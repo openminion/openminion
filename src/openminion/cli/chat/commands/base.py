@@ -171,7 +171,7 @@ def _handle_plan_or_goal_command(
 
         handle_plan_command(line, session_id=session_id)
         return ChatCommandResult(handled=True)
-    if line.startswith("/goal"):
+    if line.startswith("/goal") or line == "/goals":
         from .goal import handle_goal_command
 
         handle_goal_command(

@@ -54,6 +54,7 @@ def test_goal_command_list_show_abort_and_verify(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "brain.db"
     store = SQLiteGoalStore(db_path)
     store.create(_goal("goal-1"))
+    store.bind_to_session("goal-1", "sess-goal")
 
     handled, listed = _capture(
         "/goal list",
@@ -89,6 +90,66 @@ def test_goal_command_list_show_abort_and_verify(tmp_path, monkeypatch) -> None:
         monkeypatch=monkeypatch,
     )
     assert "[cancelled]" in aborted
+
+
+def test_goal_command_list_is_session_scoped_and_all_is_explicit(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "brain.db"
+    store = SQLiteGoalStore(db_path)
+    store.create(_goal("goal-a"))
+    store.create(_goal("goal-b"))
+    store.bind_to_session("goal-a", "sess-a")
+    store.bind_to_session("goal-b", "sess-b")
+
+    _, sess_a = _capture(
+        "/goal list",
+        session_id="sess-a",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "goal-a [active]" in sess_a
+    assert "goal-b [active]" not in sess_a
+
+    _, all_goals = _capture(
+        "/goal all",
+        session_id="sess-a",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "goal-a [active]" in all_goals
+    assert "goal-b [active]" in all_goals
+
+    _, goals_alias = _capture(
+        "/goals",
+        session_id="sess-a",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "goal-a [active]" in goals_alias
+    assert "goal-b [active]" in goals_alias
+
+
+def test_goal_command_rejects_cross_session_show_abort_verify(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "brain.db"
+    store = SQLiteGoalStore(db_path)
+    store.create(_goal("goal-b"))
+    store.bind_to_session("goal-b", "sess-b")
+
+    for command in (
+        "/goal show goal-b",
+        "/goal verify goal-b",
+        "/goal abort goal-b",
+    ):
+        _, output = _capture(
+            command,
+            session_id="sess-a",
+            db_path=db_path,
+            monkeypatch=monkeypatch,
+        )
+        assert "not active for this session" in output
 
 
 def test_goal_command_unknown_subaction_prints_usage(tmp_path, monkeypatch) -> None:

@@ -44,6 +44,26 @@ def ensure_schema(store: RecordStore) -> None:
     )
     store.execute_count(
         """
+        CREATE TABLE IF NOT EXISTS goal_session_bindings (
+            session_id TEXT NOT NULL,
+            goal_id TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, goal_id),
+            FOREIGN KEY (goal_id) REFERENCES goals(goal_id) ON DELETE CASCADE
+        )
+        """
+    )
+    store.execute_count(
+        """
+        CREATE INDEX IF NOT EXISTS idx_goal_session_bindings_session_active
+          ON goal_session_bindings(session_id, active, updated_at DESC)
+        """
+    )
+    store.execute_count(
+        """
         CREATE TABLE IF NOT EXISTS goal_audit_trail (
             audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
             entity_kind TEXT NOT NULL,
@@ -90,6 +110,15 @@ class SQLiteGoalStore(BaseModuleSQLiteStore, GoalStore):
 
     def list_active(self):
         return self._repo.list_active()
+
+    def bind_to_session(self, goal_id: str, session_id: str, *, active: bool = True):
+        return self._repo.bind_to_session(goal_id, session_id, active=active)
+
+    def list_active_for_session(self, session_id: str):
+        return self._repo.list_active_for_session(session_id)
+
+    def is_bound_to_session(self, goal_id: str, session_id: str):
+        return self._repo.is_bound_to_session(goal_id, session_id)
 
     def list_by_parent(self, parent_goal_id: str):
         return self._repo.list_by_parent(parent_goal_id)

@@ -130,6 +130,7 @@ def test_lgmh_smoke_cross_session_cron_and_goal_cli(tmp_path, monkeypatch) -> No
     goal_store = SQLiteGoalStore(db_path)
     mission_store = SQLiteMissionStateStore(db_path)
     goal_store.create(_goal("goal-smoke", apd_plan_id=plan_id, status="paused"))
+    goal_store.bind_to_session("goal-smoke", "sess-smoke")
     mission_store.create(_mission("mission-smoke", task_id=task_id, status="paused"))
 
     task_service = _FakeTaskService()

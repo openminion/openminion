@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timezone
 
-from openminion.modules.brain.schemas import (
+from openminion.modules.brain.schemas.goals import (
     ExternalBlocker,
     Goal,
     GoalStatus,
@@ -17,6 +17,13 @@ from openminion.modules.storage.record_store import RecordStore
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _strip_required(value: str, *, label: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{label} is required")
+    return text
 
 
 class SqlGoalRepository:
@@ -94,6 +101,84 @@ class SqlGoalRepository:
             ),
         )
         return [Goal.model_validate(json.loads(row["goal_json"])) for row in rows]
+
+    def bind_to_session(
+        self, goal_id: str, session_id: str, *, active: bool = True
+    ) -> Goal:
+        normalized_goal_id = _strip_required(goal_id, label="goal_id")
+        normalized_session_id = _strip_required(session_id, label="session_id")
+        goal = self.get(normalized_goal_id)
+        if goal is None:
+            raise KeyError(f"Unknown goal_id: {normalized_goal_id!r}")
+        now = _utc_now()
+        if active:
+            self._store.execute_count(
+                """
+                UPDATE goal_session_bindings
+                   SET active = 0, updated_at = ?, last_seen_at = ?
+                 WHERE session_id = ? AND active = 1
+                """,
+                (now, now, normalized_session_id),
+            )
+        self._store.execute_count(
+            """
+            INSERT INTO goal_session_bindings (
+                session_id, goal_id, active, created_at, updated_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, goal_id) DO UPDATE SET
+                active = excluded.active,
+                updated_at = excluded.updated_at,
+                last_seen_at = excluded.last_seen_at
+            """,
+            (
+                normalized_session_id,
+                normalized_goal_id,
+                1 if active else 0,
+                now,
+                now,
+                now,
+            ),
+        )
+        return goal
+
+    def list_active_for_session(self, session_id: str) -> list[Goal]:
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return []
+        rows = self._store.query_dicts(
+            """
+            SELECT g.goal_json
+              FROM goal_session_bindings AS b
+              JOIN goals AS g ON g.goal_id = b.goal_id
+             WHERE b.session_id = ?
+               AND b.active = 1
+               AND g.status IN (?, ?, ?)
+             ORDER BY b.updated_at DESC, g.updated_at DESC
+            """,
+            (
+                normalized_session_id,
+                GoalStatus.ACTIVE.value,
+                GoalStatus.PAUSED.value,
+                GoalStatus.AWAITING_ASYNC.value,
+            ),
+        )
+        return [Goal.model_validate(json.loads(row["goal_json"])) for row in rows]
+
+    def is_bound_to_session(self, goal_id: str, session_id: str) -> bool:
+        normalized_goal_id = str(goal_id or "").strip()
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_goal_id or not normalized_session_id:
+            return False
+        rows = self._store.query_dicts(
+            """
+            SELECT 1
+              FROM goal_session_bindings
+             WHERE session_id = ? AND goal_id = ? AND active = 1
+             LIMIT 1
+            """,
+            (normalized_session_id, normalized_goal_id),
+        )
+        return bool(rows)
 
     def list_by_parent(self, parent_goal_id: str) -> list[Goal]:
         rows = self._store.query_dicts(

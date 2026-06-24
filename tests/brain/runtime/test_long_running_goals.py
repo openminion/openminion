@@ -104,6 +104,7 @@ def test_goal_runtime_hydrates_resume_context_with_checkpoint(tmp_path) -> None:
     goal_store = SQLiteGoalStore(db_path)
     mission_store = SQLiteMissionStateStore(db_path)
     goal_store.create(_goal("goal-1", apd_plan_id="plan-1"))
+    goal_store.bind_to_session("goal-1", "sess-1")
     task_id = stable_task_id_for_plan_id("plan-1")
     mission_store.create(_mission("mission-1", task_id=task_id))
     task_service = _FakeTaskService()
@@ -129,6 +130,25 @@ def test_goal_runtime_hydrates_resume_context_with_checkpoint(tmp_path) -> None:
     assert snapshots[0].mission_id == "mission-1"
     assert snapshots[0].checkpoint is not None
     assert session_api.events[0][0] == "goal.resume_context.loaded"
+
+
+def test_goal_runtime_hydrates_only_session_bound_goals(tmp_path) -> None:
+    db_path = tmp_path / "brain.db"
+    goal_store = SQLiteGoalStore(db_path)
+    mission_store = SQLiteMissionStateStore(db_path)
+    goal_store.create(_goal("goal-a", apd_plan_id="plan-a"))
+    goal_store.create(_goal("goal-b", apd_plan_id="plan-b"))
+    goal_store.bind_to_session("goal-a", "sess-a")
+    goal_store.bind_to_session("goal-b", "sess-b")
+
+    runtime = LongRunningGoalRuntime(
+        goal_store=goal_store,
+        mission_store=mission_store,
+    )
+
+    snapshots = runtime.hydrate_session_start(session_id="sess-a")
+
+    assert [snapshot.goal_id for snapshot in snapshots] == ["goal-a"]
 
 
 def test_goal_runtime_advances_from_cron_and_respects_blockers(tmp_path) -> None:
@@ -254,3 +274,49 @@ def test_goal_runtime_records_goal_render_helpers_and_audit_rows(tmp_path) -> No
     )
     assert "goal=goal-audit" in rendered
     assert "status=incomplete" in rendered
+
+
+def test_goal_runtime_maps_termination_reasons_and_rolls_up_children(tmp_path) -> None:
+    db_path = tmp_path / "brain.db"
+    goal_store = SQLiteGoalStore(db_path)
+    mission_store = SQLiteMissionStateStore(db_path)
+    parent = goal_store.create(_goal("goal-parent"))
+    goal_store.create(_goal("goal-child-a", parent_goal_id=parent.goal_id))
+    goal_store.create(_goal("goal-child-b", parent_goal_id=parent.goal_id))
+    runtime = LongRunningGoalRuntime(
+        goal_store=goal_store,
+        mission_store=mission_store,
+    )
+
+    waiting = runtime.apply_termination_signal(
+        goal_id="goal-child-a",
+        reason="job_pending",
+    )
+    assert waiting is not None
+    assert waiting.status == "awaiting_async"
+    goal_store.transition_status("goal-child-a", "completed", reason="done")
+    goal_store.transition_status("goal-child-b", "completed", reason="done")
+
+    rolled_up = runtime.roll_up_child_goals(parent_goal_id=parent.goal_id)
+
+    assert rolled_up is not None
+    assert rolled_up.status == "completed"
+
+
+def test_goal_runtime_resolves_plan_owner_explicitly(tmp_path) -> None:
+    db_path = tmp_path / "brain.db"
+    goal_store = SQLiteGoalStore(db_path)
+    mission_store = SQLiteMissionStateStore(db_path)
+    goal_store.create(_goal("goal-plan-owner", apd_plan_id="plan-owner"))
+    runtime = LongRunningGoalRuntime(
+        goal_store=goal_store,
+        mission_store=mission_store,
+    )
+
+    resolved = runtime.resolve_goal_for_plan(
+        plan_id="plan-owner",
+        root_goal_id=None,
+    )
+
+    assert resolved is not None
+    assert resolved.goal_id == "goal-plan-owner"

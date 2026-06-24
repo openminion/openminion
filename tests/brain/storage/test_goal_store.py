@@ -79,6 +79,40 @@ def test_goal_store_lists_active_and_parent_children(tmp_path) -> None:
     assert child_ids == ["goal-child-b", "goal-child-a"]
 
 
+def test_goal_store_lists_active_goals_by_session(tmp_path) -> None:
+    store = SQLiteGoalStore(tmp_path / "goals.db")
+    store.create(_goal("goal-a"))
+    store.create(_goal("goal-b"))
+    store.create(_goal("goal-paused"))
+    store.bind_to_session("goal-a", "sess-a")
+    store.bind_to_session("goal-b", "sess-b")
+    store.bind_to_session("goal-paused", "sess-a")
+    store.pause("goal-paused", reason="wait")
+
+    assert [goal.goal_id for goal in store.list_active_for_session("sess-a")] == [
+        "goal-paused"
+    ]
+    assert [goal.goal_id for goal in store.list_active_for_session("sess-b")] == [
+        "goal-b"
+    ]
+    assert store.is_bound_to_session("goal-a", "sess-a") is False
+    assert store.is_bound_to_session("goal-paused", "sess-a") is True
+    assert store.is_bound_to_session("goal-a", "sess-b") is False
+
+
+def test_goal_store_keeps_one_active_goal_binding_per_session(tmp_path) -> None:
+    store = SQLiteGoalStore(tmp_path / "goals.db")
+    store.create(_goal("goal-old"))
+    store.create(_goal("goal-new"))
+
+    store.bind_to_session("goal-old", "sess-a")
+    store.bind_to_session("goal-new", "sess-a")
+
+    assert [goal.goal_id for goal in store.list_active_for_session("sess-a")] == [
+        "goal-new"
+    ]
+
+
 def test_goal_store_rejects_illegal_status_transition(tmp_path) -> None:
     store = SQLiteGoalStore(tmp_path / "goals.db")
     store.create(_goal("goal-terminal"))

@@ -380,6 +380,7 @@ class WorkingState(BaseModel):
     session_id: str = Field(..., min_length=1)
     agent_id: str = Field(..., min_length=1)
     goal: str | None = None
+    active_goal_id: str | None = None
     last_user_input: str = ""
     active_mode_name: str | None = None
     active_skill_id: str | None = None
@@ -506,6 +507,12 @@ class WorkingState(BaseModel):
     @classmethod
     def _normalize_skill_id_lists(cls, value: Any) -> Any:
         return _normalize_skill_ids(value)
+
+    @field_validator("active_goal_id", mode="before")
+    @classmethod
+    def _normalize_active_goal_id(cls, value: Any) -> str | None:
+        text = str(value or "").strip()
+        return text or None
 
     @model_validator(mode="after")
     def _sync_clarify_fields(self) -> "WorkingState":
