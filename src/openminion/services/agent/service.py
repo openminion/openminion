@@ -58,6 +58,46 @@ from .execution.finalization import normalize_provider_response_finalization_sta
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 
 
+def _provider_usage_payload(raw_usage: Any) -> dict[str, int]:
+    if raw_usage is None:
+        return {}
+    if isinstance(raw_usage, dict):
+        source = raw_usage
+    elif hasattr(raw_usage, "model_dump"):
+        dumped = raw_usage.model_dump(mode="json")
+        source = dumped if isinstance(dumped, dict) else {}
+    else:
+        source = {
+            "prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
+            "completion_tokens": getattr(raw_usage, "completion_tokens", None),
+            "total_tokens": getattr(raw_usage, "total_tokens", None),
+            "input_tokens": getattr(raw_usage, "input_tokens", None),
+            "output_tokens": getattr(raw_usage, "output_tokens", None),
+        }
+
+    usage_payload: dict[str, int] = {}
+    key_pairs = (
+        ("prompt_tokens", ("prompt_tokens", "input_tokens")),
+        ("completion_tokens", ("completion_tokens", "output_tokens")),
+        ("total_tokens", ("total_tokens",)),
+    )
+    for output_key, candidate_keys in key_pairs:
+        for key in candidate_keys:
+            value = source.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                usage_payload[output_key] = max(0, int(value))
+                break
+    if "total_tokens" not in usage_payload and (
+        "prompt_tokens" in usage_payload or "completion_tokens" in usage_payload
+    ):
+        usage_payload["total_tokens"] = int(usage_payload.get("prompt_tokens", 0)) + int(
+            usage_payload.get("completion_tokens", 0)
+        )
+    return usage_payload
+
+
 def _explicit_tool_artifact_refs(data: object) -> list[dict[str, str]]:
     if not isinstance(data, dict):
         return []
@@ -424,17 +464,7 @@ class AgentService(AgentTurnFlowMixin):
                 f"{error_code}: {error_message}" if error_code else error_message
             )
 
-        usage_payload: dict[str, int] = {}
-        usage = getattr(response, "usage", None)
-        input_tokens = getattr(usage, "input_tokens", None)
-        output_tokens = getattr(usage, "output_tokens", None)
-        total_tokens = getattr(usage, "total_tokens", None)
-        if isinstance(input_tokens, (int, float)):
-            usage_payload["prompt_tokens"] = int(input_tokens)
-        if isinstance(output_tokens, (int, float)):
-            usage_payload["completion_tokens"] = int(output_tokens)
-        if isinstance(total_tokens, (int, float)):
-            usage_payload["total_tokens"] = int(total_tokens)
+        usage_payload = _provider_usage_payload(getattr(response, "usage", None))
 
         tool_calls: list[ProviderToolCall] = []
         for call in list(getattr(response, "tool_calls", []) or []):

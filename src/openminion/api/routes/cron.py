@@ -16,8 +16,9 @@ from openminion.api.queries.cron import list_cron_jobs
 from .base import (
     APIRouteContext,
     RouteResult,
-    error_route_result,
+    exception_route_result,
     json_body_required_route_result,
+    runtime_unavailable_route_result,
 )
 
 
@@ -47,13 +48,7 @@ def handle_request(
 
 
 def _runtime_unavailable(path: str) -> RouteResult:
-    return error_route_result(
-        HTTPStatus.SERVICE_UNAVAILABLE,
-        code="runtime_unavailable",
-        message="Runtime not available.",
-        details={"path": path},
-        retryable=True,
-    )
+    return runtime_unavailable_route_result(path=path, exc="Runtime not available.")
 
 
 def _list_jobs(ctx: APIRouteContext) -> RouteResult:
@@ -63,10 +58,10 @@ def _list_jobs(ctx: APIRouteContext) -> RouteResult:
         jobs = list_cron_jobs(runtime=ctx.runtime)
         return RouteResult(status=HTTPStatus.OK, payload={"ok": True, "jobs": jobs})
     except Exception as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.INTERNAL_SERVER_ERROR,
             code="cron_error",
-            message=str(exc),
+            exc=exc,
             details={},
             retryable=False,
         )
@@ -83,18 +78,18 @@ def _create_job(ctx: APIRouteContext, *, body: dict | None) -> RouteResult:
             status=HTTPStatus.CREATED, payload={"ok": True, "job_id": job_id}
         )
     except (ValueError, KeyError, TypeError) as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.BAD_REQUEST,
             code="invalid_request",
-            message=str(exc),
+            exc=exc,
             details={},
             retryable=False,
         )
     except Exception as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.INTERNAL_SERVER_ERROR,
             code="cron_error",
-            message=str(exc),
+            exc=exc,
             details={},
             retryable=False,
         )
@@ -107,18 +102,18 @@ def _trigger_job(ctx: APIRouteContext, *, job_id: str) -> RouteResult:
         run_id = trigger_cron_job(runtime=ctx.runtime, job_id=job_id)
         return RouteResult(status=HTTPStatus.OK, payload={"ok": True, "run_id": run_id})
     except ValueError as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.NOT_FOUND,
             code="cron_job_not_found",
-            message=str(exc),
+            exc=exc,
             details={"job_id": job_id},
             retryable=False,
         )
     except Exception as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.INTERNAL_SERVER_ERROR,
             code="cron_error",
-            message=str(exc),
+            exc=exc,
             details={"job_id": job_id},
             retryable=False,
         )
@@ -131,18 +126,18 @@ def _delete_job(ctx: APIRouteContext, *, job_id: str) -> RouteResult:
         delete_cron_job(runtime=ctx.runtime, job_id=job_id)
         return RouteResult(status=HTTPStatus.OK, payload={"ok": True})
     except ValueError as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.NOT_FOUND,
             code="cron_job_not_found",
-            message=str(exc),
+            exc=exc,
             details={"job_id": job_id},
             retryable=False,
         )
     except Exception as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.INTERNAL_SERVER_ERROR,
             code="cron_error",
-            message=str(exc),
+            exc=exc,
             details={"job_id": job_id},
             retryable=False,
         )

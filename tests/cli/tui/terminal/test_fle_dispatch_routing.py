@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from rich.console import Console
 
@@ -77,13 +77,10 @@ def test_tool_started_payload_routes_to_transcript_handler() -> None:
     assert spy_started.call_args.args[0]["call_id"] == "c1"
 
 
-def test_tool_started_payload_does_not_reach_phase_display() -> None:
+def test_tool_started_payload_routes_only_to_transcript_handler() -> None:
     transcript, _ = _make_transcript()
-    fake_phase = MagicMock()
-    fake_phase.__enter__ = MagicMock(return_value=fake_phase)
-    fake_phase.__exit__ = MagicMock(return_value=None)
-    fake_phase.callback = MagicMock()
-    fake_phase.clear = MagicMock()
+    spy_started = MagicMock(wraps=transcript.handle_tool_started)
+    transcript.handle_tool_started = spy_started  # type: ignore[method-assign]
 
     runtime = _ScriptedRuntime(
         pre_chunk_events=[
@@ -96,21 +93,15 @@ def test_tool_started_payload_does_not_reach_phase_display() -> None:
         ],
         chunks=["hi"],
     )
-    with patch(
-        "openminion.cli.tui.terminal.shell.PhaseStatusDisplay",
-        return_value=fake_phase,
-    ):
-        asyncio.run(
-            _run_agent_turn(
-                text="x",
-                runtime=runtime,
-                transcript=transcript,
-                status_line=None,
-            )
+    asyncio.run(
+        _run_agent_turn(
+            text="x",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
         )
-    for call in fake_phase.callback.call_args_list:
-        payload = call.args[0] if call.args else {}
-        assert payload.get("kind") != "tool_started"
+    )
+    assert spy_started.call_count == 1
 
 
 def test_tool_completed_payload_routes_to_transcript_handler() -> None:
@@ -149,13 +140,10 @@ def test_tool_completed_payload_routes_to_transcript_handler() -> None:
     assert spy_completed.call_args.args[0]["call_id"] == "c1"
 
 
-def test_tool_completed_payload_does_not_reach_phase_display() -> None:
+def test_tool_completed_payload_routes_only_to_transcript_handler() -> None:
     transcript, _ = _make_transcript()
-    fake_phase = MagicMock()
-    fake_phase.__enter__ = MagicMock(return_value=fake_phase)
-    fake_phase.__exit__ = MagicMock(return_value=None)
-    fake_phase.callback = MagicMock()
-    fake_phase.clear = MagicMock()
+    spy_completed = MagicMock(wraps=transcript.handle_tool_completed)
+    transcript.handle_tool_completed = spy_completed  # type: ignore[method-assign]
 
     runtime = _ScriptedRuntime(
         pre_chunk_events=[
@@ -169,111 +157,77 @@ def test_tool_completed_payload_does_not_reach_phase_display() -> None:
         ],
         chunks=["done"],
     )
-    with patch(
-        "openminion.cli.tui.terminal.shell.PhaseStatusDisplay",
-        return_value=fake_phase,
-    ):
-        asyncio.run(
-            _run_agent_turn(
-                text="x",
-                runtime=runtime,
-                transcript=transcript,
-                status_line=None,
-            )
+    asyncio.run(
+        _run_agent_turn(
+            text="x",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
         )
-    for call in fake_phase.callback.call_args_list:
-        payload = call.args[0] if call.args else {}
-        assert payload.get("kind") != "tool_completed"
+    )
+    assert spy_completed.call_count == 1
 
 
-def test_phase_payload_routes_to_phase_display() -> None:
-    transcript, _ = _make_transcript()
-    fake_phase = MagicMock()
-    fake_phase.__enter__ = MagicMock(return_value=fake_phase)
-    fake_phase.__exit__ = MagicMock(return_value=None)
-    fake_phase.callback = MagicMock()
-    fake_phase.clear = MagicMock()
+def test_phase_payload_does_not_create_visible_terminal_line() -> None:
+    transcript, buf = _make_transcript()
 
     runtime = _ScriptedRuntime(
         pre_chunk_events=[{"kind": "phase", "label": "thinking"}],
         chunks=["hi"],
     )
-    with patch(
-        "openminion.cli.tui.terminal.shell.PhaseStatusDisplay",
-        return_value=fake_phase,
-    ):
-        asyncio.run(
-            _run_agent_turn(
-                text="x",
-                runtime=runtime,
-                transcript=transcript,
-                status_line=None,
-            )
+    asyncio.run(
+        _run_agent_turn(
+            text="x",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
         )
-    kinds_seen = [
-        (call.args[0] if call.args else {}).get("kind")
-        for call in fake_phase.callback.call_args_list
-    ]
-    assert "phase" in kinds_seen
+    )
+    output = buf.getvalue()
+    assert "hi" in output
+    assert "thinking" not in output
+    assert "\x1b[" not in output
 
 
-def test_thinking_payload_routes_to_phase_display() -> None:
-    transcript, _ = _make_transcript()
-    fake_phase = MagicMock()
-    fake_phase.__enter__ = MagicMock(return_value=fake_phase)
-    fake_phase.__exit__ = MagicMock(return_value=None)
-    fake_phase.callback = MagicMock()
-    fake_phase.clear = MagicMock()
+def test_thinking_payload_does_not_create_visible_terminal_line() -> None:
+    transcript, buf = _make_transcript()
 
     runtime = _ScriptedRuntime(
         pre_chunk_events=[{"kind": "thinking", "label": "reasoning"}],
         chunks=["hi"],
     )
-    with patch(
-        "openminion.cli.tui.terminal.shell.PhaseStatusDisplay",
-        return_value=fake_phase,
-    ):
-        asyncio.run(
-            _run_agent_turn(
-                text="x",
-                runtime=runtime,
-                transcript=transcript,
-                status_line=None,
-            )
+    asyncio.run(
+        _run_agent_turn(
+            text="x",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
         )
-    kinds_seen = [
-        (call.args[0] if call.args else {}).get("kind")
-        for call in fake_phase.callback.call_args_list
-    ]
-    assert "thinking" in kinds_seen
+    )
+    output = buf.getvalue()
+    assert "hi" in output
+    assert "reasoning" not in output
+    assert "\x1b[" not in output
 
 
-def test_payload_without_kind_routes_to_phase_display() -> None:
-    transcript, _ = _make_transcript()
-    fake_phase = MagicMock()
-    fake_phase.__enter__ = MagicMock(return_value=fake_phase)
-    fake_phase.__exit__ = MagicMock(return_value=None)
-    fake_phase.callback = MagicMock()
-    fake_phase.clear = MagicMock()
+def test_payload_without_kind_does_not_create_visible_terminal_line() -> None:
+    transcript, buf = _make_transcript()
 
     runtime = _ScriptedRuntime(
         pre_chunk_events=[{"label": "something"}],
         chunks=["hi"],
     )
-    with patch(
-        "openminion.cli.tui.terminal.shell.PhaseStatusDisplay",
-        return_value=fake_phase,
-    ):
-        asyncio.run(
-            _run_agent_turn(
-                text="x",
-                runtime=runtime,
-                transcript=transcript,
-                status_line=None,
-            )
+    asyncio.run(
+        _run_agent_turn(
+            text="x",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
         )
-    # Was invoked at least once (the no-kind payload routed here).
-    assert fake_phase.callback.call_count >= 1
+    )
+    output = buf.getvalue()
+    assert "hi" in output
+    assert "something" not in output
 
 
 def test_empty_payload_does_not_crash() -> None:
@@ -455,11 +409,6 @@ def test_runtime_exception_still_completes_handle() -> None:
 
 def test_mixed_event_sequence_routes_each_payload_correctly() -> None:
     transcript, _ = _make_transcript()
-    fake_phase = MagicMock()
-    fake_phase.__enter__ = MagicMock(return_value=fake_phase)
-    fake_phase.__exit__ = MagicMock(return_value=None)
-    fake_phase.callback = MagicMock()
-    fake_phase.clear = MagicMock()
 
     spy_started = MagicMock(wraps=transcript.handle_tool_started)
     spy_completed = MagicMock(wraps=transcript.handle_tool_completed)
@@ -486,28 +435,15 @@ def test_mixed_event_sequence_routes_each_payload_correctly() -> None:
         ],
         chunks=["final"],
     )
-    with patch(
-        "openminion.cli.tui.terminal.shell.PhaseStatusDisplay",
-        return_value=fake_phase,
-    ):
-        asyncio.run(
-            _run_agent_turn(
-                text="x",
-                runtime=runtime,
-                transcript=transcript,
-                status_line=None,
-            )
+    asyncio.run(
+        _run_agent_turn(
+            text="x",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
         )
+    )
 
     # Tool handlers each fired once.
     assert spy_started.call_count == 1
     assert spy_completed.call_count == 1
-    # PhaseStatusDisplay saw the two phase events (and never any
-    # tool_started / tool_completed payloads).
-    kinds = [
-        (call.args[0] if call.args else {}).get("kind")
-        for call in fake_phase.callback.call_args_list
-    ]
-    assert kinds.count("phase") >= 2
-    assert "tool_started" not in kinds
-    assert "tool_completed" not in kinds

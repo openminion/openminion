@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from openminion.base.types import AgentResponse
+from openminion.modules.brain.diagnostics.status import PhaseStatus
+
 from tests.services.gateway._gateway_service_support import (
     GatewayServiceTestCase,
     IdempotencyStore,
@@ -900,6 +903,74 @@ class GatewayTurnRunnerCharacterizationTests(GatewayServiceTestCase):
         self.assertEqual(len(transcript), 1)
         self.assertEqual(transcript[0].role, "inbound")
         self.assertEqual(transcript[0].body, "hello runner execute")
+
+    def test_gateway_turn_runner_preserves_typed_progress_usage_in_final_metadata(
+        self,
+    ) -> None:
+        gateway, _sink = self._build_gateway(
+            provider=self.provider,
+            logger_name="openminion.tests.gateway.runner.progress_usage",
+            agent_logger_name="openminion.tests.gateway.agent.runner.progress_usage",
+            auto_resume=False,
+        )
+
+        class _ProgressAgent:
+            async def run_turn(self, *_args, progress_callback=None, **_kwargs):
+                if progress_callback is not None:
+                    progress_callback(
+                        PhaseStatus(
+                            trace_id="trace-progress",
+                            status_key="analyzing",
+                            total_input_tokens_used=1234,
+                            total_output_tokens_used=56,
+                            total_tokens_used=1290,
+                        )
+                    )
+                return AgentResponse(
+                    text="done",
+                    channel="console",
+                    target="local-user",
+                    metadata={
+                        "total_input_tokens_used": "0",
+                        "total_output_tokens_used": "0",
+                        "total_tokens_used": "0",
+                    },
+                )
+
+        gateway._turn_runner._agent = _ProgressAgent()
+
+        async def _run():
+            routing = gateway._turn_runner._resolve_routing(
+                channel="console",
+                target="local-user",
+                session_id="runner-progress-usage",
+                request_id="req-runner-progress-usage",
+                inbound_metadata=None,
+                deliver=False,
+            )
+            run_id, lifecycle_payload = gateway._turn_runner._setup_turn(
+                routing,
+                channel="console",
+                target="local-user",
+            )
+            return await gateway._turn_runner._execute_agent(
+                routing,
+                channel="console",
+                target="local-user",
+                body="hello runner progress",
+                run_id=run_id,
+                lifecycle_payload=lifecycle_payload,
+                history=[],
+                forced_tools=None,
+                capability_category=None,
+                prior_transcript_available=False,
+            )
+
+        response = asyncio.run(_run())
+
+        self.assertEqual(response.metadata.get("total_input_tokens_used"), "1234")
+        self.assertEqual(response.metadata.get("total_output_tokens_used"), "56")
+        self.assertEqual(response.metadata.get("total_tokens_used"), "1290")
 
     def test_gateway_turn_runner_build_outbound_and_persist_sets_envelope_metadata(
         self,

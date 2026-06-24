@@ -14,6 +14,9 @@ from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
 from openminion.services.agent.memory import MEMORY_POLICY_SNAPSHOT_VERSION
 from openminion.base.constants import STATE_KEY_WORKING
+from openminion.services.brain.post_execution.usage import (
+    collect_llm_usage_totals_from_events,
+)
 
 _SEARCH_SOURCE_MARKER_RE = re.compile(
     r"(source=|via\s+[a-z0-9_.-]+)",
@@ -453,6 +456,20 @@ def _build_turn_response_metadata(
         action_outputs.get("total_output_tokens_used", 0) or 0
     )
     total_tokens_used = int(action_outputs.get("total_tokens_used", 0) or 0)
+    if total_tokens_used <= 0:
+        (
+            event_input_tokens,
+            event_output_tokens,
+            event_total_tokens,
+        ) = collect_llm_usage_totals_from_events(
+            runner=runner,
+            session_id=session_id,
+            trace_id=request_id,
+        )
+        if event_total_tokens > 0:
+            total_input_tokens_used = event_input_tokens
+            total_output_tokens_used = event_output_tokens
+            total_tokens_used = event_total_tokens
     tool_calls_count = int(action_outputs.get("tool_calls_count", 0) or 0)
     _default_agent_id = resolve_default_agent_id(self._config)
     return {

@@ -42,6 +42,59 @@ def error_route_result(
     )
 
 
+def exception_route_result(
+    status: HTTPStatus,
+    *,
+    code: str,
+    exc: Exception,
+    details: Mapping[str, Any] | None = None,
+    retryable: bool,
+    retry_after_ms: int | None = None,
+    session_id: str | None = None,
+    run_id: str | None = None,
+) -> RouteResult:
+    return error_route_result(
+        status,
+        code=code,
+        message=str(exc),
+        details=dict(details or {}),
+        retryable=retryable,
+        retry_after_ms=retry_after_ms,
+        session_id=session_id,
+        run_id=run_id,
+    )
+
+
+def runtime_unavailable_route_result(
+    *,
+    path: str,
+    exc: Exception | str,
+    session_id: str | None = None,
+    run_id: str | None = None,
+) -> RouteResult:
+    if isinstance(exc, Exception):
+        return exception_route_result(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            code="runtime_unavailable",
+            exc=exc,
+            details={"path": path},
+            retryable=True,
+            retry_after_ms=1000,
+            session_id=session_id,
+            run_id=run_id,
+        )
+    return error_route_result(
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        code="runtime_unavailable",
+        message=str(exc),
+        details={"path": path},
+        retryable=True,
+        retry_after_ms=1000,
+        session_id=session_id,
+        run_id=run_id,
+    )
+
+
 def json_body_required_route_result(
     *,
     path: str,

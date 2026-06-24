@@ -16,10 +16,14 @@ from openminion.api.core.validation import (
     parse_positive_int_query_value,
 )
 from openminion.api.queries.owner import OwnerStatusQueryError, get_owner_status
-from openminion.api.responses.serialization import error_response
 from openminion.api import metrics_registry
 
-from .base import APIRouteContext, RouteResult
+from .base import (
+    APIRouteContext,
+    RouteResult,
+    error_route_result,
+    exception_route_result,
+)
 
 
 _HEALTH_PATHS = {"/health", "/v1/health"}
@@ -79,32 +83,31 @@ def _handle_metrics_request(
 ) -> RouteResult:
     denial_message = authorize_metrics_request(ctx.request_headers)
     if denial_message is not None:
-        status, payload = error_response(
+        return error_route_result(
             HTTPStatus.FORBIDDEN,
             code="forbidden",
             message=denial_message,
             details={"path": path, "required_header": API_METRICS_TOKEN_HEADER},
             retryable=False,
         )
-        return RouteResult(status=status, payload=payload)
 
     query_args = parse_qs(query or "", keep_blank_values=False)
     reset_raw = query_args.get("reset", [None])[0]
     try:
         should_reset = parse_bool_query_value(reset_raw)
     except ValueError as exc:
-        status, payload = error_response(
+        return exception_route_result(
             HTTPStatus.BAD_REQUEST,
             code="invalid_request",
-            message=str(exc),
+            exc=exc,
             details={"query": {"reset": reset_raw}},
             retryable=False,
         )
-    else:
-        metrics = metrics_registry.snapshot(reset=should_reset)
-        status = HTTPStatus.OK
-        payload = {"ok": True, "metrics": metrics, "reset": should_reset}
-    return RouteResult(status=status, payload=payload)
+    metrics = metrics_registry.snapshot(reset=should_reset)
+    return RouteResult(
+        status=HTTPStatus.OK,
+        payload={"ok": True, "metrics": metrics, "reset": should_reset},
+    )
 
 
 def _handle_owner_status_request(
@@ -142,13 +145,11 @@ def _handle_owner_status_request(
             run_limit_per_session=run_limit,
             window_hours=hours,
         )
-        status = HTTPStatus.OK
-        payload = {"ok": True, **owner_payload}
     except ValueError as exc:
-        status, payload = error_response(
+        return exception_route_result(
             HTTPStatus.BAD_REQUEST,
             code="invalid_request",
-            message=str(exc),
+            exc=exc,
             details={
                 "query": {
                     "session_limit": session_limit_raw,
@@ -159,14 +160,14 @@ def _handle_owner_status_request(
             retryable=False,
         )
     except OwnerStatusQueryError as exc:
-        status, payload = error_response(
+        return exception_route_result(
             HTTPStatus.BAD_REQUEST,
             code=exc.code,
-            message=str(exc),
+            exc=exc,
             details={"path": path},
             retryable=False,
         )
-    return RouteResult(status=status, payload=payload)
+    return RouteResult(status=HTTPStatus.OK, payload={"ok": True, **owner_payload})
 
 
 def handle_request(

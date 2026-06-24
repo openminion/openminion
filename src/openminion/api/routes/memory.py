@@ -6,10 +6,9 @@ from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qs
 
-from openminion.api.responses.serialization import error_response
 from openminion.modules.memory import default_provenance_recorder
 
-from .base import APIRouteContext, RouteResult
+from .base import APIRouteContext, RouteResult, error_route_result
 
 
 _PROVENANCE_PATH = "/memory/provenance"
@@ -51,37 +50,36 @@ def _handle_get_turn_trace(
     session_id = _single_query_value(query, "session_id")
     turn_id = _single_query_value(query, "turn_id")
     if not session_id:
-        status, payload = error_response(
+        return error_route_result(
             HTTPStatus.BAD_REQUEST,
             code="invalid_request",
             message="`session_id` query parameter is required.",
             details={"path": path},
             retryable=False,
         )
-        return RouteResult(status=status, payload=payload)
     if not turn_id:
-        status, payload = error_response(
+        return error_route_result(
             HTTPStatus.BAD_REQUEST,
             code="invalid_request",
             message="`turn_id` query parameter is required.",
             details={"path": path},
             retryable=False,
+            session_id=session_id,
         )
-        return RouteResult(status=status, payload=payload, session_id=session_id)
 
     trace = default_provenance_recorder().get_turn_trace(
         session_id=session_id,
         turn_id=turn_id,
     )
     if trace is None:
-        status, payload = error_response(
+        return error_route_result(
             HTTPStatus.NOT_FOUND,
             code="not_found",
             message=f"no provenance trace recorded for session={session_id} turn={turn_id}",
             details={"path": path},
             retryable=False,
+            session_id=session_id,
         )
-        return RouteResult(status=status, payload=payload, session_id=session_id)
 
     return RouteResult(
         status=HTTPStatus.OK,
@@ -97,14 +95,13 @@ def _handle_get_by_memory(
 ) -> RouteResult:
     memory_id = _single_query_value(query, "memory_id")
     if not memory_id:
-        status, payload = error_response(
+        return error_route_result(
             HTTPStatus.BAD_REQUEST,
             code="invalid_request",
             message="`memory_id` query parameter is required.",
             details={"path": path},
             retryable=False,
         )
-        return RouteResult(status=status, payload=payload)
 
     traces = default_provenance_recorder().find_traces_citing_memory(memory_id)
     return RouteResult(

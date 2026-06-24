@@ -8,7 +8,6 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-from openminion.cli.chat.ui import PhaseStatusDisplay
 from openminion.cli.status import format_token_usage_summary
 from openminion.cli.tui.presentation.models import (
     ChatMessage,
@@ -389,9 +388,7 @@ def _route_durable_activity_event(
     return False
 
 
-def _build_turn_progress_callback(
-    *, transcript: TerminalTranscript, phase_display, state: dict
-):
+def _build_turn_progress_callback(*, transcript: TerminalTranscript):
     """Build the progress callback passed to ``runtime.send_message``."""
 
     def _handle_progress(payload: dict[str, Any]) -> None:
@@ -404,12 +401,6 @@ def _build_turn_progress_callback(
             return
         if payload and _route_durable_activity_event(transcript, payload):
             return
-        if (
-            state["phase_updates_enabled"]
-            and phase_display.callback is not None
-            and payload
-        ):
-            phase_display.callback(payload)
 
     return _handle_progress
 
@@ -446,23 +437,17 @@ async def _run_agent_turn(
     handle = transcript.begin_turn(role="assistant")
     reply = ""
     try:
-        with PhaseStatusDisplay(enabled=True, animate=True) as phase_display:
-            state = {"phase_updates_enabled": True}
-            progress_callback = _build_turn_progress_callback(
-                transcript=transcript, phase_display=phase_display, state=state
-            )
-            async for chunk in runtime.send_message(
-                text, progress_callback=progress_callback
-            ):
-                chunk_str = str(chunk or "")
-                if not chunk_str:
-                    continue
-                if state["phase_updates_enabled"]:
-                    phase_display.clear()
-                    state["phase_updates_enabled"] = False
-                reply += chunk_str
-                handle.append_token(chunk_str)
-            handle.complete(final_text=reply)
+        progress_callback = _build_turn_progress_callback(transcript=transcript)
+        async for chunk in runtime.send_message(
+            text,
+            progress_callback=progress_callback,
+        ):
+            chunk_str = str(chunk or "")
+            if not chunk_str:
+                continue
+            reply += chunk_str
+            handle.append_token(chunk_str)
+        handle.complete(final_text=reply)
     except Exception as exc:
         try:
             handle.complete(final_text=reply)

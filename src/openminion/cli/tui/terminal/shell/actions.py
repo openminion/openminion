@@ -58,6 +58,20 @@ _MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
 _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 
 _SLASH_COMMANDS = terminal_slash_commands()
+_FIGLET_FONT = "small"
+_FIGLET_TEXT = "OpenMinion"
+
+
+def _render_openminion_figlet() -> Text:
+    try:
+        from pyfiglet import Figlet
+    except ImportError:
+        return Text(_FIGLET_TEXT, style=_INFO_BOLD_STYLE)
+
+    rendered = Figlet(font=_FIGLET_FONT, width=72).renderText(_FIGLET_TEXT).rstrip()
+    if not rendered:
+        return Text(_FIGLET_TEXT, style=_INFO_BOLD_STYLE)
+    return Text(rendered, style=_INFO_BOLD_STYLE)
 
 
 def _handle_slash_expand(
@@ -811,6 +825,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     agent = str(getattr(runtime, "agent_id", "openminion") or "openminion")
     model = _runtime_label(runtime)
     body_lines = [
+        _render_openminion_figlet(),
         Text.assemble(
             ("openminion", token_rich_style(StyleToken.ASSISTANT, bold=True)),
             ("  ·  ", _MUTED_STYLE),

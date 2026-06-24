@@ -513,3 +513,30 @@ def test_llm_wrapper_preserves_structured_response_fields_from_upstream_llm_resp
     }
     assert response.pending_turn_context is not None
     assert response.pending_turn_context["active_work_summary"] == "summary"
+    assert response.usage.input_tokens == 1
+    assert response.usage.output_tokens == 1
+    assert response.usage.total_tokens == 2
+
+
+def test_llm_wrapper_emits_telemetry_from_typed_usage_info() -> None:
+    provider = StructuredFieldProvider()
+    telemetry = FakeTelemetry()
+    wrapper = OpenMinionLLMClient(provider, telemetryctl=telemetry)
+    wrapper._set_context("sess-typed", "turn-typed")
+    req = _request(purpose="act")
+    req.metadata["mode_name"] = "act"
+
+    response = wrapper.call(req)
+
+    assert response.usage.input_tokens == 1
+    assert response.usage.output_tokens == 1
+    assert telemetry.llm_calls == [
+        {
+            "session_id": "sess-typed",
+            "turn_id": "turn-typed",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "cached_tokens": 0,
+            "mode": "act",
+        }
+    ]

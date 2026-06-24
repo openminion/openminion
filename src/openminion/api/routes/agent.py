@@ -9,7 +9,13 @@ from urllib.parse import unquote
 from openminion.api.operations.agent import evict_agent_runtime
 from openminion.api.queries.agents import AgentQueryError, inspect_agent, list_agents
 
-from .base import APIRouteContext, RouteResult, error_route_result
+from .base import (
+    APIRouteContext,
+    RouteResult,
+    error_route_result,
+    exception_route_result,
+    runtime_unavailable_route_result,
+)
 
 
 _INSPECT_RE = re.compile(r"/v1/agents/([^/]+)/inspect")
@@ -17,14 +23,7 @@ _EVICT_RE = re.compile(r"/v1/agents/([^/]+)/evict")
 
 
 def _runtime_unavailable_response(path: str, exc: Exception) -> RouteResult:
-    return error_route_result(
-        HTTPStatus.SERVICE_UNAVAILABLE,
-        code="runtime_unavailable",
-        message=str(exc),
-        details={"path": path},
-        retryable=True,
-        retry_after_ms=1000,
-    )
+    return runtime_unavailable_route_result(path=path, exc=exc)
 
 
 def _handle_list_agents(ctx: APIRouteContext, *, path: str) -> RouteResult:
@@ -58,10 +57,10 @@ def _handle_inspect_agent(
             retryable=False,
         )
     except Exception as exc:  # noqa: BLE001
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.INTERNAL_SERVER_ERROR,
             code="inspect_error",
-            message=str(exc),
+            exc=exc,
             details={"agent_id": agent_id},
             retryable=False,
         )

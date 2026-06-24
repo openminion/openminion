@@ -4,7 +4,11 @@ from http import HTTPStatus
 
 from openminion.api.core.deps import resolve_runtime_manager
 
-from .base import APIRouteContext, RouteResult, error_route_result
+from .base import (
+    APIRouteContext,
+    RouteResult,
+    runtime_unavailable_route_result,
+)
 
 
 def handle_request(
@@ -23,14 +27,7 @@ def handle_request(
                 runtime=ctx.runtime,
             )
         except Exception as exc:  # noqa: BLE001
-            return error_route_result(
-                HTTPStatus.SERVICE_UNAVAILABLE,
-                code="runtime_unavailable",
-                message=str(exc),
-                details={"path": path},
-                retryable=True,
-                retry_after_ms=1000,
-            )
+            return runtime_unavailable_route_result(path=path, exc=exc)
         try:
             manager.kill_switch(grace_s=2)
             return RouteResult(
