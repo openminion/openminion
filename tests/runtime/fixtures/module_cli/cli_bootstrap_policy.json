@@ -1,0 +1,9 @@
+{
+  "no_op_modules": [
+    {
+      "module": "llm",
+      "policy": "bootstrap_noop",
+      "reason": "LLM module CLI does not write module-local state and relies on explicit config paths."
+    }
+  ]
+}

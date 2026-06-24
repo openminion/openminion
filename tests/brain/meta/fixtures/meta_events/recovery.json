@@ -1,0 +1,25 @@
+{
+    "description": "RECOVERY state — repeated failures",
+    "meta_metrics": {
+        "session_id": "sess-004",
+        "agent_id": "agent-001",
+        "trace_id": "trace-004",
+        "risk_class": "low",
+        "risk_score": 20,
+        "intent_confidence": 0.7,
+        "grounding_confidence": 0.8,
+        "recent_failures": 3,
+        "loop_count": 0,
+        "replan_count": 0,
+        "budget_remaining": 0.5,
+        "user_kill_requested": false,
+        "needs_clarification": false,
+        "irreversible": false,
+        "requires_side_effects": false
+    },
+    "expected_meta_state": "RECOVERY",
+    "expected_directive": {
+        "override_next_state": "PLAN",
+        "require_confirmation": false
+    }
+}

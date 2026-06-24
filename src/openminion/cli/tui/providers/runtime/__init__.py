@@ -1,0 +1,669 @@
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping
+from uuid import uuid4
+
+from openminion.api.runtime import APIRuntime
+from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.config.runtime.profile import PERMISSION_MODE_DEFAULT
+from openminion.cli.status import (
+    TokenUsageSnapshot,
+    TokenUsageTotals,
+    accumulate_usage,
+    build_token_usage_snapshot,
+    usage_totals_from_mapping,
+)
+from openminion.cli.parser.contracts import CLI_INTERFACE_VERSION
+from openminion.cli.tui.presentation.models import ChatMessage
+from openminion.cli.tui.widgets import SidebarItem
+from openminion.cli.tui.project_context import (
+    ProjectContextInfo,
+    build_project_context_metadata,
+)
+from openminion.services.gateway.constants import (
+    CALLER_HANDLES_DELIVERY_METADATA_KEY,
+)
+from openminion.base.config.settings import SettingsResolver
+from openminion.services.agent.lifecycle import register_settings_lifecycle_hooks
+from .controls import RuntimeControlsMixin
+from .mcp import RuntimeMCPMixin
+from .messages import (
+    TARGET_KIND_FOCUS as _TARGET_KIND_FOCUS,
+    RuntimeMessageMixin,
+)
+
+ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
+_LIVE_USAGE_THROTTLE_SECONDS = 0.5
+_RETRYABLE_TURN_ERROR_MARKERS = (
+    "required completion contract",
+    "finalization_status contract",
+)
+_TURN_FAILURE_TEXT_MAP: tuple[tuple[str, str], ...] = (
+    (
+        "finalization_status contract",
+        "The model ended the turn without the required completion contract. "
+        "Please try again.",
+    ),
+    (
+        "required completion contract",
+        "The model ended the turn without the required completion contract. "
+        "Please try again.",
+    ),
+)
+
+
+def _retryable_turn_failure_message(text: str) -> str | None:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return None
+    for marker, rendered in _TURN_FAILURE_TEXT_MAP:
+        if marker in lowered:
+            return rendered
+    return None
+
+
+def _is_retryable_turn_failure_text(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    return any(marker in lowered for marker in _RETRYABLE_TURN_ERROR_MARKERS)
+
+
+def _session_sort_key(session: Any) -> str:
+    """Sort sessions by most-recent-activity first for candidate selection."""
+    return (
+        str(getattr(session, "last_activity_at", "") or "")
+        or str(getattr(session, "updated_at", "") or "")
+        or str(getattr(session, "created_at", "") or "")
+    )
+
+
+class OpenMinionRuntime(
+    RuntimeControlsMixin,
+    RuntimeMCPMixin,
+    RuntimeMessageMixin,
+):
+    """ChatRuntimeAPI adapter over APIRuntime."""
+
+    contract_version: str = CLI_INTERFACE_VERSION
+
+    def __init__(
+        self,
+        rt: APIRuntime,
+        *,
+        channel: str | None = None,
+        target: str = "tui",
+        history_limit: int = 200,
+        agent_id: str | None = None,
+        working_dir: str | None = None,
+        bind_immediately: bool = True,
+        session_id: str | None = None,
+        prompt_on_resume: bool = False,
+    ) -> None:
+        self._rt = rt
+        self._agent_id_override = str(agent_id or "").strip() or None
+        if channel:
+            self._channel = channel
+        else:
+            selected_profile = self._select_channel_profile()
+            self._channel = (
+                str(getattr(selected_profile, "default_channel", "") or "").strip()
+                or "cli"
+            )
+        self._target = target
+        self._history_limit = max(1, int(history_limit))
+        self._working_dir = self._normalize_working_dir(working_dir)
+        self._agent_id: str | None = None
+        self._gateway = None
+        self._session_id: str | None = None
+        self._prompt_on_resume = bool(prompt_on_resume)
+        self._completed_session_usage = TokenUsageTotals()
+        self._last_turn_usage = TokenUsageTotals()
+        self._current_turn_usage: TokenUsageTotals | None = None
+        self._current_turn_has_live_deltas = False
+        self._current_turn_started_at_monotonic: float | None = None
+        self._last_turn_elapsed_seconds: float | None = None
+        self._usage_updated_at_monotonic: float | None = None
+        self._last_live_usage_update_at: float | None = None
+        self._project_context: ProjectContextInfo | None = None
+        self._project_context_pending: bool = False
+        self._model_override_provider: str = ""
+        self._model_override_model: str = ""
+        self._permission_mode: str = ""
+        self._permission_overrides: dict[str, str] = {}
+        self._read_only_mode: bool = False
+        self._effort_level: str = ""
+        self._statusline_command: str = ""
+        register_settings_lifecycle_hooks(
+            SettingsResolver(workspace_root=self._working_dir)
+        )
+        self._pending_candidate_session: Any | None = None
+
+        if bind_immediately and not self._prompt_on_resume:
+            self._ensure_agent_resolved()
+            session = rt.sessions.resolve_session(
+                agent_id=self.agent_id,
+                channel=self._channel,
+                target=self._target,
+                session_id=session_id,
+            )
+            self._session_id = session.id
+        elif self._prompt_on_resume:
+            self._ensure_agent_resolved()
+            if str(session_id or "").strip():
+                self.bind_session(str(session_id))
+            else:
+                self._refresh_pending_candidate()
+        elif str(session_id or "").strip():
+            self.bind_session(str(session_id))
+
+    def _select_channel_profile(self) -> object | None:
+        config = getattr(self._rt, "config", None)
+        agents = getattr(config, "agents", None)
+        if isinstance(agents, Mapping):
+            selected_agent_id = self._selected_agent_id_for_config(config)
+            if selected_agent_id:
+                selected_profile = agents.get(selected_agent_id)
+                if selected_profile is not None:
+                    return selected_profile
+        return None
+
+    def _selected_agent_id_for_config(self, config: object) -> str:
+        selected_agent_id = self._agent_id_override or ""
+        if selected_agent_id:
+            return selected_agent_id
+        try:
+            return resolve_default_agent_id(config)
+        except (AttributeError, TypeError, ValueError):
+            agents = getattr(config, "agents", None)
+            if isinstance(agents, Mapping) and len(agents) == 1:
+                return str(next(iter(agents)))
+        legacy_agent = getattr(config, "agent", None)
+        if legacy_agent is not None:
+            legacy_name = str(getattr(legacy_agent, "name", "") or "").strip()
+            if legacy_name:
+                return legacy_name
+        return ""
+
+    @property
+    def agent_id(self) -> str:
+        self._ensure_agent_resolved()
+        return str(self._agent_id or "")
+
+    @property
+    def session_id(self) -> str:
+        return str(self._session_id or "")
+
+    @property
+    def transport(self) -> str:
+        return "gateway"
+
+    @property
+    def api_runtime(self) -> APIRuntime:
+        return self._rt
+
+    @property
+    def is_bound(self) -> bool:
+        return bool(str(self._session_id or "").strip())
+
+    @property
+    def working_dir(self) -> str:
+        return str(self._working_dir or "")
+
+    @property
+    def project_context(self) -> ProjectContextInfo | None:
+        return self._project_context
+
+    def token_usage_snapshot(self) -> TokenUsageSnapshot:
+        turn_usage = self._current_turn_usage or self._last_turn_usage
+        session_usage = self._completed_session_usage
+        if self._current_turn_usage is not None:
+            session_usage = (
+                accumulate_usage(session_usage, self._current_turn_usage)
+                or TokenUsageTotals()
+            )
+        turn_elapsed_seconds = self._last_turn_elapsed_seconds
+        if self._current_turn_started_at_monotonic is not None:
+            turn_elapsed_seconds = max(
+                0.0,
+                time.monotonic() - self._current_turn_started_at_monotonic,
+            )
+        context_limit = self._context_limit_tokens()
+        context_used = getattr(session_usage, "total_tokens", None)
+        if context_limit is None:
+            context_used = None
+        return build_token_usage_snapshot(
+            turn=turn_usage,
+            session=session_usage,
+            context_used_tokens=context_used,
+            context_limit_tokens=context_limit,
+            has_live_deltas=self._current_turn_has_live_deltas,
+            turn_elapsed_seconds=turn_elapsed_seconds,
+            updated_at_monotonic=self._usage_updated_at_monotonic,
+        )
+
+    def get_current_history(self) -> list[ChatMessage]:
+        if not self.is_bound:
+            return []
+        records = self._rt.sessions.list_messages(
+            session_id=self.session_id,
+            limit=self._history_limit,
+        )
+        messages: list[ChatMessage] = []
+        for record in records:
+            messages.extend(self._record_to_chat_messages(record))
+        return messages
+
+    def list_sessions(self, *, scope: str = "all") -> list[SidebarItem]:
+        sessions = self._rt.sessions.list_sessions(limit=self._history_limit)
+        if str(scope or "").strip().lower() == "current_agent":
+            sessions = [
+                session
+                for session in sessions
+                if self._session_matches_current_surface(session)
+            ]
+        items: list[SidebarItem] = []
+        for session in sessions:
+            preview_records = self._rt.sessions.list_messages(
+                session_id=session.id,
+                limit=3,
+            )
+            preview_lines = [
+                f"{self._role_to_sender(str(getattr(record, 'role', '') or '').strip().lower(), getattr(record, 'metadata', {}) or {})}: "
+                f"{str(getattr(record, 'body', '') or '')[:40]}"
+                for record in preview_records
+                if str(getattr(record, "body", "") or "").strip()
+            ]
+            items.append(
+                SidebarItem(
+                    id=session.id,
+                    label=session.id[:12],
+                    active=(session.id == self._session_id),
+                    meta={
+                        "channel": session.channel,
+                        "target": session.target,
+                        "status": session.status,
+                        "updated_at": session.updated_at,
+                        "preview_lines": preview_lines,
+                        "session_type": self._classify_session_type(session),
+                    },
+                )
+            )
+        return items
+
+    @property
+    def prompt_on_resume(self) -> bool:
+        return self._prompt_on_resume
+
+    @property
+    def pending_candidate_session(self) -> Any | None:
+        return self._pending_candidate_session
+
+    def consume_pending_candidate_session(self) -> Any | None:
+        candidate = self._pending_candidate_session
+        self._pending_candidate_session = None
+        return candidate
+
+    def _refresh_pending_candidate(self) -> None:
+        self._pending_candidate_session = None
+        try:
+            candidates = self._rt.sessions.list_sessions(limit=self._history_limit)
+        except Exception:
+            return
+        best: Any | None = None
+        for session in candidates:
+            if not self._session_matches_current_surface(session):
+                continue
+            if best is None or _session_sort_key(session) > _session_sort_key(best):
+                best = session
+        self._pending_candidate_session = best
+
+    def _session_matches_current_surface(self, session: Any) -> bool:
+        target = str(getattr(session, "target", "") or "").strip()
+        channel = str(getattr(session, "channel", "") or "").strip()
+        if target != self._target:
+            return False
+        if channel and self._channel and channel != self._channel:
+            return False
+        agent_id = self._agent_id or self._agent_id_override or ""
+        if not agent_id:
+            return True
+        session_key = str(getattr(session, "session_key", "") or "")
+        if not session_key:
+            return True
+        agent_fragment = f"agent:{agent_id}|"
+        return agent_fragment in session_key
+
+    def _classify_session_type(self, session: Any) -> str:
+        session_id = str(getattr(session, "id", "") or "")
+        session_key = str(getattr(session, "session_key", "") or "")
+        target = str(getattr(session, "target", "") or "").strip()
+        channel = str(getattr(session, "channel", "") or "").strip()
+        agent_id = self._agent_id or self._agent_id_override or ""
+        if session_key and agent_id and target and channel:
+            expected_fragment = f"agent:{agent_id}|channel:{channel}|target:{target}"
+            if session_key == expected_fragment:
+                return "default"
+        if session_id.startswith("focus-"):
+            return _TARGET_KIND_FOCUS
+        if session_id.startswith("room-"):
+            return "room"
+        if session_id.startswith("sess-"):
+            return "named"
+        return "other"
+
+    def list_agents(self) -> list[SidebarItem]:
+        configured_agents = self._rt.list_registered_agents()
+        return [
+            SidebarItem(agent_id, agent_id, active=(agent_id == self._agent_id))
+            for agent_id in configured_agents
+        ]
+
+    def list_tools(self) -> list[tuple[str, bool]]:
+        tools = self._rt.tools.list()
+        pairs = [
+            (name, bool(getattr(tool_spec, "enabled", True)))
+            for name, tool_spec in tools.items()
+        ]
+        pairs.sort(key=lambda item: item[0])
+        return pairs
+
+    def switch_session(self, session_id: str) -> list[ChatMessage]:
+        self.bind_session(session_id)
+        return self.get_current_history()
+
+    def switch_agent(self, agent_id: str) -> None:
+        profile = self._rt.resolve_agent_profile(agent_id)
+        self._agent_id = profile.name
+        self._gateway = self._rt.resolve_gateway(self._agent_id)
+        self._reset_token_usage_accounting()
+        if self.is_bound and self._target == _TARGET_KIND_FOCUS:
+            self._session_id = None
+        elif self._prompt_on_resume:
+            self._session_id = None
+            self._refresh_pending_candidate()
+        else:
+            session = self._rt.sessions.resolve_session(
+                agent_id=self._agent_id,
+                channel=self._channel,
+                target=self._target,
+            )
+            self._session_id = session.id
+
+    def new_session(self) -> str:
+        return self.create_new_session()
+
+    def bind_session(self, session_id: str) -> None:
+        self._ensure_agent_resolved()
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            raise ValueError("session_id is required")
+        record = self._rt.sessions.get_session(normalized_session_id)
+        if record is None:
+            raise ValueError(f"unknown session_id: {normalized_session_id}")
+        if str(getattr(record, "target", "") or "").strip() != self._target:
+            raise ValueError(f"session target mismatch: {record.target}")
+        self._session_id = record.id
+        self._project_context_pending = False
+        self._reset_token_usage_accounting()
+
+    def create_new_session(self) -> str:
+        self._ensure_agent_resolved()
+        prefix = _TARGET_KIND_FOCUS if self._target == _TARGET_KIND_FOCUS else "sess"
+        session = self._rt.sessions.resolve_session(
+            agent_id=self.agent_id,
+            channel=self._channel,
+            target=self._target,
+            session_id=f"{prefix}-{uuid4().hex}",
+            metadata=self._session_metadata_patch(),
+        )
+        self._session_id = session.id
+        metadata_patch = self._session_metadata_patch()
+        if metadata_patch:
+            self._rt.sessions.update_session_metadata(
+                session_id=session.id,
+                patch=metadata_patch,
+            )
+        self._project_context_pending = self._project_context is not None
+        self._reset_token_usage_accounting()
+        return session.id
+
+    def set_project_context(self, info: ProjectContextInfo | None) -> None:
+        self._project_context = info
+        self._project_context_pending = info is not None and self.is_bound
+
+    def find_candidate_session(self):
+        self._ensure_agent_resolved()
+        if not self._working_dir:
+            return None
+        sessions = self.list_directory_sessions(limit=1)
+        return sessions[0] if sessions else None
+
+    def list_directory_sessions(self, *, limit: int = 20):
+        self._ensure_agent_resolved()
+        if not self._working_dir:
+            return []
+        return self._rt.sessions.list_sessions(
+            limit=limit,
+            newest_first=True,
+            agent_id=self.agent_id,
+            target=self._target,
+            metadata_filter={"working_dir": self._working_dir},
+        )
+
+    async def send_message(
+        self,
+        text: str,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        inbound_metadata: dict[str, str] | None = None,
+        approval_callback: ApprovalCallback | None = None,
+    ) -> AsyncIterator[str]:
+        self._ensure_agent_resolved()
+        if not self.is_bound:
+            raise RuntimeError("focus runtime is not bound to a session")
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            self._begin_turn_usage_tracking()
+            kwargs: dict[str, Any] = dict(
+                channel=self._channel,
+                target=self._target,
+                body=text,
+                session_id=self.session_id,
+            )
+            merged_inbound_metadata = self._merge_inbound_metadata(inbound_metadata)
+            if self._model_override_provider or self._model_override_model:
+                if merged_inbound_metadata is None:
+                    merged_inbound_metadata = {}
+                if self._model_override_provider:
+                    merged_inbound_metadata["override_provider"] = (
+                        self._model_override_provider
+                    )
+                if self._model_override_model:
+                    merged_inbound_metadata["override_model"] = (
+                        self._model_override_model
+                    )
+            if self.permission_mode != PERMISSION_MODE_DEFAULT:
+                if merged_inbound_metadata is None:
+                    merged_inbound_metadata = {}
+                merged_inbound_metadata["permission_mode"] = self.permission_mode
+                if self.permission_mode == "readonly":
+                    merged_inbound_metadata["read_only"] = "1"
+            if self._permission_overrides:
+                if merged_inbound_metadata is None:
+                    merged_inbound_metadata = {}
+                merged_inbound_metadata["permission_overrides"] = json.dumps(
+                    self._permission_overrides,
+                    sort_keys=True,
+                )
+            if self.effort_level:
+                if merged_inbound_metadata is None:
+                    merged_inbound_metadata = {}
+                merged_inbound_metadata["override_thinking"] = self.effort_level
+                merged_inbound_metadata["effort_level"] = self.effort_level
+            if merged_inbound_metadata:
+                kwargs["inbound_metadata"] = merged_inbound_metadata
+            import inspect
+
+            sig = inspect.signature(self._gateway.handle_message)
+            if "deliver" in sig.parameters:
+                kwargs["deliver"] = False
+            if "progress_callback" in sig.parameters:
+                kwargs["progress_callback"] = self._wrap_progress_callback(
+                    progress_callback
+                )
+            if approval_callback is not None and "approval_callback" in sig.parameters:
+                kwargs["approval_callback"] = approval_callback
+            try:
+                response = await self._gateway.handle_message(**kwargs)
+            except Exception:
+                self._finalize_turn_usage(None, succeeded=False)
+                raise
+            text_body = self._message_text(response)
+            retryable_failure = _retryable_turn_failure_message(text_body)
+            if retryable_failure is not None:
+                self._finalize_turn_usage(
+                    getattr(response, "metadata", None),
+                    succeeded=False,
+                )
+                if attempt < max_attempts and _is_retryable_turn_failure_text(
+                    text_body
+                ):
+                    continue
+                yield retryable_failure
+                return
+            self._finalize_turn_usage(
+                getattr(response, "metadata", None),
+                succeeded=True,
+            )
+            yield text_body
+            return
+
+    def _merge_inbound_metadata(
+        self,
+        inbound_metadata: dict[str, str] | None,
+    ) -> dict[str, str] | None:
+        merged = dict(inbound_metadata or {})
+        if (
+            self._working_dir
+            and not str(merged.get("workspace_root", "") or "").strip()
+        ):
+            merged["workspace_root"] = self._working_dir
+        if self._project_context_pending and self._project_context is not None:
+            merged.update(build_project_context_metadata(self._project_context))
+            self._project_context_pending = False
+        if (
+            self._target == _TARGET_KIND_FOCUS
+            and not str(merged.get(CALLER_HANDLES_DELIVERY_METADATA_KEY, "")).strip()
+        ):
+            merged[CALLER_HANDLES_DELIVERY_METADATA_KEY] = "true"
+        return merged or None
+
+    def _begin_turn_usage_tracking(self) -> None:
+        self._current_turn_usage = None
+        self._current_turn_has_live_deltas = False
+        self._last_live_usage_update_at = None
+        started_at = time.monotonic()
+        self._current_turn_started_at_monotonic = started_at
+        self._usage_updated_at_monotonic = started_at
+
+    def _wrap_progress_callback(
+        self,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> Callable[[dict[str, Any]], None]:
+        def _wrapped(payload: dict[str, Any]) -> None:
+            self._consume_live_usage_payload(payload)
+            if progress_callback is not None:
+                progress_callback(payload)
+
+        setattr(_wrapped, "__self__", getattr(progress_callback, "__self__", None))
+        return _wrapped
+
+    def _consume_live_usage_payload(self, payload: Mapping[str, Any] | None) -> None:
+        turn_usage = usage_totals_from_mapping(payload)
+        if turn_usage is None:
+            return
+        now = time.monotonic()
+        last_updated = self._last_live_usage_update_at
+        if (
+            last_updated is not None
+            and (now - last_updated) < _LIVE_USAGE_THROTTLE_SECONDS
+        ):
+            return
+        self._current_turn_usage = turn_usage
+        self._current_turn_has_live_deltas = True
+        self._last_live_usage_update_at = now
+        self._usage_updated_at_monotonic = now
+
+    def _finalize_turn_usage(
+        self,
+        metadata: Mapping[str, Any] | None,
+        *,
+        succeeded: bool,
+    ) -> None:
+        now = time.monotonic()
+        turn_started_at = self._current_turn_started_at_monotonic
+        if turn_started_at is not None:
+            self._last_turn_elapsed_seconds = max(0.0, now - turn_started_at)
+        final_turn_usage = (
+            usage_totals_from_mapping(metadata) or self._current_turn_usage
+        )
+        if succeeded and final_turn_usage is not None:
+            self._last_turn_usage = final_turn_usage
+            self._completed_session_usage = (
+                accumulate_usage(self._completed_session_usage, final_turn_usage)
+                or TokenUsageTotals()
+            )
+        self._current_turn_usage = None
+        self._current_turn_has_live_deltas = False
+        self._current_turn_started_at_monotonic = None
+        self._last_live_usage_update_at = None
+        self._usage_updated_at_monotonic = now
+
+    def _reset_token_usage_accounting(self) -> None:
+        self._completed_session_usage = TokenUsageTotals()
+        self._last_turn_usage = TokenUsageTotals()
+        self._current_turn_usage = None
+        self._current_turn_has_live_deltas = False
+        self._current_turn_started_at_monotonic = None
+        self._last_turn_elapsed_seconds = None
+        self._last_live_usage_update_at = None
+        self._usage_updated_at_monotonic = None
+
+    def _context_limit_tokens(self) -> int | None:
+        try:
+            runtime_cfg = getattr(getattr(self._rt, "config", None), "runtime", None)
+            value = getattr(runtime_cfg, "session_context_token_budget", None)
+            if value in (None, "", 0, "0"):
+                return None
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return None
+
+    def _ensure_agent_resolved(self) -> None:
+        if self._gateway is not None and self._agent_id:
+            return
+        selected = self._selected_agent_id_for_config(self._rt.config)
+        if not selected:
+            raise ValueError("unable to resolve agent id for TUI runtime")
+        profile = self._rt.resolve_agent_profile(selected)
+        self._agent_id = str(profile.name).strip()
+        self._gateway = self._rt.resolve_gateway(self._agent_id)
+
+    def _session_metadata_patch(self) -> dict[str, Any]:
+        patch: dict[str, Any] = {}
+        if self._working_dir:
+            patch["working_dir"] = self._working_dir
+        if self._target == _TARGET_KIND_FOCUS:
+            patch["focus_mode"] = True
+        return patch
+
+    @staticmethod
+    def _normalize_working_dir(working_dir: str | None) -> str | None:
+        raw = str(working_dir or "").strip()
+        if not raw:
+            return None
+        return str(Path(raw).expanduser().resolve(strict=False))

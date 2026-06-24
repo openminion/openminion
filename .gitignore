@@ -1,0 +1,37 @@
+# .gitignore baseline for the openminion workspace.
+# Copy the shared sample from `docs/gitignore-example.md` and adjust as needed.
+
+__pycache__/
+.pycache/
+*.pyc
+.pytest_cache/
+.venv/
+.tmp/
+.openminion/
+.openminion/runtime/
+.openminion-data/
+test-configs/
+dist/
+build/
+*.egg-info/
+
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+node_modules/
+docs/_build/
+docs/.vuepress/dist/
+
+*.tgz
+*.zip
+release/
+target/
+
+.DS_Store
+Library/
+
+temp_*
+
+.claude/

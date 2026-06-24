@@ -1,0 +1,28 @@
+{
+  "family": "openai",
+  "kind": "structured_response",
+  "case_id": "basic_act_decision",
+  "positive": true,
+  "model_name": "openai/gpt-5.4",
+  "response": {
+    "tool_calls": [
+      {
+        "name": "submit_output",
+        "arguments": {
+          "mode": "act",
+          "confidence": 0.93,
+          "reason_code": "time_now",
+          "act_profile": "general",
+          "sub_intents": [
+            "time_now"
+          ],
+          "rationale": "Use the shared act loop to answer the time request.",
+          "execution_target": {
+            "kind": "local"
+          }
+        }
+      }
+    ],
+    "output_text": ""
+  }
+}

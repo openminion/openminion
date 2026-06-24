@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from openminion.services.agent.execution.finalization import (
+    FINAL_ANSWER_ENVELOPE_ALLOWED_STATUS,
+    FINAL_ANSWER_ENVELOPE_REQUIRED_KEYS,
+    unwrap_final_answer_envelope,
+)
+
+
+def _make_envelope(status: str, summary: str, output: str) -> str:
+    return json.dumps({"status": status, "summary": summary, "output": output})
+
+
+def test_unwrap_final_answer_envelope_returns_output_for_exact_schema() -> None:
+    body = _make_envelope(
+        status="final_answer",
+        summary="Resolved location-based weather lookup with stored default.",
+        output="It is 68°F and partly cloudy in Austin today.",
+    )
+
+    result = unwrap_final_answer_envelope(body)
+
+    assert result is not None
+    output_text, payload = result
+    assert output_text == "It is 68°F and partly cloudy in Austin today."
+    assert payload == {
+        "status": "final_answer",
+        "summary": "Resolved location-based weather lookup with stored default.",
+        "output": "It is 68°F and partly cloudy in Austin today.",
+    }
+
+
+@pytest.mark.parametrize("status", sorted(FINAL_ANSWER_ENVELOPE_ALLOWED_STATUS))
+def test_unwrap_final_answer_envelope_accepts_each_allowed_status(
+    status: str,
+) -> None:
+    body = _make_envelope(status=status, summary="ok", output="answer body")
+
+    result = unwrap_final_answer_envelope(body)
+
+    assert result is not None
+    output_text, payload = result
+    assert output_text == "answer body"
+    assert payload["status"] == status
+
+
+def test_unwrap_final_answer_envelope_preserves_nonmatching_json() -> None:
+    # Plain prose body must never be unwrapped.
+    assert unwrap_final_answer_envelope("It is 68°F in Austin.") is None
+    # JSON array (not object) is not in scope.
+    assert unwrap_final_answer_envelope('["final_answer", "summary"]') is None
+    # JSON primitive (string-of-string) is not in scope.
+    assert unwrap_final_answer_envelope('"final_answer"') is None
+    # Body that contains a JSON object embedded inside prose is not in scope.
+    assert (
+        unwrap_final_answer_envelope(
+            'Sure! {"status":"final_answer","summary":"x","output":"y"}'
+        )
+        is None
+    )
+
+
+def test_unwrap_final_answer_envelope_preserves_matching_status_with_empty_output() -> (
+    None
+):
+    body = json.dumps({"status": "final_answer", "summary": "ok", "output": "   "})
+
+    # Output is required to be non-empty after strip(); preserve body.
+    assert unwrap_final_answer_envelope(body) is None
+
+
+def test_unwrap_final_answer_envelope_preserves_extra_keys() -> None:
+    # Extra keys disqualify under the exact-schema rule.
+    body = json.dumps(
+        {
+            "status": "final_answer",
+            "summary": "ok",
+            "output": "answer",
+            "tool_calls": [],
+        }
+    )
+
+    assert unwrap_final_answer_envelope(body) is None
+
+
+def test_unwrap_final_answer_envelope_preserves_missing_keys() -> None:
+    # Missing `summary` disqualifies.
+    body = json.dumps({"status": "final_answer", "output": "answer"})
+
+    assert unwrap_final_answer_envelope(body) is None
+
+
+def test_unwrap_final_answer_envelope_preserves_unknown_status() -> None:
+    body = _make_envelope(status="needs_clarification", summary="ok", output="answer")
+
+    assert unwrap_final_answer_envelope(body) is None
+
+
+def test_unwrap_final_answer_envelope_rejects_non_string_fields() -> None:
+    # Non-string `summary` disqualifies.
+    body = json.dumps({"status": "final_answer", "summary": 42, "output": "answer"})
+    assert unwrap_final_answer_envelope(body) is None
+
+    # Non-string `output` disqualifies.
+    body = json.dumps(
+        {
+            "status": "final_answer",
+            "summary": "ok",
+            "output": {"nested": "object"},
+        }
+    )
+    assert unwrap_final_answer_envelope(body) is None
+
+
+def test_unwrap_final_answer_envelope_handles_whitespace_padding() -> None:
+    # Leading/trailing whitespace around the envelope must still unwrap; the
+    # CLI surface should never see leaked envelopes regardless of padding.
+    body = (
+        "\n  "
+        + _make_envelope(
+            status="incomplete",
+            summary="Awaiting tool data.",
+            output="Still working on the weather lookup.",
+        )
+        + "  \n"
+    )
+
+    result = unwrap_final_answer_envelope(body)
+
+    assert result is not None
+    output_text, payload = result
+    assert output_text == "Still working on the weather lookup."
+    assert payload["status"] == "incomplete"
+
+
+def test_unwrap_final_answer_envelope_returns_none_for_empty_text() -> None:
+    assert unwrap_final_answer_envelope("") is None
+    assert unwrap_final_answer_envelope("   ") is None
+
+
+def test_unwrap_final_answer_envelope_schema_constants_are_frozensets() -> None:
+    # Pin the structural invariants so future edits cannot quietly turn these
+    # into mutable sets or expand the status vocabulary by accident.
+    assert isinstance(FINAL_ANSWER_ENVELOPE_REQUIRED_KEYS, frozenset)
+    assert FINAL_ANSWER_ENVELOPE_REQUIRED_KEYS == frozenset(
+        {"status", "summary", "output"}
+    )
+    assert isinstance(FINAL_ANSWER_ENVELOPE_ALLOWED_STATUS, frozenset)
+    assert FINAL_ANSWER_ENVELOPE_ALLOWED_STATUS == frozenset(
+        {"final_answer", "incomplete", "blocked"}
+    )

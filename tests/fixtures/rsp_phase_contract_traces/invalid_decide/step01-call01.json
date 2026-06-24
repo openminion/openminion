@@ -1,0 +1,17 @@
+{
+  "inference_step": 1,
+  "metadata": {
+    "purpose": "decide"
+  },
+  "tool_choice": "{'type': 'function', 'function': {'name': 'submit_output'}}",
+  "tools": [
+    {
+      "name": "submit_output",
+      "parameters": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ],
+  "user_message": "what's the weather in Tokyo?"
+}

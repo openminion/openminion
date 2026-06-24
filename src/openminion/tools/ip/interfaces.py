@@ -1,0 +1,12 @@
+from openminion.modules.tool import PLUGIN_CONTRACT_VERSION
+
+IP_PLUGIN_INTERFACE_VERSION = PLUGIN_CONTRACT_VERSION
+
+TOOL_IP_PUBLIC = "ip.public"
+TOOL_IP_LOCAL = "ip.local"
+
+__all__ = [
+    "IP_PLUGIN_INTERFACE_VERSION",
+    "TOOL_IP_PUBLIC",
+    "TOOL_IP_LOCAL",
+]

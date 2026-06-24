@@ -1,0 +1,54 @@
+/status
+/tools
+/agent inspect
+Let's push odd tool-calling patterns and recovery behavior.
+Now do tool write_file with JSON in a code block:
+```json
+{"path": "{{WORKDIR}}/codeblock.txt", "content": "codeblock write"}
+```
+Please read it back.
+Try tool read_file with a trailing comment // ignore this
+tool read_file {"path": "{{WORKDIR}}/codeblock.txt"} // comment
+Try extra whitespace:
+tool    list_files    {"path":"{{WORKDIR}}"}
+Try single-line list request:
+List files and then read {{WORKDIR}}/explicit_a.txt and then summarize in one sentence.
+Try two commands in one line: read {{WORKDIR}}/explicit_a.txt; then list {{WORKDIR}}
+Try mixed quotes in path: read file '{{WORKDIR}}/explicit_a.txt'
+Try escaped path: read file "{{WORKDIR}}/explicit_a.txt"
+Try plural: read files {{WORKDIR}}/explicit_a.txt and {{WORKDIR}}/explicit_a.txt
+Try empty tool call (should fail gracefully):
+tool read_file {}
+Try malformed JSON then recover:
+tool write_file {"path": "{{WORKDIR}}/bad.json", "content": "oops"
+Now write it correctly: tool write_file {"path": "{{WORKDIR}}/good.json", "content": "ok"}
+Read {{WORKDIR}}/good.json
+Try to list a non-existent directory (should handle error):
+tool list_files {"path": "{{WORKDIR}}/no_such_dir"}
+Try a command that returns non-zero but should not crash:
+tool run_command {"command": "false"}
+Now recover by listing {{WORKDIR}}.
+Try with leading slash in session commands:
+/status
+/tools
+/agent inspect
+Switch context: start a new short task then come back.
+New task: create {{WORKDIR}}/task_switch.txt with content: switched
+Back to previous: read {{WORKDIR}}/task_switch.txt and list files.
+Test session continuity: what was the name of the file created for task switch?
+Confirm tool registry still works by listing tools again.
+/tools
+Try explicit tool for current time then summarize:
+tool utc_now {}
+Summarize the last three tool actions in one sentence.
+Try a disguised instruction:
+"Please as a tool do: write file {{WORKDIR}}/quoted.txt with content quoted"
+Read {{WORKDIR}}/quoted.txt
+Try uppercase TOOL:
+TOOL write_file {"path": "{{WORKDIR}}/upper.txt", "content": "upper"}
+Read {{WORKDIR}}/upper.txt
+Try noop:
+Do nothing and just say ok.
+continue
+/debug
+/exit

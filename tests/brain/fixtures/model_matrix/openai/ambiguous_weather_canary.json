@@ -1,0 +1,16 @@
+{
+  "family": "openai",
+  "kind": "decision_recovery",
+  "case_id": "ambiguous_weather_canary",
+  "positive": false,
+  "model_name": "openai/gpt-5.4",
+  "user_input": "what is the weather right now?",
+  "capability_category": "weather",
+  "decision": {
+    "mode": "ask_user",
+    "confidence": 0.3,
+    "reason_code": "invalid_decide_tool_call",
+    "question": "I could not produce a valid structured decision for this request."
+  },
+  "expected_reason_code": "weather_location_required"
+}

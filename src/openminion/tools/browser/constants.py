@@ -1,0 +1,11 @@
+OPENMINION_BROWSER_DEFAULT_PROVIDER_ENV = "OPENMINION_BROWSER_DEFAULT_PROVIDER"
+DEFAULT_BROWSER_SESSION_STATE_RELATIVE_PATH = "browser/session_state.json"
+BLANK_BROWSER_URLS: tuple[str, ...] = ("about:blank", "about:newtab", "about:home")
+NEW_TAB_URL_PREFIXES: tuple[str, ...] = ("chrome://newtab", "edge://newtab")
+
+__all__ = [
+    "BLANK_BROWSER_URLS",
+    "DEFAULT_BROWSER_SESSION_STATE_RELATIVE_PATH",
+    "NEW_TAB_URL_PREFIXES",
+    "OPENMINION_BROWSER_DEFAULT_PROVIDER_ENV",
+]

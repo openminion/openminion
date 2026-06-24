@@ -1,0 +1,45 @@
+# Memory-Seeded Session Fixture
+# MIDE-01: Canonical E2E fixture for memory-seeded session
+# Used by: tests/test_memory_identity_e2e.py
+# This fixture provides seed data for memory introspection tests
+
+session_id: mide-test-session
+agent_id: mide-valid-agent
+seed_turns:
+  - turn_id: turn-001
+    role: user
+    content: "Remember this preference: always prefer short checklists over long paragraphs."
+    ts: "2026-03-06T10:00:00Z"
+  
+  - turn_id: turn-002
+    role: assistant
+    content: "I've noted your preference for short checklists over long paragraphs."
+    ts: "2026-03-06T10:00:01Z"
+  
+  - turn_id: turn-003
+    role: user
+    content: "Also remember: my current project is the MIDE E2E validation tracker."
+    ts: "2026-03-06T10:00:02Z"
+  
+  - turn_id: turn-004
+    role: assistant
+    content: "Got it. Your current project is the MIDE E2E validation tracker."
+    ts: "2026-03-06T10:00:03Z"
+
+expected_memory_highlights:
+  - "prefer short checklists over long paragraphs"
+  - "current project is the MIDE E2E validation tracker"
+
+expected_introspection_fields:
+  - identity_agent_id
+  - identity_profile_version
+  - identity_render_version
+  - memory_summary_short
+  - memory_last_event_id
+  - memory_turn_count
+
+meta:
+  fixture_type: memory_seeded_session
+  fixture_version: "1.0"
+  mide_reference: MIDE-01
+  expected_degraded: false

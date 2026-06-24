@@ -1,0 +1,32 @@
+{
+  "id": "example.hello",
+  "name": "Hello Example Plugin",
+  "version": "0.0.1",
+  "description": "Minimal plugin template for copy-first extension work.",
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "footer_text": {
+        "type": "string",
+        "default": "(hello-plugin footer)"
+      }
+    },
+    "additionalProperties": false
+  },
+  "trust_tier": "local-dev",
+  "provenance": {
+    "source": "local-path",
+    "uri": "",
+    "publisher": "",
+    "checksum": "",
+    "verified": false
+  },
+  "requested_capabilities": [
+    "message.inbound.read",
+    "message.outbound.modify"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "family": "minimax_glm",
+  "kind": "provider_retry",
+  "case_id": "tool_choice_must_be_auto",
+  "positive": true,
+  "tool_choice": "required",
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "Tool choice must be auto"
+  }
+}

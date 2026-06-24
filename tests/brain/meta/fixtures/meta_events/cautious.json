@@ -1,0 +1,25 @@
+{
+    "description": "CAUTIOUS state — medium risk class",
+    "meta_metrics": {
+        "session_id": "sess-002",
+        "agent_id": "agent-001",
+        "trace_id": "trace-002",
+        "risk_class": "medium",
+        "risk_score": 45,
+        "intent_confidence": 0.65,
+        "grounding_confidence": 0.75,
+        "recent_failures": 0,
+        "loop_count": 0,
+        "replan_count": 0,
+        "budget_remaining": 0.8,
+        "user_kill_requested": false,
+        "needs_clarification": false,
+        "irreversible": false,
+        "requires_side_effects": false
+    },
+    "expected_meta_state": "CAUTIOUS",
+    "expected_directive": {
+        "tier_override": "T1_light",
+        "require_confirmation": false
+    }
+}

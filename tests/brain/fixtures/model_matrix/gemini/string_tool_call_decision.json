@@ -1,0 +1,15 @@
+{
+  "positive": true,
+  "response": {
+    "provider": "openrouter",
+    "model": "google/gemini-2.5-pro",
+    "session_id": "gemini-string-tool-call",
+    "tool_calls": [
+      {
+        "name": "submit_output",
+        "arguments": "{\"mode\": \"act\", \"confidence\": 0.8, \"reason_code\": \"one_step_search\", \"act_profile\": \"general\", \"rationale\": \"Use the shared act loop to gather the latest news.\", \"sub_intents\": [\"web_search\", \"summarize\"], \"execution_target\": {\"kind\": \"local\"}}"
+      }
+    ],
+    "output_text": ""
+  }
+}

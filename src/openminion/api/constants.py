@@ -1,0 +1,9 @@
+from __future__ import annotations
+
+API_METRICS_TOKEN_HEADER = "X-Metrics-Token"
+API_METRICS_TOKEN_ENV = "OPENMINION_API_METRICS_TOKEN"
+
+__all__ = [
+    "API_METRICS_TOKEN_ENV",
+    "API_METRICS_TOKEN_HEADER",
+]

@@ -1,0 +1,26 @@
+{
+    "description": "HIGH_ASSURANCE state — high risk class with side effects",
+    "meta_metrics": {
+        "session_id": "sess-003",
+        "agent_id": "agent-001",
+        "trace_id": "trace-003",
+        "risk_class": "high",
+        "risk_score": 85,
+        "intent_confidence": 0.8,
+        "grounding_confidence": 0.7,
+        "recent_failures": 0,
+        "loop_count": 0,
+        "replan_count": 0,
+        "budget_remaining": 0.6,
+        "user_kill_requested": false,
+        "needs_clarification": false,
+        "irreversible": true,
+        "requires_side_effects": true
+    },
+    "expected_meta_state": "HIGH_ASSURANCE",
+    "expected_directive": {
+        "tier_override": "T3_high_assurance",
+        "require_confirmation": true,
+        "require_verification": true
+    }
+}

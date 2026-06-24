@@ -1,0 +1,165 @@
+name: publish
+
+# ISAP-01 — PyPI / TestPyPI publish infrastructure.
+#
+# Honors the spec rule "no real PyPI 0.1.0 publish before ISAP-02 freezes
+# the public API surface" by:
+#
+#   1. PR + push to main: build-only validation (no publish).
+#   2. Pre-release tags (`v*-alpha*`, `v*-beta*`, `v*-rc*`): publish to TestPyPI.
+#   3. Final release tags (`v*` not matching pre-release pattern): publish to
+#      PyPI, **gated** on the `pypi` GitHub environment (must be configured
+#      with required reviewers — repo admin sets this).
+#
+# Trusted Publishing (OIDC) is preferred over long-lived API tokens; the
+# `id-token: write` permission below enables it. To switch backends, swap
+# the `gh-action-pypi-publish` invocation's password input for a token-based
+# variant.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Upgrade build tooling
+        run: python -m pip install --upgrade pip build twine
+      - name: Build sdist + wheel
+        run: python -m build
+      - name: Validate metadata with twine
+        run: python -m twine check dist/*
+      - name: Upload built artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  verify-built-artifacts:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify wheel install and bootstrap smoke
+        shell: bash
+        run: |
+          python -m venv .venv-wheel
+          .venv-wheel/bin/python -m pip install --upgrade pip
+          .venv-wheel/bin/python -m pip install dist/*.whl
+          tmpdir="$(mktemp -d)"
+          config="$tmpdir/config.json"
+          export OPENMINION_HOME="$tmpdir/home-wheel"
+          export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
+          mkdir -p "$OPENMINION_HOME"
+          .venv-wheel/bin/python -m openminion --help >/dev/null
+          .venv-wheel/bin/python - <<'PY'
+          import openminion
+          from openminion import APIRuntime, Agent, OpenMinionConfig, tool
+          from openminion.api import dispatch_request
+
+          print(openminion.__version__)
+          print(
+              APIRuntime.__name__,
+              Agent.__name__,
+              OpenMinionConfig.__name__,
+              callable(tool),
+              callable(dispatch_request),
+          )
+          PY
+          .venv-wheel/bin/python -m openminion --config "$config" config init --provider echo --force
+          .venv-wheel/bin/python -m openminion --config "$config" verify smoke
+          .venv-wheel/bin/python -m openminion --config "$config" doctor --json
+          .venv-wheel/bin/python -m openminion --config "$config" agent --message "hello"
+      - name: Verify sdist install and bootstrap smoke
+        shell: bash
+        run: |
+          python -m venv .venv-sdist
+          .venv-sdist/bin/python -m pip install --upgrade pip
+          .venv-sdist/bin/python -m pip install dist/*.tar.gz
+          tmpdir="$(mktemp -d)"
+          config="$tmpdir/config.json"
+          export OPENMINION_HOME="$tmpdir/home-sdist"
+          export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
+          mkdir -p "$OPENMINION_HOME"
+          .venv-sdist/bin/python -m openminion --help >/dev/null
+          .venv-sdist/bin/python - <<'PY'
+          import openminion
+          from openminion import APIRuntime, Agent, OpenMinionConfig, tool
+          from openminion.api import dispatch_request
+
+          print(openminion.__version__)
+          print(
+              APIRuntime.__name__,
+              Agent.__name__,
+              OpenMinionConfig.__name__,
+              callable(tool),
+              callable(dispatch_request),
+          )
+          PY
+          .venv-sdist/bin/python -m openminion --config "$config" config init --provider echo --force
+          .venv-sdist/bin/python -m openminion --config "$config" verify smoke
+          .venv-sdist/bin/python -m openminion --config "$config" doctor --json
+          .venv-sdist/bin/python -m openminion --config "$config" agent --message "hello"
+
+  publish-testpypi:
+    name: Publish to TestPyPI (pre-release tags)
+    needs: [build, verify-built-artifacts]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') && (contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc'))
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/openminion/
+    permissions:
+      id-token: write  # OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+
+  publish-pypi:
+    name: Publish to PyPI (final release tags, gated)
+    needs: [build, verify-built-artifacts]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-alpha') && !contains(github.ref, '-beta') && !contains(github.ref, '-rc')
+    environment:
+      name: pypi
+      url: https://pypi.org/project/openminion/
+    permissions:
+      id-token: write  # OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

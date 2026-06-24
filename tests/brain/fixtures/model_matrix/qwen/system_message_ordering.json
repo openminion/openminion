@@ -1,0 +1,11 @@
+{
+  "family": "qwen",
+  "kind": "provider_error_signature",
+  "case_id": "system_message_ordering",
+  "positive": true,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "System message must be at the beginning"
+  },
+  "expected_signature": "system_message_ordering"
+}

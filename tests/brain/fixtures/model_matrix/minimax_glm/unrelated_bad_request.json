@@ -1,0 +1,11 @@
+{
+  "family": "minimax_glm",
+  "kind": "provider_retry",
+  "case_id": "unrelated_bad_request",
+  "positive": false,
+  "tool_choice": "required",
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "Request payload exceeds provider limit"
+  }
+}

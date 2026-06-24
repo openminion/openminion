@@ -1,0 +1,167 @@
+{
+  "modules": {
+    "a2a": {
+      "debug_command": [
+        "agents",
+        "list"
+      ],
+      "json_signals": [
+        "_print_json"
+      ]
+    },
+    "artifact": {
+      "debug_command": [
+        "largest",
+        "--top",
+        "1"
+      ],
+      "json_signals": [
+        "_print_json"
+      ]
+    },
+    "brain": {
+      "debug_command": [
+        "replay",
+        "--session-id",
+        "debug-session",
+        "--json"
+      ],
+      "json_signals": [
+        "_print_obj"
+      ]
+    },
+    "context": {
+      "debug_command": [
+        "build",
+        "--session-id",
+        "debug-session",
+        "--user-input",
+        "ping"
+      ],
+      "json_signals": [
+        "print_json_payload("
+      ]
+    },
+    "controlplane": {
+      "debug_command": [
+        "--storage-command",
+        "status"
+      ],
+      "json_signals": [
+        "run_storage_argv("
+      ]
+    },
+    "identity": {
+      "debug_command": [
+        "status"
+      ],
+      "json_signals": [
+        "_print_json"
+      ]
+    },
+    "llm": {
+      "debug_command": [
+        "providers",
+        "list",
+        "--json"
+      ],
+      "json_signals": [
+        "_print_obj"
+      ]
+    },
+    "memory": {
+      "debug_command": [
+        "list",
+        "--json"
+      ],
+      "json_signals": [
+        "_output("
+      ]
+    },
+    "policy": {
+      "debug_command": [
+        "mode"
+      ],
+      "json_signals": [
+        "_print_json"
+      ]
+    },
+    "registry": {
+      "debug_command": [
+        "status"
+      ],
+      "json_signals": [
+        "_print_json"
+      ]
+    },
+    "retrieve": {
+      "debug_command": [
+        "status"
+      ],
+      "json_signals": [
+        "print_json_payload("
+      ]
+    },
+    "secret": {
+      "debug_command": [
+        "storage",
+        "status"
+      ],
+      "json_signals": [
+        "run_module_storage_command("
+      ]
+    },
+    "session": {
+      "debug_command": [
+        "list-sessions",
+        "--limit",
+        "1"
+      ],
+      "json_signals": [
+        "print_json_payload("
+      ]
+    },
+    "skill": {
+      "debug_command": [
+        "list"
+      ],
+      "json_signals": [
+        "_print_json"
+      ]
+    },
+    "storage": {
+      "debug_command": [
+        "status"
+      ],
+      "json_signals": [
+        "_print_json"
+      ]
+    },
+    "task": {
+      "debug_command": [
+        "storage",
+        "status"
+      ],
+      "json_signals": [
+        "run_module_storage_command("
+      ]
+    },
+    "telemetry": {
+      "debug_command": [
+        "storage",
+        "status"
+      ],
+      "json_signals": [
+        "run_module_storage_command("
+      ]
+    },
+    "tool": {
+      "debug_command": [
+        "tools"
+      ],
+      "json_signals": [
+        "_print_obj"
+      ]
+    }
+  }
+}

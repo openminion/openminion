@@ -1,0 +1,42 @@
+# One-line justification for every Pydantic model that uses `extra="allow"` in
+# `src/openminion/`. New `extra="allow"` declarations without a matching
+# allowlist row fail the `validate_pydantic_extra_allow_audit` lint guard.
+#
+# Format: path	line	model_name	reason
+#
+# Categories used in `reason`:
+#  - "provider-extensibility": load-bearing — extra keys carry
+#    provider-specific data (PinchTab/Playwright/Open-Meteo/etc.).
+#  - "registry-extensibility": agent-registry meta/limits/cap fields.
+#  - "llm-config-extensibility": provider config or capability flags
+#    forward-compat.
+#  - "runtime-internal-deferred": no clear extensibility need but
+#    flipping requires per-model behavior analysis; current `allow`
+#    remains until that analysis is complete.
+#
+src/openminion/modules/brain/loop/recursive/schemas.py	78	TaskState	runtime-internal-deferred
+src/openminion/modules/brain/loop/recursive/schemas.py	243	TickOutput	runtime-internal-deferred
+src/openminion/modules/llm/config.py	142	ProviderConfig	llm-config-extensibility
+src/openminion/modules/llm/orchestration/schemas.py	28	ProfileCapabilities	llm-config-extensibility
+src/openminion/modules/registry/models.py	42	Capability	registry-extensibility
+src/openminion/modules/registry/models.py	76	TransportEndpoint	registry-extensibility
+src/openminion/modules/registry/models.py	95	AuthPolicy	registry-extensibility
+src/openminion/modules/registry/models.py	104	AgentDescriptor	registry-extensibility
+src/openminion/modules/registry/models.py	154	AgentStatus	registry-extensibility
+src/openminion/tools/browser/models.py	69	ActionTarget	provider-extensibility
+src/openminion/tools/browser/models.py	82	BrowserAction	provider-extensibility
+src/openminion/tools/browser/models.py	94	SnapshotOptions	provider-extensibility
+src/openminion/tools/browser/models.py	112	InstanceSpec	provider-extensibility
+src/openminion/tools/browser/models.py	119	NavigateOptions	provider-extensibility
+src/openminion/tools/browser/models.py	127	TextOptions	provider-extensibility
+src/openminion/tools/browser/models.py	152	BrowserCallArgs	provider-extensibility
+src/openminion/tools/browser/models.py	175	InstanceInfo	provider-extensibility
+src/openminion/tools/browser/models.py	183	TabInfo	provider-extensibility
+src/openminion/tools/browser/models.py	192	SnapshotResult	provider-extensibility
+src/openminion/tools/browser/models.py	200	TextResult	provider-extensibility
+src/openminion/tools/browser/models.py	210	ArtifactRef	provider-extensibility
+src/openminion/tools/browser/models.py	220	BrowserError	provider-extensibility
+src/openminion/tools/browser/models.py	236	BrowserResult	provider-extensibility
+src/openminion/tools/search/schemas.py	64	SearchResultItem	provider-extensibility
+src/openminion/tools/search/schemas.py	73	SearchResult	provider-extensibility
+src/openminion/tools/weather/plugin.py	57	WeatherArgs	provider-extensibility

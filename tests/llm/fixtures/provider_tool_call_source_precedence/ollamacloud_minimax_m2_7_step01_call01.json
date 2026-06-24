@@ -1,0 +1,26 @@
+{
+  "created_at": "2026-04-09T11:37:50.079909693Z",
+  "done": true,
+  "done_reason": "stop",
+  "eval_count": 48,
+  "message": {
+    "content": "",
+    "role": "assistant",
+    "thinking": "The user wants to know the current time in UTC. I have a time tool available that can provide this information.",
+    "tool_calls": [
+      {
+        "function": {
+          "arguments": {
+            "timezone": null
+          },
+          "index": 0,
+          "name": "time"
+        },
+        "id": "call_function_sf2usti8eu5f_1"
+      }
+    ]
+  },
+  "model": "minimax-m2.7",
+  "prompt_eval_count": 1479,
+  "total_duration": 6419389446
+}

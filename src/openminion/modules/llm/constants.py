@@ -1,0 +1,51 @@
+from pathlib import Path
+
+LLM_TOOL_CALL_STATUS_REQUESTED = "requested"
+LLM_TOOL_CALL_STATUS_PARSED = "parsed"
+LLM_TOOL_CALL_STATUS_BLOCKED = "blocked"
+LLM_TOOL_CALL_STATUS_ERROR = "error"
+LLM_TOOL_CALL_STATUS_CHOICES: tuple[str, ...] = (
+    LLM_TOOL_CALL_STATUS_REQUESTED,
+    LLM_TOOL_CALL_STATUS_PARSED,
+    LLM_TOOL_CALL_STATUS_BLOCKED,
+    LLM_TOOL_CALL_STATUS_ERROR,
+)
+
+LLM_TOOL_CHOICE_AUTO = "auto"
+LLM_TOOL_CHOICE_NONE = "none"
+LLM_TOOL_CHOICE_REQUIRED = "required"
+LLM_TOOL_CHOICE_CHOICES: tuple[str, ...] = (
+    LLM_TOOL_CHOICE_AUTO,
+    LLM_TOOL_CHOICE_NONE,
+    LLM_TOOL_CHOICE_REQUIRED,
+)
+
+LLM_CANDIDATE_STATUS_SUCCESS = "success"
+LLM_CANDIDATE_STATUS_FAILED = "failed"
+LLM_CANDIDATE_STATUS_TIMEOUT = "timeout"
+LLM_CANDIDATE_STATUS_CHOICES: tuple[str, ...] = (
+    LLM_CANDIDATE_STATUS_SUCCESS,
+    LLM_CANDIDATE_STATUS_FAILED,
+    LLM_CANDIDATE_STATUS_TIMEOUT,
+)
+
+LLM_TOOL_CALL_STRATEGY_NATIVE = "native"
+LLM_TOOL_CALL_STRATEGY_FALLBACK = "fallback"
+LLM_TOOL_CALL_STRATEGY_HYBRID = "hybrid"
+DEFAULT_FINISH_REASON_ALIASES: dict[str, str] = {
+    "tool_use": "tool_calls",
+    "tool_call": "tool_calls",
+    "function_call": "tool_calls",
+    "end_turn": "stop",
+    "completed": "stop",
+    "complete": "stop",
+}
+DEFAULT_HTTP_USER_AGENT = "OpenMinion/1.0"
+
+# Path Layout
+DEFAULT_CONFIG_FILENAME = "llmctl.yaml"
+DEFAULT_INTEGRATED_CONFIG_SUBPATH = Path("llm") / DEFAULT_CONFIG_FILENAME
+
+# Operator-tunable passthrough for provider thinking blocks.
+PROVIDER_THINKING_PASSTHROUGH_ENV: str = "OPENMINION_PROVIDER_THINKING_PASSTHROUGH"
+PROVIDER_THINKING_PASSTHROUGH_DEFAULT: bool = True

@@ -1,0 +1,44 @@
+name: Tool Registration Guard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tool-registration-guard:
+    runs-on: ubuntu-latest
+    env:
+      OPENMINION_HOME: ${{ github.workspace }}
+      OPENMINION_DATA_ROOT: ${{ github.workspace }}/.openminion
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install project
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Verify registration observability contract
+        run: |
+          PYTHONPATH=src python -m pytest -q tests/test_tool_registry.py tests/test_status_command.py -k "status_tools_json or registration_debug_report"
+
+      - name: Verify module CLI contract suite
+        run: |
+          OPENMINION_PY="$(command -v python)" tests/ci/runners/run_module_cli_contract_suite.sh

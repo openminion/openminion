@@ -1,0 +1,195 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openminion"
+version = "0.0.1"
+description = "Local-first agent framework with brain, memory, A2A, MCP, and skills"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "OpenMinion Contributors" }]
+keywords = ["agent", "llm", "agents", "mcp", "a2a", "memory", "brain", "ai", "tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Typing :: Typed",
+]
+
+dependencies = [
+  "alembic==1.18.4",
+  "aiosqlite>=0.19.0",
+  "cryptography>=41.0.0",
+  "platformdirs",
+  # The public ``openminion`` package imports memory contracts and agent
+  # runtime surfaces that depend on the released SophiaGraph package.
+  "sophiagraph>=0.0.1",
+  # FTF-11: prompt_toolkit drives the terminal-flow focus shell
+  # (`cli/tui/focus_terminal/`); rich is already transitively
+  # present via Textual but promoted to a direct dependency so
+  # FTF code does not depend on Textual's transitive graph.
+  "prompt_toolkit>=3.0,<4.0",
+  "psutil>=5",
+  "pydantic>=2",
+  "pyyaml",
+  "rich>=13.0",
+  "typer>=0.12",
+]
+
+[project.urls]
+Homepage = "https://www.openminion.com"
+Repository = "https://github.com/OpenMinion/openminion"
+Documentation = "https://www.openminion.com/docs"
+Changelog = "https://github.com/OpenMinion/openminion/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+  "pre-commit>=4,<5",
+  # TUI/focus modules import Textual surfaces directly. Include it in the
+  # dev extra so clean-env mypy and UI-focused tests see the real typed classes
+  # instead of falling back to ``Any`` from missing imports.
+  "textual>=1,<9",
+  # FTF-11: pyte is a pure-Python terminal emulator used by
+  # FTF-13's PTY scrollback test to capture the post-exit
+  # buffer. Test/dev only — never imported from runtime code.
+  "pyte>=0.8",
+  "pytest>=8.0,<9",
+  "pytest-asyncio>=0.23,<1",
+  "pytest-timeout>=2.4,<3",
+  "ruff>=0.11,<1",
+  # Coverage and pytest-cov back the repo's branch-coverage regression
+  # workflows. Test/dev only.
+  "coverage>=7",
+  "pytest-cov>=4",
+  # Faker powers deterministic test factories under tests/storage.
+  # Test/dev only — never imported from runtime code.
+  "Faker>=24,<28",
+  # mypy is the typed-surface gate for the repo's scoped strict-typing
+  # ratchet. Scope is configured via the [tool.mypy] block below.
+  # Test/dev only.
+  "mypy>=1.10,<2",
+]
+postgres = [
+  "sqlalchemy>=2.0,<3",
+  "psycopg[binary]>=3.1",
+]
+otel = [
+  "opentelemetry-api>=1.20,<2",
+  "opentelemetry-sdk>=1.20,<2",
+  "opentelemetry-exporter-otlp>=1.20,<2",
+]
+fetch-scrapling = [
+  "scrapling>=0.2.0",
+]
+fetch-scrapling-fetchers = [
+  "scrapling>=0.2.0",
+  "aiohttp>=3.9.0",
+  "httpx>=0.27.0",
+]
+progress = [
+  # tqdm powers ``modules.storage.progress.TqdmProgressReporter`` which is
+  # wired into long-running storage CLI verbs. The reporter degrades to a
+  # no-op when tqdm is missing, so this extra is operator-opt-in.
+  "tqdm>=4.65",
+]
+compress = [
+  # Optional extra for the LLMLingua compression backend. Required only when
+  # the operator opts in via ``OPENMINION_COMPRESS_PROVIDER_PREFERENCE``.
+  # Without the extra, compression falls back to the extractive baseline.
+  "llmlingua>=0.2,<1",
+]
+
+[project.scripts]
+openminion = "openminion.cli.main:main"
+openminiond = "openminion.daemon_main:main"
+openminion-tool = "openminion.modules.tool.cli:main"
+identityctl = "openminion.modules.identity.cli:main"
+openminion-controlplane = "openminion.modules.controlplane.cli:main"
+runtimectl = "openminion.services.runtime.cli:main"
+brainctl = "openminion.modules.brain.cli:main"
+memctl = "openminion.modules.memory.cli:main"
+sessctl = "openminion.modules.session.cli:main"
+contextctl = "openminion.modules.context.cli:main"
+ctxctl = "openminion.modules.context.cli:main"
+agentregctl = "openminion.modules.registry.cli:main"
+artifactctl = "openminion.modules.artifact.cli:main"
+openminion-controlplane-telegram = "openminion.modules.controlplane.channels.telegram.cli:main"
+skill = "openminion.modules.skill.cli:main"
+skillctl = "openminion.modules.skill.cli:main"
+a2actl = "openminion.modules.a2a.cli:main"
+rlmctl = "openminion.modules.brain.loop.recursive.cli:main"
+retrievectl = "openminion.modules.retrieve.cli:main"
+policyctl = "openminion.modules.policy.cli:main"
+
+[project.entry-points."openminion.modules.controlplane.commands"]
+identity = "openminion.modules.identity.controlplane.main:command_module"
+
+[project.entry-points."openminion.controlplane.commands"]
+identity = "openminion.modules.identity.controlplane.main:command_module"
+
+[project.entry-points."openminion.tool.fetch.providers"]
+scrapling = "openminion.tools.fetch.providers.scrapling.provider:provider"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+timeout = 60
+markers = [
+  "e2e: live end-to-end tests gated on OPENMINION_LIVE_CLI_CHAT_E2E=1",
+  "postgres: requires OPENMINION_TEST_POSTGRES_URL and postgres extras",
+  "benchmark: explicit benchmark / regression harness tests",
+  "memory_eval: lightweight memory evaluation scenarios",
+  "memory_eval_benchmark: slower memory evaluation benchmark scenarios",
+  "telegram_live: hits real api.telegram.org; skipped unless TELEGRAM_BOT_TOKEN + TELEGRAM_LIVE_CHAT_ID set",
+]
+
+# Scoped strict-typing configuration. `make typecheck` runs the whole-tree
+# error-count ratchet in `scripts/validate/mypy_error_budget.py`, while this block keeps a
+# smaller always-on strict subset in CI and local lint flows.
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = [
+  "src/openminion/base",
+  "src/openminion/modules/*/interfaces.py",
+  "src/openminion/modules/*/contracts.py",
+  "src/openminion/modules/*/contracts",
+  "src/openminion/modules/*/schemas.py",
+  "src/openminion/modules/*/schemas",
+  # Scoped strict-typing coverage: security service owner.
+  "src/openminion/services/security",
+  # Scoped strict-typing coverage: bootstrap service owner.
+  "src/openminion/services/bootstrap",
+  # Scoped strict-typing coverage: cron service owner.
+  "src/openminion/services/cron",
+  # Scoped strict-typing coverage: health service owner.
+  "src/openminion/services/health",
+  # Scoped strict-typing coverage: lifecycle service owner.
+  "src/openminion/services/lifecycle",
+  # Scoped strict-typing coverage: context service owner.
+  "src/openminion/services/context",
+  # Scoped strict-typing coverage: gateway service owner.
+  "src/openminion/services/gateway",
+]
+# Skip third-party packages without inline type hints.
+ignore_missing_imports = true
+# Per-file `# type: ignore[<code>]` discipline is enforced by the
+# `validate/type_ignore_hygiene.py` repo validator.
+warn_unused_ignores = true
+
+# The former bootstrap error-suppression overrides for `base.*` and
+# `modules.*.{interfaces,contracts,schemas}` are retired. `make typecheck` now
+# runs the whole-tree error-count ratchet in `scripts/validate/mypy_error_budget.py`; the
+# checked-in baseline may only shrink.

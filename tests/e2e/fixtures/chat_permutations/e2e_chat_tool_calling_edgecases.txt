@@ -1,0 +1,11 @@
+/status
+tool write_file {'path': '{{WORKDIR}}/bad_json.txt', 'content': 'bad json'}
+tool read_file {"path": ""}
+tool unknown_tool {"foo": "bar"}
+agent unknown_agent ping {"value": "hello"}
+agent unknown_agent ping notjson
+Read file {{WORKDIR}}/missing.txt
+Run command false
+write to file {{WORKDIR}}/edgecase.txt the following content: ok
+read file {{WORKDIR}}/edgecase.txt
+/exit

@@ -1,0 +1,27 @@
+/status
+/tools
+/agent inspect
+/identity show
+Hi there! Let's do an end-to-end tool test.
+What tools do you have?
+Please write to file {{WORKDIR}}/nl_write.txt the following content: Hello from NL write.
+Read file {{WORKDIR}}/nl_write.txt
+List files in {{WORKDIR}}
+Find files named nl_write.txt in {{WORKDIR}}
+Run command ls {{WORKDIR}}
+Execute command pwd
+tool write_file {"path": "{{WORKDIR}}/explicit.txt", "content": "explicit tool write"}
+tool read_file {"path": "{{WORKDIR}}/explicit.txt"}
+tool list_files {"path": "{{WORKDIR}}"}
+tool find_files {"name": "explicit.txt", "path": "{{WORKDIR}}"}
+tool run_command {"command": "ls {{WORKDIR}}"}
+tool calculate_expression {"expression": "34 * 7"}
+tool text_stats {"text": "Hello tool stats"}
+tool utc_now {}
+Fetch https://example.com
+What's the weather in Seattle right now?
+Do something maybe?
+Please proceed with a short summary only.
+continue
+/debug
+/exit

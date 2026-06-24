@@ -1,0 +1,7 @@
+interface:
+  display_name: Figma Create Design System Rules
+  short_description: Create design system rules and tokens in Figma
+  default_prompt: Help me set up design system rules in Figma.
+dependencies:
+  tools:
+    - browser

@@ -1,0 +1,39 @@
+WEATHER_OPENMETEO_CONFIG_ENV = "OPENMINION_WEATHER_OPENMETEO_CONFIG"
+WEATHER_OPENMETEO_CANONICAL_TOOL = "weather.openmeteo.current"
+WEATHER_OPENMETEO_GEOCODING_ENDPOINT = "https://geocoding-api.open-meteo.com/v1/search"
+WEATHER_OPENMETEO_FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
+WEATHER_OPENMETEO_SECONDARY_GEOCODING_ENDPOINT = (
+    "https://nominatim.openstreetmap.org/search"
+)
+WEATHER_OPENMETEO_LICENSE_NOTE = "Data source: Open-Meteo. Public API terms and CC BY 4.0 attribution apply; free usage limits and non-commercial constraints may apply."
+WEATHER_OPENMETEO_SECONDARY_LICENSE_NOTE = (
+    "Geocoding fallback may use Nominatim/OpenStreetMap; ODbL 1.0 attribution applies."
+)
+WEATHER_OPENMETEO_FALLBACK_LICENSE_NOTE = "Fallback sample used because upstream weather data was unavailable. Not a live Open-Meteo observation."
+WEATHER_OPENMETEO_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset(
+    {500, 502, 503, 504}
+)
+WEATHER_OPENMETEO_BACKOFF_SECONDS: tuple[float, ...] = (0.2, 0.5, 1.0)
+WEATHER_OPENMETEO_RAW_BODY_DETAIL_LIMIT = 32_000
+WEATHER_OPENMETEO_DEFAULT_USER_AGENT = "openminion-tool-weather-openmeteo/0.0.1"
+WEATHER_OPENMETEO_SECONDARY_USER_AGENT = (
+    "openminion-tool-weather-openmeteo/0.0.1 (nominatim-fallback)"
+)
+WEATHER_OPENMETEO_ARTIFACTS_SUBDIR = "artifacts/weather-openmeteo"
+
+__all__ = [
+    "WEATHER_OPENMETEO_ARTIFACTS_SUBDIR",
+    "WEATHER_OPENMETEO_BACKOFF_SECONDS",
+    "WEATHER_OPENMETEO_CANONICAL_TOOL",
+    "WEATHER_OPENMETEO_CONFIG_ENV",
+    "WEATHER_OPENMETEO_DEFAULT_USER_AGENT",
+    "WEATHER_OPENMETEO_FALLBACK_LICENSE_NOTE",
+    "WEATHER_OPENMETEO_FORECAST_ENDPOINT",
+    "WEATHER_OPENMETEO_GEOCODING_ENDPOINT",
+    "WEATHER_OPENMETEO_LICENSE_NOTE",
+    "WEATHER_OPENMETEO_RAW_BODY_DETAIL_LIMIT",
+    "WEATHER_OPENMETEO_RETRYABLE_STATUS_CODES",
+    "WEATHER_OPENMETEO_SECONDARY_GEOCODING_ENDPOINT",
+    "WEATHER_OPENMETEO_SECONDARY_LICENSE_NOTE",
+    "WEATHER_OPENMETEO_SECONDARY_USER_AGENT",
+]

@@ -1,0 +1,71 @@
+name: No-Legacy Deep Validation
+
+on:
+  push:
+    branches: [main, module-first-cutover, "**/module-first/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  no-legacy-validation:
+    runs-on: ubuntu-latest
+    env:
+      OPENMINION_HOME: ${{ github.workspace }}
+      OPENMINION_DATA_ROOT: ${{ github.workspace }}/.openminion
+      OPENMINION_AGENT_RUNTIME_MODE: brain
+      OPENMINION_ALLOW_LEGACY_FALLBACK: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Prepare standalone CI workspace
+        shell: bash
+        run: |
+          mkdir -p .deps
+          [[ -d .deps/sophiagraph ]] || git clone --depth 1 https://github.com/openminion/sophiagraph .deps/sophiagraph
+          [[ -d .deps/pragmagraph ]] || git clone --depth 1 https://github.com/openminion/pragmagraph .deps/pragmagraph
+          [[ -d .deps/openminion-eval ]] || git clone --depth 1 https://github.com/openminion/openminion-eval .deps/openminion-eval
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip install -e .deps/sophiagraph -e .deps/pragmagraph -e .deps/openminion-eval
+
+      - name: Run no-legacy validation suite
+        shell: bash
+        run: |
+          PYTHONPATH=src python -m pytest -q \
+            tests/test_chat_no_legacy.py \
+            tests/test_daemon.py::TestDaemonNoLegacyParity \
+            tests/test_api_gateway.py::TestAPIGatewayNoLegacy \
+            tests/test_fault_injection.py \
+            tests/test_legacy_opt_in.py \
+            tests/test_prompt.py \
+            tests/test_tool_registry_parity.py \
+            tests/test_stress.py \
+            tests/integration/test_controlplane_modules_only_gate.py
+
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: no-legacy-validation-results
+          path: |
+            .pytest_cache
+            validation-report.json
+          retention-days: 7

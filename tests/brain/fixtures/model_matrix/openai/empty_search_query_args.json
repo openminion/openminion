@@ -1,0 +1,28 @@
+{
+  "family": "openai",
+  "kind": "structured_response",
+  "case_id": "empty_search_query_args",
+  "positive": true,
+  "model_name": "openai/gpt-5.4",
+  "response": {
+    "tool_calls": [
+      {
+        "name": "submit_output",
+        "arguments": {
+          "mode": "act",
+          "confidence": 0.88,
+          "reason_code": "search_news",
+          "act_profile": "general",
+          "sub_intents": [
+            "search_news"
+          ],
+          "rationale": "Use the shared act loop to gather the requested headlines.",
+          "execution_target": {
+            "kind": "local"
+          }
+        }
+      }
+    ],
+    "output_text": ""
+  }
+}

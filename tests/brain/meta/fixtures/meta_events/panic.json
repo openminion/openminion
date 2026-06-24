@@ -1,0 +1,24 @@
+{
+    "description": "PANIC state — user kill requested",
+    "meta_metrics": {
+        "session_id": "sess-005",
+        "agent_id": "agent-001",
+        "trace_id": "trace-005",
+        "risk_class": "low",
+        "risk_score": 0,
+        "intent_confidence": 0.7,
+        "grounding_confidence": 1.0,
+        "recent_failures": 0,
+        "loop_count": 0,
+        "replan_count": 0,
+        "budget_remaining": 1.0,
+        "user_kill_requested": true,
+        "needs_clarification": false,
+        "irreversible": false,
+        "requires_side_effects": false
+    },
+    "expected_meta_state": "PANIC",
+    "expected_directive": {
+        "override_next_state": "STOPPED"
+    }
+}

@@ -1,0 +1,7 @@
+interface:
+  display_name: Figma
+  short_description: Inspect and annotate Figma design files
+  default_prompt: Help me review this Figma file.
+dependencies:
+  tools:
+    - browser

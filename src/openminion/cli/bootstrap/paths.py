@@ -1,0 +1,13 @@
+from __future__ import annotations
+
+CLI_IDENTITY_SUBDIR = "identity"
+CLI_IDENTITY_DB_FILENAME = "identity.db"
+CLI_POLICY_SUBDIR = "policy"
+CLI_POLICY_DB_FILENAME = "policy.db"
+
+__all__ = [
+    "CLI_IDENTITY_DB_FILENAME",
+    "CLI_IDENTITY_SUBDIR",
+    "CLI_POLICY_DB_FILENAME",
+    "CLI_POLICY_SUBDIR",
+]

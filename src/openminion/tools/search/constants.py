@@ -1,0 +1,58 @@
+from openminion.tools.constants import OPENMINION_WEB_SEARCH_PROVIDER_ENV
+
+SEARCH_PROVIDER_AUTO = "auto"
+SEARCH_TAVILY_PROVIDER_ID = "tavily"
+SEARCH_BRAVE_PROVIDER_ID = "brave"
+SEARCH_SERPAPI_PROVIDER_ID = "serpapi"
+SEARCH_FIRECRAWL_PROVIDER_ID = "firecrawl"
+SEARCH_SERPER_PROVIDER_ID = "serper"
+SEARCH_TINYFISH_PROVIDER_ID = "tinyfish"
+SEARCH_TAVILY_PROVIDER_ALIASES: frozenset[str] = frozenset(
+    {"search.tavily.search", "tavily.web.search", "tavily"}
+)
+SEARCH_BRAVE_PROVIDER_ALIASES: frozenset[str] = frozenset(
+    {"search.brave.search", "brave.web.search", "brave"}
+)
+SEARCH_SERPAPI_PROVIDER_ALIASES: frozenset[str] = frozenset(
+    {"search.serpapi.search", "serpapi.web.search", "serpapi"}
+)
+SEARCH_FIRECRAWL_PROVIDER_ALIASES: frozenset[str] = frozenset(
+    {"search.firecrawl.search", "firecrawl.web.search", "firecrawl"}
+)
+SEARCH_SERPER_PROVIDER_ALIASES: frozenset[str] = frozenset(
+    {"search.serper.search", "serper.web.search", "serper"}
+)
+SEARCH_TINYFISH_PROVIDER_ALIASES: frozenset[str] = frozenset(
+    {"search.tinyfish.search", "tinyfish.web.search", "tinyfish"}
+)
+
+# PFRH §5.2: typed reason codes for deterministic search-provider faults.
+SEARCH_FAULT_NETWORK_TIMEOUT = "SEARCH_FAULT_NETWORK_TIMEOUT"
+SEARCH_FAULT_HTTP_5XX = "SEARCH_FAULT_HTTP_5XX"
+SEARCH_FAULT_RATE_LIMITED = "SEARCH_FAULT_RATE_LIMITED"
+SEARCH_FAULT_AUTH_FAILED = "SEARCH_FAULT_AUTH_FAILED"
+SEARCH_FAULT_MALFORMED_RESPONSE = "SEARCH_FAULT_MALFORMED_RESPONSE"
+SEARCH_FAULT_UNAVAILABLE = "SEARCH_FAULT_UNAVAILABLE"
+
+__all__ = [
+    "OPENMINION_WEB_SEARCH_PROVIDER_ENV",
+    "SEARCH_BRAVE_PROVIDER_ALIASES",
+    "SEARCH_BRAVE_PROVIDER_ID",
+    "SEARCH_FIRECRAWL_PROVIDER_ALIASES",
+    "SEARCH_FIRECRAWL_PROVIDER_ID",
+    "SEARCH_PROVIDER_AUTO",
+    "SEARCH_SERPAPI_PROVIDER_ALIASES",
+    "SEARCH_SERPAPI_PROVIDER_ID",
+    "SEARCH_SERPER_PROVIDER_ALIASES",
+    "SEARCH_SERPER_PROVIDER_ID",
+    "SEARCH_TINYFISH_PROVIDER_ALIASES",
+    "SEARCH_TINYFISH_PROVIDER_ID",
+    "SEARCH_TAVILY_PROVIDER_ALIASES",
+    "SEARCH_TAVILY_PROVIDER_ID",
+    "SEARCH_FAULT_NETWORK_TIMEOUT",
+    "SEARCH_FAULT_HTTP_5XX",
+    "SEARCH_FAULT_RATE_LIMITED",
+    "SEARCH_FAULT_AUTH_FAILED",
+    "SEARCH_FAULT_MALFORMED_RESPONSE",
+    "SEARCH_FAULT_UNAVAILABLE",
+]

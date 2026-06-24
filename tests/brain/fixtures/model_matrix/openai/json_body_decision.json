@@ -1,0 +1,11 @@
+{
+  "family": "openai",
+  "kind": "structured_response",
+  "case_id": "json_body_decision",
+  "positive": true,
+  "model_name": "openai/gpt-4o-mini",
+  "response": {
+    "tool_calls": [],
+    "output_text": "{\"mode\": \"respond\", \"confidence\": 0.92, \"reason_code\": \"latest_news\", \"sub_intents\": [\"search_web\"], \"answer\": \"I can summarize the latest results after a live search.\", \"respond_kind\": \"answer\"}"
+  }
+}

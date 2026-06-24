@@ -1,0 +1,9 @@
+interface:
+  display_name: Linear
+  short_description: Manage Linear issues in Codex
+  default_prompt: Help me triage and update a Linear issue.
+dependencies:
+  tools:
+    - http_request
+  mcp_servers:
+    - linear

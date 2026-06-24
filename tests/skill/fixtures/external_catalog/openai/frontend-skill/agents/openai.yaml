@@ -1,0 +1,7 @@
+interface:
+  display_name: Frontend Skill
+  short_description: Companion frontend text should not override markdown metadata
+  default_prompt: Help me refine this frontend experience.
+dependencies:
+  tools:
+    - file

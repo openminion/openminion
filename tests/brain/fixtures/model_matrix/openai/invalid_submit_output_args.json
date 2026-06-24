@@ -1,0 +1,21 @@
+{
+  "family": "openai",
+  "kind": "structured_response",
+  "case_id": "invalid_submit_output_args",
+  "positive": false,
+  "model_name": "openai/gpt-4o",
+  "response": {
+    "tool_calls": [
+      {
+        "name": "submit_output",
+        "arguments": {
+          "mode": "respond",
+          "confidence": 0.9,
+          "reason_code": "greeting",
+          "sub_intents": ["greeting"]
+        }
+      }
+    ],
+    "output_text": ""
+  }
+}

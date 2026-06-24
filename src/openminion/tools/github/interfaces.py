@@ -1,0 +1,26 @@
+from openminion.modules.tool import PLUGIN_CONTRACT_VERSION
+
+GITHUB_INTERFACE_VERSION = PLUGIN_CONTRACT_VERSION
+
+TOOL_GITHUB_LIST_PRS = "github.list_prs"
+TOOL_GITHUB_FETCH_PR = "github.fetch_pr"
+TOOL_GITHUB_FETCH_DIFF = "github.fetch_diff"
+TOOL_GITHUB_FETCH_COMMENTS = "github.fetch_comments"
+TOOL_GITHUB_FETCH_CHECKS = "github.fetch_checks"
+TOOL_GITHUB_COMMIT_FILES = "github.commit_files"
+TOOL_GITHUB_OPEN_PR = "github.open_pr"
+TOOL_GITHUB_POST_PR_REVIEW = "github.post_pr_review"
+TOOL_GITHUB_POST_PR_COMMENT = "github.post_pr_comment"
+
+__all__ = [
+    "GITHUB_INTERFACE_VERSION",
+    "TOOL_GITHUB_LIST_PRS",
+    "TOOL_GITHUB_FETCH_PR",
+    "TOOL_GITHUB_FETCH_DIFF",
+    "TOOL_GITHUB_FETCH_COMMENTS",
+    "TOOL_GITHUB_FETCH_CHECKS",
+    "TOOL_GITHUB_COMMIT_FILES",
+    "TOOL_GITHUB_OPEN_PR",
+    "TOOL_GITHUB_POST_PR_REVIEW",
+    "TOOL_GITHUB_POST_PR_COMMENT",
+]

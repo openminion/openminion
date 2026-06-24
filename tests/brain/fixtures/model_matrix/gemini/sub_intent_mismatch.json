@@ -1,0 +1,26 @@
+{
+  "family": "gemini",
+  "kind": "decision_validation",
+  "case_id": "sub_intent_mismatch",
+  "positive": false,
+  "decision": {
+    "mode": "plan",
+    "confidence": 0.68,
+    "reason_code": "web_search",
+    "sub_intents": [
+      "web_search"
+    ],
+    "plan_hint": "Run a search before responding.",
+    "plan_strategy": "sequential"
+  },
+  "commands": [
+    {
+      "kind": "tool",
+      "tool_name": "weather",
+      "args": {
+        "location": "Tehran"
+      },
+      "title": "Check local weather"
+    }
+  ]
+}

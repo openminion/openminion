@@ -1,0 +1,53 @@
+/status
+/tools
+/agent inspect
+Let's stress tool calling with different phrasing.
+Write to file {{WORKDIR}}/nl_write_a.txt the following content: hello A
+Create file {{WORKDIR}}/nl_write_b.txt with content: hello B
+Save to file {{WORKDIR}}/nl_write_c.txt the content: hello C
+Please use the write_file tool to create {{WORKDIR}}/nl_write_d.txt with content: hello D
+Using write_file(path=..., content=...), create {{WORKDIR}}/nl_write_e.txt containing: hello E
+Create {{WORKDIR}}/nl_write_f.txt with content: hello F (use tool)
+Read file {{WORKDIR}}/nl_write_a.txt
+Read file {{WORKDIR}}/nl_write_b.txt first 10 chars
+Show me the content of {{WORKDIR}}/nl_write_c.txt
+Display {{WORKDIR}}/nl_write_c.txt
+Cat {{WORKDIR}}/nl_write_c.txt
+Read file '{{WORKDIR}}/nl_write_d.txt'
+Read file "{{WORKDIR}}/nl_write_e.txt"
+List files in {{WORKDIR}}
+List files under {{WORKDIR}}
+List files from {{WORKDIR}}
+ls {{WORKDIR}}
+dir {{WORKDIR}}
+Find files named nl_write_a.txt in {{WORKDIR}}
+Search for files named nl_write_b.txt in {{WORKDIR}}
+Run command ls {{WORKDIR}}
+Execute command pwd
+shell ls {{WORKDIR}}
+pwd
+tool write_file {"path": "{{WORKDIR}}/explicit_a.txt", "content": "explicit A"}
+tool read_file {"path": "{{WORKDIR}}/explicit_a.txt", "max_chars": 12}
+tool list_files {"path": "{{WORKDIR}}"}
+tool find_files {"name": "explicit_a.txt", "path": "{{WORKDIR}}"}
+tool run_command {"command": "ls {{WORKDIR}}"}
+tool run_command {"command": "echo cmd_write > {{WORKDIR}}/cmd_write.txt"}
+tool read_file {"path": "{{WORKDIR}}/cmd_write.txt"}
+tool calculate_expression {"expression": "(2+3)*5"}
+tool text_stats {"text": "one two three four"}
+tool utc_now {}
+Please run_command to print working directory.
+Use run_command to list {{WORKDIR}} and then read {{WORKDIR}}/explicit_a.txt
+search for openminion tool calling
+google openminion tool calling
+lookup tool calling examples
+fetch from https://example.com
+curl https://example.com
+open browser and go to example.com
+take screenshot
+list tabs
+What's the weather in Tokyo?
+Do multiple things
+continue
+/debug
+/exit

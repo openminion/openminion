@@ -1,0 +1,7 @@
+interface:
+  display_name: Figma Create New File
+  short_description: Create a new Figma file from a project template
+  default_prompt: Help me create a new Figma file for this project.
+dependencies:
+  tools:
+    - browser

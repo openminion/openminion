@@ -1,0 +1,7 @@
+interface:
+  display_name: Figma Generate Design
+  short_description: Generate Figma design mockups from requirements
+  default_prompt: Help me create a new Figma design from this brief.
+dependencies:
+  tools:
+    - browser

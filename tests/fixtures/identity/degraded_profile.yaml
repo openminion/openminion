@@ -1,0 +1,36 @@
+# Degraded Identity Profile Fixture
+# MIDE-01: Canonical E2E fixture for degraded/missing identity variant
+# Used by: tests/test_memory_identity_e2e.py, tests/e2e/runners/run_inference_validation_smoke.py
+# This fixture simulates an incomplete/degraded identity bundle for negative path testing
+
+agent_id: mide-degraded-agent
+display_name: ""
+profile_revision: 0
+role:
+  mission: ""
+  responsibilities: []
+  hard_constraints: []
+  domain: []
+  escalation_rules: []
+personality:
+  tone: ""
+  verbosity: normal
+  formatting: []
+  interaction_style: []
+risk:
+  risk_level: medium
+  confirm_before: []
+  auto_proceed_rules: []
+tool_posture:
+  tool_use: restricted
+  sandbox_root: ""
+  allowed_tools: []
+  blocked_patterns: []
+llm_policy_ref: null
+allowed_capabilities: []
+meta:
+  fixture_type: degraded_identity
+  fixture_version: "1.0"
+  mide_reference: MIDE-01
+  degraded_marker: true
+  expected_behavior: identity_bundle_missing_or_invalid

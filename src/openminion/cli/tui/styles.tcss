@@ -1,0 +1,1685 @@
+/* ──────────────────────────────────────────────────────────────
+   OpenMinion TUI  —  Textual CSS
+   Design principles (Claude Code–inspired):
+     • Minimal chrome — content is the focus
+     • Targeted color — accent only where it carries meaning
+     • Keyboard-first — no mouse-only affordances
+     • Subtle status — indicators that don't compete with content
+   ────────────────────────────────────────────────────────────── */
+
+/* ── App shell ──────────────────────────────────────────────── */
+
+Screen {
+    layout:     vertical;
+    background: $surface;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+
+#app-header {
+    height:     1;
+    dock:       top;
+    background: $primary-darken-3;
+    color:      $text;
+    padding:    0 1;
+    layout:     horizontal;
+    align:      left middle;
+}
+
+#header-title {
+    width:      auto;
+    color:      $accent;
+    text-style: bold;
+}
+
+#header-badge {
+    width:       1fr;
+    align:       center middle;
+    color:       $text-muted;
+    text-style:  dim;
+}
+
+#header-clock {
+    width:      auto;
+    color:      $text-muted;
+    text-style: dim;
+    margin-right: 2;
+}
+
+#header-transport {
+    width:      auto;
+    color:      $text-muted;
+    text-style: dim;
+    margin-right: 1;
+}
+
+#header-status-dot {
+    width: 1;
+    color: $success;
+}
+#header-status-dot.--ok      { color: $success; }
+#header-status-dot.--warning { color: $warning; }
+#header-status-dot.--error   { color: $error; }
+#header-status-dot.--offline { color: $text-muted; text-style: dim; }
+
+#runtime-banner {
+    height: auto;
+    background: $warning 20%;
+    color: $warning;
+    border-bottom: solid $warning;
+    padding: 0 2;
+}
+
+#runtime-banner.--hidden {
+    display: none;
+}
+
+/* ── Tab bar ─────────────────────────────────────────────────── */
+
+TabbedContent {
+    height: 1fr;
+}
+
+TabbedContent > TabPane {
+    padding: 0;
+    height:  1fr;
+}
+
+Tabs {
+    height:        1;
+    background:    $panel;
+    border-bottom: solid $primary-darken-2;
+}
+
+Tab {
+    color:   $text-muted;
+    padding: 0 2;
+}
+
+Tab:hover {
+    color:      $text;
+    background: $primary-darken-2;
+}
+
+Tab.-active {
+    color:      $accent;
+    background: $surface;
+    text-style: bold;
+}
+
+/* ── Footer ──────────────────────────────────────────────────── */
+
+FooterBar {
+    height:     auto;
+    dock:       bottom;
+    background: $primary-darken-3;
+}
+
+#footer-nav {
+    height:     1;
+    background: $primary-darken-3;
+    padding:    0 1;
+    align:      left middle;
+}
+
+.footer-tab-btn {
+    height:      1;
+    min-width:   0;
+    width:       auto;
+    border:      none;
+    background:  $primary-darken-3;
+    color:       $text-muted;
+    text-style:  dim;
+    padding:     0 1;
+    margin:      0;
+}
+
+.footer-tab-btn:hover {
+    background: $primary-darken-2;
+    color:      $text;
+    text-style: none;
+}
+
+.footer-tab-btn:focus {
+    background: $primary-darken-3;
+    color:      $text-muted;
+}
+
+#footer-help-hint {
+    color:      $text-muted;
+    text-style: dim;
+    padding:    0 1;
+}
+
+#footer-context-hints {
+    height:     1;
+    background: $primary-darken-3;
+    color:      $accent;
+    text-style: italic;
+    padding:    0 2;
+}
+
+.footer-hint-text {
+    color:      $text-muted;
+    text-style: dim;
+}
+
+/* ── Body layout (sidebar + main) ────────────────────────────── */
+
+#body {
+    layout: horizontal;
+    height: 1fr;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+
+#sidebar {
+    width:       22;
+    min-width:   22;
+    height:      100%;
+    background:  $panel;
+    border-right: solid $primary-darken-2;
+    overflow-y:  auto;
+    overflow-x:  hidden;
+    transition:  width 200ms;
+}
+
+#sidebar.--collapsed {
+    width:     2;
+    min-width: 2;
+    overflow:  hidden;
+}
+
+.sidebar-section {
+    padding: 0 1;
+}
+
+.sidebar-heading {
+    height:     1;
+    color:      $text-muted;
+    text-style: dim;
+    padding:    0;
+    margin-top: 1;
+}
+
+.sidebar-item {
+    height:     1;
+    padding:    0 1;
+    color:      $text;
+    background: transparent;
+    border-left: tall transparent;
+}
+
+.sidebar-item:hover {
+    background: $primary-darken-2;
+}
+
+.sidebar-item.--active {
+    color:      $text;
+    text-style: bold;
+    border-left: tall $accent;
+}
+
+.tool-enabled  { color: $success; }
+.tool-disabled { color: $text-muted; text-style: dim; }
+
+#sidebar-preview {
+    background: $panel;
+    border-top: solid $primary-darken-2;
+    color: $text-muted;
+    height: auto;
+    padding: 1;
+    margin-top: 1;
+}
+
+#sidebar-preview.--hidden {
+    display: none;
+}
+
+/* ── Main area ───────────────────────────────────────────────── */
+
+#main {
+    height: 100%;
+    layout: vertical;
+    width:  1fr;
+}
+
+/* ── Chat tab layout ─────────────────────────────────────────── */
+
+#chat-tab {
+    layout: horizontal;
+    height: 1fr;
+}
+
+/* ── Chat view ───────────────────────────────────────────────── */
+
+#chat-view {
+    height:     1fr;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding:    1 3 1 3;
+    background: $surface;
+}
+
+#chat-bottom-spacer {
+    width:  100%;
+    height: 0;
+}
+
+#chat-idle {
+    width:        100%;
+    height:       auto;
+    padding:      2 0 2 0;
+    align:        center middle;
+    color:        $text-muted;
+    text-style:   dim;
+    border-left:  solid $primary-darken-2;
+    margin:       0 0 1 0;
+}
+
+#chat-idle.--hidden {
+    display: none;
+}
+
+#chat-idle-pattern {
+    color:      $accent;
+    text-style: bold;
+    height:     auto;
+    text-align: center;
+    width:      100%;
+}
+
+#chat-idle-caption {
+    color:      $text-muted;
+    text-style: italic;
+    text-align: center;
+    width:      100%;
+    margin-top: 1;
+}
+
+/* ── Message blocks ──────────────────────────────────────────── */
+
+.message {
+    width:  100%;
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.message.--continued .message-header-row {
+    display: none;
+}
+
+/* Header line shared — sender left, timestamp right */
+.message-header-row {
+    layout: horizontal;
+    width:  100%;
+    height: 1;
+}
+
+.message-header-main {
+    width:      1fr;
+    height:     1;
+    text-style: bold;
+    color:      $text-muted;
+    padding:    0 0 0 1;
+}
+
+.message-timestamp {
+    width:      auto;
+    color:      $text-muted;
+    text-style: dim;
+    padding:    0 1 0 0;
+}
+
+/* Body shared — indented to align under the sender name (past the icon) */
+.message-body {
+    padding:    0 0 0 5;
+    color:      $text;
+    text-style: none;
+}
+
+/* USER — cyan ▸ icon, body standard text */
+.msg-user .message-header-main {
+    color:      $accent;
+    text-style: bold;
+}
+
+.msg-user .message-body {
+    color: $text-muted;
+    margin: 0 0 0 1;
+}
+
+/* AGENT — green ◆ icon, body brighter */
+.msg-agent {
+    background:  $openminion-chat-agent-bg 45%;
+    border-left: tall $openminion-text-accent;
+    padding:     0 1 0 0;
+    margin:      0 0 1 0;
+}
+
+.msg-agent .message-header-main {
+    color:      $openminion-text-accent;
+    text-style: bold;
+}
+
+.message-agent-body {
+    color: $openminion-chat-agent-fg;
+    margin: 0 0 0 1;
+}
+
+/* TOOL — left-bordered panel block */
+.msg-tool {
+    background:  $surface-lighten-1;
+    border-left: solid $warning;
+    border-top:  solid $primary-darken-2;
+    border-bottom: solid $primary-darken-2;
+    padding:     1 1;
+    margin:      0 0 1 0;
+}
+
+.msg-tool .message-header-main {
+    color:      $warning;
+    text-style: bold;
+}
+
+.message-tool-call {
+    color:      $text-muted;
+    text-style: dim;
+    padding:    1 0 0 5;
+}
+
+.message-tool-divider {
+    color:      $text-muted;
+    text-style: dim;
+    padding:    0 0 0 5;
+}
+
+.message-tool-result {
+    color:      $text;
+    background: $panel;
+    border-left: solid $warning;
+    padding:    0 1 0 5;
+}
+
+.message-tool-active {
+    color: $warning;
+    padding: 0 0 0 5;
+}
+
+/* SYSTEM — dim notice with subtle top separator */
+.message-system {
+    color:      $text-muted;
+    text-style: dim italic;
+    padding:    0 1;
+    margin:     0 0 1 0;
+}
+
+/* ERROR — red prefix */
+.msg-error .message-header-main {
+    color:      $error;
+    text-style: bold;
+}
+
+.message-error-body {
+    color:   $error;
+    padding: 0 0 0 5;
+}
+
+.msg-error {
+    border-left: tall $error;
+    background: $error 8%;
+    padding: 0 1;
+}
+
+/* ── Thinking indicator ──────────────────────────────────────── */
+
+ThinkingIndicator {
+    height:  1;
+    padding: 0 2;
+    opacity: 0;
+    transition: opacity 150ms linear;
+}
+
+ThinkingIndicator.--visible {
+    opacity: 1;
+}
+
+#thinking-label {
+    color:      $text-muted;
+    text-style: dim;
+}
+
+#dashboard-token-usage {
+    color:      $text-muted;
+    height:     1;
+    padding:    0 2;
+    text-style: dim;
+}
+
+/* ── Input bar ───────────────────────────────────────────────── */
+
+#input-bar {
+    height:     auto;
+    layout:     horizontal;
+    background: $panel;
+    border-top: solid $primary-darken-2;
+    padding:    0 1;
+    align:      left middle;
+}
+
+#input-prompt {
+    width:      2;
+    height:     1;
+    color:      $accent;
+    text-style: bold;
+}
+
+#input-prompt.--busy {
+    color:      $text-muted;
+    text-style: dim;
+}
+
+#message-input {
+    width:      1fr;
+    height:     3;
+    background: $surface;
+    border:     tall $primary-darken-2;
+    color:      $text;
+    padding:    0 1;
+}
+
+#message-input:focus {
+    border: tall $accent;
+}
+
+#message-input:disabled {
+    color: $text-muted;
+}
+
+#message-input.--hidden,
+#message-editor.--hidden {
+    display: none;
+}
+
+#message-editor {
+    width:      1fr;
+    min-height: 5;
+    max-height: 12;
+    background: $surface;
+    border:     tall $primary-darken-2;
+    color:      $text;
+}
+
+#message-editor:focus {
+    border: tall $accent;
+}
+
+ChatSearchBar {
+    height: auto;
+    background: $panel;
+    border-bottom: solid $primary-darken-2;
+    padding: 0 2;
+}
+
+.chat-search-row {
+    height: auto;
+    align: left middle;
+}
+
+.chat-search-icon {
+    width: auto;
+    color: $accent;
+    text-style: bold;
+    margin-right: 1;
+}
+
+.chat-search-hint {
+    width: auto;
+    color: $text-muted;
+    text-style: dim;
+    margin-left: 1;
+}
+
+#input-mode-label {
+    width:      10;
+    color:      $text-muted;
+    text-style: dim;
+    align:      right middle;
+}
+
+#char-count {
+    width:      5;
+    height:     1;
+    color:      $text-muted;
+    text-style: dim;
+    align:      right middle;
+}
+
+/* ── Tasks tab ───────────────────────────────────────────────── */
+
+#tasks-tab  { height: 1fr; }
+#tasks-body { layout: horizontal; height: 1fr; }
+
+#task-list-panel {
+    width: 26;
+}
+
+#task-filter-bar {
+    height:        3;
+    background:    $panel;
+    border-right:  solid $primary-darken-2;
+    border-bottom: solid $primary-darken-2;
+    padding:       0 1;
+    align:         left middle;
+}
+
+.task-filter-btn {
+    min-width:  0;
+    width:      auto;
+    margin:     0 1 0 0;
+    background: $surface;
+    border:     solid $primary-darken-2;
+    color:      $text-muted;
+}
+
+.task-filter-btn.--selected {
+    color:      $accent;
+    border:     solid $accent;
+    text-style: bold;
+}
+
+#task-list {
+    width:        26;
+    border-right: solid $primary-darken-2;
+    background:   $panel;
+    overflow-y:   auto;
+}
+
+#task-detail {
+    width:      1fr;
+    overflow-y: auto;
+    padding:    1 2;
+}
+
+.task-item     { padding: 0 1; height: 1; color: $text; }
+.task-item.selected {
+    border-left: solid $accent;
+    background: $primary-darken-2;
+}
+.task-active   { color: $success; text-style: bold; }
+.task-waiting  { color: $warning; }
+.task-done     { color: $text-muted; text-style: dim; }
+.task-canceled { color: $error;   text-style: dim; }
+.task-due-overdue { border-right: solid $error; }
+.task-due-today   { border-right: solid $warning; }
+.task-due-future  { border-right: solid $primary-darken-2; }
+
+.task-detail-title { text-style: bold; color: $text;      margin-bottom: 0; }
+.task-detail-desc  { color: $text-muted; padding: 0 0 1 0; }
+.task-detail-meta  { color: $text-muted; text-style: dim; }
+
+.step-row    { padding: 0 1; color: $text; }
+.step-done   { color: $text-muted; text-style: dim; }
+.step-active { color: $success;    text-style: bold; }
+.step-failed { color: $error; }
+.step-blocked{ color: $warning; }
+
+.pending-action {
+    margin:      1 0;
+    padding:     1;
+    border-left: solid $warning;
+    background:  $panel;
+    color:       $warning;
+}
+
+.pending-action-copy {
+    color: $warning;
+}
+
+.pending-action-buttons {
+    height: 3;
+    margin-top: 1;
+}
+
+/* ── Cron tab ────────────────────────────────────────────────── */
+
+#cron-tab  { height: 1fr; }
+#cron-body { layout: horizontal; height: 1fr; }
+
+#cron-list {
+    width:        26;
+    border-right: solid $primary-darken-2;
+    background:   $panel;
+    overflow-y:   auto;
+}
+
+#cron-detail {
+    width:      1fr;
+    overflow-y: auto;
+    padding:    1 2;
+}
+
+.cron-item     { padding: 0 1; margin-bottom: 1; border-left: solid transparent; }
+.cron-item.selected {
+    border-left: solid $accent;
+    background: $primary-darken-2;
+}
+.cron-enabled  { color: $text; }
+.cron-disabled { color: $text-muted; text-style: dim; }
+
+.run-row     { padding: 0 1; color: $text-muted; text-style: dim; }
+.run-success { color: $success; text-style: none; }
+.run-failed  { color: $error; }
+.run-timeout { color: $warning; }
+
+.cron-toggle-btn {
+    margin: 1 0;
+}
+
+/* ── Sessions tab ────────────────────────────────────────────── */
+
+#sessions-tab  { height: 1fr; }
+#sessions-body { layout: horizontal; height: 1fr; }
+
+#sessions-list {
+    width:        24;
+    border-right: solid $primary-darken-2;
+    background:   $panel;
+    overflow-y:   auto;
+}
+
+#sessions-search {
+    width:         100%;
+    border:        none;
+    border-bottom: solid $primary-darken-2;
+    background:    $panel;
+    height:        2;
+}
+
+#sessions-right {
+    width:      1fr;
+    height:     1fr;
+}
+
+.session-detail {
+    height:         auto;
+    border-left:    solid $accent;
+    padding:        0 1;
+    margin:         1 2 0 2;
+}
+
+.session-detail-text {
+    color: $text;
+    height: auto;
+}
+
+#sessions-timeline {
+    width:      100%;
+    overflow-y: auto;
+    padding:    1 2;
+}
+
+#sessions-filter-bar {
+    height:        3;
+    margin-bottom: 1;
+    align:         left middle;
+}
+
+.timeline-filter-btn {
+    min-width:  0;
+    width:      auto;
+    margin:     0 1 0 0;
+    background: $surface;
+    border:     solid $primary-darken-2;
+    color:      $text-muted;
+}
+
+.timeline-filter-btn.--selected {
+    color:      $accent;
+    border:     solid $accent;
+    text-style: bold;
+}
+
+.session-row       { padding: 0 1; height: 1; color: $text; }
+.session-row.selected {
+    border-left: solid $accent;
+    background: $primary-darken-2;
+}
+.session-row:hover { background: $primary-darken-2; }
+.session-age-fresh  { color: $accent; }
+.session-age-normal { color: $text; }
+.session-age-stale  { color: $text-muted; text-style: dim; }
+
+.event-row { color: $text-muted; text-style: dim; }
+
+/* ── System tab ──────────────────────────────────────────────── */
+
+#system-tab  { height: 1fr; }
+#system-body { layout: horizontal; height: 1fr; }
+#system-body.--stacked { layout: vertical; }
+
+#system-left, #system-right {
+    width:      1fr;
+    overflow-y: auto;
+    padding:    1 2;
+}
+
+.info-block {
+    margin-bottom: 2;
+    color:         $text;
+    padding:       1;
+    background:    $panel;
+    border-left:   solid $accent;
+}
+
+.info-block-title {
+    color: $text;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.info-row {
+    layout: horizontal;
+    height: auto;
+}
+
+.info-row-key {
+    width: 20;
+    color: $text-muted;
+}
+
+.info-row-value {
+    width: 1fr;
+    color: $text;
+}
+
+.system-sidecar-actions {
+    margin-top: 1;
+    height: auto;
+}
+
+/* ── Policy tab ──────────────────────────────────────────────── */
+
+#policy-tab  { height: 1fr; }
+#policy-body { layout: horizontal; height: 1fr; }
+#policy-body.--stacked { layout: vertical; }
+
+#policy-left {
+    width:        32;
+    border-right: solid $primary-darken-2;
+    background:   $panel;
+    overflow-y:   auto;
+    padding:      0 1;
+}
+
+#policy-right {
+    width:      1fr;
+    overflow-y: auto;
+    padding:    1 2;
+}
+
+.policy-row        { padding: 0 1; height: auto; color: $text; margin-bottom: 1; }
+.policy-risk-high  { color: $error;   text-style: bold; }
+.policy-risk-medium{ color: $warning; }
+.policy-risk-low   { color: $success; }
+
+.grant-row {
+    height:       auto;
+    padding:      0 0 1 0;
+    border-bottom: solid $primary-darken-2;
+    margin-bottom: 1;
+}
+
+.grant-row-body {
+    layout: horizontal;
+    width:  100%;
+    align:  left middle;
+}
+
+.grant-copy {
+    width:  1fr;
+    color:  $success;
+    padding: 0 1 0 0;
+}
+
+.history-row { color: $text-muted; text-style: dim; }
+.history-allow  { color: $success; text-style: none; }
+.history-deny   { color: $error; }
+.history-pending{ color: $warning; }
+
+/* ── Memory tab ──────────────────────────────────────────────── */
+
+#memory-tab  { height: 1fr; }
+#memory-body { layout: horizontal; height: 1fr; }
+
+#memory-list {
+    width:        38;
+    border-right: solid $primary-darken-2;
+    background:   $panel;
+    overflow-y:   auto;
+}
+
+#memory-search {
+    width:         100%;
+    border:        none;
+    border-bottom: solid $primary-darken-2;
+    background:    $panel;
+    height:        2;
+}
+
+#memory-candidates {
+    width:      1fr;
+    overflow-y: auto;
+    padding:    1 2;
+}
+
+.memory-row      { padding: 0 1; height: 1; color: $text; }
+.memory-row.selected {
+    border-left: solid $accent;
+    background: $primary-darken-2;
+}
+.memory-episodic { color: $text; }
+.memory-semantic { color: $accent; }
+.memory-working  { color: $warning; }
+
+.memory-detail-body {
+    color:      $text;
+    background: $panel;
+    padding:    1;
+    margin-bottom: 1;
+}
+
+.memory-detail-meta {
+    color:      $text-muted;
+    text-style: dim;
+    margin-bottom: 1;
+}
+
+.candidate-row { color: $text-muted; padding: 0 1; text-style: dim; }
+
+/* ── Third-brain tab ─────────────────────────────────────────── */
+
+#third-brain-tab { height: 1fr; }
+#third-brain-shell { height: 1fr; }
+#third-brain-toolbar {
+    height: auto;
+    padding: 1 1 0 1;
+    background: $panel;
+}
+
+#third-brain-query {
+    width: 1fr;
+}
+
+#third-brain-target {
+    width: 36;
+    margin-left: 1;
+}
+
+#third-brain-target.--hidden {
+    display: none;
+}
+
+#third-brain-mode-strip,
+#third-brain-provider-strip,
+#third-brain-action-strip,
+#third-brain-inspector-strip {
+    height: auto;
+}
+
+#third-brain-mode-strip {
+    margin-left: 1;
+}
+
+#third-brain-provider-strip {
+    padding: 0 1 1 1;
+    background: $panel;
+    border-bottom: solid $primary-darken-2;
+}
+
+.third-brain-provider-chip,
+.third-brain-mode-btn,
+.third-brain-inspector-btn,
+#third-brain-save-view,
+#third-brain-delete-view {
+    width: auto;
+    min-width: 0;
+    margin-right: 1;
+}
+
+.third-brain-provider-chip.--selected,
+.third-brain-mode-btn.--selected,
+.third-brain-inspector-btn.--selected {
+    background: $primary;
+    color: $text;
+    text-style: bold;
+}
+
+.third-brain-provider-chip.--warning,
+.third-brain-mode-btn.--disabled {
+    color: $warning;
+}
+
+#third-brain-error {
+    color: $error;
+    background: $error 10%;
+    border: tall $error;
+    margin: 0 1 1 1;
+    padding: 0 1;
+}
+
+#third-brain-body { layout: horizontal; height: 1fr; }
+
+#third-brain-left {
+    width: 42;
+    border-right: solid $primary-darken-2;
+    background: $panel;
+    overflow-y: auto;
+    padding: 0 1 1 1;
+}
+
+#third-brain-right {
+    width: 1fr;
+    overflow-y: auto;
+    padding: 1 2;
+}
+
+.third-brain-row,
+.third-brain-saved-row,
+.third-brain-change-row,
+.third-brain-history-row,
+.third-brain-status-row {
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.third-brain-row {
+    color: $text;
+    border-left: tall transparent;
+}
+
+.third-brain-saved-row {
+    color: $text-muted;
+    text-style: dim;
+    border-left: tall transparent;
+}
+
+.third-brain-change-row,
+.third-brain-history-row,
+.third-brain-status-row {
+    color: $text-muted;
+    text-style: dim;
+}
+
+.third-brain-row.selected,
+.third-brain-saved-row.selected {
+    border-left: tall $accent;
+    background: $primary-darken-2;
+}
+
+#third-brain-summary {
+    background: $panel;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+#third-brain-inspector-text {
+    background: $panel;
+    padding: 1;
+    min-height: 12;
+}
+
+/* ── Monitor tab ─────────────────────────────────────────────── */
+
+#monitor-tab  { height: 1fr; }
+#monitor-body { layout: vertical; height: 1fr; overflow-y: auto; padding: 1 2; }
+
+.monitor-grid {
+    width:  100%;
+    height: auto;
+}
+
+.monitor-col {
+    width:  1fr;
+    height: auto;
+    padding: 0 2;
+}
+
+.monitor-block {
+    height:        auto;
+    margin-bottom: 1;
+    padding:       0 0 1 0;
+    border-left:   solid $accent;
+    padding-left:  1;
+}
+
+.monitor-block-title {
+    color:      $text;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.monitor-bar {
+    height: 1;
+}
+
+.monitor-bar-ok       { color: $success; }
+.monitor-bar-warning  { color: $warning; }
+.monitor-bar-critical { color: $error; }
+
+.monitor-row {
+    layout: horizontal;
+    color:  $text-muted;
+    height: auto;
+}
+
+.monitor-row-key {
+    width: 14;
+    color: $text-muted;
+}
+
+.monitor-row-value {
+    width: 1fr;
+    color: $text;
+}
+
+.monitor-timestamp {
+    color:      $text-muted;
+    text-style: dim italic;
+    text-align: right;
+    height:     1;
+    margin-bottom: 1;
+}
+
+/* ── Agents tab ──────────────────────────────────────────────── */
+
+#agents-tab   { height: 1fr; }
+#agents-body  { height: 1fr; width: 100%; }
+#agents-body.--stacked { layout: vertical; }
+
+#agents-list-panel {
+    width:      28;
+    min-width:  24;
+    height:     1fr;
+    border-right: solid $primary-darken-2;
+}
+
+#agents-list {
+    height:     1fr;
+    overflow-y: auto;
+}
+
+.agent-row {
+    height:  1;
+    padding: 0 1;
+    color:   $text;
+    overflow: hidden;
+}
+.agent-row:hover  { background: $primary-lighten-1; }
+.agent-row.selected {
+    background: $accent-darken-2;
+    color:      $text;
+    text-style: bold;
+}
+
+.agent-row-body {
+    layout: horizontal;
+    height: 1;
+}
+
+.agent-row-hot {
+    width: 9;
+    color: $text-muted;
+}
+
+.agent-row-name {
+    width: 1fr;
+    color: $text;
+    overflow: hidden;
+}
+
+.agent-row-provider {
+    width: 10;
+    color: $text-muted;
+    text-align: right;
+    overflow: hidden;
+}
+
+.agents-new-btn {
+    margin: 1 1;
+    width:  auto;
+}
+
+#agents-detail {
+    width:      1fr;
+    height:     1fr;
+    overflow-y: auto;
+    padding:    1 2;
+}
+
+.profile-section {
+    height:        auto;
+    margin-bottom: 1;
+    padding:       0 0 0 1;
+    border-left:   solid $accent;
+}
+
+.profile-section-title {
+    color:      $text;
+    text-style: bold;
+    margin-bottom: 0;
+}
+
+.profile-section-row {
+    layout: horizontal;
+    color:  $text-muted;
+    height: auto;
+}
+
+.profile-section-key {
+    width: 16;
+    color: $text-muted;
+}
+
+.profile-section-value {
+    width: 1fr;
+    color: $text;
+}
+
+.tool-allowed { color: $success; height: 1; }
+.tool-blocked { color: $error;   height: 1; }
+
+.agents-actions {
+    height:     auto;
+    margin-top: 1;
+}
+
+#edit-profile-modal {
+    align:      center middle;
+    width:      60;
+    max-height: 80%;
+    background: $surface;
+    border:     solid $accent;
+    padding:    1 2;
+    overflow-y: auto;
+}
+
+#edit-profile-buttons {
+    margin-top: 1;
+    height:     auto;
+}
+
+#new-agent-modal, #confirm-delete-modal, #identity-preview-modal {
+    align:      center middle;
+    width:      50;
+    height:     auto;
+    background: $surface;
+    border:     solid $accent;
+    padding:    1 2;
+}
+
+#identity-preview-modal {
+    width:      72;
+    max-height: 85%;
+    overflow-y: auto;
+}
+
+#identity-preview-text {
+    width:      100%;
+    height:     auto;
+    padding:    0 1;
+}
+
+.modal-title {
+    text-style: bold;
+    color:      $text;
+    margin-bottom: 1;
+}
+
+#new-agent-buttons, #confirm-delete-buttons {
+    margin-top: 1;
+    height:     auto;
+}
+
+/* ── Shared helpers ──────────────────────────────────────────── */
+
+.dim-hint {
+    color:      $text-muted;
+    text-style: italic dim;
+    padding:    1 2;
+}
+
+.tab-empty-notice {
+    color:      $text-muted;
+    text-style: italic dim;
+    padding:    2 4;
+    width:      100%;
+    height:     100%;
+    content-align: center middle;
+}
+
+.empty-state-pulse {
+    width: 100%;
+    height: auto;
+    align: center middle;
+    margin-top: 2;
+}
+
+.empty-state-pulse-label {
+    color: $accent;
+    text-style: bold;
+    width: 100%;
+    text-align: center;
+}
+
+.tab-loading-indicator {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+#header-demo-badge {
+    color:       $warning;
+    text-style:  bold;
+    padding:     0 1;
+}
+
+/* ── Help overlay ────────────────────────────────────────────── */
+
+#help-overlay {
+    align:      center middle;
+    background: $surface 80%;
+}
+
+#help-dialog {
+    width:      60;
+    height:     auto;
+    max-height: 85%;
+    background: $panel;
+    border:     solid $accent;
+    padding:    1 2;
+}
+
+#help-title {
+    text-style: bold;
+    color:      $accent;
+    margin-bottom: 1;
+}
+
+.help-section {
+    color:      $text-muted;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.help-row {
+    color:   $text;
+    padding: 0 1;
+}
+
+/* ── Session picker modal ──────────────────────────────────── */
+
+SessionPickerModal {
+    align:      center middle;
+    background: $surface 80%;
+}
+
+#picker-dialog {
+    width:      64;
+    max-height: 80%;
+    background: $panel;
+    border:     solid $accent;
+    padding:    1 2;
+}
+
+#picker-title {
+    color:      $text;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.picker-row {
+    height:  1;
+    padding: 0 1;
+    color:   $text;
+}
+
+.picker-row.picker-selected {
+    background: $accent;
+    color:      $background;
+    text-style: bold;
+}
+
+.picker-new-option {
+    color:      $accent;
+    text-style: bold;
+    margin-top: 1;
+}
+
+/* ── Rename modal ─────────────────────────────────────────── */
+
+#rename-dialog {
+    width:      auto;
+    min-width:  40;
+    max-width:  90%;
+    background: $panel;
+    border:     solid $accent;
+    padding:    1 2;
+}
+
+#rename-title {
+    color:      $text;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#grant-confirm-dialog {
+    width:      auto;
+    min-width:  40;
+    max-width:  90%;
+    background: $panel;
+    border:     solid $accent;
+    padding:    1 2;
+}
+
+#delete-session-dialog,
+#trust-modal,
+#artifacts-modal,
+#new-agent-modal,
+#confirm-delete-modal,
+#identity-preview-modal,
+#edit-profile-modal,
+#agent-switch-dialog,
+#palette-dialog,
+#help-dialog,
+#onboarding-dialog {
+    width: auto;
+    min-width: 40;
+    max-width: 90%;
+}
+
+#delete-session-dialog {
+    background: $panel;
+    border: solid $accent;
+    padding: 1 2;
+}
+
+#delete-session-buttons,
+#trust-modal-buttons,
+#onboarding-buttons {
+    height: auto;
+    margin-top: 1;
+}
+
+#grant-confirm-title {
+    color:      $text;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#grant-confirm-buttons {
+    height: 3;
+    align:  right middle;
+}
+
+/* ── Agent switch modal ─────────────────────────────────────── */
+
+#agent-switch-overlay {
+    align:      center middle;
+    background: $surface 80%;
+}
+
+#agent-switch-dialog {
+    width:      60;
+    max-height: 80%;
+    background: $panel;
+    border:     solid $accent;
+    padding:    1 2;
+}
+
+#agent-switch-title {
+    color:      $text;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#agent-switch-list {
+    margin-bottom: 1;
+}
+
+#agent-switch-hint {
+    color:      $text-muted;
+    text-style: dim;
+}
+
+/* ── Command palette (Phase 3) ───────────────────────────────── */
+
+#palette-overlay {
+    align:      center top;
+    padding-top: 3;
+    background: $surface 70%;
+}
+
+#palette-dialog {
+    height:     auto;
+    max-height: 50%;
+    background: $panel;
+    border:     solid $accent;
+    padding:    0;
+}
+
+#onboarding-overlay {
+    align: center middle;
+    background: $surface 80%;
+}
+
+#onboarding-dialog {
+    background: $panel;
+    border: solid $accent;
+    padding: 1 2;
+}
+
+.wizard-step.--hidden {
+    display: none;
+}
+
+#main-screen-stack {
+    height: 1fr;
+}
+
+#debug-pane {
+    height: 30%;
+    min-height: 8;
+    background: $panel;
+    border-top: solid $primary-darken-2;
+    padding: 0 1;
+}
+
+#debug-pane.--hidden {
+    display: none;
+}
+
+#debug-filter-bar {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.debug-filter-btn {
+    min-width: 0;
+    width: auto;
+    margin: 0 1 0 0;
+    background: $surface;
+    border: solid $primary-darken-2;
+    color: $text-muted;
+}
+
+.debug-filter-btn.--selected {
+    color: $accent;
+    border: solid $accent;
+    text-style: bold;
+}
+
+.agent-row:focus,
+.session-row:focus,
+.memory-row:focus,
+.cron-item:focus,
+.task-row:focus,
+.policy-row:focus,
+.grant-row:focus,
+.sidebar-item:focus {
+    background: $accent 15%;
+}
+
+Input:focus,
+TextArea:focus {
+    border: tall $accent;
+}
+
+#sessions-body.--stacked,
+#policy-body.--stacked,
+#system-body.--stacked,
+#agents-body.--stacked,
+#tasks-body.--stacked,
+#cron-body.--stacked,
+#memory-body.--stacked,
+#third-brain-body.--stacked {
+    layout: vertical;
+}
+
+#palette-input {
+    width:         100%;
+    height:        3;
+    border:        none;
+    border-bottom: solid $primary-darken-2;
+    padding:       0 1;
+    background:    $panel;
+}
+
+#palette-results {
+    height:     auto;
+    max-height: 20;
+    overflow-y: auto;
+}
+
+.palette-item { height: 1; padding: 0 2; color: $text; }
+.palette-item:hover    { background: $primary-darken-2; }
+.palette-item.--focused{ background: $accent; color: $background; }
+
+#palette-list {
+    height:     auto;
+    max-height: 18;
+}
+
+/* ── Chat search bar ───────────────────────────────────────── */
+
+ChatSearchBar {
+    height:        auto;
+    background:    $panel;
+    border-bottom: solid $primary-darken-2;
+}
+
+.chat-search-row {
+    height:  1;
+    padding: 0 1;
+    align:   left middle;
+}
+
+.chat-search-icon {
+    color:      $text-muted;
+    width:      auto;
+    margin-right: 1;
+}
+
+.chat-search-hint {
+    color:      $text-muted;
+    text-style: dim italic;
+    width:      auto;
+    margin-left: 1;
+}
+
+#chat-search-input {
+    width:      1fr;
+    border:     none;
+    height:     1;
+    background: $panel;
+}
+
+/* ── Sidebar preview ───────────────────────────────────────── */
+
+.sidebar-preview {
+    color:      $text-muted;
+    text-style: dim italic;
+    padding:    1 1;
+    border-top: solid $primary-darken-2;
+    height:     auto;
+    max-height: 6;
+}
+
+.sidebar-preview.--hidden {
+    display: none;
+}
+
+/* ── Sidebar sparkle ───────────────────────────────────────── */
+
+.sidebar-sparkle {
+    color:      $text-muted;
+    text-style: dim;
+    padding:    0 1;
+    height:     1;
+    text-align: center;
+}
+
+/* ── Shared tool-block widget (used by both TUI shells) ──── */
+
+.focus-tool-block {
+    border:  round $panel;
+    margin:  1 0;
+    padding: 0 1;
+    height:  auto;
+}
+
+.focus-tool-block-title {
+    text-style: bold;
+}
+
+.focus-tool-block-body {
+    padding-top: 1;
+    height:      auto;
+}
+
+/* ── Shared chat-row selection (Phase 6, both TUI shells) ── */
+
+.message.--selected {
+    background: $accent 15%;
+    border-left: tall $accent;
+}
+
+.message.--selected .message-header-main {
+    text-style: bold;
+}
+
+/* ── Session-type tag coloring (Phase 7, TUIDS-10) ── */
+
+.sidebar-item.--stype-default {
+    color: $text-muted;
+}
+
+.sidebar-item.--stype-named {
+    color: $accent;
+}
+
+.sidebar-item.--stype-focus,
+.sidebar-item.--stype-room {
+    color: $text-muted;
+    text-style: dim;
+}
+
+.sidebar-item.--stype-other {
+    color: $text-muted;
+    text-style: dim italic;
+}
+
+.sidebar-item.--empty {
+    color: $text-muted;
+    text-style: dim italic;
+}

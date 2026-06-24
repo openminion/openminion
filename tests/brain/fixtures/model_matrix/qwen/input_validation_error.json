@@ -1,0 +1,11 @@
+{
+  "family": "qwen",
+  "kind": "provider_error_signature",
+  "case_id": "input_validation_error",
+  "positive": false,
+  "error": {
+    "code": "BAD_REQUEST",
+    "message": "Input validation error"
+  },
+  "expected_signature": "input_validation"
+}

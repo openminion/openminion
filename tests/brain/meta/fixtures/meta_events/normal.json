@@ -1,0 +1,27 @@
+{
+    "description": "NORMAL state — default low-risk metrics",
+    "meta_metrics": {
+        "session_id": "sess-001",
+        "agent_id": "agent-001",
+        "trace_id": "trace-001",
+        "risk_class": "low",
+        "risk_score": 10,
+        "intent_confidence": 0.9,
+        "grounding_confidence": 0.95,
+        "recent_failures": 0,
+        "loop_count": 0,
+        "replan_count": 0,
+        "budget_remaining": 0.9,
+        "user_kill_requested": false,
+        "needs_clarification": false,
+        "irreversible": false,
+        "requires_side_effects": false
+    },
+    "expected_meta_state": "NORMAL",
+    "expected_directive": {
+        "override_next_state": null,
+        "tier_override": null,
+        "require_confirmation": false,
+        "require_verification": false
+    }
+}

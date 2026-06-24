@@ -1,0 +1,25 @@
+DEFAULT_PLAYWRIGHT_PERSISTENT_USER_DATA_DIR = (
+    "${data_root}/browser-playwright/profiles/default"
+)
+DEFAULT_PLAYWRIGHT_DOWNLOADS_DIR = "${data_root}/browser-playwright/downloads"
+DEFAULT_PLAYWRIGHT_ARTIFACTS_ROOT_DIR = "${data_root}/browser-playwright/artifacts"
+DEFAULT_PLAYWRIGHT_SCREENSHOTS_DIR = "${artifacts.root_dir}/screenshots"
+DEFAULT_PLAYWRIGHT_PDF_DIR = "${artifacts.root_dir}/pdf"
+DEFAULT_PLAYWRIGHT_TRACES_DIR = "${artifacts.root_dir}/traces"
+DEFAULT_PLAYWRIGHT_WORKSPACE_ARTIFACTS_SUBPATH = (
+    ".openminion/browser-playwright/artifacts"
+)
+DEFAULT_PLAYWRIGHT_WORKSPACE_DOWNLOADS_SUBPATH = (
+    ".openminion/browser-playwright/downloads"
+)
+
+__all__ = [
+    "DEFAULT_PLAYWRIGHT_ARTIFACTS_ROOT_DIR",
+    "DEFAULT_PLAYWRIGHT_DOWNLOADS_DIR",
+    "DEFAULT_PLAYWRIGHT_PDF_DIR",
+    "DEFAULT_PLAYWRIGHT_PERSISTENT_USER_DATA_DIR",
+    "DEFAULT_PLAYWRIGHT_SCREENSHOTS_DIR",
+    "DEFAULT_PLAYWRIGHT_TRACES_DIR",
+    "DEFAULT_PLAYWRIGHT_WORKSPACE_ARTIFACTS_SUBPATH",
+    "DEFAULT_PLAYWRIGHT_WORKSPACE_DOWNLOADS_SUBPATH",
+]

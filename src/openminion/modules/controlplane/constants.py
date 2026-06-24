@@ -1,0 +1,37 @@
+from pathlib import Path
+
+from openminion.base.constants import (
+    OPENMINION_DATA_ROOT_ENV,
+    OPENMINION_MODULE_STANDALONE_ENV,
+)
+from openminion.modules.paths import (
+    CONTROLPLANE_DIRNAME,
+    STANDALONE_CONTROLPLANE_DIRNAME,
+)
+
+DEFAULT_MINIMAL_SCOPES: tuple[str, ...] = (
+    "cp.message.read",
+    "cp.message.write",
+    "session.read",
+    "session.write",
+    "run.start",
+)
+
+PRINCIPAL_BINDING_STATUS_ACTIVE = "active"
+PRINCIPAL_BINDING_STATUS_INACTIVE = "inactive"
+AUTH_ROLE_UNPAIRED = "unpaired"
+
+# Path Layout
+DEFAULT_STANDALONE_SQLITE_SUBPATH = Path(STANDALONE_CONTROLPLANE_DIRNAME) / "cp.db"
+DEFAULT_INTEGRATED_SQLITE_SUBPATH = Path(CONTROLPLANE_DIRNAME) / "cp.db"
+
+__all__ = [
+    "AUTH_ROLE_UNPAIRED",
+    "DEFAULT_INTEGRATED_SQLITE_SUBPATH",
+    "DEFAULT_MINIMAL_SCOPES",
+    "DEFAULT_STANDALONE_SQLITE_SUBPATH",
+    "OPENMINION_DATA_ROOT_ENV",
+    "OPENMINION_MODULE_STANDALONE_ENV",
+    "PRINCIPAL_BINDING_STATUS_ACTIVE",
+    "PRINCIPAL_BINDING_STATUS_INACTIVE",
+]

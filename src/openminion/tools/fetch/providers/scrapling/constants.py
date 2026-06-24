@@ -1,0 +1,3 @@
+FETCH_SCRAPLING_PROVIDER_ID = "scrapling"
+
+__all__ = ["FETCH_SCRAPLING_PROVIDER_ID"]

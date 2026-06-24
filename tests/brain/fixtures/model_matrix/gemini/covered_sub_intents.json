@@ -1,0 +1,26 @@
+{
+  "family": "gemini",
+  "kind": "decision_validation",
+  "case_id": "covered_sub_intents",
+  "positive": true,
+  "decision": {
+    "mode": "plan",
+    "confidence": 0.74,
+    "reason_code": "web_search",
+    "sub_intents": [
+      "web_search"
+    ],
+    "plan_hint": "Run a search before responding.",
+    "plan_strategy": "sequential"
+  },
+  "commands": [
+    {
+      "kind": "tool",
+      "tool_name": "web.search",
+      "args": {
+        "query": "latest news on Iran"
+      },
+      "title": "Search current news"
+    }
+  ]
+}

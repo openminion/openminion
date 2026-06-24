@@ -1,0 +1,50 @@
+MODULE_ID = "thinking"
+
+THINKING_REASONING_PROFILE_OFF = "off"
+THINKING_REASONING_PROFILE_MINIMAL = "minimal"
+THINKING_REASONING_PROFILE_DETAILED = "detailed"
+THINKING_REASONING_PROFILES = (
+    THINKING_REASONING_PROFILE_OFF,
+    THINKING_REASONING_PROFILE_MINIMAL,
+    THINKING_REASONING_PROFILE_DETAILED,
+)
+
+THINKING_SOURCE_CAPABILITY_DEFINITION = "capability_definition"
+THINKING_SOURCE_SYSTEM_RUNTIME = "system_runtime"
+THINKING_SOURCE_AGENT_RUNTIME = "agent_runtime"
+THINKING_SOURCE_INVOCATION_OVERRIDE = "invocation_override"
+THINKING_SOURCE_MODE_POLICY = "mode_policy"
+
+THINKING_DEGRADE_UNKNOWN_PROFILE = "unknown_reasoning_profile_normalized"
+THINKING_DEGRADE_PROVIDER_UNSUPPORTED = "provider_effort_unsupported"
+THINKING_DEGRADE_MODE_CLAMP = "mode_policy_clamp"
+THINKING_DEGRADE_REQUEST_OVERRIDE_BLOCKED = "request_override_blocked_by_mode"
+
+THINKING_METADATA_REQUESTED_PROFILE = "thinking_requested_profile"
+THINKING_METADATA_REASONING_PROFILE = "thinking_reasoning_profile"
+THINKING_METADATA_PROVIDER_EFFORT = "thinking_provider_effort"
+THINKING_METADATA_SOURCE_LAYER = "thinking_source_layer"
+THINKING_METADATA_SUPPORTED = "thinking_supported"
+THINKING_METADATA_DEGRADED_REASON = "thinking_degraded_reason"
+THINKING_METADATA_PROVIDER = "thinking_provider"
+THINKING_METADATA_MODEL = "thinking_model"
+
+THINKING_HINT_REQUESTED_PROFILE = "thinking_requested_profile"
+THINKING_HINT_EFFECTIVE_PROFILE = "thinking_effective_profile"
+THINKING_HINT_PROVIDER_EFFORT = "thinking_provider_effort"
+THINKING_HINT_SOURCE_LAYER = "thinking_source_layer"
+THINKING_HINT_DEGRADED_REASON = "thinking_degraded_reason"
+THINKING_HINT_SUPPORTED = "thinking_supported"
+
+THINKING_SUPPORTED_PROVIDER_NAMES = frozenset(
+    {
+        "anthropic",
+        "cerebras",
+        "cortensor",
+        "echo",
+        "groq",
+        "ollama",
+        "openai",
+        "openrouter",
+    }
+)

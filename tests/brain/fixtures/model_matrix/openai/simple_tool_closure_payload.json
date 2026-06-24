@@ -1,0 +1,19 @@
+{
+  "family": "openai",
+  "kind": "structured_response",
+  "case_id": "simple_tool_closure_payload",
+  "positive": false,
+  "model_name": "openai/gpt-5.4",
+  "response": {
+    "tool_calls": [
+      {
+        "name": "submit_output",
+        "arguments": {
+          "next_action": "replan",
+          "reason": "Need to reconsider the approach before executing a tool."
+        }
+      }
+    ],
+    "output_text": ""
+  }
+}

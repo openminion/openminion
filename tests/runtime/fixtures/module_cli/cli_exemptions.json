@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "policy": "module_cli_exemptions",
+  "exemptions": [
+    {
+      "module": "runtime",
+      "classification": "cli_exempt_internal",
+      "reason": "library only module with runtime helpers consumed by services; no operator facing CLI surface"
+    }
+  ]
+}

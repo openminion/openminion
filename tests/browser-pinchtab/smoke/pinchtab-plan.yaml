@@ -1,0 +1,61 @@
+# PinchTab smoke test plan for openminion-tool-browser-pinchtab
+#
+# Run with an active PinchTab bridge listening on PINCHTAB_URL (default localhost).
+# These commands are copy/paste ready and can be executed sequentially to
+# verify health, snapshot, and text flows end-to-end.
+version: 1
+metadata:
+  description: >-
+    Exercises browser.pinchtab.health, browser.pinchtab.instance_start (with headed mode),
+    browser.pinchtab.snapshot, and browser.pinchtab.text using a deterministic tab id.
+  prerequisites:
+    - PinchTab bridge running locally or reachable via PINCHTAB_URL.
+    - openminion-tool installed with openminion-tool-browser-pinchtab plugin available.
+    - Policy permitting WRITE_SAFE scope for browser.pinchtab.* tools.
+  environment:
+    PINCHTAB_URL: ${PINCHTAB_URL:-http://127.0.0.1:9867}
+    PINCHTAB_TOKEN: ${PINCHTAB_TOKEN:-""}
+    PINCHTAB_TAB_ID: ${PINCHTAB_TAB_ID:-smoke-tab-1}
+    PINCHTAB_MODE: ${PINCHTAB_MODE:-headed}
+steps:
+  - id: bridge-health
+    description: Ensure the PinchTab bridge reports healthy before running other checks.
+    command: |
+      openminion-tool call --json "{\"tool\":\"browser.pinchtab.health\",\"args\":{\"base_url\":\"${PINCHTAB_URL}\",\"token\":\"${PINCHTAB_TOKEN}\"}}"
+    expect:
+      - exit_code == 0
+      - output.ok is true
+      - output.data.ok is true
+  - id: create-instance
+    description: Start a new browse instance in the specified mode (defaults to headed).
+    command: |
+      openminion-tool call --json "{\"tool\":\"browser.pinchtab.instance_start\",\"args\":{\"base_url\":\"${PINCHTAB_URL}\",\"token\":\"${PINCHTAB_TOKEN}\",\"profile_id\":\"smoke-profile\",\"mode\":\"${PINCHTAB_MODE}\"}}"
+    expect:
+      - exit_code == 0
+      - output.ok is true
+      - output.data.instance_id is string
+  - id: capture-snapshot
+    description: Fetch a DOM snapshot and persist the artifact for review.
+    command: |
+      openminion-tool call --json "{\"tool\":\"browser.pinchtab.snapshot\",\"args\":{\"base_url\":\"${PINCHTAB_URL}\",\"token\":\"${PINCHTAB_TOKEN}\",\"tab_id\":\"${PINCHTAB_TAB_ID}\",\"summary_limit\":10,\"include_snapshot\":false}}"
+    expect:
+      - exit_code == 0
+      - output.ok is true
+      - output.data.summary | length > 0
+      - output.data.artifact_ref exists
+  - id: capture-text
+    description: Retrieve readable text for the same tab and store artifact + inline text.
+    command: |
+      openminion-tool call --json "{\"tool\":\"browser.pinchtab.text\",\"args\":{\"base_url\":\"${PINCHTAB_URL}\",\"token\":\"${PINCHTAB_TOKEN}\",\"tab_id\":\"${PINCHTAB_TAB_ID}\",\"mode\":\"readability\",\"include_text\":true}}"
+    expect:
+      - exit_code == 0
+      - output.ok is true
+      - output.data.mode == "readability"
+      - output.data.artifact_ref exists
+notes:
+  - The plan intentionally reuses a deterministic tab id so downstream
+    tooling can stub PinchTab responses. 
+  - The PINCHTAB_MODE defaults to 'headed' for local development and debugging.
+  - Set PINCHTAB_TOKEN only when targeting non-local bridges; local default
+    shells can keep it empty.
+  - Set PINCHTAB_MODE to 'headless' for environments without display, or unset it to omit the mode.

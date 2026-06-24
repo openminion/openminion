@@ -1,0 +1,7 @@
+interface:
+  display_name: Figma Code Connect Components
+  short_description: Connect Figma components to code implementations
+  default_prompt: Help me link Figma components to source code.
+dependencies:
+  tools:
+    - browser

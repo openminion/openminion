@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    env:
+      OPENMINION_HOME: ${{ github.workspace }}
+      OPENMINION_DATA_ROOT: ${{ github.workspace }}/.openminion
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Prepare lint workspace
+        shell: bash
+        run: |
+          mkdir -p .deps
+          [[ -d .deps/openminion-eval ]] || git clone --depth 1 https://github.com/openminion/openminion-eval .deps/openminion-eval
+
+      - name: Bootstrap repo venv
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/bin/python3.11 -m pip install --upgrade pip setuptools wheel
+          .venv/bin/python3.11 -m pip install -e ".[dev]"
+
+      - name: Run blocking lint gate
+        run: make lint
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+      fail-fast: false
+    env:
+      OPENMINION_HOME: ${{ github.workspace }}
+      OPENMINION_DATA_ROOT: ${{ github.workspace }}/.openminion
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Bootstrap repo venv (3.11 package suite)
+        if: matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/bin/python3.11 -m pip install --upgrade pip setuptools wheel
+          .venv/bin/python3.11 -m pip install -e ".[dev]"
+
+      - name: Install dependencies (3.12 smoke)
+        if: matrix.python-version == '3.12'
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[dev]"
+
+      - name: Run public API import smoke (3.11)
+        if: matrix.python-version == '3.11'
+        shell: bash
+        run: |
+          PYTHONPATH=src .venv/bin/python3.11 - <<'PY'
+          import openminion
+          from openminion import APIRuntime, Agent, OpenMinionConfig, tool
+          from openminion.api import dispatch_request
+
+          print(openminion.__version__)
+          print(
+              APIRuntime.__name__,
+              Agent.__name__,
+              OpenMinionConfig.__name__,
+              callable(tool),
+              callable(dispatch_request),
+          )
+          PY
+
+      - name: Compile examples (3.11)
+        if: matrix.python-version == '3.11'
+        run: |
+          .venv/bin/python3.11 -m compileall examples
+
+      - name: Run focused package regression suite (3.11)
+        if: matrix.python-version == '3.11'
+        run: |
+          PYTHONPATH=src .venv/bin/python3.11 -m pytest -q \
+            tests/test_verify_command.py \
+            tests/test_config_command.py \
+            tests/test_public_first_run_cli.py \
+            tests/test_package_layout.py \
+            tests/test_package_init_imports.py \
+            tests/test_package_metadata.py
+
+      - name: Run standalone CLI smoke (3.12)
+        if: matrix.python-version == '3.12'
+        shell: bash
+        run: |
+          tmpdir="$(mktemp -d)"
+          config="$tmpdir/config.json"
+          export OPENMINION_HOME="$tmpdir/home"
+          export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
+          mkdir -p "$OPENMINION_HOME"
+          python -m openminion --help >/dev/null
+          python - <<'PY'
+          import openminion
+          from openminion import APIRuntime, Agent, OpenMinionConfig, tool
+          from openminion.api import dispatch_request
+
+          print(openminion.__version__)
+          print(
+              APIRuntime.__name__,
+              Agent.__name__,
+              OpenMinionConfig.__name__,
+              callable(tool),
+              callable(dispatch_request),
+          )
+          PY
+          python -m openminion --config "$config" config init --provider echo --force
+          python -m openminion --config "$config" verify smoke
+          python -m openminion --config "$config" doctor --json
+          python -m openminion --config "$config" agent --message "hello"

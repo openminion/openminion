@@ -1,0 +1,44 @@
+{
+  "id": "065b7b2b38e2b3f0058e53b64d778f57",
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "content": "<think>The user wants me to research whether `uv` or `pipx` is better for installing Python CLI apps on macOS. Let me gather current information about both tools to make a fair comparison.\n\nI'll search for current information on both tools.</think>\n\n",
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "call_function_r9zbqs8zkx4y_1",
+            "type": "function",
+            "function": {
+              "name": "web.search",
+              "arguments": "{\"query\":\"uv vs pipx installing Python CLI apps macOS 2024 comparison\"}"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "created": 1779189806,
+  "model": "MiniMax-M2.7",
+  "object": "chat.completion",
+  "usage": {
+    "total_tokens": 1821,
+    "total_characters": 0,
+    "prompt_tokens": 1698,
+    "completion_tokens": 123,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  },
+  "input_sensitive": false,
+  "output_sensitive": false,
+  "input_sensitive_type": 0,
+  "output_sensitive_type": 0,
+  "output_sensitive_int": 0,
+  "base_resp": {
+    "status_code": 0,
+    "status_msg": "success"
+  }
+}

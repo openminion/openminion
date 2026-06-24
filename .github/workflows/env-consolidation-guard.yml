@@ -1,0 +1,40 @@
+name: env-consolidation-guard
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  env-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Enforce migrated-path env guard
+        env:
+          OPENMINION_ENV_GUARD_WARN: "1"
+        run: |
+          python scripts/validate/direct_env_calls.py \
+            --rules scripts/baselines/env_guard_rules.json \
+            --fail-on-violation

@@ -1,0 +1,9 @@
+interface:
+  display_name: Playwright
+  short_description: Run Playwright browser validation in Codex
+  default_prompt: Validate this web flow with Playwright.
+dependencies:
+  tools:
+    - browser
+  mcp_servers:
+    - playwright
