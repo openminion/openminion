@@ -67,6 +67,7 @@ class FocusStatusLine(Widget):
     permission_mode: reactive[str] = reactive("default")
     custom_label: reactive[str] = reactive("")
     agent_label: reactive[str] = reactive("")
+    queued_count: reactive[int] = reactive(0)
     input_state: reactive[str] = reactive("empty")
     tokens_severity: reactive[str] = reactive(TOKENS_SEVERITY_NORMAL)
 
@@ -88,6 +89,7 @@ class FocusStatusLine(Widget):
         permission_mode: str | None = None,
         custom: str | None = None,
         agent: str | None = None,
+        queued_count: int | None = None,
         input_state: str | None = None,
         tokens_severity: str | None = None,
     ) -> None:
@@ -118,6 +120,11 @@ class FocusStatusLine(Widget):
             self.custom_label = str(custom or "").strip()
         if agent is not None:
             self.agent_label = str(agent or "").strip()
+        if queued_count is not None:
+            try:
+                self.queued_count = max(0, int(queued_count))
+            except (TypeError, ValueError):
+                self.queued_count = 0
         if input_state is not None:
             normalized = str(input_state or "empty").strip().lower() or "empty"
             if normalized not in _INPUT_STATE_HINTS:
@@ -169,6 +176,9 @@ class FocusStatusLine(Widget):
     def watch_agent_label(self, _value: str) -> None:
         self._refresh()
 
+    def watch_queued_count(self, _value: int) -> None:
+        self._refresh()
+
     def watch_input_state(self, _value: str) -> None:
         self._refresh()
 
@@ -186,15 +196,34 @@ class FocusStatusLine(Widget):
         elapsed = self._format_elapsed(self.elapsed_seconds)
         if self.state == "tool":
             tool = self.tool_name or "tool"
-            return f"⚙ {tool}   {elapsed}   Esc cancel"
+            return self._compose_busy_text(f"⚙ {tool}", elapsed)
         if self.state == "responding":
-            return f"● responding   {elapsed}   Esc cancel"
+            return self._compose_busy_text("● responding", elapsed)
         return self._compose_idle_text()
+
+    def _compose_busy_text(self, label: str, elapsed: str) -> str:
+        segments = [label, elapsed]
+        segments.extend(self._rich_status_segments(include_agent=False))
+        if self.queued_count:
+            segments.append(f"queued: {self.queued_count}")
+        segments.append("Esc cancel")
+        return _SEGMENT_SEP.join(segments)
 
     def _compose_idle_text(self) -> str:
         """Return the idle-state line per spec §7.1 ordering."""
+        segments = self._rich_status_segments(include_agent=True)
+        prefix = _SEGMENT_SEP.join(segments)
+        suffix = _INPUT_STATE_HINTS.get(self.input_state, _IDLE_HINTS)
+        if self.usage_summary:
+            suffix = f"{suffix}   {self.usage_summary}"
+        if prefix:
+            return f"{prefix}   {suffix}"
+        return suffix
+
+    def _rich_status_segments(self, *, include_agent: bool) -> list[str]:
+        """Return stable runtime/status segments shared by idle and busy states."""
         segments: list[str] = []
-        if self.agent_label:
+        if include_agent and self.agent_label:
             segments.append(f"◆ {self.agent_label}")
         if self.model_label:
             segments.append(f"model: {self.model_label}")
@@ -215,13 +244,7 @@ class FocusStatusLine(Widget):
             segments.append(f"permissions: {self.permission_mode}")
         if self.custom_label:
             segments.append(f"status: {self.custom_label}")
-        prefix = _SEGMENT_SEP.join(segments)
-        suffix = _INPUT_STATE_HINTS.get(self.input_state, _IDLE_HINTS)
-        if self.usage_summary:
-            suffix = f"{suffix}   {self.usage_summary}"
-        if prefix:
-            return f"{prefix}   {suffix}"
-        return suffix
+        return segments
 
     @staticmethod
     def _format_elapsed(seconds: float) -> str:

@@ -92,7 +92,7 @@ def test_idle_text_renders_only_hints_when_no_segments() -> None:
     assert "^P palette" in text
 
 
-def test_responding_state_suppresses_richness() -> None:
+def test_responding_state_preserves_runtime_richness() -> None:
     line = FocusStatusLine()
     line.set_state(
         state="responding",
@@ -101,16 +101,20 @@ def test_responding_state_suppresses_richness() -> None:
         cwd="~/here",
         branch="main",
         tokens="100",
+        custom="planning",
     )
     text = _idle_text(line)
     assert "responding" in text
     assert "2.5s" in text
     assert "Esc cancel" in text
-    assert "model:" not in text
-    assert "git:" not in text
+    assert "model: anthropic/claude" in text
+    assert "cwd: ~/here" in text
+    assert "git: main" in text
+    assert "tokens: 100" in text
+    assert "status: planning" in text
 
 
-def test_tool_state_suppresses_richness() -> None:
+def test_tool_state_preserves_runtime_richness() -> None:
     line = FocusStatusLine()
     line.set_state(
         state="tool",
@@ -118,11 +122,22 @@ def test_tool_state_suppresses_richness() -> None:
         elapsed_seconds=10.0,
         model="anthropic/claude",
         cwd="~/here",
+        tokens="200",
     )
     text = _idle_text(line)
     assert "exec.run" in text
     assert "Esc cancel" in text
-    assert "model:" not in text
+    assert "model: anthropic/claude" in text
+    assert "cwd: ~/here" in text
+    assert "tokens: 200" in text
+
+
+def test_busy_state_shows_queued_count() -> None:
+    line = FocusStatusLine()
+    line.set_state(state="responding", elapsed_seconds=1.0, queued_count=2)
+    text = _idle_text(line)
+    assert "queued: 2" in text
+    assert "Esc cancel" in text
 
 
 def test_set_state_partial_update_preserves_other_segments() -> None:

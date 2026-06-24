@@ -616,6 +616,56 @@ async def test_focus_app_mounts_single_screen_without_dashboard_chrome() -> None
 
 
 @pytest.mark.asyncio
+async def test_focus_app_input_preserves_space_key() -> None:
+    runtime = _FocusRuntimeDouble(
+        working_dir="/tmp/focus-space",
+        session_id="focus-bound",
+        history_by_session={"focus-bound": []},
+    )
+    app = FocusApp(runtime=runtime, working_dir=runtime.working_dir)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        input_widget = app.screen.query_one("#focus-input", Input)
+        input_widget.focus()
+        await pilot.press("w", "h", "a", "t", "space", "n", "o", "w")
+        await pilot.pause()
+
+        assert input_widget.value == "what now"
+
+
+@pytest.mark.asyncio
+async def test_focus_app_input_preserves_space_key_after_turn() -> None:
+    runtime = _FocusRuntimeDouble(
+        working_dir="/tmp/focus-space-after-turn",
+        session_id="focus-bound",
+        history_by_session={"focus-bound": []},
+    )
+    app = FocusApp(runtime=runtime, working_dir=runtime.working_dir)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        input_widget = app.screen.query_one("#focus-input", Input)
+        input_widget.value = "hi"
+        input_widget.focus()
+        await pilot.press("enter")
+        for _ in range(20):
+            await pilot.pause()
+            if app.screen._busy is False:
+                break
+
+        input_widget.focus()
+        await pilot.press("w", "h", "a", "t", "space", "n", "o", "w")
+        await pilot.pause()
+
+        assert input_widget.value == "what now"
+
+
+@pytest.mark.asyncio
 async def test_focus_screen_resume_prompt_binds_candidate_and_loads_history() -> None:
     candidate = _SessionRecord(id="focus-old", channel="console", target="focus")
     history = {

@@ -180,22 +180,47 @@ def test_explicit_focus_subcommand_routes_to_focus(monkeypatch) -> None:
     assert called.get("focus") is True
 
 
-def test_run_tui_first_statement_is_deprecation_print() -> None:
-    import inspect
+def test_dashboard_subcommand_routes_to_dashboard(monkeypatch) -> None:
+    from openminion.cli.parser import base as parser_base
 
-    from openminion.cli.commands.tui import run_tui
+    called = {}
 
-    src = inspect.getsource(run_tui)
-    # The body must contain the deprecation print before any dashboard
-    # launch path is invoked. Establish ordering by string position.
-    dep_pos = src.find("[deprecated] 'openminion tui'")
-    dashboard_launch_pos = src.find("launch_dashboard(")
-    assert dep_pos != -1, "run_tui missing deprecation notice"
-    assert dashboard_launch_pos != -1, "run_tui missing dashboard launch"
-    assert dep_pos < dashboard_launch_pos, (
-        "deprecation print must precede dashboard launch so the user "
-        "always sees the notice even when the mount itself fails"
-    )
+    def _fake(_args):
+        called["dashboard"] = True
+        return 0
+
+    monkeypatch.setattr(parser_base.tui_cmd, "run_tui", _fake)
+    rc = cli_main(["dashboard"])
+    assert rc == 0
+    assert called.get("dashboard") is True
+
+
+def test_tui_subcommand_routes_to_focus_by_default(monkeypatch) -> None:
+    called = {}
+
+    def _fake(_args):
+        called["focus"] = True
+        return 0
+
+    monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake)
+    rc = cli_main(["tui"])
+    assert rc == 0
+    assert called.get("focus") is True
+
+
+def test_tui_dashboard_flag_routes_to_dashboard(monkeypatch) -> None:
+    from openminion.cli.parser import base as parser_base
+
+    called = {}
+
+    def _fake(_args):
+        called["dashboard"] = True
+        return 0
+
+    monkeypatch.setattr(parser_base.tui_cmd, "run_tui", _fake)
+    rc = cli_main(["tui", "--dashboard"])
+    assert rc == 0
+    assert called.get("dashboard") is True
 
 
 def test_chat_subcommand_routes_unchanged(monkeypatch) -> None:
@@ -216,10 +241,10 @@ def test_chat_subcommand_routes_unchanged(monkeypatch) -> None:
     assert called.get("chat") is True
 
 
-# ── Live tui.py deprecation source check ─────────────────────────────
+# ── Live tui.py dashboard source check ────────────────────────────────
 
 
-def test_run_tui_source_contains_deprecation_print() -> None:
+def test_tui_register_source_declares_dashboard_canonical_command() -> None:
     from pathlib import Path
 
     src = (
@@ -230,4 +255,7 @@ def test_run_tui_source_contains_deprecation_print() -> None:
         / "commands"
         / "tui.py"
     ).read_text(encoding="utf-8")
-    assert "[deprecated] 'openminion tui'" in src
+    assert 'add_parser(\n        "dashboard"' in src
+    assert '"tui"' in src
+    assert "--dashboard" in src
+    assert "launches the default focus shell" in src

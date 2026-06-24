@@ -8,6 +8,11 @@ from textual.widget import Widget
 from textual.widgets import Input, Label, TextArea
 
 from openminion.cli.ux.input_normalization import normalize_multiline_input_text
+from openminion.cli.tui.widgets.keys import (
+    is_bare_space_key,
+    is_space_key,
+    stop_key_event,
+)
 
 
 class EditorSubmitted(Message):
@@ -59,6 +64,13 @@ class ChatInput(Input):
     """`Input` variant that releases keys the surrounding shell owns."""
 
     BINDINGS = _strip_reserved(Input.BINDINGS)
+
+    async def _on_key(self, event) -> None:  # type: ignore[override]
+        if is_bare_space_key(event):
+            self.insert_text_at_cursor(" ")
+            stop_key_event(event)
+            return
+        await super()._on_key(event)
 
 
 class ChatInputBar(Widget):
@@ -156,6 +168,10 @@ class ChatInputBar(Widget):
             return
 
         inp = self.query_one("#message-input", Input)
+        if is_space_key(event) and self.app.focused is inp:
+            inp.insert_text_at_cursor(" ")
+            stop_key_event(event)
+            return
         if event.key == "up":
             self._history_back(inp)
             event.stop()

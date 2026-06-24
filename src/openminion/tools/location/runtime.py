@@ -8,6 +8,7 @@ from openminion.modules.tool.family.events import emit_family_event
 from .interfaces import LOCATION_SOURCE_VALUES
 
 LOCATION_TOOL_SOURCE = "location_module"
+_NULLISH_LOCATION_TOKENS = frozenset({"none", "null", "nil", "undefined"})
 
 
 def utc_now() -> str:
@@ -131,10 +132,10 @@ def success_set_default_payload(
 
 
 def normalize_location_record(payload: Mapping[str, Any]) -> dict[str, Any]:
-    city = str(payload.get("city", "")).strip() or None
-    region = str(payload.get("region", "")).strip() or None
-    country = str(payload.get("country", "")).strip() or None
-    timezone_name = str(payload.get("timezone", "")).strip() or None
+    city = _clean_location_text(payload.get("city"))
+    region = _clean_location_text(payload.get("region"))
+    country = _clean_location_text(payload.get("country"))
+    timezone_name = _clean_location_text(payload.get("timezone"))
     lat_value = payload.get("lat", payload.get("latitude"))
     lon_value = payload.get("lon", payload.get("longitude"))
     lat: float | None
@@ -155,6 +156,15 @@ def normalize_location_record(payload: Mapping[str, Any]) -> dict[str, Any]:
         "lat": lat,
         "lon": lon,
     }
+
+
+def _clean_location_text(value: Any) -> str | None:
+    token = str(value or "").strip()
+    if not token:
+        return None
+    if token.lower() in _NULLISH_LOCATION_TOKENS:
+        return None
+    return token
 
 
 def has_location_data(record: Mapping[str, Any]) -> bool:

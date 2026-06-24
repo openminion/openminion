@@ -99,7 +99,11 @@ def _hide_suppressed_subcommands(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="openminion",
-        description="Python-first OpenMinion runtime",
+        description=(
+            "Python-first OpenMinion runtime. Bare `openminion` opens the "
+            "default focus shell; `openminion dashboard` opens the monitoring "
+            "overview."
+        ),
         allow_abbrev=False,
     )
     parser.add_argument(

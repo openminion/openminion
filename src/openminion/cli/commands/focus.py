@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from openminion.cli.commands.tui import (
@@ -14,6 +15,8 @@ from openminion.cli.tui.project_context import resolve_project_context
 def _resolve_focus_backend(args: argparse.Namespace) -> str:
     from openminion.base.config.env import EnvironmentConfig
 
+    if bool(getattr(args, "terminal", False)):
+        return "terminal"
     if bool(getattr(args, "rich", False)):
         return "textual"
     env = EnvironmentConfig.from_sources()
@@ -22,7 +25,9 @@ def _resolve_focus_backend(args: argparse.Namespace) -> str:
         return "textual"
     if env_value in ("terminal", "flow", "terminal-flow"):
         return "terminal"
-    return "terminal"
+    stdin_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
+    stdout_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
+    return "textual" if stdin_tty and stdout_tty else "terminal"
 
 
 def _resolve_plain_spinner(args: argparse.Namespace) -> bool:
@@ -76,8 +81,8 @@ def _enforce_textual_tty_requirement() -> int | None:
         "openminion focus --rich: the Textual rich shell "
         "requires an interactive terminal (TTY) on both "
         "stdin and stdout. Either run from an interactive "
-        "shell, or drop the --rich flag to use the terminal-"
-        "flow shell which supports piped stdin "
+        "shell, or use --terminal for the terminal-flow shell "
+        "which supports piped stdin "
         "(e.g. `cat prompt.md | openminion`).",
         file=_sys.stderr,
     )
@@ -236,7 +241,12 @@ def run_focus(args: argparse.Namespace) -> int:
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     focus = subparsers.add_parser(
         "focus",
-        help="Launch the focused single-agent TUI",
+        help="Launch the focused single-agent shell",
+        description=(
+            "Launch the focused single-agent shell. Bare `openminion` uses "
+            "this surface by default; use `openminion dashboard` for the "
+            "monitoring / overview UI across chats and sessions."
+        ),
     )
     focus.add_argument(
         "--agent",
@@ -276,12 +286,21 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         action="store_true",
         help="Disable the cached startup update-available notification.",
     )
-    focus.add_argument(
+    backend = focus.add_mutually_exclusive_group()
+    backend.add_argument(
         "--rich",
         action="store_true",
         help=(
-            "Use the Textual rich shell (full overlays, in-app dashboard "
-            "side-trip) instead of the default terminal-flow shell."
+            "Use the Textual rich shell. This is the default for interactive "
+            "TTY sessions; the flag is kept for explicitness."
+        ),
+    )
+    backend.add_argument(
+        "--terminal",
+        action="store_true",
+        help=(
+            "Use the terminal-flow shell. Useful for piped stdin, minimal "
+            "terminals, or debugging the terminal renderer."
         ),
     )
     from openminion.cli.ux.verbosity import (

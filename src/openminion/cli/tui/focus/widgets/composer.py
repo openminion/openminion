@@ -8,6 +8,11 @@ from textual.widget import Widget
 from textual.widgets import Input, Label, TextArea
 
 from openminion.cli.ux.input_normalization import normalize_multiline_input_text
+from openminion.cli.tui.widgets.keys import (
+    is_bare_space_key,
+    is_space_key,
+    stop_key_event,
+)
 
 
 _SHELL_RESERVED_INPUT_KEYS: frozenset[str] = frozenset(
@@ -46,6 +51,13 @@ class _FocusComposerInput(Input):
     """`Input` variant that releases shell-reserved keys."""
 
     BINDINGS = _strip_reserved(Input.BINDINGS)
+
+    async def _on_key(self, event) -> None:  # type: ignore[override]
+        if is_bare_space_key(event):
+            self.insert_text_at_cursor(" ")
+            stop_key_event(event)
+            return
+        await super()._on_key(event)
 
 
 class _FocusComposerEditorSubmitted(Message):
@@ -263,6 +275,15 @@ class FocusComposer(Widget):
 
     def on_key(self, event) -> None:
         """Promote Shift+Enter to multiline input."""
+        if not self._multiline and is_space_key(event):
+            try:
+                single = self.query_one("#focus-input", Input)
+            except (QueryError, AttributeError):
+                return
+            if self.app.focused is single:
+                single.insert_text_at_cursor(" ")
+                stop_key_event(event)
+                return
         if not self._multiline and getattr(event, "key", "") == "shift+enter":
             self._handle_shift_enter(event)
 

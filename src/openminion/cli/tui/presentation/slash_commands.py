@@ -143,7 +143,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/dashboard",
-        "Open the dashboard inspector side-trip",
+        "Open the monitoring dashboard for chats, sessions, agents, and tools",
         "_slash_dashboard",
         "_slash_dashboard",
     ),

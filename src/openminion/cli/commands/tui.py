@@ -146,12 +146,6 @@ def _should_soften_unknown_agent_failure_for_tui(
     return reason.startswith("unknown agent profile ")
 
 
-def _print_tui_deprecation_notice(message: str) -> None:
-    import sys as _sys
-
-    print(message, file=_sys.stderr)
-
-
 def _resolve_tui_theme(args):
     from openminion.cli.theme import resolve_theme
 
@@ -262,11 +256,6 @@ def _resolve_initial_tab(
 
 
 def run_tui(args) -> int:
-    _print_tui_deprecation_notice(
-        "[deprecated] 'openminion tui' is now an alias for the dashboard "
-        "side-trip; run 'openminion' (focus is the default) or use "
-        "'/dashboard' inside focus to reach the dashboard view."
-    )
     requested_agent = _normalized_agent(args)
     no_picker = bool(getattr(args, "no_picker", False))
     resolved_theme = _resolve_tui_theme(args)
@@ -324,35 +313,48 @@ def run_tui(args) -> int:
             pass
 
 
-def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    tui = subparsers.add_parser("tui", help="Launch the full-screen TUI dashboard")
-    tui.add_argument(
+def run_tui_entry(args) -> int:
+    """Compatibility `tui` entrypoint.
+
+    `openminion tui` now follows the primary interactive surface and launches
+    focus mode. The monitoring dashboard remains available through the
+    canonical `dashboard` command and the explicit `tui --dashboard` flag.
+    """
+    if bool(getattr(args, "dashboard", False)):
+        return run_tui(args)
+    from openminion.cli.commands.focus import run_focus
+
+    return int(run_focus(args) or 0)
+
+
+def _register_dashboard_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
         "--demo",
         action="store_true",
-        help="Run TUI with demo runtime/providers (no live runtime wiring)",
+        help="Run dashboard with demo runtime/providers (no live runtime wiring)",
     )
-    tui.add_argument(
+    parser.add_argument(
         "--agent",
         default=None,
-        help="Agent id to activate for the session",
+        help="Agent id to activate when opening a session from the dashboard",
     )
-    tui.add_argument(
+    parser.add_argument(
         "--no-picker",
         dest="no_picker",
         action="store_true",
-        help="Skip the session picker at launch and always start a new session",
+        help="Skip the session picker at launch and open the chat overview directly",
     )
-    tui.add_argument(
+    parser.add_argument(
         "--sync-identity",
         action="store_true",
-        help="Refresh YAML-backed identity profiles into SQLite and regenerate generated markdown sidecars before TUI startup",
+        help="Refresh YAML-backed identity profiles into SQLite and regenerate generated markdown sidecars before dashboard startup",
     )
-    tui.add_argument(
+    parser.add_argument(
         "--no-interactive",
         action="store_true",
         help="Disable inline first-run setup and fail fast with remediation",
     )
-    tui.add_argument(
+    parser.add_argument(
         "--theme",
         default=None,
         help=(
@@ -360,4 +362,77 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
             "Top precedence — beats env and persisted preference."
         ),
     )
-    tui.set_defaults(handler=run_tui, needs_app=False)
+
+
+def _register_tui_focus_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Launch the monitoring / overview dashboard instead of focus mode",
+    )
+    parser.add_argument(
+        "--session",
+        default=None,
+        help="Existing focus session id to resume",
+    )
+    parser.add_argument(
+        "--dir",
+        default=None,
+        help="Working directory to bind the focus session to",
+    )
+    parser.add_argument(
+        "--no-context",
+        action="store_true",
+        help="Do not auto-load OPENMINION.md/AGENTS.md/CLAUDE.md project context",
+    )
+    parser.add_argument(
+        "--no-update-check",
+        action="store_true",
+        help="Disable the cached startup update-available notification.",
+    )
+    backend = parser.add_mutually_exclusive_group()
+    backend.add_argument(
+        "--rich",
+        action="store_true",
+        help="Use the Textual rich focus shell",
+    )
+    backend.add_argument(
+        "--terminal",
+        action="store_true",
+        help="Use the terminal-flow focus shell",
+    )
+    from openminion.cli.ux.verbosity import (
+        add_progress_flag,
+        add_verbosity_flag,
+    )
+
+    add_verbosity_flag(parser)
+    add_progress_flag(parser, include_aliases=True)
+
+
+def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    dashboard = subparsers.add_parser(
+        "dashboard",
+        help="Launch the monitoring dashboard for chats, sessions, agents, and tools",
+        description=(
+            "Launch the full-screen OpenMinion dashboard. Use bare "
+            "`openminion` for the default focus shell; use this command for "
+            "monitoring and overview across chats, sessions, agents, tools, "
+            "memory, cron, and system state."
+        ),
+    )
+    _register_dashboard_args(dashboard)
+    dashboard.set_defaults(handler=run_tui, needs_app=False)
+
+    tui = subparsers.add_parser(
+        "tui",
+        help="Launch focus mode; use --dashboard for the monitoring dashboard",
+        description=(
+            "`openminion tui` launches the default focus shell for one-agent "
+            "work. Use `openminion tui --dashboard` or `openminion dashboard` "
+            "for the monitoring / overview UI across chats and sessions."
+        ),
+    )
+    _register_dashboard_args(tui)
+    _register_tui_focus_args(tui)
+    tui.set_defaults(handler=run_tui_entry, needs_app=False)

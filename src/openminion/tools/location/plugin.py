@@ -540,6 +540,8 @@ def _resolve_location(
         if candidate is None:
             continue
         applied = _apply_privacy(candidate, max_privacy=max_privacy)
+        if not _has_location_data(applied):
+            continue
         applied["source"] = source
         applied["confidence"] = _confidence_for_source(source)
         return applied

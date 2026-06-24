@@ -111,6 +111,7 @@ class FocusScreen(
         self._session_initializing = True
         self._turn_worker: Worker[None] | None = None
         self._interrupt_requested = False
+        self._queued_turns: list[str] = []
         self._suppress_slash_overlay_once = False
         self._suppress_file_overlay_once = False
         self._status_controller = PhaseStatusController(fallback_label="Working...")
@@ -271,7 +272,10 @@ class FocusScreen(
                     self._run_shell_escape(command), exclusive=True
                 )
             return
-        self._turn_worker = self.run_worker(self._run_turn(text), exclusive=True)
+        if self._busy:
+            self._queue_turn(text)
+            return
+        self._start_turn_worker(text)
 
     def on_input_changed(self, event) -> None:  # type: ignore[no-untyped-def]
         """Update overlays for single-line input changes."""
@@ -389,14 +393,41 @@ class FocusScreen(
         finally:
             self._set_busy(False)
 
-    async def _run_turn(self, text: str) -> None:
+    def _queue_turn(self, text: str) -> None:
+        self._queued_turns.append(text)
+        chat = self.query_one(FocusTranscript)
+        chat.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body=text))
+        chat.push_message(
+            ChatMessage(
+                kind=MessageKind.SYSTEM,
+                sender="system",
+                body=f"Queued message ({len(self._queued_turns)} pending).",
+            )
+        )
+        self._push_status_line(state="responding")
+
+    def _start_turn_worker(self, text: str, *, render_user: bool = True) -> None:
+        self._turn_worker = self.run_worker(
+            self._run_turn(text, render_user=render_user), exclusive=True
+        )
+
+    def _start_next_queued_turn(self) -> None:
+        if self._busy or self._turn_worker is not None or not self._queued_turns:
+            return
+        text = self._queued_turns.pop(0)
+        self._start_turn_worker(text, render_user=False)
+
+    async def _run_turn(self, text: str, *, render_user: bool = True) -> None:
         if self._busy:
             return
         self._set_busy(True)
         self._interrupt_requested = False
         self._status_controller.start_turn()
         chat = self.query_one(FocusTranscript)
-        chat.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body=text))
+        if render_user:
+            chat.push_message(
+                ChatMessage(kind=MessageKind.USER, sender="you", body=text)
+            )
         started = time.perf_counter()
         reply = ""
         turn = chat.begin_turn(role="assistant")
@@ -456,6 +487,7 @@ class FocusScreen(
                 self._on_turn_complete(elapsed_seconds)
             self._interrupt_requested = False
             self._turn_worker = None
+            self._start_next_queued_turn()
 
     _ERROR_HINT_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
         (

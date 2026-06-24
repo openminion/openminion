@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from prompt_toolkit.formatted_text.ansi import ANSI
 from prompt_toolkit.history import FileHistory
 
 from openminion.cli.tui.terminal.composer import TerminalComposer
@@ -145,3 +146,23 @@ def test_slash_completer_proposes_matching_slashes() -> None:
     assert "/compact" in texts
     assert "/cost" in texts
     assert "/exit" not in texts
+
+
+def test_slash_completer_opens_menu_for_bare_slash() -> None:
+    from prompt_toolkit.document import Document
+
+    c = TerminalComposer(slash_commands={"/model": "choose model", "/help": "show help"})
+    completions = list(
+        c._completer.get_completions(Document(text="/"), complete_event=None)
+    )
+
+    assert [comp.text for comp in completions] == ["/help", "/model"]
+    assert completions[1].display_meta_text == "choose model"
+
+
+def test_bottom_toolbar_formats_ansi_string_for_prompt_toolkit() -> None:
+    c = TerminalComposer(bottom_toolbar=lambda: "\x1b[32mready\x1b[0m")
+
+    formatted = c._formatted_bottom_toolbar()
+
+    assert isinstance(formatted, ANSI)

@@ -83,6 +83,15 @@ class TerminalTurnHandle:
         self._spinner: Spinner | None = None
         self._in_thinking_frame = True
         self._active_tool: dict[str, Any] | None = None
+        self._status_label = ""
+
+    def set_status_label(self, label: str) -> None:
+        self._status_label = str(label or "").strip()
+        if self._live is not None:
+            try:
+                self._live.update(self._render(), refresh=True)
+            except Exception:
+                return
 
     def set_active_tool(
         self,
@@ -228,6 +237,8 @@ class TerminalTurnHandle:
             elapsed_label,
             "esc to interrupt",
             plain=self._plain,
+            status_label=self._status_label,
+            spinner_frame=self._spinner.current_frame(now),
         )
         if running_block is not None:
             return Group(running_block, body_row, status_row)

@@ -155,3 +155,35 @@ def test_progress_callback_does_not_print_status_lines_before_reply() -> None:
     assert "\x1b[" not in output
     assert "progress ok" in output
     assert "total 1m 22s" in status_line.usage_summary
+
+
+def test_progress_callback_updates_live_turn_status_label() -> None:
+    transcript, _ = _make_transcript()
+    runtime = _ProgressRuntime()
+    labels: list[str] = []
+    original_begin_turn = transcript.begin_turn
+
+    def _capturing_begin_turn(*args, **kwargs):
+        handle = original_begin_turn(*args, **kwargs)
+        original_set_status_label = handle.set_status_label
+
+        def _capture(label: str) -> None:
+            labels.append(label)
+            original_set_status_label(label)
+
+        handle.set_status_label = _capture  # type: ignore[method-assign]
+        return handle
+
+    transcript.begin_turn = _capturing_begin_turn  # type: ignore[method-assign]
+    asyncio.run(
+        _run_agent_turn(
+            text="hi",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=TerminalStatusLine(),
+        )
+    )
+
+    assert labels
+    assert labels[0] == "Working..."
+    assert any("Loading session history" in label for label in labels)

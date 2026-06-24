@@ -16,7 +16,7 @@ from openminion.api.responses.serialization import (
 from openminion.services.runtime.daemon import turn_chunk_to_dict, turn_response_to_dict
 
 
-def _write_stream_json_response(
+def _record_stream_response(
     *,
     status: HTTPStatus,
     payload: dict,
@@ -27,8 +27,8 @@ def _write_stream_json_response(
     logger: logging.Logger,
     observe_request_metrics: Callable[..., int],
     log_request_done: Callable[..., None],
-    write_json: Callable[..., None],
-) -> None:
+    write_json: Callable[..., None] | None = None,
+) -> dict:
     response = attach_response_meta(
         payload,
         request_id=resolved_request_id,
@@ -54,45 +54,26 @@ def _write_stream_json_response(
         session_id=session_id_for_meta,
         run_id=run_id_for_meta,
     )
-    write_json(status, response)
+    if write_json is not None:
+        write_json(status, response)
+    return response
 
 
-def _record_stream_completion(
-    *,
+def _stream_error_payload(
     status: HTTPStatus,
-    payload: dict,
-    resolved_request_id: str,
-    session_id_for_meta: str | None,
-    run_id_for_meta: str | None,
-    started_at: float,
-    logger: logging.Logger,
-    observe_request_metrics: Callable[..., int],
-    log_request_done: Callable[..., None],
-) -> None:
-    response = attach_response_meta(
-        payload,
-        request_id=resolved_request_id,
-        method="POST",
-        path="/v1/turn/stream",
-        session_id=session_id_for_meta,
-        run_id=run_id_for_meta,
-    )
-    duration_ms = observe_request_metrics(
-        method="POST",
-        path="/v1/turn/stream",
-        status=status,
-        payload=response,
-        started_at=started_at,
-    )
-    log_request_done(
-        logger=logger,
-        method="POST",
-        path="/v1/turn/stream",
-        status=status,
-        request_id=resolved_request_id,
-        duration_ms=duration_ms,
-        session_id=session_id_for_meta,
-        run_id=run_id_for_meta,
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+    retry_after_ms: int | None = None,
+) -> tuple[HTTPStatus, dict]:
+    return error_response(
+        status,
+        code=code,
+        message=message,
+        details={"path": "/v1/turn/stream"},
+        retryable=retryable,
+        retry_after_ms=retry_after_ms,
     )
 
 
@@ -109,20 +90,18 @@ def _open_stream_submission(
             body=body,
         )
     except ValueError as exc:
-        status, payload = error_response(
+        status, payload = _stream_error_payload(
             HTTPStatus.BAD_REQUEST,
             code="invalid_request",
             message=str(exc),
-            details={"path": "/v1/turn/stream"},
             retryable=False,
         )
         return None, status, payload
     except RuntimeError as exc:
-        status, payload = error_response(
+        status, payload = _stream_error_payload(
             HTTPStatus.SERVICE_UNAVAILABLE,
             code="runtime_unavailable",
             message=str(exc),
-            details={"path": "/v1/turn/stream"},
             retryable=True,
             retry_after_ms=1000,
         )
@@ -249,7 +228,7 @@ def handle_turn_stream_request(
     )
     if submission is None:
         assert error_status is not None and error_payload is not None
-        _write_stream_json_response(
+        _record_stream_response(
             status=error_status,
             payload=error_payload,
             resolved_request_id=resolved_request_id,
@@ -301,7 +280,7 @@ def handle_turn_stream_request(
     finally:
         close_submission(submission)
 
-    _record_stream_completion(
+    _record_stream_response(
         status=status_for_metrics,
         payload=payload_for_metrics,
         resolved_request_id=resolved_request_id,

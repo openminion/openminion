@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable, Mapping
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.formatted_text import ANSI, FormattedText
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -22,10 +22,20 @@ class _SlashAndAtCompleter(Completer):
 
     def __init__(
         self,
-        slash_commands: Iterable[str],
+        slash_commands: Iterable[str] | Mapping[str, str],
         path_completer: Completer | None = None,
     ) -> None:
-        self._slashes = sorted(set(slash_commands))
+        if isinstance(slash_commands, Mapping):
+            self._slash_descriptions = {
+                str(name): str(description)
+                for name, description in slash_commands.items()
+            }
+            self._slashes = sorted(self._slash_descriptions)
+        else:
+            self._slashes = sorted({str(name) for name in slash_commands})
+            self._slash_descriptions = {
+                slash: "slash command" for slash in self._slashes
+            }
         self._path_completer = path_completer
 
     def get_completions(self, document, complete_event):
@@ -36,7 +46,10 @@ class _SlashAndAtCompleter(Completer):
                     yield Completion(
                         slash,
                         start_position=-len(text),
-                        display_meta="slash command",
+                        display=slash,
+                        display_meta=self._slash_descriptions.get(
+                            slash, "slash command"
+                        ),
                     )
             return
         at_pos = text.rfind("@")
@@ -59,7 +72,7 @@ class TerminalComposer:
     def __init__(
         self,
         *,
-        slash_commands: Iterable[str] = (),
+        slash_commands: Iterable[str] | Mapping[str, str] = (),
         bottom_toolbar: object = None,
         history_file: str | None = None,
         on_ctrl_l: object = None,
@@ -182,8 +195,9 @@ class TerminalComposer:
                 text = await self._session.prompt_async(
                     FormattedText([("ansicyan", prompt)]),
                     completer=self._completer,
+                    complete_while_typing=True,
                     multiline=Condition(lambda: self._multiline),
-                    bottom_toolbar=self._bottom_toolbar,
+                    bottom_toolbar=self._formatted_bottom_toolbar,
                     placeholder=FormattedText(
                         [
                             (
@@ -196,6 +210,18 @@ class TerminalComposer:
             finally:
                 self._multiline = False
         return str(text or "").rstrip("\n")
+
+    def _formatted_bottom_toolbar(self):
+        if self._bottom_toolbar is None:
+            return None
+        value = (
+            self._bottom_toolbar()
+            if callable(self._bottom_toolbar)
+            else self._bottom_toolbar
+        )
+        if isinstance(value, str):
+            return ANSI(value)
+        return value
 
     def _prompt_text(self) -> str:
         if self._disabled:

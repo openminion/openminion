@@ -40,6 +40,7 @@ from .renderers import (
 
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.tui.presentation.markers import token_rich_style
+from openminion.cli.tui.presentation.slash_commands import slash_help_rows
 from openminion.cli.tui.presentation.visible_parity import (
     statusline_label,
 )
@@ -259,7 +260,12 @@ async def _run_terminal_focus_async(
             announce=False,
         )
 
-    catalog = tuple(_SLASH_COMMANDS) + tuple(custom_commands.keys())
+    catalog = {
+        name: description
+        for name, description in slash_help_rows(terminal_only=True)
+        if name in _SLASH_COMMANDS
+    }
+    catalog.update({name: "custom command" for name in custom_commands})
     composer = TerminalComposer(
         slash_commands=catalog,
         bottom_toolbar=status_line.bottom_toolbar,
@@ -388,7 +394,12 @@ def _route_durable_activity_event(
     return False
 
 
-def _build_turn_progress_callback(*, transcript: TerminalTranscript):
+def _build_turn_progress_callback(
+    *,
+    transcript: TerminalTranscript,
+    handle: Any | None = None,
+    status_controller: Any | None = None,
+):
     """Build the progress callback passed to ``runtime.send_message``."""
 
     def _handle_progress(payload: dict[str, Any]) -> None:
@@ -401,6 +412,16 @@ def _build_turn_progress_callback(*, transcript: TerminalTranscript):
             return
         if payload and _route_durable_activity_event(transcript, payload):
             return
+        if payload and handle is not None and status_controller is not None:
+            try:
+                view = status_controller.update(payload)
+            except Exception:
+                view = None
+            if view is None:
+                return
+            setter = getattr(handle, "set_status_label", None)
+            if callable(setter):
+                setter(str(getattr(view, "primary_text", "") or ""))
 
     return _handle_progress
 
@@ -436,8 +457,20 @@ async def _run_agent_turn(
         status_line.set_state(state="idle", elapsed_seconds=0.0)
     handle = transcript.begin_turn(role="assistant")
     reply = ""
+    from openminion.cli.status import PhaseStatusController
+
+    status_controller = PhaseStatusController(fallback_label="Working...")
+    status_controller.start_turn()
+    initial_status = status_controller.view_model_for(None)
+    setter = getattr(handle, "set_status_label", None)
+    if callable(setter):
+        setter(str(initial_status.primary_text or status_controller.fallback_label))
     try:
-        progress_callback = _build_turn_progress_callback(transcript=transcript)
+        progress_callback = _build_turn_progress_callback(
+            transcript=transcript,
+            handle=handle,
+            status_controller=status_controller,
+        )
         async for chunk in runtime.send_message(
             text,
             progress_callback=progress_callback,
@@ -457,5 +490,6 @@ async def _run_agent_turn(
             ChatMessage(kind=MessageKind.ERROR, sender="error", body=str(exc))
         )
     finally:
+        status_controller.end_turn()
         if status_line is not None:
             _finalize_turn_status_line(runtime, status_line)

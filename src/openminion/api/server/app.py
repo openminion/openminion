@@ -67,6 +67,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         request_id = self.headers.get("X-Request-ID")
         started_at = perf_counter()
+        logger = logging.getLogger("openminion.api")
         try:
             payload = self._read_json_body()
         except ValueError as exc:
@@ -78,28 +79,14 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
                 details={"path": path},
                 retryable=False,
             )
-            body = attach_response_meta(
-                body,
-                request_id=resolved_request_id,
-                method="POST",
-                path=path,
-            )
-            duration_ms = _observe_request_metrics(
-                method="POST",
-                path=path,
-                status=status,
+            body = _finalize_api_response(
                 payload=body,
-                started_at=started_at,
-            )
-            _log_request_done(
-                logger=logging.getLogger("openminion.api"),
+                status=status,
                 method="POST",
                 path=path,
-                status=status,
                 request_id=resolved_request_id,
-                duration_ms=duration_ms,
-                session_id=None,
-                run_id=None,
+                started_at=started_at,
+                logger=logger,
             )
             self._write_json(status, body)
             return
@@ -238,7 +225,7 @@ def dispatch_request(
         )
 
     if route_result is None and runtime_bootstrap_error:
-        status, payload = error_response(
+        route_result = _error_route_result(
             HTTPStatus.SERVICE_UNAVAILABLE,
             code="runtime_unavailable",
             message=(
@@ -254,7 +241,6 @@ def dispatch_request(
             retryable=True,
             retry_after_ms=1000,
         )
-        route_result = RouteResult(status=status, payload=payload)
 
     if route_result is None:
         for handler in (
@@ -279,29 +265,74 @@ def dispatch_request(
                 break
 
     if route_result is None:
-        status, payload = error_response(
+        route_result = _error_route_result(
             HTTPStatus.NOT_FOUND,
             code="not_found",
             message=f"Unknown path: {path}",
             details={"path": path},
             retryable=False,
         )
-    else:
-        status = route_result.status
-        payload = route_result.payload
-        session_id_for_meta = route_result.session_id
-        run_id_for_meta = route_result.run_id
+    status = route_result.status
+    payload = route_result.payload
+    session_id_for_meta = route_result.session_id
+    run_id_for_meta = route_result.run_id
 
-    response = attach_response_meta(
-        payload,
-        request_id=resolved_request_id,
+    response = _finalize_api_response(
+        payload=payload,
+        status=status,
         method=method_name,
         path=path,
+        request_id=resolved_request_id,
+        started_at=started_at,
+        logger=logger,
         session_id=session_id_for_meta,
         run_id=run_id_for_meta,
     )
+    return status, response
+
+
+def _error_route_result(
+    status: HTTPStatus,
+    *,
+    code: str,
+    message: str,
+    details: dict,
+    retryable: bool,
+    retry_after_ms: int | None = None,
+) -> RouteResult:
+    resolved_status, payload = error_response(
+        status,
+        code=code,
+        message=message,
+        details=details,
+        retryable=retryable,
+        retry_after_ms=retry_after_ms,
+    )
+    return RouteResult(status=resolved_status, payload=payload)
+
+
+def _finalize_api_response(
+    *,
+    payload: dict,
+    status: HTTPStatus,
+    method: str,
+    path: str,
+    request_id: str,
+    started_at: float,
+    logger: logging.Logger,
+    session_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> dict:
+    response = attach_response_meta(
+        payload,
+        request_id=request_id,
+        method=method,
+        path=path,
+        session_id=session_id,
+        run_id=run_id,
+    )
     duration_ms = _observe_request_metrics(
-        method=method_name,
+        method=method,
         path=path,
         status=status,
         payload=payload,
@@ -309,15 +340,15 @@ def dispatch_request(
     )
     _log_request_done(
         logger=logger,
-        method=method_name,
+        method=method,
         path=path,
         status=status,
-        request_id=resolved_request_id,
+        request_id=request_id,
         duration_ms=duration_ms,
-        session_id=session_id_for_meta,
-        run_id=run_id_for_meta,
+        session_id=session_id,
+        run_id=run_id,
     )
-    return status, response
+    return response
 
 
 def get_api_metrics_snapshot(*, reset: bool = False) -> dict:

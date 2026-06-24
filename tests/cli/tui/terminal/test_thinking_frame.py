@@ -46,6 +46,22 @@ def test_thinking_frame_renderable_uses_thinking_verb() -> None:
     handle.complete()
 
 
+def test_thinking_frame_can_show_runtime_status_label() -> None:
+    console, _ = _make_console()
+    handle = TerminalTurnHandle(console).start()
+    handle.set_status_label("Analyzing request...")
+    renderable = handle._render()
+    assert renderable is not None
+    from rich.console import Group
+
+    assert isinstance(renderable, Group)
+    rows = list(renderable.renderables)
+    status_row_text = rows[1].plain
+    assert "Analyzing request..." in status_row_text
+    assert THINKING_VERB not in status_row_text
+    handle.complete()
+
+
 def test_streaming_layout_after_first_token_uses_rotating_verb() -> None:
     console, _ = _make_console()
     handle = TerminalTurnHandle(console).start()
