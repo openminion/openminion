@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from openminion.base.time import utc_now_iso
 
 from ...checkpoint import CheckpointManager
 from ...constants import MissionStatus
 from ...loop.tools.task_ops import stable_task_id_for_plan_id
-from ...schemas import (
+from ...schemas.goals import (
     Goal,
     GoalStatus,
     evaluate_goal_cost_budget,
@@ -32,7 +32,7 @@ class GoalSessionResumeSnapshot:
     checkpoint: dict[str, Any] | None
 
     def as_payload(self) -> dict[str, Any]:
-        payload = {
+        payload: dict[str, Any] = {
             "goal_id": self.goal_id,
             "status": self.status,
             "apd_plan_id": self.apd_plan_id,
@@ -58,6 +58,16 @@ class LongRunningGoalRuntime:
         self.mission_store = mission_store
         self.checkpoint_manager = checkpoint_manager
 
+    def bind_goal_to_session(self, *, goal_id: str, session_id: str) -> Goal:
+        """Make ``goal_id`` the current durable goal for ``session_id``."""
+
+        return self.goal_store.bind_to_session(goal_id, session_id, active=True)
+
+    def list_active_goals_for_session(self, session_id: str) -> list[Goal]:
+        """Return active goals bound to one session, never the global list."""
+
+        return self.goal_store.list_active_for_session(session_id)
+
     def hydrate_session_start(
         self,
         *,
@@ -70,7 +80,7 @@ class LongRunningGoalRuntime:
             if str(mission.task_id or "").strip()
         }
         snapshots: list[GoalSessionResumeSnapshot] = []
-        for goal in self.goal_store.list_active():
+        for goal in self.goal_store.list_active_for_session(session_id):
             task_id = self._task_id_for_goal(goal)
             mission = missions_by_task.get(task_id or "")
             checkpoint = None
@@ -143,12 +153,7 @@ class LongRunningGoalRuntime:
         terminal_status: str,
         reason: str,
     ) -> Goal | None:
-        normalized_goal_id = str(root_goal_id or "").strip()
-        goal = self.goal_store.get(normalized_goal_id) if normalized_goal_id else None
-        if goal is None:
-            linked_goals = self.goal_store.list_by_plan_id(plan_id)
-            if len(linked_goals) == 1:
-                goal = linked_goals[0]
+        goal = self.resolve_goal_for_plan(plan_id=plan_id, root_goal_id=root_goal_id)
         if goal is None:
             return None
         if goal.apd_plan_id != plan_id:
@@ -166,6 +171,63 @@ class LongRunningGoalRuntime:
                 reason=reason,
             )
         return goal
+
+    def resolve_goal_for_plan(
+        self, *, plan_id: str, root_goal_id: str | None
+    ) -> Goal | None:
+        """Resolve an explicit root goal or the sole goal linked to ``plan_id``."""
+
+        normalized_goal_id = str(root_goal_id or "").strip()
+        goal = self.goal_store.get(normalized_goal_id) if normalized_goal_id else None
+        if goal is not None:
+            return goal
+        linked_goals = self.goal_store.list_by_plan_id(plan_id)
+        if len(linked_goals) == 1:
+            return linked_goals[0]
+        return None
+
+    def apply_termination_signal(
+        self,
+        *,
+        goal_id: str,
+        reason: str,
+        budget_exhausted_terminal: bool = True,
+    ) -> Goal | None:
+        """Project an operational termination reason onto ``Goal.status``."""
+
+        goal = self.goal_store.get(goal_id)
+        if goal is None:
+            return None
+        status = project_goal_status_for_termination(
+            reason,
+            budget_exhausted_terminal=budget_exhausted_terminal,
+        )
+        if status == goal.status:
+            return goal
+        return self.goal_store.transition_status(goal.goal_id, status, reason=reason)
+
+    def roll_up_child_goals(self, *, parent_goal_id: str) -> Goal | None:
+        """Project child-goal terminal state into the parent goal."""
+
+        parent = self.goal_store.get(parent_goal_id)
+        if parent is None:
+            return None
+        children = self.goal_store.list_by_parent(parent.goal_id)
+        if not children:
+            return parent
+        if all(child.status == GoalStatus.COMPLETED for child in children):
+            return self.goal_store.transition_status(
+                parent.goal_id,
+                GoalStatus.COMPLETED,
+                reason="child_goal_rollup_completed",
+            )
+        if any(child.status in {GoalStatus.HALTED, GoalStatus.CANCELLED} for child in children):
+            return self.goal_store.transition_status(
+                parent.goal_id,
+                GoalStatus.HALTED,
+                reason="child_goal_rollup_failed",
+            )
+        return parent
 
     def consume_cost(
         self,
@@ -197,8 +259,8 @@ class LongRunningGoalRuntime:
         *,
         goal_id: str,
         run_id: str,
-        state,
-        logger,
+        state: Any,
+        logger: Any,
     ) -> GoalVerificationResult:
         return verify_goal_completion(
             goal_id,
@@ -232,7 +294,7 @@ class LongRunningGoalRuntime:
             return None
         try:
             return stable_task_id_for_plan_id(goal.apd_plan_id)
-        except Exception:
+        except ValueError:
             return None
 
 
@@ -266,9 +328,44 @@ def render_goal_verification(goal_id: str, result: GoalVerificationResult) -> st
     return "\n".join(lines)
 
 
+TerminationReason = Literal[
+    "verified_closeout",
+    "needs_user",
+    "job_pending",
+    "budget_exhausted",
+    "tool_failure",
+    "explicit_cancel",
+]
+
+
+def project_goal_status_for_termination(
+    reason: str,
+    *,
+    budget_exhausted_terminal: bool = True,
+) -> GoalStatus:
+    """Map operational loop termination reasons onto the canonical status enum."""
+
+    normalized = str(reason or "").strip()
+    if normalized in {"verified_closeout", "completed", "success"}:
+        return GoalStatus.COMPLETED
+    if normalized in {"needs_user", "waiting_user", "paused"}:
+        return GoalStatus.PAUSED
+    if normalized in {"job_pending", "awaiting_external", "awaiting_async"}:
+        return GoalStatus.AWAITING_ASYNC
+    if normalized == "budget_exhausted" and not budget_exhausted_terminal:
+        return GoalStatus.ACTIVE
+    if normalized in {"budget_exhausted", "tool_failure", "failed", "halted"}:
+        return GoalStatus.HALTED
+    if normalized in {"explicit_cancel", "cancelled", "canceled"}:
+        return GoalStatus.CANCELLED
+    return GoalStatus.HALTED
+
+
 __all__ = [
     "GoalSessionResumeSnapshot",
     "LongRunningGoalRuntime",
+    "TerminationReason",
+    "project_goal_status_for_termination",
     "render_goal_summary",
     "render_goal_verification",
 ]

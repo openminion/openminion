@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from openminion.modules.brain.schemas import (
+from openminion.modules.brain.schemas.goals import (
     ExternalBlocker,
     Goal,
     GoalStatus,
@@ -21,6 +21,15 @@ class GoalStore(ABC):
 
     @abstractmethod
     def list_active(self) -> list[Goal]: ...
+
+    @abstractmethod
+    def bind_to_session(self, goal_id: str, session_id: str, *, active: bool = True) -> Goal: ...
+
+    @abstractmethod
+    def list_active_for_session(self, session_id: str) -> list[Goal]: ...
+
+    @abstractmethod
+    def is_bound_to_session(self, goal_id: str, session_id: str) -> bool: ...
 
     @abstractmethod
     def list_by_parent(self, parent_goal_id: str) -> list[Goal]: ...
