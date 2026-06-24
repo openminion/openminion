@@ -35,6 +35,7 @@ from openminion.cli.commands import toolctl as toolctl_cmd
 from openminion.cli.commands import tools as tools_cmd
 from openminion.cli.commands import tui as tui_cmd
 from openminion.cli.commands import verify as verify_cmd
+from openminion.cli.commands import version as version_cmd
 from openminion.cli.commands.debug import cli as debug_cli_cmd
 
 COMMAND_MODULES = (
@@ -64,6 +65,7 @@ COMMAND_MODULES = (
     setup_cmd,
     storage_cmd,
     verify_cmd,
+    version_cmd,
     scaffold_cmd,
     cron_cmd,
     debug_cli_cmd,
