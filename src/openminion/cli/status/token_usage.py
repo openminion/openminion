@@ -105,7 +105,9 @@ def usage_totals_from_mapping(
     return None if totals.is_empty else totals
 
 
-def _payload_mapping(payload: Mapping[str, Any] | Any | None) -> Mapping[str, Any] | None:
+def _payload_mapping(
+    payload: Mapping[str, Any] | Any | None,
+) -> Mapping[str, Any] | None:
     if isinstance(payload, Mapping):
         return payload
     if payload is None:

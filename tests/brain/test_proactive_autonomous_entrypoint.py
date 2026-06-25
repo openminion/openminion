@@ -1123,7 +1123,7 @@ class ReviewRoundTwoFixesTests(unittest.TestCase):
         self.assertIsNone(calls[1]["user_input"])
 
     def test_executor_resolves_session_via_cron_store(self) -> None:
-        from openminion.services.runtime.cron_executor import (
+        from openminion.services.runtime.cron.executor import (
             CronTurnExecutor,
         )
 
@@ -1148,7 +1148,7 @@ class ReviewRoundTwoFixesTests(unittest.TestCase):
         self.assertIs(resolved, executor._cron_store)
 
     def test_executor_reads_grace_seconds_from_payload(self) -> None:
-        from openminion.services.runtime.cron_executor import (
+        from openminion.services.runtime.cron.executor import (
             CronTurnExecutor,
         )
 
@@ -2049,7 +2049,7 @@ class GatewayNoopSuppressionTests(unittest.TestCase):
 class CronExecutorNoopSummaryTests(unittest.TestCase):
     def test_no_op_summary_when_metadata_marker_present(self) -> None:
         import inspect
-        from openminion.services.runtime import cron_executor as mod
+        from openminion.services.runtime.cron import executor as mod
 
         src = inspect.getsource(mod.CronTurnExecutor._execute_idle_tick_turn)
         # The no-op branch is gated on the `pae_idle_tick_noop`

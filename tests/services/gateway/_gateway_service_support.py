@@ -184,6 +184,16 @@ class _SequenceTextProvider(LLMProvider):
 
     def __init__(self, responses: list[str]) -> None:
         self._responses = list(responses)
+        self.requests: list[ProviderRequest] = []
+
+    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+        self.requests.append(request)
+        if not self._responses:
+            text = ""
+        else:
+            index = min(len(self.requests) - 1, len(self._responses) - 1)
+            text = self._responses[index]
+        return ProviderResponse(text=text, model="sequence-text-model")
 
 
 class _SuccessfulSearchTool(Tool):
@@ -206,17 +216,6 @@ class _SuccessfulSearchTool(Tool):
             data={"query": query, "result_count": 1},
             source="test-stub",
         )
-
-        self.requests: list[ProviderRequest] = []
-
-    async def generate(self, request: ProviderRequest) -> ProviderResponse:
-        self.requests.append(request)
-        if not self._responses:
-            text = ""
-        else:
-            index = min(len(self.requests) - 1, len(self._responses) - 1)
-            text = self._responses[index]
-        return ProviderResponse(text=text, model="sequence-text-model")
 
 
 class _HelloWorldMemoryV2Adapter:
@@ -365,6 +364,7 @@ class GatewayServiceTestCase(unittest.TestCase):
         sink_channel_name: str = "console",
         authenticity_policy=None,
         history_limit: int = 20,
+        session_context: object | None = None,
         agent_memory: object | None = None,
         knowledge_graphs: object | None = None,
         auto_resume: bool = True,
@@ -394,6 +394,7 @@ class GatewayServiceTestCase(unittest.TestCase):
             security_policy=security_policy,
             channel_authenticity_policy=authenticity_policy,
             history_limit=history_limit,
+            session_context=session_context,  # type: ignore[arg-type]
             agent_memory=agent_memory,
             knowledge_graphs=knowledge_graphs,
         )

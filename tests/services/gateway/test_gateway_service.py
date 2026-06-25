@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from openminion.base.types import AgentResponse
 from openminion.modules.brain.diagnostics.status import PhaseStatus
+from openminion.modules.llm.providers.base import (
+    LLMProvider,
+    ProviderRequest,
+    ProviderResponse,
+)
+from openminion.services.context.session import SessionContextService
 
 from tests.services.gateway._gateway_service_support import (
     GatewayServiceTestCase,
@@ -19,6 +25,26 @@ from tests.services.gateway._gateway_service_support import (
     asyncio,
     connect_database,
 )
+
+
+class _LongArtifactProvider(LLMProvider):
+    name = "long-artifact-provider"
+
+    def __init__(self) -> None:
+        self.requests: list[ProviderRequest] = []
+
+    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            body = (
+                "def get_weather(city: str) -> str:\n"
+                "    return f'weather for {city}'\n"
+                + ("# generated helper detail\n" * 260)
+                + "if __name__ == '__main__':\n"
+                "    print(get_weather('Tokyo'))\n"
+            )
+            return ProviderResponse(text=body, model=self.name)
+        return ProviderResponse(text="second", model=self.name)
 
 
 class GatewayServiceCoreTests(GatewayServiceTestCase):
@@ -84,6 +110,52 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         self.assertGreaterEqual(len(run_events), 8)
         self.assertEqual(run_events[0].payload.get("state"), "queued")
         self.assertEqual(run_events[-1].payload.get("state"), "completed")
+
+    def test_gateway_budgeted_history_keeps_recent_large_assistant_artifact(
+        self,
+    ) -> None:
+        provider = _LongArtifactProvider()
+        gateway, _sink = self._build_gateway(
+            provider=provider,
+            logger_name="openminion.tests.gateway.budgeted.large_artifact",
+            agent_logger_name="openminion.tests.gateway.agent.budgeted.large_artifact",
+            session_context=SessionContextService(
+                self.sessions,
+                token_budget=360,
+                chars_per_token=1.0,
+                keep_recent_messages=20,
+            ),
+        )
+
+        first = asyncio.run(
+            gateway.run_once(
+                channel="console",
+                target="local-user",
+                message="write a Python weather helper",
+            )
+        )
+        asyncio.run(
+            gateway.run_once(
+                channel="console",
+                target="local-user",
+                message="write the above Python code into files",
+                session_id=str(first.metadata.get("session_id", "")),
+            )
+        )
+
+        self.assertEqual(len(provider.requests), 2)
+        assistant_history = [
+            item for item in provider.requests[1].history if item.role == "assistant"
+        ]
+        self.assertEqual(len(assistant_history), 1)
+        assistant_body = assistant_history[0].content
+        self.assertIn("[context budget compacted message:", assistant_body)
+        self.assertIn("def get_weather", assistant_body)
+        self.assertIn("print(get_weather('Tokyo'))", assistant_body)
+        total_history_chars = sum(
+            len(str(item.content or "")) for item in provider.requests[1].history
+        )
+        self.assertLessEqual(total_history_chars, 360)
 
     def test_gateway_forks_settled_thread_by_default(self) -> None:
         gateway, _sink = self._build_gateway(

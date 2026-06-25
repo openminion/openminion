@@ -105,7 +105,9 @@ def _attach_progress_usage_metadata(
     if stats is None:
         return
     existing = RunStats.from_mapping(metadata)
-    if existing is not None and (existing.input_tokens > 0 or existing.output_tokens > 0):
+    if existing is not None and (
+        existing.input_tokens > 0 or existing.output_tokens > 0
+    ):
         return
     total_tokens = max(0, int(stats.input_tokens) + int(stats.output_tokens))
     if total_tokens <= 0:

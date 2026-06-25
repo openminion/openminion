@@ -9,7 +9,12 @@ from urllib.parse import unquote
 from openminion.api.core.deps import is_debug_api_enabled, register_api_debug_providers
 from openminion.services.diagnostics.debug import get_debug_registry
 
-from .base import APIRouteContext, RouteResult, error_route_result, exception_route_result
+from .base import (
+    APIRouteContext,
+    RouteResult,
+    error_route_result,
+    exception_route_result,
+)
 
 
 _DEBUG_MODULE_RE = re.compile(r"/v1/debug/modules/([^/]+)")

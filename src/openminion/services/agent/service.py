@@ -92,9 +92,9 @@ def _provider_usage_payload(raw_usage: Any) -> dict[str, int]:
     if "total_tokens" not in usage_payload and (
         "prompt_tokens" in usage_payload or "completion_tokens" in usage_payload
     ):
-        usage_payload["total_tokens"] = int(usage_payload.get("prompt_tokens", 0)) + int(
-            usage_payload.get("completion_tokens", 0)
-        )
+        usage_payload["total_tokens"] = int(
+            usage_payload.get("prompt_tokens", 0)
+        ) + int(usage_payload.get("completion_tokens", 0))
     return usage_payload
 
 
