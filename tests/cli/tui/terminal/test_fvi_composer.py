@@ -70,7 +70,7 @@ def test_read_line_passes_placeholder_kwarg() -> None:
 
 def test_read_line_still_passes_patch_stdout_context() -> None:
     src = inspect.getsource(TerminalComposer.read_line)
-    assert "patch_stdout()" in src
+    assert "patch_stdout(raw=True)" in src
 
 
 def test_read_line_still_passes_completer() -> None:

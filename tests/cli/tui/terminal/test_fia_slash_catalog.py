@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
+import io
+
+from rich.console import Console
 
 from openminion.cli.tui.terminal.shell import (
     _SLASH_COMMANDS,
     _handle_slash,
 )
+from openminion.cli.tui.terminal.status_line import TerminalStatusLine
+from openminion.cli.tui.terminal.transcript import TerminalTranscript
+
+
+class _StubOverlay:
+    pass
 
 
 def _extract_implemented_slashes() -> set[str]:
@@ -107,6 +117,7 @@ def test_implemented_slashes_in_catalog() -> None:
 def test_extractor_finds_known_slashes() -> None:
     implemented = _extract_implemented_slashes()
     # Must find at least these well-known dispatch arms.
+    assert "/" in implemented
     assert "/exit" in implemented
     assert "/quit" in implemented
     assert "/clear" in implemented
@@ -125,3 +136,25 @@ def test_catalog_size_after_fia_01() -> None:
         f"Catalog has {len(_SLASH_COMMANDS)} entries; expected ≥ 9 "
         f"after FIA-01 strip pass (≥ 13 after FIA-05)"
     )
+
+
+def test_bare_slash_dispatch_prints_menu() -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+
+    asyncio.run(
+        _handle_slash(
+            "/",
+            runtime=object(),
+            console=console,
+            transcript=TerminalTranscript(console),
+            overlay=_StubOverlay(),  # type: ignore[arg-type]
+            status_line=TerminalStatusLine(),
+            working_dir="/tmp",
+        )
+    )
+
+    out = buf.getvalue()
+    assert "Slash commands:" in out
+    assert "/help" in out
+    assert "not yet implemented" not in out

@@ -5,6 +5,7 @@ import time
 
 from rich.console import Console
 
+from openminion.cli.tui.terminal.status_line import TerminalStatusLine
 from openminion.cli.tui.terminal.streaming import TerminalTurnHandle
 from openminion.cli.tui.presentation.models import ToolEvent
 
@@ -92,6 +93,83 @@ def test_wait_state_cadence_via_auto_refresh() -> None:
         "verb must rotate over a 3 s gap (rotate_seconds=3.0 default)"
     )
     handle.complete()
+
+
+def test_wait_state_refreshes_without_token_arrival() -> None:
+    console, _ = _make_console()
+    handle = TerminalTurnHandle(console)
+    refresh_count = 0
+    original_refresh = handle._refresh_live
+
+    def _counting_refresh() -> None:
+        nonlocal refresh_count
+        refresh_count += 1
+        original_refresh()
+
+    handle._refresh_live = _counting_refresh  # type: ignore[method-assign]
+    handle.start()
+    deadline = time.monotonic() + 1.0
+    while refresh_count < 2 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    handle.complete()
+
+    assert refresh_count >= 2
+
+
+def test_wait_state_renders_footer_while_prompt_toolbar_is_suspended() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        agent="minimax-m2-7",
+        model="openai/MiniMax-M2.7",
+        cwd="/repo/openminion",
+        tokens="1200/8000",
+    )
+    console, buffer = _make_console()
+    handle = TerminalTurnHandle(console, footer_provider=line.live_turn_footer).start()
+    console.print(handle._render())
+    handle.complete()
+
+    output = buffer.getvalue()
+    assert "minimax-m2-7" in output
+    assert "openai/MiniMax-M2.7" in output
+    assert "/repo/openminion" in output
+    assert "1200/8000" in output
+
+
+def test_wait_state_footer_parses_ansi_without_escape_garbage() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        agent="minimax-m2-7",
+        model="openai/MiniMax-M2.7",
+        cwd="/repo/openminion",
+    )
+    console, buffer = _make_console()
+    handle = TerminalTurnHandle(console, footer_provider=line.live_turn_footer).start()
+    console.print(handle._render())
+    handle.complete()
+
+    output = buffer.getvalue()
+    assert "\x1b[" not in output
+    assert "[38;" not in output
+
+
+def test_wait_state_suppresses_empty_assistant_row_before_first_token() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        agent="minimax-m2-7",
+        model="openai/MiniMax-M2.7",
+        cwd="/repo/openminion",
+    )
+    console, buffer = _make_console()
+    handle = TerminalTurnHandle(console, footer_provider=line.live_turn_footer).start()
+    console.print(handle._render())
+    handle.complete()
+
+    output = buffer.getvalue()
+    assert "⏺" not in output
+    assert "▍" not in output
+    assert "minimax-m2-7" in output
+    assert "esc to interrupt" in output
 
 
 def test_pre_stream_thinking_frame_state() -> None:

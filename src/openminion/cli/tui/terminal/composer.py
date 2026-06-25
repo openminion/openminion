@@ -100,7 +100,11 @@ class TerminalComposer:
 
         @kb.add("enter")
         def _(event):
-            event.current_buffer.validate_and_handle()
+            self._insert_newline(event)
+
+        @kb.add("/")
+        def _(event):
+            self._insert_slash(event)
 
         @kb.add("<bracketed-paste>")
         def _(event):
@@ -151,13 +155,26 @@ class TerminalComposer:
     def focus_input(self) -> None:
         pass
 
+    @property
+    def prompt_session(self) -> PromptSession:
+        return self._session
+
     def toggle_multiline(self) -> None:
         self._multiline = not self._multiline
 
     def _insert_newline(self, event) -> None:
         if not self._multiline:
-            self._multiline = True
+            event.app.current_buffer.validate_and_handle()
+            return
         event.app.current_buffer.insert_text("\n")
+
+    def _insert_slash(self, event) -> None:
+        buffer = event.app.current_buffer
+        buffer.insert_text("/")
+        try:
+            buffer.start_completion(select_first=False)
+        except Exception:
+            pass
 
     def _apply_pasted_text(self, text: str, *, buffer) -> None:
         text = normalize_multiline_input_text(text)

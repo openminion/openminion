@@ -134,7 +134,7 @@ def test_empty_stream_drops_placeholder_message() -> None:
     assert not agents or all(not m.body for m in agents)
 
 
-def test_progress_callback_does_not_print_status_lines_before_reply() -> None:
+def test_progress_callback_keeps_plain_output_free_of_status_echo() -> None:
     buf = _TTYStringIO()
     transcript = TerminalTranscript(Console(file=buf, force_terminal=False, width=80))
     runtime = _ProgressRuntime()
@@ -151,9 +151,9 @@ def test_progress_callback_does_not_print_status_lines_before_reply() -> None:
         )
 
     output = buf.getvalue()
-    assert "Loading session history..." not in output
     assert "\x1b[" not in output
     assert "progress ok" in output
+    assert "Loading session history..." not in output
     assert "total 1m 22s" in status_line.usage_summary
 
 
@@ -180,10 +180,30 @@ def test_progress_callback_updates_live_turn_status_label() -> None:
             text="hi",
             runtime=runtime,
             transcript=transcript,
-            status_line=TerminalStatusLine(),
+            status_line=None,
         )
     )
 
     assert labels
     assert labels[0] == "Working..."
     assert any("Loading session history" in label for label in labels)
+
+
+def test_progress_callback_updates_prompt_toolbar_status_during_interactive_turn() -> (
+    None
+):
+    transcript, _ = _make_transcript()
+    runtime = _ProgressRuntime()
+    status_line = TerminalStatusLine()
+
+    asyncio.run(
+        _run_agent_turn(
+            text="hi",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=status_line,
+        )
+    )
+
+    assert status_line.state == "idle"
+    assert "total 1m 22s" in status_line.usage_summary

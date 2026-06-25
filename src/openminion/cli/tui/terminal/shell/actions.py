@@ -496,7 +496,7 @@ async def _handle_slash(
 
     if cmd in ("/exit", "/quit"):
         return True
-    if cmd == "/help":
+    if cmd in ("/", "/help"):
         _print_slash_help(console)
         return False
     if cmd == "/clear":

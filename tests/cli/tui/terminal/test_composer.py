@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text.ansi import ANSI
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.input.defaults import create_pipe_input
+from prompt_toolkit.output import DummyOutput
 
 from openminion.cli.tui.terminal.composer import TerminalComposer
 from openminion.cli.tui.presentation.contracts import Composer
@@ -121,6 +125,73 @@ def test_carriage_return_paste_normalizes_to_newlines() -> None:
     assert buffer.calls == ["line one\nline two\nline three"]
 
 
+def test_enter_binding_submits_in_single_line_mode() -> None:
+    c = TerminalComposer()
+    calls: list[str] = []
+
+    class _Buffer:
+        def insert_text(self, text: str) -> None:
+            calls.append(f"insert:{text}")
+
+        def validate_and_handle(self) -> None:
+            calls.append("submit")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+
+    c._insert_newline(_Event())
+
+    assert calls == ["submit"]
+
+
+def test_enter_binding_inserts_newline_in_multiline_mode() -> None:
+    c = TerminalComposer()
+    c._multiline = True
+    calls: list[str] = []
+
+    class _Buffer:
+        def insert_text(self, text: str) -> None:
+            calls.append(f"insert:{text}")
+
+        def validate_and_handle(self) -> None:
+            calls.append("submit")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+
+    c._insert_newline(_Event())
+
+    assert calls == ["insert:\n"]
+
+
+def test_slash_key_inserts_slash_and_opens_completion_menu() -> None:
+    c = TerminalComposer()
+    calls: list[str] = []
+
+    class _Buffer:
+        def insert_text(self, text: str) -> None:
+            calls.append(f"insert:{text}")
+
+        def start_completion(self, *, select_first: bool) -> None:
+            calls.append(f"complete:{select_first}")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+
+    c._insert_slash(_Event())
+
+    assert calls == ["insert:/", "complete:False"]
+
+
 @pytest.mark.asyncio
 async def test_read_line_resets_multiline_after_submit() -> None:
     c = TerminalComposer()
@@ -132,6 +203,34 @@ async def test_read_line_resets_multiline_after_submit() -> None:
     c._session = type("_Session", (), {"prompt_async": _prompt_async})()
     assert await c.read_line() == "hello"
     assert c._multiline is False
+
+
+@pytest.mark.asyncio
+async def test_read_line_uses_patch_stdout_default_mode(monkeypatch) -> None:
+    c = TerminalComposer()
+    patch_events: list[str] = []
+
+    @contextmanager
+    def _fake_patch_stdout(*args, **kwargs):
+        assert args == ()
+        assert kwargs == {}
+        patch_events.append("enter")
+        try:
+            yield
+        finally:
+            patch_events.append("exit")
+
+    async def _prompt_async(*args, **kwargs):
+        return "hello"
+
+    monkeypatch.setattr(
+        "openminion.cli.tui.terminal.composer.patch_stdout",
+        _fake_patch_stdout,
+    )
+    c._session = type("_Session", (), {"prompt_async": _prompt_async})()
+
+    assert await c.read_line() == "hello"
+    assert patch_events == ["enter", "exit"]
 
 
 def test_slash_completer_proposes_matching_slashes() -> None:
@@ -151,7 +250,9 @@ def test_slash_completer_proposes_matching_slashes() -> None:
 def test_slash_completer_opens_menu_for_bare_slash() -> None:
     from prompt_toolkit.document import Document
 
-    c = TerminalComposer(slash_commands={"/model": "choose model", "/help": "show help"})
+    c = TerminalComposer(
+        slash_commands={"/model": "choose model", "/help": "show help"}
+    )
     completions = list(
         c._completer.get_completions(Document(text="/"), complete_event=None)
     )
@@ -166,3 +267,27 @@ def test_bottom_toolbar_formats_ansi_string_for_prompt_toolkit() -> None:
     formatted = c._formatted_bottom_toolbar()
 
     assert isinstance(formatted, ANSI)
+
+
+@pytest.mark.asyncio
+async def test_read_line_submits_on_enter_with_real_prompt_session() -> None:
+    with create_pipe_input() as pipe:
+        composer = TerminalComposer()
+        composer._session = PromptSession(
+            input=pipe,
+            output=DummyOutput(),
+            style=composer._session.style,
+        )
+
+        async def _send() -> None:
+            import asyncio
+
+            await asyncio.sleep(0.05)
+            pipe.send_text("hi\n")
+
+        import asyncio
+
+        asyncio.create_task(_send())
+        result = await composer.read_line()
+
+    assert result == "hi"

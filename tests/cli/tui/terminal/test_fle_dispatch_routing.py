@@ -314,7 +314,7 @@ def test_call_id_recorded_in_dedup_set_after_tool_started() -> None:
 # ── (5) FTR-02 footer stays idle across tool events ───────────────
 
 
-def test_footer_stays_idle_across_tool_events() -> None:
+def test_footer_stays_identity_only_across_tool_events() -> None:
     transcript, _ = _make_transcript()
     status_line = TerminalStatusLine()
     status_line.set_state(agent="alpha", model="openai/test", cwd="/tmp")
@@ -356,9 +356,10 @@ def test_footer_stays_idle_across_tool_events() -> None:
         )
     )
     assert "responding" not in state_history, (
-        f"footer must not flip to responding during tool events; "
-        f"history: {state_history}"
+        "tool events should stay owned by the inline turn handle rather than "
+        f"reentering the shared footer state; history: {state_history}"
     )
+    assert "tool" not in state_history, state_history
     assert status_line.state == "idle"
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from threading import Event, Thread
 from typing import Any
 
 from rich.console import Console, Group
@@ -73,7 +74,13 @@ _HUNK_HEADER_RE = re.compile(r"^@@\s+-\d+(,\d+)?\s+\+\d+(,\d+)?\s+@@")
 
 
 class TerminalTurnHandle:
-    def __init__(self, console: Console, *, plain: bool = False) -> None:
+    def __init__(
+        self,
+        console: Console,
+        *,
+        plain: bool = False,
+        footer_provider: Any | None = None,
+    ) -> None:
         self._console = console
         self._buffer = ""
         self._started_at: float = 0.0
@@ -84,14 +91,26 @@ class TerminalTurnHandle:
         self._in_thinking_frame = True
         self._active_tool: dict[str, Any] | None = None
         self._status_label = ""
+        self._footer_provider = footer_provider
+        self._refresh_stop = Event()
+        self._refresh_thread: Thread | None = None
+        self._inline_status_mode = False
+        self._inline_status_visible = False
+
+    def _refresh_live(self) -> None:
+        if self._inline_status_mode:
+            self._refresh_inline_status()
+            return
+        if self._live is None:
+            return
+        try:
+            self._live.update(self._render(), refresh=True)
+        except Exception:
+            return
 
     def set_status_label(self, label: str) -> None:
         self._status_label = str(label or "").strip()
-        if self._live is not None:
-            try:
-                self._live.update(self._render(), refresh=True)
-            except Exception:
-                return
+        self._refresh_live()
 
     def set_active_tool(
         self,
@@ -107,11 +126,7 @@ class TerminalTurnHandle:
             "args": dict(args or {}),
             "started_at": float(started_at),
         }
-        if self._live is not None:
-            try:
-                self._live.update(self._render(), refresh=True)
-            except Exception:
-                return
+        self._refresh_live()
 
     def clear_active_tool(self, call_id: str = "") -> None:
         if self._active_tool is None:
@@ -121,11 +136,7 @@ class TerminalTurnHandle:
             if active_id and active_id != str(call_id):
                 return
         self._active_tool = None
-        if self._live is not None:
-            try:
-                self._live.update(self._render(), refresh=True)
-            except Exception:
-                return
+        self._refresh_live()
 
     def has_active_tool(self) -> bool:
         return self._active_tool is not None
@@ -133,14 +144,24 @@ class TerminalTurnHandle:
     def start(self) -> "TerminalTurnHandle":
         self._started_at = time.monotonic()
         self._spinner = Spinner(self._started_at, plain=self._plain)
-        self._live = Live(
-            self._render(),
-            console=self._console,
-            transient=False,
-            refresh_per_second=_LIVE_REFRESH_PER_SECOND,
-            auto_refresh=True,
+        self._refresh_stop.clear()
+        self._inline_status_mode = bool(getattr(self._console, "is_terminal", False))
+        self._inline_status_visible = False
+        if not self._inline_status_mode:
+            self._live = Live(
+                self._render(),
+                console=self._console,
+                transient=False,
+                refresh_per_second=_LIVE_REFRESH_PER_SECOND,
+                auto_refresh=True,
+            )
+            self._live.start(refresh=True)
+        self._refresh_thread = Thread(
+            target=self._run_live_refresh_loop,
+            name="terminal-turn-refresh",
+            daemon=True,
         )
-        self._live.start(refresh=True)
+        self._refresh_thread.start()
         return self
 
     def append_token(self, s: str) -> None:
@@ -151,10 +172,14 @@ class TerminalTurnHandle:
         if self._in_thinking_frame:
             self._in_thinking_frame = False
         self._buffer += s
-        if self._live is not None:
-            self._live.update(self._render(), refresh=True)
+        self._refresh_live()
 
     def append_tool_block(self, event: ToolEvent) -> None:
+        if self._inline_status_mode:
+            self._clear_inline_status()
+            self._console.print(_render_tool_block(event))
+            self._refresh_inline_status()
+            return
         if self._live is not None:
             self._live.stop()
             self._console.print(_render_tool_block(event))
@@ -169,29 +194,98 @@ class TerminalTurnHandle:
             self._buffer = final_text
         elapsed = time.monotonic() - self._started_at
         is_bounded_fallback = elapsed <= _BOUNDED_FALLBACK_THRESHOLD_S
-        if self._live is not None:
+        self._refresh_stop.set()
+        if self._inline_status_mode:
+            self._clear_inline_status()
+            final_renderable = self._render_final_body()
+            if final_renderable is not None:
+                self._console.print(final_renderable)
+        elif self._live is not None:
             if is_bounded_fallback:
                 self._live.update(Text(self._buffer or ""), refresh=True)
             else:
-                final_renderable = self._render(
-                    force_no_cursor=True, force_no_status=True
-                )
-                buffer = self._buffer or ""
-                if buffer and _looks_like_markdown(buffer):
-                    marker = marker_text(MARKER_ASSISTANT, bold=True)
-                    marker.append(" ")
-                    md = RichMarkdown(
-                        buffer,
-                        code_theme="monokai",
-                        inline_code_lexer="text",
-                        justify="left",
-                    )
-                    final_renderable = Group(marker, md)
+                final_renderable = self._render_final_body()
+                if final_renderable is None:
+                    final_renderable = Text()
                 self._live.update(final_renderable, refresh=True)
             self._live.stop()
             self._live = None
-        self._console.print()
+        if self._refresh_thread is not None:
+            self._refresh_thread.join(timeout=0.2)
+            self._refresh_thread = None
+        if not self._inline_status_mode:
+            self._console.print()
         self._completed = True
+
+    def _run_live_refresh_loop(self) -> None:
+        while not self._refresh_stop.wait(0.2):
+            self._refresh_live()
+
+    def _refresh_inline_status(self) -> None:
+        if self._completed:
+            return
+        line = self._inline_status_line()
+        if not line:
+            return
+        file = getattr(self._console, "file", None)
+        if file is None:
+            return
+        file.write(f"\r\033[2K{line}")
+        file.flush()
+        self._inline_status_visible = True
+
+    def _clear_inline_status(self) -> None:
+        if not self._inline_status_visible:
+            return
+        file = getattr(self._console, "file", None)
+        if file is None:
+            return
+        file.write("\r\033[2K")
+        file.flush()
+        self._inline_status_visible = False
+
+    def _inline_status_line(self) -> str:
+        if self._spinner is None:
+            return ""
+        now = time.monotonic()
+        status_label = str(self._status_label or "").strip()
+        if self._active_tool is not None:
+            tool_event = ToolEvent(
+                tool_name=str(self._active_tool.get("tool_name", "") or "tool"),
+                args=dict(self._active_tool.get("args") or {}),
+                content="",
+                full_content="",
+            )
+            status_label = f"Running {_verb_form_title(tool_event)}"
+        elif not status_label:
+            status_label = (
+                THINKING_VERB
+                if self._in_thinking_frame
+                else self._spinner.current_verb(now) or THINKING_VERB
+            )
+        spinner_frame = self._spinner.current_frame(now) or "✻"
+        elapsed_label = self._spinner.elapsed_label(now)
+        return f"{spinner_frame} {status_label} · {elapsed_label} · esc to interrupt"
+
+    def _render_final_body(self) -> Any | None:
+        buffer = self._buffer or ""
+        if not buffer:
+            return None
+        if _looks_like_markdown(buffer):
+            marker = marker_text(MARKER_ASSISTANT, bold=True)
+            marker.append(" ")
+            md = RichMarkdown(
+                buffer,
+                code_theme="monokai",
+                inline_code_lexer="text",
+                justify="left",
+            )
+            return Group(marker, md)
+        final_row = Text()
+        final_row.append_text(marker_text(MARKER_ASSISTANT, bold=True))
+        final_row.append(" ")
+        final_row.append(buffer)
+        return final_row
 
     def _render(
         self,
@@ -199,12 +293,17 @@ class TerminalTurnHandle:
         force_no_cursor: bool = False,
         force_no_status: bool = False,
     ) -> Any:
-        body_row = Text()
-        body_row.append_text(marker_text(MARKER_ASSISTANT, bold=True))
-        body_row.append(" ")
-        body_row.append(self._buffer or "")
-        if not force_no_cursor and not self._completed:
-            body_row.append(_STREAM_CURSOR, style="dim")
+        show_body_row = bool(
+            self._buffer or self._completed or not self._in_thinking_frame
+        )
+        body_row: Text | None = None
+        if show_body_row:
+            body_row = Text()
+            body_row.append_text(marker_text(MARKER_ASSISTANT, bold=True))
+            body_row.append(" ")
+            body_row.append(self._buffer or "")
+            if not force_no_cursor and not self._completed:
+                body_row.append(_STREAM_CURSOR, style="dim")
 
         running_block: Any = None
         if self._active_tool is not None:
@@ -217,16 +316,36 @@ class TerminalTurnHandle:
                 elapsed_seconds=elapsed,
             )
 
+        footer_row: Any = None
+        if callable(self._footer_provider):
+            footer_text = str(self._footer_provider() or "").strip()
+            if footer_text:
+                footer_row = Text.from_ansi(footer_text)
+
         if force_no_status:
+            rows: list[Any] = []
             if running_block is not None:
-                return Group(running_block, body_row)
-            return body_row
+                rows.append(running_block)
+            if body_row is not None:
+                rows.append(body_row)
+            if footer_row is not None:
+                rows.append(footer_row)
+            if not rows:
+                return Text()
+            return Group(*rows) if len(rows) > 1 else rows[0]
 
         now = time.monotonic()
         if self._spinner is None:
+            rows = []
             if running_block is not None:
-                return Group(running_block, body_row)
-            return body_row
+                rows.append(running_block)
+            if body_row is not None:
+                rows.append(body_row)
+            if footer_row is not None:
+                rows.append(footer_row)
+            if not rows:
+                return Text()
+            return Group(*rows) if len(rows) > 1 else rows[0]
         if self._in_thinking_frame:
             verb = "" if self._plain else THINKING_VERB
         else:
@@ -240,9 +359,15 @@ class TerminalTurnHandle:
             status_label=self._status_label,
             spinner_frame=self._spinner.current_frame(now),
         )
+        rows = []
         if running_block is not None:
-            return Group(running_block, body_row, status_row)
-        return Group(body_row, status_row)
+            rows.append(running_block)
+        if body_row is not None:
+            rows.append(body_row)
+        if footer_row is not None:
+            rows.append(footer_row)
+        rows.append(status_row)
+        return Group(*rows)
 
 
 def _render_tool_block(event: ToolEvent) -> Group:
