@@ -4,8 +4,8 @@ import json
 from types import SimpleNamespace
 from datetime import datetime, timezone
 
-from openminion.services.runtime.cron_delivery import CronDeliveryBridge
-from openminion.services.runtime.cron_executor import CronTurnExecutor
+from openminion.services.runtime.cron.delivery import CronDeliveryBridge
+from openminion.services.runtime.cron.executor import CronTurnExecutor
 
 
 class _FakeHandle:

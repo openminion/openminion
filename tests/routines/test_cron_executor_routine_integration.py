@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from openminion.modules.tool.registry import ToolRegistry
-from openminion.services.runtime.cron_executor import CronTurnExecutor
+from openminion.services.runtime.cron.executor import CronTurnExecutor
 from openminion.tools.github.plugin import register as register_github_tools
 from openminion.tools.github.providers import (
     provider_registry,

@@ -26,8 +26,8 @@ from openminion.services.runtime.ingress import (
     TurnRequestError,
     TurnTimeoutError,
 )
-from openminion.services.runtime.cron_delivery import CronDeliveryBridge
-from openminion.services.runtime.cron_executor import CronTurnExecutor
+from openminion.services.runtime.cron.delivery import CronDeliveryBridge
+from openminion.services.runtime.cron.executor import CronTurnExecutor
 
 if False:  # pragma: no cover
     from openminion.api.runtime import APIRuntime

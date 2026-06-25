@@ -379,8 +379,8 @@ def test_tcee_06_daemon_path_does_not_emit_cli_manual_tick_summary() -> None:
 def test_tcee_06_scheduler_invokes_real_cron_turn_executor_end_to_end() -> None:
     from types import SimpleNamespace
 
-    from openminion.services.runtime.cron_delivery import CronDeliveryBridge
-    from openminion.services.runtime.cron_executor import CronTurnExecutor
+    from openminion.services.runtime.cron.delivery import CronDeliveryBridge
+    from openminion.services.runtime.cron.executor import CronTurnExecutor
 
     # --- Production-shape runtime fakes (mirroring test_cron_turn_executor) ---
 
