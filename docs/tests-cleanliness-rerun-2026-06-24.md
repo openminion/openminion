@@ -14,9 +14,9 @@ current `openminion/tests` tree.
 
 The live rerun artifacts remain under the workspace scratch root:
 
-1. `/Users/j/repos/base/agent-frameworks/workspace-tmp/openminion-tests-cleanliness-rerun-2026-06-24/latest-test-files.current.txt`
-2. `/Users/j/repos/base/agent-frameworks/workspace-tmp/openminion-tests-cleanliness-rerun-2026-06-24/per-file-ledger.tsv`
-3. `/Users/j/repos/base/agent-frameworks/workspace-tmp/openminion-tests-cleanliness-rerun-2026-06-24/summary.md`
+1. `workspace-tmp/openminion-tests-cleanliness-rerun-2026-06-24/latest-test-files.current.txt`
+2. `workspace-tmp/openminion-tests-cleanliness-rerun-2026-06-24/per-file-ledger.tsv`
+3. `workspace-tmp/openminion-tests-cleanliness-rerun-2026-06-24/summary.md`
 
 ## Current proven state
 
