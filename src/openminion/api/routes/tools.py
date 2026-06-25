@@ -21,6 +21,7 @@ from .base import (
     APIRouteContext,
     RouteResult,
     error_route_result,
+    exception_route_result,
     json_body_required_route_result,
 )
 
@@ -92,10 +93,10 @@ def _handle_tool_run(
         try:
             arguments = v1_tool_arguments(body)
         except ValueError as exc:
-            return error_route_result(
+            return exception_route_result(
                 HTTPStatus.BAD_REQUEST,
                 code="invalid_request",
-                message=str(exc),
+                exc=exc,
                 details={"path": path},
                 retryable=False,
             )

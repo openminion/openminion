@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from openminion.base.types import Message
 
+_COMPACTED_MESSAGE_PREFIX = "[context budget compacted message:"
+_COMPACTED_OMISSION_PREFIX = "[... omitted "
+
 
 @dataclass(frozen=True)
 class ContextBudgetConfig:
@@ -108,6 +111,13 @@ def assemble_budgeted_context(
 
     trimmed_history = remaining + protected
     total_final_chars = system_chars + sum(_msg_chars(m) for m in trimmed_history)
+    if total_final_chars > budget_chars:
+        trimmed_history = _fit_recent_history_to_budget(
+            system_chars=system_chars,
+            history_messages=trimmed_history,
+            budget_chars=budget_chars,
+        )
+        total_final_chars = system_chars + sum(_msg_chars(m) for m in trimmed_history)
     overflow = total_final_chars > budget_chars
 
     telemetry.messages_after_trim = len(trimmed_history)
@@ -132,6 +142,79 @@ def _msg_chars(msg: Message) -> int:
     body = str(msg.body or "")
     meta_str = str(msg.metadata or "")
     return len(body) + len(meta_str)
+
+
+def _fit_recent_history_to_budget(
+    *,
+    system_chars: int,
+    history_messages: list[Message],
+    budget_chars: int,
+) -> list[Message]:
+    available_history_chars = max(0, int(budget_chars) - max(0, int(system_chars)))
+    if available_history_chars <= 0:
+        return []
+
+    selected_newest_first: list[Message] = []
+    used_chars = 0
+    for message in reversed(history_messages):
+        remaining_chars = available_history_chars - used_chars
+        if remaining_chars <= 0:
+            break
+        message_chars = _msg_chars(message)
+        if message_chars <= remaining_chars:
+            selected_newest_first.append(message)
+            used_chars += message_chars
+            continue
+        compacted = _compact_message_to_char_limit(message, remaining_chars)
+        if compacted is not None:
+            selected_newest_first.append(compacted)
+        break
+    return list(reversed(selected_newest_first))
+
+
+def _compact_message_to_char_limit(message: Message, max_chars: int) -> Message | None:
+    meta_chars = len(str(message.metadata or ""))
+    body_limit = max(0, int(max_chars) - meta_chars)
+    if body_limit <= 0:
+        return None
+    compacted_body = _compact_text_to_limit(str(message.body or ""), body_limit)
+    if not compacted_body:
+        return None
+    return Message(
+        channel=message.channel,
+        target=message.target,
+        body=compacted_body,
+        metadata=dict(message.metadata or {}),
+        stats=message.stats,
+        id=message.id,
+        timestamp=message.timestamp,
+    )
+
+
+def _compact_text_to_limit(text: str, max_chars: int) -> str:
+    limit = max(0, int(max_chars))
+    if limit <= 0:
+        return ""
+    body = str(text or "")
+    if len(body) <= limit:
+        return body
+
+    note = f"{_COMPACTED_MESSAGE_PREFIX} original_chars={len(body)}]\n"
+    if limit <= len(note):
+        return note[:limit].rstrip()
+
+    omission = f"\n{_COMPACTED_OMISSION_PREFIX}{len(body)} chars ...]\n"
+    payload_limit = limit - len(note) - len(omission)
+    if payload_limit <= 0:
+        return (note + omission.lstrip())[:limit].rstrip()
+
+    head_chars = max(1, (payload_limit + 1) // 2)
+    tail_chars = max(0, payload_limit - head_chars)
+    omitted = max(0, len(body) - head_chars - tail_chars)
+    omission = f"\n{_COMPACTED_OMISSION_PREFIX}{omitted} chars ...]\n"
+    tail = body[-tail_chars:] if tail_chars > 0 else ""
+    compacted = note + body[:head_chars].rstrip() + omission + tail.lstrip()
+    return compacted[:limit].rstrip()
 
 
 def _chars_to_tokens(chars: int, chars_per_token: float) -> int:

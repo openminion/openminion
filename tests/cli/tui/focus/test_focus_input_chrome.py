@@ -13,7 +13,7 @@ from openminion.cli.theme import DARK
 from openminion.cli.tui.focus.app import FocusApp, _DemoFocusRuntime
 from openminion.cli.tui.focus.widgets.status_line import FocusStatusLine
 from openminion.cli.tui.focus.widgets import FocusComposer
-from openminion.cli.tui.widgets.input_bar import ChatInputBar
+from openminion.cli.tui.widgets.input_bar import ChatInput, ChatInputBar
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +43,74 @@ class _InputBarHarness(App[None]):
 
     def compose(self) -> ComposeResult:
         yield self.bar
+
+
+class _BareSpaceKeyEvent:
+    key = "space"
+    character = None
+    is_printable = False
+
+    def __init__(self) -> None:
+        self.stopped = False
+        self.prevented = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def prevent_default(self) -> None:
+        self.prevented = True
+
+
+@pytest.mark.asyncio
+async def test_dashboard_input_bar_preserves_space_key() -> None:
+    bar = ChatInputBar()
+    app = _InputBarHarness(bar)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        single = bar.query_one("#message-input", Input)
+        single.focus()
+        await pilot.press("w", "h", "a", "t", "space", "n", "o", "w")
+        await pilot.pause()
+        assert single.value == "what now"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_input_bar_inserts_bare_terminal_space_key() -> None:
+    bar = ChatInputBar()
+    app = _InputBarHarness(bar)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        single = bar.query_one("#message-input", ChatInput)
+        single.value = "what"
+        single.cursor_position = len(single.value)
+
+        event = _BareSpaceKeyEvent()
+        await single._on_key(event)
+
+        assert single.value == "what "
+        assert single.cursor_position == len("what ")
+        assert event.stopped is True
+        assert event.prevented is True
+
+
+@pytest.mark.asyncio
+async def test_dashboard_input_bar_parent_inserts_space_when_input_focused() -> None:
+    bar = ChatInputBar()
+    app = _InputBarHarness(bar)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        single = bar.query_one("#message-input", Input)
+        single.value = "what"
+        single.cursor_position = len(single.value)
+        single.focus()
+
+        event = _BareSpaceKeyEvent()
+        bar.on_key(event)
+
+        assert single.value == "what "
+        assert single.cursor_position == len("what ")
+        assert event.stopped is True
+        assert event.prevented is True
 
 
 @pytest.mark.asyncio
@@ -272,4 +340,24 @@ def test_status_line_busy_state_overrides_input_state_hint() -> None:
     line.set_state(state="responding", elapsed_seconds=5.0, input_state="typing")
     text = line._text()
     assert "responding" in text
+    assert "Enter to send" not in text
+
+
+def test_status_line_busy_state_keeps_runtime_stats() -> None:
+    line = FocusStatusLine()
+    line.set_state(
+        state="responding",
+        elapsed_seconds=5.0,
+        model="openai/MiniMax-M2.7",
+        tokens="1200/8000",
+        custom="analyzing request",
+        queued_count=1,
+        input_state="typing",
+    )
+    text = line._text()
+    assert "responding" in text
+    assert "model: openai/MiniMax-M2.7" in text
+    assert "tokens: 1200/8000" in text
+    assert "status: analyzing request" in text
+    assert "queued: 1" in text
     assert "Enter to send" not in text

@@ -221,7 +221,10 @@ class LongRunningGoalRuntime:
                 GoalStatus.COMPLETED,
                 reason="child_goal_rollup_completed",
             )
-        if any(child.status in {GoalStatus.HALTED, GoalStatus.CANCELLED} for child in children):
+        if any(
+            child.status in {GoalStatus.HALTED, GoalStatus.CANCELLED}
+            for child in children
+        ):
             return self.goal_store.transition_status(
                 parent.goal_id,
                 GoalStatus.HALTED,

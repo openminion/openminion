@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import sys
+import types
 from pathlib import Path
 
 from rich.console import Console
@@ -33,7 +35,26 @@ def _capture_greeter(*, working_dir: str = "/test/cwd") -> str:
 
 def test_greeter_contains_openminion_identity() -> None:
     out = _capture_greeter()
-    assert "openminion" in out
+    assert "OpenMinion" in out or "openminion" in out
+
+
+def test_greeter_uses_pyfiglet_banner_when_available(monkeypatch) -> None:
+    class _Figlet:
+        def __init__(self, *, font: str, width: int) -> None:
+            self.font = font
+            self.width = width
+
+        def renderText(self, text: str) -> str:
+            assert self.font == "small"
+            assert self.width == 72
+            assert text == "OpenMinion"
+            return "OM FIGLET\n"
+
+    monkeypatch.setitem(sys.modules, "pyfiglet", types.SimpleNamespace(Figlet=_Figlet))
+
+    out = _capture_greeter()
+
+    assert "OM FIGLET" in out
 
 
 def test_greeter_contains_focus_shell_label() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from openminion.cli.status import (
     TokenUsageSnapshot,
     TokenUsageTotals,
@@ -31,6 +33,18 @@ def test_usage_totals_from_mapping_accepts_final_and_live_keys() -> None:
 
     assert final_usage == TokenUsageTotals(1200, 300, 1500)
     assert live_usage == TokenUsageTotals(10, 5, 15)
+
+
+def test_usage_totals_from_mapping_accepts_typed_status_objects() -> None:
+    usage = usage_totals_from_mapping(
+        SimpleNamespace(
+            total_input_tokens_used=1200,
+            total_output_tokens_used=45,
+            total_tokens_used=1245,
+        )
+    )
+
+    assert usage == TokenUsageTotals(1200, 45, 1245)
 
 
 def test_usage_totals_from_mapping_ignores_non_numeric_values() -> None:

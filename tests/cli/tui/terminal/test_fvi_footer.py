@@ -107,18 +107,35 @@ def test_set_state_api_unchanged() -> None:
     assert "1k tokens" in out
 
 
-# ── Active turn states preserved (FTR-02 contract) ──────────────
+# ── Active turn states stay out of the footer ───────────────────
 
 
-def test_responding_state_still_renders() -> None:
+def test_responding_state_does_not_reenter_footer() -> None:
     sl = TerminalStatusLine()
-    sl.set_state(state="responding", elapsed_seconds=1.5)
+    sl.set_state(
+        state="responding",
+        elapsed_seconds=1.5,
+        agent="alpha",
+        model="openai/test",
+    )
     out = sl.bottom_toolbar()
-    assert "responding" in out
+    assert "responding" not in out
+    assert "1.5s" not in out
+    assert "Esc cancel" not in out
+    assert "alpha" in out
 
 
-def test_tool_state_still_renders() -> None:
+def test_tool_state_does_not_reenter_footer() -> None:
     sl = TerminalStatusLine()
-    sl.set_state(state="tool", tool_name="Bash", elapsed_seconds=2.0)
+    sl.set_state(
+        state="tool",
+        tool_name="Bash",
+        elapsed_seconds=2.0,
+        agent="alpha",
+        model="openai/test",
+    )
     out = sl.bottom_toolbar()
-    assert "Bash" in out
+    assert "Bash" not in out
+    assert "2.0s" not in out
+    assert "Esc cancel" not in out
+    assert "alpha" in out

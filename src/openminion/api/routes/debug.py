@@ -7,17 +7,21 @@ from http import HTTPStatus
 from urllib.parse import unquote
 
 from openminion.api.core.deps import is_debug_api_enabled, register_api_debug_providers
-from openminion.api.responses.serialization import error_response
 from openminion.services.diagnostics.debug import get_debug_registry
 
-from .base import APIRouteContext, RouteResult
+from .base import (
+    APIRouteContext,
+    RouteResult,
+    error_route_result,
+    exception_route_result,
+)
 
 
 _DEBUG_MODULE_RE = re.compile(r"/v1/debug/modules/([^/]+)")
 
 
 def _debug_disabled_response(path: str) -> RouteResult:
-    status, payload = error_response(
+    return error_route_result(
         HTTPStatus.FORBIDDEN,
         code="debug_disabled",
         message="API debug endpoints are disabled by config.",
@@ -30,7 +34,6 @@ def _debug_disabled_response(path: str) -> RouteResult:
         },
         retryable=False,
     )
-    return RouteResult(status=status, payload=payload)
 
 
 def _build_debug_registry(ctx: APIRouteContext):
@@ -61,25 +64,23 @@ def _handle_debug_module(
     registry = _build_debug_registry(ctx)
     provider = registry.get_module(module_name)
     if provider is None:
-        status, payload = error_response(
+        return error_route_result(
             HTTPStatus.NOT_FOUND,
             code="module_not_found",
             message=f"Unknown module: {module_name}",
             details={"module": module_name},
             retryable=False,
         )
-        return RouteResult(status=status, payload=payload)
     try:
         payload = {"ok": True, "module": provider.get_debug().to_dict()}
     except Exception as exc:  # noqa: BLE001
-        status, payload = error_response(
+        return exception_route_result(
             HTTPStatus.INTERNAL_SERVER_ERROR,
             code="debug_failed",
-            message=str(exc),
+            exc=exc,
             details={"module": module_name},
             retryable=False,
         )
-        return RouteResult(status=status, payload=payload)
     return RouteResult(status=HTTPStatus.OK, payload=payload)
 
 

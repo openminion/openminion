@@ -139,10 +139,8 @@ class InputStateMixin:
 
     def _sync_input_state(self) -> None:
         input_bar = self.query_one(FocusComposer)
-        disabled = (
-            self._busy
-            or self._session_initializing
-            or not bool(getattr(self._runtime, "is_bound", False))
+        disabled = self._session_initializing or not bool(
+            getattr(self._runtime, "is_bound", False)
         )
         input_bar.set_disabled(disabled)
         if not disabled:

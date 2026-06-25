@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from openminion.cli.tui.terminal.spinner import (
+    SPINNER_FRAMES,
     THINKING_VERB,
     VERBS,
     Spinner,
@@ -44,6 +45,14 @@ def test_current_verb_returns_empty_in_plain_mode() -> None:
     spinner = Spinner(start_time=0.0, plain=True)
     assert spinner.current_verb(0.0) == ""
     assert spinner.current_verb(15.0) == ""
+    assert spinner.current_frame(15.0) == ""
+
+
+def test_current_frame_uses_old_chat_spinner_frames() -> None:
+    spinner = Spinner(start_time=0.0)
+    assert spinner.current_frame(0.0) == SPINNER_FRAMES[0]
+    assert spinner.current_frame(0.1) == SPINNER_FRAMES[1]
+    assert spinner.current_frame(1.0) == SPINNER_FRAMES[0]
 
 
 @pytest.mark.parametrize(
@@ -89,6 +98,20 @@ def test_format_status_row_plain_mode_drops_verb() -> None:
 def test_format_status_row_custom_hint() -> None:
     text = format_status_row("Pondering", "5s", hint="Ctrl+C to cancel")
     assert "Ctrl+C to cancel" in text.plain
+
+
+def test_format_status_row_prefers_runtime_status_label() -> None:
+    text = format_status_row(
+        "Pondering",
+        "5s",
+        status_label="Analyzing request...",
+        spinner_frame="⠋",
+    )
+    rendered = text.plain
+    assert "⠋" in rendered
+    assert "Analyzing request..." in rendered
+    assert "5s" in rendered
+    assert "Pondering" not in rendered
 
 
 def test_format_status_row_no_hint() -> None:

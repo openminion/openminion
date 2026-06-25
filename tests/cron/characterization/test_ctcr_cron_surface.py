@@ -126,7 +126,7 @@ def test_non_test_src_importers_resolve() -> None:
         "src/openminion/modules/session/storage/repository.py",
         "src/openminion/modules/session/storage/cron_store.py",
         "src/openminion/services/health/lifecycle.py",
-        "src/openminion/services/runtime/cron_delivery.py",
+        "src/openminion/services/runtime/cron/delivery.py",
         "src/openminion/services/runtime/daemon.py",
     }
     for rel in known_non_test_importers:

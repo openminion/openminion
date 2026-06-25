@@ -374,9 +374,14 @@ def test_fresh_session_branches_reset_chat_transcript() -> None:
     from openminion.cli.tui.tabs.chat import ChatTab
 
     reply_src = inspect.getsource(ChatTab._handle_resume_prompt_reply)
-    # `set_messages([])` must appear in the fresh-session branches (at
-    # least twice: explicit "n" + arbitrary-message fall-through).
-    assert reply_src.count("set_messages([])") >= 2, (
+    fresh_src = inspect.getsource(ChatTab._start_fresh_session)
+    # Fresh-session reset is centralized in `_start_fresh_session`; both
+    # explicit "n" and arbitrary-message fall-through must route through it.
+    assert reply_src.count("_start_fresh_session()") >= 2, (
+        "Fresh-session branches must route through the shared reset helper "
+        "so UI state does not diverge from the newly-bound runtime session."
+    )
+    assert "set_messages([])" in fresh_src, (
         "Fresh-session branches must reset the visible transcript so UI "
         "state does not diverge from the newly-bound runtime session."
     )

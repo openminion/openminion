@@ -8,7 +8,7 @@ from openminion.cli.commands.focus import _resolve_focus_backend
 
 
 def _args(**overrides) -> SimpleNamespace:
-    base = {"rich": False}
+    base = {"rich": False, "terminal": False}
     base.update(overrides)
     return SimpleNamespace(**base)
 
@@ -28,6 +28,8 @@ def _args(**overrides) -> SimpleNamespace:
 def test_focus_backend_resolution(
     monkeypatch, env_value: str | None, rich_flag: bool, expected: str
 ) -> None:
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     if env_value is None:
         monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
     else:
@@ -35,7 +37,31 @@ def test_focus_backend_resolution(
     assert _resolve_focus_backend(_args(rich=rich_flag)) == expected
 
 
-def test_focus_subparser_registers_rich_flag() -> None:
+def test_focus_backend_defaults_to_terminal_for_interactive_tty(monkeypatch) -> None:
+    monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    assert _resolve_focus_backend(_args()) == "terminal"
+
+
+def test_focus_backend_defaults_to_terminal_for_piped_stdin(monkeypatch) -> None:
+    monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    assert _resolve_focus_backend(_args()) == "terminal"
+
+
+def test_focus_terminal_flag_wins_over_interactive_default(monkeypatch) -> None:
+    monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    assert _resolve_focus_backend(_args(terminal=True)) == "terminal"
+
+
+def test_focus_subparser_registers_rich_and_terminal_flags() -> None:
     import argparse
 
     from openminion.cli.commands import focus as focus_cmd
@@ -45,9 +71,15 @@ def test_focus_subparser_registers_rich_flag() -> None:
     focus_cmd.register(subparsers)
     parsed = parser.parse_args(["focus", "--rich"])
     assert parsed.rich is True
+    assert parsed.terminal is False
+
+    parsed_terminal = parser.parse_args(["focus", "--terminal"])
+    assert parsed_terminal.terminal is True
+    assert parsed_terminal.rich is False
 
     parsed_no_flag = parser.parse_args(["focus"])
     assert parsed_no_flag.rich is False
+    assert parsed_no_flag.terminal is False
 
 
 def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
@@ -71,12 +103,13 @@ def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
         dir=None,
         no_interactive=False,
         theme=None,
+        terminal=False,
     )
     rc = focus_cmd.run_focus(args)
     assert rc == 2
     captured = capsys.readouterr()
     assert "requires an interactive terminal" in captured.err
-    assert "drop the --rich flag" in captured.err or "terminal-flow" in captured.err
+    assert "--terminal" in captured.err
 
 
 def test_rich_with_tty_does_not_short_circuit(monkeypatch) -> None:
@@ -113,6 +146,7 @@ def test_rich_with_tty_does_not_short_circuit(monkeypatch) -> None:
         dir=".",
         no_interactive=False,
         theme=None,
+        terminal=False,
     )
     try:
         focus_cmd.run_focus(args)

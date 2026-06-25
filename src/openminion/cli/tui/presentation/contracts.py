@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Iterable, Literal, Protocol, runtime_checkable
 
 from openminion.cli.tui.presentation.models import ChatMessage, ToolEvent
@@ -26,7 +27,10 @@ class TurnHandleProtocol(Protocol):
 @runtime_checkable
 class TranscriptSink(Protocol):
     def begin_turn(
-        self, role: Literal["user", "assistant"] = "assistant"
+        self,
+        role: Literal["user", "assistant"] = "assistant",
+        *,
+        footer_provider: Callable[[], str] | None = None,
     ) -> TurnHandleProtocol: ...
 
     def push_message(self, message: ChatMessage) -> Any: ...

@@ -365,6 +365,56 @@ def test_build_turn_response_metadata_includes_turn_progress_summary() -> None:
     assert metadata["tool_calls_count"] == "2"
 
 
+def test_build_turn_response_metadata_falls_back_to_llm_event_usage() -> None:
+    bridge = DummyBridge()
+    bridge._config = SimpleNamespace(
+        agent=SimpleNamespace(name="agent-1"),
+        agents={"agent-1": SimpleNamespace(name="agent-1")},
+        default_agent="agent-1",
+    )
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    runner = _DummyRunner({})
+    runner.session_api.append_event(
+        "sess-usage",
+        "llm.call.completed",
+        {
+            "purpose": "entry",
+            "usage": {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+        },
+        trace_id="trace-usage",
+    )
+    runner.session_api.append_event(
+        "sess-usage",
+        "llm.call.completed",
+        {
+            "purpose": "entry",
+            "usage": {
+                "prompt_tokens": 300,
+                "completion_tokens": 40,
+                "total_tokens": 340,
+            },
+        },
+        trace_id="trace-usage",
+    )
+
+    metadata = bridge._build_turn_response_metadata(
+        runner=runner,
+        step_out=SimpleNamespace(
+            status="done",
+            action_result=SimpleNamespace(outputs={}),
+        ),
+        session_id="sess-usage",
+        request_id="trace-usage",
+        elapsed_ms=1234.5,
+        llm_steps=2,
+        termination_reason="model_final",
+    )
+
+    assert metadata["total_input_tokens_used"] == "400"
+    assert metadata["total_output_tokens_used"] == "60"
+    assert metadata["total_tokens_used"] == "460"
+
+
 def test_build_turn_response_metadata_uses_selected_runtime_agent_identity() -> None:
     bridge = DummyBridge()
     bridge._config = OpenMinionConfig.from_dict(

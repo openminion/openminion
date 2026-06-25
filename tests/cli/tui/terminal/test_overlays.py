@@ -101,3 +101,30 @@ def test_completion_returns_user_reply() -> None:
         console=console, prompt_session=_StubSession(["my answer"])
     )
     assert overlay.present_completion("Confirm?") == "my answer"
+
+
+def test_confirm_yes_returns_true() -> None:
+    console, _ = _make_console()
+    overlay = TerminalOverlayPresenter(
+        console=console,
+        prompt_session=_StubSession(["y"]),
+    )
+    assert overlay.present_confirm("Exit focus mode?") is True
+
+
+def test_confirm_empty_uses_default() -> None:
+    console, _ = _make_console()
+    overlay = TerminalOverlayPresenter(
+        console=console,
+        prompt_session=_StubSession([""]),
+    )
+    assert overlay.present_confirm("Exit focus mode?", default=True) is True
+
+
+def test_confirm_keyboard_interrupt_returns_false() -> None:
+    console, _ = _make_console()
+    overlay = TerminalOverlayPresenter(
+        console=console,
+        prompt_session=_StubSession([KeyboardInterrupt()]),
+    )
+    assert overlay.present_confirm("Exit focus mode?") is False

@@ -12,7 +12,7 @@ from openminion.tools.task.routine.dispatcher import (
     build_default_dispatcher,
 )
 from openminion.tools.task.routine.schemas import RoutinePayloadV1
-from openminion.services.runtime.cron_audit import watch_write_audit_entries
+from openminion.services.runtime.cron.audit import watch_write_audit_entries
 from openminion.tools.task.constants import (
     CONSOLIDATION_PAYLOAD_KEY,
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,

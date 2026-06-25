@@ -50,6 +50,7 @@ class FocusLabelsMixin:
                 getattr(self._runtime, "permission_mode", "default") or "default"
             ),
             custom=self._statusline_custom_label(),
+            queued_count=len(getattr(self, "_queued_turns", []) or []),
             tokens_severity=tokens_severity,
         )
 

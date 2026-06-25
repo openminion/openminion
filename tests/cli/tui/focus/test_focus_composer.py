@@ -25,6 +25,22 @@ class _Harness(App):
         self.received.append(event.text)
 
 
+class _BareSpaceKeyEvent:
+    key = "space"
+    character = None
+    is_printable = False
+
+    def __init__(self) -> None:
+        self.stopped = False
+        self.prevented = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def prevent_default(self) -> None:
+        self.prevented = True
+
+
 def test_constructor_signature_matches_chatinputbar_focus_form() -> None:
     c = FocusComposer()
     assert c._placeholder == FocusComposer.PLACEHOLDER_FRESH
@@ -97,6 +113,51 @@ async def test_submitted_event_class_renamed_from_chat_input_bar() -> None:
     assert FocusComposer.Submitted.__qualname__ == "FocusComposer.Submitted"
     msg = FocusComposer.Submitted("hello")
     assert msg.text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_single_line_input_preserves_space_key() -> None:
+    async with _Harness().run_test() as pilot:
+        c = pilot.app.composer
+        inp = c.query_one("#focus-input", Input)
+        await pilot.press("w", "h", "a", "t", "space", "n", "o", "w")
+        await pilot.pause()
+        assert inp.value == "what now"
+
+
+@pytest.mark.asyncio
+async def test_single_line_input_inserts_bare_terminal_space_key() -> None:
+    async with _Harness().run_test() as pilot:
+        c = pilot.app.composer
+        inp = c.query_one("#focus-input", Input)
+        inp.value = "what"
+        inp.cursor_position = len(inp.value)
+
+        event = _BareSpaceKeyEvent()
+        await inp._on_key(event)
+
+        assert inp.value == "what "
+        assert inp.cursor_position == len("what ")
+        assert event.stopped is True
+        assert event.prevented is True
+
+
+@pytest.mark.asyncio
+async def test_parent_composer_inserts_space_when_input_focused() -> None:
+    async with _Harness().run_test() as pilot:
+        c = pilot.app.composer
+        inp = c.query_one("#focus-input", Input)
+        inp.value = "what"
+        inp.cursor_position = len(inp.value)
+        inp.focus()
+
+        event = _BareSpaceKeyEvent()
+        c.on_key(event)
+
+        assert inp.value == "what "
+        assert inp.cursor_position == len("what ")
+        assert event.stopped is True
+        assert event.prevented is True
 
 
 @pytest.mark.asyncio

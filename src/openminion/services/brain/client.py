@@ -84,6 +84,48 @@ def _extract_structured_response_fields(raw_response: Any) -> dict[str, Any]:
     return extracted
 
 
+def _usage_payload_from_response_usage(raw_usage: Any) -> dict[str, int]:
+    if raw_usage is None:
+        return {}
+    if isinstance(raw_usage, dict):
+        source = raw_usage
+    elif hasattr(raw_usage, "model_dump"):
+        dumped = raw_usage.model_dump(mode="json")
+        source = dumped if isinstance(dumped, dict) else {}
+    else:
+        source = {
+            "prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
+            "completion_tokens": getattr(raw_usage, "completion_tokens", None),
+            "total_tokens": getattr(raw_usage, "total_tokens", None),
+            "input_tokens": getattr(raw_usage, "input_tokens", None),
+            "output_tokens": getattr(raw_usage, "output_tokens", None),
+            "cached_tokens": getattr(raw_usage, "cached_tokens", None),
+        }
+
+    usage: dict[str, int] = {}
+    key_pairs = (
+        ("prompt_tokens", ("prompt_tokens", "input_tokens")),
+        ("completion_tokens", ("completion_tokens", "output_tokens")),
+        ("total_tokens", ("total_tokens",)),
+        ("cached_tokens", ("cached_tokens", "cache_read_input_tokens")),
+    )
+    for output_key, candidate_keys in key_pairs:
+        for key in candidate_keys:
+            value = source.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                usage[output_key] = max(0, int(value))
+                break
+    if "total_tokens" not in usage and (
+        "prompt_tokens" in usage or "completion_tokens" in usage
+    ):
+        usage["total_tokens"] = int(usage.get("prompt_tokens", 0)) + int(
+            usage.get("completion_tokens", 0)
+        )
+    return usage
+
+
 def _metadata_user_prompt(metadata: dict[str, str]) -> str:
     for key in ("user_input", "original_user_input", "last_user_input"):
         value = str(metadata.get(key, "") or "").strip()
@@ -413,7 +455,7 @@ class OpenMinionLLMClient:
             for tc in resp.tool_calls
         ]
 
-        usage_payload = resp.usage if isinstance(resp.usage, dict) else {}
+        usage_payload = _usage_payload_from_response_usage(resp.usage)
         prompt_tokens = usage_payload.get("prompt_tokens")
         completion_tokens = usage_payload.get("completion_tokens")
         total_tokens = usage_payload.get("total_tokens")

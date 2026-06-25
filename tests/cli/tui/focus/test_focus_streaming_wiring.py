@@ -4,12 +4,14 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from textual.widgets import Input
 
 from openminion.cli.parser.contracts import CLI_INTERFACE_VERSION
 from openminion.cli.tui.focus.app import FocusApp
 from openminion.cli.tui.focus.widgets import (
     FocusComposer,
     FocusMessageWidget,
+    FocusStatusLine,
     FocusTranscript,
 )
 from openminion.cli.tui.presentation.models import ChatMessage, MessageKind
@@ -24,13 +26,18 @@ class _StreamingRuntimeDouble:
         working_dir: str,
         chunks: list[str],
         raise_after: int | None = None,
+        hold_after_first_chunk: bool = False,
     ) -> None:
         self._working_dir = str(Path(working_dir).resolve(strict=False))
         self._chunks = list(chunks)
         self._raise_after = raise_after
+        self._hold_after_first_chunk = hold_after_first_chunk
         self._agent_id = "alpha"
         self._session_id = "focus-stream"
         self.tool_list: list[tuple[str, bool]] = []
+        self.sent_texts: list[str] = []
+        self.first_chunk_sent = asyncio.Event()
+        self.release_first_turn = asyncio.Event()
 
     @property
     def agent_id(self) -> str:
@@ -101,16 +108,67 @@ class _StreamingRuntimeDouble:
         inbound_metadata=None,
         approval_callback=None,
     ):
-        del text, progress_callback, inbound_metadata, approval_callback
+        del progress_callback, inbound_metadata, approval_callback
+        self.sent_texts.append(text)
+        is_first_turn = len(self.sent_texts) == 1
         for i, chunk in enumerate(self._chunks):
             if self._raise_after is not None and i >= self._raise_after:
                 raise RuntimeError("simulated mid-stream failure")
             yield chunk
+            if self._hold_after_first_chunk and is_first_turn and i == 0:
+                self.first_chunk_sent.set()
+                await self.release_first_turn.wait()
             await asyncio.sleep(0)
 
 
 def _make_app(runtime: _StreamingRuntimeDouble) -> FocusApp:
     return FocusApp(runtime=runtime, working_dir=runtime.working_dir)
+
+
+@pytest.mark.asyncio
+async def test_busy_focus_keeps_input_enabled_and_queues_next_message() -> None:
+    runtime = _StreamingRuntimeDouble(
+        working_dir="/tmp/focus-stream-queue",
+        chunks=["reply"],
+        hold_after_first_chunk=True,
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("first"))
+        await runtime.first_chunk_sent.wait()
+        await pilot.pause()
+
+        input_widget = app.screen.query_one("#focus-input", Input)
+        assert input_widget.disabled is False
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("second"))
+        await pilot.pause()
+
+        chat = app.screen.query_one(FocusTranscript)
+        assert runtime.sent_texts == ["first"]
+        assert any(
+            msg.kind == MessageKind.USER and msg.body == "second"
+            for msg in chat._messages
+        )
+        assert any(
+            msg.kind == MessageKind.SYSTEM and "Queued message" in msg.body
+            for msg in chat._messages
+        )
+        status_line = app.screen.query_one(FocusStatusLine)
+        assert "queued: 1" in status_line._text()
+
+        runtime.release_first_turn.set()
+        for _ in range(30):
+            await pilot.pause()
+            if runtime.sent_texts == ["first", "second"] and not app.screen._busy:
+                break
+
+        assert runtime.sent_texts == ["first", "second"]
+        assert app.screen._queued_turns == []
 
 
 @pytest.mark.asyncio

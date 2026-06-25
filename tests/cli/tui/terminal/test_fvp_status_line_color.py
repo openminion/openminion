@@ -35,62 +35,90 @@ def test_idle_segments_are_plain_when_color_disabled() -> None:
     assert "openai/test" in text
 
 
-# ── Responding state ─────────────────────────────────────────────
+# ── Active turn footer stays identity-only ──────────────────────
 
 
-def test_responding_state_wraps_marker_and_label() -> None:
+def test_active_turn_footer_keeps_identity_coloring_without_status_copy() -> None:
     line = TerminalStatusLine()
-    line.set_state(state="responding", elapsed_seconds=1.5)
+    line.set_state(
+        state="responding",
+        elapsed_seconds=1.5,
+        agent="alpha",
+        model="openai/test",
+        cwd="/tmp",
+    )
     with patch(
         "openminion.cli.presentation.styles.is_color_enabled",
         return_value=True,
     ):
         text = line.bottom_toolbar()
-    assert "●" in text
-    assert "responding" in text
-    assert "1.5s" in text
-    assert "Esc cancel" in text
     assert "\033[" in text
+    assert "alpha" in text
+    assert "openai/test" in text
+    assert "responding" not in text
+    assert "1.5s" not in text
+    assert "Esc cancel" not in text
 
 
-def test_responding_state_plain_when_color_disabled() -> None:
+def test_active_turn_footer_is_plain_when_color_disabled() -> None:
     line = TerminalStatusLine()
-    line.set_state(state="responding", elapsed_seconds=2.0)
+    line.set_state(
+        state="responding",
+        elapsed_seconds=2.0,
+        agent="alpha",
+        model="openai/test",
+    )
     with patch(
         "openminion.cli.presentation.styles.is_color_enabled",
         return_value=False,
     ):
         text = line.bottom_toolbar()
-    assert text == "● responding   2.0s   Esc cancel"
+    assert "\033[" not in text
+    assert "alpha" in text
+    assert "responding" not in text
+    assert "2.0s" not in text
 
 
-# ── Tool state ───────────────────────────────────────────────────
+# ── Live-turn footer keeps color and omits active timer/hint ────
 
 
-def test_tool_state_wraps_marker_and_tool_name() -> None:
+def test_live_turn_footer_keeps_ansi_identity_segments() -> None:
     line = TerminalStatusLine()
-    line.set_state(state="tool", tool_name="Bash", elapsed_seconds=0.5)
+    line.set_state(
+        state="tool",
+        tool_name="Bash",
+        elapsed_seconds=0.5,
+        agent="alpha",
+        model="openai/test",
+        cwd="/tmp",
+    )
     with patch(
         "openminion.cli.presentation.styles.is_color_enabled",
         return_value=True,
     ):
-        text = line.bottom_toolbar()
-    assert "⚙" in text
-    assert "Bash" in text
-    assert "0.5s" in text
-    assert "Esc cancel" in text
+        text = line.live_turn_footer()
     assert "\033[" in text
+    assert "alpha" in text
+    assert "openai/test" in text
+    assert "Bash" not in text
+    assert "0.5s" not in text
+    assert "Esc cancel" not in text
 
 
-def test_tool_state_falls_back_when_tool_name_unset() -> None:
+def test_live_turn_footer_omits_custom_status_label_even_when_set() -> None:
     line = TerminalStatusLine()
-    line.set_state(state="tool", elapsed_seconds=1.0)
+    line.set_state(
+        state="responding",
+        elapsed_seconds=1.0,
+        agent="alpha",
+        custom="Analyzing request...",
+    )
     with patch(
         "openminion.cli.presentation.styles.is_color_enabled",
         return_value=False,
     ):
-        text = line.bottom_toolbar()
-    assert "⚙ tool" in text
+        text = line.live_turn_footer()
+    assert "Analyzing request..." not in text
 
 
 # ── Token severity escalation ────────────────────────────────────

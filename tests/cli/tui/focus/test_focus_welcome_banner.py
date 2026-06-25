@@ -75,7 +75,7 @@ async def test_fresh_session_uses_fiu_greeter_mount_path() -> None:
             assert messages, "fresh session should render at least one message"
             first = messages[0]
             assert first.kind == MessageKind.SYSTEM
-            assert "How can I help today?" in first.body
+            assert first.body.startswith("OpenMinion\nHow can I help today?")
             assert "Try:" in first.body
             assert "OpenMinion focus — single-agent shell" not in first.body
             assert callable(build_welcome_message)

@@ -70,7 +70,7 @@ def test_read_line_passes_placeholder_kwarg() -> None:
 
 def test_read_line_still_passes_patch_stdout_context() -> None:
     src = inspect.getsource(TerminalComposer.read_line)
-    assert "patch_stdout()" in src
+    assert "patch_stdout(raw=True)" in src
 
 
 def test_read_line_still_passes_completer() -> None:
@@ -80,7 +80,12 @@ def test_read_line_still_passes_completer() -> None:
 
 def test_read_line_still_passes_bottom_toolbar() -> None:
     src = inspect.getsource(TerminalComposer.read_line)
-    assert "bottom_toolbar=self._bottom_toolbar" in src
+    assert "bottom_toolbar=self._formatted_bottom_toolbar" in src
+
+
+def test_read_line_enables_completion_while_typing() -> None:
+    src = inspect.getsource(TerminalComposer.read_line)
+    assert "complete_while_typing=True" in src
 
 
 def test_read_line_still_passes_multiline() -> None:

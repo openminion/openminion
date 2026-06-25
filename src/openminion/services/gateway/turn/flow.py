@@ -77,6 +77,46 @@ def _human_participant_id(
     return str(target or channel or "human").strip()
 
 
+def _progress_payload_mapping(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict):
+        return dict(payload)
+    model_dump = getattr(payload, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(mode="json")
+        if isinstance(dumped, dict):
+            return dumped
+    return {}
+
+
+def _progress_usage_stats(payload: Any) -> tuple[RunStats | None, bool]:
+    mapped = _progress_payload_mapping(payload)
+    if not mapped:
+        return None, False
+    stats = RunStats.from_mapping(mapped)
+    if stats is None:
+        return None, bool(mapped.get("token_usage_estimated", False))
+    return stats, bool(mapped.get("token_usage_estimated", False))
+
+
+def _attach_progress_usage_metadata(
+    metadata: dict[str, str],
+    stats: RunStats | None,
+) -> None:
+    if stats is None:
+        return
+    existing = RunStats.from_mapping(metadata)
+    if existing is not None and (
+        existing.input_tokens > 0 or existing.output_tokens > 0
+    ):
+        return
+    total_tokens = max(0, int(stats.input_tokens) + int(stats.output_tokens))
+    if total_tokens <= 0:
+        return
+    metadata["total_input_tokens_used"] = str(int(stats.input_tokens))
+    metadata["total_output_tokens_used"] = str(int(stats.output_tokens))
+    metadata["total_tokens_used"] = str(total_tokens)
+
+
 @dataclass
 class _RoutingResult:
     """Resolved routing state for a single gateway turn."""
@@ -510,6 +550,20 @@ class GatewayTurnRunnerFlowMixin:
         routing_reason = routing.routing_reason
         normalized_request_id = routing.normalized_request_id
         normalized_inbound_metadata = routing.normalized_inbound_metadata
+        latest_progress_usage: RunStats | None = None
+        latest_progress_usage_estimated = False
+
+        def _capture_progress(payload: object) -> None:
+            nonlocal latest_progress_usage, latest_progress_usage_estimated
+            usage_stats, is_estimated = _progress_usage_stats(payload)
+            if usage_stats is not None and (
+                not is_estimated or latest_progress_usage is None
+            ):
+                latest_progress_usage = usage_stats
+                latest_progress_usage_estimated = is_estimated
+            if progress_callback is not None:
+                progress_callback(payload)
+
         inbound_participant_id = _human_participant_id(
             session=routing.session,
             channel=channel,
@@ -607,9 +661,11 @@ class GatewayTurnRunnerFlowMixin:
             history=history,
             forced_tools=list(forced_tools or []),
             capability_category=capability_category,
-            progress_callback=progress_callback,
+            progress_callback=_capture_progress,
             approval_callback=approval_callback,
         )
+        if not latest_progress_usage_estimated:
+            _attach_progress_usage_metadata(response.metadata, latest_progress_usage)
         response.metadata.setdefault(
             "authenticity_status", authenticity_decision.reason_code
         )

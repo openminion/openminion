@@ -35,6 +35,18 @@ VERBS: tuple[str, ...] = (
     "Wrangling",
 )
 THINKING_VERB = "Thinking"
+SPINNER_FRAMES: tuple[str, ...] = (
+    "⠋",
+    "⠙",
+    "⠹",
+    "⠸",
+    "⠼",
+    "⠴",
+    "⠦",
+    "⠧",
+    "⠇",
+    "⠏",
+)
 
 
 class Spinner:
@@ -56,6 +68,13 @@ class Spinner:
         index = int(elapsed // self._rotate) % len(VERBS)
         return VERBS[index]
 
+    def current_frame(self, now: float) -> str:
+        if self._plain:
+            return ""
+        elapsed = max(0.0, float(now) - self._start)
+        index = int(elapsed * 10) % len(SPINNER_FRAMES)
+        return SPINNER_FRAMES[index]
+
     def elapsed_label(self, now: float) -> str:
         elapsed = max(0.0, float(now) - self._start)
         if elapsed < 60:
@@ -73,11 +92,19 @@ def format_status_row(
     hint: str = "esc to interrupt",
     *,
     plain: bool = False,
+    status_label: str = "",
+    spinner_frame: str = "",
 ) -> Text:
-    text = Text(style="dim", justify="right")
+    text = Text(style="dim")
     text.append("(")
-    if not plain and verb:
-        text.append("✻ ", style="dim italic")
+    label = str(status_label or "").strip()
+    frame = str(spinner_frame or "").strip() or "✻"
+    if not plain:
+        text.append(f"{frame} ", style="dim italic")
+    if label:
+        text.append(label)
+        text.append(" · ")
+    elif not plain and verb:
         text.append(verb)
         text.append(" · ")
     text.append(elapsed)
@@ -88,4 +115,10 @@ def format_status_row(
     return text
 
 
-__all__ = ["Spinner", "THINKING_VERB", "VERBS", "format_status_row"]
+__all__ = [
+    "SPINNER_FRAMES",
+    "Spinner",
+    "THINKING_VERB",
+    "VERBS",
+    "format_status_row",
+]

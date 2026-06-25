@@ -8,7 +8,6 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-from openminion.cli.chat.ui import PhaseStatusDisplay
 from openminion.cli.status import format_token_usage_summary
 from openminion.cli.tui.presentation.models import (
     ChatMessage,
@@ -41,6 +40,7 @@ from .renderers import (
 
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.tui.presentation.markers import token_rich_style
+from openminion.cli.tui.presentation.slash_commands import slash_help_rows
 from openminion.cli.tui.presentation.visible_parity import (
     statusline_label,
 )
@@ -49,6 +49,7 @@ __all__ = [
     "run_terminal_focus",
     "_discover_custom_commands_for",
     "_focus_history_path",
+    "_confirm_terminal_exit",
     "_handle_slash_input",
     "_run_one_shot_stdin",
     "_run_agent_turn",
@@ -78,6 +79,15 @@ _INFO_BOLD_STYLE = token_rich_style(StyleToken.INFO, bold=True)
 _MUTED_STYLE = token_rich_style(StyleToken.MUTED)
 _MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
 _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
+
+
+async def _confirm_terminal_exit(
+    *, console: Console, overlay: TerminalOverlayPresenter
+) -> bool:
+    should_exit = await overlay.present_confirm_async("Exit focus mode?")
+    if not should_exit:
+        console.print(Text("(exit cancelled)", style=_MUTED_ITALIC_STYLE))
+    return should_exit
 
 
 def _discover_custom_commands_for(*, runtime: Any, working_dir: str) -> dict[str, Any]:
@@ -260,7 +270,12 @@ async def _run_terminal_focus_async(
             announce=False,
         )
 
-    catalog = tuple(_SLASH_COMMANDS) + tuple(custom_commands.keys())
+    catalog = {
+        name: description
+        for name, description in slash_help_rows(terminal_only=True)
+        if name in _SLASH_COMMANDS
+    }
+    catalog.update({name: "custom command" for name in custom_commands})
     composer = TerminalComposer(
         slash_commands=catalog,
         bottom_toolbar=status_line.bottom_toolbar,
@@ -270,7 +285,10 @@ async def _run_terminal_focus_async(
         on_shift_tab=handle_shift_tab,
         working_dir=working_dir,
     )
-    overlay = TerminalOverlayPresenter(console=console)
+    overlay = TerminalOverlayPresenter(
+        console=console,
+        prompt_session=composer.prompt_session,
+    )
 
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
     status_line.set_state(
@@ -285,46 +303,56 @@ async def _run_terminal_focus_async(
     while True:
         try:
             text = await composer.read_line()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             console.print(Text("(exit)", style=_MUTED_STYLE))
             return 0
+        except KeyboardInterrupt:
+            if await _confirm_terminal_exit(console=console, overlay=overlay):
+                console.print(Text("(exit)", style=_MUTED_STYLE))
+                return 0
+            continue
         text = (text or "").strip()
         if not text:
             continue
         if text in ("/exit", "/quit"):
             return 0
-        if text.startswith("/"):
-            should_exit = await _handle_slash_input(
-                text,
+        try:
+            if text.startswith("/"):
+                should_exit = await _handle_slash_input(
+                    text,
+                    runtime=runtime,
+                    console=console,
+                    transcript=transcript,
+                    overlay=overlay,
+                    status_line=status_line,
+                    working_dir=working_dir,
+                    custom_commands=custom_commands,
+                )
+                if should_exit:
+                    return 0
+                continue
+            if text.startswith("!"):
+                await _run_shell_escape(
+                    command=text[1:].strip(),
+                    console=console,
+                    transcript=transcript,
+                    working_dir=working_dir,
+                )
+                continue
+            transcript.push_message(
+                ChatMessage(kind=MessageKind.USER, sender="you", body=text),
+                render=False,
+            )
+            await _run_agent_turn(
+                text=text,
                 runtime=runtime,
-                console=console,
                 transcript=transcript,
-                overlay=overlay,
                 status_line=status_line,
-                working_dir=working_dir,
-                custom_commands=custom_commands,
             )
-            if should_exit:
+        except KeyboardInterrupt:
+            if await _confirm_terminal_exit(console=console, overlay=overlay):
+                console.print(Text("(exit)", style=_MUTED_STYLE))
                 return 0
-            continue
-        if text.startswith("!"):
-            await _run_shell_escape(
-                command=text[1:].strip(),
-                console=console,
-                transcript=transcript,
-                working_dir=working_dir,
-            )
-            continue
-        transcript.push_message(
-            ChatMessage(kind=MessageKind.USER, sender="you", body=text),
-            render=False,
-        )
-        await _run_agent_turn(
-            text=text,
-            runtime=runtime,
-            transcript=transcript,
-            status_line=status_line,
-        )
 
 
 async def _run_one_shot_stdin(
@@ -390,10 +418,13 @@ def _route_durable_activity_event(
 
 
 def _build_turn_progress_callback(
-    *, transcript: TerminalTranscript, phase_display, state: dict
+    *,
+    transcript: TerminalTranscript,
+    handle: Any | None = None,
+    status_controller: Any | None = None,
+    status_line: TerminalStatusLine | None = None,
 ):
     """Build the progress callback passed to ``runtime.send_message``."""
-
     def _handle_progress(payload: dict[str, Any]) -> None:
         kind = str(payload.get("kind", "") or "").strip() if payload else ""
         if kind == "tool_started":
@@ -404,12 +435,17 @@ def _build_turn_progress_callback(
             return
         if payload and _route_durable_activity_event(transcript, payload):
             return
-        if (
-            state["phase_updates_enabled"]
-            and phase_display.callback is not None
-            and payload
-        ):
-            phase_display.callback(payload)
+        if payload and handle is not None and status_controller is not None:
+            try:
+                view = status_controller.update(payload)
+            except Exception:
+                view = None
+            if view is None:
+                return
+            label = str(getattr(view, "primary_text", "") or "")
+            setter = getattr(handle, "set_status_label", None)
+            if callable(setter):
+                setter(label)
 
     return _handle_progress
 
@@ -443,26 +479,37 @@ async def _run_agent_turn(
 
     if status_line is not None:
         status_line.set_state(state="idle", elapsed_seconds=0.0)
-    handle = transcript.begin_turn(role="assistant")
+    handle = transcript.begin_turn(
+        role="assistant",
+        footer_provider=status_line.live_turn_footer if status_line is not None else None,
+    )
     reply = ""
+    from openminion.cli.status import PhaseStatusController
+
+    status_controller = PhaseStatusController(fallback_label="Working...")
+    status_controller.start_turn()
+    initial_status = status_controller.view_model_for(None)
+    setter = getattr(handle, "set_status_label", None)
+    initial_label = str(initial_status.primary_text or status_controller.fallback_label)
+    if callable(setter):
+        setter(initial_label)
     try:
-        with PhaseStatusDisplay(enabled=True, animate=True) as phase_display:
-            state = {"phase_updates_enabled": True}
-            progress_callback = _build_turn_progress_callback(
-                transcript=transcript, phase_display=phase_display, state=state
-            )
-            async for chunk in runtime.send_message(
-                text, progress_callback=progress_callback
-            ):
-                chunk_str = str(chunk or "")
-                if not chunk_str:
-                    continue
-                if state["phase_updates_enabled"]:
-                    phase_display.clear()
-                    state["phase_updates_enabled"] = False
-                reply += chunk_str
-                handle.append_token(chunk_str)
-            handle.complete(final_text=reply)
+        progress_callback = _build_turn_progress_callback(
+            transcript=transcript,
+            handle=handle,
+            status_controller=status_controller,
+            status_line=status_line,
+        )
+        async for chunk in runtime.send_message(
+            text,
+            progress_callback=progress_callback,
+        ):
+            chunk_str = str(chunk or "")
+            if not chunk_str:
+                continue
+            reply += chunk_str
+            handle.append_token(chunk_str)
+        handle.complete(final_text=reply)
     except Exception as exc:
         try:
             handle.complete(final_text=reply)
@@ -472,5 +519,6 @@ async def _run_agent_turn(
             ChatMessage(kind=MessageKind.ERROR, sender="error", body=str(exc))
         )
     finally:
+        status_controller.end_turn()
         if status_line is not None:
             _finalize_turn_status_line(runtime, status_line)

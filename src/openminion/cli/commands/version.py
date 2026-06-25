@@ -6,15 +6,9 @@ from openminion import __version__
 from openminion.cli.presentation.json_output import print_json_payload
 
 
-def run_version(args) -> int:
-    json_mode = bool(getattr(args, "json", False))
-    if json_mode:
-        print_json_payload(
-            {
-                "package": "openminion",
-                "version": __version__,
-            }
-        )
+def run_version(args: argparse.Namespace) -> int:
+    if bool(getattr(args, "json", False)):
+        print_json_payload({"package": "openminion", "version": __version__})
         return 0
     print(__version__)
     return 0

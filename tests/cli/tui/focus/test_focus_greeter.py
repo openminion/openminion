@@ -38,6 +38,7 @@ def test_greeter_includes_default_content_blocks() -> None:
     assert msg.kind == MessageKind.SYSTEM
     assert msg.show_header is False
     body = msg.body
+    assert body.splitlines()[0] == "OpenMinion"
     assert "How can I help today?" in body
     assert "example-dir" in body
     assert "echo/demo" in body
@@ -114,6 +115,7 @@ def test_greeter_env_override_for_greeting(
         theme_name="dark",
     )
     assert msg.body.splitlines()[0] == "Yo, what's up?"
+    assert msg.body.splitlines()[1] == "How can I help today?"
 
 
 @pytest.mark.asyncio
@@ -128,7 +130,7 @@ async def test_fresh_session_renders_greeter_not_welcome_banner() -> None:
             assert messages
             first = messages[0]
             assert first.kind == MessageKind.SYSTEM
-            assert "How can I help today?" in first.body
+            assert first.body.startswith("OpenMinion\nHow can I help today?")
             assert "Try:" in first.body
             assert "OpenMinion focus — single-agent shell" not in first.body
 

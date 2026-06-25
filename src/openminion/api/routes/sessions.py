@@ -17,6 +17,7 @@ from .base import (
     APIRouteContext,
     RouteResult,
     error_route_result,
+    exception_route_result,
     json_body_required_route_result,
 )
 
@@ -94,12 +95,12 @@ def _handle_append_event(
         status = HTTPStatus.OK
         payload = {"ok": True, **result}
     except SessionQueryError as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.NOT_FOUND
             if exc.code == "session_not_found"
             else HTTPStatus.BAD_REQUEST,
             code=exc.code,
-            message=str(exc),
+            exc=exc,
             details={"session_id": session_id},
             retryable=False,
             session_id=session_id,
@@ -132,12 +133,12 @@ def _handle_list_runs(
         status = HTTPStatus.OK
         payload = {"ok": True, **runs_payload}
     except RunQueryError as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.NOT_FOUND
             if exc.code in {"session_not_found", "run_not_found"}
             else HTTPStatus.BAD_REQUEST,
             code=exc.code,
-            message=str(exc),
+            exc=exc,
             details={"session_id": session_id},
             retryable=False,
             session_id=session_id,
@@ -173,12 +174,12 @@ def _handle_list_run_events(
         status = HTTPStatus.OK
         payload = {"ok": True, **runs_payload}
     except RunQueryError as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.NOT_FOUND
             if exc.code in {"session_not_found", "run_not_found"}
             else HTTPStatus.BAD_REQUEST,
             code=exc.code,
-            message=str(exc),
+            exc=exc,
             details={"session_id": session_id, "run_id": run_id},
             retryable=False,
             session_id=session_id,
@@ -217,12 +218,12 @@ def _handle_list_session_messages(
         status = HTTPStatus.OK
         payload = {"ok": True, **session_payload}
     except SessionQueryError as exc:
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.NOT_FOUND
             if exc.code == "session_not_found"
             else HTTPStatus.BAD_REQUEST,
             code=exc.code,
-            message=str(exc),
+            exc=exc,
             details={"session_id": session_id},
             retryable=False,
             session_id=session_id,

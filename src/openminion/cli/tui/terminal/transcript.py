@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, Literal
+from typing import Any, Callable, Iterable, Literal
 
 from rich.console import Console
 from rich.markdown import Markdown as RichMarkdown
@@ -54,13 +54,20 @@ class TerminalTranscript:
         self._active_handle: Any | None = None
 
     def begin_turn(
-        self, role: Literal["user", "assistant"] = "assistant"
+        self,
+        role: Literal["user", "assistant"] = "assistant",
+        *,
+        footer_provider: Callable[[], str] | None = None,
     ) -> TerminalTurnHandle:
         kind = MessageKind.AGENT if role == "assistant" else MessageKind.USER
         message = ChatMessage(kind=kind, sender=role, body="")
         self._messages.append(message)
         self._selected_message_id = message.msg_id
-        handle = TerminalTurnHandle(self._console, plain=self._plain_spinner).start()
+        handle = TerminalTurnHandle(
+            self._console,
+            plain=self._plain_spinner,
+            footer_provider=footer_provider,
+        ).start()
         self._active_handle = handle
         original_complete = handle.complete
 

@@ -18,7 +18,7 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.brain.storage.goals import SQLiteGoalStore
 from openminion.modules.brain.storage.missions import SQLiteMissionStateStore
-from openminion.services.runtime.cron_executor import CronTurnExecutor
+from openminion.services.runtime.cron.executor import CronTurnExecutor
 
 
 class _FakeTaskService:

@@ -38,12 +38,13 @@ class _FakeOkResponse:
         tool_calls: list[_FakeToolCall] | None = None,
         output_text: str = "",
         finish_reason: str | None = None,
+        usage: object | None = None,
     ) -> None:
         self.ok = True
         self.error = None
         self.output_text = output_text
         self.model = "MiniMax-M2.5"
-        self.usage = _FakeUsage()
+        self.usage = usage if usage is not None else _FakeUsage()
         self.tool_calls = list(tool_calls or [])
         self.finish_reason = (
             finish_reason
@@ -74,6 +75,20 @@ class _CapturingRuntimeClient:
     def complete(self, **kwargs):
         self.calls.append(dict(kwargs))
         return _FakeOkResponse()
+
+
+class _UsageDictRuntimeClient:
+    def complete(self, **kwargs):
+        del kwargs
+        return _FakeOkResponse(
+            output_text="ok",
+            finish_reason="stop",
+            usage={
+                "prompt_tokens": 123,
+                "completion_tokens": 45,
+                "total_tokens": 168,
+            },
+        )
 
 
 class _MinimaxXmlLeakRuntimeClient:
@@ -177,6 +192,17 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
         self.assertEqual(
             client.calls[0]["tool_choice"],
             {"type": "function", "function": {"name": "submit_output"}},
+        )
+
+    def test_runtime_client_preserves_openai_style_usage_dict(self) -> None:
+        client = _UsageDictRuntimeClient()
+        service = _service(client=client)
+
+        response = asyncio.run(service._invoke_provider_request(_structured_request()))
+
+        self.assertEqual(
+            response.usage,
+            {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
         )
 
     def test_runtime_client_retries_with_shared_override_owner(self) -> None:

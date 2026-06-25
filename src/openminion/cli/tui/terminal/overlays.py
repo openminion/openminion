@@ -83,6 +83,21 @@ class TerminalOverlayPresenter:
             return ""
         return str(text or "").strip()
 
+    def present_confirm(self, prompt: str, *, default: bool = False) -> bool:
+        return asyncio.run(self.present_confirm_async(prompt, default=default))
+
+    async def present_confirm_async(self, prompt: str, *, default: bool = False) -> bool:
+        self._console.print(Text(prompt, style="bold"))
+        suffix = "[Y/n]: " if default else "[y/N]: "
+        try:
+            text = await self._session.prompt_async(suffix)
+        except (EOFError, KeyboardInterrupt):
+            return False
+        normalized = str(text or "").strip().lower()
+        if not normalized:
+            return default
+        return normalized in {"y", "yes"}
+
 
 def _session_label(item: Any) -> str:
     if isinstance(item, str):

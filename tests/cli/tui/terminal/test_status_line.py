@@ -28,22 +28,75 @@ def test_idle_toolbar_chains_segments() -> None:
     assert "$0.01" in text
 
 
-def test_responding_state_overrides_idle_segments() -> None:
+def test_active_turn_footer_stays_identity_only() -> None:
     line = TerminalStatusLine()
-    line.set_state(model="x", state="responding", elapsed_seconds=2.5)
+    line.set_state(
+        agent="alpha",
+        model="x",
+        cwd="/tmp/wd",
+        state="responding",
+        elapsed_seconds=2.5,
+    )
     text = line.bottom_toolbar()
-    assert "responding" in text
-    assert "2.5s" in text
-    # Idle segments suppressed during responding.
-    assert "model" not in text
+    assert "responding" not in text
+    assert "2.5s" not in text
+    assert "Esc cancel" not in text
+    assert "alpha" in text
+    assert "model: x" in text
+    assert "cwd: /tmp/wd" in text
 
 
-def test_tool_state_shows_tool_name() -> None:
+def test_active_turn_footer_suppresses_custom_status_copy() -> None:
     line = TerminalStatusLine()
-    line.set_state(state="tool", tool_name="bash", elapsed_seconds=0.1)
+    line.set_state(
+        agent="minimax-m2-7",
+        model="openai/MiniMax-M2.7",
+        state="responding",
+        elapsed_seconds=2.5,
+        custom="Analyzing request...",
+    )
     text = line.bottom_toolbar()
-    assert "bash" in text
-    assert "0.1s" in text
+    assert "minimax-m2-7" in text
+    assert "openai/MiniMax-M2.7" in text
+    assert "Analyzing request..." not in text
+
+
+def test_live_turn_footer_keeps_identity_without_active_timer_or_hint() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        agent="minimax-m2-7",
+        model="openai/MiniMax-M2.7",
+        cwd="/repo/openminion",
+        tokens="1200/8000",
+        state="responding",
+        elapsed_seconds=6.8,
+        custom="Loading session history...",
+    )
+    text = line.live_turn_footer()
+    assert "minimax-m2-7" in text
+    assert "openai/MiniMax-M2.7" in text
+    assert "/repo/openminion" in text
+    assert "1200/8000" in text
+    assert "6.8s" not in text
+    assert "Esc cancel" not in text
+    assert "responding" not in text
+    assert "Loading session history..." not in text
+
+
+def test_tool_state_footer_stays_identity_only() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        state="tool",
+        tool_name="bash",
+        elapsed_seconds=0.1,
+        agent="alpha",
+        model="openai/test",
+    )
+    text = line.bottom_toolbar()
+    assert "bash" not in text
+    assert "0.1s" not in text
+    assert "alpha" in text
+    assert "openai/test" in text
 
 
 def test_input_state_no_longer_appends_keybind_hint_suffix() -> None:

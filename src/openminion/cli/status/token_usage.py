@@ -83,9 +83,10 @@ class TokenUsageSnapshot:
 
 
 def usage_totals_from_mapping(
-    payload: Mapping[str, Any] | None,
+    payload: Mapping[str, Any] | Any | None,
 ) -> TokenUsageTotals | None:
-    if not isinstance(payload, Mapping):
+    payload = _payload_mapping(payload)
+    if payload is None:
         return None
     prompt_tokens = _first_int(payload, _PROMPT_KEYS)
     completion_tokens = _first_int(payload, _COMPLETION_KEYS)
@@ -102,6 +103,25 @@ def usage_totals_from_mapping(
         cached_tokens=cached_tokens,
     )
     return None if totals.is_empty else totals
+
+
+def _payload_mapping(
+    payload: Mapping[str, Any] | Any | None,
+) -> Mapping[str, Any] | None:
+    if isinstance(payload, Mapping):
+        return payload
+    if payload is None:
+        return None
+    model_dump = getattr(payload, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(mode="json")
+        if isinstance(dumped, Mapping):
+            return dumped
+    attrs: dict[str, Any] = {}
+    for key in (*_PROMPT_KEYS, *_COMPLETION_KEYS, *_TOTAL_KEYS, *_CACHED_KEYS):
+        if hasattr(payload, key):
+            attrs[key] = getattr(payload, key)
+    return attrs or None
 
 
 def accumulate_usage(

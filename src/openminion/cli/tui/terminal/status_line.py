@@ -74,14 +74,6 @@ class TerminalStatusLine:
                 setattr(self, attr_name, str(value).strip() if value else "")
 
     def bottom_toolbar(self) -> str:
-        if self.state == "responding":
-            return self._active_toolbar_row("●", "responding", StyleToken.SYSTEM)
-        if self.state == "tool":
-            return self._active_toolbar_row(
-                "⚙",
-                self.tool_name or "tool",
-                StyleToken.ASSISTANT,
-            )
         segments: list[str] = []
         if self.agent_label:
             segments.append(_wrap(StyleToken.USER, f"◆ {self.agent_label}"))
@@ -112,7 +104,7 @@ class TerminalStatusLine:
             segments.append(
                 _labeled_segment("permissions: ", self.permission_mode, mode_kind)
             )
-        if self.custom_label:
+        if self.custom_label and self.state == "idle":
             segments.append(
                 _labeled_segment("status: ", self.custom_label, StyleToken.SYSTEM)
             )
@@ -125,20 +117,36 @@ class TerminalStatusLine:
             return usage_styled
         return prefix
 
-    def _active_toolbar_row(
-        self, marker: str, label: str, label_token: StyleToken
-    ) -> str:
-        elapsed = _wrap(StyleToken.MUTED, _format_elapsed(self.elapsed_seconds))
-        hint = _wrap(StyleToken.MUTED, "Esc cancel")
-        return (
-            f"{_wrap(StyleToken.WARNING, marker)} "
-            f"{_wrap(label_token, label, bold=True)}   {elapsed}   {hint}"
-        )
-
-
-def _format_elapsed(seconds: float) -> str:
-    seconds = max(0.0, float(seconds))
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    minutes, secs = divmod(int(seconds), 60)
-    return f"{minutes}m{secs:02d}s"
+    def live_turn_footer(self) -> str:
+        segments: list[str] = []
+        if self.agent_label:
+            segments.append(_wrap(StyleToken.USER, f"◆ {self.agent_label}"))
+        if self.model_label:
+            segments.append(
+                _labeled_segment("model: ", self.model_label, StyleToken.SYSTEM)
+            )
+        if self.cwd_label:
+            segments.append(_wrap(StyleToken.MUTED, f"cwd: {self.cwd_label}"))
+        if self.branch_label:
+            segments.append(_wrap(StyleToken.MUTED, f"git: {self.branch_label}"))
+        if self.tokens_label:
+            segments.append(
+                _labeled_segment(
+                    "tokens: ",
+                    self.tokens_label,
+                    _token_severity((self.tokens_severity or "normal").lower()),
+                )
+            )
+        if self.cost_label:
+            segments.append(_wrap(StyleToken.MUTED, f"cost: {self.cost_label}"))
+        if self.permission_mode and self.permission_mode != "default":
+            mode_kind = (
+                StyleToken.WARNING
+                if self.permission_mode == "readonly"
+                else StyleToken.ERROR
+            )
+            segments.append(
+                _labeled_segment("permissions: ", self.permission_mode, mode_kind)
+            )
+        sep = _wrap(StyleToken.MUTED, _SEGMENT_SEP)
+        return sep.join(segment for segment in segments if segment)

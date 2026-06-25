@@ -18,8 +18,10 @@ from openminion.api.turns import TurnRequestError, TurnTimeoutError, run_turn
 from .base import (
     APIRouteContext,
     RouteResult,
+    exception_route_result,
     error_route_result,
     json_body_required_route_result,
+    runtime_unavailable_route_result,
 )
 
 
@@ -39,14 +41,7 @@ def _handle_cancel_turn(
             runtime=ctx.runtime,
         )
     except Exception as exc:  # noqa: BLE001
-        return error_route_result(
-            HTTPStatus.SERVICE_UNAVAILABLE,
-            code="runtime_unavailable",
-            message=str(exc),
-            details={"path": path},
-            retryable=True,
-            retry_after_ms=1000,
-        )
+        return runtime_unavailable_route_result(path=path, exc=exc)
     try:
         cancelled = bool(manager.cancel_turn(trace_id))
         if not cancelled:
@@ -129,10 +124,10 @@ def _handle_legacy_turn_request(
             retry_after_ms=1000,
         )
     except Exception as exc:  # noqa: BLE001
-        return error_route_result(
+        return exception_route_result(
             HTTPStatus.INTERNAL_SERVER_ERROR,
             code="turn_failed",
-            message=str(exc),
+            exc=exc,
             details={"path": path},
             retryable=False,
         )

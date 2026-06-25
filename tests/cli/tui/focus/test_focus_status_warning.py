@@ -98,10 +98,10 @@ def test_tokens_segment_unknown_severity_clamps_to_normal() -> None:
     assert "⛔" not in text
 
 
-# ── Active-turn state still suppresses richness ──────────────────────────────
+# ── Active-turn state preserves warning richness ─────────────────────────────
 
 
-def test_responding_state_suppresses_warning_glyph() -> None:
+def test_responding_state_preserves_warning_glyph() -> None:
     line = FocusStatusLine()
     line.set_state(
         state="responding",
@@ -111,11 +111,11 @@ def test_responding_state_suppresses_warning_glyph() -> None:
     )
     text = line._text()
     assert "responding" in text
-    assert "tokens:" not in text
-    assert "⛔" not in text
+    assert "tokens:" in text
+    assert "⛔" in text
 
 
-def test_tool_state_suppresses_warning_glyph() -> None:
+def test_tool_state_preserves_warning_glyph() -> None:
     line = FocusStatusLine()
     line.set_state(
         state="tool",
@@ -126,7 +126,8 @@ def test_tool_state_suppresses_warning_glyph() -> None:
     )
     text = line._text()
     assert "exec.run" in text
-    assert "⛔" not in text
+    assert "tokens:" in text
+    assert "⛔" in text
 
 
 # ── FocusScreen._tokens_severity helper ──────────────────────────────────────

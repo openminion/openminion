@@ -189,6 +189,54 @@ def test_get_prefers_identity_default_over_ip_when_no_session(
     assert payload["data"]["city"] == "Identity City"
 
 
+def test_get_ignores_stringified_null_identity_and_falls_back_to_ip(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        location_plugin,
+        "_location_from_identity_profile",
+        lambda _ctx: location_plugin._normalize_location_record(
+            {
+                "city": "None",
+                "region": "None",
+                "country": "None",
+                "timezone": "null",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        location_plugin,
+        "_lookup_ip_location",
+        lambda _ctx, **_kwargs: {
+            "city": "San Francisco",
+            "region": "California",
+            "country": "United States",
+            "timezone": "America/Los_Angeles",
+        },
+    )
+
+    payload = _h_get({}, _ctx(tmp_path))
+
+    assert payload["ok"] is True
+    assert payload["data"]["location_source"] == "ip.geo"
+    assert payload["data"]["city"] == "San Francisco"
+    assert payload["data"]["region"] == "California"
+    assert payload["data"]["country"] == "United States"
+
+
+def test_normalize_location_record_treats_nullish_strings_as_missing() -> None:
+    record = location_plugin._normalize_location_record(
+        {
+            "city": "None",
+            "region": "null",
+            "country": "undefined",
+            "timezone": "nil",
+        }
+    )
+
+    assert location_plugin._has_location_data(record) is False
+
+
 def test_get_prefers_ip_when_requested(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
         location_plugin,

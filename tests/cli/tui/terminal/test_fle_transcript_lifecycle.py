@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import io
 
 from rich.console import Console
 
+import openminion.cli.tui.terminal.transcript as transcript_module
 from openminion.cli.tui.terminal.transcript import TerminalTranscript
 from openminion.cli.tui.presentation.models import (
     ChatMessage,
@@ -187,6 +189,54 @@ def test_completed_without_prior_started_still_renders() -> None:
     assert "ok" in out
 
 
+def test_completed_during_live_turn_appends_via_handle() -> None:
+    t, buf = _make("normal")
+
+    class _CapturingHandle:
+        def __init__(self) -> None:
+            self.cleared: list[str] = []
+            self.renderables: list[object] = []
+
+        def clear_active_tool(self, *, call_id: str = "") -> None:
+            self.cleared.append(call_id)
+
+        def append_renderable(self, renderable: object) -> None:
+            self.renderables.append(renderable)
+
+    handle = _CapturingHandle()
+    t._active_handle = handle
+
+    t.handle_tool_completed(
+        {
+            "call_id": "c1",
+            "tool_name": "file.list_dir",
+            "args": {"path": "."},
+            "content": "first-marker",
+        }
+    )
+    t.handle_tool_completed(
+        {
+            "call_id": "c2",
+            "tool_name": "file.read",
+            "args": {"path": "README.md"},
+            "content": "second-marker",
+        }
+    )
+
+    assert handle.cleared == ["c1", "c2"]
+    assert len(handle.renderables) == 2
+    assert "first-marker" not in buf.getvalue()
+    assert "second-marker" not in buf.getvalue()
+
+    rendered = io.StringIO()
+    console = Console(file=rendered, force_terminal=False, width=160)
+    for renderable in handle.renderables:
+        console.print(renderable)
+    out = rendered.getvalue()
+    assert "first-marker" in out
+    assert "second-marker" in out
+
+
 def test_completed_ignores_live_clear_failure() -> None:
     t, buf = _make("normal")
 
@@ -200,6 +250,59 @@ def test_completed_ignores_live_clear_failure() -> None:
     )
 
     assert "ok" in buf.getvalue()
+
+
+def test_agent_render_uses_prompt_safe_terminal_hook_when_app_running(monkeypatch) -> None:
+    async def _case() -> None:
+        t, buf = _make("normal")
+
+        class _App:
+            is_running = True
+
+        calls: list[bool] = []
+
+        monkeypatch.setattr(transcript_module, "get_app_or_none", lambda: _App())
+
+        def _fake_run_in_terminal(func, render_cli_done=False):
+            assert render_cli_done is False
+            calls.append(True)
+            func()
+
+            async def _done():
+                return None
+
+            return asyncio.create_task(_done())
+
+        monkeypatch.setattr(
+            transcript_module,
+            "run_in_terminal",
+            _fake_run_in_terminal,
+        )
+
+        t.push_message(
+            ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="hello"),
+        )
+        await asyncio.sleep(0)
+
+        assert calls
+        assert "hello" in buf.getvalue()
+
+    asyncio.run(_case())
+
+
+def test_terminal_writer_overrides_direct_console_print() -> None:
+    t, buf = _make("normal")
+    rendered: list[str] = []
+
+    def _writer(render) -> None:
+        render()
+        rendered.append(buf.getvalue())
+
+    t.set_terminal_writer(_writer)
+    t.push_message(ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="hello"))
+
+    assert rendered
+    assert "hello" in rendered[0]
 
 
 def test_post_turn_render_skips_already_narrated_call_id() -> None:
@@ -328,9 +431,6 @@ def test_live_narrated_call_ids_starts_empty() -> None:
 
 # ── FLE-04: end-to-end integration ───────────────────────────────
 
-
-import asyncio  # noqa: E402
-
 from openminion.cli.tui.terminal.shell import _run_agent_turn  # noqa: E402
 
 
@@ -381,6 +481,56 @@ class _ScriptedLifecycleRuntime:
         yield "done."
 
 
+class _ScriptedMultiLifecycleRuntime:
+    async def send_message(self, text, *, progress_callback=None, **kwargs):
+        del text, kwargs
+        if progress_callback:
+            progress_callback(
+                {
+                    "kind": "tool_started",
+                    "call_id": "c1",
+                    "tool_name": "file.list_dir",
+                    "args": {"path": "."},
+                }
+            )
+        await asyncio.sleep(0)
+        if progress_callback:
+            progress_callback(
+                {
+                    "kind": "tool_completed",
+                    "call_id": "c1",
+                    "tool_name": "file.list_dir",
+                    "args": {"path": "."},
+                    "content": "dir-marker",
+                    "exit_code": 0,
+                }
+            )
+        await asyncio.sleep(0)
+        if progress_callback:
+            progress_callback(
+                {
+                    "kind": "tool_started",
+                    "call_id": "c2",
+                    "tool_name": "file.read",
+                    "args": {"path": "README.md"},
+                }
+            )
+        await asyncio.sleep(0)
+        if progress_callback:
+            progress_callback(
+                {
+                    "kind": "tool_completed",
+                    "call_id": "c2",
+                    "tool_name": "file.read",
+                    "args": {"path": "README.md"},
+                    "content": "read-marker",
+                    "exit_code": 0,
+                }
+            )
+        await asyncio.sleep(0)
+        yield "done."
+
+
 def _run_e2e(transcript: TerminalTranscript, runtime) -> None:
     asyncio.run(
         _run_agent_turn(
@@ -414,6 +564,16 @@ def test_e2e_no_double_render_across_lifecycle() -> None:
     assert out.count("unique-marker-xyz") == 1
     # call_id was recorded in the dedup set.
     assert "dedup-test" in transcript._live_narrated_call_ids
+
+
+def test_e2e_preserves_multiple_completed_tool_blocks() -> None:
+    transcript, buf = _make("normal")
+    _run_e2e(transcript, _ScriptedMultiLifecycleRuntime())
+    out = buf.getvalue()
+    assert out.count("dir-marker") == 1
+    assert out.count("read-marker") == 1
+    assert "c1" in transcript._live_narrated_call_ids
+    assert "c2" in transcript._live_narrated_call_ids
 
 
 def test_e2e_quiet_mode_hides_blocks_and_fires_summary() -> None:

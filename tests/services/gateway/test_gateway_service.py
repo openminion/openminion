@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+from openminion.base.types import AgentResponse
+from openminion.modules.brain.diagnostics.status import PhaseStatus
+from openminion.modules.llm.providers.base import (
+    LLMProvider,
+    ProviderRequest,
+    ProviderResponse,
+)
+from openminion.services.context.session import SessionContextService
+
 from tests.services.gateway._gateway_service_support import (
     GatewayServiceTestCase,
     IdempotencyStore,
@@ -16,6 +25,26 @@ from tests.services.gateway._gateway_service_support import (
     asyncio,
     connect_database,
 )
+
+
+class _LongArtifactProvider(LLMProvider):
+    name = "long-artifact-provider"
+
+    def __init__(self) -> None:
+        self.requests: list[ProviderRequest] = []
+
+    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            body = (
+                "def get_weather(city: str) -> str:\n"
+                "    return f'weather for {city}'\n"
+                + ("# generated helper detail\n" * 260)
+                + "if __name__ == '__main__':\n"
+                "    print(get_weather('Tokyo'))\n"
+            )
+            return ProviderResponse(text=body, model=self.name)
+        return ProviderResponse(text="second", model=self.name)
 
 
 class GatewayServiceCoreTests(GatewayServiceTestCase):
@@ -81,6 +110,52 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         self.assertGreaterEqual(len(run_events), 8)
         self.assertEqual(run_events[0].payload.get("state"), "queued")
         self.assertEqual(run_events[-1].payload.get("state"), "completed")
+
+    def test_gateway_budgeted_history_keeps_recent_large_assistant_artifact(
+        self,
+    ) -> None:
+        provider = _LongArtifactProvider()
+        gateway, _sink = self._build_gateway(
+            provider=provider,
+            logger_name="openminion.tests.gateway.budgeted.large_artifact",
+            agent_logger_name="openminion.tests.gateway.agent.budgeted.large_artifact",
+            session_context=SessionContextService(
+                self.sessions,
+                token_budget=360,
+                chars_per_token=1.0,
+                keep_recent_messages=20,
+            ),
+        )
+
+        first = asyncio.run(
+            gateway.run_once(
+                channel="console",
+                target="local-user",
+                message="write a Python weather helper",
+            )
+        )
+        asyncio.run(
+            gateway.run_once(
+                channel="console",
+                target="local-user",
+                message="write the above Python code into files",
+                session_id=str(first.metadata.get("session_id", "")),
+            )
+        )
+
+        self.assertEqual(len(provider.requests), 2)
+        assistant_history = [
+            item for item in provider.requests[1].history if item.role == "assistant"
+        ]
+        self.assertEqual(len(assistant_history), 1)
+        assistant_body = assistant_history[0].content
+        self.assertIn("[context budget compacted message:", assistant_body)
+        self.assertIn("def get_weather", assistant_body)
+        self.assertIn("print(get_weather('Tokyo'))", assistant_body)
+        total_history_chars = sum(
+            len(str(item.content or "")) for item in provider.requests[1].history
+        )
+        self.assertLessEqual(total_history_chars, 360)
 
     def test_gateway_forks_settled_thread_by_default(self) -> None:
         gateway, _sink = self._build_gateway(
@@ -900,6 +975,74 @@ class GatewayTurnRunnerCharacterizationTests(GatewayServiceTestCase):
         self.assertEqual(len(transcript), 1)
         self.assertEqual(transcript[0].role, "inbound")
         self.assertEqual(transcript[0].body, "hello runner execute")
+
+    def test_gateway_turn_runner_preserves_typed_progress_usage_in_final_metadata(
+        self,
+    ) -> None:
+        gateway, _sink = self._build_gateway(
+            provider=self.provider,
+            logger_name="openminion.tests.gateway.runner.progress_usage",
+            agent_logger_name="openminion.tests.gateway.agent.runner.progress_usage",
+            auto_resume=False,
+        )
+
+        class _ProgressAgent:
+            async def run_turn(self, *_args, progress_callback=None, **_kwargs):
+                if progress_callback is not None:
+                    progress_callback(
+                        PhaseStatus(
+                            trace_id="trace-progress",
+                            status_key="analyzing",
+                            total_input_tokens_used=1234,
+                            total_output_tokens_used=56,
+                            total_tokens_used=1290,
+                        )
+                    )
+                return AgentResponse(
+                    text="done",
+                    channel="console",
+                    target="local-user",
+                    metadata={
+                        "total_input_tokens_used": "0",
+                        "total_output_tokens_used": "0",
+                        "total_tokens_used": "0",
+                    },
+                )
+
+        gateway._turn_runner._agent = _ProgressAgent()
+
+        async def _run():
+            routing = gateway._turn_runner._resolve_routing(
+                channel="console",
+                target="local-user",
+                session_id="runner-progress-usage",
+                request_id="req-runner-progress-usage",
+                inbound_metadata=None,
+                deliver=False,
+            )
+            run_id, lifecycle_payload = gateway._turn_runner._setup_turn(
+                routing,
+                channel="console",
+                target="local-user",
+            )
+            return await gateway._turn_runner._execute_agent(
+                routing,
+                channel="console",
+                target="local-user",
+                body="hello runner progress",
+                run_id=run_id,
+                lifecycle_payload=lifecycle_payload,
+                history=[],
+                forced_tools=None,
+                capability_category=None,
+                prior_transcript_available=False,
+            )
+
+        response = asyncio.run(_run())
+
+        self.assertEqual(response.metadata.get("total_input_tokens_used"), "1234")
+        self.assertEqual(response.metadata.get("total_output_tokens_used"), "56")
+        self.assertEqual(response.metadata.get("total_tokens_used"), "1290")
 
     def test_gateway_turn_runner_build_outbound_and_persist_sets_envelope_metadata(
         self,
