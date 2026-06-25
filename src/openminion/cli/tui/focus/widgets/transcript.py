@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import time
+from collections.abc import Callable
 from dataclasses import dataclass
+import time
 from typing import Literal
 
 from rich.markdown import Markdown as RichMarkdown
@@ -38,7 +39,7 @@ class FocusMessageWidget(Widget):
     FocusMessageWidget { height: auto; padding: 0 1; }
     FocusMessageWidget.--user { color: $text; }
     FocusMessageWidget.--agent { color: $text; }
-    FocusMessageWidget.--system { color: $text-muted; text-style: italic; }
+    FocusMessageWidget.--system { color: $text-muted; }
     FocusMessageWidget.--error { color: $error; }
     """
 
@@ -59,7 +60,14 @@ class FocusMessageWidget(Widget):
 
     @staticmethod
     def _safe_id(msg_id: str) -> str | None:
-        return msg_id if msg_id and msg_id.replace("-", "").isalnum() else None
+        token = str(msg_id or "").strip()
+        if not token:
+            return None
+        safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in token)
+        safe = safe.strip("-_")
+        if not safe:
+            return None
+        return f"msg-{safe}"
 
     def compose(self):
         msg = self._message
@@ -84,7 +92,7 @@ class FocusMessageWidget(Widget):
         if msg.kind == MessageKind.AGENT and not self._streaming:
             return self._body_renderable(body, markdown_allowed=True)
         if msg.kind == MessageKind.SYSTEM:
-            return Text(body, style="italic dim")
+            return Text(body, style="dim")
         if msg.kind == MessageKind.ERROR:
             return Text(body, style="red")
         return self._with_cursor(Text(body))
@@ -344,9 +352,13 @@ class FocusTranscript(ScrollableContainer):
         return None
 
     def begin_turn(
-        self, role: Literal["user", "assistant"] = "assistant"
+        self,
+        role: Literal["user", "assistant"] = "assistant",
+        *,
+        footer_provider: Callable[[], str] | None = None,
     ) -> TurnHandle:
         """Open a streaming turn and update one message in place."""
+        del footer_provider
         kind = MessageKind.AGENT if role == "assistant" else MessageKind.USER
         message = ChatMessage(kind=kind, sender=role, body="")
         widget = self.push_message(message)

@@ -37,12 +37,12 @@ def test_focus_backend_resolution(
     assert _resolve_focus_backend(_args(rich=rich_flag)) == expected
 
 
-def test_focus_backend_defaults_to_textual_for_interactive_tty(monkeypatch) -> None:
+def test_focus_backend_defaults_to_terminal_for_interactive_tty(monkeypatch) -> None:
     monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
 
-    assert _resolve_focus_backend(_args()) == "textual"
+    assert _resolve_focus_backend(_args()) == "terminal"
 
 
 def test_focus_backend_defaults_to_terminal_for_piped_stdin(monkeypatch) -> None:

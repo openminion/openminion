@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from openminion.cli.commands.tui import (
@@ -25,9 +24,7 @@ def _resolve_focus_backend(args: argparse.Namespace) -> str:
         return "textual"
     if env_value in ("terminal", "flow", "terminal-flow"):
         return "terminal"
-    stdin_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
-    stdout_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
-    return "textual" if stdin_tty and stdout_tty else "terminal"
+    return "terminal"
 
 
 def _resolve_plain_spinner(args: argparse.Namespace) -> bool:

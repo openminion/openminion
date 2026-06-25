@@ -216,6 +216,19 @@ def test_focus_message_widget_refresh_body_ignores_missing_body_widget(
     widget._refresh_body()
 
 
+def test_focus_message_widget_sanitizes_textual_widget_id() -> None:
+    widget = FocusMessageWidget(
+        ChatMessage(
+            kind=MessageKind.AGENT,
+            sender="agent",
+            body="hello",
+            msg_id="'692dc2caf55741a4b16357d0e119ec0c'",
+        )
+    )
+
+    assert widget.id == "msg-692dc2caf55741a4b16357d0e119ec0c"
+
+
 def test_transcript_module_does_not_import_forbidden_symbols() -> None:
     import openminion.cli.tui.focus.widgets.transcript as transcript_mod
 

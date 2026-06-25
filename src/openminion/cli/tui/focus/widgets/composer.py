@@ -98,17 +98,25 @@ class FocusComposer(Widget):
     DEFAULT_CSS = """
     FocusComposer {
         height: auto;
-        border: round $accent;
+        border: none;
+        border-top: solid $primary-darken-2;
         padding: 0 1;
-        background: $surface;
+        background: $panel;
     }
     FocusComposer > #focus-prompt {
         width: 2;
         color: $accent;
         padding: 0;
     }
-    FocusComposer > Input { background: transparent; }
-    FocusComposer > TextArea { background: transparent; height: auto; }
+    FocusComposer > Input {
+        border: none;
+        background: transparent;
+    }
+    FocusComposer > TextArea {
+        border: none;
+        background: transparent;
+        height: auto;
+    }
     FocusComposer > .--hidden { display: none; }
     """
 

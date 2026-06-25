@@ -12,7 +12,7 @@ from openminion.cli.tui.presentation.header import shorten_working_dir
 from openminion.cli.tui.presentation.models import ChatMessage, MessageKind
 
 
-_DEFAULT_GREETING = "How can I help today?"
+_DEFAULT_GREETING = "OpenMinion"
 _DEFAULT_EXAMPLE_PROMPTS: tuple[str, ...] = (
     "explain this codebase",
     "find all references to <symbol>",
@@ -53,6 +53,7 @@ def build_greeter_message(
 
     lines = [
         greeting,
+        "How can I help today?",
         f"  {cwd_short} · {agent_name}/{runtime_label} · theme: {theme_label}",
     ]
     project_context = getattr(runtime, "project_context", None)

@@ -27,7 +27,7 @@ async def test_focus_streaming_cursor_renders_then_clears(tmp_path: Path) -> Non
 
         widget.update_body("partial reply", streaming=True)
         await pilot.pause()
-        body = app.screen.query_one(f"#{message.msg_id}-body")
+        body = app.screen.query_one(f"#{widget.id}-body")
         assert "▍" in str(body.render()), (
             "focus streaming should render the `▍` cursor — parity "
             "with dashboard test_chat_agent_streaming_cursor_toggles"
@@ -35,7 +35,7 @@ async def test_focus_streaming_cursor_renders_then_clears(tmp_path: Path) -> Non
 
         widget.update_body("complete reply", streaming=False)
         await pilot.pause()
-        body = app.screen.query_one(f"#{message.msg_id}-body")
+        body = app.screen.query_one(f"#{widget.id}-body")
         assert "▍" not in str(body.render()), (
             "cursor must clear when streaming finishes"
         )
