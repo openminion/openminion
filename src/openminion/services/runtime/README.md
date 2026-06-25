@@ -49,7 +49,7 @@ Internal modules of note:
 - `cli.py`, `__main__.py` — operator CLI
 - `engine.py` — `RuntimeEngine` (policy + tool dispatch)
 - `discovery.py`, `plugins/` — runtime plugin loader
-- `cron_delivery.py`, `cron_executor.py` — cron <-> turn
+- `cron/` — cron <-> turn delivery, execution, and audit helpers
 - `turn_router.py` — turn routing across composed surfaces
 - `ingress.py`, `lifecycle.py` — runtime ingress + lifecycle hooks
 - `catalog.py` — runtime catalog

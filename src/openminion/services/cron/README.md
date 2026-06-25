@@ -50,7 +50,7 @@ Re-exported from `openminion.services.cron`:
 ## Non-goals
 
 - Turn execution itself — that is dispatched into
-  `services/runtime/cron_executor.py` via the delivery handler.
+  `services/runtime/cron/executor.py` via the delivery handler.
 - Cron-record SQL schema — owned by `modules/storage/`.
 - Operator CLI (`cron list`, `cron add`) — that lives in
   `controlplane/`.
