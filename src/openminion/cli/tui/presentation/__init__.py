@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .clipboard import copy_to_clipboard
 from .header import (
     RuntimeHeaderContext,

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .catalog import DARK, LIGHT, SHIPPED_THEMES
 from .models import Theme
 from .selection import (

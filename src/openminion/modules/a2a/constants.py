@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 A2A_POLICY_ACTION_ALLOW = "allow"

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.modules.runtime.audit import (
     AUDIT_EVENT_KINDS,
     AUDIT_EVENT_RECORDED_EVENT_TYPE,

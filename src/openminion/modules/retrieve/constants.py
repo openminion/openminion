@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from openminion.base.constants import (
     OPENMINION_DATA_ROOT_ENV,

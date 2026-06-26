@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .serialization import (
     attach_response_meta,
     error_response,

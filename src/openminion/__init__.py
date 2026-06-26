@@ -1,7 +1,5 @@
 """OpenMinion's stable package-level public API."""
 
-from __future__ import annotations
-
 # Bind __version__ before public re-exports to avoid circular import reads.
 __version__ = "0.0.1"
 

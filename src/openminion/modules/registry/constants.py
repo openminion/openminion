@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 DEFAULT_CONFIG_FILENAME = "registry.yaml"

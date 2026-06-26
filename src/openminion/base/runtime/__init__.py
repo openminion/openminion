@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .constants import (
     DEFAULT_CONFIG_FILENAME,
     RUNTIME_NET_MODE_ALLOW,

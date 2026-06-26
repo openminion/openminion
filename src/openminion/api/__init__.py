@@ -1,7 +1,5 @@
 """Public API re-exports for ``openminion.api``."""
 
-from __future__ import annotations
-
 from openminion.api.agent import (
     Agent,
     AgentOutputValidationError,

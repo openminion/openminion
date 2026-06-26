@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .adapt import (
     error_dict_from_exception,
     error_dict_from_mapping,

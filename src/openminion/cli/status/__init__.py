@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .activity_ledger import (
     ACTIVITY_KINDS,
     ACTIVITY_STATES,

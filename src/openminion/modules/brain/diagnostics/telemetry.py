@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 
 from openminion.modules.telemetry.events.module import make_module_emitters

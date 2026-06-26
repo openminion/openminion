@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from ..config import (
     load_cli_config as load_config,
     load_cli_config_with_path as load_config_with_path,
