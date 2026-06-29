@@ -53,6 +53,52 @@ def dom_id(prefix: str, key: str) -> str:
     return f"{prefix}-{slug}"
 
 
+def format_selection_summary(selected: dict[str, Any]) -> str:
+    line = selected.get("line")
+    path = str(selected.get("path", "") or "—")
+    line_text = f":{line}" if line else ""
+    return (
+        f"{selected['provider']}  ·  {selected['node_or_edge_id']}\n"
+        f"{path}{line_text}\n"
+        f"graph={selected.get('graph_id', '—')}  score={selected.get('score', '—')}"
+    )
+
+
+def format_status_row(status: dict[str, Any]) -> str:
+    state = "ready" if status.get("ok") else "degraded"
+    caps = ",".join(status.get("capabilities", [])[:5]) or "none"
+    return f"{status.get('provider')} [{state}] caps={caps}"
+
+
+def format_history_row(item: dict[str, Any]) -> str:
+    target = f" -> {item['target']}" if item.get("target") else ""
+    providers = ",".join(item.get("providers", [])[:3]) or "all"
+    return (
+        f"{item.get('ts', '')}  {item.get('mode', '')}  {item.get('query', '')}{target}\n"
+        f"providers={providers}  count={item.get('count', 0)}"
+    )
+
+
+def format_saved_view_row(saved_view: Any) -> str:
+    target = f" -> {saved_view.target}" if saved_view.target else ""
+    providers = ",".join(saved_view.providers[:3]) or "all"
+    return (
+        f"{saved_view.name}\n"
+        f"{saved_view.mode}  {saved_view.query}{target}\n"
+        f"providers={providers}"
+    )
+
+
+def format_result_row(row: dict[str, Any]) -> str:
+    score = row.get("score")
+    score_text = f"{float(score):.2f}" if isinstance(score, (int, float)) else "—"
+    snippet = str(row.get("snippet", "") or "").replace("\n", " ").strip()
+    preview = (
+        snippet[:70] if snippet else str(row.get("path", "") or row["node_or_edge_id"])
+    )
+    return f"{row['provider']:<12} {score_text:>4}  {row['node_or_edge_id']}\n{preview}"
+
+
 def _item_rows(
     envelope: dict[str, Any],
     provider: str,
@@ -161,4 +207,14 @@ def _dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
-__all__ = ("dom_id", "flatten_query_payloads", "open_path", "resolve_local_path")
+__all__ = (
+    "dom_id",
+    "flatten_query_payloads",
+    "format_history_row",
+    "format_result_row",
+    "format_saved_view_row",
+    "format_selection_summary",
+    "format_status_row",
+    "open_path",
+    "resolve_local_path",
+)

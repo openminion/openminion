@@ -146,6 +146,10 @@ def test_refresh_api_mode_indexes_and_reloads_snapshot(tmp_path: Path) -> None:
     assert result.ok is True
     assert snapshot_path.exists()
     assert result.counts["nodes"] > 0
+    assert result.counts["changed_path_count"] > 0
+    assert result.counts["added_node_count"] > 0
+    assert result.counts["added_edge_count"] > 0
+    assert "omitted_reason_counts" in result.diagnostics
     assert CAPABILITY_REFRESH in source.capabilities.advertised
     assert source.health().ok is True
 

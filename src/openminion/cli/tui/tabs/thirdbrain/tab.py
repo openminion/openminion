@@ -17,15 +17,23 @@ from textual.widgets import Button, Input, Label, Static
 from openminion.cli.tui.presentation import copy_to_clipboard
 from .changes import (
     ThirdBrainChangeSummary,
+    ThirdBrainRefreshDeltaSummary,
     ThirdBrainRunSnapshot,
+    build_refresh_delta_summary,
     build_run_snapshot,
     compare_run_snapshots,
     summarize_change_summary,
+    summarize_refresh_delta_summary,
 )
 from .inspector import build_local_map, build_provider_comparison
 from .rows import (
     dom_id,
     flatten_query_payloads,
+    format_history_row,
+    format_result_row,
+    format_saved_view_row,
+    format_selection_summary,
+    format_status_row,
     open_path,
     resolve_local_path,
 )
@@ -64,6 +72,7 @@ class ThirdBrainTab(Widget):
         self._history: list[dict[str, Any]] = []
         self._traversal_rows: list[dict[str, Any]] = []
         self._last_refresh: list[dict[str, Any]] = []
+        self._last_refresh_delta_summary: ThirdBrainRefreshDeltaSummary | None = None
         self._last_error = ""
         self._last_result_count = 0
         self._last_runs_by_mode: dict[str, ThirdBrainRunSnapshot] = {}
@@ -125,7 +134,7 @@ class ThirdBrainTab(Widget):
                     if self._results:
                         for row in self._results:
                             yield SelectableRow(
-                                self._result_row_text(row),
+                                format_result_row(row),
                                 row_key=f"tb-result-{row['key']}",
                                 dom_id=dom_id("tb-result", row["key"]),
                                 classes=self._row_classes(row["key"]),
@@ -139,7 +148,7 @@ class ThirdBrainTab(Widget):
                     if self._saved_views:
                         for saved_view in self._saved_views:
                             yield SelectableRow(
-                                self._saved_view_row_text(saved_view),
+                                format_saved_view_row(saved_view),
                                 row_key=f"tb-saved-{saved_view.view_id}",
                                 dom_id=f"tb-saved-{saved_view.view_id}",
                                 classes=self._saved_view_classes(saved_view.view_id),
@@ -160,11 +169,24 @@ class ThirdBrainTab(Widget):
                             "Run the same mode more than once to inspect what changed.",
                             classes="dim-hint",
                         )
+                    yield Label("PROVIDER REFRESH DELTA", classes="sidebar-heading")
+                    if self._last_refresh_delta_summary is not None:
+                        yield Static(
+                            summarize_refresh_delta_summary(
+                                self._last_refresh_delta_summary
+                            ),
+                            classes="third-brain-change-row",
+                        )
+                    else:
+                        yield Label(
+                            "Refresh providers to inspect snapshot-backed deltas.",
+                            classes="dim-hint",
+                        )
                     yield Label("QUERY HISTORY", classes="sidebar-heading")
                     if self._history:
                         for index, item in enumerate(self._history[:8]):
                             yield SelectableRow(
-                                self._history_row_text(item),
+                                format_history_row(item),
                                 row_key=f"tb-history-{index}",
                                 dom_id=f"tb-history-{index}",
                                 classes="third-brain-history-row",
@@ -175,7 +197,7 @@ class ThirdBrainTab(Widget):
                     if self._statuses:
                         for status in self._statuses:
                             yield Static(
-                                self._status_row_text(status),
+                                format_status_row(status),
                                 classes="third-brain-status-row",
                             )
                     else:
@@ -189,7 +211,7 @@ class ThirdBrainTab(Widget):
                         )
                     else:
                         yield Static(
-                            self._selection_summary(selected),
+                            format_selection_summary(selected),
                             id="third-brain-summary",
                         )
                         with Horizontal(id="third-brain-action-strip"):
@@ -203,6 +225,7 @@ class ThirdBrainTab(Widget):
                             yield self._inspector_button("raw", "Raw")
                             yield self._inspector_button("context", "Ctx")
                             yield self._inspector_button("changes", "Changes")
+                            yield self._inspector_button("refresh", "Refresh")
                             yield self._inspector_button("compare", "Compare")
                             yield self._inspector_button("map", "Map")
                             yield self._inspector_button("traversal", "Traverse")
@@ -213,7 +236,7 @@ class ThirdBrainTab(Widget):
                         if self._inspector_mode == "traversal" and self._traversal_rows:
                             for row in self._traversal_rows:
                                 yield SelectableRow(
-                                    self._result_row_text(row),
+                                    format_result_row(row),
                                     row_key=f"tb-traverse-{row['key']}",
                                     dom_id=dom_id("tb-traverse", row["key"]),
                                     classes="third-brain-row third-brain-traverse-row",
@@ -371,6 +394,9 @@ class ThirdBrainTab(Widget):
         if refreshable:
             try:
                 self._last_refresh = self._provider.refresh(provider_names=refreshable)
+                self._last_refresh_delta_summary = build_refresh_delta_summary(
+                    self._last_refresh
+                )
                 self._last_error = ""
             except Exception as exc:
                 self._last_error = f"Refresh failed: {exc}"
@@ -602,16 +628,6 @@ class ThirdBrainTab(Widget):
                 return row
         return None
 
-    def _selection_summary(self, selected: dict[str, Any]) -> str:
-        line = selected.get("line")
-        path = str(selected.get("path", "") or "—")
-        line_text = f":{line}" if line else ""
-        return (
-            f"{selected['provider']}  ·  {selected['node_or_edge_id']}\n"
-            f"{path}{line_text}\n"
-            f"graph={selected.get('graph_id', '—')}  score={selected.get('score', '—')}"
-        )
-
     def _inspector_text(self, selected: dict[str, Any]) -> str:
         if self._inspector_mode == "details":
             payload = {
@@ -652,6 +668,14 @@ class ThirdBrainTab(Widget):
                 )
             return json.dumps(
                 self._last_change_summary.to_dict(),
+                indent=2,
+                sort_keys=True,
+            )
+        if self._inspector_mode == "refresh":
+            if self._last_refresh_delta_summary is None:
+                return "No provider refresh delta yet. Press Refresh to load provider-backed refresh facts."
+            return json.dumps(
+                self._last_refresh_delta_summary.to_dict(),
                 indent=2,
                 sort_keys=True,
             )
@@ -728,42 +752,6 @@ class ThirdBrainTab(Widget):
         if view_id == self._selected_saved_view_id:
             classes += " selected"
         return classes
-
-    def _status_row_text(self, status: dict[str, Any]) -> str:
-        state = "ready" if status.get("ok") else "degraded"
-        caps = ",".join(status.get("capabilities", [])[:5]) or "none"
-        return f"{status.get('provider')} [{state}] caps={caps}"
-
-    def _history_row_text(self, item: dict[str, Any]) -> str:
-        target = f" -> {item['target']}" if item.get("target") else ""
-        providers = ",".join(item.get("providers", [])[:3]) or "all"
-        return (
-            f"{item.get('ts', '')}  {item.get('mode', '')}  {item.get('query', '')}{target}\n"
-            f"providers={providers}  count={item.get('count', 0)}"
-        )
-
-    def _saved_view_row_text(self, saved_view: SavedThirdBrainView) -> str:
-        target = f" -> {saved_view.target}" if saved_view.target else ""
-        providers = ",".join(saved_view.providers[:3]) or "all"
-        return (
-            f"{saved_view.name}\n"
-            f"{saved_view.mode}  {saved_view.query}{target}\n"
-            f"providers={providers}"
-        )
-
-    def _result_row_text(self, row: dict[str, Any]) -> str:
-        score = row.get("score")
-        score_text = f"{float(score):.2f}" if isinstance(score, (int, float)) else "—"
-        snippet = str(row.get("snippet", "") or "").replace("\n", " ").strip()
-        preview = (
-            snippet[:70]
-            if snippet
-            else str(row.get("path", "") or row["node_or_edge_id"])
-        )
-        return (
-            f"{row['provider']:<12} {score_text:>4}  {row['node_or_edge_id']}\n"
-            f"{preview}"
-        )
 
     def _selected_provider_names(self, capability: str | None = None) -> list[str]:
         names = []

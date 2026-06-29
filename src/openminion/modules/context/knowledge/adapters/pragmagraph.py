@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections import Counter
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Callable, Mapping, Sequence
@@ -224,6 +225,7 @@ class PragmaGraphKnowledgeGraphSource:
         self._ensure_capability(CAPABILITY_REFRESH)
         args = _pragmagraph_command_args(self._options)
         diagnostics: dict[str, Any] = {"mode": request.mode}
+        refresh_result: Any | None = None
         ok = False
         if args:
             timeout = _pragmagraph_timeout_seconds(self._options)
@@ -254,21 +256,25 @@ class PragmaGraphKnowledgeGraphSource:
                     },
                 )
             package = self._load_package()
-            snapshot = package.index_path(root_path, namespace=self._namespace())
+            previous_snapshot = self._snapshot
+            refresh_result = package.refresh_snapshot(
+                root_path,
+                namespace=self._namespace(),
+                previous_snapshot=previous_snapshot,
+            )
+            snapshot = refresh_result.snapshot
             package.save_snapshot(snapshot, snapshot_path)
             self._snapshot = snapshot
             self._load_error = ""
             diagnostics["refresh"] = "api"
+            diagnostics["omitted_reason_counts"] = _omitted_reason_counts(snapshot)
             ok = True
         snapshot = self._snapshot
         return GraphRefreshResult(
             provider=self.name,
             layer=self.layer,
             ok=ok,
-            counts={
-                "nodes": len(tuple(getattr(snapshot, "nodes", ()) or ())),
-                "edges": len(tuple(getattr(snapshot, "edges", ()) or ())),
-            },
+            counts=_refresh_counts(snapshot, refresh_result),
             diagnostics=diagnostics,
         )
 
@@ -477,6 +483,38 @@ def _omitted_to_openminion(provider: str, item: Any) -> GraphOmittedItem:
         reason=str(getattr(item, "reason", "") or ""),
         details=dict(getattr(item, "details", {}) or {}),
     )
+
+
+def _omitted_reason_counts(snapshot: Any | None) -> dict[str, int]:
+    return dict(
+        sorted(
+            Counter(
+                str(getattr(item, "reason", "") or "")
+                for item in tuple(getattr(snapshot, "omitted", ()) or ())
+                if str(getattr(item, "reason", "") or "")
+            ).items()
+        )
+    )
+
+
+def _refresh_counts(snapshot: Any | None, refresh_result: Any | None) -> dict[str, int]:
+    snapshot_delta = getattr(refresh_result, "snapshot_delta", None)
+    return {
+        "nodes": _sequence_count(snapshot, "nodes"),
+        "edges": _sequence_count(snapshot, "edges"),
+        "changed_path_count": _sequence_count(refresh_result, "changed_paths"),
+        "removed_path_count": _sequence_count(refresh_result, "removed_paths"),
+        "added_node_count": _sequence_count(snapshot_delta, "added_node_ids"),
+        "removed_node_count": _sequence_count(snapshot_delta, "removed_node_ids"),
+        "added_edge_count": _sequence_count(snapshot_delta, "added_edge_ids"),
+        "removed_edge_count": _sequence_count(snapshot_delta, "removed_edge_ids"),
+        "added_omitted_count": _sequence_count(snapshot_delta, "added_omitted_ids"),
+        "removed_omitted_count": _sequence_count(snapshot_delta, "removed_omitted_ids"),
+    }
+
+
+def _sequence_count(owner: Any | None, attribute: str) -> int:
+    return len(tuple(getattr(owner, attribute, ()) or ()))
 
 
 def _query_result_to_openminion(
