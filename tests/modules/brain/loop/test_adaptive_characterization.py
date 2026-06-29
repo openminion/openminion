@@ -1123,14 +1123,19 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
 ) -> None:
     specs = adaptive_modes.build_runtime_tool_specs(
         None,
-        allowed_tools=frozenset({"file.write", "exec.run", "unknown.dynamic"}),
+        allowed_tools=frozenset(
+            {"file.write", "exec.run", "host.metrics", "unknown.dynamic"}
+        ),
     )
     by_name = {spec.name: spec for spec in specs}
 
     assert "parent directories" in by_name["file.write"].description
     assert "scaffold" in by_name["file.write"].description.lower()
-    assert "structured file/web tools" in by_name["exec.run"].description
-    assert "directories" in by_name["exec.run"].description
+    assert "platform=" in by_name["exec.run"].description
+    assert "shell_family=" in by_name["exec.run"].description
+    assert "direct command" in by_name["exec.run"].description
+    assert "host.metrics" in by_name["exec.run"].description
+    assert "disk usage" in by_name["host.metrics"].description
     assert "unknown.dynamic" not in by_name
 
     monkeypatch.setattr(

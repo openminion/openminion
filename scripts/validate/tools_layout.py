@@ -42,6 +42,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "git",
     "github",
     "gws",
+    "host",
     "ip",
     "location",
     "memory",

@@ -45,6 +45,12 @@ from .policy_normalization import (
     deep_merge as _deep_merge,
     normalize_policy_legacy_aliases as _normalize_policy_legacy_aliases,
 )
+from .command_patterns import (
+    COMMAND_ALLOW_PATTERNS,
+    DISCOVERY_KNOWN_TOOLS,
+    command_action_class,
+    matching_allow_pattern,
+)
 
 SCOPE_ORDER: Dict[str, int] = {
     "READ_ONLY": 0,
@@ -52,7 +58,6 @@ SCOPE_ORDER: Dict[str, int] = {
     "POWER_USER": 2,
     "UI_AUTOMATION": 3,
 }
-
 
 def reorder_runtime_chain(
     *,
@@ -287,6 +292,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
             "openminion_tool_weather_openmeteo",
             "openminion_tool_gws",
             "openminion_tool_time",
+            "openminion_tool_host",
         ],
         "deny": [],
     },
@@ -307,6 +313,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
             "weather",
             "time",
             "location",
+            "host.",
             "ip.",
             "gws.",
             "fetch.",
@@ -367,6 +374,8 @@ DEFAULT_POLICY: Dict[str, Any] = {
         ],
         "deny_exact": ["rm", "dd", "mkfs"],
         "deny_regex": [".*shutdown.*", ".*reboot.*", ".*poweroff.*", ".*halt.*"],
+        "known_tools": list(DISCOVERY_KNOWN_TOOLS),
+        "allow_patterns": list(COMMAND_ALLOW_PATTERNS),
     },
     "exec": {
         "security": TOOL_EXEC_SECURITY_ALLOWLIST,  # deny|allowlist|full
@@ -632,6 +641,8 @@ class Policy:
         security_mode = self.exec_security_mode()
         ask_mode = self.exec_ask_mode()
         allowlist = self.exec_allowlist()
+        commands = cast(Dict[str, Any], self.raw.get("commands", {}))
+        allow_pattern = matching_allow_pattern(argv, commands)
 
         def _ask_required(rule: str, details: Dict[str, Any]) -> None:
             if confirm:
@@ -650,7 +661,7 @@ class Policy:
             )
 
         if security_mode == TOOL_EXEC_SECURITY_ALLOWLIST:
-            allowed = False
+            allowed = allow_pattern is not None
             for item in allowlist:
                 token = str(item)
                 if not token:
@@ -912,13 +923,30 @@ class Policy:
         mode_raw = str(commands.get("mode", TOOL_EXEC_SECURITY_ALLOWLIST))
         mode = mode_raw.lower()
         allow = set(commands.get("allow", []))
+        allow_pattern = matching_allow_pattern(argv, commands)
+        action_class = command_action_class(argv)
+
+        if mode == TOOL_EXEC_SECURITY_ALLOWLIST and action_class == "install":
+            raise ToolRuntimeError(
+                "POLICY_DENIED",
+                f"Denied by policy: command '{exec_name}' is an install command",
+                {
+                    "rule": "commands.install",
+                    "command": exec_name,
+                    "action_class": action_class,
+                },
+            )
 
         if mode == TOOL_EXEC_SECURITY_ALLOWLIST:
-            if exec_name not in allow:
+            if exec_name not in allow and allow_pattern is None:
                 raise ToolRuntimeError(
                     "POLICY_DENIED",
                     f"Denied by policy: command '{exec_name}' is not allowlisted",
-                    {"rule": "commands.allow"},
+                    {
+                        "rule": "commands.allow",
+                        "command": exec_name,
+                        "action_class": action_class,
+                    },
                 )
         elif mode == "blocklist":
             # In blocklist mode, commands are permitted unless deny rules match.

@@ -47,6 +47,27 @@ def test_complete_with_explicit_final_text() -> None:
     assert "full body" in output
 
 
+def test_complete_shows_muted_whole_second_response_time() -> None:
+    console, buffer = _make_console()
+    handle = TerminalTurnHandle(console).start()
+    handle._started_at = time.monotonic() - 3.4
+    handle.append_token("timed reply")
+    handle.complete()
+    output = buffer.getvalue()
+    assert "Done in 3s" in output
+    assert output.endswith("Done in 3s\n\n")
+    assert "3.4s" not in output
+
+
+def test_complete_can_hide_response_time() -> None:
+    console, buffer = _make_console()
+    handle = TerminalTurnHandle(console, show_response_time=False).start()
+    handle._started_at = time.monotonic() - 3.4
+    handle.append_token("untimed reply")
+    handle.complete()
+    assert "Done in" not in buffer.getvalue()
+
+
 def test_bounded_fallback_under_50ms_threshold() -> None:
     console, buffer = _make_console()
     handle = TerminalTurnHandle(console).start()
@@ -89,6 +110,7 @@ def test_append_tool_block_renders_inline() -> None:
     handle.complete()
     output = buffer.getvalue()
     assert "bash" in output
+    assert "└ file1" in output
     assert "file1" in output
     assert "after tool" in output
 

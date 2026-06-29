@@ -22,6 +22,28 @@ from .streaming import (
 )
 
 
+def get_app_or_none() -> Any | None:
+    try:
+        import importlib
+
+        context = importlib.import_module("textual._context")
+        active_app = getattr(context, "active_app", None)
+        if active_app is None:
+            return None
+        return active_app.get(None)
+    except (ImportError, LookupError, RuntimeError, AttributeError):
+        return None
+
+
+def run_in_terminal(func: Callable[[], None], *, render_cli_done: bool = False) -> Any:
+    app = get_app_or_none()
+    runner = getattr(app, "run_in_terminal", None)
+    if callable(runner):
+        return runner(func, render_cli_done=render_cli_done)
+    func()
+    return None
+
+
 _USER_PREFIX_STYLE = token_rich_style(StyleToken.USER, dim=True)
 _USER_PREFIX = Text("> ", style=_USER_PREFIX_STYLE)
 # SYSTEM-style lines route through MUTED tier + italic
@@ -39,11 +61,13 @@ class TerminalTranscript:
         *,
         plain_spinner: bool = False,
         verbosity: str = "normal",
+        show_response_time: bool = True,
     ) -> None:
         self._console = console
         self._messages: list[ChatMessage] = []
         self._selected_message_id: str | None = None
         self._plain_spinner = bool(plain_spinner)
+        self._show_response_time = bool(show_response_time)
         self._verbosity: str = (
             verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
         )
@@ -52,6 +76,21 @@ class TerminalTranscript:
         self._truncated_blocks: list[Any] = []
         self._live_narrated_call_ids: set[str] = set()
         self._active_handle: Any | None = None
+        self._terminal_writer: Callable[[Callable[[], None]], Any] | None = None
+
+    def set_terminal_writer(self, writer: Callable[[Callable[[], None]], Any]) -> None:
+        self._terminal_writer = writer
+
+    def _write_render(self, render: Callable[[], None]) -> None:
+        writer = self._terminal_writer
+        if writer is not None:
+            writer(render)
+            return
+        app = get_app_or_none()
+        if bool(getattr(app, "is_running", False)):
+            run_in_terminal(render, render_cli_done=False)
+            return
+        render()
 
     def begin_turn(
         self,
@@ -67,6 +106,7 @@ class TerminalTranscript:
             self._console,
             plain=self._plain_spinner,
             footer_provider=footer_provider,
+            show_response_time=self._show_response_time,
         ).start()
         self._active_handle = handle
         original_complete = handle.complete
@@ -171,30 +211,42 @@ class TerminalTranscript:
 
     def _render(self, message: ChatMessage) -> None:
         if message.kind == MessageKind.USER:
-            line = Text()
-            line.append("> ", style=_USER_PREFIX_STYLE)
-            line.append(message.body or "")
-            self._console.print(line)
+            def _render_user() -> None:
+                line = Text()
+                line.append("> ", style=_USER_PREFIX_STYLE)
+                line.append(message.body or "")
+                self._console.print(line)
+
+            self._write_render(_render_user)
             return
         if message.kind == MessageKind.AGENT:
             body = str(message.body or "")
-            if body and _looks_like_markdown(body):
-                self._console.print(
-                    RichMarkdown(
-                        body,
-                        code_theme="monokai",
-                        inline_code_lexer="text",
-                        justify="left",
+            def _render_agent() -> None:
+                if body and _looks_like_markdown(body):
+                    self._console.print(
+                        RichMarkdown(
+                            body,
+                            code_theme="monokai",
+                            inline_code_lexer="text",
+                            justify="left",
+                        )
                     )
-                )
-            else:
-                self._console.print(Text(body))
+                else:
+                    self._console.print(Text(body))
+
+            self._write_render(_render_agent)
             return
         if message.kind == MessageKind.SYSTEM:
-            self._console.print(Text(message.body or "", style=_SYSTEM_STYLE))
+            self._write_render(
+                lambda: self._console.print(
+                    Text(message.body or "", style=_SYSTEM_STYLE)
+                )
+            )
             return
         if message.kind == MessageKind.ERROR:
-            self._console.print(Text(message.body or "", style=_ERROR_STYLE))
+            self._write_render(
+                lambda: self._console.print(Text(message.body or "", style=_ERROR_STYLE))
+            )
             return
         if message.kind == MessageKind.TOOL and message.tool_event is not None:
             call_id = getattr(message.tool_event, "call_id", "")
@@ -310,20 +362,35 @@ class TerminalTranscript:
             return
 
         if self._verbosity == "verbose":
-            self._console.print(
-                _render_full_tool_block(event, cap=_TOOL_BLOCK_VERBOSE_MAX_LINES)
+            renderable = _render_full_tool_block(
+                event, cap=_TOOL_BLOCK_VERBOSE_MAX_LINES
             )
+            if not self._append_live_renderable(renderable):
+                self._write_render(lambda: self._console.print(renderable))
             if _body_line_count(event) > _TOOL_BLOCK_VERBOSE_MAX_LINES:
                 self._truncated_blocks.append(event)
             if call_id:
                 self._live_narrated_call_ids.add(call_id)
             return
 
-        self._console.print(_render_tool_block(event))
+        renderable = _render_tool_block(event)
+        if not self._append_live_renderable(renderable):
+            self._write_render(lambda: self._console.print(renderable))
         if is_truncated(event):
             self._truncated_blocks.append(event)
         if call_id:
             self._live_narrated_call_ids.add(call_id)
+
+    def _append_live_renderable(self, renderable: Any) -> bool:
+        handle = self._active_handle
+        append = getattr(handle, "append_renderable", None)
+        if not callable(append):
+            return False
+        try:
+            append(renderable)
+        except (AttributeError, RuntimeError, ValueError):
+            return False
+        return True
 
     def push_activity_event(self, event: Any) -> None:
         from openminion.cli.status.activity_ledger import (
@@ -365,8 +432,11 @@ class TerminalTranscript:
             style = token_rich_style(StyleToken.SYSTEM)
         else:
             style = token_rich_style(StyleToken.SYSTEM)
+        renderable = Text(line, style=style or "")
+        if self._append_live_renderable(renderable):
+            return
         try:
-            self._console.print(Text(line, style=style or ""))
+            self._console.print(renderable)
         except Exception:
             return
 

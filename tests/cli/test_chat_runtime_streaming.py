@@ -35,5 +35,5 @@ def test_build_chat_progress_callback_routes_budget_events_to_notes() -> None:
 
     callback({"kind": "budget_event", "event_type": "budget.extended", "cap": 8})
 
-    assert display.notes == ["Budget event: budget.extended"]
+    assert display.notes == ["Budget: extended"]
     assert display.updates == []

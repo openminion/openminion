@@ -9,6 +9,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_LIST_DIR,
     MODEL_FILE_READ,
     MODEL_FILE_WRITE,
+    MODEL_HOST_METRICS,
     MODEL_IP_LOCAL,
     MODEL_IP_PUBLIC,
     MODEL_LOCATION,
@@ -50,6 +51,9 @@ DEFAULT_TOOL_CATEGORY_MAP: dict[str, ToolCategoryInfo] = {
         primary_category="time", secondary_categories=("time_util",)
     ),
     MODEL_LOCATION: ToolCategoryInfo(primary_category="location"),
+    MODEL_HOST_METRICS: ToolCategoryInfo(
+        primary_category="host.metrics", secondary_categories=("system", "resources")
+    ),
     MODEL_IP_PUBLIC: ToolCategoryInfo(
         primary_category="network.public_ip", secondary_categories=("network",)
     ),

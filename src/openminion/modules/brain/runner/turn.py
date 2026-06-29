@@ -10,6 +10,7 @@ from ..runtime import tokens
 from . import call_order
 
 from openminion.modules.tool.contracts.model_ids import (
+    MODEL_HOST_METRICS,
     MODEL_IP_LOCAL,
     MODEL_IP_PUBLIC,
     MODEL_LOCATION,
@@ -339,6 +340,7 @@ def command_has_side_effects(
         MODEL_WEATHER,
         MODEL_TIME,
         MODEL_LOCATION,
+        MODEL_HOST_METRICS,
         MODEL_IP_PUBLIC,
         MODEL_IP_LOCAL,
     }

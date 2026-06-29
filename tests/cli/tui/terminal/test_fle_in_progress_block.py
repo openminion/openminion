@@ -26,9 +26,9 @@ def _render(renderable, *, color: bool = False) -> str:
 
 
 def test_format_elapsed_sub_60_seconds() -> None:
-    assert _format_elapsed_seconds(0.0) == "0.0s"
-    assert _format_elapsed_seconds(1.234) == "1.2s"
-    assert _format_elapsed_seconds(59.99) == "60.0s"
+    assert _format_elapsed_seconds(0.0) == "0s"
+    assert _format_elapsed_seconds(1.234) == "1s"
+    assert _format_elapsed_seconds(59.99) == "59s"
 
 
 def test_format_elapsed_over_60_seconds() -> None:
@@ -38,7 +38,7 @@ def test_format_elapsed_over_60_seconds() -> None:
 
 
 def test_format_elapsed_negative_clamps_to_zero() -> None:
-    assert _format_elapsed_seconds(-1.0) == "0.0s"
+    assert _format_elapsed_seconds(-1.0) == "0s"
 
 
 # ── Render helper ────────────────────────────────────────────────
@@ -93,7 +93,7 @@ def test_render_in_progress_includes_elapsed_when_positive() -> None:
     out = _render(
         _render_in_progress_tool_block("Bash", {"cmd": "ls"}, elapsed_seconds=1.5)
     )
-    assert "1.5s" in out
+    assert "1s" in out
 
 
 def test_render_in_progress_omits_elapsed_when_zero() -> None:

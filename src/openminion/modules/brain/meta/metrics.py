@@ -15,6 +15,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_FIND,
     MODEL_FILE_LIST_DIR,
     MODEL_FILE_READ,
+    MODEL_HOST_METRICS,
     MODEL_TIME,
     MODEL_WEATHER,
     MODEL_WEB_SEARCH,
@@ -240,6 +241,7 @@ def _command_has_side_effects(command: Command | None) -> bool:
         MODEL_WEB_SEARCH,
         MODEL_WEATHER,
         MODEL_TIME,
+        MODEL_HOST_METRICS,
     }
     if tool_name in read_only_tools:
         return False

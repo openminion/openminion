@@ -123,7 +123,18 @@ def test_push_activity_event_renders_background_running_and_done() -> None:
 def test_push_activity_event_renders_budget_event() -> None:
     t, buf = _make_transcript()
     t.push_activity_event(TurnActivityEvent(kind=KIND_BUDGET, title="tokens_low"))
-    assert "Budget event: tokens_low" in buf.getvalue()
+    assert "Budget: tokens_low" in buf.getvalue()
+
+
+def test_push_activity_event_uses_active_turn_render_path() -> None:
+    t, buf = _make_transcript()
+    handle = t.begin_turn()
+    t.push_activity_event(TurnActivityEvent(kind=KIND_BUDGET, title="budget.allocated"))
+    handle.complete(final_text="done")
+
+    out = buf.getvalue()
+    assert "Budget: allocated" in out
+    assert "Budget event" not in out
 
 
 def test_push_activity_event_renders_error() -> None:

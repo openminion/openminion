@@ -47,6 +47,26 @@ _READ_ONLY_EXECUTABLES = frozenset(
     }
 )
 
+_READ_ONLY_PLATFORM_PATTERNS = frozenset(
+    {
+        ("uname", "-m"),
+        ("uname", "-s"),
+        ("sw_vers",),
+        ("sysctl", "-n", "hw.machine"),
+    }
+)
+
+
+def _is_read_only_discovery_argv(argv: tuple[str, ...]) -> bool:
+    if len(argv) == 3 and argv[0] == "command" and argv[1] == "-v":
+        return bool(argv[2].strip())
+    if len(argv) == 2 and argv[0] == "which":
+        return bool(argv[1].strip())
+    if len(argv) == 2 and argv[1] == "--version":
+        executable = argv[0].strip()
+        return bool(executable) and "/" not in executable and "\\" not in executable
+    return argv in _READ_ONLY_PLATFORM_PATTERNS
+
 
 def _segment_bounds(command: str) -> tuple[int, int]:
     start = 0
@@ -314,8 +334,9 @@ def is_read_only_exec_command(
         return False
     if len(parsed.segments) != 1 or parsed.operators:
         return False
-    executable = str(parsed.segments[0].argv[0]).strip().lower()
-    return executable in _READ_ONLY_EXECUTABLES
+    argv = tuple(str(arg).strip() for arg in parsed.segments[0].argv)
+    executable = argv[0].lower()
+    return executable in _READ_ONLY_EXECUTABLES or _is_read_only_discovery_argv(argv)
 
 
 __all__ = [

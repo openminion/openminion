@@ -62,6 +62,11 @@ def test_history_file_enables_file_history(tmp_path: Path) -> None:
     assert isinstance(c._session.history, FileHistory)
 
 
+def test_completion_menu_reserves_ten_rows() -> None:
+    c = TerminalComposer()
+    assert c._session.reserve_space_for_menu == 10
+
+
 def test_history_file_persists_across_composer_recreation(tmp_path: Path) -> None:
     history_file = tmp_path / "terminal_history"
     first = TerminalComposer(history_file=str(history_file))

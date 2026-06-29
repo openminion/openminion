@@ -15,6 +15,7 @@ from openminion.cli.ux.input_normalization import normalize_multiline_input_text
 _PROMPT_FRESH = "❯ "
 _PROMPT_RESUMED = "↳ "
 _PROMPT_DISABLED = "… "
+_COMPLETION_MENU_ROWS = 10
 
 
 class _SlashAndAtCompleter(Completer):
@@ -144,6 +145,7 @@ class TerminalComposer:
             history=history,
             key_bindings=kb,
             enable_history_search=True,
+            reserve_space_for_menu=_COMPLETION_MENU_ROWS,
         )
 
     def set_resumed(self, is_resumed: bool) -> None:
@@ -207,6 +209,7 @@ class TerminalComposer:
         if self._disabled:
             raise RuntimeError("composer disabled — refuse to read input")
         prompt = self._prompt_text()
+        # Historical guard: patch_stdout(raw=True)
         with patch_stdout():
             try:
                 text = await self._session.prompt_async(

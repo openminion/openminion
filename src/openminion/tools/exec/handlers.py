@@ -109,12 +109,12 @@ _PACKAGE_INSTALL_HINT_FIX = (
     "task requires Python test verification, run the allowed direct command "
     "`python -m pytest -q tests` from the workspace instead."
 )
-_PYTHON_DISCOVERY_HINT_TOOL = "exec.run"
-_PYTHON_DISCOVERY_HINT_FIX = (
-    "Interpreter-discovery commands such as `which python3` are not allowlisted "
-    "for this execution surface. If the task requires Python test verification, "
-    "run the allowed direct command `python -m pytest -q tests` from the "
-    "workspace instead. Do not probe interpreter paths or versions first."
+_DISCOVERY_HINT_TOOL = "exec.run"
+_DISCOVERY_HINT_FIX = (
+    "Run toolchain discovery as a direct command such as "
+    "`command -v nasm`, then run a separate direct version check such as "
+    "`nasm --version` if the tool exists. Do not use pipes, redirections, "
+    "or shell chaining."
 )
 
 

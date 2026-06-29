@@ -395,7 +395,9 @@ def format_activity_line(event: TurnActivityEvent | None) -> str | None:
 
     if event.kind == KIND_BUDGET:
         title = event.title or "budget"
-        return f"Budget event: {title}"
+        if title.startswith("budget."):
+            title = title.split(".", 1)[1]
+        return f"Budget: {title}"
 
     if event.kind == KIND_ERROR:
         title = event.title or "error"

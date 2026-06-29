@@ -159,6 +159,37 @@ def test_is_read_only_exec_command_uses_parser_and_fails_closed() -> None:
     assert not is_read_only_exec_command("echo 'unterminated")
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "command -v nasm",
+        "which clang",
+        "nasm --version",
+        "uname -m",
+        "uname -s",
+        "sw_vers",
+        "sysctl -n hw.machine",
+    ],
+)
+def test_is_read_only_exec_command_accepts_direct_discovery(command: str) -> None:
+    assert is_read_only_exec_command(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "command -v nasm && nasm --version",
+        "clang -v",
+        "nasm -f macho64 ping.asm",
+        "./ping --version",
+    ],
+)
+def test_is_read_only_exec_command_rejects_non_discovery_shapes(
+    command: str,
+) -> None:
+    assert not is_read_only_exec_command(command)
+
+
 def test_is_read_only_exec_command_fails_closed_for_non_posix_shell_family() -> None:
     assert not is_read_only_exec_command(
         "ls -la",

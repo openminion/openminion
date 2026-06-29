@@ -54,6 +54,32 @@ def test_exec_discovery_command_denied_with_structured_tool_hint_before_confirma
     assert "file.list_dir" in decision.details["suggested_fix"]
 
 
+def test_exec_toolchain_discovery_bypasses_high_risk_confirmation() -> None:
+    decision = _adapter().evaluate(
+        tool_name=MODEL_EXEC_RUN,
+        tool_spec=_exec_spec(),
+        args={"command": "command -v nasm"},
+    )
+
+    assert decision.allowed is True
+    assert decision.requires_confirm is False
+    assert decision.code == "OK"
+    assert decision.reason == "read_only_exec_allowed"
+    assert decision.details["action_class"] == "read_only_discovery"
+
+
+def test_exec_platform_probe_bypasses_high_risk_confirmation() -> None:
+    decision = _adapter().evaluate(
+        tool_name=MODEL_EXEC_RUN,
+        tool_spec=_exec_spec(),
+        args={"command": "uname -m"},
+    )
+
+    assert decision.allowed is True
+    assert decision.requires_confirm is False
+    assert decision.code == "OK"
+
+
 def test_non_discovery_exec_command_keeps_high_risk_confirmation_contract() -> None:
     decision = _adapter().evaluate(
         tool_name=MODEL_EXEC_RUN,

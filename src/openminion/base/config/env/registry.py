@@ -167,6 +167,13 @@ ENV_VAR_SPECS: tuple[EnvVarSpec, ...] = (
         description="Global turn timeout override in seconds.",
     ),
     EnvVarSpec(
+        name="OPENMINION_SHOW_RESPONSE_TIME",
+        value_type="bool",
+        default="true",
+        owner="cli/tui",
+        description="Show a muted whole-second response duration after terminal focus turns.",
+    ),
+    EnvVarSpec(
         name="OPENMINION_AGENT_ID",
         value_type="string",
         default="openminion",

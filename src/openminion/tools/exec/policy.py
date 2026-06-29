@@ -103,12 +103,12 @@ _PACKAGE_INSTALL_HINT_FIX = (
     "task requires Python test verification, run the allowed direct command "
     "`python -m pytest -q tests` from the workspace instead."
 )
-_PYTHON_DISCOVERY_HINT_TOOL = "exec.run"
-_PYTHON_DISCOVERY_HINT_FIX = (
-    "Interpreter-discovery commands such as `which python3` are not allowlisted "
-    "for this execution surface. If the task requires Python test verification, "
-    "run the allowed direct command `python -m pytest -q tests` from the "
-    "workspace instead. Do not probe interpreter paths or versions first."
+_DISCOVERY_HINT_TOOL = "exec.run"
+_DISCOVERY_HINT_FIX = (
+    "Run toolchain discovery as a direct command such as "
+    "`command -v nasm`, then run a separate direct version check such as "
+    "`nasm --version` if the tool exists. Do not use pipes, redirections, "
+    "or shell chaining."
 )
 
 
@@ -139,10 +139,34 @@ def _attach_executable_denial_hint(
     if normalized in {"pip", "pip3"}:
         details.setdefault("suggested_tool", _PACKAGE_INSTALL_HINT_TOOL)
         details.setdefault("suggested_fix", _PACKAGE_INSTALL_HINT_FIX)
-    if normalized == "which":
-        details.setdefault("suggested_tool", _PYTHON_DISCOVERY_HINT_TOOL)
-        details.setdefault("suggested_fix", _PYTHON_DISCOVERY_HINT_FIX)
+    if normalized in {"command", "which"}:
+        details.setdefault("suggested_tool", _DISCOVERY_HINT_TOOL)
+        details.setdefault("suggested_fix", _DISCOVERY_HINT_FIX)
     return details
+
+
+def _discovery_chain_detected(parsed: ParseResult) -> bool:
+    if not parsed.operators:
+        return False
+    for segment in parsed.segments:
+        argv = tuple(str(part).strip() for part in segment.argv)
+        if not argv:
+            continue
+        if argv[0] in {"command", "which"}:
+            return True
+        if len(argv) == 2 and argv[1] == "--version":
+            return True
+    return False
+
+
+def _attach_discovery_chain_hint(command: str) -> Dict[str, Any]:
+    return {
+        "command": command,
+        "parse_error_code": "unsupported_chain",
+        "parse_error_position": None,
+        "suggested_tool": _DISCOVERY_HINT_TOOL,
+        "suggested_fix": _DISCOVERY_HINT_FIX,
+    }
 
 
 def _normalize_bool_env(value: str) -> bool:
@@ -422,12 +446,18 @@ def _validate_command_against_policy(
         parsed=parsed,
         validator="policy",
     )
+    if _discovery_chain_detected(parsed):
+        return (
+            False,
+            "unsupported command syntax: split toolchain discovery into direct commands",
+            _attach_discovery_chain_hint(command),
+        )
 
     checked: list[Dict[str, Any]] = []
     for segment in parsed.segments:
         executable = str(segment.argv[0])
         try:
-            resolved = ctx.policy.ensure_command_allowed([executable])
+            resolved = ctx.policy.ensure_command_allowed(list(segment.argv))
         except ToolRuntimeError as exc:
             details = dict(exc.details or {})
             if executable == "mkdir":

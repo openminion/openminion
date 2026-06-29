@@ -141,7 +141,7 @@ def test_format_budget_event_still_emits_note() -> None:
         {"kind": "budget_event", "event_type": "tokens_low"}
     )
     assert note is not None
-    assert "Budget event: tokens_low" in note
+    assert "Budget: tokens_low" in note
 
 
 def _force_tty_phase_display() -> tuple[PhaseStatusDisplay, io.StringIO]:

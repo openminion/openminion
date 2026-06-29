@@ -37,6 +37,7 @@ MODEL_WEB_FETCH = "web.fetch"
 MODEL_WEATHER = "weather"
 MODEL_TIME = "time"
 MODEL_LOCATION = "location"
+MODEL_HOST_METRICS = "host.metrics"
 MODEL_IP_PUBLIC = "ip.public"
 MODEL_IP_LOCAL = "ip.local"
 MODEL_BROWSER = "browser"
@@ -129,6 +130,7 @@ ALL_MODEL_TOOL_IDS: tuple[str, ...] = (
     MODEL_WEATHER,
     MODEL_TIME,
     MODEL_LOCATION,
+    MODEL_HOST_METRICS,
     MODEL_IP_PUBLIC,
     MODEL_IP_LOCAL,
     MODEL_BROWSER,

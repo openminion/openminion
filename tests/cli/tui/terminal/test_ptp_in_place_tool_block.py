@@ -167,9 +167,8 @@ def test_render_in_progress_block_shows_elapsed_when_positive() -> None:
     )
     console.print(block)
     out = buf.getvalue()
-    # `_format_elapsed_seconds(1.7)` yields "1.7s" for under-60s values.
     assert "Running" in out
-    assert "1.7s" in out or "0m01s" in out
+    assert "1s" in out or "0m01s" in out
 
 
 def test_render_in_progress_block_omits_elapsed_when_zero() -> None:

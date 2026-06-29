@@ -54,7 +54,7 @@ def test_dashboard_push_activity_row_renders_budget_event() -> None:
     )
     assert result is True
     assert pushed[0].kind == MessageKind.SYSTEM
-    assert "Budget event: tokens_low" in pushed[0].body
+    assert "Budget: tokens_low" in pushed[0].body
 
 
 def test_dashboard_push_activity_row_skips_tool_events() -> None:

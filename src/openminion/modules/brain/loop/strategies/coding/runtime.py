@@ -93,9 +93,10 @@ def _build_tool_specs(allowed_tools: frozenset[str]) -> list[ToolSpec]:
         "code.repo_map": "Summarize the workspace tree and key Python symbols.",
         "code.symbol_find": "Find symbol definitions and line ranges.",
         "exec.run": (
-            "Run an allowlisted shell command for verification or existing-file "
-            "workflows; do not use it just to create files or directories when "
-            "structured file tools can do that directly."
+            "Run one allowlisted direct shell command for verification or "
+            "existing-file workflows; do not use pipes, redirections, chaining, "
+            "fallback operators, or file/directory creation when structured tools "
+            "can do that directly."
         ),
         "exec.poll": "Poll the status or output of a running process.",
         "exec.list": "List currently running processes.",

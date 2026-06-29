@@ -4,7 +4,9 @@ from typing import Any, Callable
 from openminion.modules.tool.plugin_api import PolicyAdapter, PolicyDecision
 from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.contracts.model_ids import MODEL_EXEC_RUN
+from openminion.tools.exec.command_parser import is_read_only_exec_command
 from openminion.tools.exec.hints import read_only_discovery_hint_for_command
+from openminion.tools.exec.process import resolve_shell_family
 
 from .blast_radius.adapter import CompositionBoundaryAdapter
 from .policy import (
@@ -108,6 +110,19 @@ class ExecutionBoundaryPolicyAdapter(PolicyAdapter):
                     "suggested_fix": hint_fix,
                 },
             )
+        if _read_only_exec_allowed(tool_name=tool_name, args=args):
+            return PolicyDecision(
+                allowed=True,
+                reason="read_only_exec_allowed",
+                code="OK",
+                requires_confirm=False,
+                modified_args=dict(args),
+                details={
+                    "decision": "allow",
+                    "tool_name": tool_name,
+                    "action_class": "read_only_discovery",
+                },
+            )
         risk, budget_cost, required_scopes = self._tool_profile(tool_name, tool_spec)
         decision = self.policy.evaluate(
             SecurityPolicyCheck(
@@ -161,6 +176,15 @@ def _read_only_exec_denial_hint(
     if not command:
         return None
     return read_only_discovery_hint_for_command(command)
+
+
+def _read_only_exec_allowed(*, tool_name: str, args: dict[str, Any]) -> bool:
+    if str(tool_name or "").strip() not in _EXEC_RUN_TOOL_NAMES:
+        return False
+    command = str(args.get("command", "") or "").strip()
+    if not command:
+        return False
+    return is_read_only_exec_command(command, shell_family=resolve_shell_family())
 
 
 def build_execution_boundary_policy_adapter(
