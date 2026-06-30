@@ -207,6 +207,10 @@ def _is_infra_unavailable_response(
             "requires more credits",
             "insufficient credits",
             "can't assign requested address",
+            "no endpoints found",
+            "deprecated",
+            "switching to",
+            "switch models",
         )
     ):
         return True
@@ -215,6 +219,8 @@ def _is_infra_unavailable_response(
         if "can't assign requested address" in item_blob:
             return True
         if "requires more credits" in item_blob or '"code": 402' in item_blob:
+            return True
+        if "no endpoints found" in item_blob or "deprecated" in item_blob:
             return True
     return False
 
@@ -442,14 +448,15 @@ def test_live_profile_matrix_resolves_default_agent_ids_from_current_configs() -
 
 def test_live_profile_matrix_bundle_agents_resolve_from_aggregate_configs() -> None:
     framework_root = _agent_framework_root()
+    selected_bundle_targets = tuple(
+        target[len("bundle:") :].strip()
+        for target in str(os.getenv("OPENMINION_LIVE_TOOL_E2E_TARGETS", "")).split(",")
+        if target.strip().startswith("bundle:")
+    )
+    if _using_env_profile_overrides() and not selected_bundle_targets:
+        pytest.skip("env-selected live tool targets do not include bundle configs")
     bundle_names = (
-        tuple(
-            target[len("bundle:") :].strip()
-            for target in str(os.getenv("OPENMINION_LIVE_TOOL_E2E_TARGETS", "")).split(
-                ","
-            )
-            if target.strip().startswith("bundle:")
-        )
+        selected_bundle_targets
         if _using_env_profile_overrides()
         else ("agents-alibaba.json", "agents-openrouter.json")
     )
@@ -469,6 +476,20 @@ def test_live_profile_matrix_bundle_agents_resolve_from_aggregate_configs() -> N
         assert agent.agent_id in configured, (
             f"agent_id={agent.agent_id} not in configured ids={configured}"
         )
+
+
+def test_live_tool_profile_provider_unavailable_classifier_covers_retired_models() -> None:
+    assert _is_infra_unavailable_response(
+        "The configured model provider failed before it could return a decision "
+        "(No endpoints found for anthropic/claude-3.5-haiku.).",
+        {},
+        [],
+    )
+    assert _is_infra_unavailable_response(
+        "Grok 4.1 Fast is deprecated. xAI recommends switching to Grok 4.3.",
+        {},
+        [],
+    )
 
 
 @pytest.mark.e2e

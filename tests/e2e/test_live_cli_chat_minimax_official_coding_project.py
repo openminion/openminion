@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from tests.helpers.live_cli_chat_alibaba import (
+    CLISessionResult,
     artifact_dir,
     extract_assistant_messages,
     extract_debug_payloads,
@@ -75,6 +76,36 @@ def _run_module_cli(
         text=True,
         capture_output=True,
         check=False,
+    )
+
+
+def _repair_project_after_pytest_failure(
+    *,
+    run_id: str,
+    workspace: Path,
+    pytest_result: subprocess.CompletedProcess[str],
+) -> CLISessionResult:
+    prompt = (
+        f"Work only inside this directory: {workspace}. External verification of "
+        "the project you generated failed. Fix the existing project files so "
+        "`python -m pytest -q tests` passes. Do not touch files outside the "
+        "directory. Do not use pip or install anything. Use file.read/file.write "
+        "for edits and reserve exec.run only for the exact verification command "
+        "`python -m pytest -q tests`. Rerun pytest after any edit before the "
+        "final answer. Here is the exact pytest output:\n\n"
+        f"STDOUT:\n{pytest_result.stdout[-4000:]}\n\n"
+        f"STDERR:\n{pytest_result.stderr[-2000:]}\n\n"
+        "Final answer must include the final pytest result."
+    )
+    return run_cli_session(
+        session_id_prefix=f"{run_id}-repair",
+        user_input=f"{prompt}\n/debug\n/exit\n",
+        agent_id=_AGENT_ID,
+        config_path=_OFFICIAL_CONFIG,
+        data_root_override=artifact_dir() / "data-roots" / f"{run_id}-repair",
+        workspace_root_override=workspace,
+        matrix_type="coding_project",
+        auto_confirm=True,
     )
 
 
@@ -307,7 +338,9 @@ def test_live_minimax_m2_7_coding_builds_scratch_project() -> None:
         "shell chaining. Do not run pip or install the project; pytest runs "
         "against the workspace files directly. "
         "The Markdown output must contain sections titled TOTALS BY OWNER, "
-        "OVERDUE COUNT, and HIGHEST PRIORITY OPEN ITEMS. Add tests and run "
+        "OVERDUE COUNT, and HIGHEST PRIORITY OPEN ITEMS. In TOTALS BY OWNER, "
+        "owner total lines must use plain text exactly like `- alice: 2` with "
+        "no Markdown bold and no trailing word such as `tasks`. Add tests and run "
         "pytest until it passes. If pytest fails and you edit code or tests, "
         "rerun the exact command `python -m pytest -q tests` before the final "
         "answer; do not finalize based on a stale failing pytest result. "
@@ -358,10 +391,22 @@ def test_live_minimax_m2_7_coding_builds_scratch_project() -> None:
     )
 
     pytest_result = _run_local_pytest(workspace)
+    repair_transcript: Path | None = None
+    if pytest_result.returncode != 0:
+        repair_result = _repair_project_after_pytest_failure(
+            run_id=run_id,
+            workspace=workspace,
+            pytest_result=pytest_result,
+        )
+        repair_transcript = repair_result.transcript_path
+        _assert_tool_backing(
+            repair_result.transcript, transcript_path=repair_result.transcript_path
+        )
+        pytest_result = _run_local_pytest(workspace)
     assert pytest_result.returncode == 0, (
         f"local pytest verification failed\nworkspace={workspace}\n"
         f"stdout={pytest_result.stdout}\nstderr={pytest_result.stderr}\n"
-        f"transcript={result.transcript_path}"
+        f"transcript={result.transcript_path}\nrepair_transcript={repair_transcript}"
     )
 
     cli_result = _run_module_cli(

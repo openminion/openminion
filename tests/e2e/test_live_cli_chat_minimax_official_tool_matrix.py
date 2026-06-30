@@ -86,10 +86,7 @@ _SCENARIOS: tuple[_Scenario, ...] = (
         expected_outcome="non_success_without_execution",
         require_artifact_path=True,
     ),
-    _Scenario(
-        id="exec_run",
-        expected_outcome="non_success_without_execution",
-    ),
+    _Scenario(id="exec_run", expected_tools=("exec.run",)),
 )
 
 
@@ -162,7 +159,7 @@ def _is_truthful_no_execution_outcome(
 def test_confirmation_required_scenarios_are_classified_explicitly() -> None:
     scenarios = {scenario.id: scenario for scenario in _SCENARIOS}
     assert scenarios["file_write"].expected_outcome == "non_success_without_execution"
-    assert scenarios["exec_run"].expected_outcome == "non_success_without_execution"
+    assert scenarios["exec_run"].expected_outcome == "tool_execution"
     assert scenarios["time_now"].expected_outcome == "tool_execution"
 
 
@@ -330,6 +327,18 @@ def test_live_cli_chat_minimax_official_tool_matrix(
         f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
         f"transcript={transcript_path}"
     )
+
+    if scenario.id == "exec_run":
+        repo_root = framework_root()
+        assert any(
+            str(item.get("content", "") or "").find("stdout:") >= 0
+            and str(item.get("content", "") or "").find(str(repo_root)) >= 0
+            for item in tool_results
+        ), (
+            "exec.run result should expose stdout in model-visible content\n"
+            f"tool_results={json.dumps(tool_results, indent=2, sort_keys=True)}\n"
+            f"transcript={transcript_path}"
+        )
 
     if artifact_path is not None:
         assert artifact_path.exists(), (
