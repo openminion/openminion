@@ -46,20 +46,20 @@ Before substantial code changes, read:
 Preferred PR shape:
 
 1. short, GitHub-native title,
-2. flat bullet summary of what changed,
-3. short validation block with exact commands.
+2. flat line-item bullets that summarize what changed,
+3. plain `Validation` label followed by exact command bullets.
 
 Example:
 
-1. `Title`
-   - `Add package-local workspace sync helpers`
-2. `Description`
-   - `- add typed workspace sync planning`
-   - `- add explicit apply/status helpers`
-   - `- align public docs`
-3. `Validation`
-   - `- make lint`
-   - `- python -m pytest -q tests/<target>`
+`Add package-local workspace sync helpers`
+
+- add typed workspace sync planning
+- add explicit apply/status helpers
+- align public docs
+
+Validation
+- `make lint`
+- `python -m pytest -q tests/<target>`
 
 ## Commit message shape
 

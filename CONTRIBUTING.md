@@ -48,10 +48,9 @@ boundary summary than the broader docs.
 3. Include validation commands and results in the PR description.
 4. Prefer a short GitHub-native PR title plus a flat bullet summary of what the
    commit set landed.
-5. Keep PR descriptions easy to scan and easy to copy:
-   1. short title
-   2. bullet summary of changes
-   3. validation commands/results
+5. Keep PR descriptions easy to scan and easy to copy: short title, flat
+   line-item bullets, and a plain `Validation` section with exact
+   commands/results.
 6. For broad cleanup/code-quality lanes, start from a fresh live file inventory instead of a hand-picked subset. Preferred command:
    ```bash
    cd openminion
@@ -78,15 +77,15 @@ Commit message guidance:
 
 Preferred PR shape:
 
-1. `Title`
-   - short and literal, for example `Add workspace persistence mode`
-2. `Description`
-   - `- add ...`
-   - `- align ...`
-   - `- polish ...`
-3. `Validation`
-   - `- <command>`
-   - `- <command>`
+`Add workspace persistence mode`
+
+- add ...
+- align ...
+- polish ...
+
+Validation
+- `<command>`
+- `<command>`
 
 ## Legal basics (plain English)
 
