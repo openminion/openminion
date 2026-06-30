@@ -1,7 +1,5 @@
 """Sandbox action specs and policy-narrowing helpers."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable

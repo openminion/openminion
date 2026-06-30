@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from rich.text import Text
 
 VERBS: tuple[str, ...] = (

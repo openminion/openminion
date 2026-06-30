@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from rich.theme import Theme as RichTheme
 
 from .models import Theme
