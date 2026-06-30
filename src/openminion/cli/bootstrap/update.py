@@ -1,7 +1,5 @@
 """CLI update-available notification helper."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 import json
 import time

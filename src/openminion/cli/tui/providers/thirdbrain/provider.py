@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 from openminion.cli.parser.contracts import CLI_INTERFACE_VERSION

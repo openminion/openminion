@@ -110,7 +110,7 @@ help:
 	@printf '%s\n' \
 		'Targets:' \
 		'  make dev-install   Create/update .venv and install OpenMinion with dev extras' \
-		'  make hooks-install Install pre-commit hooks into .git/hooks' \
+		'  make hooks-install Install pre-commit and commit-msg hooks into .git/hooks' \
 		'  make hooks-run     Run pre-commit across the OpenMinion repo' \
 		'  make fix           Apply local Ruff formatting and autofixes' \
 		'  make format        Run Ruff formatter' \
@@ -138,7 +138,7 @@ $(DEV_STAMP): pyproject.toml | venv
 dev-install: $(DEV_STAMP)
 
 hooks-install: $(DEV_STAMP)
-	$(PRE_COMMIT) install
+	$(PRE_COMMIT) install --install-hooks --hook-type pre-commit --hook-type commit-msg
 
 hooks-run: $(DEV_STAMP)
 	$(PRE_COMMIT) run --all-files

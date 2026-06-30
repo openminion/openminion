@@ -1,3 +1,5 @@
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -18,6 +20,11 @@ repos:
 
   - repo: local
     hooks:
+      - id: commit-message-policy
+        name: commit message policy
+        entry: ./.venv/bin/python3.11 scripts/commit_message.py
+        language: system
+        stages: [commit-msg]
       - id: ruff-check
         name: ruff check --fix
         entry: ./.venv/bin/python3.11 -m ruff check --fix

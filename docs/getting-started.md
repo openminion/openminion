@@ -13,6 +13,7 @@ cd openminion
 python3.11 -m venv .venv
 source .venv/bin/activate
 make dev-install
+make hooks-install
 ```
 
 If you are running the CLI locally, also set:
@@ -45,20 +46,48 @@ Before substantial code changes, read:
 Preferred PR shape:
 
 1. short, GitHub-native title,
-2. flat bullet summary of what changed,
-3. short validation block with exact commands.
+2. flat line-item bullets that summarize what changed,
+3. plain `Validation` label followed by exact command bullets.
 
 Example:
 
-1. `Title`
-   - `Add package-local workspace sync helpers`
-2. `Description`
-   - `- add typed workspace sync planning`
-   - `- add explicit apply/status helpers`
-   - `- align public docs`
-3. `Validation`
-   - `- make lint`
-   - `- python -m pytest -q tests/<target>`
+`Add package-local workspace sync helpers`
+
+- add typed workspace sync planning
+- add explicit apply/status helpers
+- align public docs
+
+Validation
+- `make lint`
+- `python -m pytest -q tests/<target>`
+
+## Commit message shape
+
+Use commit messages in the form:
+
+1. `<type>(<scope>): <summary>`
+
+Approved current types are:
+
+1. `feat`
+2. `fix`
+3. `docs`
+4. `refactor`
+5. `test`
+6. `chore`
+7. `style`
+8. `build`
+
+Guidance:
+
+1. include a scope by default in `openminion`,
+2. choose a real owner scope such as `agent`, `api`, `cli`, `e2e`, `gateway`,
+   `runtime`, `telemetry`, `tool`, `tools`, or `tui`,
+3. keep the summary specific to the landed change,
+4. avoid vague subjects like `update`,
+5. prefer the most specific truthful type; do not use `chore` when `docs`,
+   `test`, `refactor`, or `build` is more accurate,
+6. do not use local shorthand or planning labels as normal commit types.
 
 ## Boundary reminder
 

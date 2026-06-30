@@ -1,7 +1,5 @@
 """Shared turn-activity ledger model for non-widget status surfaces."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Optional
 
 from openminion.api.config import close_api_runtime_if_owned
