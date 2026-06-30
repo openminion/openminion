@@ -8,6 +8,7 @@ __all__ = [
     "DemoRuntime",
     "run_demo",
     "presentation",
+    "providers",
     "screen",
     "tabs",
 ]
@@ -16,7 +17,7 @@ __all__ = [
 def __getattr__(name: str) -> Any:
     if name not in __all__:
         raise AttributeError(name)
-    if name in {"presentation", "screen", "tabs"}:
+    if name in {"presentation", "providers", "screen", "tabs"}:
         return import_module(f".{name}", __name__)
     module = import_module(".app", __name__)
     return getattr(module, name)
