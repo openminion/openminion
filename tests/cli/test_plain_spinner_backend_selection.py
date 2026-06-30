@@ -122,6 +122,13 @@ def test_run_terminal_focus_accepts_plain_spinner_kwarg() -> None:
     assert "plain_spinner" in sig.parameters
 
 
+def test_terminal_response_time_env_default_and_opt_out() -> None:
+    from openminion.cli.tui.terminal.shell import _show_response_time_enabled
+
+    assert _show_response_time_enabled({}) is True
+    assert _show_response_time_enabled({"OPENMINION_SHOW_RESPONSE_TIME": "0"}) is False
+
+
 def test_terminal_transcript_accepts_plain_spinner_kwarg() -> None:
     import inspect
 

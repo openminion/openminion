@@ -52,6 +52,30 @@ class ThirdBrainChangeSummary:
         }
 
 
+@dataclass(frozen=True)
+class ThirdBrainRefreshDeltaSummary:
+    providers: tuple[dict[str, Any], ...]
+    total_changed_paths: int
+    total_removed_paths: int
+    total_added_nodes: int
+    total_removed_nodes: int
+    total_added_edges: int
+    total_removed_edges: int
+    refreshed_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "providers": [dict(provider) for provider in self.providers],
+            "total_changed_paths": self.total_changed_paths,
+            "total_removed_paths": self.total_removed_paths,
+            "total_added_nodes": self.total_added_nodes,
+            "total_removed_nodes": self.total_removed_nodes,
+            "total_added_edges": self.total_added_edges,
+            "total_removed_edges": self.total_removed_edges,
+            "refreshed_at": self.refreshed_at,
+        }
+
+
 def build_run_snapshot(
     *,
     payloads: list[dict[str, Any]],
@@ -75,6 +99,37 @@ def build_run_snapshot(
         result_ids=result_ids,
         omitted_ids=omitted_ids,
         captured_at=datetime.now().strftime("%H:%M:%S"),
+    )
+
+
+def build_refresh_delta_summary(
+    payloads: list[dict[str, Any]],
+) -> ThirdBrainRefreshDeltaSummary | None:
+    if not payloads:
+        return None
+    provider_summaries = tuple(
+        _provider_refresh_summary(payload) for payload in payloads
+    )
+    return ThirdBrainRefreshDeltaSummary(
+        providers=provider_summaries,
+        total_changed_paths=_sum_provider_count(
+            provider_summaries, "changed_path_count"
+        ),
+        total_removed_paths=_sum_provider_count(
+            provider_summaries, "removed_path_count"
+        ),
+        total_added_nodes=_sum_provider_count(provider_summaries, "added_node_count"),
+        total_removed_nodes=_sum_provider_count(
+            provider_summaries, "removed_node_count"
+        ),
+        total_added_edges=_sum_provider_count(provider_summaries, "added_edge_count"),
+        total_removed_edges=_sum_provider_count(
+            provider_summaries, "removed_edge_count"
+        ),
+        refreshed_at=max(
+            (str(item.get("refreshed_at", "") or "") for item in provider_summaries),
+            default="",
+        ),
     )
 
 
@@ -121,6 +176,19 @@ def compare_run_snapshots(
     )
 
 
+def summarize_refresh_delta_summary(
+    summary: ThirdBrainRefreshDeltaSummary | None,
+) -> str:
+    if summary is None:
+        return "No provider refresh delta yet"
+    return (
+        f"{summary.refreshed_at or 'latest'}  "
+        f"paths +{summary.total_changed_paths} / -{summary.total_removed_paths}\n"
+        f"nodes +{summary.total_added_nodes} / -{summary.total_removed_nodes}  "
+        f"edges +{summary.total_added_edges} / -{summary.total_removed_edges}"
+    )
+
+
 def summarize_change_summary(summary: ThirdBrainChangeSummary | None) -> str:
     if summary is None:
         return "No change set yet"
@@ -159,10 +227,44 @@ def _omitted_identity(item: dict[str, Any]) -> str:
     return f"{provider}|{node_or_edge_id}|{reason}"
 
 
+def _provider_refresh_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    counts = dict(payload.get("counts", {}) or {})
+    diagnostics = dict(payload.get("diagnostics", {}) or {})
+    return {
+        "provider": str(payload.get("provider", "") or ""),
+        "ok": bool(payload.get("ok", False)),
+        "refreshed_at": str(payload.get("refreshed_at", "") or ""),
+        "changed_path_count": _count_value(counts, "changed_path_count"),
+        "removed_path_count": _count_value(counts, "removed_path_count"),
+        "added_node_count": _count_value(counts, "added_node_count"),
+        "removed_node_count": _count_value(counts, "removed_node_count"),
+        "added_edge_count": _count_value(counts, "added_edge_count"),
+        "removed_edge_count": _count_value(counts, "removed_edge_count"),
+        "omitted_reason_counts": dict(
+            counts.get("omitted_reason_counts", {})
+            or diagnostics.get("omitted_reason_counts", {})
+            or {}
+        ),
+        "counts": counts,
+        "diagnostics": diagnostics,
+    }
+
+
+def _count_value(counts: dict[str, Any], key: str) -> int:
+    return int(counts.get(key, 0) or 0)
+
+
+def _sum_provider_count(providers: tuple[dict[str, Any], ...], key: str) -> int:
+    return sum(int(item.get(key, 0) or 0) for item in providers)
+
+
 __all__ = [
     "ThirdBrainChangeSummary",
+    "ThirdBrainRefreshDeltaSummary",
     "ThirdBrainRunSnapshot",
+    "build_refresh_delta_summary",
     "build_run_snapshot",
     "compare_run_snapshots",
     "summarize_change_summary",
+    "summarize_refresh_delta_summary",
 ]

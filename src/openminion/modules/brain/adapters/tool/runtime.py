@@ -35,6 +35,8 @@ from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
     resolve_runtime_tool_config,
 )
+from openminion.tools.exec.command_parser import is_read_only_exec_command
+from openminion.tools.exec.process import resolve_shell_family
 from .command_metadata import (
     _confirmation_replay_metadata,
     _extract_runtime_message_ref,
@@ -452,6 +454,11 @@ class ToolAdapter:
             or background_write_authorized
         ):
             auto_confirm = True
+        elif tool_name == "exec.run":
+            auto_confirm = is_read_only_exec_command(
+                str(validated_args.get("command", "") or ""),
+                shell_family=resolve_shell_family(),
+            )
 
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
         local_adapter = LocalPolicyAdapter(

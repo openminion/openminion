@@ -154,6 +154,15 @@ def test_manager_normalizes_tool_search_alias_to_tool_list() -> None:
     assert manager.resolve_binding("tool.search") == "runtime.tool.list"
 
 
+def test_manager_normalizes_host_status_aliases_to_host_metrics() -> None:
+    manager = _get_bootstrap_manager()
+    assert manager.normalize_model_input_name("system.status") == "host.metrics"
+    assert manager.normalize_model_input_name("host.status") == "host.metrics"
+    assert manager.normalize_raw_name("system.status") == "host.metrics"
+    assert manager.resolve_binding("host.metrics") == "runtime.host.metrics"
+    assert manager.runtime_candidates("runtime.host.metrics") == ("host.metrics",)
+
+
 def test_manager_exposes_canonical_tool_catalog_rows() -> None:
     manager = _get_bootstrap_manager()
     catalog = dict(manager.model_tool_catalog())

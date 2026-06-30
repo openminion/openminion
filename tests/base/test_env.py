@@ -42,6 +42,7 @@ def test_environment_config_curated_properties() -> None:
             "OPENMINION_DATA_ROOT": "/workspace/.openminion",
             "OPENMINION_DATA_ROOT_ENFORCEMENT": "warn",
             "OPENMINION_LLM_DEBUG_MAX_CHARS": "1024",
+            "OPENMINION_SHOW_RESPONSE_TIME": "0",
             "OPENMINION_TURN_TIMEOUT_SECONDS": "45",
             "BRAVE_API_KEY": "brave-key",
             "TAVILY_API_KEY": "tavily-key",
@@ -51,9 +52,15 @@ def test_environment_config_curated_properties() -> None:
     assert env.openminion_data_root == "/workspace/.openminion"
     assert env.openminion_data_root_enforcement == "soft"
     assert env.openminion_llm_debug_max_chars == 1024
+    assert env.openminion_show_response_time is False
     assert env.openminion_turn_timeout_seconds == 45
     assert env.brave_api_key == "brave-key"
     assert env.tavily_api_key == "tavily-key"
+
+
+def test_environment_config_shows_response_time_by_default() -> None:
+    env = EnvironmentConfig.from_sources(process_env={})
+    assert env.openminion_show_response_time is True
 
 
 def test_validate_for_provider_reports_missing_required_key() -> None:

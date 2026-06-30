@@ -54,10 +54,14 @@ class ExecRegistrar:
                 ModelToolDef(
                     model_tool_id=MODEL_EXEC_RUN,
                     description=(
-                        "Run an allowlisted shell command for verification or "
-                        "existing-file workflows; prefer structured file tools "
-                        "for file discovery, reads, and scaffolding, and web "
-                        "tools for web fetches."
+                        "Run one allowlisted direct shell command for verification "
+                        "or existing-file workflows; do not use pipes, "
+                        "redirections, chaining, or fallback operators. For "
+                        "toolchain checks, use direct discovery such as "
+                        "`command -v nasm`, then a separate direct version check "
+                        "such as `nasm --version`. Prefer host.metrics for disk, "
+                        "memory, and OS status; prefer structured file/web tools "
+                        "for reads, scaffolding, or web fetches."
                     ),
                     parameters={},
                     aliases=("exec_run",),

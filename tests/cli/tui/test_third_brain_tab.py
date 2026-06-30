@@ -174,7 +174,15 @@ class _SpyThirdBrainProvider:
                 "layer": "provider",
                 "ok": True,
                 "refreshed_at": "now",
-                "counts": {"items": 2},
+                "counts": {
+                    "items": 2,
+                    "changed_path_count": 1,
+                    "removed_path_count": 0,
+                    "added_node_count": 2,
+                    "removed_node_count": 0,
+                    "added_edge_count": 1,
+                    "removed_edge_count": 0,
+                },
                 "diagnostics": {"mode": "manual"},
             }
         ]
@@ -467,6 +475,39 @@ async def test_third_brain_tab_copy_open_and_refresh_actions_are_callable(
         assert copied
         assert opened
         assert spy.refresh_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_third_brain_tab_surfaces_provider_refresh_delta() -> None:
+    spy = _SpyThirdBrainProvider()
+    app = OpenMinionApp(providers=ProviderBundle(provider=spy))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.screen.action_switch_tab("tab-third-brain")
+        await pilot.pause()
+
+        await pilot.click("#third-brain-refresh")
+        await pilot.pause()
+        await pilot.pause()
+
+        tab = app.screen.query_one(ThirdBrainTab)
+        summary = tab._last_refresh_delta_summary
+        assert summary is not None
+        assert summary.total_changed_paths == 1
+        assert summary.total_added_nodes == 2
+        assert summary.total_added_edges == 1
+
+        query = app.screen.query_one("#third-brain-query")
+        query.value = "service"
+        await pilot.click("#third-brain-run")
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.query_one("#tb-inspector-refresh").press()
+        await pilot.pause()
+        rendered = str(app.screen.query_one("#third-brain-inspector-text").render())
+        assert "total_changed_paths" in rendered
+        assert '"added_node_count": 2' in rendered
 
 
 @pytest.mark.asyncio

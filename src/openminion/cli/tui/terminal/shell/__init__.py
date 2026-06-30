@@ -8,6 +8,7 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
+from openminion.base.config.env import resolve_environment_config
 from openminion.cli.status import format_token_usage_summary
 from openminion.cli.tui.presentation.models import (
     ChatMessage,
@@ -70,6 +71,7 @@ __all__ = [
     "_render_sessions_list",
     "_render_status_block",
     "_render_tools_list",
+    "_show_response_time_enabled",
 ]
 
 
@@ -121,6 +123,10 @@ def _focus_history_path(runtime: Any) -> str | None:
     history_dir = Path(raw).expanduser().resolve(strict=False) / "cli"
     history_dir.mkdir(parents=True, exist_ok=True)
     return str(history_dir / "terminal_history")
+
+
+def _show_response_time_enabled(env: Any | None = None) -> bool:
+    return resolve_environment_config(env=env).openminion_show_response_time
 
 
 def run_terminal_focus(
@@ -242,7 +248,10 @@ async def _run_terminal_focus_async(
 ) -> int:
     console = Console()
     transcript = TerminalTranscript(
-        console, plain_spinner=plain_spinner, verbosity=verbosity
+        console,
+        plain_spinner=plain_spinner,
+        verbosity=verbosity,
+        show_response_time=_show_response_time_enabled(),
     )
     status_line = TerminalStatusLine()
 

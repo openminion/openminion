@@ -373,7 +373,12 @@ def test_format_activity_line_background_event() -> None:
 
 def test_format_activity_line_budget_event() -> None:
     event = TurnActivityEvent(kind=KIND_BUDGET, title="tokens_low")
-    assert format_activity_line(event) == "Budget event: tokens_low"
+    assert format_activity_line(event) == "Budget: tokens_low"
+
+
+def test_format_activity_line_budget_event_strips_prefix() -> None:
+    event = TurnActivityEvent(kind=KIND_BUDGET, title="budget.allocated")
+    assert format_activity_line(event) == "Budget: allocated"
 
 
 def test_format_activity_line_error_event() -> None:

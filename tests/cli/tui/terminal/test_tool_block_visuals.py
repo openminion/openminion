@@ -51,7 +51,7 @@ def test_red_marker_when_exit_code_nonzero() -> None:
     assert "●" in output
 
 
-def test_body_lines_are_two_space_indented() -> None:
+def test_body_lines_render_under_tool_stem() -> None:
     event = ToolEvent(
         tool_name="Bash",
         args={"cmd": "echo"},
@@ -60,9 +60,9 @@ def test_body_lines_are_two_space_indented() -> None:
         exit_code=0,
     )
     output = _capture(_render_tool_block(event))
-    assert "  line1" in output
-    assert "  line2" in output
-    assert "  line3" in output
+    assert "  └ line1" in output
+    assert "    line2" in output
+    assert "    line3" in output
 
 
 def test_truncates_to_six_lines_with_summary() -> None:

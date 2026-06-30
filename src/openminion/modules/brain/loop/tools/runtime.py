@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
 from typing import Any, TypeVar
 
@@ -28,6 +29,7 @@ from openminion.modules.brain.runtime.reasoning import (
 
 from openminion.modules.brain.bootstrap.route_catalog import get_route_descriptor
 from openminion.modules.brain.tools.schema import collect_runtime_tool_schemas
+from openminion.tools.exec.process import resolve_shell_family
 from .contracts import AdaptiveToolLoopRuntimeUnavailableError
 from .response_trailers import (
     TYPED_SIGNAL_SOURCE_STRUCTURED_FIELD,
@@ -68,6 +70,33 @@ _DELEGATION_CONTEXT_RE = re.compile(
 _DELEGATION_RESULT_SUMMARY_RE = re.compile(
     r"(?s)(?P<body>.*?)(?:\n\s*)?<delegation_result_summary>\s*(?P<payload>\{.*\})\s*</delegation_result_summary>\s*$"
 )
+
+
+def _exec_run_description() -> str:
+    system = platform.system() or "unknown"
+    try:
+        shell_family = resolve_shell_family().value
+    except Exception:
+        shell_family = "unknown"
+    return (
+        "Run one allowlisted direct command for verification or existing-file "
+        f"workflows on platform={system}, shell_family={shell_family}. Do not use "
+        "pipes, redirections, shell chaining, fallback operators, or multi-command "
+        "snippets. Prefer host.metrics for disk, memory, and OS status; prefer "
+        "structured file/web tools for discovery, reads, scaffolding, or web fetches."
+    )
+
+
+def _tool_spec_description(
+    tool_name: str,
+    raw: dict[str, Any],
+    descriptions: dict[str, str],
+) -> str:
+    if tool_name == "exec.run":
+        return _exec_run_description()
+    return str(raw.get("description", "") or "").strip() or descriptions.get(
+        tool_name, tool_name
+    )
 
 
 def _validated_model(
@@ -510,12 +539,7 @@ def build_runtime_tool_specs(
         ),
         "file.search": "Search file contents and matches in a workspace.",
         "file.edit": "Apply a targeted file edit or patch.",
-        "exec.run": (
-            "Run an allowlisted shell command for verification or existing-file "
-            "workflows. Do not use it for file discovery, file reads, web fetches, "
-            "or creating files/directories when structured file/web tools can do "
-            "that directly."
-        ),
+        "exec.run": _exec_run_description(),
         "exec.poll": "Poll the status or output of a running process.",
         "exec.list": "List currently running processes.",
         "exec.kill": "Kill a running process by ID.",
@@ -524,6 +548,7 @@ def build_runtime_tool_specs(
         "weather": "Get current weather for a location.",
         "time": "Get the current time for a timezone or locale.",
         "location": "Resolve or infer a geographic location.",
+        "host.metrics": "Get local host platform, disk usage, and memory metrics.",
         "ip.public": "Get the public IP details.",
         "ip.local": "Get the local IP details.",
         "browser": "Browse or inspect a web page interactively.",
@@ -550,8 +575,7 @@ def build_runtime_tool_specs(
         specs.append(
             ToolSpec(
                 name=tool_name,
-                description=str(raw.get("description", "") or "").strip()
-                or descriptions.get(tool_name, tool_name),
+                description=_tool_spec_description(tool_name, raw, descriptions),
                 input_schema=dict(raw.get("parameters", {}) or {})
                 or {
                     "type": "object",

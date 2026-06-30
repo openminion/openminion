@@ -262,7 +262,13 @@ class ProcessListResult(BaseModel):
 def tool_schemas() -> Dict[str, Dict[str, Any]]:
     return {
         "exec.run": {
-            "description": "Run a shell command in workspace scope with optional PTY/background sessioning.",
+            "description": (
+                "Run one direct shell command in workspace scope with optional "
+                "PTY/background sessioning; shell pipes, redirections, chaining, "
+                "and fallback operators are not supported. For toolchain checks, "
+                "use direct discovery such as `command -v nasm`, then a separate "
+                "direct version check such as `nasm --version`."
+            ),
             "args_schema": ExecRunArgs.model_json_schema(),
             "return_schema": ExecRunResult.model_json_schema(),
         },

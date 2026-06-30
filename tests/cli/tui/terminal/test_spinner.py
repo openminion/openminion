@@ -58,9 +58,9 @@ def test_current_frame_uses_old_chat_spinner_frames() -> None:
 @pytest.mark.parametrize(
     ("elapsed", "expected"),
     [
-        (0.0, "0.0s"),
-        (0.5, "0.5s"),
-        (9.9, "9.9s"),
+        (0.0, "0s"),
+        (0.5, "0s"),
+        (9.9, "9s"),
         (10.0, "10s"),
         (12.7, "12s"),
         (59.9, "59s"),

@@ -105,7 +105,7 @@ def test_responding_state_preserves_runtime_richness() -> None:
     )
     text = _idle_text(line)
     assert "responding" in text
-    assert "2.5s" in text
+    assert "2s" in text
     assert "Esc cancel" in text
     assert "model: anthropic/claude" in text
     assert "cwd: ~/here" in text

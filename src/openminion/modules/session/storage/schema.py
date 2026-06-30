@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 BOOTSTRAP_SCHEMA: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS sessions (

@@ -284,7 +284,16 @@ class DemoThirdBrainProvider:
                 "layer": "provider",
                 "ok": True,
                 "refreshed_at": f"demo-{self._refresh_count}",
-                "counts": {"items": 3},
+                "counts": {
+                    "items": 3,
+                    "changed_path_count": 1 if provider == "pragmagraph" else 0,
+                    "removed_path_count": 0,
+                    "added_node_count": 2 if provider == "pragmagraph" else 0,
+                    "removed_node_count": 0,
+                    "added_edge_count": 1 if provider == "pragmagraph" else 0,
+                    "removed_edge_count": 0,
+                    "omitted_reason_counts": {},
+                },
                 "diagnostics": {"mode": "manual"},
             }
             for provider in sorted(providers)

@@ -20,6 +20,16 @@ def _make(verbosity: str = "normal") -> tuple[TerminalTranscript, io.StringIO]:
     return TerminalTranscript(console, verbosity=verbosity), buf
 
 
+def test_transcript_can_hide_response_time() -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=160)
+    transcript = TerminalTranscript(console, show_response_time=False)
+    handle = transcript.begin_turn()
+    handle.append_token("hello")
+    handle.complete()
+    assert "Done in" not in buf.getvalue()
+
+
 def test_started_prints_yellow_narration() -> None:
     t, buf = _make("normal")
     t.handle_tool_started({"call_id": "c1", "tool_name": "Bash", "args": {"cmd": "ls"}})

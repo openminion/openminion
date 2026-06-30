@@ -23,6 +23,7 @@ from openminion.base.constants import (
     OPENMINION_LOG_LEVEL_ENV,
     OPENMINION_MODULE_STANDALONE_ENV,
     OPENMINION_PROVIDER_INTERFACE_STRICT_ENV,
+    OPENMINION_SHOW_RESPONSE_TIME_ENV,
     OPENMINION_STRICT_PROVIDER_RESPONSE_CONTRACTS_ENV,
     OPENMINION_TRACE_REQUESTS_DIR_ENV,
     OPENMINION_TRACE_REQUESTS_ENV,
@@ -199,6 +200,10 @@ class EnvironmentConfig:
     @property
     def openminion_turn_timeout_seconds(self) -> int:
         return max(0, self.get_int(OPENMINION_TURN_TIMEOUT_SECONDS_ENV, 0))
+
+    @property
+    def openminion_show_response_time(self) -> bool:
+        return self.get_bool(OPENMINION_SHOW_RESPONSE_TIME_ENV, True)
 
     @property
     def openai_api_key(self) -> str:

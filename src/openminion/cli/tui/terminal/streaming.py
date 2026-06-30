@@ -73,6 +73,14 @@ _DIFF_RENDER_TOOL_NAMES = frozenset({"Edit", "Write"})
 _HUNK_HEADER_RE = re.compile(r"^@@\s+-\d+(,\d+)?\s+\+\d+(,\d+)?\s+@@")
 
 
+def _format_response_time(elapsed_seconds: float) -> str:
+    seconds = int(max(0.0, float(elapsed_seconds)))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    return f"{minutes}m{seconds:02d}s"
+
+
 class TerminalTurnHandle:
     def __init__(
         self,
@@ -80,6 +88,7 @@ class TerminalTurnHandle:
         *,
         plain: bool = False,
         footer_provider: Any | None = None,
+        show_response_time: bool = True,
     ) -> None:
         self._console = console
         self._buffer = ""
@@ -92,6 +101,7 @@ class TerminalTurnHandle:
         self._active_tool: dict[str, Any] | None = None
         self._status_label = ""
         self._footer_provider = footer_provider
+        self._show_response_time = bool(show_response_time)
         self._refresh_stop = Event()
         self._refresh_thread: Thread | None = None
         self._inline_status_mode = False
@@ -175,17 +185,20 @@ class TerminalTurnHandle:
         self._refresh_live()
 
     def append_tool_block(self, event: ToolEvent) -> None:
+        self.append_renderable(_render_tool_block(event))
+
+    def append_renderable(self, renderable: Any) -> None:
         if self._inline_status_mode:
             self._clear_inline_status()
-            self._console.print(_render_tool_block(event))
+            self._console.print(renderable)
             self._refresh_inline_status()
             return
         if self._live is not None:
             self._live.stop()
-            self._console.print(_render_tool_block(event))
+            self._console.print(renderable)
             self._live.start(refresh=True)
         else:
-            self._console.print(_render_tool_block(event))
+            self._console.print(renderable)
 
     def complete(self, final_text: str | None = None) -> None:
         if self._completed:
@@ -197,14 +210,14 @@ class TerminalTurnHandle:
         self._refresh_stop.set()
         if self._inline_status_mode:
             self._clear_inline_status()
-            final_renderable = self._render_final_body()
+            final_renderable = self._render_final_body(elapsed_seconds=elapsed)
             if final_renderable is not None:
                 self._console.print(final_renderable)
         elif self._live is not None:
+            final_renderable = self._render_final_body(elapsed_seconds=elapsed)
             if is_bounded_fallback:
-                self._live.update(Text(self._buffer or ""), refresh=True)
+                self._live.update(final_renderable or Text(self._buffer or ""), refresh=True)
             else:
-                final_renderable = self._render_final_body()
                 if final_renderable is None:
                     final_renderable = Text()
                 self._live.update(final_renderable, refresh=True)
@@ -267,10 +280,19 @@ class TerminalTurnHandle:
         elapsed_label = self._spinner.elapsed_label(now)
         return f"{spinner_frame} {status_label} · {elapsed_label} · esc to interrupt"
 
-    def _render_final_body(self) -> Any | None:
+    def _response_time_row(self, elapsed_seconds: float | None) -> Text | None:
+        if not self._show_response_time or elapsed_seconds is None:
+            return None
+        return Text(
+            f"Done in {_format_response_time(elapsed_seconds)}",
+            style="dim italic",
+        )
+
+    def _render_final_body(self, *, elapsed_seconds: float | None = None) -> Any | None:
         buffer = self._buffer or ""
         if not buffer:
             return None
+        response_time = self._response_time_row(elapsed_seconds)
         if _looks_like_markdown(buffer):
             marker = marker_text(MARKER_ASSISTANT, bold=True)
             marker.append(" ")
@@ -280,12 +302,18 @@ class TerminalTurnHandle:
                 inline_code_lexer="text",
                 justify="left",
             )
-            return Group(marker, md)
+            rows: list[Any] = [marker, md]
+            if response_time is not None:
+                rows.append(response_time)
+                rows.append(Text())
+            return Group(*rows)
         final_row = Text()
         final_row.append_text(marker_text(MARKER_ASSISTANT, bold=True))
         final_row.append(" ")
         final_row.append(buffer)
-        return final_row
+        if response_time is None:
+            return final_row
+        return Group(final_row, response_time, Text())
 
     def _render(
         self,
@@ -362,7 +390,9 @@ class TerminalTurnHandle:
         rows = []
         if running_block is not None:
             rows.append(running_block)
-        if body_row is not None:
+        if self._in_thinking_frame and body_row is None:
+            rows.append(Text())
+        elif body_row is not None:
             rows.append(body_row)
         if footer_row is not None:
             rows.append(footer_row)
@@ -480,10 +510,11 @@ def _collapsed_body_row(body_text: str, *, cap: int | None, hint_style: str) -> 
         max_lines=cap if cap is not None else 10**9,
     )
     body_row = Text()
-    for line in collapsed.visible_lines:
-        body_row.append(f"  {line}\n")
+    for index, line in enumerate(collapsed.visible_lines):
+        prefix = "  └ " if index == 0 else "    "
+        body_row.append(f"{prefix}{line}\n")
     if collapsed.truncated:
-        body_row.append(f"  {collapsed.expand_hint}\n", style=hint_style)
+        body_row.append(f"    {collapsed.expand_hint}\n", style=hint_style)
     return body_row
 
 
@@ -537,7 +568,7 @@ def _body_line_count(event: ToolEvent) -> int:
 def _format_elapsed_seconds(seconds: float) -> str:
     seconds = max(0.0, float(seconds))
     if seconds < 60:
-        return f"{seconds:.1f}s"
+        return f"{int(seconds)}s"
     minutes, secs = divmod(int(seconds), 60)
     return f"{minutes}m{secs:02d}s"
 
@@ -560,7 +591,7 @@ def _render_in_progress_tool_block(
     title_row.append(" ")
     title_row.append("Running ", style="bold")
     title_row.append(verb, style="bold")
-    if elapsed_seconds > 0.0:
+    if int(max(0.0, elapsed_seconds)) > 0:
         title_row.append(
             f" · {_format_elapsed_seconds(elapsed_seconds)}",
             style="dim",

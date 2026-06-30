@@ -10,6 +10,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_LIST_DIR,
     MODEL_FILE_READ,
     MODEL_FILE_WRITE,
+    MODEL_HOST_METRICS,
     MODEL_LOCATION,
     MODEL_TIME,
     MODEL_WEATHER,
@@ -49,6 +50,7 @@ def build_tool_inventory_response(
                 MODEL_WEATHER,
                 MODEL_TIME,
                 MODEL_LOCATION,
+                MODEL_HOST_METRICS,
                 MODEL_BROWSER,
             ]
         )

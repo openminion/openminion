@@ -9,6 +9,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_FILE_FIND,
     MODEL_FILE_LIST_DIR,
     MODEL_FILE_READ,
+    MODEL_HOST_METRICS,
     MODEL_LOCATION,
     MODEL_TIME,
     MODEL_WEATHER,
@@ -127,6 +128,7 @@ def resolve_capability_tool_fallback(
         MODEL_WEATHER: [MODEL_WEATHER],
         MODEL_TIME: [MODEL_TIME],
         MODEL_LOCATION: [MODEL_LOCATION],
+        MODEL_HOST_METRICS: [MODEL_HOST_METRICS],
         MODEL_BROWSER: [MODEL_BROWSER],
         MODEL_EXEC_RUN: [MODEL_EXEC_RUN],
     }
@@ -149,7 +151,7 @@ def build_forced_tool_command(
     lower_name = str(normalized_tool_name).lower()
     family = tool_family_for_argument_repair(normalized_tool_name)
     args: dict[str, Any] | None = None
-    if family in {MODEL_TIME, MODEL_LOCATION}:
+    if family in {MODEL_TIME, MODEL_LOCATION, MODEL_HOST_METRICS}:
         args = {}
     elif lower_name == MODEL_EXEC_RUN:
         return None

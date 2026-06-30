@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .allowed_tools import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
     WATCH_ADAPTIVE_ALLOWED_TOOLS,

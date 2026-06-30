@@ -78,8 +78,6 @@ class Spinner:
     def elapsed_label(self, now: float) -> str:
         elapsed = max(0.0, float(now) - self._start)
         if elapsed < 60:
-            if elapsed < 10:
-                return f"{elapsed:.1f}s"
             return f"{int(elapsed)}s"
         minutes = int(elapsed // 60)
         seconds = int(elapsed - minutes * 60)

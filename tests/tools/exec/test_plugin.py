@@ -147,6 +147,19 @@ def test_exec_run_foreground_returns_ok_and_preview(tmp_path):
     assert "hello" in str(result.get("stdout_preview") or "")
 
 
+def test_exec_run_missing_toolchain_discovery_result_stops_retry_loop(tmp_path):
+    ctx = _ctx(tmp_path)
+    missing_tool = "openminion_missing_toolchain_probe_zzzz"
+    ctx.policy.raw["commands"]["known_tools"] = [missing_tool]
+
+    result = _h_exec_run({"command": f"command -v {missing_tool}"}, ctx)
+
+    assert result["status"] == "ok"
+    assert result["exit_code"] == 1
+    assert result["summary"] == f"Toolchain discovery did not find {missing_tool}."
+    assert result["error"] is None
+
+
 def test_exec_run_accepts_common_model_argument_aliases(tmp_path):
     ctx = _ctx(tmp_path)
 
@@ -882,21 +895,73 @@ def test_validate_command_against_policy_hints_direct_pytest_for_cd_pip_install(
     assert "python -m pytest -q tests" in details["suggested_fix"]
 
 
-def test_validate_command_against_policy_hints_direct_pytest_for_python_discovery(
+def test_validate_command_against_policy_hints_split_for_toolchain_discovery_chain(
     tmp_path,
 ):
     ctx = _ctx(tmp_path)
 
     allowed, message, details = _validate_command_against_policy(
-        "which python3 && python3 --version",
+        "command -v nasm && nasm --version",
         ctx,
     )
 
     assert not allowed
-    assert "which" in message
+    assert "split toolchain discovery" in message
     assert details["suggested_tool"] == "exec.run"
-    assert "Interpreter-discovery commands" in details["suggested_fix"]
-    assert "python -m pytest -q tests" in details["suggested_fix"]
+    assert "command -v nasm" in details["suggested_fix"]
+    assert "nasm --version" in details["suggested_fix"]
+
+
+def test_validate_command_against_policy_allows_direct_toolchain_discovery(
+    tmp_path,
+):
+    ctx = _ctx(tmp_path)
+
+    allowed, message, details = _validate_command_against_policy(
+        "command -v nasm",
+        ctx,
+    )
+
+    assert allowed
+    assert message == ""
+    assert details["checked"][0]["exec"] == "command"
+
+
+def test_validate_command_against_policy_denies_non_discovery_toolchain_shapes(
+    tmp_path,
+):
+    ctx = _ctx(tmp_path)
+
+    for command in (
+        "clang -v",
+        "nasm -f macho64 ping.asm",
+        "clang ping.s -o ping",
+        "npm install left-pad",
+        "./ping",
+    ):
+        allowed, message, details = _validate_command_against_policy(command, ctx)
+
+        assert not allowed, command
+        assert message
+        assert details["action_class"] in {"compile", "install", "run"}
+
+
+def test_validate_command_against_policy_keeps_cd_prefix_normalization_path(
+    tmp_path,
+):
+    ctx = _ctx(tmp_path)
+
+    allowed, message, details = _validate_command_against_policy(
+        "cd . && pip install -e .",
+        ctx,
+    )
+
+    assert not allowed
+    assert "cd" in message
+    assert details["suggested_tool"] == "exec.run"
+    assert "Package-manager install commands are not allowlisted" in str(
+        details["suggested_fix"]
+    )
 
 
 def test_validate_host_allowlist_denies_unknown_shell_family(

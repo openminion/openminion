@@ -2,6 +2,7 @@ from typing import Iterable
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_BROWSER,
+    MODEL_HOST_METRICS,
     MODEL_LOCATION,
     MODEL_TIME,
     MODEL_WEATHER,
@@ -69,6 +70,16 @@ LOCATION_TOOL_CAPABILITIES: dict[str, tuple[str, ...]] = {
     ),
 }
 
+HOST_TOOL_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    MODEL_HOST_METRICS: (
+        "check_disk",
+        "check_memory",
+        "check_host",
+        "system_status",
+        "resource_usage",
+    ),
+}
+
 KNOWN_CAPABILITY_SIGNALS: frozenset[str] = frozenset(
     signal
     for mapping in (
@@ -79,6 +90,7 @@ KNOWN_CAPABILITY_SIGNALS: frozenset[str] = frozenset(
         TIME_TOOL_CAPABILITIES,
         SEARCH_TOOL_CAPABILITIES,
         LOCATION_TOOL_CAPABILITIES,
+        HOST_TOOL_CAPABILITIES,
     )
     for values in mapping.values()
     for signal in values
@@ -126,6 +138,10 @@ def location_capabilities_for_tool(tool_name: str | None) -> tuple[str, ...]:
     return _capabilities_for_tool(LOCATION_TOOL_CAPABILITIES, tool_name)
 
 
+def host_capabilities_for_tool(tool_name: str | None) -> tuple[str, ...]:
+    return _capabilities_for_tool(HOST_TOOL_CAPABILITIES, tool_name)
+
+
 def is_known_capability_signal(value: str | None) -> bool:
     text = str(value or "").strip()
     if not text:
@@ -159,6 +175,7 @@ def command_capabilities(command: Command) -> set[str]:
     caps.update(time_capabilities_for_tool(command.tool_name))
     caps.update(search_capabilities_for_tool(command.tool_name))
     caps.update(location_capabilities_for_tool(command.tool_name))
+    caps.update(host_capabilities_for_tool(command.tool_name))
     caps.update(file_capabilities_for_tool(command.tool_name))
     caps.update(exec_capabilities_for_tool(command.tool_name))
     return caps

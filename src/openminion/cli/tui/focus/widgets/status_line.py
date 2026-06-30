@@ -251,6 +251,6 @@ class FocusStatusLine(Widget):
         if seconds <= 0:
             return "0s"
         if seconds < 60:
-            return f"{seconds:.1f}s"
+            return f"{int(seconds)}s"
         minutes, rem = divmod(int(seconds), 60)
         return f"{minutes}m{rem:02d}s"

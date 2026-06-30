@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .advance import advance_after_action, transition_to_replan_state
 from .closure import (
     ClosureJudgment,

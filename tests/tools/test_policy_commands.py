@@ -80,6 +80,7 @@ def test_default_policy_allows_time_tools(tmp_path):
     policy = Policy.load(policy_path)
     policy.ensure_tool_allowed("time.now")
     policy.ensure_tool_allowed("location.get")
+    policy.ensure_tool_allowed("host.metrics")
 
 
 def test_default_policy_allows_legacy_runtime_aliases(tmp_path):
@@ -102,3 +103,103 @@ def test_default_policy_allows_skill_model_tool(tmp_path):
     policy_path.write_text("version: 1\n", encoding="utf-8")
     policy = Policy.load(policy_path)
     policy.ensure_tool_allowed("skill.list")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["command", "-v", "nasm"],
+        ["which", "clang"],
+        ["nasm", "--version"],
+        ["uname", "-m"],
+        ["uname", "-s"],
+        ["sw_vers"],
+        ["sysctl", "-n", "hw.machine"],
+    ],
+)
+def test_default_policy_allows_exact_discovery_patterns(tmp_path, argv):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    assert policy.ensure_command_allowed(argv) == argv[0]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["clang", "-v"],
+        ["nasm", "-f", "macho64", "ping.asm"],
+        ["clang", "ping.s", "-o", "ping"],
+        ["pip", "install", "nasm"],
+        ["npm", "install", "left-pad"],
+        ["./ping"],
+        ["command", "-v", "unknown-local-tool"],
+        ["which", "unknown-local-tool"],
+    ],
+)
+def test_default_policy_denies_non_discovery_toolchain_shapes(tmp_path, argv):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        policy.ensure_command_allowed(argv)
+
+    assert excinfo.value.code == "POLICY_DENIED"
+    assert excinfo.value.details["rule"] in {"commands.allow", "commands.install"}
+    assert excinfo.value.details["action_class"] in {
+        "compile",
+        "discovery",
+        "install",
+        "run",
+        "unknown",
+    }
+
+
+def test_default_policy_deny_rules_win_before_allow_patterns(tmp_path):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text(
+        """
+version: 1
+commands:
+  deny_regex:
+    - ".*nasm.*"
+""",
+        encoding="utf-8",
+    )
+    policy = Policy.load(policy_path)
+
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        policy.ensure_command_allowed(["command", "-v", "nasm"])
+
+    assert excinfo.value.code == "POLICY_DENIED"
+    assert excinfo.value.details["rule"] == "commands.deny_regex"
+
+
+def test_exec_approval_honors_command_discovery_allow_pattern(tmp_path):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    assert (
+        policy.ensure_exec_allowed(
+            argv=["command", "-v", "nasm"],
+            workspace=tmp_path,
+            confirm=False,
+        )
+        == "command"
+    )
+
+
+def test_exec_approval_still_gates_compile_and_run_shapes(tmp_path):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    for argv in (["clang", "ping.s", "-o", "ping"], ["./ping"]):
+        with pytest.raises(ToolRuntimeError) as excinfo:
+            policy.ensure_exec_allowed(argv=argv, workspace=tmp_path, confirm=False)
+
+        assert excinfo.value.code == "CONFIRM_REQUIRED"
+        assert excinfo.value.details["rule"] == "exec.ask.on_miss"

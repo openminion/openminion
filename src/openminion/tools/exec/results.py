@@ -31,6 +31,8 @@ from .constants import (
     EXEC_ARTIFACT_THRESHOLD_BYTES,
     EXEC_MAX_PREVIEW_CHARS,
 )
+from .command_parser import CommandParseError, parse_command
+from .process import resolve_shell_family
 from .schemas import (
     ExecErrorModel,
     ExecMetricsModel,
@@ -105,12 +107,12 @@ _PACKAGE_INSTALL_HINT_FIX = (
     "task requires Python test verification, run the allowed direct command "
     "`python -m pytest -q tests` from the workspace instead."
 )
-_PYTHON_DISCOVERY_HINT_TOOL = "exec.run"
-_PYTHON_DISCOVERY_HINT_FIX = (
-    "Interpreter-discovery commands such as `which python3` are not allowlisted "
-    "for this execution surface. If the task requires Python test verification, "
-    "run the allowed direct command `python -m pytest -q tests` from the "
-    "workspace instead. Do not probe interpreter paths or versions first."
+_DISCOVERY_HINT_TOOL = "exec.run"
+_DISCOVERY_HINT_FIX = (
+    "Run toolchain discovery as a direct command such as "
+    "`command -v nasm`, then run a separate direct version check such as "
+    "`nasm --version` if the tool exists. Do not use pipes, redirections, "
+    "or shell chaining."
 )
 
 
@@ -169,6 +171,34 @@ def _build_error(
         retryable=retryable,
         details=details or {},
     ).model_dump()
+
+
+def _toolchain_discovery_failure_details(command: str) -> Dict[str, str]:
+    try:
+        parsed = parse_command(command, shell_family=resolve_shell_family())
+    except CommandParseError:
+        return {}
+    if len(parsed.segments) != 1:
+        return {}
+    argv = list(parsed.segments[0].argv)
+    if len(argv) == 3 and argv[:2] == ["command", "-v"]:
+        tool = str(argv[2]).strip()
+    elif len(argv) == 2 and argv[0] == "which":
+        tool = str(argv[1]).strip()
+    else:
+        return {}
+    if not tool:
+        return {}
+    return {
+        "action_class": "toolchain_discovery",
+        "discovery_status": "not_found",
+        "discovery_tool": tool,
+        "next_action": (
+            "Treat this as the tool being absent on this host. Do not repeat "
+            "the identical discovery command; answer with the absence or ask "
+            "whether to install/configure the toolchain."
+        ),
+    }
 
 
 def _artifactize_output(
@@ -248,12 +278,24 @@ def _exec_run_result_from_sandbox(
             details={"timeout_s": timeout_s},
         )
     elif int(exec_result.returncode or 0) != 0:
-        status = "error"
-        error_payload = _build_error(
-            code="EXEC_ERROR",
-            message=f"command exited with code {exec_result.returncode}",
-            details={"exit_code": exec_result.returncode},
+        details: Dict[str, Any] = {"exit_code": exec_result.returncode}
+        details.update(
+            _toolchain_discovery_failure_details(
+                str(request_payload.get("command", "") or "")
+            )
         )
+        message = f"command exited with code {exec_result.returncode}"
+        if details.get("discovery_status") == "not_found":
+            tool = str(details.get("discovery_tool", "tool") or "tool")
+            summary = f"Toolchain discovery did not find {tool}."
+            status = "ok"
+        else:
+            status = "error"
+            error_payload = _build_error(
+                code="EXEC_ERROR",
+                message=message,
+                details=details,
+            )
 
     result = ExecRunResult(
         status=status,  # type: ignore[arg-type]
@@ -475,12 +517,24 @@ def _build_completed_exec_run_result(
             details={"timeout_s": snapshot.timeout_s},
         )
     elif int(snapshot.exit_code or 0) != 0:
-        status = "error"
-        error_payload = _build_error(
-            code="EXEC_ERROR",
-            message=f"command exited with code {snapshot.exit_code}",
-            details={"exit_code": snapshot.exit_code},
+        details: Dict[str, Any] = {"exit_code": snapshot.exit_code}
+        details.update(
+            _toolchain_discovery_failure_details(
+                str(request_payload.get("command", "") or "")
+            )
         )
+        message = f"command exited with code {snapshot.exit_code}"
+        if details.get("discovery_status") == "not_found":
+            tool = str(details.get("discovery_tool", "tool") or "tool")
+            summary = f"Toolchain discovery did not find {tool}."
+            status = "ok"
+        else:
+            status = "error"
+            error_payload = _build_error(
+                code="EXEC_ERROR",
+                message=message,
+                details=details,
+            )
 
     result = ExecRunResult(
         status=status,  # type: ignore[arg-type]

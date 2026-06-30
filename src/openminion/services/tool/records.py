@@ -23,6 +23,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_GITHUB_OPEN_PR,
     MODEL_GITHUB_POST_PR_COMMENT,
     MODEL_GITHUB_POST_PR_REVIEW,
+    MODEL_HOST_METRICS,
     MODEL_LOCATION,
     MODEL_TASK_CANCEL,
     MODEL_TASK_CONSOLIDATE_MEMORY,
@@ -99,6 +100,15 @@ PREFERRED_MODEL_TOOLS_BY_CATEGORY: dict[str, list[str]] = {
     ],
     "location": [
         MODEL_LOCATION,
+    ],
+    "host.metrics": [
+        MODEL_HOST_METRICS,
+    ],
+    "resources": [
+        MODEL_HOST_METRICS,
+    ],
+    "system": [
+        MODEL_HOST_METRICS,
     ],
     "task.schedule": [
         MODEL_TASK_SCHEDULE,

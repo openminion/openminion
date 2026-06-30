@@ -81,7 +81,7 @@ def test_push_durable_activity_row_renders_budget_event() -> None:
     assert result is True
     msg = pushed[0]
     assert msg.kind == MessageKind.SYSTEM
-    assert "Budget event: tokens_low" in msg.body
+    assert "Budget: tokens_low" in msg.body
 
 
 def test_push_durable_activity_row_skips_tool_events() -> None:

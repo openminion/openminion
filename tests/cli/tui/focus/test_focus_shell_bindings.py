@@ -148,7 +148,7 @@ async def test_focus_status_line_reflects_shell_state() -> None:
             await pilot.pause()
             responding_text = status_line._text()
             assert "responding" in responding_text.lower(), responding_text
-            assert "1.5" in responding_text, responding_text
+            assert "1s" in responding_text, responding_text
 
             # tool state shows tool name
             status_line.set_state(
@@ -157,7 +157,7 @@ async def test_focus_status_line_reflects_shell_state() -> None:
             await pilot.pause()
             tool_text = status_line._text()
             assert "fs.find" in tool_text, tool_text
-            assert "0.3" in tool_text, tool_text
+            assert "0s" in tool_text, tool_text
 
 
 @pytest.mark.asyncio
