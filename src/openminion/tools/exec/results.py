@@ -51,6 +51,20 @@ _ARTIFACT_THRESHOLD_BYTES = EXEC_ARTIFACT_THRESHOLD_BYTES
 _APPROVAL_PENDING_STATUSES = EXEC_APPROVAL_PENDING_STATUSES
 
 
+def _command_summary(
+    *,
+    exit_code: int | None,
+    stdout_preview: str | None,
+    stderr_preview: str | None,
+) -> str:
+    lines = [f"Command exited with code {exit_code}."]
+    if stdout_preview:
+        lines.extend(("", "stdout:", stdout_preview.rstrip()))
+    if stderr_preview:
+        lines.extend(("", "stderr:", stderr_preview.rstrip()))
+    return "\n".join(lines)
+
+
 _KEY_ALIASES = {
     "ENTER": b"\r",
     "RETURN": b"\r",
@@ -267,7 +281,11 @@ def _exec_run_result_from_sandbox(
         stderr_preview = _decode_preview(stderr_bytes)
 
     status = "ok"
-    summary = f"Command exited with code {exec_result.returncode}."
+    summary = _command_summary(
+        exit_code=exec_result.returncode,
+        stdout_preview=stdout_preview,
+        stderr_preview=stderr_preview,
+    )
     error_payload = None
     if exec_result.timed_out:
         status = "timeout"
@@ -506,7 +524,11 @@ def _build_completed_exec_run_result(
         stderr_preview = _decode_preview(stderr_bytes)
 
     status = "ok"
-    summary = f"Command exited with code {snapshot.exit_code}."
+    summary = _command_summary(
+        exit_code=snapshot.exit_code,
+        stdout_preview=stdout_preview,
+        stderr_preview=stderr_preview,
+    )
     error_payload = None
     if bool(snapshot.timed_out):
         status = "timeout"

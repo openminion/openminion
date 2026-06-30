@@ -297,8 +297,24 @@ def build_runtime_bootstrap(
     if config is not None:
         tool_selection = getattr(config, "tool_selection", None)
         if tool_selection is not None:
-            policy_manager = ToolBindingPolicyManager.from_tool_selection_config(
-                tool_selection
+            default_policies = {
+                binding_id: policy
+                for binding_id, (primary, fallback_tools) in (
+                    registry_manager.runtime_binding_policy_defaults().items()
+                )
+                if (
+                    policy := ToolBindingPolicyManager.default_policy(
+                        binding_id,
+                        (primary, *fallback_tools),
+                    )
+                )
+                is not None
+            }
+            policy_manager = (
+                ToolBindingPolicyManager.from_tool_selection_config_with_defaults(
+                    tool_selection,
+                    default_policies=default_policies,
+                )
             )
         else:
             policy_manager = ToolBindingPolicyManager(

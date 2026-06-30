@@ -8,6 +8,7 @@ from openminion.modules.brain.adapters.tool.permission_mode import (
     effective_permission_mode_for_tool,
     is_tool_blocked_by_readonly,
 )
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 
 from ...diagnostics.events import CanonicalEventLogger
 from ...config import TOOL_OUTCOME_SUCCESS_ALLOWLIST
@@ -498,11 +499,12 @@ def execute_prepared_tool_dispatch(
     prepared_dispatch: PreparedToolDispatch,
 ) -> RawToolResult:
     started = time.monotonic()
-    raw = runner.tool_api.execute(
-        command=prepared_dispatch.payload,
-        session_id=prepared_dispatch.session_id,
-        trace_id=prepared_dispatch.trace_id,
-    )
+    with active_chat_phase("tool_calls"):
+        raw = runner.tool_api.execute(
+            command=prepared_dispatch.payload,
+            session_id=prepared_dispatch.session_id,
+            trace_id=prepared_dispatch.trace_id,
+        )
     duration_ms = int((time.monotonic() - started) * 1000)
     error_payload = (
         dict(raw.get("error"))

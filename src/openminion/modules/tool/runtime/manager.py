@@ -318,6 +318,16 @@ class ToolRegistryManager:
             return ()
         return compiled.runtime_binding_to_candidates.get(token, ())
 
+    def runtime_binding_policy_defaults(self) -> dict[str, tuple[str, tuple[str, ...]]]:
+        """Expose manifest-backed runtime binding defaults for config overlays."""
+        compiled = self._ensure_compiled()
+        defaults: dict[str, tuple[str, tuple[str, ...]]] = {}
+        for binding_id, candidates in compiled.runtime_binding_to_candidates.items():
+            ordered = tuple(str(item).strip() for item in candidates if str(item).strip())
+            if ordered:
+                defaults[binding_id] = (ordered[0], ordered[1:])
+        return defaults
+
     def model_to_runtime_binding_map(self) -> dict[str, str]:
         """Expose canonical model_tool_id -> runtime_binding_id map."""
         compiled = self._ensure_compiled()
