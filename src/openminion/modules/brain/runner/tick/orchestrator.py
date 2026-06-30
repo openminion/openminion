@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
+
 from ...constants import BRAIN_STATE_WAITING_USER
 from ...execution.entry import build_execution_entry_request, dispatch as dispatch_entry
 from ...diagnostics.events import CanonicalEventLogger
@@ -199,7 +201,8 @@ def run_step(
     capability_category: str | None = None,
 ) -> "StepOutput":
     started = _runner_delegate("_now_ms", runner)
-    state = _runner_delegate("_load_or_init_state", runner, session_id)
+    with active_chat_phase("brain_state_load"):
+        state = _runner_delegate("_load_or_init_state", runner, session_id)
     _stamp_pending_run_context(runner, state)
     logger = CanonicalEventLogger(
         session_api=runner.session_api,
@@ -226,25 +229,27 @@ def run_step(
                 trace_id=trace_id,
             )
 
-        maybe_run_mrdd_pre_dispatch_hook(runner=runner, state=state, logger=logger)
+        with active_chat_phase("brain_pre_dispatch"):
+            maybe_run_mrdd_pre_dispatch_hook(runner=runner, state=state, logger=logger)
 
-        pre_dispatch_result = _run_pre_dispatch_checks(
-            runner,
-            state=state,
-            logger=logger,
-            session_id=session_id,
-            tick_ctx=tick_ctx,
-        )
+            pre_dispatch_result = _run_pre_dispatch_checks(
+                runner,
+                state=state,
+                logger=logger,
+                session_id=session_id,
+                tick_ctx=tick_ctx,
+            )
         if pre_dispatch_result is not None:
             return pre_dispatch_result
 
-        budget_stop_reason = _runner_delegate("_consume_tick", runner, state)
-        budget_result = _handle_budget_exhaustion(
-            runner,
-            state=state,
-            logger=logger,
-            budget_stop_reason=budget_stop_reason,
-        )
+        with active_chat_phase("brain_budget_check"):
+            budget_stop_reason = _runner_delegate("_consume_tick", runner, state)
+            budget_result = _handle_budget_exhaustion(
+                runner,
+                state=state,
+                logger=logger,
+                budget_stop_reason=budget_stop_reason,
+            )
         if budget_result is not None:
             return budget_result
 
@@ -257,30 +262,32 @@ def run_step(
         if autonomous_result is not None:
             return autonomous_result
 
-        confirmation_result = confirmation.process(
-            runner=runner,
-            state=state,
-            logger=logger,
-            tick_ctx=tick_ctx,
-        )
+        with active_chat_phase("brain_confirmation"):
+            confirmation_result = confirmation.process(
+                runner=runner,
+                state=state,
+                logger=logger,
+                tick_ctx=tick_ctx,
+            )
         if confirmation_result is not None:
             return confirmation_result
 
-        return dispatch_entry(
-            runner=runner,
-            state=state,
-            logger=logger,
-            request=build_execution_entry_request(
-                user_input=tick_ctx.user_input,
-                forced_tools=tick_ctx.forced_tools,
-                capability_category=tick_ctx.capability_category,
-                skip_decide=tick_ctx.skip_decide,
-                decision=tick_ctx.decision,
-                mask_pending_confirmation_in_output=tick_ctx.mask_pending_confirmation_in_output,
-                masked_resume_cursor=tick_ctx.masked_resume_cursor,
-                consume_user_input_for_command=tick_ctx.consume_user_input_for_command,
-            ),
-        )
+        with active_chat_phase("brain_dispatch"):
+            return dispatch_entry(
+                runner=runner,
+                state=state,
+                logger=logger,
+                request=build_execution_entry_request(
+                    user_input=tick_ctx.user_input,
+                    forced_tools=tick_ctx.forced_tools,
+                    capability_category=tick_ctx.capability_category,
+                    skip_decide=tick_ctx.skip_decide,
+                    decision=tick_ctx.decision,
+                    mask_pending_confirmation_in_output=tick_ctx.mask_pending_confirmation_in_output,
+                    masked_resume_cursor=tick_ctx.masked_resume_cursor,
+                    consume_user_input_for_command=tick_ctx.consume_user_input_for_command,
+                ),
+            )
     finally:
         elapsed = max(0, _runner_delegate("_now_ms", runner) - started)
         state.budgets_remaining.time_ms = max(

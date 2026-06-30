@@ -314,6 +314,30 @@ class _ExecPolicyRecoveryTool(Tool):
         )
 
 
+class _ExecUnavailableTool(Tool):
+    name = "exec.run"
+    description = "Run a command in the workspace."
+    parameters = _ExecPolicyRecoveryTool.parameters
+    categories = ToolCategoryInfo(primary_category="system.exec")
+
+    def execute(self, arguments, context: ToolExecutionContext) -> ToolExecutionResult:
+        del context
+        command = str(arguments.get("command", "")).strip()
+        return ToolExecutionResult(
+            tool_name=self.name,
+            ok=False,
+            content="command exited with code 127",
+            error="command exited with code 127",
+            data={
+                "error_code": "EXEC_ERROR",
+                "exit_code": 127,
+                "stderr": "nasm: command not found",
+                "command": command,
+            },
+            verified=False,
+        )
+
+
 class _DeniedThenRecoveredExecProvider(LLMProvider):
     name = "denied-then-recovered-exec"
 
@@ -361,6 +385,34 @@ class _DeniedThenRecoveredExecProvider(LLMProvider):
                 "Python is available in the repo runtime.\n"
                 '<finalization_status>{"status":"final_answer","reasoning":"The recovered exec.run result answered the version check.","remaining_work":"","blocking_reason":""}</finalization_status>'
             ),
+            model="fake-model",
+            finish_reason="stop",
+        )
+
+
+class _RepeatsUnavailableVersionProvider(LLMProvider):
+    name = "repeats-unavailable-version"
+
+    def __init__(self) -> None:
+        self.calls: list[ProviderRequest] = []
+
+    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+        self.calls.append(request)
+        if request.tools:
+            return ProviderResponse(
+                text="",
+                model="fake-model",
+                tool_calls=[
+                    ProviderToolCall(
+                        name="exec.run",
+                        arguments={"command": "nasm --version"},
+                        source="native",
+                    )
+                ],
+                finish_reason="tool_calls",
+            )
+        return ProviderResponse(
+            text="should-not-be-used",
             model="fake-model",
             finish_reason="stop",
         )
@@ -792,6 +844,44 @@ def test_required_lane_recovers_once_from_policy_denied_tool_with_structured_hin
     denied_details = (tool_results[0].get("data") or {}).get("error_details") or {}
     assert denied_details.get("suggested_tool") == "exec.run"
     assert "workdir" in str(denied_details.get("suggested_fix") or "")
+
+
+def test_required_lane_finalizes_unavailable_version_probe_instead_of_loop_error() -> (
+    None
+):
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config)  # type: ignore[attr-defined]
+    config.runtime.tool_selection.bindings["system.exec"] = "exec.run"
+    config.runtime.tool_selection.allow_runtime_direct_fallback = False
+
+    provider = _RepeatsUnavailableVersionProvider()
+    service = AgentService(
+        config=config,
+        plugins=PluginRegistry([]),
+        provider=provider,
+        logger=logging.getLogger("openminion.tests"),
+        tools=ToolRegistry([_ExecUnavailableTool()]),
+    )
+
+    response = _run_async(
+        service.run_turn(
+            Message(
+                channel="console",
+                target="cli",
+                body="check whether nasm exists and what version it is",
+            ),
+            capability_category="system.exec",
+        )
+    )
+
+    assert "nasm --version" in response.text
+    assert "appears unavailable" in response.text
+    assert "repeated identical tool calls" not in response.text
+    assert response.metadata.get("tool_loop_termination_reason") == (
+        "tool_unavailable_final"
+    )
+    assert response.metadata.get("tool_execution_count") == "1"
+    assert len(provider.calls) == 2
 
 
 def _assert_invalid_tool_arguments_contract_metadata(

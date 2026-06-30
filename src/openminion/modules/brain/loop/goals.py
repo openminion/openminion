@@ -1,7 +1,5 @@
 """Goal access helpers for the adaptive loop."""
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field

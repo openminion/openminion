@@ -8,6 +8,9 @@ from openminion.modules.telemetry.trace.phase_timing import (
     CHAT_PHASES,
     ChatPhaseTimer,
     ChatPhaseTimingPayload,
+    active_chat_phase,
+    mark_active_chat_first_text,
+    use_chat_phase_timer,
 )
 from openminion.modules.telemetry.events.catalog import CHAT_PHASE_TIMING
 
@@ -15,19 +18,29 @@ from openminion.modules.telemetry.events.catalog import CHAT_PHASE_TIMING
 # --- closed-set vocabulary regression ---
 
 
-def test_chat_phases_closed_set_has_exactly_10_values():
+def test_chat_phases_closed_set_matches_contract():
 
-    assert len(CHAT_PHASES) == 10
     assert set(CHAT_PHASES) == {
         "runtime_bootstrap",
         "daemon_probe_start",
         "session_resume",
         "memory_retrieval",
         "context_pack_build",
+        "gateway_routing",
+        "gateway_session_context",
+        "brain_state_load",
+        "brain_pre_dispatch",
+        "brain_budget_check",
+        "brain_confirmation",
+        "brain_dispatch",
         "tool_schema_serialization",
         "provider_request_build",
         "provider_round_trip",
+        "approval_wait",
+        "tool_calls",
         "response_normalization",
+        "response_persistence",
+        "memory_write",
         "cli_render_delivery",
     }
 
@@ -72,7 +85,7 @@ def test_payload_rejects_negative_phase_ms():
         )
 
 
-def test_payload_as_dict_contains_all_10_phase_keys_and_load_bearing_metrics():
+def test_payload_as_dict_contains_all_phase_keys_and_load_bearing_metrics():
 
     payload = ChatPhaseTimingPayload(
         cold_start=True, total_turn_ms=100, time_to_first_text_ms=20
@@ -82,7 +95,6 @@ def test_payload_as_dict_contains_all_10_phase_keys_and_load_bearing_metrics():
     assert d["cold_start"] is True
     assert d["total_turn_ms"] == 100
     assert d["time_to_first_text_ms"] == 20
-    # All 10 phase keys present
     for phase in CHAT_PHASES:
         assert f"{phase}_ms" in d
         assert d[f"{phase}_ms"] == 0
@@ -195,3 +207,33 @@ def test_timer_overhead_is_negligible():
     elapsed_ms = (time.perf_counter() - start) * 1000
     # 1000 phase-marks in well under 50ms on modern hardware
     assert elapsed_ms < 100
+
+
+def test_active_chat_phase_is_noop_without_active_timer():
+    with active_chat_phase("provider_round_trip"):
+        pass
+
+
+def test_active_chat_phase_records_on_active_timer():
+    timer = ChatPhaseTimer()
+    with use_chat_phase_timer(timer):
+        with active_chat_phase("tool_calls"):
+            time.sleep(0.001)
+    payload = timer.build_payload()
+    assert "tool_calls" in payload.phases_instrumented
+    assert payload.tool_calls_ms >= 0
+
+
+def test_active_chat_phase_rejects_unknown_name_without_timer():
+    with pytest.raises(ValueError):
+        with active_chat_phase("not_a_phase"):
+            pass
+
+
+def test_active_timer_context_resets_after_exit():
+    timer = ChatPhaseTimer()
+    with use_chat_phase_timer(timer):
+        mark_active_chat_first_text()
+    first_ttft = timer._first_text_ns
+    mark_active_chat_first_text()
+    assert timer._first_text_ns == first_ttft

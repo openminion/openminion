@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import sys
 from pathlib import Path
 from typing import Any
@@ -72,6 +73,8 @@ __all__ = [
     "_render_status_block",
     "_render_tools_list",
     "_show_response_time_enabled",
+    "_emit_startup_notice",
+    "_schedule_startup_notice",
 ]
 
 
@@ -129,6 +132,40 @@ def _show_response_time_enabled(env: Any | None = None) -> bool:
     return resolve_environment_config(env=env).openminion_show_response_time
 
 
+async def _emit_startup_notice(
+    startup_notice: Callable[[], str],
+    *,
+    transcript: TerminalTranscript,
+) -> None:
+    try:
+        notice = await asyncio.to_thread(startup_notice)
+    except Exception:
+        return
+    notice = str(notice or "").strip()
+    if not notice:
+        return
+    transcript.push_message(
+        ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=notice)
+    )
+
+
+def _schedule_startup_notice(
+    startup_notice: Callable[[], str] | None,
+    *,
+    transcript: TerminalTranscript,
+) -> asyncio.Task[None] | None:
+    if startup_notice is None:
+        return None
+    return asyncio.create_task(
+        _emit_startup_notice(startup_notice, transcript=transcript)
+    )
+
+
+def _cancel_startup_notice(task: asyncio.Task[None] | None) -> None:
+    if task is not None and not task.done():
+        task.cancel()
+
+
 def run_terminal_focus(
     runtime: Any,
     *,
@@ -137,6 +174,7 @@ def run_terminal_focus(
     session: str | None = None,
     plain_spinner: bool = False,
     verbosity: str = "normal",
+    startup_notice: Callable[[], str] | None = None,
 ) -> int:
     """Synchronous entry point. Wraps the async loop."""
     return asyncio.run(
@@ -147,6 +185,7 @@ def run_terminal_focus(
             session=session,
             plain_spinner=plain_spinner,
             verbosity=verbosity,
+            startup_notice=startup_notice,
         )
     )
 
@@ -245,6 +284,7 @@ async def _run_terminal_focus_async(
     session: str | None,
     plain_spinner: bool = False,
     verbosity: str = "normal",
+    startup_notice: Callable[[], str] | None = None,
 ) -> int:
     console = Console()
     transcript = TerminalTranscript(
@@ -300,6 +340,10 @@ async def _run_terminal_focus_async(
     )
 
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
+    startup_notice_task = _schedule_startup_notice(
+        startup_notice,
+        transcript=transcript,
+    )
     status_line.set_state(
         agent=str(getattr(runtime, "agent_id", "") or ""),
         cwd=working_dir,
@@ -309,59 +353,62 @@ async def _run_terminal_focus_async(
         state="idle",
     )
 
-    while True:
-        try:
-            text = await composer.read_line()
-        except EOFError:
-            console.print(Text("(exit)", style=_MUTED_STYLE))
-            return 0
-        except KeyboardInterrupt:
-            if await _confirm_terminal_exit(console=console, overlay=overlay):
+    try:
+        while True:
+            try:
+                text = await composer.read_line()
+            except EOFError:
                 console.print(Text("(exit)", style=_MUTED_STYLE))
                 return 0
-            continue
-        text = (text or "").strip()
-        if not text:
-            continue
-        if text in ("/exit", "/quit"):
-            return 0
-        try:
-            if text.startswith("/"):
-                should_exit = await _handle_slash_input(
-                    text,
-                    runtime=runtime,
-                    console=console,
-                    transcript=transcript,
-                    overlay=overlay,
-                    status_line=status_line,
-                    working_dir=working_dir,
-                    custom_commands=custom_commands,
-                )
-                if should_exit:
+            except KeyboardInterrupt:
+                if await _confirm_terminal_exit(console=console, overlay=overlay):
+                    console.print(Text("(exit)", style=_MUTED_STYLE))
                     return 0
                 continue
-            if text.startswith("!"):
-                await _run_shell_escape(
-                    command=text[1:].strip(),
-                    console=console,
-                    transcript=transcript,
-                    working_dir=working_dir,
-                )
+            text = (text or "").strip()
+            if not text:
                 continue
-            transcript.push_message(
-                ChatMessage(kind=MessageKind.USER, sender="you", body=text),
-                render=False,
-            )
-            await _run_agent_turn(
-                text=text,
-                runtime=runtime,
-                transcript=transcript,
-                status_line=status_line,
-            )
-        except KeyboardInterrupt:
-            if await _confirm_terminal_exit(console=console, overlay=overlay):
-                console.print(Text("(exit)", style=_MUTED_STYLE))
+            if text in ("/exit", "/quit"):
                 return 0
+            try:
+                if text.startswith("/"):
+                    should_exit = await _handle_slash_input(
+                        text,
+                        runtime=runtime,
+                        console=console,
+                        transcript=transcript,
+                        overlay=overlay,
+                        status_line=status_line,
+                        working_dir=working_dir,
+                        custom_commands=custom_commands,
+                    )
+                    if should_exit:
+                        return 0
+                    continue
+                if text.startswith("!"):
+                    await _run_shell_escape(
+                        command=text[1:].strip(),
+                        console=console,
+                        transcript=transcript,
+                        working_dir=working_dir,
+                    )
+                    continue
+                transcript.push_message(
+                    ChatMessage(kind=MessageKind.USER, sender="you", body=text),
+                    render=False,
+                )
+                await _run_agent_turn(
+                    text=text,
+                    runtime=runtime,
+                    transcript=transcript,
+                    status_line=status_line,
+                )
+            except KeyboardInterrupt:
+                if await _confirm_terminal_exit(console=console, overlay=overlay):
+                    console.print(Text("(exit)", style=_MUTED_STYLE))
+                    return 0
+    finally:
+        _cancel_startup_notice(startup_notice_task)
 
 
 async def _run_one_shot_stdin(

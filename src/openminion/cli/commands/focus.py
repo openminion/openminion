@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from pathlib import Path
 
 from openminion.cli.commands.tui import (
@@ -109,12 +110,13 @@ def _launch_terminal_focus(
         session=str(getattr(args, "session", "") or "").strip() or None,
         plain_spinner=_resolve_plain_spinner(args),
         verbosity=_resolve_focus_verbosity(args),
+        startup_notice=_build_update_notice_resolver(args),
     )
 
 
-def _maybe_print_update_notice(args: argparse.Namespace) -> None:
+def _resolve_update_notice(args: argparse.Namespace) -> str:
     if bool(getattr(args, "no_update_check", False)):
-        return
+        return ""
     try:
         from openminion import __version__
         from openminion.base.config.env import EnvironmentConfig
@@ -142,11 +144,29 @@ def _maybe_print_update_notice(args: argparse.Namespace) -> None:
             },
         )
         notice = "" if result is None else result.render_notice()
-        if notice:
-            print(notice)
-            print()
+        return notice
     except Exception:
+        return ""
+
+
+def _build_update_notice_resolver(
+    args: argparse.Namespace,
+) -> Callable[[], str] | None:
+    if bool(getattr(args, "no_update_check", False)):
+        return None
+
+    def _resolve() -> str:
+        return _resolve_update_notice(args)
+
+    return _resolve
+
+
+def _maybe_print_update_notice(args: argparse.Namespace) -> None:
+    notice = _resolve_update_notice(args)
+    if not notice:
         return
+    print(notice)
+    print()
 
 
 def _resolve_focus_theme(args: argparse.Namespace):
@@ -221,9 +241,9 @@ def run_focus(args: argparse.Namespace) -> int:
         working_dir = str(
             Path(getattr(args, "dir", None) or ".").expanduser().resolve(strict=False)
         )
-        _maybe_print_update_notice(args)
         if backend == "terminal":
             return _launch_terminal_focus(args, runtime, working_dir=working_dir)
+        _maybe_print_update_notice(args)
         return _launch_textual_focus(args, runtime, working_dir=working_dir)
     except Exception as exc:
         import sys

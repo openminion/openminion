@@ -7,7 +7,6 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, cast
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
-
     class _YamlFallback:
         @staticmethod
         def safe_load(raw: str) -> Any:
@@ -52,12 +51,7 @@ from .command_patterns import (
     matching_allow_pattern,
 )
 
-SCOPE_ORDER: Dict[str, int] = {
-    "READ_ONLY": 0,
-    "WRITE_SAFE": 1,
-    "POWER_USER": 2,
-    "UI_AUTOMATION": 3,
-}
+SCOPE_ORDER = {"READ_ONLY": 0, "WRITE_SAFE": 1, "POWER_USER": 2, "UI_AUTOMATION": 3}
 
 def reorder_runtime_chain(
     *,
@@ -66,7 +60,6 @@ def reorder_runtime_chain(
     runtime_binding_policies: Dict[str, Any] | None,
     available_tool_names: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
-    """Compatibility bridge for dispatch policy reordering."""
     manager = ToolBindingPolicyManager.from_runtime_binding_policy_payload(
         runtime_binding_policies
     )
@@ -78,13 +71,11 @@ def reorder_runtime_chain(
         else None,
     )
 
-
 @dataclass(frozen=True)
 class RuntimeBindingPolicy:
     runtime_binding_id: str
     primary: str
     fallback_tools: tuple[str, ...]
-
 
 class ToolBindingPolicyManager:
     """Owns runtime binding candidate ordering/fallback policy."""
@@ -106,8 +97,17 @@ class ToolBindingPolicyManager:
 
     @classmethod
     def from_tool_selection_config(cls, config: Any) -> "ToolBindingPolicyManager":
+        return cls.from_tool_selection_config_with_defaults(config)
+
+    @classmethod
+    def from_tool_selection_config_with_defaults(
+        cls,
+        config: Any,
+        *,
+        default_policies: Mapping[str, RuntimeBindingPolicy] | None = None,
+    ) -> "ToolBindingPolicyManager":
         runtime_bindings = getattr(config, "runtime_bindings", {}) or {}
-        parsed: dict[str, RuntimeBindingPolicy] = {}
+        parsed: dict[str, RuntimeBindingPolicy] = dict(default_policies or {})
         for runtime_binding_id, binding in runtime_bindings.items():
             binding_id = str(runtime_binding_id or "").strip()
             if not binding_id:
@@ -131,6 +131,20 @@ class ToolBindingPolicyManager:
             ),
             fallback_on=getattr(config, "runtime_fallback_on", ()) or (),
             no_fallback_on=getattr(config, "runtime_no_fallback_on", ()) or (),
+        )
+
+    @staticmethod
+    def default_policy(
+        runtime_binding_id: str, candidates: Sequence[str]
+    ) -> RuntimeBindingPolicy | None:
+        binding_id = str(runtime_binding_id or "").strip()
+        ordered = tuple(_dedupe(candidates))
+        if not binding_id or not ordered:
+            return None
+        return RuntimeBindingPolicy(
+            runtime_binding_id=binding_id,
+            primary=ordered[0],
+            fallback_tools=ordered[1:],
         )
 
     @classmethod
@@ -275,7 +289,6 @@ class ToolBindingPolicyManager:
         if self._fallback_on and any(token in text for token in self._fallback_on):
             return True
         return False
-
 
 DEFAULT_POLICY: Dict[str, Any] = {
     "version": 1,

@@ -26,7 +26,6 @@ from openminion.services.security.policy import ToolBudgetState
 
 from ..deps import ExecutorDeps
 from ..followup import available_follow_up_tools, recover_text_tool_calls
-
 from ..validators import is_empty_provider_response
 from .metadata import (
     build_required_outcome,
@@ -35,6 +34,10 @@ from .metadata import (
     shared_capability_metadata,
 )
 from .state import RequiredLaneState, _PhaseResult
+from .unavailable import (
+    unavailable_discovery_phase_result,
+    unavailable_discovery_retry_instruction,
+)
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS  # noqa: F401  (re-exported for in-module callers)
 
 if TYPE_CHECKING:
@@ -73,7 +76,6 @@ def _tool_feedback_context(
         message = f"{message}\n\n{FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE}"
     return str(payload), message, requires_status
 
-
 def _pre_tool_draft_message(response: ProviderResponse) -> ProviderHistoryMessage:
     return ProviderHistoryMessage(
         role="assistant",
@@ -83,13 +85,11 @@ def _pre_tool_draft_message(response: ProviderResponse) -> ProviderHistoryMessag
         ),
     )
 
-
 def _needs_plain_text_retry(response: ProviderResponse) -> bool:
     if response.tool_calls:
         return False
     text = str(getattr(response, "text", "") or "")
     return _looks_like_embedded_tool_response_text(text)
-
 
 def _looks_like_pre_tool_draft_echo(
     *,
@@ -103,7 +103,6 @@ def _looks_like_pre_tool_draft_echo(
     if not pre_tool_text or not final_text:
         return False
     return final_text == pre_tool_text
-
 
 async def _call_initial_final_response(
     runner: "RequiredLaneRunner",
@@ -127,7 +126,6 @@ async def _call_initial_final_response(
         tool_call_strategy=tool_call_strategy,
     )
     return recover_text_tool_calls(runner, response=final_response)
-
 
 async def _retry_plain_text_final_response(
     runner: "RequiredLaneRunner",
@@ -198,7 +196,6 @@ async def _retry_plain_text_final_response(
     )
     return recover_text_tool_calls(runner, response=final_response)
 
-
 async def _retry_stale_draft_final_response(
     runner: "RequiredLaneRunner",
     *,
@@ -248,7 +245,6 @@ async def _retry_stale_draft_final_response(
         tool_call_strategy=tool_call_strategy,
     )
     return recover_text_tool_calls(runner, response=final_response)
-
 
 def _finalization_contract_missing_result(
     runner: "RequiredLaneRunner",
@@ -406,6 +402,9 @@ async def _retry_duplicate_final_tool_calls_response(
         "the final answer, or choose a different available tool only if the "
         "existing results are insufficient."
     )
+    unavailable_instruction = unavailable_discovery_retry_instruction(response, batch)
+    if unavailable_instruction:
+        retry_user_message = f"{retry_user_message}\n\n{unavailable_instruction}"
     retry_response = await runner.runtime_ops.call_provider(
         ProviderRequest(
             user_message=(
@@ -481,6 +480,20 @@ async def _handle_final_response_tool_calls(
         final_response = retry_response
         final_sig = deps.tool_calls_payload(final_response.tool_calls)
         if final_sig == tool_calls_sig:
+            unavailable_result = unavailable_discovery_phase_result(
+                runner,
+                deps=deps,
+                final_response=final_response,
+                final_sig=final_sig,
+                intent_category=intent_category,
+                response=response,
+                batch=batch,
+                attempted_tools=attempted_tools,
+                capability_fallback_trigger_reason=capability_fallback_trigger_reason,
+                shared_capability_meta=shared_capability_meta,
+            )
+            if unavailable_result is not None:
+                return unavailable_result
             return _duplicate_final_tool_calls_result(
                 runner,
                 deps=deps,

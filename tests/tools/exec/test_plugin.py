@@ -247,7 +247,7 @@ def test_exec_run_foreground_contract_snapshot(tmp_path):
         "stdout": "hello\n",
         "stdout_artifact": None,
         "stdout_preview": "hello\n",
-        "summary": "Command exited with code 0.",
+        "summary": "Command exited with code 0.\n\nstdout:\nhello",
     }
 
 

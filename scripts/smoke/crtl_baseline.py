@@ -12,8 +12,8 @@ from typing import Any
 
 from openminion.api.runtime import APIRuntime
 from openminion.base.generated_paths import resolve_generated_root
-from openminion.modules.telemetry.chat_phase_timing import CHAT_PHASES
 from openminion.modules.telemetry.events.catalog import CHAT_PHASE_TIMING
+from openminion.modules.telemetry.trace.phase_timing import CHAT_PHASES
 
 
 class _BaselineSink:

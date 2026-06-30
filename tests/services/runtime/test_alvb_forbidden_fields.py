@@ -161,8 +161,8 @@ def test_forbidden_field_roster_matches_six_lane_precedent() -> None:
     from tests.brain.test_mtrr_forbidden_fields import (
         FORBIDDEN_FIELDS as MTRR_FORBIDDEN_FIELDS,
     )
-    from tests.brain.test_sprr_forbidden_fields import (
-        FORBIDDEN_FIELDS as SPRR_FORBIDDEN_FIELDS,
+    from tests.brain.test_promotion_forbidden_fields import (
+        FORBIDDEN_FIELDS as PROMOTION_FORBIDDEN_FIELDS,
     )
     from tests.brain.test_tgcr_forbidden_fields import (
         FORBIDDEN_FIELDS as TGCR_FORBIDDEN_FIELDS,
@@ -173,7 +173,7 @@ def test_forbidden_field_roster_matches_six_lane_precedent() -> None:
     assert tuple(FORBIDDEN_FIELDS) == tuple(MTRR_FORBIDDEN_FIELDS)
     assert tuple(FORBIDDEN_FIELDS) == tuple(ASRR_FORBIDDEN_FIELDS)
     assert tuple(FORBIDDEN_FIELDS) == tuple(AATR_FORBIDDEN_FIELDS)
-    assert tuple(FORBIDDEN_FIELDS) == tuple(SPRR_FORBIDDEN_FIELDS)
+    assert tuple(FORBIDDEN_FIELDS) == tuple(PROMOTION_FORBIDDEN_FIELDS)
 
 
 def test_derive_run_terminal_state_accepts_only_typed_inputs() -> None:

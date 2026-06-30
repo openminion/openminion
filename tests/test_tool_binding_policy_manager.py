@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from openminion.base.config import CapabilityBinding, ToolSelectionConfig
+from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.runtime.policy import ToolBindingPolicyManager
 
 
@@ -21,6 +22,39 @@ def test_policy_manager_from_config_reorders_runtime_chain() -> None:
         available_tool_names=("search.fallback", "search.tavily.search"),
     )
     assert ordered == ("search.tavily.search", "search.fallback")
+
+
+def test_policy_manager_config_overrides_registry_defaults_without_hiding_new_bindings() -> None:
+    bootstrap = build_runtime_bootstrap(config=None, workspace_root=None, run_root=None)
+    defaults = {
+        binding_id: policy
+        for binding_id, (primary, fallback_tools) in (
+            bootstrap.manager.runtime_binding_policy_defaults().items()
+        )
+        if (
+            policy := ToolBindingPolicyManager.default_policy(
+                binding_id,
+                (primary, *fallback_tools),
+            )
+        )
+        is not None
+    }
+    config = ToolSelectionConfig(
+        runtime_bindings={
+            "runtime.web.search": CapabilityBinding(
+                primary="search.serpapi.search",
+                fallback_tools=["search.dispatch"],
+            )
+        }
+    )
+
+    manager = ToolBindingPolicyManager.from_tool_selection_config_with_defaults(
+        config,
+        default_policies=defaults,
+    )
+
+    assert manager.policy_for("runtime.web.search").primary == "search.serpapi.search"
+    assert manager.policy_for("runtime.host.metrics").primary == "host.metrics"
 
 
 def test_policy_manager_metadata_payload_contains_runtime_binding_fields() -> None:

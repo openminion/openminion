@@ -1008,6 +1008,81 @@ def test_run_terminal_wires_shared_runtime_and_closes(monkeypatch) -> None:
     assert closed == [True]
 
 
+def test_run_terminal_defers_update_notice_until_shell_owner(monkeypatch) -> None:
+    focus_command = importlib.import_module("openminion.cli.commands.focus")
+    from openminion.api.runtime import APIRuntime
+
+    captured: dict[str, Any] = {}
+    resolver_calls: list[str] = []
+
+    class _FakeApiRuntime(SimpleNamespace):
+        def close(self) -> None:
+            return None
+
+    class _FakeFocusRuntime:
+        def __init__(self, runtime, **kwargs) -> None:
+            self.api_runtime = runtime
+            self.agent_id = kwargs.get("agent_id") or "alpha"
+            self.session_id = kwargs.get("session_id") or "focus-auto"
+            self.provider_name = "openai"
+            self.model_name = "MiniMax-M2.7"
+            self.transport = "gateway"
+
+        def set_project_context(self, info) -> None:
+            captured["project_context"] = info
+
+    def _resolver() -> str:
+        resolver_calls.append("called")
+        return "Update available"
+
+    def _fake_run_terminal_focus(runtime, **kwargs) -> int:
+        del runtime
+        captured["startup_notice"] = kwargs.get("startup_notice")
+        assert resolver_calls == []
+        return 0
+
+    monkeypatch.setattr(
+        focus_command,
+        "_inspect_tui_onboarding",
+        lambda args: _ready_onboarding_status(),
+    )
+    monkeypatch.setattr(
+        APIRuntime,
+        "from_config_path",
+        staticmethod(lambda *args, **kwargs: _FakeApiRuntime()),
+    )
+    monkeypatch.setattr(
+        "openminion.cli.tui.providers.OpenMinionRuntime", _FakeFocusRuntime
+    )
+    monkeypatch.setattr(
+        "openminion.cli.tui.terminal.run_terminal_focus",
+        _fake_run_terminal_focus,
+    )
+    monkeypatch.setattr(
+        focus_command,
+        "_build_update_notice_resolver",
+        lambda args: _resolver,
+    )
+
+    args = SimpleNamespace(
+        config=str(
+            (_repo_root() / "test-configs" / "per-agent.json").resolve(strict=False)
+        ),
+        home_root=str(_repo_root()),
+        data_root=None,
+        agent="alpha",
+        session="focus-explicit",
+        dir="/tmp/focus-live",
+        rich=False,
+    )
+
+    assert focus_command.run_focus(args) == 0
+    assert callable(captured["startup_notice"])
+    assert resolver_calls == []
+    assert captured["startup_notice"]() == "Update available"
+    assert resolver_calls == ["called"]
+
+
 def test_run_terminal_uses_runtime_data_root_for_history_path(
     monkeypatch, tmp_path
 ) -> None:

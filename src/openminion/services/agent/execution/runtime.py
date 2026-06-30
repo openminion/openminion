@@ -10,6 +10,7 @@ from openminion.modules.llm.providers.base import (
     ProviderResponse,
     ProviderToolCall,
 )
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
@@ -37,6 +38,7 @@ from openminion.services.security.tool_execution import (
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 
 from ..telemetry import trace_provider_request, trace_provider_response
+from .loop_quality import observe_tool_calls
 from .ports import TurnFlowServicePort
 
 
@@ -410,13 +412,14 @@ class ExecutorRuntime:
                     decision.requires_confirm
                     or decision.code == DECISION_REQUIRE_APPROVAL
                 ):
-                    approved = bool(
-                        await approval_callback(
-                            tool_name,
-                            tool_args,
-                            str(getattr(call, "id", "") or ""),
+                    with active_chat_phase("approval_wait"):
+                        approved = bool(
+                            await approval_callback(
+                                tool_name,
+                                tool_args,
+                                str(getattr(call, "id", "") or ""),
+                            )
                         )
-                    )
                     if approved:
                         allowed_calls.append(
                             ProviderToolCall(
@@ -644,13 +647,14 @@ class ExecutorRuntime:
             if approval_callback is not None and (
                 decision.requires_confirm or decision.code == DECISION_REQUIRE_APPROVAL
             ):
-                approved = bool(
-                    await approval_callback(
-                        tool_name,
-                        tool_args,
-                        str(getattr(call, "id", "") or ""),
+                with active_chat_phase("approval_wait"):
+                    approved = bool(
+                        await approval_callback(
+                            tool_name,
+                            tool_args,
+                            str(getattr(call, "id", "") or ""),
+                        )
                     )
-                )
                 if approved:
                     allowed_calls.append(
                         ProviderToolCall(
@@ -828,6 +832,33 @@ class ExecutorRuntime:
         )
         return list(batch.results)
 
+    def _observe_tool_loop_quality(
+        self,
+        tool_calls: list[ProviderToolCall],
+    ) -> list[dict[str, str]]:
+        observations = observe_tool_calls(
+            tool_calls,
+            seen_signatures=getattr(
+                self._runtime,
+                "tool_call_signature_counts",
+                None,
+            ),
+        )
+        if not observations:
+            return []
+        runtime_observations = getattr(self._runtime, "tool_loop_observations", None)
+        if isinstance(runtime_observations, list):
+            runtime_observations.extend(observations)
+        progress_callback = getattr(self._runtime, "progress_callback", None)
+        if not callable(progress_callback):
+            return observations
+        for observation in observations:
+            try:
+                progress_callback(dict(observation))
+            except Exception:
+                pass
+        return observations
+
     async def execute_tool_calls(
         self,
         tool_calls: list[ProviderToolCall],
@@ -843,6 +874,7 @@ class ExecutorRuntime:
         turn_boundary_adapter = build_default_composition_boundary_adapter(
             seam_id=SEAM_AGENT_EXECUTOR_RUNTIME,
         )
+        self._observe_tool_loop_quality(tool_calls)
         policy_adapter = self._build_policy_adapter(
             tool_budget_state=tool_budget_state,
             turn_boundary_adapter=turn_boundary_adapter,

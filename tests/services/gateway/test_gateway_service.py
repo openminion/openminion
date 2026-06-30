@@ -110,6 +110,16 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         self.assertGreaterEqual(len(run_events), 8)
         self.assertEqual(run_events[0].payload.get("state"), "queued")
         self.assertEqual(run_events[-1].payload.get("state"), "completed")
+        generate_events = [
+            event
+            for event in run_events
+            if event.payload.get("step") == "agent.generate"
+        ]
+        self.assertTrue(generate_events)
+        self.assertEqual(
+            generate_events[0].payload.get("setup_cost_route"),
+            "no_tool_answer",
+        )
 
     def test_gateway_budgeted_history_keeps_recent_large_assistant_artifact(
         self,

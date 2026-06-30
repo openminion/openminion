@@ -36,6 +36,8 @@ class _StreamingRuntimeDouble:
         self._session_id = "focus-stream"
         self.tool_list: list[tuple[str, bool]] = []
         self.sent_texts: list[str] = []
+        self.active_turns = 0
+        self.max_active_turns = 0
         self.first_chunk_sent = asyncio.Event()
         self.release_first_turn = asyncio.Event()
 
@@ -110,15 +112,20 @@ class _StreamingRuntimeDouble:
     ):
         del progress_callback, inbound_metadata, approval_callback
         self.sent_texts.append(text)
-        is_first_turn = len(self.sent_texts) == 1
-        for i, chunk in enumerate(self._chunks):
-            if self._raise_after is not None and i >= self._raise_after:
-                raise RuntimeError("simulated mid-stream failure")
-            yield chunk
-            if self._hold_after_first_chunk and is_first_turn and i == 0:
-                self.first_chunk_sent.set()
-                await self.release_first_turn.wait()
-            await asyncio.sleep(0)
+        self.active_turns += 1
+        self.max_active_turns = max(self.max_active_turns, self.active_turns)
+        try:
+            is_first_turn = len(self.sent_texts) == 1
+            for i, chunk in enumerate(self._chunks):
+                if self._raise_after is not None and i >= self._raise_after:
+                    raise RuntimeError("simulated mid-stream failure")
+                yield chunk
+                if self._hold_after_first_chunk and is_first_turn and i == 0:
+                    self.first_chunk_sent.set()
+                    await self.release_first_turn.wait()
+                await asyncio.sleep(0)
+        finally:
+            self.active_turns -= 1
 
 
 def _make_app(runtime: _StreamingRuntimeDouble) -> FocusApp:
@@ -169,6 +176,76 @@ async def test_busy_focus_keeps_input_enabled_and_queues_next_message() -> None:
 
         assert runtime.sent_texts == ["first", "second"]
         assert app.screen._queued_turns == []
+        assert runtime.max_active_turns == 1
+
+
+@pytest.mark.asyncio
+async def test_queued_focus_message_runs_after_interrupt_without_parallel_turns() -> None:
+    runtime = _StreamingRuntimeDouble(
+        working_dir="/tmp/focus-stream-queue-interrupt",
+        chunks=["reply"],
+        hold_after_first_chunk=True,
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("first"))
+        await runtime.first_chunk_sent.wait()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(
+            FocusComposer.Submitted("@README.md summarize")
+        )
+        await pilot.pause()
+
+        assert app.screen._queued_turns == ["@README.md summarize"]
+
+        await app.screen._interrupt_current_turn()
+        for _ in range(30):
+            await pilot.pause()
+            if (
+                runtime.sent_texts == ["first", "@README.md summarize"]
+                and not app.screen._busy
+            ):
+                break
+
+        assert runtime.sent_texts == ["first", "@README.md summarize"]
+        assert app.screen._queued_turns == []
+        assert runtime.max_active_turns == 1
+
+
+@pytest.mark.asyncio
+async def test_slash_command_while_busy_is_not_queued() -> None:
+    runtime = _StreamingRuntimeDouble(
+        working_dir="/tmp/focus-stream-busy-slash",
+        chunks=["reply"],
+        hold_after_first_chunk=True,
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("first"))
+        await runtime.first_chunk_sent.wait()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("/status"))
+        await pilot.pause()
+
+        chat = app.screen.query_one(FocusTranscript)
+        assert app.screen._queued_turns == []
+        assert runtime.sent_texts == ["first"]
+        assert any(
+            msg.kind == MessageKind.SYSTEM and "transport  gateway" in msg.body
+            for msg in chat._messages
+        )
+
+        runtime.release_first_turn.set()
 
 
 @pytest.mark.asyncio

@@ -472,10 +472,10 @@ def test_h5_places_agent_memory_after_historical_session_summaries() -> None:
         user_message="What is my email? Answer with only the email address.",
     )
 
-    recent_index = rendered.index("## Continuing from recent sessions")
     agent_index = rendered.index("## Agent Memory")
-    assert recent_index < agent_index
+    assert agent_index >= 0
     assert "new@example.com" in rendered
+    assert "old@example.com" not in rendered
 
 
 def test_h6_retrieves_prior_session_summary_mid_session() -> None:

@@ -29,7 +29,7 @@ def _blocked_tool_response_text(batch: ToolExecutionBatch) -> str:
             or getattr(result, "error", "")
             or "blocked"
         ).strip()
-        message = f"Tool `{tool_name}` was blocked"
+        message = f"status=error: Tool `{tool_name}` was blocked"
         if reason_code:
             message = f"{message} ({reason_code})"
         suggested_tool = str(error_details.get("suggested_tool", "") or "").strip()
