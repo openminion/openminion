@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Iterator, Literal
 
@@ -12,10 +13,21 @@ ChatPhase = Literal[
     "session_resume",
     "memory_retrieval",
     "context_pack_build",
+    "gateway_routing",
+    "gateway_session_context",
+    "brain_state_load",
+    "brain_pre_dispatch",
+    "brain_budget_check",
+    "brain_confirmation",
+    "brain_dispatch",
     "tool_schema_serialization",
     "provider_request_build",
     "provider_round_trip",
+    "approval_wait",
+    "tool_calls",
     "response_normalization",
+    "response_persistence",
+    "memory_write",
     "cli_render_delivery",
 ]
 
@@ -26,11 +38,27 @@ CHAT_PHASES: tuple[str, ...] = (
     "session_resume",
     "memory_retrieval",
     "context_pack_build",
+    "gateway_routing",
+    "gateway_session_context",
+    "brain_state_load",
+    "brain_pre_dispatch",
+    "brain_budget_check",
+    "brain_confirmation",
+    "brain_dispatch",
     "tool_schema_serialization",
     "provider_request_build",
     "provider_round_trip",
+    "approval_wait",
+    "tool_calls",
     "response_normalization",
+    "response_persistence",
+    "memory_write",
     "cli_render_delivery",
+)
+
+_ACTIVE_CHAT_PHASE_TIMER: ContextVar["ChatPhaseTimer | None"] = ContextVar(
+    "openminion_active_chat_phase_timer",
+    default=None,
 )
 
 
@@ -47,10 +75,21 @@ class ChatPhaseTimingPayload:
     session_resume_ms: int = 0
     memory_retrieval_ms: int = 0
     context_pack_build_ms: int = 0
+    gateway_routing_ms: int = 0
+    gateway_session_context_ms: int = 0
+    brain_state_load_ms: int = 0
+    brain_pre_dispatch_ms: int = 0
+    brain_budget_check_ms: int = 0
+    brain_confirmation_ms: int = 0
+    brain_dispatch_ms: int = 0
     tool_schema_serialization_ms: int = 0
     provider_request_build_ms: int = 0
     provider_round_trip_ms: int = 0
+    approval_wait_ms: int = 0
+    tool_calls_ms: int = 0
     response_normalization_ms: int = 0
+    response_persistence_ms: int = 0
+    memory_write_ms: int = 0
     cli_render_delivery_ms: int = 0
 
     phases_instrumented: tuple[str, ...] = field(default_factory=tuple)
@@ -174,4 +213,38 @@ __all__ = [
     "ChatPhase",
     "ChatPhaseTimer",
     "ChatPhaseTimingPayload",
+    "active_chat_phase",
+    "mark_active_chat_first_text",
+    "use_chat_phase_timer",
 ]
+
+
+def _validate_phase_name(name: str) -> None:
+    if name not in CHAT_PHASES:
+        raise ValueError(f"Unknown chat phase: {name!r}. Allowed: {sorted(CHAT_PHASES)}")
+
+
+@contextmanager
+def use_chat_phase_timer(timer: ChatPhaseTimer) -> Iterator[ChatPhaseTimer]:
+    token = _ACTIVE_CHAT_PHASE_TIMER.set(timer)
+    try:
+        yield timer
+    finally:
+        _ACTIVE_CHAT_PHASE_TIMER.reset(token)
+
+
+@contextmanager
+def active_chat_phase(name: str) -> Iterator[None]:
+    _validate_phase_name(name)
+    timer = _ACTIVE_CHAT_PHASE_TIMER.get()
+    if timer is None:
+        yield
+        return
+    with timer.phase(name):
+        yield
+
+
+def mark_active_chat_first_text() -> None:
+    timer = _ACTIVE_CHAT_PHASE_TIMER.get()
+    if timer is not None:
+        timer.mark_first_text()

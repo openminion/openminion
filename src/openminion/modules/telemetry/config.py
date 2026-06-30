@@ -11,8 +11,17 @@ from openminion.base.config.io import load_config as load_base_config
 
 
 @dataclass(frozen=True)
+class TelemetryExportConfig:
+    oteler: OTELExporterConfig = field(default_factory=OTELExporterConfig)
+
+
+@dataclass(frozen=True)
 class TelemetryConfig:
     otel_exporter: OTELExporterConfig = field(default_factory=OTELExporterConfig)
+
+    @property
+    def export(self) -> TelemetryExportConfig:
+        return TelemetryExportConfig(oteler=self.otel_exporter)
 
 
 def load_config(

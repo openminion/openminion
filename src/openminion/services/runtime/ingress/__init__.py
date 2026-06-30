@@ -69,23 +69,31 @@ def run_turn_payload(
     progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,
 ) -> dict[str, Any]:
-    from openminion.modules.telemetry.trace.phase_timing import ChatPhaseTimer
+    from openminion.modules.telemetry.trace.phase_timing import (
+        ChatPhaseTimer,
+        active_chat_phase,
+        use_chat_phase_timer,
+    )
 
     cold_start = bool(payload.get("__crtl_cold_start__", False))
     timer = ChatPhaseTimer(cold_start=cold_start)
-    request = runtime_turn_request_from_payload(
-        runtime=runtime,
-        payload=payload,
-        request_id=request_id,
-    )
+    with use_chat_phase_timer(timer):
+        with active_chat_phase("provider_request_build"):
+            request = runtime_turn_request_from_payload(
+                runtime=runtime,
+                payload=payload,
+                request_id=request_id,
+            )
     try:
-        result = execute_runtime_turn(
-            runtime=runtime,
-            request=request,
-            progress_callback=progress_callback,
-            approval_callback=approval_callback,
-        )
-        return result.as_payload()
+        with use_chat_phase_timer(timer):
+            result = execute_runtime_turn(
+                runtime=runtime,
+                request=request,
+                progress_callback=progress_callback,
+                approval_callback=approval_callback,
+            )
+            with active_chat_phase("response_normalization"):
+                return result.as_payload()
     finally:
         _emit_chat_phase_timing(runtime=runtime, timer=timer, request=request)
 
