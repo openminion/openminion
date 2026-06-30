@@ -8,6 +8,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pydantic import ValidationError
 
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
+
 from ..constants import (
     LLM_TOOL_CALL_STATUS_BLOCKED,
     LLM_TOOL_CALL_STATUS_ERROR,
@@ -381,11 +383,12 @@ def _call_with_retries(
                 message=f"Unknown provider: {provider_name}",
             )
 
-        call_request = request.model_copy(
-            update={"provider": provider_name, "model": model_name}
-        )
-        cfg = resolve_provider_config(client.llmctl.config, provider_name)
-        cfg["timeouts"] = client.llmctl.config.llmctl.timeouts.model_dump()
+        with active_chat_phase("provider_request_build"):
+            call_request = request.model_copy(
+                update={"provider": provider_name, "model": model_name}
+            )
+            cfg = resolve_provider_config(client.llmctl.config, provider_name)
+            cfg["timeouts"] = client.llmctl.config.llmctl.timeouts.model_dump()
 
         client._emit_operation(
             request=call_request,
@@ -396,17 +399,19 @@ def _call_with_retries(
         )
 
         try:
-            raw_resp = provider.complete(call_request, cfg)
-            response = client._normalize_response(
-                raw_resp,
-                provider_name,
-                model_name,
-                allowed_tool_names={
-                    str(getattr(tool, "name", "") or "").strip()
-                    for tool in call_request.tools or []
-                    if str(getattr(tool, "name", "") or "").strip()
-                },
-            )
+            with active_chat_phase("provider_round_trip"):
+                raw_resp = provider.complete(call_request, cfg)
+            with active_chat_phase("response_normalization"):
+                response = client._normalize_response(
+                    raw_resp,
+                    provider_name,
+                    model_name,
+                    allowed_tool_names={
+                        str(getattr(tool, "name", "") or "").strip()
+                        for tool in call_request.tools or []
+                        if str(getattr(tool, "name", "") or "").strip()
+                    },
+                )
         except LLMCtlError as exc:
             response = client._error_response(
                 provider=provider_name,

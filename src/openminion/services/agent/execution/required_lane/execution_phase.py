@@ -7,6 +7,10 @@ from openminion.services.security.policy import ToolBudgetState
 from ..deps import ExecutorDeps
 from .metadata import build_required_outcome
 from .state import RequiredLaneState, _PhaseResult
+from .unavailable import (
+    unavailable_discovery_or_version_message,
+    unavailable_discovery_retry_instruction,
+)
 from ..unforced_lane.follow_up import (
     build_follow_up_request,
     denied_tool_recovery_hint,
@@ -126,6 +130,69 @@ async def phase_execute(
                             "capability_fallback_trigger_reason": trigger_reason,
                         },
                     )
+        unavailable_message = (
+            ""
+            if denied
+            else unavailable_discovery_or_version_message(response, batch)
+        )
+        if unavailable_message:
+            retry_response = await runner.runtime_ops.call_provider(
+                build_follow_up_request(
+                    runner,
+                    deps=deps,
+                    response=response,
+                    batch=batch,
+                    extra_tool_feedback=unavailable_discovery_retry_instruction(
+                        response,
+                        batch,
+                    ),
+                ),
+                tool_call_strategy=tool_call_strategy,
+            )
+            if not retry_response.tool_calls:
+                return _PhaseResult(
+                    action="return",
+                    outcome=build_required_outcome(
+                        runner,
+                        deps=deps,
+                        text=str(getattr(retry_response, "text", "") or ""),
+                        model=str(getattr(retry_response, "model", "") or ""),
+                        finish_reason=str(
+                            getattr(retry_response, "finish_reason", "") or "stop"
+                        ),
+                        intent_category=intent_category,
+                        termination_reason="model_final",
+                        tool_calls_sig=deps.tool_calls_payload(response.tool_calls),
+                        batch=batch,
+                        tool_calls_count=len(response.tool_calls or []),
+                        attempted_tools=list(state.attempted_tools or []),
+                        capability_fallback_trigger_reason=state.capability_fallback_trigger_reason,
+                    ),
+                )
+            if (
+                deps.tool_calls_payload(retry_response.tool_calls)
+                == deps.tool_calls_payload(response.tool_calls)
+            ):
+                return _PhaseResult(
+                    action="return",
+                    outcome=build_required_outcome(
+                        runner,
+                        deps=deps,
+                        text=unavailable_message,
+                        model=str(getattr(retry_response, "model", "") or ""),
+                        finish_reason=str(
+                            getattr(retry_response, "finish_reason", "")
+                            or "tool_calls"
+                        ),
+                        intent_category=intent_category,
+                        termination_reason="tool_unavailable_final",
+                        tool_calls_sig=deps.tool_calls_payload(response.tool_calls),
+                        batch=batch,
+                        tool_calls_count=len(response.tool_calls or []),
+                        attempted_tools=list(state.attempted_tools or []),
+                        capability_fallback_trigger_reason=state.capability_fallback_trigger_reason,
+                    ),
+                )
         extra_metadata: dict[str, Any] = {}
         if security_events:
             extra_metadata["security_events"] = json.dumps(

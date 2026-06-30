@@ -322,8 +322,10 @@ def test_tmac03_candidate_promotion_never_produces_supersession_from_prose() -> 
             title="Prefer emacs",
             content="I do not prefer vim for code editing.",
             confidence=0.9,
+            claim_key="preference:editor",
             tags=["editor"],
             entities=["vim", "code", "editing"],
+            source_class="user_input",
         )
     )
     supersede_calls = _recording_supersede_calls(service)

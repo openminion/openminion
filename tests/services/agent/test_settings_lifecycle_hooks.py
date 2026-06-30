@@ -115,10 +115,14 @@ def test_settings_lifecycle_hook_nonzero_exit_is_observe_only(
     resolver = SettingsResolver(workspace_root=workspace, user_home=tmp_path / "user")
     register_settings_lifecycle_hooks(resolver, registry=registry)
 
-    registry.fire(
-        LifecycleEvent(event_type=LIFECYCLE_EVENT_PRE_TOOL_USE, tool_name="exec.run"),
-        _hook_context(),
-    )
+    with caplog.at_level(logging.WARNING, logger="test.settings_hooks"):
+        registry.fire(
+            LifecycleEvent(
+                event_type=LIFECYCLE_EVENT_PRE_TOOL_USE,
+                tool_name="exec.run",
+            ),
+            _hook_context(),
+        )
 
     assert "settings lifecycle hook exited non-zero" in caplog.text
 

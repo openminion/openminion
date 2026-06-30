@@ -87,12 +87,8 @@ class ContextBuildersMixin:
         query_text: str,
         agent_records: list[Any],
     ) -> bool:
-        if not query_text:
-            return True
-        return not any(
-            str(getattr(record, "type", "") or "").strip() != "session_summary"
-            for record in agent_records
-        )
+        del query_text
+        return not agent_records
 
     def _record_turn_provenance_trace(
         self,
@@ -310,6 +306,17 @@ class ContextBuildersMixin:
         session_records: list[Any],
     ) -> tuple[str, str, str, str]:
         parts: list[str] = []
+        recent_section = ""
+        if self._should_include_recent_session_summaries(
+            query_text=query_text,
+            agent_records=agent_records,
+        ):
+            recent_section = self._format_session_summaries(
+                recent_summaries,
+                max_chars=limit // 4,
+            )
+        if recent_section:
+            parts.append(recent_section)
         agent_section = _format_records_as_context(
             agent_records,
             header="## Agent Memory",
@@ -324,17 +331,6 @@ class ContextBuildersMixin:
         )
         if session_section:
             parts.append(session_section)
-        recent_section = ""
-        if self._should_include_recent_session_summaries(
-            query_text=query_text,
-            agent_records=agent_records,
-        ):
-            recent_section = self._format_session_summaries(
-                recent_summaries,
-                max_chars=limit // 4,
-            )
-        if recent_section:
-            parts.append(recent_section)
         current_section = ""
         if current_session_summary_records:
             current_section = self._format_session_summaries(
