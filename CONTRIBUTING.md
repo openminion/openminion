@@ -36,9 +36,10 @@ boundary summary than the broader docs.
 ## Quick start
 
 1. Fork and create a branch.
-2. Make focused changes.
-3. Add or update tests.
-4. Open a PR with a clear summary.
+2. Run `make dev-install` and `make hooks-install` once in your clone.
+3. Make focused changes.
+4. Add or update tests.
+5. Open a PR with a clear summary.
 
 ## Development basics
 
@@ -59,6 +60,21 @@ boundary summary than the broader docs.
 7. Keep temporary broad-sweep artifacts in the repository scratch area, not in this package root and not mixed into package source or docs surfaces.
 8. Prefer task-scoped validation during slice work; reserve broad repo-wide suites like `make check` for integration closeout or when the tracker explicitly requires them.
 9. Do not include unrelated refactors in the same PR.
+
+Commit message guidance:
+
+1. Use commit messages in the form `<type>(<scope>): <summary>` for normal work
+   in this repo.
+2. Approved current types are `feat`, `fix`, `docs`, `refactor`, `test`,
+   `chore`, `style`, and `build`.
+3. In `openminion`, include a scope by default. Good scopes name the owner
+   surface directly, for example `agent`, `api`, `cli`, `e2e`, `gateway`,
+   `runtime`, `telemetry`, `tool`, `tools`, or `tui`.
+4. Keep the summary specific to the landed change and avoid vague messages like
+   `update`.
+5. Prefer the most specific truthful type; do not use `chore` when `docs`,
+   `test`, `refactor`, or `build` is more accurate.
+6. Do not use local shorthand or planning labels as normal commit types.
 
 Preferred PR shape:
 
