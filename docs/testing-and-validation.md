@@ -1,7 +1,7 @@
 # OpenMinion Testing And Validation
 
 Status: active
-Last updated: 2026-06-18
+Last updated: 2026-06-30
 
 Purpose: give package users and maintainers one package-local reference for the
 basic validation commands that prove `openminion` installs and runs correctly.
@@ -81,3 +81,58 @@ For package-release or integration-owner validation, use:
 1. `RELEASING.md` for the compact release checklist
 2. `tests/e2e/runners/` for committed end-to-end runners
 3. the maintainer workflow docs for broader integration and tracking flows
+
+## TUI focus PTY smoke
+
+The terminal focus shell has a reusable PTY-based E2E harness under
+`tests/e2e/tui/focus/`. It is intended for maintainer and contributor
+validation of the interactive surface a person actually uses: launch, prompt
+readiness, slash commands, live turns, tool turns, and opt-in complex workflows.
+
+Run the deterministic local slice from the package root:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py local
+```
+
+Run live MiniMax focus smoke when a compatible config and credentials are
+available:
+
+```bash
+OPENMINION_TUI_FOCUS_E2E_CONFIG=/path/to/config.json \
+OPENMINION_TUI_FOCUS_E2E_AGENT=minimax-m2-7 \
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py live
+```
+
+Run only the separately gated deep/complex research scenarios:
+
+```bash
+OPENMINION_TUI_FOCUS_E2E_CONFIG=/path/to/config.json \
+OPENMINION_TUI_FOCUS_E2E_AGENT=minimax-m2-7 \
+OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py research
+```
+
+Run only the separately gated deep/complex/long coding scenarios:
+
+```bash
+OPENMINION_TUI_FOCUS_E2E_CONFIG=/path/to/config.json \
+OPENMINION_TUI_FOCUS_E2E_AGENT=minimax-m2-7 \
+OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py coding
+```
+
+Run the full complex/deep matrix:
+
+```bash
+OPENMINION_TUI_FOCUS_E2E_CONFIG=/path/to/config.json \
+OPENMINION_TUI_FOCUS_E2E_AGENT=minimax-m2-7 \
+OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py complex
+```
+
+The complex slice is intentionally not part of routine local validation. It can
+consume provider quota and exercises longer tasks such as deep-research,
+complex research synthesis, long-running research, deep coding, complex coding,
+and long scratch-directory coding flows.
