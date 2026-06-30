@@ -189,17 +189,56 @@ Tool package note:
 
 The default `openminion` invocation is the recommended interactive surface:
 
-1. `openminion` (no subcommand) on a TTY launches the terminal-flow focus shell — output flows into your terminal's primary buffer (scrollback works like `git log`).
-2. `cat prompt.md | openminion` runs a single one-shot turn against stdin and exits.
-3. `openminion tui` also launches focus mode by default; use `openminion dashboard` or `openminion tui --dashboard` for the full-screen monitoring / overview dashboard across chats, sessions, agents, tools, memory, cron, and system state.
-4. `openminion focus --rich` opens the Textual full-TUI focus shell (alt-screen, overlays, in-app dashboard side-trip) instead of terminal-flow.
-5. Each agent turn renders with a `⏺` marker, a verb-rotating thinking spinner, colored `●` tool-call markers, and syntax-highlighted code blocks (monokai theme).
-6. `--plain-spinner` (or `OPENMINION_FOCUS_PLAIN_SPINNER=1` / `NO_COLOR=1`) drops the verb rotation but keeps the elapsed counter and `esc to interrupt` hint.
-7. Tool blocks longer than 6 lines are truncated to keep the scrollback readable; `/expand` re-prints the most recent one in full, `/expand 2` picks the second-most-recent, `/expand 0` lists all truncated blocks.
-8. Tool-block verbosity has three levels: `--verbosity quiet` hides tool blocks (an end-of-turn `(N tool calls hidden …)` summary still shows the activity, with `M failed` if any non-zero exits); `--verbosity normal` is the default (6-line cap + `/expand`); `--verbosity verbose` shows full tool bodies up to a 200-line hard cap. Same effect via `OPENMINION_FOCUS_VERBOSITY=quiet|normal|verbose`. Live overrides via `/quiet`, `/verbose`, `/normal` slash commands. Failed tool calls show `✗ (exit N)` in red after the title. **Persistent preferences**: create `<DATA_ROOT>/focus_prefs.toml` (typically `~/.openminion/focus_prefs.toml`) with flat keys `verbosity = "quiet"` and/or `progress = "off"` to set per-user defaults without re-typing slashes or exporting env vars. Precedence: CLI flag → env → preferences file → default.
-9. Edit and Write tool calls render with inline unified-diff coloring (`+` lines green, `-` lines red, `@@` hunk headers cyan, `---`/`+++` file headers bold). The same FTV verbosity ladder applies — `quiet` hides; `normal` truncates to 6 lines + `/expand`; `verbose` shows up to 200 lines; `/expand` always shows the full diff. Detection is conservative: when the body isn't recognizable as a unified diff, the generic tool-block render fires instead.
-10. Live tool-execution narration: while a tool is running, a yellow `●` marker prints a `Running Bash(ls -la)` narration line; on completion, the final tool block (with output, exit code, and FDR diff coloring for Edit/Write) prints immediately below — no double-render across the live and post-turn paths. Quiet mode suppresses the narration but still counts the call toward the end-of-turn `(N tool calls hidden …)` summary.
-11. Slash commands available in focus terminal-flow: `/clear`, `/compact`, `/cost`, `/dashboard`, `/exit`, `/expand`, `/help`, `/init`, `/mcp`, `/model`, `/new`, `/normal`, `/quiet`, `/quit`, `/readonly`, `/resume`, `/sessions`, `/status`, `/tools`, `/verbose`. Prefix `!` runs a shell escape. FPC v2 additions: `/init` bootstraps an `OPENMINION.md` project memory file (also detects `AGENTS.md` / `CLAUDE.md`); `/compact` summarizes older turns to reclaim context (real backend via `SessionContextService`); `/model <provider>` or `/model <provider>/<model>` switches the active model for the session (restart reverts); `/mcp` lists configured MCP servers + health + tool counts; `/dashboard` opens the monitoring / overview dashboard; `/readonly on|off|toggle` flags the session as read-only (write-tool blocking enforcement is FPC-11b). Pasting an image-file path into the composer auto-converts to `[image: <path>]`. Custom slash commands can be added as Markdown files in `.openminion/commands/*.md` (project) or `<DATA_ROOT>/commands/*.md` (user-global) with `$ARGUMENTS`/`$1..$N`/`@file`/`!` `cmd` `` interpolation.
+1. `openminion` launches the terminal-flow focus shell on a TTY. Output stays in
+   your terminal's primary buffer, so scrollback behaves like `git log`.
+2. `cat prompt.md | openminion` runs one stdin-backed turn and exits.
+3. `openminion tui` also launches focus mode by default. Use
+   `openminion dashboard` or `openminion tui --dashboard` when you want the
+   monitoring dashboard across chats, sessions, agents, tools, memory, cron,
+   and system state.
+4. `openminion focus --rich` opens the Textual focus shell with alt-screen,
+   overlays, and an in-app dashboard side-trip.
+5. Each agent turn shows a `⏺` marker, verb-rotating thinking spinner,
+   colored `●` tool-call markers, and syntax-highlighted code blocks.
+6. `--plain-spinner` drops the verb rotation but keeps the elapsed counter and
+   `esc to interrupt` hint. The same behavior is available through
+   `OPENMINION_FOCUS_PLAIN_SPINNER=1` or `NO_COLOR=1`.
+7. Tool blocks longer than 6 lines are truncated to keep scrollback readable:
+   `/expand` reprints the latest block, `/expand 2` selects the second latest,
+   and `/expand 0` lists all truncated blocks.
+8. Tool-block verbosity has three levels:
+   - `--verbosity quiet` hides tool blocks but keeps an end-of-turn hidden-call
+     summary.
+   - `--verbosity normal` is the default: 6-line cap plus `/expand`.
+   - `--verbosity verbose` shows full tool bodies up to a 200-line hard cap.
+
+   You can set the same default with
+   `OPENMINION_FOCUS_VERBOSITY=quiet|normal|verbose`, then override it live with
+   `/quiet`, `/normal`, or `/verbose`. Failed tool calls show `✗ (exit N)` in
+   red after the title.
+
+   For persistent preferences, create `<DATA_ROOT>/focus_prefs.toml` (usually
+   `~/.openminion/focus_prefs.toml`) with flat keys such as
+   `verbosity = "quiet"` or `progress = "off"`. Precedence is CLI flag → env →
+   preferences file → default.
+9. Edit and Write tool calls render inline unified diffs. The same verbosity
+   ladder applies: quiet hides, normal truncates, verbose shows up to 200 lines,
+   and `/expand` always shows the full diff.
+10. Live tool-execution narration prints a yellow `● Running Bash(ls -la)` line
+    while a tool is active, then renders the final tool block below it. Quiet
+    mode suppresses narration but still counts the call in the end-of-turn
+    summary.
+11. Focus terminal-flow slash commands include `/clear`, `/compact`, `/cost`,
+    `/dashboard`, `/exit`, `/expand`, `/help`, `/init`, `/mcp`, `/model`,
+    `/new`, `/normal`, `/quiet`, `/quit`, `/readonly`, `/resume`, `/sessions`,
+    `/status`, `/tools`, and `/verbose`.
+
+    Other composer affordances:
+    - prefix `!` to run a shell escape;
+    - paste an image-file path to convert it to `[image: <path>]`;
+    - add custom slash commands as Markdown files in `.openminion/commands/*.md`
+      or `<DATA_ROOT>/commands/*.md`; command templates can use `$ARGUMENTS`,
+      `$1..$N`, `@file`, and shell interpolation with `!` commands.
 
 ## Legacy chat surface
 
@@ -228,13 +267,25 @@ Chat-only behavior preserved during the notice period:
 
 These apply uniformly to focus, gateway, run, and agent surfaces:
 
-1. `--verbosity {quiet,normal,verbose}` — tool-block fidelity. `quiet` hides tool blocks (focus shows an end-of-turn `(N tool calls hidden …)` summary; gateway/run/agent simply omit them); `normal` is the default (6-line cap + `/expand`); `verbose` shows full tool bodies up to a 200-line cap.
-2. `--progress {full,minimal,off}` — in-flight chrome. `full` is the default on TTY (spinner + elapsed + interrupt hint); `minimal` keeps the elapsed counter but drops the verb rotation; `off` suppresses all chrome.
-3. **Auto-detect**: when stdin OR stdout is piped (e.g. `cat prompt | openminion` or `openminion run "..." | tee out.txt`), `--progress` defaults to `off` automatically so captured output stays clean. Pass `--progress full` to override.
-4. Env: `OPENMINION_VERBOSITY=quiet|normal|verbose` and `OPENMINION_PROGRESS=full|minimal|off` set defaults persistently.
-5. Legacy aliases still work: `--no-progress` → `--progress off`; `--plain-spinner` → `--progress minimal`; `OPENMINION_FOCUS_VERBOSITY` and `OPENMINION_FOCUS_PLAIN_SPINNER` still resolve (with deprecation warnings).
-6. `NO_COLOR=1` honors the universal convention by mapping to `--progress minimal`.
-7. The Textual `--rich` shell does NOT yet honor the verbosity ladder (deferred to a follow-on round); use the default terminal-flow shell to get the full UX.
+1. `--verbosity {quiet,normal,verbose}` controls tool-block fidelity:
+   - `quiet` hides tool blocks;
+   - `normal` is the default 6-line cap plus `/expand`;
+   - `verbose` shows full tool bodies up to a 200-line cap.
+2. `--progress {full,minimal,off}` controls in-flight chrome:
+   - `full` is the TTY default with spinner, elapsed time, and interrupt hint;
+   - `minimal` keeps elapsed time and drops verb rotation;
+   - `off` suppresses progress chrome.
+3. **Auto-detect**: when stdin or stdout is piped, `--progress` defaults to
+   `off` so captured output stays clean. Pass `--progress full` to override.
+4. Env defaults: `OPENMINION_VERBOSITY=quiet|normal|verbose` and
+   `OPENMINION_PROGRESS=full|minimal|off`.
+5. Legacy aliases still work: `--no-progress` → `--progress off`,
+   `--plain-spinner` → `--progress minimal`, and the older focus-specific env
+   vars still resolve with deprecation warnings.
+6. `NO_COLOR=1` follows the universal convention by mapping to
+   `--progress minimal`.
+7. The Textual `--rich` shell does NOT yet honor the verbosity ladder. Use the
+   default terminal-flow shell for the full UX.
 8. `openminion chat` is in maintenance mode and does NOT honor the unified
    `--verbosity` / `--progress` flags. It keeps its own existing
    `--no-progress` / `--quiet` flags during the soft-deprecation notice period.
@@ -265,7 +316,10 @@ not liable for damages, losses, outages, billing costs, or other consequences
 arising from use or malfunction of the software. See `LICENSE` for the full
 legal terms and limitations.
 
-OpenMinion can be configured to call third-party providers that may charge usage fees. You are solely responsible for any provider, API, cloud, infrastructure, or similar charges incurred through your configuration or use of the software.
+OpenMinion can be configured to call third-party providers that may charge
+usage fees. You are solely responsible for provider, API, cloud,
+infrastructure, or similar charges incurred through your configuration or use
+of the software.
 
 ## Configuration and deeper docs
 
