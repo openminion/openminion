@@ -1,5 +1,3 @@
-"""Modules brain adapters context bridges identity."""
-
 from typing import Any
 
 from openminion.modules.brain.constants import (

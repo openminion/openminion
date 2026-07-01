@@ -1,5 +1,3 @@
-"""Modules brain adapters context bridges artifact."""
-
 import logging
 from typing import Any
 

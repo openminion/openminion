@@ -1,13 +1,9 @@
-"""Modules brain adapters context bridges compress."""
-
 from typing import Any
 
 from .shared import BRAIN_ADAPTER_INTERFACE_VERSION, _lazy_resolve_service
 
 
 class BridgeCompressClient:
-    """Bridge adapter to wrap CompressionService for ContextCtlService."""
-
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
     def __init__(self, backing_store: Any) -> None:
