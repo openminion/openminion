@@ -30,7 +30,6 @@ from .constants import (
     DEFAULT_INTEGRATED_CONFIG_SUBDIR,
 )
 
-# ``fixed_act_profile_*`` + ``normalize_default_act_profile``
 from .act_profiles import (  # noqa: F401
     _ALLOWED_ACT_PROFILES,
     fixed_act_profile_from_context,
@@ -46,7 +45,6 @@ TOOL_SCHEMA_SHORTLISTING_ENABLED = False
 TOOL_SCHEMA_SHORTLIST_THRESHOLD = 8
 TOOL_SCHEMA_SHORTLIST_MAX_ACTIVE = 8
 
-# CTGP-04 defaults: cross-turn goal persistence safety caps. Operator-tunable
 DEFAULT_MAX_AUTONOMOUS_TURNS_PER_PLAN = 10
 DEFAULT_MAX_AUTONOMOUS_TURNS_PER_SESSION = 20
 
@@ -139,11 +137,6 @@ class RetryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_retries_per_step: int = Field(default=2, ge=0)
-    # AR-02 (2026-06-06): raised max_replans default from 2 → 8.
-    # Self-correcting coding tasks routinely need 5-10 replans before
-    # converging on a working solution; 2 caused premature
-    # `replans_exhausted` terminations on LMPO Residual B research-to-code.
-    # Operators tighten via config when speed-over-completeness is required.
     max_replans: int = Field(default=8, ge=0)
     plan_checkpoint_interval: int = Field(default=5, ge=0)
     plan_max_iterations: int = Field(default=64, ge=1)
@@ -246,7 +239,6 @@ class RunnerOptions:
     memory_policy_snapshot: dict[str, Any] = field(default_factory=dict)
     skill_selection_strategy: str = "llm"
     tool_schema_shortlisting_enabled: bool = TOOL_SCHEMA_SHORTLISTING_ENABLED
-    # `context_budget_prerouting_enabled` removed
     max_skills_per_session: int = MAX_SKILLS_PER_SESSION
     outcome_attribution_config: OutcomeAttributionConfig = field(
         default_factory=OutcomeAttributionConfig
@@ -257,18 +249,15 @@ class RunnerOptions:
     auto_fact_extraction_config: AutoFactExtractionConfig = field(
         default_factory=AutoFactExtractionConfig
     )
-    # proactive autonomous entrypoint. Default disabled
     proactive_autonomous_entrypoint_config: ProactiveAutonomousEntrypointConfig = field(
         default_factory=ProactiveAutonomousEntrypointConfig
     )
-    # adaptive iteration budget. Controls per-turn iteration
     adaptive_budget_config: AdaptiveBudgetConfig = field(
         default_factory=AdaptiveBudgetConfig
     )
     budget_telemetry_config: BudgetTelemetryConfig = field(
         default_factory=BudgetTelemetryConfig
     )
-    # CTGP operator kill-switch + cap overrides. Default enabled: the
     autonomous_continuation_enabled: bool = True
     autonomous_continuation_max_per_plan: int = DEFAULT_MAX_AUTONOMOUS_TURNS_PER_PLAN
     autonomous_continuation_max_per_session: int = (
@@ -440,7 +429,6 @@ class RunnerOptions:
             self.proactive_autonomous_entrypoint_config = (
                 ProactiveAutonomousEntrypointConfig.model_validate(raw_pae)
             )
-        # CTGP cap coercion. Non-positive caps are coerced up to 1 so we
         self.autonomous_continuation_enabled = bool(
             getattr(self, "autonomous_continuation_enabled", True)
         )
@@ -589,7 +577,7 @@ class BrainConfig(BaseModel):
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     clarify: ClarifyConfig = Field(
         default_factory=ClarifyConfig
-    )  # Clarification settings
+    )
     mission: MissionConfig = Field(default_factory=MissionConfig)
     skill_selection_strategy: str = "llm"
     max_skills_per_session: int = Field(default=MAX_SKILLS_PER_SESSION, ge=1)
@@ -600,11 +588,9 @@ class BrainConfig(BaseModel):
     auto_fact_extraction: AutoFactExtractionConfig = Field(
         default_factory=AutoFactExtractionConfig
     )
-    # per-agent proactive-autonomous-entrypoint config. YAML
     proactive_autonomous_entrypoint: ProactiveAutonomousEntrypointConfig = Field(
         default_factory=ProactiveAutonomousEntrypointConfig
     )
-    # per-agent adaptive-iteration-budget config. YAML shape
     adaptive_budget: AdaptiveBudgetConfig = Field(default_factory=AdaptiveBudgetConfig)
     budget_telemetry: BudgetTelemetryConfig = Field(
         default_factory=BudgetTelemetryConfig
