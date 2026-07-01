@@ -7,13 +7,36 @@ import pytest
 
 from openminion.cli.constants import OPENMINION_FOCUS_BELL_ENV
 from openminion.cli.tui.focus.app import _DemoFocusRuntime
+from openminion.cli.tui.focus.screen import FocusScreen, _format_response_time
+from openminion.cli.tui.focus.widgets import FocusTranscript
+from openminion.cli.tui.presentation.models import ChatMessage, MessageKind
 
 
 def _make_screen():
-    from openminion.cli.tui.focus.screen import FocusScreen
-
     runtime = _DemoFocusRuntime(working_dir="/tmp", session="bell-test")
     return FocusScreen(runtime=runtime, working_dir="/tmp")
+
+
+class _TranscriptProbe:
+    def __init__(self) -> None:
+        self.messages: list[ChatMessage] = []
+
+    def push_message(self, message: ChatMessage) -> None:
+        self.messages.append(message)
+
+
+def _attach_transcript_probe(
+    monkeypatch: pytest.MonkeyPatch, screen: FocusScreen
+) -> _TranscriptProbe:
+    probe = _TranscriptProbe()
+
+    def query_one(selector):
+        if selector is FocusTranscript:
+            return probe
+        raise LookupError(selector)
+
+    monkeypatch.setattr(screen, "query_one", query_one)
+    return probe
 
 
 def test_bell_suppressed_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -23,6 +46,40 @@ def test_bell_suppressed_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None
     with redirect_stdout(buf):
         screen._on_turn_complete(elapsed_seconds=20.0)
     assert "\a" not in buf.getvalue()
+
+
+def test_focus_completion_adds_muted_timing_message_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENMINION_SHOW_RESPONSE_TIME", raising=False)
+    screen = _make_screen()
+    probe = _attach_transcript_probe(monkeypatch, screen)
+
+    screen._on_turn_complete(elapsed_seconds=82.0)
+
+    assert len(probe.messages) == 1
+    message = probe.messages[0]
+    assert message.kind == MessageKind.SYSTEM
+    assert message.body == "Done in 1m22s"
+
+
+def test_focus_completion_can_hide_timing_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_SHOW_RESPONSE_TIME", "0")
+    screen = _make_screen()
+    probe = _attach_transcript_probe(monkeypatch, screen)
+
+    screen._on_turn_complete(elapsed_seconds=82.0)
+
+    assert probe.messages == []
+
+
+def test_focus_response_time_format_uses_whole_seconds() -> None:
+    assert _format_response_time(0.0) == "0s"
+    assert _format_response_time(0.9) == "<1s"
+    assert _format_response_time(3.8) == "3s"
+    assert _format_response_time(62.5) == "1m02s"
 
 
 def test_bell_fires_when_env_on_and_elapsed_over_threshold(

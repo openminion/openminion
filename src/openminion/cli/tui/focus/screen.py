@@ -27,6 +27,7 @@ from openminion.cli.tui.presentation.models import ChatMessage, MessageKind
 from openminion.cli.tui.widgets import (
     ChatSearchBar,
 )
+from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
 
 from .files import build_file_index
 from .tokens import cursor_offset_for_text_area
@@ -56,6 +57,17 @@ _FOCUS_PALETTE_ENTRIES = [
     ("/debug", "Toggle debug pane", "cmd-debug"),
     ("/exit", "Quit focus mode", "cmd-exit"),
 ]
+
+
+def _format_response_time(elapsed_seconds: float) -> str:
+    elapsed = max(0.0, float(elapsed_seconds))
+    if 0.0 < elapsed < 1.0:
+        return "<1s"
+    seconds = int(elapsed)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    return f"{minutes}m{seconds:02d}s"
 
 
 class FocusScreen(
@@ -266,6 +278,16 @@ class FocusScreen(
             self._handle_command(text)
             return
         if text.startswith("!"):
+            if self._busy:
+                chat = self.query_one(FocusTranscript)
+                chat.push_message(
+                    ChatMessage(
+                        kind=MessageKind.SYSTEM,
+                        sender="system",
+                        body="Shell escape is unavailable while a turn is running.",
+                    )
+                )
+                return
             command = text[1:].strip()
             if command:
                 self._turn_worker = self.run_worker(
@@ -443,6 +465,7 @@ class FocusScreen(
                 if not token:
                     continue
                 reply += token
+                mark_active_chat_first_text()
                 turn.append_token(token)
             turn.complete(final_text=reply)
             if not reply.strip():
@@ -532,7 +555,7 @@ class FocusScreen(
         return text
 
     def _on_turn_complete(self, elapsed_seconds: float) -> None:
-        """Write the terminal bell on long completions when enabled."""
+        """Record completion timing and write the optional long-completion bell."""
         from openminion.base.config.env import resolve_environment_config
         from openminion.cli.constants import (
             CLI_TRUTHY_ENV_VALUES,
@@ -544,9 +567,21 @@ class FocusScreen(
             elapsed_float = float(elapsed_seconds or 0.0)
         except (TypeError, ValueError):
             return
+        env = resolve_environment_config()
+        if env.openminion_show_response_time:
+            try:
+                chat = self.query_one(FocusTranscript)
+                chat.push_message(
+                    ChatMessage(
+                        kind=MessageKind.SYSTEM,
+                        sender="system",
+                        body=f"Done in {_format_response_time(elapsed_float)}",
+                    )
+                )
+            except (QueryError, AttributeError):
+                pass
         if elapsed_float <= 10.0:
             return
-        env = resolve_environment_config()
         raw = str(env.get(OPENMINION_FOCUS_BELL_ENV, "") or "").strip().lower()
         if raw not in CLI_TRUTHY_ENV_VALUES:
             return
