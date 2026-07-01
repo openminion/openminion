@@ -1,6 +1,7 @@
 from .approval import ToolApprovalWidget
 from .composer import FocusComposer
 from .mention_overlay import FileMentionOverlay
+from .permissions_overlay import PermissionsOverlay
 from .session_overlay import SessionOverlay
 from .slash_overlay import SlashCommandOverlay
 from .status_line import FocusStatusLine
@@ -12,6 +13,7 @@ __all__ = [
     "FileMentionOverlay",
     "FocusComposer",
     "FocusMessageWidget",
+    "PermissionsOverlay",
     "FocusStatusLine",
     "FocusTranscript",
     "SlashCommandOverlay",

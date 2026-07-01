@@ -53,6 +53,32 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(state.unresolved_clarify_items, [])
         session_api.put_working_state.assert_called_once()
 
+
+    def test_pending_session_action_policy_metadata_applies_to_new_state(self) -> None:
+        class _SessionApi:
+            store = None
+
+            def __init__(self) -> None:
+                self.saved = None
+
+            def get_latest_working_state(self, _session_id: str):
+                return None
+
+            def put_working_state(self, _session_id: str, *, state_inline):
+                self.saved = dict(state_inline)
+
+        session_api = _SessionApi()
+        runner = BrainRunner(profile=_profile(), session_api=session_api)
+        runner._pending_session_action_policy_mode_override = "auto"
+
+        state = runner._load_or_init_state("s-policy")
+
+        self.assertEqual(state.session_action_policy_mode_override, "auto")
+        self.assertEqual(
+            session_api.saved["session_action_policy_mode_override"],
+            "auto",
+        )
+
     def test_interpret_updates_goal_for_fresh_input(self) -> None:
         runner = BrainRunner(profile=_profile(), session_api=MagicMock())
         state = WorkingState(

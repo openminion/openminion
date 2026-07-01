@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from openminion.api.runtime import APIRuntime
 from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.config.action_policy import ACTION_POLICY_SESSION_OVERRIDE_KEY
 from openminion.base.config.runtime.profile import PERMISSION_MODE_DEFAULT
 from openminion.base.types import Message
 from openminion.cli.status import (
@@ -133,6 +134,7 @@ class OpenMinionRuntime(
         self._project_context_pending: bool = False
         self._model_override_provider: str = ""
         self._model_override_model: str = ""
+        self._action_policy_mode_override: str = ""
         self._permission_mode: str = ""
         self._permission_overrides: dict[str, str] = {}
         self._read_only_mode: bool = False
@@ -499,6 +501,12 @@ class OpenMinionRuntime(
                 merged_inbound_metadata["permission_overrides"] = json.dumps(
                     self._permission_overrides,
                     sort_keys=True,
+                )
+            if self.action_policy_mode_override:
+                if merged_inbound_metadata is None:
+                    merged_inbound_metadata = {}
+                merged_inbound_metadata[ACTION_POLICY_SESSION_OVERRIDE_KEY] = (
+                    self.action_policy_mode_override
                 )
             if self.effort_level:
                 if merged_inbound_metadata is None:

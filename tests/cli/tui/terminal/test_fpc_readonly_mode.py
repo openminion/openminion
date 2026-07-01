@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 from rich.console import Console
 
 from openminion.cli.tui.terminal.shell import _SLASH_COMMANDS, _handle_slash
+from openminion.base.config.action_policy import ACTION_POLICY_SESSION_OVERRIDE_KEY
 from openminion.cli.tui.providers.runtime import OpenMinionRuntime
 
 
@@ -27,6 +28,7 @@ def _make_runtime() -> OpenMinionRuntime:
     rt._project_context_pending = False
     rt._model_override_provider = ""
     rt._model_override_model = ""
+    rt._action_policy_mode_override = ""
     rt._permission_mode = ""
     rt._permission_overrides = {}
     rt._read_only_mode = False
@@ -73,6 +75,46 @@ def test_permission_mode_cycle_uses_three_modes() -> None:
     assert rt.cycle_permission_mode() == "readonly"
     assert rt.cycle_permission_mode() == "bypass"
     assert rt.cycle_permission_mode() == "default"
+
+
+def test_session_action_policy_mode_override_persists_to_session_metadata() -> None:
+    class _Sessions:
+        def __init__(self) -> None:
+            self.patch = None
+
+        def update_session_metadata(self, *, session_id: str, patch: dict) -> None:
+            self.patch = (session_id, dict(patch))
+
+    rt = _make_runtime()
+    sessions = _Sessions()
+    rt._rt.sessions = sessions
+
+    assert rt.set_session_action_policy_mode("auto") == "auto"
+
+    assert rt.action_policy_mode_override == "auto"
+    assert sessions.patch == (
+        "sess-1",
+        {ACTION_POLICY_SESSION_OVERRIDE_KEY: "auto"},
+    )
+
+
+def test_session_action_policy_mode_override_rejects_request_response_words() -> None:
+    rt = _make_runtime()
+
+    try:
+        rt.set_session_action_policy_mode("allow_forever")
+    except ValueError as exc:
+        assert "valid modes" in str(exc)
+    else:  # pragma: no cover - defensive assertion
+        raise AssertionError("expected ValueError")
+
+
+def test_permissions_bypass_surfaces_full_access_warning() -> None:
+    rt = _make_runtime()
+    out = _dispatch(rt, "/permissions bypass")
+
+    assert rt.permission_mode == "bypass"
+    assert "full access" in out
 
 
 def test_set_permission_mode_rejects_unknown_mode() -> None:

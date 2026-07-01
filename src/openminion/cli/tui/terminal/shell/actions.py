@@ -239,10 +239,19 @@ def _handle_slash_permissions(
         return
     console.print(
         Text(
-            f"(permissions: {mode} — session-scoped)",
+            _permission_mode_message(mode),
             style=_MUTED_ITALIC_STYLE,
         )
     )
+
+
+def _permission_mode_message(mode: str) -> str:
+    if str(mode or "").strip().lower() == "bypass":
+        return (
+            "(permissions: bypass — full access for this session; "
+            "use `/permissions` in Focus for the safer chooser)"
+        )
+    return f"(permissions: {mode} — session-scoped)"
 
 
 def _handle_slash_agents(text: str, *, runtime: Any, console: Console) -> None:

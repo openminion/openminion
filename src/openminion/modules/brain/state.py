@@ -214,6 +214,11 @@ def _session_action_policy_mode_override(
     *,
     session_id: str,
 ) -> str | None:
+    pending = normalize_action_policy_mode_override(
+        getattr(runner, "_pending_session_action_policy_mode_override", None)
+    )
+    if pending is not None:
+        return pending
     store = getattr(getattr(runner, "session_api", None), "store", None)
     if store is None or not hasattr(store, "get_session"):
         return None

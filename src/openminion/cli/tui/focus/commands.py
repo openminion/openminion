@@ -10,11 +10,15 @@ from openminion.cli.tui.project_context import (
     write_init_template,
 )
 from openminion.cli.tui.presentation.models import ChatMessage, MessageKind
+from openminion.cli.tui.presentation.permissions import (
+    apply_permission_menu_choice,
+    format_permission_status_label,
+)
 from openminion.cli.tui.presentation import resolve_theme_data_root
 from openminion.cli.tui.presentation.detail_modes import resolve_details_mode
 from openminion.cli.tui.presentation.slash_commands import rich_slash_command_registry
 
-from .widgets import FocusTranscript
+from .widgets import FocusTranscript, PermissionsOverlay
 
 
 class SlashCommandMixin:
@@ -288,14 +292,9 @@ class SlashCommandMixin:
         """Show or set the session-scoped permission mode."""
         arg = str(args or "").strip().lower()
         if not arg:
-            mode = str(
-                getattr(self._runtime, "permission_mode", "default") or "default"
-            )
-            body = (
-                f"permissions → {mode}\n"
-                "Use `/permissions default|readonly|bypass` or Shift+Tab."
-            )
-        elif arg == "cycle":
+            self._open_permissions_overlay()
+            return
+        if arg == "cycle":
             body = f"permissions → {self._cycle_permission_mode_from_ui()}"
         else:
             setter = getattr(self._runtime, "set_permission_mode", None)
@@ -304,12 +303,55 @@ class SlashCommandMixin:
             else:
                 try:
                     body = f"permissions → {setter(arg)}"
+                    if arg == "bypass":
+                        body = (
+                            f"{body} — full access for this session; "
+                            "use `/permissions` for the safer chooser."
+                        )
                 except ValueError as exc:
                     body = f"/permissions: {exc}"
         self._push_status_line()
         self.query_one(FocusTranscript).push_message(
             ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
         )
+
+    def _open_permissions_overlay(self) -> bool:
+        def _on_selected(result: tuple[str, bool] | None) -> None:
+            if result is None:
+                return
+            choice_id, confirmed = result
+            self._apply_permission_menu_choice(choice_id, confirmed=confirmed)
+
+        try:
+            self.app.push_screen(PermissionsOverlay(), _on_selected)
+        except (AttributeError, QueryError, RuntimeError, ValueError) as exc:
+            self._push_permissions_message(
+                f"/permissions: unable to open chooser: {exc}"
+            )
+            return False
+        return True
+
+    def _apply_permission_menu_choice(self, choice_id: str, *, confirmed: bool) -> None:
+        try:
+            result = apply_permission_menu_choice(
+                self._runtime,
+                choice_id,
+                confirmed=confirmed,
+            )
+        except (PermissionError, RuntimeError, ValueError) as exc:
+            body = f"/permissions: {exc}"
+        else:
+            body = result.message
+        self._push_status_line()
+        self._push_permissions_message(body)
+
+    def _push_permissions_message(self, body: str) -> None:
+        try:
+            self.query_one(FocusTranscript).push_message(
+                ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
+            )
+        except (QueryError, AttributeError):
+            pass
 
     def _slash_diff(self, args: str) -> None:
         """Show the current git diff in the focus transcript."""
@@ -336,13 +378,20 @@ class SlashCommandMixin:
         return mode
 
     def action_cycle_permission_mode(self) -> None:
-        mode = self._cycle_permission_mode_from_ui()
+        if not self._open_permissions_overlay():
+            return
+        mode = format_permission_status_label(
+            permission_mode=getattr(self._runtime, "permission_mode", "default"),
+            action_policy_mode=getattr(
+                self._runtime, "action_policy_mode_override", None
+            ),
+        ) or str(getattr(self._runtime, "permission_mode", "default") or "default")
         try:
             self.query_one(FocusTranscript).push_message(
                 ChatMessage(
                     kind=MessageKind.SYSTEM,
                     sender="system",
-                    body=f"permissions → {mode}",
+                    body=f"permissions chooser opened (current: {mode})",
                 )
             )
         except (QueryError, AttributeError):

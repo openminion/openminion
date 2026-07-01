@@ -9,6 +9,12 @@ from typing import AsyncIterator
 from textual.app import App
 from textual.css.query import QueryError
 
+from openminion.base.config.action_policy import normalize_action_policy_mode_override
+from openminion.base.config.runtime.profile import (
+    PERMISSION_MODE_DEFAULT,
+    PERMISSION_MODE_VALUES,
+    next_permission_mode,
+)
 from openminion.cli.theme import DARK, Theme
 from openminion.cli.theme.textual_adapter import (
     theme_variables_dict,
@@ -60,6 +66,9 @@ class DemoRuntime:
             ("weather_openmeteo", True),
             ("location", False),
         ]
+        self._permission_mode = ""
+        self._permission_overrides: dict[str, str] = {}
+        self._action_policy_mode_override = ""
 
     @property
     def agent_id(self) -> str:
@@ -120,6 +129,49 @@ class DemoRuntime:
         self._sessions[new_id] = []
         self._session_id = new_id
         return new_id
+
+    @property
+    def permission_mode(self) -> str:
+        return self._permission_mode or PERMISSION_MODE_DEFAULT
+
+    def set_permission_mode(self, mode: str) -> str:
+        normalized = str(mode or PERMISSION_MODE_DEFAULT).strip().lower()
+        if normalized not in PERMISSION_MODE_VALUES:
+            valid = ", ".join(sorted(PERMISSION_MODE_VALUES))
+            raise ValueError(f"unknown permission mode {mode!r}; valid modes: {valid}")
+        self._permission_mode = "" if normalized == PERMISSION_MODE_DEFAULT else normalized
+        return self.permission_mode
+
+    def cycle_permission_mode(self) -> str:
+        return self.set_permission_mode(next_permission_mode(self.permission_mode))
+
+    @property
+    def action_policy_mode_override(self) -> str:
+        return self._action_policy_mode_override
+
+    def set_session_action_policy_mode(self, mode: str) -> str:
+        normalized = normalize_action_policy_mode_override(mode)
+        if normalized is None:
+            raise ValueError("unknown action policy mode; valid modes: ask, auto, bypass")
+        self._action_policy_mode_override = normalized
+        return normalized
+
+    @property
+    def permission_overrides(self) -> dict[str, str]:
+        return dict(self._permission_overrides)
+
+    def set_permission_override(self, tool_name: str, mode: str) -> str:
+        tool = str(tool_name or "").strip().lower()
+        if not tool:
+            raise ValueError("tool name is required")
+        normalized = str(mode or "").strip().lower()
+        if normalized in {"default", "reset", "clear"}:
+            self._permission_overrides.pop(tool, None)
+            return PERMISSION_MODE_DEFAULT
+        if normalized not in {"ask", "auto", "bypass", "readonly"}:
+            raise ValueError("unknown per-tool permission mode")
+        self._permission_overrides[tool] = normalized
+        return normalized
 
 
 class _MockApprovalStore:
