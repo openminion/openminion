@@ -970,7 +970,7 @@ class FocusScreen(
             search.hide()
             return
         if self._busy:
-            self.run_worker(self._confirm_interrupt(), exclusive=False)
+            self.run_worker(self._interrupt_current_turn(), exclusive=False)
             return
         self.run_worker(self._confirm_exit(), exclusive=False)
 

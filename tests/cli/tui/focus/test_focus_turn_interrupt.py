@@ -152,10 +152,11 @@ async def test_idle_ctrl_c_does_not_open_interrupt_prompt() -> None:
 
 
 @pytest.mark.asyncio
-async def test_busy_escape_prompts_interrupt_and_decline_keeps_turn_running() -> None:
+async def test_busy_escape_interrupts_current_turn() -> None:
     runtime = _InterruptRuntimeDouble(
-        working_dir="/tmp/focus-interrupt-decline",
-        final_text="finished",
+        working_dir="/tmp/focus-interrupt-escape-direct",
+        emit_partial_first=True,
+        final_text="should-not-complete",
     )
     app = _make_app(runtime)
 
@@ -165,26 +166,54 @@ async def test_busy_escape_prompts_interrupt_and_decline_keeps_turn_running() ->
 
         app.screen.on_focus_composer_submitted(FocusComposer.Submitted("hello"))
         await runtime.started.wait()
+        await runtime.first_chunk_sent.wait()
         await pilot.pause()
         assert app.screen._busy is True
 
         app.screen.action_handle_escape()
         await pilot.pause()
-        prompt = app.screen.query_one(".focus-inline-prompt-title", Label)
-        assert "Interrupt current turn?" in str(prompt.render())
-
-        await pilot.press("n")
         await pilot.pause()
-        assert app.screen._busy is True, "declining interrupt must keep the turn alive"
 
-        runtime.release.set()
+        chat = app.screen.query_one(FocusTranscript)
+        assert runtime.cancelled is True
+        assert app.screen._busy is False
+        assert "Interrupted current turn." in _system_bodies(chat)
+        assert any(
+            msg.kind == MessageKind.AGENT and msg.body == "partial reply"
+            for msg in chat._messages
+        )
+        assert not list(app.screen.query(".focus-inline-prompt"))
+
+
+@pytest.mark.asyncio
+async def test_busy_escape_keypress_interrupts_current_turn() -> None:
+    runtime = _InterruptRuntimeDouble(
+        working_dir="/tmp/focus-interrupt-keypress",
+        emit_partial_first=True,
+        final_text="should-not-complete",
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("hello"))
+        await runtime.started.wait()
+        await runtime.first_chunk_sent.wait()
+        await pilot.pause()
+        assert app.screen._busy is True
+
+        await pilot.press("escape")
         await pilot.pause()
         await pilot.pause()
 
         chat = app.screen.query_one(FocusTranscript)
-        assert "Interrupted current turn." not in _system_bodies(chat)
+        assert runtime.cancelled is True
+        assert app.screen._busy is False
+        assert "Interrupted current turn." in _system_bodies(chat)
         assert any(
-            msg.kind == MessageKind.AGENT and msg.body == "finished"
+            msg.kind == MessageKind.AGENT and msg.body == "partial reply"
             for msg in chat._messages
         )
 
@@ -255,10 +284,6 @@ async def test_interrupt_dismisses_tool_approval_widget_cleanly() -> None:
 
         app.screen.action_handle_escape()
         await pilot.pause()
-        prompt = app.screen.query_one(".focus-inline-prompt-title", Label)
-        assert "Interrupt current turn?" in str(prompt.render())
-        await pilot.press("y")
-        await pilot.pause()
         await pilot.pause()
 
         assert runtime.cancelled is True
@@ -266,6 +291,7 @@ async def test_interrupt_dismisses_tool_approval_widget_cleanly() -> None:
         assert not list(app.screen.query(ToolApprovalWidget)), (
             "interrupt must dismiss any approval widget owned by the turn"
         )
+        assert not list(app.screen.query(".focus-inline-prompt"))
         assert "Interrupted current turn." in _system_bodies(
             app.screen.query_one(FocusTranscript)
         )
