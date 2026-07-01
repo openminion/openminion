@@ -510,6 +510,10 @@ class APIRuntime:
             telemetry_service=getattr(self, "telemetry_service", None),
         )
 
+    @property
+    def llm(self) -> RuntimeLLMHandle:
+        return self.llm_runtime
+
     @staticmethod
     def _bind_runtime_handle(agent_service: object, runtime: "APIRuntime") -> None:
         binder = getattr(agent_service, "bind_runtime_handle", None)

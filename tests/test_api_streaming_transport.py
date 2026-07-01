@@ -22,6 +22,12 @@ from openminion.base.config import OpenMinionConfig, save_config
 from openminion.api.server.streaming import handle_turn_stream_request
 
 
+def _install_json_body(handler: _OpenMinionAPIHandler, body: dict) -> None:
+    encoded = json.dumps(body).encode("utf-8")
+    handler.headers = {**dict(handler.headers), "Content-Length": str(len(encoded))}
+    handler.rfile = io.BytesIO(encoded)
+
+
 @dataclass
 class _FakeChunk:
     idx: int
@@ -193,12 +199,11 @@ class APIStreamingTransportTests(unittest.TestCase):
         handler.config_path = None
         handler.runtime = None
         handler.runtime_bootstrap_error = None
-        handler.rfile = io.BytesIO()
+        _install_json_body(handler, {"message": "hello"})
         handler.wfile = io.BytesIO()
         handler.send_response = mock.Mock()
         handler.send_header = mock.Mock()
         handler.end_headers = mock.Mock()
-        handler._read_json_body = mock.Mock(return_value={"message": "hello"})  # type: ignore[attr-defined]
 
         submission = _FakeSubmission(
             handle=_FakeHandle(chunks=[_FakeChunk(1)], result=object()),
@@ -267,12 +272,11 @@ class APIStreamingTransportTests(unittest.TestCase):
         handler.config_path = None
         handler.runtime = None
         handler.runtime_bootstrap_error = None
-        handler.rfile = io.BytesIO()
+        _install_json_body(handler, {"message": "hello"})
         handler.wfile = io.BytesIO()
         handler.send_response = mock.Mock()
         handler.send_header = mock.Mock()
         handler.end_headers = mock.Mock()
-        handler._read_json_body = mock.Mock(return_value={"message": "hello"})  # type: ignore[attr-defined]
 
         sse_submission = _FakeSubmission(
             handle=_FakeHandle(chunks=[_FakeChunk(1)], result=object()),
@@ -421,12 +425,11 @@ def _build_stream_handler(
     handler.config_path = config_path
     handler.runtime = runtime
     handler.runtime_bootstrap_error = None
-    handler.rfile = io.BytesIO()
+    _install_json_body(handler, body)
     handler.wfile = io.BytesIO()
     handler.send_response = mock.Mock()
     handler.send_header = mock.Mock()
     handler.end_headers = mock.Mock()
-    handler._read_json_body = mock.Mock(return_value=body)  # type: ignore[attr-defined]
     return handler
 
 
@@ -469,7 +472,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
         handler.config_path = None
         handler.runtime = None
         handler.runtime_bootstrap_error = None
-        handler._read_json_body = mock.Mock(return_value={"message": "hello"})  # type: ignore[attr-defined]
+        _install_json_body(handler, {"message": "hello"})
         handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
         handler._write_json = mock.Mock()  # type: ignore[attr-defined]
 
@@ -490,7 +493,7 @@ class APIStreamingNegotiationTests(unittest.TestCase):
         handler.config_path = "cfg.json"
         handler.runtime = None
         handler.runtime_bootstrap_error = None
-        handler._read_json_body = mock.Mock(return_value={"message": "hello"})  # type: ignore[attr-defined]
+        _install_json_body(handler, {"message": "hello"})
         handler._handle_turn_stream = mock.Mock()  # type: ignore[attr-defined]
         handler._write_json = mock.Mock()  # type: ignore[attr-defined]
 
