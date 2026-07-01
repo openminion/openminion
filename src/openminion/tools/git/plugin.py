@@ -34,9 +34,6 @@ from openminion.tools.git.runtime import (
 )
 
 
-# Pydantic argument models
-
-
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -113,7 +110,6 @@ class GitBlameArgs(_StrictModel):
     )
 
 
-# Branch ops use an explicit action discriminator so the model cannot
 class GitBranchArgs(_StrictModel):
     action: str = Field(
         ...,
@@ -261,9 +257,6 @@ class GitReflogArgs(_StrictModel):
     )
 
 
-# Path resolution
-
-
 def _scoped_path(ctx: RuntimeContext, raw_path: str | None, operation: str) -> str:
     """Resolve `raw_path` against the workspace boundary. Raises a
     `ToolRuntimeError(GIT_PATH_OUTSIDE_WORKSPACE)` if the path escapes the
@@ -292,9 +285,6 @@ def _workspace_cwd(ctx: RuntimeContext) -> str:
     return str(resolve_git_repo_root(ctx))
 
 
-# Result shaping
-
-
 def _ok_result(
     *,
     result: GitCommandResult,
@@ -312,9 +302,6 @@ def _ok_result(
 def _require_success(result: GitCommandResult) -> None:
     if result.exit_code != 0:
         raise classify_git_failure(result)
-
-
-# Handlers
 
 
 def _h_status(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
@@ -426,7 +413,6 @@ def _h_branch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     cwd = _workspace_cwd(ctx)
 
     if action == "list":
-        # `list` is read-only. Other args are accepted but ignored to keep
         result = run_git(("branch",), cwd=cwd)
         _require_success(result)
         entries = branch_list_to_dict(parse_branch_list(result.stdout))
@@ -524,7 +510,6 @@ def _h_add(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     return _ok_result(result=result, parsed=parsed)
 
 
-# Phrases git prints to stderr/stdout when there's nothing staged for a
 _NOTHING_TO_COMMIT_PHRASES: tuple[str, ...] = (
     "nothing to commit",
     "no changes added to commit",
@@ -545,8 +530,6 @@ def _h_commit(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             "commit message is required",
             {"field": "message"},
         )
-    # NEVER `--no-verify` (CLAUDE.md compliance) and NEVER `--amend` in this
-    # slice (NGT-03 keeps the commit surface narrow per user guardrail #2).
     cmd: tuple[str, ...] = ("commit", "-m", message)
     result = run_git(cmd, cwd=_workspace_cwd(ctx))
     if result.exit_code != 0:
@@ -563,8 +546,6 @@ def _h_commit(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             )
         raise classify_git_failure(result)
 
-    # On success, the SHA isn't in `git commit` stdout by default. Probe
-    # HEAD so the result envelope carries the new commit identity.
     sha_probe = run_git(("rev-parse", "HEAD"), cwd=result.cwd)
     sha = sha_probe.stdout.strip() if sha_probe.exit_code == 0 else ""
 
@@ -596,7 +577,6 @@ def _h_stash(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             cmd.extend(["-m", message])
         result = run_git(tuple(cmd), cwd=cwd)
         _require_success(result)
-        # `git stash push` prints either "Saved working directory and index
         stdout_lower = result.stdout.lower()
         nothing_to_stash = "no local changes to save" in stdout_lower
         parsed = {
@@ -639,7 +619,6 @@ def _h_stash(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             apply_cmd.append(f"stash@{{{index}}}")
         result = run_git(tuple(apply_cmd), cwd=cwd)
         if result.exit_code != 0:
-            # Merge conflicts surface as GIT_MERGE_CONFLICT via the classifier.
             raise classify_git_failure(result)
         parsed = {
             "action": "apply",
@@ -746,10 +725,8 @@ def _h_checkout(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     cwd = _workspace_cwd(ctx)
     result = run_git(("checkout", ref), cwd=cwd)
     if result.exit_code != 0:
-        # `classify_git_failure` already maps "would be overwritten" /
         raise classify_git_failure(result)
 
-    # Detect detached HEAD after a successful checkout. `git rev-parse
     head_probe = run_git(("rev-parse", "--abbrev-ref", "HEAD"), cwd=cwd)
     detached = False
     current_branch = ""

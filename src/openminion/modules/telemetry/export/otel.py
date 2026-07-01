@@ -38,12 +38,10 @@ _CLASS_LOG = "log_record"
 _CLASS_EXCLUDED = "excluded"
 
 _EVENT_CLASSIFICATION: dict[str, str] = {
-    # Storage — per OTEL-02 §4.3 item 1.
     "storage.query": _CLASS_SPAN,
     "storage.slow_query": _CLASS_SPAN,
     "storage.migration": _CLASS_SPAN,
     "storage.pool.stats": _CLASS_METRIC,
-    # Memory aggregate counters — per OTEL-02 §4.3 item 6.
     "memory.scope_capacity.evicted": _CLASS_METRIC,
     "memory.soft_deleted.purged": _CLASS_METRIC,
     # LLM cache metrics — point-in-time hit/miss observation. Treat
@@ -52,9 +50,8 @@ _EVENT_CLASSIFICATION: dict[str, str] = {
     "llm.cache.metrics": _CLASS_METRIC,
     "chat.phase_timing": _CLASS_SPAN,
     "module.stats": _CLASS_METRIC,
-    # Module / metric / debug — per OTEL-02 §4.3 item 12. Generic catchalls are
-    # explicitly excluded from OTel emission; MODULE_DEBUG_FAILURE keeps OTel
-    # emission as a log record.
+    # Generic catchalls stay out of OTel emission; module.debug.failure remains
+    # a log record so runtime failure diagnostics are still visible.
     "metric": _CLASS_EXCLUDED,
     "message": _CLASS_EXCLUDED,
     "module.debug.failure": _CLASS_LOG,
@@ -253,8 +250,6 @@ class _OpenTelemetrySDKSink:
         )
         for key, value in attributes.items():
             child.set_attribute(key, value)
-        # paired-span collapse passes an explicit ``end_timestamp_ns``
-        # so the OTel span carries a real duration. Non-paired spans keep the
         child.end(
             end_time=end_timestamp_ns if end_timestamp_ns is not None else timestamp_ns
         )
@@ -273,9 +268,8 @@ class _OpenTelemetrySDKSink:
     ) -> None:
         if not self._metric_warned:
             _LOG.info(
-                "OTEL-03: metric emission (%s=%s) reached the SDK sink but "
-                "the OTel metrics provider is not wired yet — deferred to "
-                "OTEL-CQ. Recording sink coverage is in place.",
+                "Metric emission (%s=%s) reached the SDK sink before the OTel "
+                "metrics provider is wired. Recording sink coverage is in place.",
                 metric_name,
                 value,
             )
@@ -368,9 +362,6 @@ def create_otel_trace_sink(
         {"service.name": str(config.service_name or "openminion")}
     )
     provider = TracerProvider(resource=resource)
-    # forward configured headers (e.g. Tempo bearer, Langfuse basic,
-    # Braintrust/LangSmith API keys) to the OTLP exporter. Empty headers keep
-    # the no-op-when-absent shape from OTEL-02 §4.1.
     headers = dict(getattr(config, "headers", {}) or {})
     exporter_kwargs: dict[str, Any] = {"endpoint": endpoint}
     if headers:
@@ -423,7 +414,6 @@ class OpenTelemetryTraceExporter:
             include_assistant_body=bool(self._config.include_assistant_body),
         )
         try:
-            # paired-span collapse — started event captures state.
             if event_type in _PAIRED_SPAN_CLASSES:
                 self._capture_paired_start(
                     event_type=event_type,
@@ -433,9 +423,6 @@ class OpenTelemetryTraceExporter:
                     trace_key=trace_key,
                 )
                 return True
-            # paired-span collapse — completion event drains state and
-            # emits a single span with start_ns from the captured started
-            # event and end_ns from the current completion event.
             if event_type in _PAIRED_COMPLETION_EVENTS:
                 if self._emit_paired_completion(
                     event_type=event_type,
@@ -608,7 +595,7 @@ _GEN_AI_OUTPUT_TOKEN_KEYS = ("output_tokens", "completion_tokens")
 
 
 def _gen_ai_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
-    """Gen ai attributes for event helper."""
+    """Return OTel GenAI semantic attributes for LLM telemetry events."""
 
     event_type = str(event.event_type or "").strip()
     if event_type not in _GEN_AI_LLM_EVENT_TYPES:
@@ -851,8 +838,6 @@ def _resolve_pairing_id(
     event: TelemetryEvent,
     pairing_keys: tuple[str, ...],
 ) -> str:
-    """Resolve pairing id helper."""
-
     payload = event.data if isinstance(event.data, dict) else {}
     for key in pairing_keys:
         value = payload.get(key)
