@@ -51,7 +51,7 @@ DEFAULT_MAX_AUTONOMOUS_TURNS_PER_SESSION = 20
 CODING_MAX_ITERATIONS = 40
 CODING_MAX_SELF_CORRECTIONS = 7
 
-# hardcoded AIB safety-rail ceiling — never operator-tunable.
+# Hard safety ceiling; never operator-tunable.
 ADAPTIVE_BUDGET_HARD_CAP: int = 128
 
 RESEARCH_CHECKPOINT_INTERVAL = 1
@@ -180,8 +180,6 @@ class IdempotencyConfig(BaseModel):
 
 
 class ClarifyConfig(BaseModel):
-    """Configuration settings for clarification handling"""
-
     # extra="ignore" for backward compat with old configs that have guard fields
     model_config = ConfigDict(extra="ignore")
 
@@ -191,7 +189,7 @@ class ClarifyConfig(BaseModel):
     ask_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     allow_non_blocking: bool = True
     one_by_one_questions: bool = False
-    timeout_seconds: int = Field(default=3600, ge=60)  # 1 hour default
+    timeout_seconds: int = Field(default=3600, ge=60)
     handle_unanswered_policy: Literal["error", "assume_default", "abort"] = (
         "assume_default"
     )
@@ -207,7 +205,6 @@ class MissionConfig(BaseModel):
 @dataclass
 class RunnerOptions:
     max_retries_per_step: int = 2
-    # AR-02 (2026-06-06): default raised 2 → 8 to match RetryConfig.
     max_replans: int = 8
     plan_checkpoint_interval: int = 5
     plan_max_iterations: int = 64

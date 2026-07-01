@@ -247,15 +247,10 @@ class AdaptiveToolLoopProfile:
         "engine_single_pass",
     ] = ADAPTIVE_CLOSURE_MODE_OWNED
     budget_conserve_threshold: float = 0.20
-    # Speculative tool prefetch
     speculative_prefetch: bool = False
     speculative_prefetch_threshold: float = 0.8
-    # ACL-16 / PTC-00: default to serial execution unless a profile explicitly
     provider_parallel_tool_capacity: int = 1
-    # Cross-loop memory templates
     use_memory_templates: bool = False
-    # AIB-07/AIB-08: immutable profile carries the operator config, while the
-    # mutable cap itself lives on AdaptiveToolLoopState.effective_max_iterations.
     adaptive_budget_config: AdaptiveBudgetConfig | None = None
     self_improvement_policy: SelfImprovementPolicy | None = None
 
@@ -323,13 +318,9 @@ class AdaptiveToolLoopState:
     direct_tool_turn: DirectToolTurnContext | None = None
     direct_tool_requested_batch_satisfied: bool = False
     direct_tool_closure_consumed: bool = False
-    # AIB-05/06: dynamic per-turn iteration cap that can extend mid-turn
     effective_max_iterations: int = 0
-    # AIB-06/08: number of extensions used this turn. Bounded by
-    # `AdaptiveBudgetConfig.max_extensions_per_turn`.
     extensions_used: int = 0
-    # consecutive no-op iterations (safety kill). Reset on
-    # progress; tripping `max_adaptive_noops_per_turn` halts extension.
+    # Safety kill reset on progress.
     consecutive_noops: int = 0
 
 
@@ -347,10 +338,8 @@ class AdaptiveToolLoopOutcome:
     meta_rule_preference: dict[str, Any] | None = None
     memory_consolidation_decisions: list[dict[str, Any]] | None = None
     session_work_summary: str | None = None
-    # model-authored goal declaration (post-TSCM structured field
     goal_declaration: dict[str, Any] | None = None
-    # model-authored goal revision. Structured-channel only; the
-    # adaptive loop stages/persists it via `runtime.memory.stage_goal_revision`.
+    # Structured-channel only; staged through runtime memory.
     goal_revision: dict[str, Any] | None = None
     delegation_context: dict[str, Any] | None = None
     delegation_result_summary: dict[str, Any] | None = None
@@ -506,7 +495,6 @@ def loop_turn_progress_payload(scratchpad: Mapping[str, Any] | None) -> dict[str
 
 
 def profile_include_reflect(profile: AdaptiveToolLoopProfile) -> bool:
-    """Return True if the profile's reflection_policy is 'always'."""
     return profile.reflection_policy == "always"
 
 
