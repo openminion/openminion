@@ -24,9 +24,6 @@ def run_policy_preflight(
 
     policy.ensure_tool_allowed(canonical_name)
     policy.ensure_scope_allowed(effective_scope, tool_spec.min_scope, canonical_name)
-    policy.ensure_confirm_if_required(
-        canonical_name, args, confirm, tool_spec.dangerous
-    )
 
     if canonical_name in ("cmd.run", "exec.run"):
         if canonical_name == "exec.run":
@@ -48,7 +45,14 @@ def run_policy_preflight(
             policy.ensure_path_allowed(str(workdir), workspace, "read")
         else:
             policy.ensure_path_allowed(str(args.get("cwd", ".")), workspace, "read")
+        policy.ensure_confirm_if_required(
+            canonical_name, args, confirm, tool_spec.dangerous
+        )
         return
+
+    policy.ensure_confirm_if_required(
+        canonical_name, args, confirm, tool_spec.dangerous
+    )
 
     if canonical_name in ("file.list_dir", "file.read", "file.find"):
         key = "root" if canonical_name == "file.find" else "path"

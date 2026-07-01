@@ -52,6 +52,13 @@ from .command_patterns import (
 )
 
 SCOPE_ORDER = {"READ_ONLY": 0, "WRITE_SAFE": 1, "POWER_USER": 2, "UI_AUTOMATION": 3}
+_MKDIR_SCAFFOLD_HINT = {
+    "suggested_tool": "file.write",
+    "suggested_fix": (
+        "For project scaffolding, write the target file directly with file.write; "
+        "parent directories are created automatically by default."
+    ),
+}
 
 def reorder_runtime_chain(
     *,
@@ -78,8 +85,6 @@ class RuntimeBindingPolicy:
     fallback_tools: tuple[str, ...]
 
 class ToolBindingPolicyManager:
-    """Owns runtime binding candidate ordering/fallback policy."""
-
     def __init__(
         self,
         *,
@@ -391,14 +396,14 @@ DEFAULT_POLICY: Dict[str, Any] = {
         "allow_patterns": list(COMMAND_ALLOW_PATTERNS),
     },
     "exec": {
-        "security": TOOL_EXEC_SECURITY_ALLOWLIST,  # deny|allowlist|full
-        "ask": TOOL_EXEC_ASK_ON_MISS,  # off|on-miss|always
-        "askFallback": TOOL_EXEC_SECURITY_DENY,  # deny|allowlist|full
+        "security": TOOL_EXEC_SECURITY_ALLOWLIST,
+        "ask": TOOL_EXEC_ASK_ON_MISS,
+        "askFallback": TOOL_EXEC_SECURITY_DENY,
         "allowlist": [],
     },
     "dangerous": {
         "enabled": True,
-        "mode": TOOL_DANGEROUS_MODE_PROMPT,  # prompt|deny|allow
+        "mode": TOOL_DANGEROUS_MODE_PROMPT,
         "approvals": {
             "allow_once": True,
             "allow_session": True,
@@ -407,7 +412,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
         },
     },
     "audit": {
-        "write_mode": TOOL_AUDIT_WRITE_MODE_DUAL,  # dual|jsonl_only|storage_only|off
+        "write_mode": TOOL_AUDIT_WRITE_MODE_DUAL,
         "retention_days": 30,
         "gc_on_startup": False,
     },
@@ -438,8 +443,6 @@ DEFAULT_POLICY: Dict[str, Any] = {
 
 
 def _expand_path_pair(value: str, workspace: Path) -> tuple[Path, Path]:
-    """Return `(candidate_abs, resolved_realpath)` for policy paths."""
-
     expanded = value.replace("${WORKSPACE}", str(workspace))
     candidate = Path(expanded).expanduser()
     if not candidate.is_absolute():
@@ -459,13 +462,10 @@ def _is_subpath(path: Path, root: Path) -> bool:
 
 
 def _resolve_candidate_path(raw_path: str, workspace: Path) -> tuple[Path, Path]:
-    """Return (candidate_path_without_symlink_resolution, resolved_real_path)."""
-
     candidate = Path(raw_path).expanduser()
     if not candidate.is_absolute():
         candidate = workspace / candidate
 
-    # `os.path.abspath` preserves symlinks but guarantees absolute paths.
     candidate_abs = Path(os.path.abspath(candidate))
 
     try:
@@ -959,11 +959,10 @@ class Policy:
                         "rule": "commands.allow",
                         "command": exec_name,
                         "action_class": action_class,
+                        **(_MKDIR_SCAFFOLD_HINT if exec_name == "mkdir" else {}),
                     },
                 )
         elif mode == "blocklist":
-            # In blocklist mode, commands are permitted unless deny rules match.
-            # `commands.allow` is ignored for compatibility with the main spec.
             pass
         else:
             raise ToolRuntimeError(
