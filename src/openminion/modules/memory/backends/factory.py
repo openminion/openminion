@@ -12,8 +12,6 @@ KnowledgeBackendFactory = Callable[..., KnowledgeBackend]
 
 @dataclass(frozen=True)
 class ResolvedKnowledgeBackendFactory:
-    """Resolved lower-level backend factory plus normalized config."""
-
     provider: str
     factory: KnowledgeBackendFactory
     config: KnowledgeBackendConfig
@@ -63,8 +61,7 @@ def instantiate_backend(
     config: KnowledgeBackendConfig,
     **kwargs: Any,
 ) -> KnowledgeBackend:
-    resolved = resolve_backend_factory(config=config)
-    backend = resolved.factory(config=resolved.config, **kwargs)
+    backend = get_registered_backend_factory(config.provider)(config=config, **kwargs)
     ensure_backend_compatibility(backend, strict=True)
     return backend
 

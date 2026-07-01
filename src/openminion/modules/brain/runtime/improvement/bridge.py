@@ -17,8 +17,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 
 class SelfImprovementStageResult(BaseModel):
-    """Result of staging one typed self-improvement decision."""
-
     model_config = ConfigDict(extra="forbid")
 
     candidate_id: str | None = None
@@ -34,8 +32,6 @@ def stage_improvement_decision(
     decision: ImprovementDecision | Mapping[str, Any],
     evaluation: OnlineImprovementEval | Mapping[str, Any],
 ) -> SelfImprovementStageResult:
-    """Stage a lesson/candidate decision through the canonical memory API."""
-
     decision_obj = (
         decision
         if isinstance(decision, ImprovementDecision)
