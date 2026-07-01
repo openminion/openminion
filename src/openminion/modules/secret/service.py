@@ -5,7 +5,6 @@ from typing import Mapping
 
 from cryptography.fernet import Fernet, InvalidToken
 
-# Import interface contract
 from .interfaces import SECRET_INTERFACE_VERSION
 from .constants import (
     DEFAULT_SQLITE_FILENAME,
@@ -27,8 +26,6 @@ from .storage.store import PostgresSecretStore, SQLiteSecretStore
 
 
 class SecretService:
-    """Service for managing encrypted secrets."""
-
     def __init__(
         self,
         db_path: str | None = None,
@@ -45,7 +42,6 @@ class SecretService:
                     'Generate a 32-byte key with: python -c "import base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"'
                 )
 
-        # Ensure key is valid for Fernet (must be 32 bytes, base64 encoded)
         try:
             self._fernet = Fernet(master_key.encode())
         except Exception as exc:
@@ -83,21 +79,18 @@ class SecretService:
 
     @property
     def contract_version(self) -> str:
-        """Interface contract version for this implementation."""
         return SECRET_INTERFACE_VERSION
 
     async def close(self) -> None:
         await asyncio.to_thread(self._store.close)
 
     def _encrypt(self, value: str) -> str:
-        """Encrypt a value."""
         try:
             return self._fernet.encrypt(value.encode()).decode()
         except Exception as exc:
             raise SecretEncryptionError(f"Failed to encrypt: {exc}")
 
     def _decrypt(self, encrypted: str) -> str:
-        """Decrypt a value."""
         try:
             return self._fernet.decrypt(encrypted.encode()).decode()
         except InvalidToken:
@@ -108,7 +101,6 @@ class SecretService:
     async def set_secret(
         self, key: str, value: str, *, namespace: str = "default"
     ) -> None:
-        """Set a secret value."""
         encrypted = self._encrypt(value)
         now = time.time()
         await asyncio.to_thread(
@@ -121,7 +113,6 @@ class SecretService:
         )
 
     async def get_secret(self, key: str, *, namespace: str = "default") -> str:
-        """Get a secret value."""
         encrypted = await asyncio.to_thread(
             self._store.fetch_value, key=key, namespace=namespace
         )
@@ -132,17 +123,7 @@ class SecretService:
         return self._decrypt(encrypted)
 
     async def delete_secret(self, key: str, *, namespace: str = "default") -> None:
-        """Delete a secret."""
         await asyncio.to_thread(self._store.delete, key=key, namespace=namespace)
 
     async def list_keys(self, namespace: str = "default") -> list[str]:
-        """List all keys in a namespace."""
         return await asyncio.to_thread(self._store.list_keys, namespace=namespace)
-
-
-def create_secret_adapter(
-    db_path: str | None = None,
-    master_key: str | None = None,
-) -> SecretService:
-    """Factory function to create a secret service."""
-    return SecretService(db_path, master_key)
