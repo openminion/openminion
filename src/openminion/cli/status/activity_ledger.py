@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from .models import is_hidden_progress_payload
+
 KIND_TOOL = "tool"
 KIND_SEARCH = "search"
 KIND_PLAN = "plan"
@@ -60,6 +62,19 @@ _SEARCH_TOOL_NAME_PREFIXES: tuple[str, ...] = (
     "firecrawl.search",
 )
 
+_HIDDEN_VISIBLE_ARG_KEYS: frozenset[str] = frozenset(
+    {
+        "chain_of_thought",
+        "hidden_reasoning",
+        "provider_reasoning",
+        "raw_provider_reasoning",
+        "raw_reasoning",
+        "reasoning",
+        "thinking",
+        "thinking_blocks",
+    }
+)
+
 
 @dataclass(frozen=False)
 class TurnActivityEvent:
@@ -107,6 +122,27 @@ def _coerce_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return dict(value)
     return {}
+
+
+def _coerce_visible_args(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    visible: dict[str, Any] = {}
+    for key, raw_value in value.items():
+        normalized_key = str(key or "").strip().lower()
+        if normalized_key in _HIDDEN_VISIBLE_ARG_KEYS:
+            continue
+        if isinstance(raw_value, Mapping):
+            visible[str(key)] = _coerce_visible_args(raw_value)
+            continue
+        if isinstance(raw_value, (list, tuple)):
+            visible[str(key)] = [
+                _coerce_visible_args(item) if isinstance(item, Mapping) else item
+                for item in raw_value
+            ]
+            continue
+        visible[str(key)] = raw_value
+    return visible
 
 
 def _coerce_list(value: Any) -> list[Any]:
@@ -166,6 +202,8 @@ def activity_from_progress_payload(
     if not isinstance(payload, Mapping):
         return None
     payload_dict = dict(payload)
+    if is_hidden_progress_payload(payload_dict):
+        return None
     kind_raw = _coerce_str(payload_dict.get("kind", "")).strip()
     if kind_raw in {"tool_started", "tool_completed"}:
         tool_name = _coerce_str(payload_dict.get("tool_name", "")).strip()
@@ -175,7 +213,7 @@ def activity_from_progress_payload(
             state=_tool_state_from_payload(kind=kind_raw, payload=payload_dict),
             title=tool_name,
             tool_name=tool_name,
-            args=_coerce_dict(payload_dict.get("args")),
+            args=_coerce_visible_args(payload_dict.get("args")),
             call_id=_coerce_str(payload_dict.get("call_id", "")),
             duration_ms=_coerce_optional_int(payload_dict.get("duration_ms")),
             content=_coerce_str(payload_dict.get("content", "")),
@@ -230,7 +268,7 @@ def activity_from_progress_payload(
             state=state,
             title=_coerce_str(payload_dict.get("tool_name", "")) or "approval",
             tool_name=_coerce_str(payload_dict.get("tool_name", "")),
-            args=_coerce_dict(payload_dict.get("args")),
+            args=_coerce_visible_args(payload_dict.get("args")),
             detail=_coerce_str(payload_dict.get("reason", "")),
             source_payload=payload_dict,
         )

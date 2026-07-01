@@ -5,6 +5,14 @@ from openminion.modules.brain.diagnostics.status import PhaseStatus
 
 
 PhaseStatusSignature = tuple[Any, ...]
+_HIDDEN_VISIBILITY_VALUES = frozenset({"hidden", "internal", "private"})
+
+
+def is_hidden_progress_payload(status: Mapping[str, Any] | None) -> bool:
+    if not isinstance(status, Mapping):
+        return False
+    visibility = str(status.get("visibility", "") or "").strip().lower()
+    return visibility in _HIDDEN_VISIBILITY_VALUES
 
 
 def build_signature(status: PhaseStatus) -> PhaseStatusSignature:
@@ -63,5 +71,6 @@ __all__ = [
     "PhaseStatusSignature",
     "PhaseStatusViewModel",
     "build_signature",
+    "is_hidden_progress_payload",
     "status_from_payload",
 ]

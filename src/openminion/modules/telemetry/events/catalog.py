@@ -54,6 +54,9 @@ MEMORY_CAPSULE_REFRESH_FAILED = "memory.capsule.refresh_failed"
 MEMORY_CAPSULE_REFRESH_SKIPPED = "memory.capsule.refresh_skipped"
 MEMORY_CONTEXT_BUILT = "memory.context.built"
 MEMORY_CONTEXT_FAILED = "memory.context.failed"
+MEMORY_FOLLOWUP_COMPLETED = "memory.followup.completed"
+MEMORY_FOLLOWUP_FAILED = "memory.followup.failed"
+MEMORY_FOLLOWUP_PENDING = "memory.followup.pending"
 MEMORY_POLICY_SNAPSHOT = "memory.policy.snapshot"
 MEMORY_RECORD_DELETE = "memory.record.delete"
 MEMORY_RECORD_FEEDBACK = "memory.record.feedback"
@@ -205,6 +208,9 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MEMORY_CAPSULE_REFRESH_SKIPPED,
         MEMORY_CONTEXT_BUILT,
         MEMORY_CONTEXT_FAILED,
+        MEMORY_FOLLOWUP_COMPLETED,
+        MEMORY_FOLLOWUP_FAILED,
+        MEMORY_FOLLOWUP_PENDING,
         MEMORY_POLICY_SNAPSHOT,
         MEMORY_RECORD_DELETE,
         MEMORY_RECORD_FEEDBACK,
@@ -381,6 +387,9 @@ __all__ = [
     "MEMORY_CAPSULE_REFRESH_SKIPPED",
     "MEMORY_CONTEXT_BUILT",
     "MEMORY_CONTEXT_FAILED",
+    "MEMORY_FOLLOWUP_COMPLETED",
+    "MEMORY_FOLLOWUP_FAILED",
+    "MEMORY_FOLLOWUP_PENDING",
     "MEMORY_POLICY_SNAPSHOT",
     "MEMORY_RECORD_DELETE",
     "MEMORY_RECORD_FEEDBACK",

@@ -9,7 +9,15 @@ from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.execution.executor import TurnExecutor
-from openminion.services.agent.execution.loop_quality import observe_tool_calls
+from openminion.services.agent.execution.loop_quality import (
+    GUARD_ACTION_FINALIZE_FROM_PRIOR_RESULT,
+    GUARD_ACTION_OBSERVE_ONLY,
+    GUARD_ACTION_ROUTE_DUPLICATE_BATCH,
+    GUARD_OWNER_DUPLICATE_BATCH,
+    GUARD_OWNER_LOOP_QUALITY,
+    GUARD_OWNER_NONE,
+    observe_tool_calls,
+)
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -34,6 +42,9 @@ def test_loop_quality_observes_exact_duplicate_call_shapes() -> None:
     assert len(observations) == 1
     assert observations[0]["event_kind"] == "duplicate_tool_call_observed"
     assert observations[0]["action_class"] == "discovery"
+    assert observations[0]["guard_action"] == GUARD_ACTION_ROUTE_DUPLICATE_BATCH
+    assert observations[0]["guard_owner"] == GUARD_OWNER_DUPLICATE_BATCH
+    assert observations[0]["suppression_candidate"] == "false"
     assert observations[0]["batch_count"] == "2"
 
 
@@ -58,6 +69,11 @@ def test_loop_quality_observes_redundant_discovery_version_across_batches() -> N
     assert len(observations) == 1
     assert observations[0]["event_kind"] == "redundant_discovery_version_observed"
     assert observations[0]["action_class"] == "version"
+    assert (
+        observations[0]["guard_action"] == GUARD_ACTION_FINALIZE_FROM_PRIOR_RESULT
+    )
+    assert observations[0]["guard_owner"] == GUARD_OWNER_LOOP_QUALITY
+    assert observations[0]["suppression_candidate"] == "true"
     assert observations[0]["turn_count"] == "2"
 
 
@@ -72,6 +88,19 @@ def test_loop_quality_changed_denial_retry_shape_is_not_duplicate() -> None:
 
     assert first == []
     assert retry == []
+
+
+def test_loop_quality_repeated_non_discovery_shape_is_observe_only() -> None:
+    seen: dict[str, int] = {}
+
+    assert observe_tool_calls([_call("pwd")], seen_signatures=seen) == []
+    observations = observe_tool_calls([_call("pwd")], seen_signatures=seen)
+
+    assert len(observations) == 1
+    assert observations[0]["event_kind"] == "repeated_tool_call_shape_observed"
+    assert observations[0]["guard_action"] == GUARD_ACTION_OBSERVE_ONLY
+    assert observations[0]["guard_owner"] == GUARD_OWNER_NONE
+    assert observations[0]["suppression_candidate"] == "false"
 
 
 def test_executor_observes_without_suppressing_legitimate_calls() -> None:
@@ -130,6 +159,7 @@ def test_executor_observes_without_suppressing_legitimate_calls() -> None:
     ]
     assert len(loop_events) == 1
     assert loop_events[0]["event_kind"] == "duplicate_tool_call_observed"
+    assert loop_events[0]["guard_owner"] == GUARD_OWNER_DUPLICATE_BATCH
     assert len(executed) == 2
     assert len(batch.results) == 2
     assert security_events == []

@@ -123,7 +123,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
         )
 
         try:
-            with active_chat_phase("brain_dispatch"):
+            with active_chat_phase("gateway_agent_dispatch"):
                 response = await self._execute_agent(
                     routing,
                     channel=channel,

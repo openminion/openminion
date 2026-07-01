@@ -122,6 +122,27 @@ def test_controller_update_repaints_on_mode_label_change() -> None:
     assert first.signature != second.signature
 
 
+def test_controller_drops_hidden_progress_payloads_without_consuming_dedup() -> None:
+    controller = PhaseStatusController()
+    controller.start_turn()
+
+    hidden = controller.update(
+        {
+            "trace_id": "hidden",
+            "status_key": "working",
+            "label": "raw provider thought",
+            "visibility": "hidden",
+        }
+    )
+    visible = controller.update(
+        {"trace_id": "shown", "status_key": "working", "label": "Working..."}
+    )
+
+    assert hidden is None
+    assert visible is not None
+    assert visible.primary_text == "Working..."
+
+
 def test_controller_elapsed_seconds_tracks_clock() -> None:
     values = iter([10.0, 14.5, 20.0])
     controller = PhaseStatusController(clock=lambda: next(values))

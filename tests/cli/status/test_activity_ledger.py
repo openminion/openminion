@@ -100,6 +100,47 @@ def test_adapter_routes_search_tool_to_search_kind() -> None:
     assert event.tool_name == "web.search"
 
 
+def test_adapter_drops_hidden_visibility_payloads() -> None:
+    event = activity_from_progress_payload(
+        {
+            "kind": "background_started",
+            "title": "raw model thought",
+            "detail": "do not render",
+            "visibility": "hidden",
+        }
+    )
+    assert event is None
+
+
+def test_adapter_scrubs_hidden_reasoning_args_before_rendering() -> None:
+    event = activity_from_progress_payload(
+        {
+            "kind": "tool_started",
+            "tool_name": "exec.run",
+            "args": {
+                "command": "pwd",
+                "reasoning": "secret chain text",
+                "nested": {"thinking": "hidden path", "safe": "shown"},
+                "items": [
+                    {"raw_provider_reasoning": "hidden branch", "safe": "ok"}
+                ],
+            },
+        }
+    )
+    assert event is not None
+    assert event.args == {
+        "command": "pwd",
+        "nested": {"safe": "shown"},
+        "items": [{"safe": "ok"}],
+    }
+    line = format_activity_line(event)
+    assert line is not None
+    assert "pwd" in line
+    assert "secret chain text" not in line
+    assert "hidden path" not in line
+    assert "hidden branch" not in line
+
+
 def test_adapter_carries_provenance_and_fallback_fields() -> None:
     event = activity_from_progress_payload(
         {

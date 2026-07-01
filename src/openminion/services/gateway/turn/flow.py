@@ -16,7 +16,7 @@ from openminion.services.gateway.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
 from openminion.services.gateway.context import build_turn_context
-from openminion.services.gateway.memory import record_memory_turn
+from openminion.services.gateway.memory import MemoryFollowupQueue, record_memory_turn
 from openminion.services.gateway.response import build_outbound_message
 from openminion.services.gateway.routing import (
     build_lifecycle_payload,
@@ -179,6 +179,7 @@ class GatewayTurnRunnerFlowMixin:
         self._history_limit = history_limit
         self._memory_capsule_strategy = memory_capsule_strategy
         self._memory_capsule_cache = memory_capsule_cache
+        self._memory_followup_queue = MemoryFollowupQueue(auto_start=False)
         self._memory_dynamic_retrieval_enabled = memory_dynamic_retrieval_enabled
         self._emit_run_state = emit_run_state
         self._typed_terminal_resolver = typed_terminal_resolver
@@ -188,6 +189,9 @@ class GatewayTurnRunnerFlowMixin:
             emit_run_state=emit_run_state,
             typed_terminal_resolver=typed_terminal_resolver,
         )
+
+    def flush_memory_followups(self, *, session_id: str | None = None) -> None:
+        self._memory_followup_queue.flush(session_id=session_id)
 
     def _emit_terminal_run_state(
         self,
@@ -474,6 +478,7 @@ class GatewayTurnRunnerFlowMixin:
         run_id: str,
         history: list[Message],
     ) -> TurnContext:
+        self._memory_followup_queue.flush(session_id=routing.session.id)
         return build_turn_context(
             history=history,
             agent_id=self._agent_id,
@@ -890,6 +895,8 @@ class GatewayTurnRunnerFlowMixin:
             attach_id=attach_id,
             emit_memory_event=self._lifecycle_ops.emit_memory_event,
             outbound_metadata=outbound.metadata,
+            followup_queue=self._memory_followup_queue,
+            defer_followup=True,
         )
 
     def _deliver_and_complete(
