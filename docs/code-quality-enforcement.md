@@ -1,7 +1,7 @@
 # OpenMinion Code Quality Enforcement
 
 Status: active
-Last updated: 2026-06-20
+Last updated: 2026-06-30
 
 Purpose: summarize the public contributor view of OpenMinion's active quality
 gates and validation posture.
@@ -15,6 +15,11 @@ OpenMinion enforces code quality through four layers:
    boilerplate drift before code lands,
 3. automated validation scripts and lint gates,
 4. focused cleanup/refactor discipline when a surface needs structural work.
+
+Before adding new structure, contributors should check whether the behavior is
+needed at all, whether an existing OpenMinion owner already provides it, whether
+the standard library or platform covers it, and whether one direct call would
+be clearer than a new wrapper.
 
 ## Required local validation
 
@@ -59,6 +64,11 @@ The active checks are designed to catch drift in areas such as:
 1. Start from a fresh live inventory instead of a hand-picked subset.
 2. Keep sweep artifacts in the workspace temp area rather than the repo root.
 3. Use focused regression proof before and after structural moves.
+4. Prefer root-cause fixes in the owning module over repeated local
+   workarounds.
+5. Do not count LOC reduction as a win if it removes validation, permission
+   checks, telemetry/audit/replay seams, provider/tool contracts, or public
+   behavior.
 
 ## See also
 

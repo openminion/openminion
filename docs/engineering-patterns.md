@@ -1,7 +1,7 @@
 # OpenMinion Engineering Patterns
 
 Status: active
-Last updated: 2026-06-20
+Last updated: 2026-06-30
 
 Purpose: give public contributors one package-local summary of the engineering
 patterns that shape `openminion` changes.
@@ -10,6 +10,17 @@ patterns that shape `openminion` changes.
 
 Prefer single-owner, explicitly named, typed surfaces over repeated literals,
 ad hoc wrappers, or hidden cross-module coupling.
+
+Before adding new code, use the minimum useful code ladder:
+
+1. remove the need for the code if it is unnecessary,
+2. reuse an existing OpenMinion owner when one exists,
+3. prefer standard-library, platform, or existing dependency behavior when it
+   keeps the path readable,
+4. use a direct call or one small helper before adding a larger abstraction.
+
+The ladder is not code golf. Preserve validation, security, policy,
+audit/replay/telemetry, provider/tool contracts, and public behavior.
 
 ## The main owner split
 
@@ -48,6 +59,8 @@ Use this source-tree ladder when deciding where code belongs:
 3. Prefer focused, reviewable refactors over broad mixed-purpose rewrites.
 4. Keep temporary sweep artifacts out of the repo root; use the workspace temp
    area instead.
+5. Fix repeated symptoms at the shared owner instead of copying small
+   workarounds across callers.
 
 ## Use with
 

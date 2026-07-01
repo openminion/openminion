@@ -25,10 +25,13 @@ Treat items 1 and 2 as a pair:
 Treat item 3 as the pre-write simplicity companion:
 
 1. write direct code first,
-2. avoid wrappers that add no policy or validation,
-3. prefer concrete names and real owners,
-4. avoid speculative event/callback abstraction when a direct call is clearer,
-5. optimize for human readability before relying on cleanup later.
+2. run the minimum useful code ladder before adding custom structure,
+3. avoid wrappers that add no policy or validation,
+4. prefer concrete names and real owners,
+5. avoid speculative event/callback abstraction when a direct call is clearer,
+6. preserve validation, security, policy, telemetry/audit/replay seams, and
+   public behavior while simplifying,
+7. optimize for human readability before relying on cleanup later.
 
 Use item 5 as the short contributor rulebook when you need a tighter package
 boundary summary than the broader docs.
