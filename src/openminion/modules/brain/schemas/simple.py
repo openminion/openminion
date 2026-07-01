@@ -158,7 +158,6 @@ def promote_to_full_decision(
         else:
             decision["answer"] = str(simplified.get("answer") or "").strip()
     elif route == "plan":
-        # Compat bridge: plan -> act/orchestrate
         decision["route"] = "act"
         decision["act_profile"] = "orchestrate"
         decision["execution_target"] = {"kind": "local"}
