@@ -15,6 +15,13 @@ from openminion.services.runtime.manager import (
 )
 from openminion.services.runtime.settings import ManagerConfig, RuntimeConfig
 from openminion.services.runtime.run_status import RunStatus
+from openminion.services.runtime.turn_input import (
+    TurnInputIntent,
+    TurnInputQueue,
+    TurnInputQueueEntry,
+    TurnInputQueueError,
+    TurnInputQueueStatus,
+)
 
 __version__ = "0.0.1"
 
@@ -30,6 +37,11 @@ __all__ = [
     "TurnChunk",
     "TurnError",
     "TurnHandle",
+    "TurnInputIntent",
+    "TurnInputQueue",
+    "TurnInputQueueEntry",
+    "TurnInputQueueError",
+    "TurnInputQueueStatus",
     "TurnRequest",
     "TurnResponse",
     "TurnTelemetry",

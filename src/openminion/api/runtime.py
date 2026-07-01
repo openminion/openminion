@@ -60,6 +60,7 @@ from openminion.services.brain.factory.retrieve import build_retrieve_service
 from openminion.services.runtime.daemon import build_runtime_manager
 from openminion.services.runtime.env import apply_runtime_environment
 from openminion.services.runtime.lifecycle import LifecycleService
+from openminion.services.runtime.turn_input import TurnInputQueue
 from openminion.services.security.policy import SecurityPolicyEngine, ToolBudgetPolicy
 from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 
@@ -477,6 +478,7 @@ class APIRuntime:
     config_manager: ConfigManager | None
     _agent_services: dict[str, AgentService]
     _gateways: dict[str, GatewayService]
+    turn_input_queue: TurnInputQueue = field(default_factory=TurnInputQueue)
     run_profile_overrides: RunProfileOverrides = field(
         default_factory=RunProfileOverrides
     )

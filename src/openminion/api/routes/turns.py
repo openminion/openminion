@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from http import HTTPStatus
+from typing import Any, cast
 from urllib.parse import unquote
 
 from openminion.api.core.turn_execution import (
@@ -14,6 +15,7 @@ from openminion.api.core.turn_execution import (
 from openminion.api.core.deps import resolve_runtime_manager
 from openminion.api.queries.sessions import append_session_event
 from openminion.api.turns import TurnRequestError, TurnTimeoutError, run_turn
+from .turn_inputs import handle_request as handle_turn_inputs_request
 
 from .base import (
     APIRouteContext,
@@ -26,14 +28,12 @@ from .base import (
 
 
 _CANCEL_RE = re.compile(r"/v1/turn/([^/]+)/cancel")
-
-
 def _handle_cancel_turn(
     ctx: APIRouteContext,
     *,
     path: str,
     trace_id: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
 ) -> RouteResult:
     try:
         manager, active_runtime, own_runtime = resolve_runtime_manager(
@@ -43,7 +43,7 @@ def _handle_cancel_turn(
     except Exception as exc:  # noqa: BLE001
         return runtime_unavailable_route_result(path=path, exc=exc)
     try:
-        cancelled = bool(manager.cancel_turn(trace_id))
+        cancelled = bool(cast(Any, manager).cancel_turn(trace_id))
         if not cancelled:
             return error_route_result(
                 HTTPStatus.NOT_FOUND,
@@ -85,7 +85,7 @@ def _handle_legacy_turn_request(
     ctx: APIRouteContext,
     *,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
 ) -> RouteResult:
     if body is None:
         return json_body_required_route_result(path=path)
@@ -138,15 +138,24 @@ def handle_request(
     *,
     method_name: str,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
-    del query
     if method_name == "POST" and path == "/v1/turn":
         return _handle_v1_turn(ctx=ctx, path=path, body=body, include_chunks=False)
 
     if method_name == "POST" and path == "/v1/turn/stream":
         return _handle_v1_turn(ctx=ctx, path=path, body=body, include_chunks=True)
+
+    turn_input_result = handle_turn_inputs_request(
+        ctx,
+        method_name=method_name,
+        path=path,
+        body=body,
+        query=query,
+    )
+    if turn_input_result is not None:
+        return turn_input_result
 
     if (
         method_name == "POST"
@@ -169,7 +178,7 @@ def _handle_v1_turn(
     *,
     ctx: APIRouteContext,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
     include_chunks: bool,
 ) -> RouteResult:
     if body is None:

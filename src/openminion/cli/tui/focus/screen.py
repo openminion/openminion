@@ -32,6 +32,8 @@ from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_fir
 from .files import build_file_index
 from .tokens import cursor_offset_for_text_area
 from .input import InputStateMixin
+from .turn_queue import FocusTurnQueueMixin
+from .shell import FocusShellMixin
 from .status import FocusLabelsMixin, FocusRuntimeStateMixin
 from .overlay import FocusOverlayInteractionMixin
 from .commands import SlashCommandMixin
@@ -72,8 +74,10 @@ def _format_response_time(elapsed_seconds: float) -> str:
 
 class FocusScreen(
     SlashCommandMixin,
+    FocusShellMixin,
     FocusOverlayInteractionMixin,
     InputStateMixin,
+    FocusTurnQueueMixin,
     FocusLabelsMixin,
     FocusRuntimeStateMixin,
     Screen,
@@ -89,6 +93,7 @@ class FocusScreen(
         Binding("ctrl+d", "toggle_debug", "Debug", priority=True),
         Binding("ctrl+k", "clear_screen", "Clear", priority=True),
         Binding("ctrl+l", "toggle_multiline", "Multiline"),
+        Binding("ctrl+enter", "cancel_and_run_next", "Cancel + next"),
         Binding("shift+tab", "cycle_permission_mode", "Permissions"),
         Binding("escape", "handle_escape", "Escape"),
     ]
@@ -123,7 +128,9 @@ class FocusScreen(
         self._session_initializing = True
         self._turn_worker: Worker[None] | None = None
         self._interrupt_requested = False
-        self._queued_turns: list[str] = []
+        self._run_next_after_interrupt = False
+        self._cancel_run_next_expected_queue_id: str | None = None
+        self._turn_input_queue = self._resolve_turn_input_queue()
         self._suppress_slash_overlay_once = False
         self._suppress_file_overlay_once = False
         self._status_controller = PhaseStatusController(fallback_label="Working...")
@@ -333,113 +340,13 @@ class FocusScreen(
             return
         status_line.set_state(input_state=input_state)
 
-    async def _run_shell_escape(self, command: str) -> None:
-        """Run a ``!cmd`` shell escape via the local subprocess."""
-        import shlex
-        from openminion.cli.tui.focus.widgets import FocusTranscript
-        from openminion.cli.tui.presentation.models import ToolEvent
-
-        if self._busy:
-            return
-        self._set_busy(True)
-        chat = self.query_one(FocusTranscript)
-        chat.push_message(
-            ChatMessage(
-                kind=MessageKind.USER,
-                sender="you",
-                body=f"!{command}",
-            )
-        )
-        try:
-            try:
-                argv = shlex.split(command)
-            except ValueError as exc:
-                chat.push_message(
-                    ChatMessage(
-                        kind=MessageKind.ERROR,
-                        sender="error",
-                        body=f"Could not parse `!{command}`: {exc}",
-                    )
-                )
-                return
-            if not argv:
-                return
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *argv,
-                    cwd=self._working_dir,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-            except FileNotFoundError as exc:
-                chat.push_message(
-                    ChatMessage(
-                        kind=MessageKind.ERROR,
-                        sender="error",
-                        body=f"Command not found: {exc.filename or argv[0]}",
-                    )
-                )
-                return
-            except Exception as exc:
-                chat.push_message(
-                    ChatMessage(
-                        kind=MessageKind.ERROR,
-                        sender="error",
-                        body=f"Could not run `!{command}`: {exc}",
-                    )
-                )
-                return
-            stdout_b, stderr_b = await proc.communicate()
-            stdout = (stdout_b or b"").decode("utf-8", errors="replace")
-            stderr = (stderr_b or b"").decode("utf-8", errors="replace")
-            combined = stdout
-            if stderr:
-                combined = (combined + ("\n" if combined else "") + stderr).rstrip()
-            event = ToolEvent(
-                tool_name="bash",
-                args={"cmd": command},
-                content=combined or "(no output)",
-                full_content=combined,
-                duration_ms=0,
-                exit_code=int(proc.returncode or 0),
-            )
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.TOOL,
-                    sender="bash",
-                    body="",
-                    tool_event=event,
-                    tool_result=combined,
-                )
-            )
-        finally:
-            self._set_busy(False)
-
-    def _queue_turn(self, text: str) -> None:
-        self._queued_turns.append(text)
-        chat = self.query_one(FocusTranscript)
-        chat.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body=text))
-        chat.push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=f"Queued message ({len(self._queued_turns)} pending).",
-            )
-        )
-        self._push_status_line(state="responding")
-
-    def _start_turn_worker(self, text: str, *, render_user: bool = True) -> None:
-        self._turn_worker = self.run_worker(
-            self._run_turn(text, render_user=render_user), exclusive=True
-        )
-
-    def _start_next_queued_turn(self) -> None:
-        if self._busy or self._turn_worker is not None or not self._queued_turns:
-            return
-        text = self._queued_turns.pop(0)
-        self._start_turn_worker(text, render_user=False)
-
-    async def _run_turn(self, text: str, *, render_user: bool = True) -> None:
+    async def _run_turn(
+        self,
+        text: str,
+        *,
+        render_user: bool = True,
+        queue_id: str | None = None,
+    ) -> None:
         if self._busy:
             return
         self._set_busy(True)
@@ -452,6 +359,7 @@ class FocusScreen(
             )
         started = time.perf_counter()
         reply = ""
+        failed = False
         turn = chat.begin_turn(role="assistant")
         turn._widget._message.sender = self._runtime.agent_id
         try:
@@ -486,6 +394,7 @@ class FocusScreen(
             else:
                 raise
         except Exception as exc:
+            failed = True
             chat.push_message(
                 ChatMessage(
                     kind=MessageKind.ERROR,
@@ -494,6 +403,7 @@ class FocusScreen(
                 )
             )
         finally:
+            interrupted = bool(self._interrupt_requested)
             elapsed_seconds = time.perf_counter() - started
             self._last_turn_debug = {
                 "elapsed_ms": int(elapsed_seconds * 1000),
@@ -501,16 +411,26 @@ class FocusScreen(
                 "agent_id": self._runtime.agent_id,
                 "working_dir": self._working_dir,
                 "reply": reply,
-                "interrupted": bool(self._interrupt_requested),
+                "interrupted": interrupted,
             }
+            self._mark_queue_entry_terminal(
+                queue_id,
+                interrupted=interrupted,
+                failed=failed,
+            )
             self._set_busy(False)
             self._status_controller.end_turn()
             self._update_debug_snapshot()
-            if not self._interrupt_requested:
+            if not interrupted:
                 self._on_turn_complete(elapsed_seconds)
+            run_next = (not interrupted) or self._run_next_after_interrupt
+            expected_queue_id = self._cancel_run_next_expected_queue_id
             self._interrupt_requested = False
+            self._run_next_after_interrupt = False
+            self._cancel_run_next_expected_queue_id = None
             self._turn_worker = None
-            self._start_next_queued_turn()
+            if run_next:
+                self._start_next_queued_turn(expected_queue_id=expected_queue_id)
 
     _ERROR_HINT_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
         (
@@ -955,6 +875,11 @@ class FocusScreen(
         if not self._busy:
             return
         self.run_worker(self._confirm_interrupt(), exclusive=False)
+
+    def action_cancel_and_run_next(self) -> None:
+        if not self._busy:
+            return
+        self.run_worker(self._cancel_current_and_run_next(), exclusive=False)
 
     def action_handle_escape(self) -> None:
         file_overlay = self._file_overlay()
