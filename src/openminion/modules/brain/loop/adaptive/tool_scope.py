@@ -1,7 +1,5 @@
 """Adaptive tool-scope filtering and public label helpers."""
 
-from __future__ import annotations
-
 import re
 import sys
 from typing import Any

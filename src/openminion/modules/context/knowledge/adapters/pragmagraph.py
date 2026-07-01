@@ -1,7 +1,5 @@
 """PragmaGraph adapter for OpenMinion third-brain graph context."""
 
-from __future__ import annotations
-
 import subprocess
 from collections import Counter
 from dataclasses import dataclass

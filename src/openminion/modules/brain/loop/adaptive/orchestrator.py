@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,

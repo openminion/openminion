@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from ..constants import (
     BRAIN_ACTION_STATUS_FAILED,
     BRAIN_ACTION_STATUS_FAILURES,

@@ -1,7 +1,5 @@
 """Operator-tunable config for the knowledge-graph layer."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 

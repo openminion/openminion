@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from openminion.modules.a2a.models import Envelope, JobRecord
 from openminion.modules.a2a.runtime import A2ARuntime
 from openminion.modules.a2a.transport.base import Transport

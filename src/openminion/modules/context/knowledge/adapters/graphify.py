@@ -1,7 +1,5 @@
 """Graphify adapter for OpenMinion third-brain graph context."""
 
-from __future__ import annotations
-
 import json
 import subprocess
 from collections import deque

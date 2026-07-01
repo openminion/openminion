@@ -1,7 +1,5 @@
 """Provider-neutral DTOs for the knowledge-graph layer."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
