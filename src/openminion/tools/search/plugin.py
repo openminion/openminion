@@ -1,5 +1,3 @@
-"""Search tool plugin."""
-
 from collections.abc import Mapping
 from datetime import datetime, timezone
 import hashlib
@@ -43,7 +41,6 @@ from .providers import (
 )
 from .schemas import SearchArgs
 
-# SEP-02 backward-compat shims: pre-existing tests reference
 _PROVIDERS: dict[str, SearchProvider] = provider_registry()._providers  # noqa: SLF001
 _PROVIDER_ORDER: list[str] = provider_registry()._provider_order  # noqa: SLF001
 
@@ -53,8 +50,6 @@ def _normalize_provider_id(raw: Any) -> str:
 
 
 def register_provider(provider: SearchProvider) -> None:
-    """Register a built-in or external search provider."""
-
     provider_id = _normalize_provider_id(getattr(provider, "provider_id", ""))
     if not provider_id:
         raise ValueError("search provider must define provider_id")
@@ -62,14 +57,10 @@ def register_provider(provider: SearchProvider) -> None:
 
 
 def list_provider_ids() -> tuple[str, ...]:
-    """Return registered provider ids in registration order."""
-
     return tuple(provider_registry().list_provider_ids())
 
 
 def _registered_provider(provider_id: str) -> SearchProvider | None:
-    """Lookup a provider by id; ``None`` if not registered."""
-
     if not provider_id:
         return None
     try:
@@ -79,8 +70,6 @@ def _registered_provider(provider_id: str) -> SearchProvider | None:
 
 
 def _registered_provider_ids() -> list[str]:
-    """Return the current registered provider ids (mutation-safe snapshot)."""
-
     return provider_registry().list_provider_ids()
 
 
@@ -337,7 +326,6 @@ def _render_content(payload: Mapping[str, Any]) -> str:
         url = str(row.get("url", "") or "").strip() or "unknown-url"
         lines.append(f"{idx}. {title} - {url}")
     rendered = "\n".join(lines)
-    # PIDF: route search_result through the typed boundary owner.
     _pidf_emit_boundary_event(
         "search_result",
         rendered,
@@ -581,7 +569,6 @@ def register(registry: ToolRegistry) -> None:
         )
     )
 
-    # load external search-provider entry points AFTER built-ins so
     try:
         provider_registry().load_entry_points()
     except Exception as exc:  # noqa: BLE001

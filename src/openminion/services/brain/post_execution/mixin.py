@@ -29,7 +29,6 @@ def _emit_prep_status(
     trace_id: str,
     detail_text: str,
 ) -> None:
-    """Emit a phase-status update during `_prepare_turn` (best-effort, PPL-07)."""
     if callback is None:
         return
     try:
@@ -54,7 +53,6 @@ class BrainBridgeTurnMixin:
         brain_session_id: str,
         progress_callback: Callable[[PhaseStatus], None] | None = None,
     ) -> tuple[BrainRunner, str, str | None, str, float]:
-        # synthesize a trace_id early so prep-phase
         prep_trace_id = f"prep-{uuid.uuid4().hex[:12]}"
         _emit_prep_status(
             progress_callback,
@@ -315,7 +313,6 @@ class BrainBridgeTurnMixin:
                 approval_callback=approval_callback,
                 initial_trigger="idle_tick",
             )
-        # CTGP wiring: route through `run_with_autonomous_continuation`
         options = getattr(runner, "options", None)
         ctgp_enabled = bool(getattr(options, "autonomous_continuation_enabled", True))
         if ctgp_enabled:
@@ -323,7 +320,6 @@ class BrainBridgeTurnMixin:
                 run_with_autonomous_continuation,
             )
 
-            # The wrapper forwards `progress_callback` / `approval_callback`
             return run_with_autonomous_continuation(
                 runner,
                 session_id=session_id,
@@ -393,7 +389,6 @@ class BrainBridgeTurnMixin:
             forced_tools=forced_tools,
             capability_category=resolved_capability_category,
             brain_session_id=brain_session_id,
-            # forward `progress_callback` into prep so
             progress_callback=progress_callback,
         )
 
