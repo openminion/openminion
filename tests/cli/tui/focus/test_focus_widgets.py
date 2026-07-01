@@ -125,7 +125,7 @@ async def test_tool_block_widget_renders_exec_output_and_toggles_collapsed() -> 
         body = widget.query_one(".focus-tool-block-body", Static)
         assert "Ran" in title
         assert "pytest -x" in title
-        assert "0.3s" in title or "300ms" in title
+        assert "<1s" in title
         assert widget.collapsed is True
         assert body.display is False
 
@@ -133,7 +133,7 @@ async def test_tool_block_widget_renders_exec_output_and_toggles_collapsed() -> 
         await pilot.pause()
         assert widget.collapsed is False
         assert body.display is True
-        assert "show more" in str(body.render())
+        assert "copy keeps full output" in str(body.render())
 
         await pilot.press("enter")
         await pilot.pause()

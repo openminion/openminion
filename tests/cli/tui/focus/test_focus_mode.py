@@ -10,6 +10,7 @@ import pytest
 from textual.widgets import Input, OptionList
 
 from openminion.base.types import Message
+from openminion.services.gateway.streaming import GatewayStreamEvent
 from openminion.cli.parser.contracts import CLI_INTERFACE_VERSION
 from openminion.cli.tui.focus import FocusApp
 from openminion.cli.tui.focus.screen import (
@@ -198,8 +199,55 @@ class _FakeGateway:
         return Message(channel=channel, target=target, body=f"{self._name}:{body}")
 
 
+class _FakeStreamingGateway(_FakeGateway):
+    async def handle_message_streaming(
+        self,
+        *,
+        channel: str,
+        target: str,
+        body: str,
+        session_id: str,
+        inbound_metadata=None,
+        deliver: bool = True,
+        approval_callback=None,
+    ):
+        self.calls.append(
+            {
+                "channel": channel,
+                "target": target,
+                "body": body,
+                "session_id": session_id,
+                "approval_callback": approval_callback,
+                "inbound_metadata": dict(inbound_metadata or {}),
+                "deliver": deliver,
+            }
+        )
+        yield GatewayStreamEvent(
+            trace_id="stream-1",
+            kind="tool_call_started",
+            tool_name="exec.run",
+            args={"command": "pwd"},
+        )
+        yield GatewayStreamEvent(trace_id="stream-1", kind="assistant_token", text="hi ")
+        yield GatewayStreamEvent(
+            trace_id="stream-1",
+            kind="assistant_token",
+            text="there",
+        )
+        yield GatewayStreamEvent(
+            trace_id="stream-1",
+            kind="final_message",
+            final_message={
+                "channel": channel,
+                "target": target,
+                "body": f"{self._name}:{body}",
+                "metadata": {"total_tokens": 3},
+            },
+        )
+
+
 class _FakeRuntime:
-    def __init__(self) -> None:
+    def __init__(self, *, streaming_gateway: bool = False) -> None:
         self._agent_profiles = {
             "alpha": SimpleNamespace(name="alpha", provider="openai"),
             "beta": SimpleNamespace(name="beta", provider="anthropic"),
@@ -225,6 +273,7 @@ class _FakeRuntime:
             }
         )
         self._gateways: dict[str, _FakeGateway] = {}
+        self._streaming_gateway = streaming_gateway
 
     def list_registered_agents(self) -> list[str]:
         return ["alpha", "beta", "custom-agent"]
@@ -239,7 +288,10 @@ class _FakeRuntime:
     def resolve_gateway(self, agent_id: str | None = None) -> _FakeGateway:
         name = str(agent_id or "").strip() or "alpha"
         if name not in self._gateways:
-            self._gateways[name] = _FakeGateway(name)
+            gateway_class = (
+                _FakeStreamingGateway if self._streaming_gateway else _FakeGateway
+            )
+            self._gateways[name] = gateway_class(name)
         return self._gateways[name]
 
 
@@ -482,6 +534,39 @@ async def test_openminion_runtime_focus_deferred_binding_and_send_message_forwar
     assert call["inbound_metadata"]["workspace_root"] == str(
         Path("/tmp/focus-project").resolve()
     )
+
+
+@pytest.mark.asyncio
+async def test_openminion_runtime_focus_uses_gateway_streaming_when_available() -> None:
+    rt = _FakeRuntime(streaming_gateway=True)
+    runtime = OpenMinionRuntime(
+        rt,
+        target="focus",
+        working_dir="/tmp/focus-streaming-project",
+        bind_immediately=False,
+    )
+    runtime.create_new_session()
+
+    async def _approve(tool_name: str, args: dict[str, Any], call_id: Any) -> bool:
+        del tool_name, args, call_id
+        return True
+
+    progress_events: list[dict[str, Any]] = []
+    chunks = await _collect_chunks(
+        runtime,
+        "stream please",
+        progress_callback=progress_events.append,
+        inbound_metadata={"request_source": "stream-test"},
+        approval_callback=_approve,
+    )
+
+    assert chunks == ["hi ", "there"]
+    call = rt.resolve_gateway("alpha").calls[-1]
+    assert call["deliver"] is False
+    assert call["approval_callback"] is _approve
+    assert call["inbound_metadata"]["request_source"] == "stream-test"
+    assert progress_events[0]["kind"] == "tool_started"
+    assert progress_events[0]["tool_name"] == "exec.run"
 
 
 def test_openminion_runtime_focus_explicit_session_and_candidate_lookup() -> None:

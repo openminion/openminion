@@ -75,7 +75,7 @@ def test_tool_block_normal_render_uses_6_line_cap() -> None:
     widget = ToolBlockWidget(event, pending=False, verbosity="normal")
     rendered = widget._render_exec()
     plain = rendered.plain
-    assert "show more" in plain
+    assert "copy keeps full output" in plain
     assert "line-5" in plain  # last shown line (0-indexed)
     assert "line-6" not in plain
 

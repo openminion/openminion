@@ -15,6 +15,7 @@ from openminion.cli.tui.presentation.models import (
     ChatMessage,
     MessageKind,
 )
+from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
 
 from ..composer import TerminalComposer
 from ..overlays import TerminalOverlayPresenter
@@ -564,6 +565,7 @@ async def _run_agent_turn(
             if not chunk_str:
                 continue
             reply += chunk_str
+            mark_active_chat_first_text()
             handle.append_token(chunk_str)
         handle.complete(final_text=reply)
     except Exception as exc:

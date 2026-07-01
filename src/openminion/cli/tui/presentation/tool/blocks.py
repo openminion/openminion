@@ -18,6 +18,7 @@ from ..models import ToolEvent
 VerbosityLevel = Literal["quiet", "normal", "verbose"]
 _VERBOSE_LINE_CAP = 200
 _NORMAL_LINE_CAP = 6
+_TRUNCATION_HINT = "... {remaining} more lines; copy keeps full output"
 
 _TOOL_VERBS: dict[str, tuple[str, str]] = {
     "exec.run": ("Running", "Ran"),
@@ -189,8 +190,8 @@ class ToolBlockWidget(Widget):
             return ""
         seconds = ms_int / 1000.0
         if seconds < 1.0:
-            return f"{ms_int}ms"
-        return f"{seconds:.1f}s"
+            return "<1s"
+        return f"{int(seconds)}s"
 
     @staticmethod
     def _truncate_hint(hint: str, *, limit: int = 60) -> str:
@@ -217,16 +218,35 @@ class ToolBlockWidget(Widget):
         command = str(self._tool_event.args.get("command", "") or "").strip()
         content = self._tool_event.full_content or self._tool_event.content
         lines = str(content or "").splitlines()
-        cap = self._verbosity_line_cap()
-        truncated = len(lines) > cap
-        shown = lines[:cap] if truncated else lines
         text = Text()
         if command:
             text.append(f"$ {command}\n", style="bold")
-        text.append("\n".join(shown) if shown else "(no output)")
-        if truncated:
-            text.append("\n... show more", style="dim")
+        self._append_capped_lines(text, lines, empty="(no output)")
         return text
+
+    def _append_capped_lines(
+        self,
+        text: Text,
+        lines: list[str],
+        *,
+        empty: str,
+        prefix: str = "",
+        style_for_line: Any | None = None,
+    ) -> None:
+        cap = self._verbosity_line_cap()
+        truncated = len(lines) > cap
+        shown = lines[:cap] if truncated else lines
+        if not shown:
+            text.append(empty)
+        for line in shown:
+            style = style_for_line(line) if style_for_line is not None else ""
+            text.append(f"{prefix}{line}\n", style=style)
+        if truncated:
+            remaining = len(lines) - len(shown)
+            if shown:
+                text.rstrip()
+                text.append("\n")
+            text.append(_TRUNCATION_HINT.format(remaining=remaining), style="dim")
 
     def _verbosity_line_cap(self) -> int:
         if self.verbosity == "quiet":
@@ -238,18 +258,29 @@ class ToolBlockWidget(Widget):
     def _render_file_read(self) -> Text:
         content = self._tool_event.full_content or self._tool_event.content
         text = Text()
-        for index, line in enumerate(str(content or "").splitlines(), start=1):
+        lines = str(content or "").splitlines()
+        cap = self._verbosity_line_cap()
+        truncated = len(lines) > cap
+        shown = lines[:cap] if truncated else lines
+        for index, line in enumerate(shown, start=1):
             text.append(f"{index:>3} | ", style="dim")
             text.append(f"{line}\n")
-        if not text.plain:
+        if not shown:
             text.append("(empty file)")
+        if truncated:
+            text.append(
+                _TRUNCATION_HINT.format(remaining=len(lines) - len(shown)),
+                style="dim",
+            )
         return text
 
     def _render_diff(self) -> Text:
         content = self._tool_event.full_content or self._tool_event.content
         added_color, removed_color = self._diff_colors()
         text = Text()
-        for line in str(content or "").splitlines():
+        lines = str(content or "").splitlines()
+
+        def style_for_line(line: str) -> str:
             style = ""
             if line.startswith("+"):
                 style = added_color
@@ -257,9 +288,14 @@ class ToolBlockWidget(Widget):
                 style = removed_color
             elif line.startswith("@@"):
                 style = "bold"
-            text.append(f"{line}\n", style=style)
-        if not text.plain:
-            text.append("(empty diff)")
+            return style
+
+        self._append_capped_lines(
+            text,
+            lines,
+            empty="(empty diff)",
+            style_for_line=style_for_line,
+        )
         return text
 
     def _diff_colors(self) -> tuple[str, str]:
@@ -292,7 +328,8 @@ class ToolBlockWidget(Widget):
         text = Text()
         if url:
             text.append(f"{url}\n", style="bold")
-        text.append(str(self._tool_event.content or "(empty response)"))
+        lines = str(self._tool_event.content or "").splitlines()
+        self._append_capped_lines(text, lines, empty="(empty response)")
         return text
 
     def _render_default(self) -> Text:
@@ -303,7 +340,8 @@ class ToolBlockWidget(Widget):
             except (TypeError, ValueError):
                 text.append(str(self._tool_event.args))
             text.append("\n")
-        text.append(str(self._tool_event.content or "(no content)"))
+        lines = str(self._tool_event.content or "").splitlines()
+        self._append_capped_lines(text, lines, empty="(no content)")
         return text
 
 
