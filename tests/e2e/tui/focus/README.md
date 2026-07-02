@@ -10,6 +10,18 @@ Run the deterministic local smoke:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q tests/e2e/tui/focus/test_local.py -ra
 ```
 
+List reusable suites:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py --list
+```
+
+Run a single suite:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py progress-visibility
+```
+
 Run live MiniMax focus smoke:
 
 ```bash
@@ -42,8 +54,25 @@ Run the full complex/deep scenario matrix:
 OPENMINION_LIVE_TUI_FOCUS_E2E=1 \
 OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 \
 PYTHONDONTWRITEBYTECODE=1 \
-.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py complex
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py deep
 ```
+
+Suite names:
+
+- `local`: deterministic PTY launch and slash-command smoke.
+- `core`: live MiniMax basic answer.
+- `tools`: live MiniMax tool and policy-recovery smoke.
+- `approval`: focused approval UI tests without live credentials.
+- `research`: live complex/deep research prompts.
+- `coding`: live complex/deep coding prompts.
+- `long-running`: live long-running research/coding prompts.
+- `queued-input`: focused queued-input/status tests without live credentials.
+- `progress-visibility`: progress/status rendering tests without live credentials.
+- `regression`: broad local focus/terminal/status regression suite.
+- `live`: basic plus tools live suites.
+- `complex`: full complex live suite.
+- `deep`: live plus complex live suites.
+- `all`: every focus E2E test.
 
 Useful environment variables:
 

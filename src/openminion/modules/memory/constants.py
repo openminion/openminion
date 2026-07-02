@@ -2,12 +2,10 @@ from pathlib import Path
 
 from openminion.modules.paths import MEMORY_DB_SUBPATH
 
-# Memory module environment variable names.
 MEMCTL_CONFIG_ENV = "MEMCTL_CONFIG"
 OPENMINION_MEMORY_TRACE_ENV = "OPENMINION_MEMORY_TRACE"
 OPENMINION_MEMORY_TRACE_FILE_ENV = "OPENMINION_MEMORY_TRACE_FILE"
 
-# Fixed normalized-key bounds shared with downstream validators.
 NORMALIZED_KEY_MAX_LENGTH = 128
 
 MEMORY_CANDIDATE_STATUS_PROPOSED = "proposed"
@@ -27,7 +25,6 @@ PROMOTABLE_MEMORY_CANDIDATE_STATUSES: frozenset[str] = frozenset(
     }
 )
 
-# Fallback confidence scores used when operator config omits them.
 DEFAULT_CONFIDENCE: dict[str, float] = {
     "user_said": 0.8,
     "tool_output": 0.9,
@@ -41,7 +38,6 @@ MEMORY_GC_SUMMARY_COMPRESS_AFTER_DAYS = 30
 MEMORY_GC_SUMMARY_DELETE_AFTER_DAYS = 90
 MEMORY_GC_SUMMARY_COMPRESS_MAX_CHARS = 100
 
-# Path layout defaults.
 DEFAULT_CONFIG_FILENAME = "memory.yaml"
 DEFAULT_STANDALONE_ROOT_SUBPATH = Path(".memctl")
 DEFAULT_STANDALONE_SQLITE_SUBPATH = DEFAULT_STANDALONE_ROOT_SUBPATH / "memory.db"

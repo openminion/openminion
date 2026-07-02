@@ -19,7 +19,7 @@ from tests.services.gateway._gateway_service_support import (
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
-from openminion.services.gateway.memory import record_memory_turn
+from openminion.services.gateway.memory import MemoryFollowupQueue, record_memory_turn
 
 
 def _make_v2_memory(
@@ -88,6 +88,90 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         )
 
         self.assertEqual(memory.called, ["sess-1"])
+
+    def test_record_memory_turn_can_defer_capsule_and_summary_followup(self) -> None:
+        class _DeferredMemory:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            def record_turn(self, **_kwargs):
+                from types import SimpleNamespace
+
+                self.calls.append(("record_turn", str(_kwargs["session_id"])))
+                return SimpleNamespace(
+                    facts_added=1,
+                    todos_added=0,
+                    todos_completed=0,
+                    patch_id="p1",
+                    generation=1,
+                    replayed_patches=0,
+                    lock_recovered=False,
+                )
+
+            def build_context(self, *, session_id: str, user_message: str) -> str:
+                self.calls.append(("build_context", session_id))
+                del user_message
+                return "updated capsule"
+
+            def maybe_checkpoint_session_summary(self, session_id: str) -> str:
+                self.calls.append(("checkpoint", session_id))
+                return "summary-1"
+
+        events: list[dict[str, object]] = []
+
+        def _emit_memory_event(**kwargs):
+            events.append(dict(kwargs))
+
+        memory = _DeferredMemory()
+        metadata: dict[str, str] = {}
+        queue = MemoryFollowupQueue(auto_start=False)
+        record_memory_turn(
+            agent_memory=memory,
+            logger=logging.getLogger(__name__),
+            agent_id="main",
+            memory_capsule_strategy="refresh_on_write",
+            memory_capsule_cache={},
+            session_id="sess-1",
+            run_id="run-1",
+            request_id="req-1",
+            channel="console",
+            target="local-user",
+            user_message="remember: project codename is Orion",
+            assistant_message="ok",
+            conversation_id="",
+            thread_id="",
+            attach_id="",
+            emit_memory_event=_emit_memory_event,
+            outbound_metadata=metadata,
+            followup_queue=queue,
+            defer_followup=True,
+        )
+
+        self.assertEqual(memory.calls, [("record_turn", "sess-1")])
+        self.assertEqual(metadata.get("memory_enabled"), "true")
+        self.assertEqual(metadata.get("memory_capsule_refreshed"), "pending")
+        self.assertEqual(metadata.get("memory_followup_deferred"), "true")
+        self.assertEqual(queue.pending_count(session_id="sess-1"), 1)
+        self.assertIn(
+            "memory.followup.pending",
+            [str(event.get("event_type")) for event in events],
+        )
+
+        queue.flush(session_id="sess-1")
+
+        self.assertEqual(
+            memory.calls,
+            [
+                ("record_turn", "sess-1"),
+                ("build_context", "sess-1"),
+                ("checkpoint", "sess-1"),
+            ],
+        )
+        self.assertEqual(metadata.get("memory_capsule_refreshed"), "true")
+        self.assertIn(
+            "memory.followup.completed",
+            [str(event.get("event_type")) for event in events],
+        )
 
     def test_gateway_injects_agent_memory_across_sessions(self) -> None:
         memory_service = _make_v2_memory(Path(self._tmp.name), "-inject")
@@ -222,7 +306,10 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
             else:
                 self.assertIn("memctl codename is Orion", final_capsule)
             if strategy == "refresh_on_write":
-                self.assertEqual(turn2.metadata.get("memory_capsule_refreshed"), "true")
+                self.assertIn(
+                    turn2.metadata.get("memory_capsule_refreshed"),
+                    ("pending", "true"),
+                )
 
     def test_gateway_merges_memory_with_compacted_session_context(self) -> None:
         memory_service = _make_v2_memory(Path(self._tmp.name), "-merged")
@@ -365,7 +452,7 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
                     session_id="refresh-session-1",
                 )
             )
-            self.assertEqual(turn2.metadata.get("memory_capsule_refreshed"), "true")
+            self.assertEqual(turn2.metadata.get("memory_capsule_refreshed"), "pending")
 
             asyncio.run(
                 gateway.run_once(
@@ -522,7 +609,10 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
                 self.assertNotIn("project codename is Orion", final_capsule)
 
             if strategy == "refresh_on_write":
-                self.assertEqual(turn2.metadata.get("memory_capsule_refreshed"), "true")
+                self.assertIn(
+                    turn2.metadata.get("memory_capsule_refreshed"),
+                    ("pending", "true"),
+                )
             else:
                 self.assertIn(
                     turn2.metadata.get("memory_capsule_refreshed"),
@@ -564,6 +654,7 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
                     session_id=session_id,
                 )
             )
+            gateway.flush_memory_followups(session_id=session_id)
 
         events = self.sessions.list_events(session_id=session_id, limit=200)
         event_types = [event.event_type for event in events]

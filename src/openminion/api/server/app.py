@@ -69,7 +69,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         started_at = perf_counter()
         logger = logging.getLogger("openminion.api")
         try:
-            payload = self._read_json_body()
+            payload = self._read_optional_json_body()
         except ValueError as exc:
             resolved_request_id = normalize_request_id(request_id)
             status, body = error_response(
@@ -107,6 +107,60 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             request_id=request_id,
         )
         self._write_json(status, response_payload)
+
+    def do_DELETE(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
+        parsed = urlparse(self.path)
+        request_id = self.headers.get("X-Request-ID")
+        started_at = perf_counter()
+        logger = logging.getLogger("openminion.api")
+        try:
+            payload = self._read_optional_json_body()
+        except ValueError as exc:
+            resolved_request_id = normalize_request_id(request_id)
+            status, body = error_response(
+                HTTPStatus.BAD_REQUEST,
+                code="invalid_json",
+                message=str(exc),
+                details={"path": parsed.path},
+                retryable=False,
+            )
+            body = _finalize_api_response(
+                payload=body,
+                status=status,
+                method="DELETE",
+                path=parsed.path,
+                request_id=resolved_request_id,
+                started_at=started_at,
+                logger=logger,
+            )
+            self._write_json(status, body)
+            return
+        status, response_payload = dispatch_request(
+            "DELETE",
+            parsed.path,
+            self.config_path,
+            body=payload,
+            query=parsed.query,
+            runtime=self.runtime,
+            runtime_bootstrap_error=self.runtime_bootstrap_error,
+            request_headers=self.headers,
+            request_id=request_id,
+        )
+        self._write_json(status, response_payload)
+
+    def _read_optional_json_body(self) -> dict:
+        content_length_raw = self.headers.get("Content-Length", "0")
+        try:
+            content_length = int(content_length_raw)
+        except ValueError as exc:
+            raise ValueError("Invalid Content-Length header.") from exc
+        if content_length <= 0:
+            return {}
+        raw_body = self.rfile.read(content_length).decode("utf-8")
+        return parse_json_request_body(
+            content_length_raw=content_length_raw,
+            raw_body=raw_body,
+        )
 
     def _handle_turn_stream(self, *, body: dict, request_id: Optional[str]) -> None:
         from openminion.api.server.streaming import handle_turn_stream_request

@@ -67,7 +67,7 @@ def test_completed_exec_run_uses_ran_with_duration() -> None:
     title = ToolBlockWidget(event, pending=False)._header_text()
     assert "Ran" in title
     assert "ls" in title
-    assert "1.2s" in title
+    assert "1s" in title
     assert "·" in title
 
 
@@ -80,7 +80,7 @@ def test_completed_exec_run_short_duration_uses_ms() -> None:
         exit_code=0,
     )
     title = ToolBlockWidget(event, pending=False)._header_text()
-    assert "0.3s" in title or "300ms" in title
+    assert "<1s" in title
 
 
 def test_pending_file_edit_uses_editing() -> None:

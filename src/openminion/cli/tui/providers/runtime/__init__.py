@@ -8,7 +8,9 @@ from uuid import uuid4
 
 from openminion.api.runtime import APIRuntime
 from openminion.base.config.core import resolve_default_agent_id
+from openminion.base.config.action_policy import ACTION_POLICY_SESSION_OVERRIDE_KEY
 from openminion.base.config.runtime.profile import PERMISSION_MODE_DEFAULT
+from openminion.base.types import Message
 from openminion.cli.status import (
     TokenUsageSnapshot,
     TokenUsageTotals,
@@ -132,6 +134,7 @@ class OpenMinionRuntime(
         self._project_context_pending: bool = False
         self._model_override_provider: str = ""
         self._model_override_model: str = ""
+        self._action_policy_mode_override: str = ""
         self._permission_mode: str = ""
         self._permission_overrides: dict[str, str] = {}
         self._read_only_mode: bool = False
@@ -499,6 +502,12 @@ class OpenMinionRuntime(
                     self._permission_overrides,
                     sort_keys=True,
                 )
+            if self.action_policy_mode_override:
+                if merged_inbound_metadata is None:
+                    merged_inbound_metadata = {}
+                merged_inbound_metadata[ACTION_POLICY_SESSION_OVERRIDE_KEY] = (
+                    self.action_policy_mode_override
+                )
             if self.effort_level:
                 if merged_inbound_metadata is None:
                     merged_inbound_metadata = {}
@@ -508,13 +517,70 @@ class OpenMinionRuntime(
                 kwargs["inbound_metadata"] = merged_inbound_metadata
             import inspect
 
-            sig = inspect.signature(self._gateway.handle_message)
+            stream_handler = getattr(self._gateway, "handle_message_streaming", None)
+            if callable(stream_handler):
+                sig = inspect.signature(stream_handler)
+            else:
+                sig = inspect.signature(self._gateway.handle_message)
             if "deliver" in sig.parameters:
                 kwargs["deliver"] = False
+            wrapped_progress = self._wrap_progress_callback(progress_callback)
             if "progress_callback" in sig.parameters:
-                kwargs["progress_callback"] = self._wrap_progress_callback(
-                    progress_callback
-                )
+                kwargs["progress_callback"] = wrapped_progress
+            if approval_callback is not None and "approval_callback" in sig.parameters:
+                kwargs["approval_callback"] = approval_callback
+            if callable(stream_handler):
+                final_text = ""
+                final_metadata: Mapping[str, Any] | None = None
+                emitted_text = False
+                try:
+                    async for event in stream_handler(**kwargs):
+                        kind = str(getattr(event, "kind", "") or "")
+                        if kind == "assistant_token":
+                            token = str(getattr(event, "text", "") or "")
+                            if not token:
+                                continue
+                            emitted_text = True
+                            final_text += token
+                            yield token
+                            continue
+                        if kind == "final_message":
+                            final_message = getattr(event, "final_message", None)
+                            if isinstance(final_message, Mapping):
+                                metadata = final_message.get("metadata", {})
+                                final_metadata = (
+                                    dict(metadata) if isinstance(metadata, Mapping) else {}
+                                )
+                                response = Message(
+                                    channel=str(final_message.get("channel", "") or ""),
+                                    target=str(final_message.get("target", "") or ""),
+                                    body=str(final_message.get("body", "") or ""),
+                                    metadata=dict(final_metadata),
+                                )
+                                final_text = self._message_text(response)
+                            continue
+                        progress_payload = self._progress_payload_from_stream_event(event)
+                        if progress_payload:
+                            wrapped_progress(progress_payload)
+                except Exception:
+                    self._finalize_turn_usage(None, succeeded=False)
+                    raise
+                retryable_failure = _retryable_turn_failure_message(final_text)
+                if retryable_failure is not None:
+                    self._finalize_turn_usage(final_metadata, succeeded=False)
+                    if attempt < max_attempts and _is_retryable_turn_failure_text(
+                        final_text
+                    ):
+                        continue
+                    if not emitted_text:
+                        yield retryable_failure
+                    return
+                self._finalize_turn_usage(final_metadata, succeeded=True)
+                if final_text and not emitted_text:
+                    yield final_text
+                return
+            if "progress_callback" in sig.parameters:
+                kwargs["progress_callback"] = wrapped_progress
             if approval_callback is not None and "approval_callback" in sig.parameters:
                 kwargs["approval_callback"] = approval_callback
             try:
@@ -581,6 +647,36 @@ class OpenMinionRuntime(
 
         setattr(_wrapped, "__self__", getattr(progress_callback, "__self__", None))
         return _wrapped
+
+    def _progress_payload_from_stream_event(self, event: Any) -> dict[str, Any]:
+        kind = str(getattr(event, "kind", "") or "")
+        if kind == "tool_call_started":
+            return {
+                "kind": "tool_started",
+                "tool_name": str(getattr(event, "tool_name", "") or ""),
+                "args": dict(getattr(event, "args", None) or {}),
+            }
+        if kind == "tool_call_completed":
+            return {
+                "kind": "tool_completed",
+                "tool_name": str(getattr(event, "tool_name", "") or ""),
+                "args": dict(getattr(event, "args", None) or {}),
+                "ok": bool(getattr(event, "ok", False)),
+                "duration_ms": getattr(event, "duration_ms", None),
+                "content": str(getattr(event, "text", "") or ""),
+            }
+        if kind == "budget_event":
+            payload = dict(getattr(event, "budget_payload", None) or {})
+            payload.setdefault("kind", "budget_event")
+            event_type = str(getattr(event, "budget_event_type", "") or "").strip()
+            if event_type:
+                payload.setdefault("event_type", event_type)
+            return payload
+        if kind == "status":
+            payload = dict(getattr(event, "status_payload", None) or {})
+            payload.setdefault("kind", "status")
+            return payload
+        return {}
 
     def _consume_live_usage_payload(self, payload: Mapping[str, Any] | None) -> None:
         turn_usage = usage_totals_from_mapping(payload)

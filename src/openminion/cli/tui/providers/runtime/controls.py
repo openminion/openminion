@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
+from openminion.base.config.action_policy import (
+    ACTION_POLICY_SESSION_OVERRIDE_KEY,
+    normalize_action_policy_mode_override,
+)
 from openminion.base.config.runtime.profile import (
     PERMISSION_MODE_DEFAULT,
     PERMISSION_MODE_VALUES,
@@ -23,6 +27,7 @@ class RuntimeControlsMixin:
     _memory_provider: Any
     _model_override_model: str
     _model_override_provider: str
+    _action_policy_mode_override: str
     _permission_mode: str
     _permission_overrides: dict[str, str]
     _read_only_mode: bool
@@ -134,6 +139,33 @@ class RuntimeControlsMixin:
 
     def cycle_permission_mode(self) -> str:
         return self.set_permission_mode(next_permission_mode(self.permission_mode))
+
+    @property
+    def action_policy_mode_override(self) -> str:
+        return str(getattr(self, "_action_policy_mode_override", "") or "").strip()
+
+    def set_session_action_policy_mode(self, mode: str) -> str:
+        normalized = normalize_action_policy_mode_override(mode)
+        if normalized is None:
+            raise ValueError("unknown action policy mode; valid modes: ask, auto, bypass")
+        self._action_policy_mode_override = normalized
+        self._persist_session_action_policy_mode(normalized)
+        return normalized
+
+    def _persist_session_action_policy_mode(self, mode: str) -> None:
+        if not self.is_bound or not self.session_id:
+            return
+        sessions = getattr(getattr(self, "_rt", None), "sessions", None)
+        update = getattr(sessions, "update_session_metadata", None)
+        if not callable(update):
+            return
+        try:
+            update(
+                session_id=self.session_id,
+                patch={ACTION_POLICY_SESSION_OVERRIDE_KEY: mode},
+            )
+        except Exception:
+            return
 
     @property
     def permission_overrides(self) -> dict[str, str]:

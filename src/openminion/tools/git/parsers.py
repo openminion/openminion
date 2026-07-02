@@ -2,9 +2,6 @@ from dataclasses import dataclass
 from typing import Any
 
 
-# git branch (plain list)
-
-
 @dataclass
 class BranchEntry:
     """Single line of `git branch` output."""
@@ -36,9 +33,6 @@ def branch_list_to_dict(entries: list[BranchEntry]) -> list[dict[str, Any]]:
     return [{"name": entry.name, "is_current": entry.is_current} for entry in entries]
 
 
-# git reflog
-
-
 @dataclass
 class ReflogEntry:
     """A single line of `git reflog` (default format)."""
@@ -66,8 +60,6 @@ def parse_reflog_output(stdout: str) -> list[ReflogEntry]:
             continue
         ref = rest[:colon_idx]
         body = rest[colon_idx + 2 :]
-        # Body is `<action>: <summary>`; some entries have no extra colon
-        # (e.g. `commit (initial)`) so partition fallback to whole-body action.
         body_colon = body.find(": ")
         if body_colon == -1:
             action = body
@@ -165,9 +157,6 @@ def stash_list_to_dict(entries: list[StashEntry]) -> list[dict[str, Any]]:
     ]
 
 
-# git status --porcelain=v2 --branch
-
-
 @dataclass
 class StatusEntry:
     """A single file entry in `git status --porcelain=v2 --branch` output."""
@@ -200,7 +189,6 @@ def parse_status_porcelain_v2(stdout: str) -> StatusOutput:
         if not line:
             continue
         if line.startswith("# branch."):
-            # The header form is `# branch.<name> <value...>` — strip the
             rest = line[len("# branch.") :]
             header, _, value = rest.partition(" ")
             header = header.strip()
@@ -224,8 +212,6 @@ def parse_status_porcelain_v2(stdout: str) -> StatusOutput:
                             pass
             continue
         if line.startswith(("1 ", "2 ")):
-            # Ordinary or renamed/copied file. The XY status codes are the
-            # second whitespace-separated token (e.g. ".M", "M.", "RM").
             tokens = line.split(" ", 8)
             if len(tokens) < 9:
                 continue
@@ -295,10 +281,6 @@ def status_to_dict(status: StatusOutput) -> dict[str, Any]:
     }
 
 
-# git log --pretty=format:...
-
-# Field separator used in our `--pretty=format` string. Chosen to be a value
-# that does not appear in normal commit metadata so we can split reliably.
 LOG_FIELD_SEP = "\x1f"
 LOG_RECORD_SEP = "\x1e"
 
@@ -312,8 +294,6 @@ LOG_PRETTY_FORMAT = LOG_RECORD_SEP.join(
         "%b",
     ]
 ).replace(LOG_RECORD_SEP, LOG_FIELD_SEP)
-# The final `--pretty=format` string passed to git. Each commit is the
-# above field sequence; commits are separated by ASCII RS (`\x1e`).
 LOG_PRETTY_FORMAT_ARG = LOG_PRETTY_FORMAT + LOG_RECORD_SEP
 
 
@@ -372,9 +352,6 @@ def log_to_dict(entries: list[LogEntry]) -> list[dict[str, Any]]:
     ]
 
 
-# git blame --porcelain
-
-
 @dataclass
 class BlameLine:
     line_number: int
@@ -405,7 +382,6 @@ def parse_blame_porcelain(stdout: str) -> list[BlameLine]:
             parts = line.split(" ")
             if len(parts) >= 3 and len(parts[0]) == 40:
                 sha = parts[0]
-                # parts[1] = original line number; parts[2] = final line number
                 try:
                     line_number = int(parts[2])
                 except ValueError:
@@ -421,7 +397,6 @@ def parse_blame_porcelain(stdout: str) -> list[BlameLine]:
                 author_date_unix = 0
             continue
         if line.startswith("\t"):
-            # Content line — leading TAB marks the actual file content.
             content = line[1:]
             lines.append(
                 BlameLine(

@@ -1,7 +1,5 @@
 # mypy: disable-error-code="attr-defined,has-type,no-any-return"
 
-from __future__ import annotations
-
 from openminion.cli.tui.presentation.models import ChatMessage, MessageKind
 
 _COPYABLE_KINDS: frozenset[MessageKind] = frozenset(

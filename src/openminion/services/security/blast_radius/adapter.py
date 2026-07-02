@@ -16,8 +16,6 @@ from openminion.modules.tool.runtime.blast_radius import (
 
 @dataclass
 class CompositionBoundaryAdapter:
-    """One seam's composition-boundary owner."""
-
     policy: CompositionPolicy
     audit_log: CompositionAuditLog
     seam_id: str
@@ -43,16 +41,10 @@ class CompositionBoundaryAdapter:
         *,
         credential_ref: Optional[CredentialRef] = None,
     ) -> tuple[ToolBlastRadiusProfile, bool, CompositionBoundaryEvent]:
-        """Run one ``classify → compose → guard → record`` step."""
-        # 1. classify
         profile = classify_tool_blast_radius(tool_spec, credential_ref=credential_ref)
-        # 2. compose (advances the running prior-profiles list only
-        composed_before = classify_composed_blast_radius(self.prior_profiles)
-        # 3. guard
         needs_approval = requires_composition_approval(
             self.policy, self.prior_profiles, profile
         )
-        # 4. record (audit event flows to the canonical-events stream).
         event = record_composition_boundary_event(
             self.policy,
             self.prior_profiles,
@@ -60,18 +52,13 @@ class CompositionBoundaryAdapter:
             seam_id=self.seam_id,
             audit_log=self.audit_log,
         )
-        # Advance running prior profiles only after the audit event is
         self.prior_profiles.append(profile)
-        # composed_before is exposed via the returned event's
-        _ = composed_before
         return profile, needs_approval, event
 
     def composed_radius(self) -> str:
-        """Return the current composed blast radius for the turn so far."""
         return classify_composed_blast_radius(self.prior_profiles)
 
     def reset(self) -> None:
-        """Reset the running prior-profiles list (e.g. between turns)."""
         self.prior_profiles.clear()
 
 
@@ -82,10 +69,6 @@ def build_composition_boundary_adapter(
     seam_id: str,
     prior_profiles: Sequence[ToolBlastRadiusProfile] = (),
 ) -> CompositionBoundaryAdapter:
-    """Build a typed :class:`CompositionBoundaryAdapter`.
-
-    ``seam_id`` must be a caller-declared static label.
-    """
     return CompositionBoundaryAdapter(
         policy=policy,
         audit_log=audit_log,

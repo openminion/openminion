@@ -124,6 +124,9 @@ class GatewayService:
             emit_run_state=self._emit_run_state,
         )
 
+    def flush_memory_followups(self, *, session_id: str | None = None) -> None:
+        self._turn_runner.flush_memory_followups(session_id=session_id)
+
     async def handle_message(
         self,
         channel: str,

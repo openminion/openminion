@@ -1,5 +1,3 @@
-"""Modules brain adapters context bridges skill."""
-
 from typing import Any
 
 from .shared import (
@@ -10,8 +8,6 @@ from .shared import (
 
 
 class BridgeSkillClient:
-    """Bridge adapter to wrap Skill service for ContextCtlService and runner."""
-
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
     def __init__(

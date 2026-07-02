@@ -27,8 +27,6 @@ from ..schemas import (
 
 from openminion.base.time import utc_now as _utc_now
 
-# Import events module
-
 
 class TaskError(RuntimeError):
     """Base task module exception."""
@@ -60,29 +58,18 @@ class SqlTaskCtl:
         self._events: list[TaskEvent] = []
 
     def _dict_to_task_record(self, row: dict[str, object]) -> TaskRecord:
-        from datetime import datetime
-
-        # Parse datetime fields from ISO format strings
         def parse_datetime(s: str | None) -> datetime | None:
             if s is None or s == "":
                 return None
             if isinstance(s, str):
-                # Handle Z suffix
                 iso_string = (
                     s.replace("Z", "+00:00")
                     if isinstance(s, str) and s.endswith("Z")
                     else s
                 )
-                try:
-                    return datetime.fromisoformat(iso_string)
-                except ValueError:
-                    # Fallback for different datetime formats
-
-                    # Handle "YYYY-MM-DD HH:MM:SS.ssssss+ZZ:ZZ" format
-                    return datetime.fromisoformat(iso_string)
+                return datetime.fromisoformat(iso_string)
             return s
 
-        # Safely convert values
         status_str = str(row.get("status", "PENDING"))
         status = (
             TaskStatus(status_str)
@@ -100,17 +87,14 @@ class SqlTaskCtl:
             wait_at=parse_datetime(row.get("wait_at")),
             created_by_mode=row.get("created_by_mode"),
             executing_mode=row.get("executing_mode"),
-            current_plan_id=row["current_plan_id"],  # Can be None
-            next_step_id=row["next_step_id"],  # Can be None
-            labels=[],  # Labels aren't stored in DB yet - we could extend the schema
+            current_plan_id=row["current_plan_id"],
+            next_step_id=row["next_step_id"],
+            labels=[],
             created_at=parse_datetime(row.get("created_at")) or _utc_now(),
             updated_at=parse_datetime(row.get("updated_at")) or _utc_now(),
         )
 
     def _dict_to_plan_record(self, row: dict[str, object]) -> PlanRecord:
-        from datetime import datetime
-
-        # Parse dates
         def to_datetime(dt_or_none, default=None):
             if dt_or_none is None:
                 return default or _utc_now()
@@ -120,7 +104,6 @@ class SqlTaskCtl:
         task_id = str(row["task_id"]) if row["task_id"] is not None else ""
         plan_name = str(row["plan_name"]) if row.get("plan_name") is not None else None
 
-        # Load steps from the plan_steps table
         step_dicts = self._repo.get_steps_for_plan(plan_id)
         steps = [self._dict_to_step_record(step_dict) for step_dict in step_dicts]
 
@@ -140,10 +123,8 @@ class SqlTaskCtl:
         )
 
     def _dict_to_step_record(self, row: dict[str, object]) -> PlanStepRecord:
-        from datetime import datetime
         import json
 
-        # Helper to convert values properly
         def safe_str(obj, default="") -> str:
             return str(obj) if obj is not None else default
 
@@ -158,28 +139,26 @@ class SqlTaskCtl:
                 return default or _utc_now()
             str_value = str(str_val)
             try:
-                # Handle various date formats
                 str_value = str_value.replace("Z", "+00:00")
                 if (
                     "." not in str_value
                     and "+" not in str_value
                     and len(str_value) > 19
                 ):
-                    # Has microseconds but no TZ - add default timezone
                     str_value += "+00:00"
                 return datetime.fromisoformat(str_value)
             except ValueError:
                 return default or _utc_now()
 
-        def safe_json_list(obj, default=[]):
+        def safe_json_list(obj, default=None):
+            fallback = [] if default is None else default
             if obj is None:
-                return default
+                return fallback
             try:
                 return json.loads(str(obj)) if obj != "" else []
             except (TypeError, json.JSONDecodeError):
-                return default
+                return fallback
 
-        # Safe status conversion
         status_val = safe_str(row.get("status"), "PENDING")
         status_mapping = {
             "PENDING": PlanStepStatus.PENDING,
@@ -203,14 +182,11 @@ class SqlTaskCtl:
         )
 
     def _dict_to_pending_action(self, row: dict[str, object]) -> PendingAction:
-        from datetime import datetime
-
         def parse_datetime(s: str | None) -> datetime | None:
             if not s:
                 return None
             return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
-        # Reconstruct ResumePointer from row values
         cursor = ResumePointer(
             task_id=str(row["task_id"]),
             plan_id=str(row["plan_id"]),
@@ -241,7 +217,6 @@ class SqlTaskCtl:
         if existing is not None:
             return self._dict_to_task_record(existing)
 
-        # Create the task record
         task = TaskRecord(
             task_id=task_id,
             title=input.title,
@@ -259,7 +234,6 @@ class SqlTaskCtl:
             updated_at=now,
         )
 
-        # Persist to database
         self._repo.create_task(
             task_id=task.task_id,
             title=task.title,
@@ -280,7 +254,6 @@ class SqlTaskCtl:
     def attach_plan(
         self, task_id: str, draft: PlanDraft, *, trace_id: str | None = None
     ) -> PlanRecord:
-        # Fetch task from database to verify it exists
         task_row = self._repo.get_task(task_id)
         if task_row is None:
             raise TaskNotFoundError(f"task not found: {task_id}")
@@ -292,7 +265,6 @@ class SqlTaskCtl:
         if existing_plan_row is not None:
             return self._dict_to_plan_record(existing_plan_row)
 
-        # Create steps
         steps: list[PlanStepRecord] = []
         for idx, step in enumerate(draft.steps, start=1):
             step_id = step.step_id or _new_id("stp")
@@ -323,7 +295,6 @@ class SqlTaskCtl:
             )
             steps.append(step_record)
 
-        # Create plan
         plan = PlanRecord(
             plan_id=plan_id,
             task_id=task_id,
@@ -334,7 +305,6 @@ class SqlTaskCtl:
             updated_at=now,
         )
 
-        # Persist plan to database
         self._repo.create_plan(
             plan_id=plan.plan_id,
             task_id=plan.task_id,
@@ -345,10 +315,8 @@ class SqlTaskCtl:
             updated_at=plan.updated_at,
         )
 
-        # Link plan to task
         self._repo.attach_plan_to_task(task_id, plan_id)
 
-        # Update task to point to new plan
         self._repo.update_task(
             task_id=task_id,
             current_plan_id=plan_id,
@@ -369,7 +337,6 @@ class SqlTaskCtl:
         *,
         trace_id: str | None = None,
     ) -> PlanRecord:
-        # Fetch task and plan to validate they exist
         task_row = self._repo.get_task(task_id)
         if task_row is None:
             raise TaskNotFoundError(f"task not found: {task_id}")
@@ -385,16 +352,13 @@ class SqlTaskCtl:
 
         plan = self._dict_to_plan_record(plan_row)
 
-        # Check for idempotency
         idempotency_key = (input.idempotency_key or "").strip()
         if idempotency_key:
             existing = self._repo.get_idempotency_record(idempotency_key)
             if existing is not None:
-                # If we have an existing record, check if it matches the current request
                 plan_row = self._repo.get_plan(task.current_plan_id)
                 return self._dict_to_plan_record(plan_row)
 
-            # Record idempotency key
             self._repo.record_idempotency(
                 idempotency_key=idempotency_key,
                 task_id=task_id,
@@ -404,8 +368,6 @@ class SqlTaskCtl:
                 artifact_refs=input.artifact_refs,
             )
 
-        # Find and update the step in the DB
-        # Update step record in database
         self._repo.update_step(
             step_id=step_id,
             status=input.status,
@@ -415,15 +377,12 @@ class SqlTaskCtl:
             updated_at=_utc_now(),
         )
 
-        # Refresh from DB to ensure consistency
         plan_row = self._repo.get_plan(task.current_plan_id)
         plan = self._dict_to_plan_record(plan_row)
 
-        # Find next actionable step
         next_step_id = _next_actionable_step(plan.steps)
         next_step_id = next_step_id.step_id if next_step_id is not None else None
 
-        # Derive task status and update task
         task_status = _derive_task_status(task.status, plan.steps, input.status)
         self._repo.update_task(
             task_id=task_id,
@@ -464,16 +423,13 @@ class SqlTaskCtl:
         *,
         trace_id: str | None = None,
     ) -> TaskRecord:
-        # Validate task exists
         task_row = self._repo.get_task(task_id)
         if task_row is None:
             raise TaskNotFoundError(f"task not found: {task_id}")
 
-        # Update task status in database
         updated_at = _utc_now()
         self._repo.update_task(task_id=task_id, status=status, updated_at=updated_at)
 
-        # Refresh task from DB
         refreshed_row = self._repo.get_task(task_id)
         updated_task = self._dict_to_task_record(refreshed_row)
 
@@ -515,7 +471,6 @@ class SqlTaskCtl:
         now = _utc_now()
         max_items = max(limit, 1)
 
-        # Fetch from database based on status
         ready_rows = self._repo.get_tasks_ready(limit=max_items)
         active_rows = self._repo.get_tasks_active(limit=max_items)
         waiting_rows = self._repo.get_tasks_waiting(limit=max_items)
@@ -523,7 +478,6 @@ class SqlTaskCtl:
         ready_tasks = [self._dict_to_task_record(row) for row in ready_rows]
         active_tasks = [self._dict_to_task_record(row) for row in active_rows]
 
-        # Use the active task as current if any exist
         current = (
             active_tasks[0]
             if active_tasks
@@ -553,17 +507,14 @@ class SqlTaskCtl:
         cursor: ResumePointer,
         reason: str | None = None,
     ) -> PendingAction:
-        # Check if already exists
         existing = self._repo.get_pending_action(policy_request_id)
         if existing is not None and existing.get("resolved_at") is None:
-            # Return the existing one if not resolved
             existing_pa = self._dict_to_pending_action(existing)
             return existing_pa
 
         now = _utc_now()
         pending_action_id = _new_id("pa")
 
-        # Create in database
         self._repo.record_pending_action(
             pending_action_id=pending_action_id,
             policy_request_id=policy_request_id,
@@ -629,11 +580,10 @@ class SqlTaskCtl:
                     "policy_request_id": policy_request_id,
                     "decision_id": decision_id,
                     "pending_backlog_count": self._repo.count_pending_actions(),
-                    "resume_latency_ms": latency_ms,
-                },
-            )
+                "resume_latency_ms": latency_ms,
+            },
+        )
 
-        # Create cursor from the stored data
         cursor = ResumePointer(
             task_id=pending_row["task_id"],
             plan_id=pending_row["plan_id"],
@@ -663,7 +613,6 @@ class SqlTaskCtl:
         if not task.current_plan_id or not task.next_step_id:
             return None
 
-        # Get the next step for its title
         step_row = self._repo.get_step(task.next_step_id)
         if step_row:
             return str(step_row["title"])

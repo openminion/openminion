@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import subprocess
@@ -10,7 +11,97 @@ _ROOT = Path(__file__).resolve().parents[3]
 _PYTHON = _ROOT / ".venv" / "bin" / "python3.11"
 
 
-def _run(paths: list[str], *, env: dict[str, str], extra_args: list[str] | None = None) -> int:
+@dataclass(frozen=True)
+class Suite:
+    paths: tuple[str, ...]
+    extra_args: tuple[str, ...] = ()
+    live: bool = False
+    complex: bool = False
+
+
+SUITES: dict[str, Suite] = {
+    "local": Suite(("tests/e2e/tui/focus/test_local.py",)),
+    "core": Suite(("tests/e2e/tui/focus/test_live_basic.py",), live=True),
+    "tools": Suite(("tests/e2e/tui/focus/test_live_tools.py",), live=True),
+    "approval": Suite(
+        ("tests/cli/tui/focus/test_focus_mode.py",),
+        ("-k", "approval"),
+    ),
+    "research": Suite(
+        ("tests/e2e/tui/focus/test_live_complex.py",),
+        ("-k", "research"),
+        live=True,
+        complex=True,
+    ),
+    "coding": Suite(
+        ("tests/e2e/tui/focus/test_live_complex.py",),
+        ("-k", "coding"),
+        live=True,
+        complex=True,
+    ),
+    "long-running": Suite(
+        ("tests/e2e/tui/focus/test_live_complex.py",),
+        ("-k", "long"),
+        live=True,
+        complex=True,
+    ),
+    "queued-input": Suite(
+        (
+            "tests/cli/tui/focus/test_focus_input_chrome.py",
+            "tests/cli/tui/focus/test_focus_status_line_richness.py",
+        ),
+        ("-k", "queued"),
+    ),
+    "progress-visibility": Suite(
+        (
+            "tests/cli/status",
+            "tests/cli/tui/terminal/test_spinner.py",
+            "tests/cli/tui/focus/test_focus_status_format_parity.py",
+        ),
+    ),
+    "regression": Suite(
+        (
+            "tests/e2e/tui/focus/test_local.py",
+            "tests/cli/tui/focus",
+            "tests/cli/tui/terminal",
+            "tests/cli/status",
+        ),
+    ),
+    "live": Suite(
+        (
+            "tests/e2e/tui/focus/test_live_basic.py",
+            "tests/e2e/tui/focus/test_live_tools.py",
+        ),
+        live=True,
+    ),
+    "complex": Suite(
+        ("tests/e2e/tui/focus/test_live_complex.py",),
+        live=True,
+        complex=True,
+    ),
+    "deep": Suite(
+        (
+            "tests/e2e/tui/focus/test_live_basic.py",
+            "tests/e2e/tui/focus/test_live_tools.py",
+            "tests/e2e/tui/focus/test_live_complex.py",
+        ),
+        live=True,
+        complex=True,
+    ),
+    "all": Suite(("tests/e2e/tui/focus",), live=True, complex=True),
+}
+
+
+def suite_names() -> tuple[str, ...]:
+    return tuple(sorted(SUITES))
+
+
+def _run(
+    paths: tuple[str, ...],
+    *,
+    env: dict[str, str],
+    extra_args: tuple[str, ...] = (),
+) -> int:
     command = [
         str(_PYTHON),
         "-m",
@@ -26,32 +117,22 @@ def _run(paths: list[str], *, env: dict[str, str], extra_args: list[str] | None 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     mode = args[0] if args else "local"
+    if mode in {"--list", "list"}:
+        for name in suite_names():
+            print(name)
+        return 0
     env = os.environ.copy()
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
-    suites: dict[str, tuple[list[str], list[str]]] = {
-        "local": (["tests/e2e/tui/focus/test_local.py"], []),
-        "live": (
-            [
-                "tests/e2e/tui/focus/test_live_basic.py",
-                "tests/e2e/tui/focus/test_live_tools.py",
-            ],
-            [],
-        ),
-        "research": (["tests/e2e/tui/focus/test_live_complex.py"], ["-k", "research"]),
-        "coding": (["tests/e2e/tui/focus/test_live_complex.py"], ["-k", "coding"]),
-        "complex": (["tests/e2e/tui/focus/test_live_complex.py"], []),
-        "all": (["tests/e2e/tui/focus"], []),
-    }
-    if mode not in suites:
-        options = ", ".join(sorted(suites))
+    if mode not in SUITES:
+        options = ", ".join(suite_names())
         print(f"usage: run_tui_focus_e2e.py [{options}]", file=sys.stderr)
         return 2
-    if mode in {"live", "research", "coding", "complex", "all"}:
+    suite = SUITES[mode]
+    if suite.live:
         env["OPENMINION_LIVE_TUI_FOCUS_E2E"] = "1"
-    if mode in {"research", "coding", "complex"}:
+    if suite.complex:
         env["OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E"] = "1"
-    paths, extra_args = suites[mode]
-    return _run(paths, env=env, extra_args=extra_args)
+    return _run(suite.paths, env=env, extra_args=suite.extra_args)
 
 
 if __name__ == "__main__":

@@ -175,12 +175,12 @@ async def test_busy_focus_keeps_input_enabled_and_queues_next_message() -> None:
                 break
 
         assert runtime.sent_texts == ["first", "second"]
-        assert app.screen._queued_turns == []
+        assert app.screen._queued_count() == 0
         assert runtime.max_active_turns == 1
 
 
 @pytest.mark.asyncio
-async def test_queued_focus_message_runs_after_interrupt_without_parallel_turns() -> None:
+async def test_escape_interrupt_preserves_queued_focus_message_without_running_it() -> None:
     runtime = _StreamingRuntimeDouble(
         working_dir="/tmp/focus-stream-queue-interrupt",
         chunks=["reply"],
@@ -201,19 +201,16 @@ async def test_queued_focus_message_runs_after_interrupt_without_parallel_turns(
         )
         await pilot.pause()
 
-        assert app.screen._queued_turns == ["@README.md summarize"]
+        assert app.screen._queued_count() == 1
 
         await app.screen._interrupt_current_turn()
         for _ in range(30):
             await pilot.pause()
-            if (
-                runtime.sent_texts == ["first", "@README.md summarize"]
-                and not app.screen._busy
-            ):
+            if not app.screen._busy:
                 break
 
-        assert runtime.sent_texts == ["first", "@README.md summarize"]
-        assert app.screen._queued_turns == []
+        assert runtime.sent_texts == ["first"]
+        assert app.screen._queued_count() == 1
         assert runtime.max_active_turns == 1
 
 
@@ -238,7 +235,7 @@ async def test_slash_command_while_busy_is_not_queued() -> None:
         await pilot.pause()
 
         chat = app.screen.query_one(FocusTranscript)
-        assert app.screen._queued_turns == []
+        assert app.screen._queued_count() == 0
         assert runtime.sent_texts == ["first"]
         assert any(
             msg.kind == MessageKind.SYSTEM and "transport  gateway" in msg.body
@@ -246,6 +243,77 @@ async def test_slash_command_while_busy_is_not_queued() -> None:
         )
 
         runtime.release_first_turn.set()
+
+
+@pytest.mark.asyncio
+async def test_shell_escape_while_busy_does_not_replace_active_turn() -> None:
+    runtime = _StreamingRuntimeDouble(
+        working_dir="/tmp/focus-stream-busy-shell",
+        chunks=["reply"],
+        hold_after_first_chunk=True,
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("first"))
+        first_worker = app.screen._turn_worker
+        await runtime.first_chunk_sent.wait()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("!pwd"))
+        await pilot.pause()
+
+        chat = app.screen.query_one(FocusTranscript)
+        assert app.screen._turn_worker is first_worker
+        assert app.screen._queued_count() == 0
+        assert runtime.sent_texts == ["first"]
+        assert any(
+            msg.kind == MessageKind.SYSTEM and "Shell escape is unavailable" in msg.body
+            for msg in chat._messages
+        )
+
+        runtime.release_first_turn.set()
+
+
+@pytest.mark.asyncio
+async def test_queued_focus_message_runs_after_first_turn_error() -> None:
+    runtime = _StreamingRuntimeDouble(
+        working_dir="/tmp/focus-stream-queue-error",
+        chunks=["partial", "boom"],
+        raise_after=1,
+        hold_after_first_chunk=True,
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("first"))
+        await runtime.first_chunk_sent.wait()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("second"))
+        await pilot.pause()
+        assert app.screen._queued_count() == 1
+
+        runtime.release_first_turn.set()
+        for _ in range(40):
+            await pilot.pause()
+            if runtime.sent_texts == ["first", "second"] and not app.screen._busy:
+                break
+
+        chat = app.screen.query_one(FocusTranscript)
+        assert runtime.sent_texts == ["first", "second"]
+        assert app.screen._queued_count() == 0
+        assert runtime.max_active_turns == 1
+        assert any(
+            msg.kind == MessageKind.ERROR and "simulated mid-stream failure" in msg.body
+            for msg in chat._messages
+        )
 
 
 @pytest.mark.asyncio
@@ -373,3 +441,36 @@ async def test_streaming_chunks_invoke_append_token() -> None:
                 break
         agents = [m for m in chat._messages if m.kind == MessageKind.AGENT]
         assert agents and agents[-1].body == "abc"
+
+
+@pytest.mark.asyncio
+async def test_explicit_cancel_and_run_next_starts_reserved_queued_message() -> None:
+    runtime = _StreamingRuntimeDouble(
+        working_dir="/tmp/focus-stream-cancel-run-next",
+        chunks=["reply"],
+        hold_after_first_chunk=True,
+    )
+    app = _make_app(runtime)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("first"))
+        await runtime.first_chunk_sent.wait()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("second"))
+        await pilot.pause()
+        assert app.screen._queued_count() == 1
+
+        await app.screen._cancel_current_and_run_next()
+        runtime.release_first_turn.set()
+        for _ in range(40):
+            await pilot.pause()
+            if runtime.sent_texts == ["first", "second"] and not app.screen._busy:
+                break
+
+        assert runtime.sent_texts == ["first", "second"]
+        assert app.screen._queued_count() == 0
+        assert runtime.max_active_turns == 1

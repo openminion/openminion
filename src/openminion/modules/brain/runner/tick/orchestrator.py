@@ -272,7 +272,7 @@ def run_step(
         if confirmation_result is not None:
             return confirmation_result
 
-        with active_chat_phase("brain_dispatch"):
+        with active_chat_phase("brain_tick_dispatch"):
             return dispatch_entry(
                 runner=runner,
                 state=state,

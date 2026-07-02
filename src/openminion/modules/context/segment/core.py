@@ -1,7 +1,5 @@
 """Segment-building and rendering helpers for context assembly."""
 
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Callable

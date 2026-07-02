@@ -28,8 +28,6 @@ _EXEC_RUN_TOOL_NAMES = frozenset({MODEL_EXEC_RUN, "runtime.exec.run"})
 
 @dataclass
 class ExecutionBoundaryPolicyAdapter(PolicyAdapter):
-    """Policy adapter that bridges SecurityPolicyEngine into tool execution."""
-
     policy: SecurityPolicyEngine
     actor: SecurityPolicyActor
     context: SecurityPolicyContext

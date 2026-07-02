@@ -19,7 +19,8 @@ ChatPhase = Literal[
     "brain_pre_dispatch",
     "brain_budget_check",
     "brain_confirmation",
-    "brain_dispatch",
+    "gateway_agent_dispatch",
+    "brain_tick_dispatch",
     "tool_schema_serialization",
     "provider_request_build",
     "provider_round_trip",
@@ -44,7 +45,8 @@ CHAT_PHASES: tuple[str, ...] = (
     "brain_pre_dispatch",
     "brain_budget_check",
     "brain_confirmation",
-    "brain_dispatch",
+    "gateway_agent_dispatch",
+    "brain_tick_dispatch",
     "tool_schema_serialization",
     "provider_request_build",
     "provider_round_trip",
@@ -81,7 +83,8 @@ class ChatPhaseTimingPayload:
     brain_pre_dispatch_ms: int = 0
     brain_budget_check_ms: int = 0
     brain_confirmation_ms: int = 0
-    brain_dispatch_ms: int = 0
+    gateway_agent_dispatch_ms: int = 0
+    brain_tick_dispatch_ms: int = 0
     tool_schema_serialization_ms: int = 0
     provider_request_build_ms: int = 0
     provider_round_trip_ms: int = 0

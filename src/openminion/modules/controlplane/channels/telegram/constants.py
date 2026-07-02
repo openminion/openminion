@@ -9,18 +9,13 @@ from openminion.modules.paths import (
     STANDALONE_CONTROLPLANE_DIRNAME,
 )
 
-# Valid access policy values.
 ALLOWED_POLICIES: set[str] = {"allow", "deny", "allowlist"}
 
-# Valid channel mode values.
 ALLOWED_MODES: set[str] = {"polling", "webhook"}
 
-# webhook HTTP listener fixed internal values.
 WEBHOOK_LISTENER_DEFAULT_PATH = "/telegram/webhook"
-# Defensive cap on inbound webhook body size (1 MiB). Telegram update
 WEBHOOK_LISTENER_MAX_BODY_BYTES = 1 * 1024 * 1024
-# Header carrying the Telegram secret token; required when
-# ``WebhookConfig.secret`` is set.
+# Required when WebhookConfig.secret is set.
 WEBHOOK_LISTENER_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
 
 ACCESS_REASON_OK = "ok"
@@ -46,7 +41,6 @@ REPLY_MODES: frozenset[str] = frozenset(
     {REPLY_MODE_TO_USER, REPLY_MODE_TO_THREAD, REPLY_MODE_NONE}
 )
 
-# Path Layout
 DEFAULT_STANDALONE_POLL_STATE_SUBPATH = (
     Path(STANDALONE_CONTROLPLANE_DIRNAME) / "telegram-poll-state.db"
 )

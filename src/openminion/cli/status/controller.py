@@ -15,6 +15,7 @@ from .models import (
     PhaseStatusSignature,
     PhaseStatusViewModel,
     build_signature,
+    is_hidden_progress_payload,
     status_from_payload,
 )
 
@@ -62,6 +63,8 @@ class PhaseStatusController:
     def update(
         self, status: PhaseStatus | Mapping[str, Any] | None
     ) -> PhaseStatusViewModel | None:
+        if is_hidden_progress_payload(status if isinstance(status, Mapping) else None):
+            return None
         phase_status = status_from_payload(status)
         signature = build_signature(phase_status)
         if signature == self._last_signature:
@@ -78,7 +81,10 @@ class PhaseStatusController:
         the initial render without consuming the dedup slot.
         """
 
-        phase_status = status_from_payload(status)
+        hidden_payload = status if isinstance(status, Mapping) else None
+        phase_status = status_from_payload(
+            None if is_hidden_progress_payload(hidden_payload) else status
+        )
         signature = build_signature(phase_status)
         return self._to_view_model(phase_status, signature)
 

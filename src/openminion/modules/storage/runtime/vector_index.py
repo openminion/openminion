@@ -264,7 +264,6 @@ class InMemoryVectorIndex:
             else:
                 similarity = dot_product / (magn_query * magn_stored)
 
-            # Apply filter if present
             if filters:
                 meta = self.metadata[vector_id]
                 matches_filter = True
@@ -278,7 +277,6 @@ class InMemoryVectorIndex:
 
             results.append((vector_id, similarity, self.metadata[vector_id]))
 
-        # Sort by similarity (descending) and return top_k
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
@@ -449,7 +447,6 @@ class SQLiteVecBackend(VectorIndexBackend):
             vector_id, embedding_blob, metadata_json = row
             stored_vector = self._blob_to_vector(embedding_blob)
 
-            # Compute cosine similarity
             dot_product = sum(q * s for q, s in zip(query_vector, stored_vector))
             stored_norm = sum(s * s for s in stored_vector) ** 0.5
             if query_norm == 0 or stored_norm == 0:
@@ -459,7 +456,6 @@ class SQLiteVecBackend(VectorIndexBackend):
 
             metadata = json.loads(metadata_json)
 
-            # Apply filters if provided
             if filters:
                 valid = True
                 for key, value in filters.items():
@@ -471,7 +467,6 @@ class SQLiteVecBackend(VectorIndexBackend):
 
             results.append((vector_id, similarity, metadata))
 
-        # Sort by similarity descending
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
@@ -496,7 +491,6 @@ class SQLiteVecBackend(VectorIndexBackend):
         if not ids:
             return
 
-        # Create placeholders for IN clause
         placeholders = ",".join("?" * len(ids))
         cursor = self.conn.cursor()
         cursor.execute(
@@ -530,13 +524,12 @@ class QdrantVectorBackend(VectorIndexBackend):
         api_key: Optional[str] = None,
         dimension: int = 384,
     ):
-        # Initialize with config, defer client initialization if qdrant-client is not available
         self.collection_name = collection_name
         self.url = url
         self.api_key = api_key
         self.dimension = dimension
         self._client = None
-        self._qdrant_available = None  # Will be set during client init attempt
+        self._qdrant_available = None
 
     def _ensure_client(self):
         """Ensure the Qdrant client is available and connected."""
@@ -546,7 +539,7 @@ class QdrantVectorBackend(VectorIndexBackend):
             )
 
         if self._client is not None:
-            return  # Already initialized
+            return
 
         try:
             from qdrant_client import QdrantClient
@@ -558,7 +551,6 @@ class QdrantVectorBackend(VectorIndexBackend):
 
         self._qdrant_available = True
 
-        # Parse URL to determine connection method
         if self.url.startswith("http://") or self.url.startswith("https://"):
             import urllib.parse
 
@@ -573,7 +565,6 @@ class QdrantVectorBackend(VectorIndexBackend):
                 else (443 if parsed.scheme == "https" else 6333),
             )
         else:
-            # Assume traditional host:port format
             import re
 
             match = re.match(r"^([^:]+)(?::(\d+))?$", self.url)
@@ -582,10 +573,8 @@ class QdrantVectorBackend(VectorIndexBackend):
                 port = int(match.group(2)) if match.group(2) else 6333
                 self._client = QdrantClient(host=host, port=port, api_key=self.api_key)
             else:
-                # Assume the URL is just a host
                 self._client = QdrantClient(host=self.url, api_key=self.api_key)
 
-        # Ensure collection exists
         self._ensure_collection()
 
     def _ensure_collection(self):
@@ -596,7 +585,6 @@ class QdrantVectorBackend(VectorIndexBackend):
         try:
             self._client.get_collection(self.collection_name)
         except (RpcError, Exception):
-            # Create collection if it doesn't exist
             self._client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=models.VectorParams(
@@ -649,7 +637,6 @@ class QdrantVectorBackend(VectorIndexBackend):
 
         from qdrant_client.http import models
 
-        # Map filters to Qdrant conditions if provided
         qdrant_filters = None
         if filters:
             filter_conditions = []
@@ -667,7 +654,6 @@ class QdrantVectorBackend(VectorIndexBackend):
             query_filter=qdrant_filters,
         )
 
-        # Format to standard results format (id, score, metadata)
         return [
             (result.id, float(result.score), result.payload or {})
             for result in search_results
@@ -711,7 +697,7 @@ class VectorIndexAdapter:
         search_k: int = 10,
     ):
         self.embedding_provider = embedding_provider
-        self.__vector_index = vector_index  # Private attribute
+        self.__vector_index = vector_index
         self.batch_size = batch_size
         self.search_k = search_k
 
@@ -722,13 +708,10 @@ class VectorIndexAdapter:
 
     def index_record(self, record: Any, content: str) -> str:
         """Index a memory record with its content."""
-        # Create embedding from content
         embedding_result = self.embedding_provider.embed(content)
 
-        # Use the record id directly as the vector id, or create deterministic id if no id
         vector_id = getattr(record, "id", f"record_{int(time.time())}")
 
-        # Store in vector index
         self.__vector_index.add_vectors(
             [vector_id], [embedding_result.vector], [{"source": content}]
         )
@@ -740,15 +723,12 @@ class VectorIndexAdapter:
         if len(records) != len(contents):
             raise ValueError("Records and contents must have the same length")
 
-        # Process in batches
         for i in range(0, len(records), self.batch_size):
             batch_records = records[i : i + self.batch_size]
             batch_contents = contents[i : i + self.batch_size]
 
-            # Embed the batch
             embeddings = self.embedding_provider.embed_batch(batch_contents)
 
-            # Prepare data for storage
             vector_ids = [
                 str(getattr(record, "id", i + j))
                 for j, record in enumerate(batch_records)
@@ -770,15 +750,12 @@ class VectorIndexAdapter:
         self, query: str, top_k: Optional[int] = None
     ) -> List[tuple[Any, float, Dict]]:
         """Semantic search in the vector store."""
-        # Generate query embedding
         query_embedding = self.embedding_provider.embed(query)
 
-        # Perform search
         search_results = self.__vector_index.search(
             query_embedding.vector, top_k=top_k or self.search_k
         )
 
-        # Return results formatted as (vector_id, score, metadata)
         return search_results
 
 
@@ -789,16 +766,13 @@ def create_vector_index_adapter(
     *,
     env: EnvironmentConfig | Mapping[str, Any] | None = None,
 ) -> VectorIndexAdapter:
-    """Factory to create vector index adapters - FIXED TO RUN MIGRATIONS."""
-    # Import and run migrations to ensure tables exist (FIXES ZVECR-01)
+    """Create a vector index adapter after storage migrations are current."""
     from .migrations import run_migrations
 
-    # Open connection and ensure migrations are run
     conn = connect_database(db_path, env=env)
-    run_migrations(conn)  # This is the critical fix
+    run_migrations(conn)
     conn.close()
 
-    # Return adapter instance with providers
     return VectorIndexAdapter(
         embedding_provider=embedding_provider,
         vector_index=vector_index,
@@ -815,7 +789,7 @@ class MockEmbeddingProvider(EmbeddingProvider):
         text_hash = hashlib.md5(text.encode()).hexdigest()
         seed = int(text_hash[:16], 16)
 
-        vector = [(seed ^ i) % 1000 / 1000.0 for i in range(128)]  # Shorter for testing
+        vector = [(seed ^ i) % 1000 / 1000.0 for i in range(128)]
 
         return EmbeddingResult(
             vector=vector,

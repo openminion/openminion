@@ -1,7 +1,5 @@
 """Retrieval bundle collection for segment assembly."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field as _dc_field
 from typing import Any
 

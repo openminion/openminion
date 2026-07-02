@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
+import os
 import sys
 from pathlib import Path
 from typing import Any
+
+try:
+    import termios
+    import tty
+except ImportError:  # pragma: no cover - POSIX-only terminal interrupt support.
+    termios = None  # type: ignore[assignment]
+    tty = None  # type: ignore[assignment]
 
 from rich.console import Console
 from rich.text import Text
@@ -15,6 +24,7 @@ from openminion.cli.tui.presentation.models import (
     ChatMessage,
     MessageKind,
 )
+from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
 
 from ..composer import TerminalComposer
 from ..overlays import TerminalOverlayPresenter
@@ -55,9 +65,11 @@ __all__ = [
     "_handle_slash_input",
     "_run_one_shot_stdin",
     "_run_agent_turn",
+    "_run_interruptible_agent_turn",
     "_route_durable_activity_event",
     "_build_turn_progress_callback",
     "_finalize_turn_status_line",
+    "_start_escape_interrupt_watcher",
     "_copy_to_clipboard",
     "_handle_slash",
     "_open_dashboard_side_trip",
@@ -84,6 +96,13 @@ _INFO_BOLD_STYLE = token_rich_style(StyleToken.INFO, bold=True)
 _MUTED_STYLE = token_rich_style(StyleToken.MUTED)
 _MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
 _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
+_ESCAPE_BYTE = b"\x1b"
+
+
+@dataclass(frozen=True)
+class _EscapeInterruptWatcher:
+    stop: Callable[[], None]
+    interrupted: Callable[[], bool]
 
 
 async def _confirm_terminal_exit(
@@ -164,6 +183,65 @@ def _schedule_startup_notice(
 def _cancel_startup_notice(task: asyncio.Task[None] | None) -> None:
     if task is not None and not task.done():
         task.cancel()
+
+
+def _start_escape_interrupt_watcher(
+    turn_task: asyncio.Task[None],
+    *,
+    stdin: Any = None,
+) -> _EscapeInterruptWatcher | None:
+    """Watch the terminal for Escape while a turn is running."""
+
+    stream = stdin if stdin is not None else sys.stdin
+    isatty = getattr(stream, "isatty", None)
+    fileno = getattr(stream, "fileno", None)
+    if termios is None or tty is None or not callable(isatty) or not isatty():
+        return None
+    if not callable(fileno):
+        return None
+    try:
+        fd = int(fileno())
+        previous_attrs = termios.tcgetattr(fd)
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+    interrupted = False
+    loop = asyncio.get_running_loop()
+
+    def _restore_terminal() -> None:
+        try:
+            loop.remove_reader(fd)
+        except (OSError, RuntimeError, ValueError):
+            pass
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, previous_attrs)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            pass
+
+    def _read_keypress() -> None:
+        nonlocal interrupted
+        try:
+            data = os.read(fd, 1)
+        except BlockingIOError:
+            return
+        except OSError:
+            _restore_terminal()
+            return
+        if data == _ESCAPE_BYTE and not turn_task.done():
+            interrupted = True
+            turn_task.cancel()
+
+    try:
+        tty.setcbreak(fd)
+        loop.add_reader(fd, _read_keypress)
+    except (OSError, RuntimeError, ValueError, NotImplementedError):
+        _restore_terminal()
+        return None
+
+    return _EscapeInterruptWatcher(
+        stop=_restore_terminal,
+        interrupted=lambda: interrupted,
+    )
 
 
 def run_terminal_focus(
@@ -258,7 +336,7 @@ async def _handle_slash_input(
             ChatMessage(kind=MessageKind.USER, sender="you", body=rendered),
             render=False,
         )
-        await _run_agent_turn(
+        await _run_interruptible_agent_turn(
             text=rendered,
             runtime=runtime,
             transcript=transcript,
@@ -397,7 +475,7 @@ async def _run_terminal_focus_async(
                     ChatMessage(kind=MessageKind.USER, sender="you", body=text),
                     render=False,
                 )
-                await _run_agent_turn(
+                await _run_interruptible_agent_turn(
                     text=text,
                     runtime=runtime,
                     transcript=transcript,
@@ -524,6 +602,42 @@ def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) ->
     )
 
 
+async def _run_interruptible_agent_turn(
+    *,
+    text: str,
+    runtime: Any,
+    transcript: TerminalTranscript,
+    status_line: TerminalStatusLine | None,
+) -> None:
+    """Run one agent turn and let Escape cancel it in terminal focus."""
+
+    turn_task = asyncio.create_task(
+        _run_agent_turn(
+            text=text,
+            runtime=runtime,
+            transcript=transcript,
+            status_line=status_line,
+        )
+    )
+    watcher = _start_escape_interrupt_watcher(turn_task)
+    try:
+        await turn_task
+    except asyncio.CancelledError:
+        if watcher is not None and watcher.interrupted():
+            transcript.push_message(
+                ChatMessage(
+                    kind=MessageKind.SYSTEM,
+                    sender="system",
+                    body="Interrupted current turn.",
+                )
+            )
+            return
+        raise
+    finally:
+        if watcher is not None:
+            watcher.stop()
+
+
 async def _run_agent_turn(
     *,
     text: str,
@@ -564,8 +678,15 @@ async def _run_agent_turn(
             if not chunk_str:
                 continue
             reply += chunk_str
+            mark_active_chat_first_text()
             handle.append_token(chunk_str)
         handle.complete(final_text=reply)
+    except asyncio.CancelledError:
+        try:
+            handle.complete(final_text=reply)
+        except Exception:
+            pass
+        raise
     except Exception as exc:
         try:
             handle.complete(final_text=reply)

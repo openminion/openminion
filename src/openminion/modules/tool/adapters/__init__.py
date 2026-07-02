@@ -17,18 +17,14 @@ from ..contracts.schemas import Scope
 
 @dataclass
 class AllowAllSafetyAdapter(SafetyAdapter):
-    """Default safety adapter that always allows execution."""
-
     reason: str = "Safety checks passed"
 
-    def evaluate(self, *, tool: str, args: dict[str, Any]) -> SafetyDecision:  # noqa: D401 - simple
+    def evaluate(self, *, tool: str, args: dict[str, Any]) -> SafetyDecision:
         return SafetyDecision(allowed=True, reason=self.reason)
 
 
 @dataclass
 class LocalPolicyAdapter(PolicyAdapter):
-    """Policy adapter that delegates to the local Policy instance."""
-
     policy: Policy
     workspace: Path
     scope: Scope
@@ -47,9 +43,7 @@ class LocalPolicyAdapter(PolicyAdapter):
                 confirm=self.confirm,
                 workspace=self.workspace,
             )
-        except (
-            ToolRuntimeError
-        ) as exc:  # pragma: no cover - exercised in higher-level tests
+        except ToolRuntimeError as exc:  # pragma: no cover - exercised in higher-level tests
             requires_confirm = str(exc.code or "").upper() == "CONFIRM_REQUIRED"
             return PolicyDecision(
                 allowed=False,

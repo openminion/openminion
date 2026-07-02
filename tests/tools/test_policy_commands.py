@@ -1,9 +1,46 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel
 
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.registry.catalog import ToolSpec
 from openminion.modules.tool.runtime.policy import Policy, canonical_tool_name
+from openminion.modules.tool.runtime.policy_checks import run_policy_preflight
+
+
+class _ExecRunArgs(BaseModel):
+    command: str
+    workdir: str = "."
+
+
+def _exec_tool_spec(*, dangerous: bool = True) -> ToolSpec:
+    return ToolSpec(
+        name="exec.run",
+        args_model=_ExecRunArgs,
+        min_scope="POWER_USER",
+        handler=lambda _args, _ctx: {},
+        dangerous=dangerous,
+    )
+
+
+def _exec_policy_for_preflight(tmp_path):
+    return Policy(
+        raw={
+            "tools": {"allow": ["exec.run"]},
+            "commands": {"mode": "allowlist", "allow": ["pwd"]},
+            "exec": {
+                "security": "allowlist",
+                "ask": "on-miss",
+                "allowlist": ["pwd"],
+            },
+            "paths": {
+                "read_allow": [str(tmp_path)],
+                "write_allow": [str(tmp_path)],
+            },
+            "confirm_before": ["destructive_actions"],
+        }
+    )
 
 
 @pytest.fixture
@@ -33,6 +70,60 @@ commands:
 def test_allowlist_permits_allowed_command(policy_allowlist):
     exec_name = policy_allowlist.ensure_command_allowed(["git", "status"])
     assert exec_name == "git"
+
+
+def test_preflight_denies_unallowlisted_exec_before_confirmation(tmp_path):
+    policy = _exec_policy_for_preflight(tmp_path)
+
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        run_policy_preflight(
+            policy=policy,
+            tool_spec=_exec_tool_spec(),
+            tool_name="exec.run",
+            args={
+                "command": "mkdir -p test-project && cd test-project && pwd",
+                "workdir": str(tmp_path),
+            },
+            effective_scope="POWER_USER",
+            confirm=False,
+            workspace=tmp_path,
+        )
+
+    assert excinfo.value.code == "POLICY_DENIED"
+    assert excinfo.value.details["rule"] == "commands.allow"
+    assert excinfo.value.details["command"] == "mkdir"
+    assert excinfo.value.details["suggested_tool"] == "file.write"
+
+
+def test_preflight_still_prompts_for_allowed_dangerous_exec(tmp_path):
+    policy = _exec_policy_for_preflight(tmp_path)
+
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        run_policy_preflight(
+            policy=policy,
+            tool_spec=_exec_tool_spec(),
+            tool_name="exec.run",
+            args={"command": "pwd", "workdir": str(tmp_path)},
+            effective_scope="POWER_USER",
+            confirm=False,
+            workspace=tmp_path,
+        )
+
+    assert excinfo.value.code == "CONFIRM_REQUIRED"
+
+
+def test_preflight_confirmed_allowed_exec_passes(tmp_path):
+    policy = _exec_policy_for_preflight(tmp_path)
+
+    run_policy_preflight(
+        policy=policy,
+        tool_spec=_exec_tool_spec(),
+        tool_name="exec.run",
+        args={"command": "pwd", "workdir": str(tmp_path)},
+        effective_scope="POWER_USER",
+        confirm=True,
+        workspace=tmp_path,
+    )
 
 
 def test_allowlist_denies_missing_command(policy_allowlist):

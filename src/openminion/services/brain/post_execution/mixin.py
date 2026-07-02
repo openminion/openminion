@@ -3,6 +3,10 @@ import time
 import uuid
 from typing import Any, Callable
 
+from openminion.base.config.action_policy import (
+    ACTION_POLICY_SESSION_OVERRIDE_KEY,
+    normalize_action_policy_mode_override,
+)
 from openminion.base.types import AgentResponse, Message
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.brain.diagnostics.status import (
@@ -29,7 +33,6 @@ def _emit_prep_status(
     trace_id: str,
     detail_text: str,
 ) -> None:
-    """Emit a phase-status update during `_prepare_turn` (best-effort, PPL-07)."""
     if callback is None:
         return
     try:
@@ -54,7 +57,6 @@ class BrainBridgeTurnMixin:
         brain_session_id: str,
         progress_callback: Callable[[PhaseStatus], None] | None = None,
     ) -> tuple[BrainRunner, str, str | None, str, float]:
-        # synthesize a trace_id early so prep-phase
         prep_trace_id = f"prep-{uuid.uuid4().hex[:12]}"
         _emit_prep_status(
             progress_callback,
@@ -262,6 +264,9 @@ class BrainBridgeTurnMixin:
         # cron-scheduled idle ticks arrive with a `pae_idle_tick`
         metadata_source = getattr(message, "metadata", {}) or {}
         permission_mode = str(metadata_source.get("permission_mode", "") or "").strip()
+        action_policy_mode = normalize_action_policy_mode_override(
+            metadata_source.get(ACTION_POLICY_SESSION_OVERRIDE_KEY)
+        )
         permission_overrides_raw = str(
             metadata_source.get("permission_overrides", "") or ""
         ).strip()
@@ -279,6 +284,11 @@ class BrainBridgeTurnMixin:
                 }
         setattr(runner, "_pending_permission_mode", permission_mode or "default")
         setattr(runner, "_pending_permission_overrides", permission_overrides)
+        setattr(
+            runner,
+            "_pending_session_action_policy_mode_override",
+            action_policy_mode,
+        )
         is_pae_idle_tick = (
             str(metadata_source.get("pae_idle_tick", "")).strip().lower() == "true"
         )
@@ -315,7 +325,6 @@ class BrainBridgeTurnMixin:
                 approval_callback=approval_callback,
                 initial_trigger="idle_tick",
             )
-        # CTGP wiring: route through `run_with_autonomous_continuation`
         options = getattr(runner, "options", None)
         ctgp_enabled = bool(getattr(options, "autonomous_continuation_enabled", True))
         if ctgp_enabled:
@@ -323,7 +332,6 @@ class BrainBridgeTurnMixin:
                 run_with_autonomous_continuation,
             )
 
-            # The wrapper forwards `progress_callback` / `approval_callback`
             return run_with_autonomous_continuation(
                 runner,
                 session_id=session_id,
@@ -393,7 +401,6 @@ class BrainBridgeTurnMixin:
             forced_tools=forced_tools,
             capability_category=resolved_capability_category,
             brain_session_id=brain_session_id,
-            # forward `progress_callback` into prep so
             progress_callback=progress_callback,
         )
 

@@ -53,7 +53,6 @@ def resolve_llm_profiles(
     *,
     override_value: OverrideValue,
 ) -> LLMProfiles:
-    """Canonical LLM-profile derivation: defaults + env-override layer."""
     default_profiles = derive_default_llm_profiles(config)
     shared = override_value(OPENMINION_BRAIN_MODEL_ENV)
     decide = override_value(OPENMINION_BRAIN_DECIDE_MODEL_ENV)
@@ -133,7 +132,6 @@ def resolve_runner_options(
     override_value: OverrideValue,
     logger: logging.Logger,
 ) -> RunnerOptions:
-    """Canonical RunnerOptions derivation."""
     plan_auto_scale_max_llm_calls = max(
         1,
         _coerce_int(
@@ -156,7 +154,6 @@ def resolve_runner_options(
         ),
     )
 
-    # Resolve `build_memory_policy_snapshot` via the bridge module so that
     import openminion.services.brain.service as _bridge_module
 
     try:
@@ -183,7 +180,6 @@ def resolve_runner_options(
 
     options = RunnerOptions(
         max_retries_per_step=2,
-        # AR-02 (2026-06-06): aligned with RetryConfig default 8.
         max_replans=8,
         plan_auto_scale_max_llm_calls=plan_auto_scale_max_llm_calls,
         plan_auto_scale_max_ticks=plan_auto_scale_max_ticks,
@@ -216,7 +212,6 @@ def resolve_runner_options(
         ),
     )
 
-    # forward the resolved AdaptiveBudgetConfig into RunnerOptions
     aib_config = (
         brain_config.adaptive_budget.model_copy(deep=True)
         if brain_config is not None

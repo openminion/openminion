@@ -1,6 +1,4 @@
-# AR-12 (2026-06-06): every emitted `termination_reason` literal must be
-# defined here and included in `TERMINATION_REASON_VALUES`, which is what the
-# vocabulary validator enforces across the runtime.
+# Vocabulary validation requires every emitted termination_reason here.
 
 TERMINATION_REASON_TASK_COMPLETE = "task_complete"
 TERMINATION_REASON_TOOL_FINAL = "tool_final"

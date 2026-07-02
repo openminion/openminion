@@ -4128,6 +4128,44 @@ class MenuAndPairingTests(unittest.TestCase):
         self.assertIn("Usage:", output)
         self.assertIn("--user-id", output)
 
+    def test_handle_pair_create_uses_real_pairing_helper(self) -> None:
+        from openminion.cli.chat.commands import _handle_pair_create
+        from openminion.cli.commands import channel
+
+        cfg = SimpleNamespace(
+            runtime=SimpleNamespace(menu_pairing_enabled=True),
+            config_path="/tmp/openminion-agent.json",
+        )
+
+        def _fake_create(**kwargs):
+            self.assertEqual(kwargs["config_path"], "/tmp/openminion-agent.json")
+            self.assertEqual(kwargs["user_id"], "123")
+            self.assertEqual(kwargs["chat_id"], "456")
+            return channel.PairTokenOutput(
+                token="tok",
+                token_hint="tok",
+                token_hash_prefix="abc123",
+                expires_at_iso="2026-07-01T00:00:00+00:00",
+                scopes=["chat.interact"],
+                deep_link="https://t.me/bot?start=tok",
+            )
+
+        original = channel.create_telegram_pair_token_for_cli
+        channel.create_telegram_pair_token_for_cli = _fake_create
+        try:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                _handle_pair_create(
+                    line="/pair create --user-id 123 --chat-id 456",
+                    config=cfg,
+                )
+        finally:
+            channel.create_telegram_pair_token_for_cli = original
+
+        output = buf.getvalue()
+        self.assertIn("PAIR_TOKEN=tok", output)
+        self.assertIn("PAIR_DEEP_LINK=https://t.me/bot?start=tok", output)
+
     def test_handle_pair_revoke_shows_usage_without_token(self) -> None:
         from openminion.cli.chat.commands import _handle_pair_revoke
 

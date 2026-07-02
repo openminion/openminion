@@ -6,6 +6,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Label
 
+from openminion.cli.tui.presentation.permissions import format_permission_status_label
+
 _IDLE_HINTS = "^P palette   ^K clear   ^F search   ^D debug   ^T tools   Esc exit"
 
 _HINT_TYPING = "Enter to send   Shift+Enter for newline   Esc to clear"
@@ -65,6 +67,7 @@ class FocusStatusLine(Widget):
     tokens_label: reactive[str] = reactive("")
     cost_label: reactive[str] = reactive("")
     permission_mode: reactive[str] = reactive("default")
+    action_policy_mode: reactive[str] = reactive("")
     custom_label: reactive[str] = reactive("")
     agent_label: reactive[str] = reactive("")
     queued_count: reactive[int] = reactive(0)
@@ -87,6 +90,7 @@ class FocusStatusLine(Widget):
         tokens: str | None = None,
         cost: str | None = None,
         permission_mode: str | None = None,
+        action_policy_mode: str | None = None,
         custom: str | None = None,
         agent: str | None = None,
         queued_count: int | None = None,
@@ -115,6 +119,10 @@ class FocusStatusLine(Widget):
         if permission_mode is not None:
             self.permission_mode = (
                 str(permission_mode or "default").strip().lower() or "default"
+            )
+        if action_policy_mode is not None:
+            self.action_policy_mode = (
+                str(action_policy_mode or "").strip().lower()
             )
         if custom is not None:
             self.custom_label = str(custom or "").strip()
@@ -168,6 +176,9 @@ class FocusStatusLine(Widget):
         self._refresh()
 
     def watch_permission_mode(self, _value: str) -> None:
+        self._refresh()
+
+    def watch_action_policy_mode(self, _value: str) -> None:
         self._refresh()
 
     def watch_custom_label(self, _value: str) -> None:
@@ -240,8 +251,12 @@ class FocusStatusLine(Widget):
             segments.append(tokens_text)
         if self.cost_label:
             segments.append(f"cost: {self.cost_label}")
-        if self.permission_mode and self.permission_mode != "default":
-            segments.append(f"permissions: {self.permission_mode}")
+        permission_label = format_permission_status_label(
+            permission_mode=self.permission_mode,
+            action_policy_mode=self.action_policy_mode,
+        )
+        if permission_label:
+            segments.append(f"permissions: {permission_label}")
         if self.custom_label:
             segments.append(f"status: {self.custom_label}")
         return segments

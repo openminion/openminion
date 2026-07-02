@@ -8,6 +8,7 @@ from openminion.cli.commands import agent_check as agent_check_cmd
 from openminion.cli.commands import agents as agents_cmd
 from openminion.cli.commands import api as api_cmd
 from openminion.cli.commands import chat as chat_cmd
+from openminion.cli.commands import channel as channel_cmd
 from openminion.cli.commands import config as config_cmd
 from openminion.cli.commands import cron as cron_cmd
 from openminion.cli.commands import daemon as daemon_cmd
@@ -45,6 +46,7 @@ COMMAND_MODULES = (
     daemon_cmd,
     run_cmd,
     room_cmd,
+    channel_cmd,
     chat_cmd,
     tui_cmd,
     sessions_cmd,

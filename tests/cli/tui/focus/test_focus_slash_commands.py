@@ -5,12 +5,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from textual.widgets import OptionList
 
 from openminion.cli.presentation import styles
 from openminion.cli.theme import DARK
 from openminion.cli.tui.focus.app import FocusApp, _DemoFocusRuntime
 from openminion.cli.tui.focus.screen import FocusScreen
-from openminion.cli.tui.focus.widgets import FocusTranscript
+from openminion.cli.tui.focus.widgets import FocusTranscript, PermissionsOverlay
 from openminion.cli.tui.focus.widgets.transcript import MessageKind
 
 
@@ -66,6 +67,101 @@ async def test_slash_help_lists_every_registered_command_with_description() -> N
             # FCC-04 also surfaces a key-hint trailer for parity with
             # Claude-Code-style help output.
             assert "Ctrl+P" in body
+
+
+@pytest.mark.asyncio
+async def test_slash_permissions_bare_opens_focus_menu() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command("/permissions")
+            await pilot.pause()
+
+            assert isinstance(app.screen, PermissionsOverlay)
+            option_list = app.screen.query_one(
+                "#focus-permissions-overlay-list", OptionList
+            )
+            assert option_list.option_count == 4
+
+
+@pytest.mark.asyncio
+async def test_permissions_menu_applies_ask_for_approval() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+            runtime = screen._runtime
+
+            screen._handle_command("/permissions")
+            await pilot.pause()
+            overlay = app.screen
+            assert isinstance(overlay, PermissionsOverlay)
+            option_list = overlay.query_one("#focus-permissions-overlay-list", OptionList)
+            option_list.highlighted = 1
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, FocusScreen)
+            assert runtime.permission_mode == "default"
+            assert runtime.action_policy_mode_override == "ask"
+            body = _last_system_body(app.screen.query_one(FocusTranscript))
+            assert body == "permissions → ask"
+
+
+@pytest.mark.asyncio
+async def test_permissions_menu_full_access_requires_second_selection() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+            runtime = screen._runtime
+
+            screen._handle_command("/permissions")
+            await pilot.pause()
+            overlay = app.screen
+            assert isinstance(overlay, PermissionsOverlay)
+            option_list = overlay.query_one("#focus-permissions-overlay-list", OptionList)
+            option_list.highlighted = 3
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, PermissionsOverlay)
+            assert runtime.permission_mode == "default"
+            assert runtime.action_policy_mode_override == ""
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, FocusScreen)
+            assert runtime.permission_mode == "bypass"
+            assert runtime.action_policy_mode_override == "bypass"
+            body = _last_system_body(app.screen.query_one(FocusTranscript))
+            assert "full access" in body
+
+
+@pytest.mark.asyncio
+async def test_shift_tab_action_opens_permissions_menu_instead_of_cycling() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+            runtime = screen._runtime
+
+            screen.action_cycle_permission_mode()
+            await pilot.pause()
+
+            assert isinstance(app.screen, PermissionsOverlay)
+            assert runtime.permission_mode == "default"
 
 
 @pytest.mark.asyncio

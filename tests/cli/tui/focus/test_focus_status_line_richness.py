@@ -166,6 +166,26 @@ def test_set_state_explicit_empty_clears_segment() -> None:
     assert "git:" not in _idle_text(line)
 
 
+def test_idle_text_renders_combined_permission_posture() -> None:
+    line = FocusStatusLine()
+    line.set_state(
+        state="idle",
+        permission_mode="readonly",
+        action_policy_mode="auto",
+    )
+    assert "permissions: read-only + auto" in _idle_text(line)
+
+
+def test_idle_text_renders_full_access_as_warning_label() -> None:
+    line = FocusStatusLine()
+    line.set_state(
+        state="idle",
+        permission_mode="bypass",
+        action_policy_mode="bypass",
+    )
+    assert "permissions: full access" in _idle_text(line)
+
+
 def test_refresh_ignores_missing_status_label(monkeypatch: pytest.MonkeyPatch) -> None:
     line = FocusStatusLine()
 

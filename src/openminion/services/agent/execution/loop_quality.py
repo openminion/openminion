@@ -4,6 +4,14 @@ from typing import Any
 
 from openminion.tools.exec.command_parser import CommandParseError, parse_command
 
+GUARD_OWNER_DUPLICATE_BATCH = "duplicate_batch"
+GUARD_OWNER_LOOP_QUALITY = "loop_quality"
+GUARD_OWNER_NONE = "none"
+
+GUARD_ACTION_FINALIZE_FROM_PRIOR_RESULT = "finalize_from_prior_result"
+GUARD_ACTION_OBSERVE_ONLY = "observe_only"
+GUARD_ACTION_ROUTE_DUPLICATE_BATCH = "route_duplicate_batch_owner"
+
 
 def _canonical_arguments(arguments: Any) -> str:
     try:
@@ -73,6 +81,29 @@ def _event_kind(
     return None
 
 
+def _guard_metadata(*, event_kind: str, action_class: str) -> dict[str, str]:
+    if event_kind == "duplicate_tool_call_observed":
+        return {
+            "guard_action": GUARD_ACTION_ROUTE_DUPLICATE_BATCH,
+            "guard_owner": GUARD_OWNER_DUPLICATE_BATCH,
+            "suppression_candidate": "false",
+        }
+    if event_kind == "redundant_discovery_version_observed" and action_class in {
+        "discovery",
+        "version",
+    }:
+        return {
+            "guard_action": GUARD_ACTION_FINALIZE_FROM_PRIOR_RESULT,
+            "guard_owner": GUARD_OWNER_LOOP_QUALITY,
+            "suppression_candidate": "true",
+        }
+    return {
+        "guard_action": GUARD_ACTION_OBSERVE_ONLY,
+        "guard_owner": GUARD_OWNER_NONE,
+        "suppression_candidate": "false",
+    }
+
+
 def observe_tool_calls(
     tool_calls: list[Any],
     *,
@@ -101,6 +132,10 @@ def observe_tool_calls(
             {
                 "kind": "tool_loop_observation",
                 "event_kind": event_kind,
+                **_guard_metadata(
+                    event_kind=event_kind,
+                    action_class=action_class,
+                ),
                 "tool_name": str(getattr(call, "name", "") or "").strip(),
                 "call_id": str(getattr(call, "id", "") or "").strip(),
                 "signature": signature,
@@ -114,6 +149,12 @@ def observe_tool_calls(
 
 
 __all__ = [
+    "GUARD_ACTION_FINALIZE_FROM_PRIOR_RESULT",
+    "GUARD_ACTION_OBSERVE_ONLY",
+    "GUARD_ACTION_ROUTE_DUPLICATE_BATCH",
+    "GUARD_OWNER_DUPLICATE_BATCH",
+    "GUARD_OWNER_LOOP_QUALITY",
+    "GUARD_OWNER_NONE",
     "exec_command_action_class",
     "exec_tool_call_command",
     "observe_tool_calls",

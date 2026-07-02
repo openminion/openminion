@@ -7,11 +7,9 @@ from openminion.services.security.blast_radius.adapter import (
     build_composition_boundary_adapter,
 )
 
-# Canonical default policy id used for production wiring. Operators
 DEFAULT_COMPOSITION_POLICY_ID = "openminion.tsbr.default"
 
-# Caller-declared seam ids for the eight named production paths.
-# Static labels, never synthesized.
+# Caller-declared seam ids are static labels, never synthesized.
 SEAM_BRAIN_RUNTIME_TOOL_API = "modules.brain.adapters.tool.runtime"
 SEAM_AGENT_EXECUTOR_RUNTIME = "services.agent.execution.runtime"
 SEAM_TOOL_EXECUTOR = "modules.tool.executor"
@@ -27,7 +25,6 @@ SEAM_RUNTIME_ENGINE = "services.runtime.engine"
 def build_default_composition_boundary_adapter(
     *, seam_id: str
 ) -> CompositionBoundaryAdapter:
-    """Build a turn-scoped composition-boundary adapter for one seam."""
     return build_composition_boundary_adapter(
         policy=build_composition_policy(policy_id=DEFAULT_COMPOSITION_POLICY_ID),
         audit_log=InMemoryCompositionAuditLog(),

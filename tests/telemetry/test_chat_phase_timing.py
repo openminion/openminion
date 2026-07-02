@@ -32,7 +32,8 @@ def test_chat_phases_closed_set_matches_contract():
         "brain_pre_dispatch",
         "brain_budget_check",
         "brain_confirmation",
-        "brain_dispatch",
+        "gateway_agent_dispatch",
+        "brain_tick_dispatch",
         "tool_schema_serialization",
         "provider_request_build",
         "provider_round_trip",
@@ -158,6 +159,21 @@ def test_timer_reentrant_phase_accumulates():
         time.sleep(0.003)
     payload = timer.build_payload()
     assert payload.memory_retrieval_ms >= 5
+
+
+def test_timer_records_gateway_and_brain_dispatch_separately():
+
+    timer = ChatPhaseTimer()
+    with timer.phase("gateway_agent_dispatch"):
+        time.sleep(0.002)
+    with timer.phase("brain_tick_dispatch"):
+        time.sleep(0.002)
+
+    payload = timer.build_payload()
+    assert "gateway_agent_dispatch" in payload.phases_instrumented
+    assert "brain_tick_dispatch" in payload.phases_instrumented
+    assert payload.gateway_agent_dispatch_ms >= 1
+    assert payload.brain_tick_dispatch_ms >= 1
 
 
 def test_timer_mark_first_text_is_idempotent():

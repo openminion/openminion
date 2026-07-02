@@ -1,5 +1,3 @@
-"""Modules brain adapters context bridges session."""
-
 from typing import Any
 
 from openminion.modules.context.schemas import (
