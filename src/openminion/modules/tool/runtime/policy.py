@@ -544,7 +544,7 @@ class Policy:
             raise ToolRuntimeError(
                 "INVALID_ARGUMENT", f"Invalid redaction mode: {mode}"
             )
-        return mode
+        return str(mode)
 
     def exec_config(self) -> Dict[str, Any]:
         return cast(Dict[str, Any], self.raw.get("exec", {}))
