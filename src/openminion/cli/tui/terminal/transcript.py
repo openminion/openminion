@@ -211,6 +211,7 @@ class TerminalTranscript:
 
     def _render(self, message: ChatMessage) -> None:
         if message.kind == MessageKind.USER:
+
             def _render_user() -> None:
                 line = Text()
                 line.append("> ", style=_USER_PREFIX_STYLE)
@@ -221,6 +222,7 @@ class TerminalTranscript:
             return
         if message.kind == MessageKind.AGENT:
             body = str(message.body or "")
+
             def _render_agent() -> None:
                 if body and _looks_like_markdown(body):
                     self._console.print(
@@ -245,7 +247,9 @@ class TerminalTranscript:
             return
         if message.kind == MessageKind.ERROR:
             self._write_render(
-                lambda: self._console.print(Text(message.body or "", style=_ERROR_STYLE))
+                lambda: self._console.print(
+                    Text(message.body or "", style=_ERROR_STYLE)
+                )
             )
             return
         if message.kind == MessageKind.TOOL and message.tool_event is not None:

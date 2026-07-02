@@ -386,12 +386,15 @@ def _validate_transition(
 
 
 def _dump_model(model: BaseModel) -> str:
-    return json.dumps(
-        model.model_dump(mode="json"),
-        indent=2,
-        sort_keys=True,
-        ensure_ascii=False,
-    ) + "\n"
+    return (
+        json.dumps(
+            model.model_dump(mode="json"),
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )
 
 
 def _git_output(root: Path, *args: str) -> str | None:

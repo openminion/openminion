@@ -164,7 +164,9 @@ def _get_validated_module_ids(
     backend_type: str, requested_module: str | None
 ) -> tuple[list[str], list[str]]:
     from openminion.modules.storage.migrations.module_ids import MODULE_APPLICATION_IDS
-    from openminion.modules.storage.migrations.registry import POSTGRES_VALIDATED_MODULES
+    from openminion.modules.storage.migrations.registry import (
+        POSTGRES_VALIDATED_MODULES,
+    )
 
     all_ids = list(MODULE_APPLICATION_IDS.keys())
 

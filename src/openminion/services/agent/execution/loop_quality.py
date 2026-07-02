@@ -53,7 +53,9 @@ def exec_command_action_class(command: str) -> str:
         return "unsupported_command_syntax"
     if len(parsed.segments) != 1 or parsed.operators:
         return "compound_command"
-    argv = tuple(str(arg).strip() for arg in parsed.segments[0].argv if str(arg).strip())
+    argv = tuple(
+        str(arg).strip() for arg in parsed.segments[0].argv if str(arg).strip()
+    )
     if not argv:
         return "tool_call"
     executable = argv[0].lower()

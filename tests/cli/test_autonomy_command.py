@@ -209,7 +209,9 @@ def test_autonomy_list_and_show_use_same_store(tmp_path: Path) -> None:
     )
     run_id = json.loads(start_output)["run"]["run_id"]
 
-    list_code, list_output = _run_cli([*_root_args(tmp_path), "autonomy", "list", "--json"])
+    list_code, list_output = _run_cli(
+        [*_root_args(tmp_path), "autonomy", "list", "--json"]
+    )
     show_code, show_output = _run_cli(
         [*_root_args(tmp_path), "autonomy", "show", run_id, "--json"]
     )

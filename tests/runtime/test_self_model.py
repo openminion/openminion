@@ -38,7 +38,9 @@ def test_self_model_snapshot_composes_ok_health() -> None:
 
     assert snapshot.health == SELF_MODEL_HEALTH_OK
     assert snapshot.agent_id == "mini"
-    assert snapshot.model_dump(mode="json")["identity"]["facts"]["display_name"] == "Mini"
+    assert (
+        snapshot.model_dump(mode="json")["identity"]["facts"]["display_name"] == "Mini"
+    )
 
 
 def test_self_model_snapshot_collects_unavailable_reason() -> None:

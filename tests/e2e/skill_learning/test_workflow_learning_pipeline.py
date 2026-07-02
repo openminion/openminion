@@ -150,8 +150,12 @@ def test_observe_to_apply_to_reuse_to_downgrade(tmp_path: Path) -> None:
         trust = promote_execution_trust(trust, "suggest_only")
         trust = record_skill_run_outcome(trust, outcome="success", evidence_ref=run_id)
         trust = promote_execution_trust(trust, "trusted_for_manual")
-        trust = record_skill_run_outcome(trust, outcome="fail", evidence_ref="run-fail-1")
-        trust = record_skill_run_outcome(trust, outcome="fail", evidence_ref="run-fail-2")
+        trust = record_skill_run_outcome(
+            trust, outcome="fail", evidence_ref="run-fail-1"
+        )
+        trust = record_skill_run_outcome(
+            trust, outcome="fail", evidence_ref="run-fail-2"
+        )
 
         assert trust.trust_state == "execution_downgraded"
         applied = get_proposal(store, proposal_id=result.proposal.proposal_id)

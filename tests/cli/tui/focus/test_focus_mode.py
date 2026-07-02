@@ -228,7 +228,9 @@ class _FakeStreamingGateway(_FakeGateway):
             tool_name="exec.run",
             args={"command": "pwd"},
         )
-        yield GatewayStreamEvent(trace_id="stream-1", kind="assistant_token", text="hi ")
+        yield GatewayStreamEvent(
+            trace_id="stream-1", kind="assistant_token", text="hi "
+        )
         yield GatewayStreamEvent(
             trace_id="stream-1",
             kind="assistant_token",

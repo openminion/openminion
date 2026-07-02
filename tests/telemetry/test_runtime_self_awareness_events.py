@@ -11,7 +11,11 @@ from openminion.modules.telemetry.events.catalog import (
     register_event_type,
 )
 from openminion.modules.brain.runtime.improvement.candidates import ImprovementCandidate
-from openminion.modules.runtime.self_model import SelfModelSnapshot, section_degraded, section_ok
+from openminion.modules.runtime.self_model import (
+    SelfModelSnapshot,
+    section_degraded,
+    section_ok,
+)
 from openminion.modules.telemetry.self_awareness import (
     build_improvement_candidate_event,
     build_self_awareness_answer_degraded_event,

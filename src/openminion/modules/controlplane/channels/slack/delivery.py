@@ -18,6 +18,7 @@ from openminion.modules.controlplane.channels.slack.models import (
 from openminion.modules.controlplane.contracts.models import DeliveryContext
 from openminion.modules.controlplane.interfaces import CONTROLPLANE_INTERFACE_VERSION
 
+
 class SlackDeliveryService:
     contract_version = CONTROLPLANE_INTERFACE_VERSION
 
@@ -37,7 +38,11 @@ class SlackDeliveryService:
     def send_payload(
         self, payload: Any, target: SlackReplyTarget | DeliveryContext | dict[str, Any]
     ) -> SlackDeliveryResult:
-        text = str(getattr(payload, "text", "") or payload.get("text", "") if isinstance(payload, dict) else getattr(payload, "text", ""))
+        text = str(
+            getattr(payload, "text", "") or payload.get("text", "")
+            if isinstance(payload, dict)
+            else getattr(payload, "text", "")
+        )
         blocks = _extract_blocks(payload)
         return self.send_text(text, target, blocks=blocks)
 
@@ -78,7 +83,10 @@ class SlackDeliveryService:
                 self._audit_failure(exc, attempt=attempt)
                 if not exc.retryable or attempt >= attempts:
                     raise
-                self._sleep(exc.retry_after_seconds or self._delivery_config.retry.backoff_seconds)
+                self._sleep(
+                    exc.retry_after_seconds
+                    or self._delivery_config.retry.backoff_seconds
+                )
         raise AssertionError("unreachable Slack delivery retry state")
 
     def _audit_failure(self, exc: SlackAPIError, *, attempt: int) -> None:
@@ -117,7 +125,7 @@ def _extract_blocks(payload: Any) -> list[dict[str, Any]] | None:
 
 
 def _resolve_reply_target(
-    target: SlackReplyTarget | DeliveryContext | dict[str, Any]
+    target: SlackReplyTarget | DeliveryContext | dict[str, Any],
 ) -> SlackReplyTarget:
     if isinstance(target, SlackReplyTarget):
         return target

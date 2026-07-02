@@ -101,7 +101,9 @@ class FocusProbe:
             )
             transcript = session.transcript
             turn_slice = transcript[wait_offset:]
-            if _DONE_RE.fullmatch(match.group(0)) and not _APPROVAL_RE.search(turn_slice):
+            if _DONE_RE.fullmatch(match.group(0)) and not _APPROVAL_RE.search(
+                turn_slice
+            ):
                 break
             if not _APPROVAL_RE.search(turn_slice):
                 wait_offset = turn_offset

@@ -18,9 +18,7 @@ DEGRADED_GENERIC_CANDIDATE_REGISTRY_UNAVAILABLE = (
     "generic_candidate_registry_unavailable"
 )
 DEGRADED_IDENTITY_UNAVAILABLE = "identity_unavailable"
-DEGRADED_RUNTIME_CAPABILITY_REPORT_UNAVAILABLE = (
-    "runtime_capability_report_unavailable"
-)
+DEGRADED_RUNTIME_CAPABILITY_REPORT_UNAVAILABLE = "runtime_capability_report_unavailable"
 DEGRADED_POLICY_POSTURE_UNAVAILABLE = "policy_posture_unavailable"
 DEGRADED_MEMORY_UNAVAILABLE = "memory_unavailable"
 DEGRADED_CONTEXT_UNAVAILABLE = "context_unavailable"
@@ -58,7 +56,9 @@ class SelfModelSnapshot(BaseModel):
     degraded_reasons: list[str] = Field(default_factory=list)
 
     @classmethod
-    def compose_health(cls, sections: Mapping[str, SelfModelSection]) -> SelfModelHealth:
+    def compose_health(
+        cls, sections: Mapping[str, SelfModelSection]
+    ) -> SelfModelHealth:
         statuses = {section.status for section in sections.values()}
         if SELF_MODEL_HEALTH_UNAVAILABLE in statuses:
             return SELF_MODEL_HEALTH_UNAVAILABLE

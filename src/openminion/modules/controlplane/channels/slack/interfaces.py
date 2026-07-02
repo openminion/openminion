@@ -45,6 +45,8 @@ def ensure_slack_component_compatibility(
         "state_store": ("mark_event_seen", "close"),
         "runtime_handler": ("handle_inbound",),
     }.get(component_type, ())
-    missing = [name for name in required if not callable(getattr(component, name, None))]
+    missing = [
+        name for name in required if not callable(getattr(component, name, None))
+    ]
     if missing:
         raise TypeError(f"{component_type} missing methods: {', '.join(missing)}")

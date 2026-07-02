@@ -84,10 +84,28 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     outcome = _outcome_label(payload)
     common = {"route_class": route_class, "outcome": outcome, "cold_start": cold_start}
     metrics: list[dict[str, Any]] = []
-    _append_metric(metrics, "openminion_turn_wall_ms", _KIND_HISTOGRAM, payload.get("total_turn_ms"), common)
-    _append_metric(metrics, "openminion_turn_ttft_ms", _KIND_HISTOGRAM, payload.get("time_to_first_text_ms"), common)
+    _append_metric(
+        metrics,
+        "openminion_turn_wall_ms",
+        _KIND_HISTOGRAM,
+        payload.get("total_turn_ms"),
+        common,
+    )
+    _append_metric(
+        metrics,
+        "openminion_turn_ttft_ms",
+        _KIND_HISTOGRAM,
+        payload.get("time_to_first_text_ms"),
+        common,
+    )
     for phase in CHAT_PHASES:
-        _append_metric(metrics, "openminion_chat_phase_duration_ms", _KIND_HISTOGRAM, payload.get(f"{phase}_ms"), {**common, "phase": phase})
+        _append_metric(
+            metrics,
+            "openminion_chat_phase_duration_ms",
+            _KIND_HISTOGRAM,
+            payload.get(f"{phase}_ms"),
+            {**common, "phase": phase},
+        )
     _append_metric(
         metrics,
         "openminion_provider_round_trip_ms",
@@ -95,22 +113,43 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         payload.get("provider_round_trip_ms"),
         {"route_class": route_class, "transport": transport, "outcome": outcome},
     )
-    _append_metric(metrics, "openminion_context_assembly_ms", _KIND_HISTOGRAM, payload.get("context_pack_build_ms"), {"route_class": route_class, "outcome": outcome})
+    _append_metric(
+        metrics,
+        "openminion_context_assembly_ms",
+        _KIND_HISTOGRAM,
+        payload.get("context_pack_build_ms"),
+        {"route_class": route_class, "outcome": outcome},
+    )
     return metrics
 
 
 def _storage_operation_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
-    value = payload.get("duration_ms") or payload.get("latency_ms") or payload.get("elapsed_ms")
+    value = (
+        payload.get("duration_ms")
+        or payload.get("latency_ms")
+        or payload.get("elapsed_ms")
+    )
     _append_metric(
         metrics,
         "openminion_storage_operation_ms",
         _KIND_HISTOGRAM,
         value,
         {
-            "store_family": _bounded_label(payload.get("store_family") or payload.get("module_id") or payload.get("store") or "storage", default="storage"),
-            "operation": _bounded_label(payload.get("operation") or payload.get("query_kind") or "operation", default="operation"),
-            "criticality": _bounded_label(payload.get("criticality") or "unknown", default="unknown"),
+            "store_family": _bounded_label(
+                payload.get("store_family")
+                or payload.get("module_id")
+                or payload.get("store")
+                or "storage",
+                default="storage",
+            ),
+            "operation": _bounded_label(
+                payload.get("operation") or payload.get("query_kind") or "operation",
+                default="operation",
+            ),
+            "criticality": _bounded_label(
+                payload.get("criticality") or "unknown", default="unknown"
+            ),
             "outcome": _outcome_label(payload),
         },
     )
@@ -120,54 +159,139 @@ def _storage_operation_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
 def _storage_pool_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
     common = {
-        "store_family": _bounded_label(payload.get("store_family") or payload.get("module_id") or "storage", default="storage"),
-        "criticality": _bounded_label(payload.get("criticality") or "unknown", default="unknown"),
+        "store_family": _bounded_label(
+            payload.get("store_family") or payload.get("module_id") or "storage",
+            default="storage",
+        ),
+        "criticality": _bounded_label(
+            payload.get("criticality") or "unknown", default="unknown"
+        ),
     }
-    _append_metric(metrics, "openminion_background_write_queue_depth", _KIND_GAUGE, payload.get("queue_depth") or payload.get("depth"), common)
-    _append_metric(metrics, "openminion_sqlite_wal_bytes", _KIND_GAUGE, payload.get("wal_bytes"), {"store_family": common["store_family"]})
+    _append_metric(
+        metrics,
+        "openminion_background_write_queue_depth",
+        _KIND_GAUGE,
+        payload.get("queue_depth") or payload.get("depth"),
+        common,
+    )
+    _append_metric(
+        metrics,
+        "openminion_sqlite_wal_bytes",
+        _KIND_GAUGE,
+        payload.get("wal_bytes"),
+        {"store_family": common["store_family"]},
+    )
     return metrics
 
 
 def _module_stats_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
-    route_class = _bounded_label(payload.get("route_class") or payload.get("module_id") or "runtime", default="runtime")
-    _append_metric(metrics, "openminion_active_turns", _KIND_GAUGE, payload.get("active_turns") or payload.get("active"), {"route_class": route_class})
-    _append_metric(metrics, "openminion_queued_prompts", _KIND_GAUGE, payload.get("queued_prompts") or payload.get("queue_depth"), {"route_class": route_class})
+    route_class = _bounded_label(
+        payload.get("route_class") or payload.get("module_id") or "runtime",
+        default="runtime",
+    )
+    _append_metric(
+        metrics,
+        "openminion_active_turns",
+        _KIND_GAUGE,
+        payload.get("active_turns") or payload.get("active"),
+        {"route_class": route_class},
+    )
+    _append_metric(
+        metrics,
+        "openminion_queued_prompts",
+        _KIND_GAUGE,
+        payload.get("queued_prompts") or payload.get("queue_depth"),
+        {"route_class": route_class},
+    )
     _append_metric(
         metrics,
         "openminion_process_rss_bytes",
         _KIND_GAUGE,
         payload.get("process_rss_bytes") or payload.get("rss_bytes"),
-        {"process_family": _bounded_label(payload.get("process_family") or route_class, default="runtime")},
+        {
+            "process_family": _bounded_label(
+                payload.get("process_family") or route_class, default="runtime"
+            )
+        },
     )
     return metrics
 
 
 def _cache_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
-    cache_family = _bounded_label(payload.get("cache_family") or payload.get("cache") or "llm", default="llm")
-    _append_metric(metrics, "openminion_cache_hits_total", _KIND_COUNTER, payload.get("hits"), {"cache_family": cache_family})
-    _append_metric(metrics, "openminion_cache_misses_total", _KIND_COUNTER, payload.get("misses"), {"cache_family": cache_family})
+    cache_family = _bounded_label(
+        payload.get("cache_family") or payload.get("cache") or "llm", default="llm"
+    )
+    _append_metric(
+        metrics,
+        "openminion_cache_hits_total",
+        _KIND_COUNTER,
+        payload.get("hits"),
+        {"cache_family": cache_family},
+    )
+    _append_metric(
+        metrics,
+        "openminion_cache_misses_total",
+        _KIND_COUNTER,
+        payload.get("misses"),
+        {"cache_family": cache_family},
+    )
     return metrics
 
 
 def _tui_render_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
     common = {
-        "view_family": _bounded_label(payload.get("view_family") or payload.get("view") or "tui", default="tui"),
+        "view_family": _bounded_label(
+            payload.get("view_family") or payload.get("view") or "tui", default="tui"
+        ),
         "outcome": _outcome_label(payload),
     }
-    _append_metric(metrics, "openminion_tui_render_chunk_ms", _KIND_HISTOGRAM, payload.get("render_chunk_ms") or payload.get("duration_ms") or payload.get("elapsed_ms"), common)
-    _append_metric(metrics, "openminion_tui_queue_pressure", _KIND_GAUGE, payload.get("queue_pressure") or payload.get("queue_depth"), common)
-    _append_metric(metrics, "openminion_tui_retained_messages", _KIND_GAUGE, payload.get("retained_messages"), common)
+    _append_metric(
+        metrics,
+        "openminion_tui_render_chunk_ms",
+        _KIND_HISTOGRAM,
+        payload.get("render_chunk_ms")
+        or payload.get("duration_ms")
+        or payload.get("elapsed_ms"),
+        common,
+    )
+    _append_metric(
+        metrics,
+        "openminion_tui_queue_pressure",
+        _KIND_GAUGE,
+        payload.get("queue_pressure") or payload.get("queue_depth"),
+        common,
+    )
+    _append_metric(
+        metrics,
+        "openminion_tui_retained_messages",
+        _KIND_GAUGE,
+        payload.get("retained_messages"),
+        common,
+    )
     return metrics
 
 
-def _append_metric(metrics: list[dict[str, Any]], name: str, kind: str, value: Any, attributes: dict[str, str]) -> None:
+def _append_metric(
+    metrics: list[dict[str, Any]],
+    name: str,
+    kind: str,
+    value: Any,
+    attributes: dict[str, str],
+) -> None:
     number = _optional_float(value)
     if number is None:
         return
-    metrics.append({"name": name, "kind": kind, "value": number, "attributes": _metric_attributes(attributes)})
+    metrics.append(
+        {
+            "name": name,
+            "kind": kind,
+            "value": number,
+            "attributes": _metric_attributes(attributes),
+        }
+    )
 
 
 def _metric_attributes(attributes: dict[str, str]) -> dict[str, str]:
@@ -194,7 +318,9 @@ def _bounded_label(value: Any, *, default: str) -> str:
     text = str(value or "").strip().lower().replace(" ", "_")
     if not text:
         return default
-    allowed = [char if char.isalnum() or char in {"_", "-", "."} else "_" for char in text[:64]]
+    allowed = [
+        char if char.isalnum() or char in {"_", "-", "."} else "_" for char in text[:64]
+    ]
     return "".join(allowed) or default
 
 

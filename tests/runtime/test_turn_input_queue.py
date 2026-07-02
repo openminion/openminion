@@ -116,7 +116,9 @@ def test_reserve_next_and_terminal_status() -> None:
     assert running.status == TurnInputQueueStatus.RUNNING
     assert running.trace_id == "trace-1"
 
-    queue.mark_terminal(queue_id=reserved.queue_id, status=TurnInputQueueStatus.COMPLETED)
+    queue.mark_terminal(
+        queue_id=reserved.queue_id, status=TurnInputQueueStatus.COMPLETED
+    )
     completed = queue.list_entries(session_id="s1")[0]
     assert completed.status == TurnInputQueueStatus.COMPLETED
 

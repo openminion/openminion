@@ -11,9 +11,7 @@ from openminion.modules.runtime.self_model import (
 
 def render_self_awareness_block(request: BuildPackRequest) -> str:
     payload = (
-        dict(request.self_awareness)
-        if isinstance(request.self_awareness, dict)
-        else {}
+        dict(request.self_awareness) if isinstance(request.self_awareness, dict) else {}
     )
     if not payload:
         return ""

@@ -80,9 +80,17 @@ class SlackHttpEventsRunner:
         if headers is not None:
             verify_slack_signature(
                 signing_secret=self._config.signing_secret,
-                timestamp=str(headers.get("X-Slack-Request-Timestamp") or headers.get("x-slack-request-timestamp") or ""),
+                timestamp=str(
+                    headers.get("X-Slack-Request-Timestamp")
+                    or headers.get("x-slack-request-timestamp")
+                    or ""
+                ),
                 body=body_bytes,
-                signature=str(headers.get("X-Slack-Signature") or headers.get("x-slack-signature") or ""),
+                signature=str(
+                    headers.get("X-Slack-Signature")
+                    or headers.get("x-slack-signature")
+                    or ""
+                ),
             )
         payload = parse_json_body(body)
         challenge = url_verification_response(payload)

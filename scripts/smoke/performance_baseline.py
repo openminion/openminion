@@ -255,7 +255,9 @@ def _focus_help_command(options: RunOptions) -> list[str]:
     ]
 
 
-def _command_env(options: RunOptions, *, data_root: Path | None = None) -> dict[str, str]:
+def _command_env(
+    options: RunOptions, *, data_root: Path | None = None
+) -> dict[str, str]:
     env = os.environ.copy()
     src_root = options.workspace_root / "openminion" / "src"
     existing_pythonpath = env.get("PYTHONPATH", "")
@@ -271,7 +273,9 @@ def _command_env(options: RunOptions, *, data_root: Path | None = None) -> dict[
     return env
 
 
-def _run_subprocess(command: list[str], *, options: RunOptions, data_root: Path) -> subprocess.CompletedProcess[str]:
+def _run_subprocess(
+    command: list[str], *, options: RunOptions, data_root: Path
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=options.workspace_root / "openminion",
@@ -415,9 +419,7 @@ def _measure_focus_startup(
         data_root.mkdir(parents=True, exist_ok=True)
         try:
             completed = _run_subprocess(command, options=options, data_root=data_root)
-            metrics["phase_timings_ms"] = {
-                "subprocess_exit_code": completed.returncode
-            }
+            metrics["phase_timings_ms"] = {"subprocess_exit_code": completed.returncode}
             prompt_ready = "focused single-agent shell" in completed.stdout.lower()
             metrics["prompt_ready_marker"] = prompt_ready
             if not prompt_ready or completed.returncode != 0:
@@ -526,7 +528,9 @@ def _measure_local_status_tool_turn() -> ScenarioRun:
             }
         ]
         metrics["tool_call_count"] = 1
-        return ["Local deterministic status/tool-style fixture; no provider or network work."]
+        return [
+            "Local deterministic status/tool-style fixture; no provider or network work."
+        ]
 
     return _run_with_metrics(
         scenario_id="local_status_tool_turn",
@@ -552,8 +556,7 @@ def _measure_context_heavy_turn() -> ScenarioRun:
                 body=(
                     f"Context fixture message {index}. "
                     "This message represents project files, docs, memories, "
-                    "and tool observations that must be packed predictably. "
-                    * 8
+                    "and tool observations that must be packed predictably. " * 8
                 ),
             )
             for index in range(24)
@@ -580,8 +583,7 @@ def _measure_context_heavy_turn() -> ScenarioRun:
             {
                 "segment_family": "system",
                 "prompt_bytes": sum(
-                    len(str(message.body or "").encode("utf-8"))
-                    for message in system
+                    len(str(message.body or "").encode("utf-8")) for message in system
                 ),
                 "prompt_tokens_estimated": sum(
                     _estimate_tokens(str(message.body or "")) for message in system
@@ -590,15 +592,16 @@ def _measure_context_heavy_turn() -> ScenarioRun:
             {
                 "segment_family": "history",
                 "prompt_bytes": sum(
-                    len(str(message.body or "").encode("utf-8"))
-                    for message in history
+                    len(str(message.body or "").encode("utf-8")) for message in history
                 ),
                 "prompt_tokens_estimated": sum(
                     _estimate_tokens(str(message.body or "")) for message in history
                 ),
             },
         ]
-        return ["Uses the existing context budget owner to create a replayable context-heavy measurement."]
+        return [
+            "Uses the existing context budget owner to create a replayable context-heavy measurement."
+        ]
 
     return _run_with_metrics(
         scenario_id="context_heavy_turn",
@@ -658,9 +661,13 @@ def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
 
 def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
     if scenario_id == "cold_focus_startup":
-        return _measure_focus_startup(scenario_id=scenario_id, options=options, cold=True)
+        return _measure_focus_startup(
+            scenario_id=scenario_id, options=options, cold=True
+        )
     if scenario_id == "warm_focus_startup":
-        return _measure_focus_startup(scenario_id=scenario_id, options=options, cold=False)
+        return _measure_focus_startup(
+            scenario_id=scenario_id, options=options, cold=False
+        )
     if scenario_id == "simple_turn":
         return _measure_replay_turn(
             scenario_id,
@@ -720,9 +727,7 @@ def _metric_summary(values: Iterable[Any]) -> dict[str, int | None]:
         "max": ints[-1],
         "mean": round(mean, 2),
         "stddev": round(stddev, 2),
-        "coefficient_of_variation": (
-            round(stddev / mean, 4) if mean > 0 else None
-        ),
+        "coefficient_of_variation": (round(stddev / mean, 4) if mean > 0 else None),
     }
 
 
@@ -856,9 +861,7 @@ def _run_to_artifact(
         "provider_profile": run.provider_profile,
         "provider_variance_class": run.provider_variance_class,
         "wall_ms": metrics.get("wall_time_ms"),
-        "time_to_first_visible_text_ms": metrics.get(
-            "time_to_first_visible_text_ms"
-        ),
+        "time_to_first_visible_text_ms": metrics.get("time_to_first_visible_text_ms"),
         "phase_timings_ms": metrics.get("phase_timings_ms", {}),
         "provider_round_trip_ms": metrics.get("provider_round_trip_ms"),
         "context_assembly_ms": metrics.get("context_assembly_ms"),
@@ -1013,7 +1016,9 @@ def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
             run_scenario(scenario_id, options)
         per_scenario_runs = 1 if scenario_id == "repeated_local_turns" else options.runs
         for run_index in range(per_scenario_runs):
-            print(f"[performance-baseline] {scenario_id} run {run_index + 1}/{per_scenario_runs}")
+            print(
+                f"[performance-baseline] {scenario_id} run {run_index + 1}/{per_scenario_runs}"
+            )
             run, profile_artifact, profile_pstats_artifact = (
                 _run_scenario_with_optional_profile(
                     scenario_id,
@@ -1146,10 +1151,14 @@ def main(argv: list[str] | None = None) -> int:
         scenarios = _scenario_list(str(args.scenarios))
         summary = run_baseline(options, scenarios)
     except Exception as exc:  # noqa: BLE001 - script should return operator-friendly error
-        print(f"performance baseline failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            f"performance baseline failed: {type(exc).__name__}: {exc}", file=sys.stderr
+        )
         return 2
     print(f"[performance-baseline] wrote {options.output_root / 'summary.json'}")
-    print(f"[performance-baseline] scenarios={summary['scenario_count']} runs={summary['run_count']}")
+    print(
+        f"[performance-baseline] scenarios={summary['scenario_count']} runs={summary['run_count']}"
+    )
     return 0
 
 

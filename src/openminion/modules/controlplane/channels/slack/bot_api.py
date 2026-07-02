@@ -66,7 +66,8 @@ class SlackWebAPI:
             raise SlackAPIError(
                 f"Slack API {method} failed: {code}",
                 error_code=code,
-                retryable=code in {"ratelimited", "internal_error", "service_unavailable"},
+                retryable=code
+                in {"ratelimited", "internal_error", "service_unavailable"},
             )
         return response
 
@@ -98,7 +99,9 @@ class SlackWebAPI:
                     retry_after_seconds=float(retry_after or 1),
                     status_code=429,
                 ) from exc
-            raise SlackTransportError(f"Slack transport error: HTTP {exc.code}") from exc
+            raise SlackTransportError(
+                f"Slack transport error: HTTP {exc.code}"
+            ) from exc
         except OSError as exc:
             raise SlackTransportError(str(exc)) from exc
         try:

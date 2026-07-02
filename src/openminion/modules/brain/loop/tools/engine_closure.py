@@ -127,8 +127,7 @@ class AdaptiveLoopRunnerClosureMixin:
                 if duplicate_outcome is not None:
                     return False, self._finalize_answer_only_closure_outcome(
                         outcome=duplicate_outcome,
-                        llm_duration_ms=prepared.iter_llm_duration_ms
-                        + duration_ms,
+                        llm_duration_ms=prepared.iter_llm_duration_ms + duration_ms,
                         tokens_used=(
                             prepared.iter_input_tokens
                             + prepared.iter_output_tokens

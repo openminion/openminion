@@ -67,8 +67,12 @@ def bundle_from_autonomy_proof_packet(
     artifacts = normalize_text_list(list(_field(packet, "artifact_refs", ()) or ()))
     source_run_ref = str(_field(packet, "run_id", "") or "").strip()
     validation_summary = str(_field(packet, "validation_summary", "") or "").strip()
-    command_fingerprints = [command_fingerprint(_field(item, "command", "")) for item in commands]
-    test_fingerprints = [command_fingerprint(_field(item, "command", "")) for item in tests]
+    command_fingerprints = [
+        command_fingerprint(_field(item, "command", "")) for item in commands
+    ]
+    test_fingerprints = [
+        command_fingerprint(_field(item, "command", "")) for item in tests
+    ]
     evidence_refs = [_proof_packet_ref(packet), *artifacts, *user_correction_refs]
     return WorkflowEvidenceBundle(
         source_run_refs=[source_run_ref] if source_run_ref else [],
@@ -137,7 +141,9 @@ def bundle_from_strategy_outcome(
     return WorkflowEvidenceBundle(
         strategy_outcome_refs=[card_ref],
         tool_names=normalize_text_list(card.get("tool_names") or []),
-        command_fingerprints=normalize_text_list(card.get("command_fingerprints") or []),
+        command_fingerprints=normalize_text_list(
+            card.get("command_fingerprints") or []
+        ),
         test_fingerprints=normalize_text_list(card.get("test_fingerprints") or []),
         artifact_types=normalize_text_list(card.get("artifact_types") or []),
         validation_summary=str(card.get("summary") or ""),

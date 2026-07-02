@@ -29,8 +29,12 @@ def build_runtime_self_model(
 ) -> SelfModelSnapshot:
     """Build a truthful partial self-model from existing runtime owners."""
 
-    resolved_agent_id = _resolve_agent_id(runtime, agent_id=agent_id, overrides=overrides)
-    capability_report, capability_section = _capabilities(runtime, resolved_agent_id, overrides)
+    resolved_agent_id = _resolve_agent_id(
+        runtime, agent_id=agent_id, overrides=overrides
+    )
+    capability_report, capability_section = _capabilities(
+        runtime, resolved_agent_id, overrides
+    )
     posture_report, policy_section = _policy(runtime, resolved_agent_id, overrides)
     identity_section = _identity(runtime, resolved_agent_id)
     memory_section = _memory(runtime)
@@ -100,7 +104,9 @@ def _capabilities(
         provider=selected_provider or "unknown",
         model=selected_model,
         tool_count=int(counts.get("total", len(inventory)) or 0),
-        enabled_tool_count=sum(1 for item in inventory if bool(item.get("enabled", True))),
+        enabled_tool_count=sum(
+            1 for item in inventory if bool(item.get("enabled", True))
+        ),
         modes=report.get("modes", {}),
         thinking=report.get("thinking", {}),
         plugins=report.get("plugins", {}),
@@ -108,7 +114,9 @@ def _capabilities(
     )
 
 
-def _policy(runtime: Any, agent_id: str, overrides: Any) -> tuple[dict[str, Any], SelfModelSection]:
+def _policy(
+    runtime: Any, agent_id: str, overrides: Any
+) -> tuple[dict[str, Any], SelfModelSection]:
     try:
         report = build_runtime_posture_report(
             runtime,

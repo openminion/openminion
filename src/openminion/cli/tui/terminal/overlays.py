@@ -86,7 +86,9 @@ class TerminalOverlayPresenter:
     def present_confirm(self, prompt: str, *, default: bool = False) -> bool:
         return asyncio.run(self.present_confirm_async(prompt, default=default))
 
-    async def present_confirm_async(self, prompt: str, *, default: bool = False) -> bool:
+    async def present_confirm_async(
+        self, prompt: str, *, default: bool = False
+    ) -> bool:
         self._console.print(Text(prompt, style="bold"))
         suffix = "[Y/n]: " if default else "[y/N]: "
         try:

@@ -652,7 +652,9 @@ def bucket_caps_for(budgets: ContextBudgets) -> Dict[str, int]:
         "conversation_summary": budgets.conversation_summary_tokens,
         "active_plan": budgets.active_plan_tokens,
         "task_digest": budgets.task_digest_tokens,
-        "self_awareness": max(64, int(total * BUCKET_TOKEN_FRACTIONS["self_awareness"])),
+        "self_awareness": max(
+            64, int(total * BUCKET_TOKEN_FRACTIONS["self_awareness"])
+        ),
         "recent_window": budgets.recent_turn_tokens,
         "retrieval": budgets.facts_tokens
         + budgets.memory_tokens

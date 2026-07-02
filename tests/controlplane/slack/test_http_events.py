@@ -32,9 +32,12 @@ class FakeDelivery:
 
 def _headers(secret: str, body: bytes, *, ts: int | None = None) -> dict[str, str]:
     timestamp = str(ts or int(time.time()))
-    sig = "v0=" + hmac.new(
-        secret.encode(), b"v0:" + timestamp.encode() + b":" + body, sha256
-    ).hexdigest()
+    sig = (
+        "v0="
+        + hmac.new(
+            secret.encode(), b"v0:" + timestamp.encode() + b":" + body, sha256
+        ).hexdigest()
+    )
     return {"X-Slack-Request-Timestamp": timestamp, "X-Slack-Signature": sig}
 
 
@@ -59,7 +62,9 @@ def test_http_runner_handles_challenge_and_event() -> None:
     )
 
     challenge = json.dumps({"type": "url_verification", "challenge": "abc"}).encode()
-    assert runner.handle_http_event(challenge, headers=_headers("secret", challenge)) == {
+    assert runner.handle_http_event(
+        challenge, headers=_headers("secret", challenge)
+    ) == {
         "status": 200,
         "body": "abc",
     }
@@ -79,6 +84,9 @@ def test_http_runner_handles_challenge_and_event() -> None:
             },
         }
     ).encode()
-    assert runner.handle_http_event(body, headers=_headers("secret", body))["status"] == 200
+    assert (
+        runner.handle_http_event(body, headers=_headers("secret", body))["status"]
+        == 200
+    )
     assert runtime.inbounds[0].text == "hi"
     assert delivery.sent[0][0] == {"text": "ok"}

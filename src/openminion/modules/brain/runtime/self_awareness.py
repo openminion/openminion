@@ -32,7 +32,11 @@ def answer_self_awareness_question(
         return _policy_answer(snapshot_obj)
     if "improve" in normalized:
         return _improvement_answer(snapshot_obj)
-    if "disabled" in normalized or "degraded" in normalized or "unavailable" in normalized:
+    if (
+        "disabled" in normalized
+        or "degraded" in normalized
+        or "unavailable" in normalized
+    ):
         return _degraded_answer(snapshot_obj)
     if "what can" in normalized or "capab" in normalized:
         return _capabilities_answer(snapshot_obj)
@@ -81,7 +85,9 @@ def _memory_answer(snapshot: SelfModelSnapshot) -> str:
     provider = _fact(memory, "provider", "unknown")
     provenance = _fact(memory, "provenance_available", False)
     scopes = _fact(memory, "scopes", [])
-    scope_text = ", ".join(str(item) for item in scopes) if scopes else "no scopes listed"
+    scope_text = (
+        ", ".join(str(item) for item in scopes) if scopes else "no scopes listed"
+    )
     return (
         f"My memory provider is {provider}. "
         f"Provenance recording is {'available' if provenance else 'not available'}. "
@@ -115,7 +121,11 @@ def _improvement_answer(snapshot: SelfModelSnapshot) -> str:
 def _degraded_answer(snapshot: SelfModelSnapshot) -> str:
     if not snapshot.degraded_reasons:
         return "No degraded self-model sections are currently reported."
-    return "Current degraded self-model reasons: " + ", ".join(snapshot.degraded_reasons) + "."
+    return (
+        "Current degraded self-model reasons: "
+        + ", ".join(snapshot.degraded_reasons)
+        + "."
+    )
 
 
 def _degraded_section_answer(label: str, section: SelfModelSection) -> str:

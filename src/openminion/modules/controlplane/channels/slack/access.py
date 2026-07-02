@@ -19,7 +19,10 @@ class SlackAccessPolicy:
         self._config = config or SlackAccessConfig()
 
     def evaluate(self, envelope: SlackInboundEnvelope) -> SlackAccessDecision:
-        if self._config.allowed_team_ids and envelope.team_id not in self._config.allowed_team_ids:
+        if (
+            self._config.allowed_team_ids
+            and envelope.team_id not in self._config.allowed_team_ids
+        ):
             return SlackAccessDecision(False, "team_allowlist_miss")
         if (
             self._config.allowed_channel_ids

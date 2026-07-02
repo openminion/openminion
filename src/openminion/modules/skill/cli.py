@@ -383,7 +383,9 @@ def _add_learning_subcommands(sub: Any) -> None:
     learning_replay.add_argument("--proposal-id", required=True)
     learning_replay.add_argument("--shape-id", required=True)
     learning_replay.add_argument("--proof-id", required=True)
-    learning_replay.add_argument("--status", required=True, choices=_REPLAY_STATUS_CHOICES)
+    learning_replay.add_argument(
+        "--status", required=True, choices=_REPLAY_STATUS_CHOICES
+    )
     learning_replay.add_argument("--evidence", default="")
 
     learning_apply = sub.add_parser(

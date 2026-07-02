@@ -568,7 +568,9 @@ def test_pomv2_tui_render_exports_low_cardinality_metrics() -> None:
         "openminion_tui_queue_pressure",
         "openminion_tui_retained_messages",
     }.issubset(names)
-    chunk = next(item for item in metrics if item.name == "openminion_tui_render_chunk_ms")
+    chunk = next(
+        item for item in metrics if item.name == "openminion_tui_render_chunk_ms"
+    )
     assert chunk.metric_kind == "histogram"
     assert chunk.metric_value == 7.0
     assert chunk.attributes == {"view_family": "chat", "outcome": "ok"}

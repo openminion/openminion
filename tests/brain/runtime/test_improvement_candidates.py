@@ -12,7 +12,9 @@ from openminion.modules.brain.runtime.improvement.candidates import (
 )
 
 
-def _candidate(target_type: str = "memory", *, evidence: list[str] | None = None) -> dict:
+def _candidate(
+    target_type: str = "memory", *, evidence: list[str] | None = None
+) -> dict:
     return {
         "candidate_id": f"cand-{target_type}",
         "target_type": target_type,
@@ -46,7 +48,9 @@ def test_improvement_candidate_requires_evidence_for_promotion_and_rollback() ->
 
 def test_improvement_candidate_registry_tracks_state_transitions() -> None:
     registry = ImprovementCandidateRegistry()
-    staged = registry.stage(ImprovementCandidate.model_validate(_candidate(evidence=["trace:1"])))
+    staged = registry.stage(
+        ImprovementCandidate.model_validate(_candidate(evidence=["trace:1"]))
+    )
 
     promoted = registry.transition(staged.candidate_id, "promoted")
 
@@ -62,7 +66,9 @@ def test_stage_candidate_with_owner_calls_matching_adapter() -> None:
     result = stage_candidate_with_owner(
         candidate,
         owner_stage_fns={
-            "skill": lambda item: calls.append(item.candidate_id) or {"proposal_id": "p1"},
+            "skill": lambda item: (
+                calls.append(item.candidate_id) or {"proposal_id": "p1"}
+            ),
         },
     )
 

@@ -213,9 +213,7 @@ def test_live_minimax_m2_7_complex_task_integrity() -> None:
             f"transcript={result.transcript_path}\n"
             f"assistant_body={assistant_body}"
         )
-        if attempt == 1 and (
-            tool_execution_count == 0 or finalization_status is None
-        ):
+        if attempt == 1 and (tool_execution_count == 0 or finalization_status is None):
             continue
         break
 

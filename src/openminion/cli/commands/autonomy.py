@@ -158,7 +158,11 @@ def _list(args: argparse.Namespace, store: AutonomyRunStore) -> int:
 
 def _show(args: argparse.Namespace, store: AutonomyRunStore) -> int:
     run = store.require(str(args.run_id))
-    proof_payload = _load_proof_payload(run) if bool(getattr(args, "include_proof", False)) else None
+    proof_payload = (
+        _load_proof_payload(run)
+        if bool(getattr(args, "include_proof", False))
+        else None
+    )
     payload = {"ok": True, "run": run.model_dump(mode="json")}
     if proof_payload is not None:
         payload["proof"] = proof_payload
@@ -400,7 +404,9 @@ def _delegated_role_evidence(
     args: argparse.Namespace,
 ) -> tuple[DelegatedRoleEvidence, ...]:
     raw_values = getattr(args, "delegate_result", ()) or ()
-    return tuple(_parse_delegated_role_evidence(raw) for raw in raw_values if _clean(raw))
+    return tuple(
+        _parse_delegated_role_evidence(raw) for raw in raw_values if _clean(raw)
+    )
 
 
 def _parse_delegated_role_evidence(raw: object) -> DelegatedRoleEvidence:
@@ -419,10 +425,18 @@ def _delegation_aggregation(
 ) -> dict[str, object] | None:
     if not delegation_results:
         return None
-    success_count = sum(1 for result in delegation_results if result.status == "success")
-    failure_count = sum(1 for result in delegation_results if result.status == "failure")
-    skipped_count = sum(1 for result in delegation_results if result.status == "skipped")
-    canceled_count = sum(1 for result in delegation_results if result.status == "canceled")
+    success_count = sum(
+        1 for result in delegation_results if result.status == "success"
+    )
+    failure_count = sum(
+        1 for result in delegation_results if result.status == "failure"
+    )
+    skipped_count = sum(
+        1 for result in delegation_results if result.status == "skipped"
+    )
+    canceled_count = sum(
+        1 for result in delegation_results if result.status == "canceled"
+    )
     return {
         "total_children": len(delegation_results),
         "success_count": success_count,
@@ -468,7 +482,9 @@ def _context_budget_evidence(
         return None
     required_facts = tuple(
         fact
-        for fact in (_clean(value) for value in getattr(args, "context_required_fact", ()) or ())
+        for fact in (
+            _clean(value) for value in getattr(args, "context_required_fact", ()) or ()
+        )
         if fact
     )
     system_messages = [
@@ -529,7 +545,9 @@ def _run_verification_commands(
     )
     if not commands:
         return ()
-    return tuple(_run_verification_command(command, workspace=workspace) for command in commands)
+    return tuple(
+        _run_verification_command(command, workspace=workspace) for command in commands
+    )
 
 
 def _run_verification_command(command: str, *, workspace: Path) -> TestEvidence:
@@ -599,7 +617,9 @@ def _run_verification_command(command: str, *, workspace: Path) -> TestEvidence:
 
 
 def _verification_summary(exit_code: int, output: str) -> str:
-    first_line = next((line.strip() for line in output.splitlines() if line.strip()), "")
+    first_line = next(
+        (line.strip() for line in output.splitlines() if line.strip()), ""
+    )
     if exit_code == 0:
         return first_line or "verification command passed"
     return first_line or f"verification command failed with exit code {exit_code}"
@@ -611,7 +631,9 @@ def _validation_summary(
     waiver: VerificationWaiver | None,
 ) -> str:
     if waiver is not None:
-        return "Replay/runtime execution completed with an explicit verification waiver."
+        return (
+            "Replay/runtime execution completed with an explicit verification waiver."
+        )
     if not verification:
         return "Replay/runtime execution completed; no verification command configured."
     return "Replay/runtime execution completed; verification commands passed."

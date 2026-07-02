@@ -197,7 +197,9 @@ def _handle_enqueue_turn_input(
         return json_body_required_route_result(path=path, session_id=session_id)
     runtime, own_runtime, error = _resolve_runtime_for_queue(ctx, path=path)
     if error is not None or runtime is None:
-        return error or runtime_unavailable_route_result(path=path, exc="runtime unavailable")
+        return error or runtime_unavailable_route_result(
+            path=path, exc="runtime unavailable"
+        )
     try:
         requested_intent = str(body.get("intent", TurnInputIntent.QUEUE_NEXT.value))
         metadata = dict(body.get("metadata") or {})
@@ -259,7 +261,9 @@ def _handle_list_turn_inputs(
 ) -> RouteResult:
     runtime, own_runtime, error = _resolve_runtime_for_queue(ctx, path=path)
     if error is not None or runtime is None:
-        return error or runtime_unavailable_route_result(path=path, exc="runtime unavailable")
+        return error or runtime_unavailable_route_result(
+            path=path, exc="runtime unavailable"
+        )
     try:
         params = parse_qs(query or "")
         agent_id = (params.get("agent_id") or [""])[0].strip() or None
@@ -305,7 +309,9 @@ def _handle_drop_turn_input(
 ) -> RouteResult:
     runtime, own_runtime, error = _resolve_runtime_for_queue(ctx, path=path)
     if error is not None or runtime is None:
-        return error or runtime_unavailable_route_result(path=path, exc="runtime unavailable")
+        return error or runtime_unavailable_route_result(
+            path=path, exc="runtime unavailable"
+        )
     try:
         entry = _turn_input_queue(runtime).drop(
             session_id=session_id,
@@ -347,7 +353,9 @@ def _handle_move_turn_input(
         return json_body_required_route_result(path=path, session_id=session_id)
     runtime, own_runtime, error = _resolve_runtime_for_queue(ctx, path=path)
     if error is not None or runtime is None:
-        return error or runtime_unavailable_route_result(path=path, exc="runtime unavailable")
+        return error or runtime_unavailable_route_result(
+            path=path, exc="runtime unavailable"
+        )
     try:
         entry = _turn_input_queue(runtime).move(
             session_id=session_id,
@@ -422,9 +430,7 @@ def _handle_cancel_and_run_next(
         )
         cancelled = bool(cast(Any, manager).cancel_turn(trace_id))
         event_type = (
-            QUEUE_EVENT_CANCEL_ACKNOWLEDGED
-            if cancelled
-            else QUEUE_EVENT_CANCEL_FAILED
+            QUEUE_EVENT_CANCEL_ACKNOWLEDGED if cancelled else QUEUE_EVENT_CANCEL_FAILED
         )
         _append_turn_input_event(
             ctx=ctx,

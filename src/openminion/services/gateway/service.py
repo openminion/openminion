@@ -276,9 +276,7 @@ class GatewayService:
                     )
                 worker_loop.close()
 
-        task = asyncio.create_task(
-            asyncio.to_thread(_run_message_turn)
-        )
+        task = asyncio.create_task(asyncio.to_thread(_run_message_turn))
         try:
             while True:
                 if task.done() and queue.empty():

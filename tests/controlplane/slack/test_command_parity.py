@@ -7,7 +7,9 @@ from openminion.modules.controlplane.channels.slack.command_aliases import (
 
 
 def test_slack_aliases_use_profile_and_session_vocabulary() -> None:
-    assert normalize_command_text("agent use minimax-m2-5") == "/profile use minimax-m2-5"
+    assert (
+        normalize_command_text("agent use minimax-m2-5") == "/profile use minimax-m2-5"
+    )
     assert normalize_command_text("new") == "/session new"
     assert normalize_slash_command_text("/openminion", "status") == "/status"
 

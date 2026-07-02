@@ -3621,7 +3621,10 @@ class TestFinalizeIterationCapExit:
 
         assert result is not None
         assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-        assert result.final_text == "Here is the researched answer from the gathered evidence."
+        assert (
+            result.final_text
+            == "Here is the researched answer from the gathered evidence."
+        )
         assert result.finalization_status == {
             "status": "final_answer",
             "reasoning": "The prior answer completed the request.",

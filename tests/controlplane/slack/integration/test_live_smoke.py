@@ -12,4 +12,6 @@ def test_slack_live_smoke_is_explicitly_gated() -> None:
     ]
     if missing:
         pytest.skip("missing live Slack env vars: " + ", ".join(missing))
-    pytest.skip("live Slack smoke scaffold present; enable send/receive after app fixture is provisioned")
+    pytest.skip(
+        "live Slack smoke scaffold present; enable send/receive after app fixture is provisioned"
+    )

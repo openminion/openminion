@@ -36,7 +36,9 @@ def test_delivery_posts_threaded_message() -> None:
     api = FakeAPI()
     delivery = SlackDeliveryService(api=api)
 
-    result = delivery.send_text("hello", SlackReplyTarget(channel_id="C1", thread_ts="1.0"))
+    result = delivery.send_text(
+        "hello", SlackReplyTarget(channel_id="C1", thread_ts="1.0")
+    )
 
     assert result.ok is True
     assert api.calls == [{"channel": "C1", "text": "hello", "thread_ts": "1.0"}]

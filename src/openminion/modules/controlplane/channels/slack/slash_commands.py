@@ -21,7 +21,9 @@ from openminion.modules.controlplane.contracts.inbound import (
 from openminion.modules.controlplane.contracts.models import InboundMessage
 
 
-def parse_slash_payload(raw: bytes | str | Mapping[str, Any]) -> SlackSlashCommandEnvelope:
+def parse_slash_payload(
+    raw: bytes | str | Mapping[str, Any],
+) -> SlackSlashCommandEnvelope:
     data = _payload_to_dict(raw)
     return SlackSlashCommandEnvelope(
         team_id=_required(data, "team_id"),

@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, cast
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+
     class _YamlFallback:
         @staticmethod
         def safe_load(raw: str) -> Any:
@@ -60,6 +61,7 @@ _MKDIR_SCAFFOLD_HINT = {
     ),
 }
 
+
 def reorder_runtime_chain(
     *,
     runtime_binding_id: str,
@@ -78,11 +80,13 @@ def reorder_runtime_chain(
         else None,
     )
 
+
 @dataclass(frozen=True)
 class RuntimeBindingPolicy:
     runtime_binding_id: str
     primary: str
     fallback_tools: tuple[str, ...]
+
 
 class ToolBindingPolicyManager:
     def __init__(
@@ -294,6 +298,7 @@ class ToolBindingPolicyManager:
         if self._fallback_on and any(token in text for token in self._fallback_on):
             return True
         return False
+
 
 DEFAULT_POLICY: Dict[str, Any] = {
     "version": 1,

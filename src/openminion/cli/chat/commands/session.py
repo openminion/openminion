@@ -181,7 +181,9 @@ def _handle_pair_create(*, line: str, config) -> None:
     try:
         from openminion.cli.commands import channel
 
-        output = channel.create_telegram_pair_token_from_chat_line(line=line, config=config)
+        output = channel.create_telegram_pair_token_from_chat_line(
+            line=line, config=config
+        )
     except Exception as exc:
         print(f"Could not create Telegram pairing token: {exc}")
         print(

@@ -216,7 +216,7 @@ class PrincipalsStore:
             SELECT pairing_id, channel, chat_id, user_id, session_id, created_at,
                    last_seen_at, status, scopes_json, note
             FROM cp_pairings
-            WHERE {' AND '.join(where)}
+            WHERE {" AND ".join(where)}
             ORDER BY last_seen_at DESC
             LIMIT ?
             """,

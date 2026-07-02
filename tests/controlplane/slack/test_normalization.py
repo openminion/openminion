@@ -10,12 +10,26 @@ from openminion.modules.controlplane.channels.slack.normalization import (
 
 
 def _payload(event: dict, *, event_id: str = "Ev1") -> dict:
-    return {"type": "event_callback", "team_id": "T1", "event_id": event_id, "event": event}
+    return {
+        "type": "event_callback",
+        "team_id": "T1",
+        "event_id": event_id,
+        "event": event,
+    }
 
 
 def test_dm_message_normalizes_to_controlplane_inbound() -> None:
     callback = event_callback_from_payload(
-        _payload({"type": "message", "channel": "D1", "channel_type": "im", "user": "U1", "text": "help", "ts": "1.0"})
+        _payload(
+            {
+                "type": "message",
+                "channel": "D1",
+                "channel_type": "im",
+                "user": "U1",
+                "text": "help",
+                "ts": "1.0",
+            }
+        )
     )
     envelope = envelope_from_event_callback(callback, bot_user_id="B1")
 
@@ -58,10 +72,14 @@ def test_two_slack_threads_have_distinct_chat_keys() -> None:
 
 def test_self_loop_and_broad_channel_message_drop() -> None:
     self_callback = event_callback_from_payload(
-        _payload({"type": "message", "channel": "D1", "user": "B1", "text": "hi", "ts": "1"})
+        _payload(
+            {"type": "message", "channel": "D1", "user": "B1", "text": "hi", "ts": "1"}
+        )
     )
     broad_callback = event_callback_from_payload(
-        _payload({"type": "message", "channel": "C1", "user": "U1", "text": "hi", "ts": "1"})
+        _payload(
+            {"type": "message", "channel": "C1", "user": "U1", "text": "hi", "ts": "1"}
+        )
     )
 
     assert envelope_from_event_callback(self_callback, bot_user_id="B1") is None

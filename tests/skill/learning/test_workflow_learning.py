@@ -130,7 +130,9 @@ def test_evidence_bundle_redacts_and_round_trips() -> None:
     assert bundle.command_fingerprints
     assert "/tmp/project" not in bundle.model_dump_json()
     assert "abc123" not in bundle.model_dump_json()
-    assert WorkflowEvidenceBundle.model_validate_json(bundle.model_dump_json()) == bundle
+    assert (
+        WorkflowEvidenceBundle.model_validate_json(bundle.model_dump_json()) == bundle
+    )
 
 
 def test_shape_contract_rejects_unknown_trust_state() -> None:
@@ -184,7 +186,9 @@ def test_user_save_signal_can_create_candidate_shape() -> None:
     assert ready[0].explicit_save_count == 1
 
 
-def test_stage_shape_uses_proposal_queue_and_suppresses_duplicates(tmp_path: Path) -> None:
+def test_stage_shape_uses_proposal_queue_and_suppresses_duplicates(
+    tmp_path: Path,
+) -> None:
     store = _store(tmp_path)
     try:
         result = stage_shape_as_skill_proposal(
@@ -335,7 +339,10 @@ def test_matching_catalog_entries_accepts_dict_and_object_entries() -> None:
     matches = matching_catalog_entries(
         shape,
         [
-            {"tags": ["cleanup", "test_cleanup"], "applies_to": {"intents": ["test_cleanup"]}},
+            {
+                "tags": ["cleanup", "test_cleanup"],
+                "applies_to": {"intents": ["test_cleanup"]},
+            },
             {
                 "tags": ["capability:cleanup", "strategy:test_cleanup"],
                 "applies_to": {"intents": ["task:test_cleanup"]},

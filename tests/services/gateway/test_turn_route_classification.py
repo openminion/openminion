@@ -22,7 +22,9 @@ def test_route_classifier_marks_multiple_forced_tools_as_multi_tool_request():
 
 
 def test_route_classifier_marks_file_context_without_changing_behavior():
-    route = classify_setup_cost_route(message="summarize @src/openminion/api/runtime.py")
+    route = classify_setup_cost_route(
+        message="summarize @src/openminion/api/runtime.py"
+    )
 
     assert route.label == "file_context_request"
 

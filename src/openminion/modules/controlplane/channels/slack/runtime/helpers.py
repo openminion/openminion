@@ -42,7 +42,9 @@ def audit_event(
         )
 
 
-def process_envelope(runner: Any, envelope: SlackInboundEnvelope) -> dict[str, Any] | None:
+def process_envelope(
+    runner: Any, envelope: SlackInboundEnvelope
+) -> dict[str, Any] | None:
     log: logging.Logger = runner._log  # noqa: SLF001
     state_store = runner._state_store  # noqa: SLF001
     audit_logger = runner._audit_logger  # noqa: SLF001

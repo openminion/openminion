@@ -116,7 +116,9 @@ def _from_dict(
 ) -> SlackChannelConfig:
     mode = str(raw.get("mode") or MODE_SOCKET).strip().lower()
     if mode not in SUPPORTED_MODES:
-        raise ValueError(f"channels.slack.mode must be one of {sorted(SUPPORTED_MODES)}")
+        raise ValueError(
+            f"channels.slack.mode must be one of {sorted(SUPPORTED_MODES)}"
+        )
     state_path = str(
         raw.get("stateSqlitePath")
         or raw.get("state_sqlite_path")

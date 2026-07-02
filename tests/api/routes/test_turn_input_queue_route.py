@@ -59,7 +59,6 @@ class _Runtime:
         self.closed = True
 
 
-
 def _ctx(runtime: _Runtime) -> APIRouteContext:
     return APIRouteContext(
         config_path=None,

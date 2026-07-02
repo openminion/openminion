@@ -15,7 +15,9 @@ class WorkflowShapeMiner:
         self.min_success_count = max(1, int(min_success_count))
 
     def mine(self, bundles: Iterable[WorkflowEvidenceBundle]) -> list[WorkflowShape]:
-        grouped: dict[tuple[object, ...], list[WorkflowEvidenceBundle]] = defaultdict(list)
+        grouped: dict[tuple[object, ...], list[WorkflowEvidenceBundle]] = defaultdict(
+            list
+        )
         for bundle in bundles or []:
             if not self._has_structural_signal(bundle):
                 continue
@@ -73,7 +75,12 @@ class WorkflowShapeMiner:
         evidence_refs = sorted({ref for item in items for ref in item.evidence_refs})
         seen = sorted(item.observed_at for item in items if item.observed_at)
         failure_refs = sorted(
-            {ref for item in items if item.outcome == "failure" for ref in item.evidence_refs}
+            {
+                ref
+                for item in items
+                if item.outcome == "failure"
+                for ref in item.evidence_refs
+            }
         )
         return WorkflowShape(
             intent_category=first.intent_category,

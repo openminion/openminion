@@ -72,6 +72,8 @@ PLAN_TOOL_ACTIONS = frozenset(
 )
 PLAN_STEP_STATUSES = ("pending", "in_progress", "completed", "blocked")
 PLAN_STEP_DIFFICULTIES = ("low", "medium", "high")
+
+
 def _plan_step_input_schema() -> dict[str, Any]:
     return {
         "type": "object",

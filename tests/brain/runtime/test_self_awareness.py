@@ -1,22 +1,36 @@
 from __future__ import annotations
 
-from openminion.modules.brain.runtime.self_awareness import answer_self_awareness_question
+from openminion.modules.brain.runtime.self_awareness import (
+    answer_self_awareness_question,
+)
 from openminion.modules.runtime.self_model import (
     DEGRADED_IDENTITY_UNAVAILABLE,
     SelfModelSnapshot,
     section_degraded,
     section_ok,
 )
-from openminion.services.agent.prompt_history import resolve_self_awareness_prompt_answer
+from openminion.services.agent.prompt_history import (
+    resolve_self_awareness_prompt_answer,
+)
 
 
 def _snapshot() -> SelfModelSnapshot:
     return SelfModelSnapshot.from_sections(
         agent_id="mini",
         identity=section_ok(display_name="Mini", mission="Help the operator."),
-        capabilities=section_ok(provider="echo", model="echo-small", tool_count=5, enabled_tool_count=3),
-        policy=section_ok(permission_mode="ask", sandbox="workspace-write", destructive_action_posture="approval_required"),
-        memory_state=section_ok(provider="SQLiteMemoryStore", provenance_available=True, scopes=["agent:mini"]),
+        capabilities=section_ok(
+            provider="echo", model="echo-small", tool_count=5, enabled_tool_count=3
+        ),
+        policy=section_ok(
+            permission_mode="ask",
+            sandbox="workspace-write",
+            destructive_action_posture="approval_required",
+        ),
+        memory_state=section_ok(
+            provider="SQLiteMemoryStore",
+            provenance_available=True,
+            scopes=["agent:mini"],
+        ),
         context_state=section_ok(budget_total=4096),
         knowledge_state=section_ok(providers=[]),
         improvement_state=section_degraded(
@@ -35,7 +49,9 @@ def test_self_awareness_answer_uses_identity_snapshot() -> None:
 
 
 def test_self_awareness_answer_reports_visible_tools_only() -> None:
-    answer = answer_self_awareness_question(_snapshot(), question="what tools do you have?")
+    answer = answer_self_awareness_question(
+        _snapshot(), question="what tools do you have?"
+    )
 
     assert "3 enabled tools out of 5 visible tools" in answer
     assert "file_browser" not in answer

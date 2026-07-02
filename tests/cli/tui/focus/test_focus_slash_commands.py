@@ -102,7 +102,9 @@ async def test_permissions_menu_applies_ask_for_approval() -> None:
             await pilot.pause()
             overlay = app.screen
             assert isinstance(overlay, PermissionsOverlay)
-            option_list = overlay.query_one("#focus-permissions-overlay-list", OptionList)
+            option_list = overlay.query_one(
+                "#focus-permissions-overlay-list", OptionList
+            )
             option_list.highlighted = 1
             await pilot.press("enter")
             await pilot.pause()
@@ -128,7 +130,9 @@ async def test_permissions_menu_full_access_requires_second_selection() -> None:
             await pilot.pause()
             overlay = app.screen
             assert isinstance(overlay, PermissionsOverlay)
-            option_list = overlay.query_one("#focus-permissions-overlay-list", OptionList)
+            option_list = overlay.query_one(
+                "#focus-permissions-overlay-list", OptionList
+            )
             option_list.highlighted = 3
             await pilot.press("enter")
             await pilot.pause()

@@ -13,7 +13,9 @@ def test_slack_web_api_unwraps_success_response() -> None:
 
 
 def test_slack_web_api_raises_useful_error() -> None:
-    api = SlackWebAPI("xoxb-secret", http_post=lambda *_: {"ok": False, "error": "not_in_channel"})
+    api = SlackWebAPI(
+        "xoxb-secret", http_post=lambda *_: {"ok": False, "error": "not_in_channel"}
+    )
 
     with pytest.raises(SlackAPIError) as exc:
         api.chat_post_message({"channel": "C1", "text": "hi"})

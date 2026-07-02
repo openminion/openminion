@@ -216,7 +216,9 @@ class TerminalTurnHandle:
         elif self._live is not None:
             final_renderable = self._render_final_body(elapsed_seconds=elapsed)
             if is_bounded_fallback:
-                self._live.update(final_renderable or Text(self._buffer or ""), refresh=True)
+                self._live.update(
+                    final_renderable or Text(self._buffer or ""), refresh=True
+                )
             else:
                 if final_renderable is None:
                     final_renderable = Text()

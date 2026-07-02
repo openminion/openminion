@@ -101,11 +101,15 @@ def test_learning_cli_scan_inspect_save_and_trust_status(tmp_path: Path) -> None
         ],
     )
 
-    scanned = _run_cli(["--config", str(cfg), "learning-scan", "--bundle-json", str(bundle_path)])
+    scanned = _run_cli(
+        ["--config", str(cfg), "learning-scan", "--bundle-json", str(bundle_path)]
+    )
     assert scanned["ok"] is True
     assert len(scanned["shapes"]) == 1
 
-    inspected = _run_cli(["--config", str(cfg), "learning-inspect", "--shape-json", str(shape_path)])
+    inspected = _run_cli(
+        ["--config", str(cfg), "learning-inspect", "--shape-json", str(shape_path)]
+    )
     assert inspected["shape"]["shape_id"] == shape.shape_id
 
     saved = _run_cli(
@@ -142,7 +146,9 @@ def test_learning_cli_propose_replay_and_apply_gate(tmp_path: Path) -> None:
     shape = _shape()
     shape_path = _write_json(tmp_path, "shape.json", shape.model_dump(mode="json"))
 
-    proposed = _run_cli(["--config", str(cfg), "learning-propose", "--shape-json", str(shape_path)])
+    proposed = _run_cli(
+        ["--config", str(cfg), "learning-propose", "--shape-json", str(shape_path)]
+    )
     result = proposed["result"]
     assert result["status"] == "staged"
     proposal_id = result["proposal"]["proposal_id"]

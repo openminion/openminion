@@ -96,7 +96,9 @@ def build_improvement_candidate_event(
         "state": str(_field(candidate, "state", "")),
         "risk_level": str(_field(candidate, "risk_level", "")),
         "review_mode": str(_field(candidate, "review_mode", "")),
-        "evidence_ref_count": len(evidence_refs) if isinstance(evidence_refs, list) else 0,
+        "evidence_ref_count": len(evidence_refs)
+        if isinstance(evidence_refs, list)
+        else 0,
     }
 
 

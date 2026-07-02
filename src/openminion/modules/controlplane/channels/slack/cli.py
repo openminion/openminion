@@ -98,7 +98,11 @@ def slack_setup(args: argparse.Namespace) -> int:
             print(f"Validation error: {exc}")
             return 2
 
-    config = load_cli_config(str(config_path)) if config_path.exists() else OpenMinionConfig()
+    config = (
+        load_cli_config(str(config_path))
+        if config_path.exists()
+        else OpenMinionConfig()
+    )
     _patch_slack_channel_config(
         config,
         bot_token_value=bot_config_value,
@@ -182,7 +186,9 @@ def slack_status(args: argparse.Namespace) -> int:
     print(f"slack.mode={cfg.mode}")
     print(f"slack.state={cfg.state_sqlite_path}")
     print(f"controlplane.sqlite={cp_cfg.sqlite_path}")
-    print(f"pairings.active={_count_active_channel_subjects(cp_cfg.sqlite_path, 'slack')}")
+    print(
+        f"pairings.active={_count_active_channel_subjects(cp_cfg.sqlite_path, 'slack')}"
+    )
     print(f"daemon.reachable={str(_daemon_reachable(config_path)).lower()}")
     print("daemon.state=not observed from this process")
     return 0
@@ -244,7 +250,9 @@ def main(argv: list[str] | None = None) -> int:
     return run_slack_channel(args)
 
 
-def _register_direct(subcommands: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+def _register_direct(
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     for name, help_text in {
         "setup": "Configure Slack",
         "doctor": "Check Slack setup",
@@ -375,25 +383,68 @@ def _slack_doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
     except Exception as exc:
         return [_check("config.parse", False, str(exc))]
     cp_cfg = _load_controlplane_config(config_path)
-    checks.append(_check("channel.enabled", bool(cfg.enabled), "channels.slack.enabled"))
+    checks.append(
+        _check("channel.enabled", bool(cfg.enabled), "channels.slack.enabled")
+    )
     bot_present = bool(cfg.bot_token)
     app_present = bool(cfg.app_token)
-    checks.append(_check("bot_token.present", bot_present, "token=[redacted]" if bot_present else "missing"))
-    checks.append(_check("app_token.present", app_present, "token=[redacted]" if app_present else "missing", required=False))
+    checks.append(
+        _check(
+            "bot_token.present",
+            bot_present,
+            "token=[redacted]" if bot_present else "missing",
+        )
+    )
+    checks.append(
+        _check(
+            "app_token.present",
+            app_present,
+            "token=[redacted]" if app_present else "missing",
+            required=False,
+        )
+    )
     if bot_present:
         try:
             auth = SlackWebAPI(cfg.bot_token).auth_test()
-            checks.append(_check("bot.auth_test", True, str(auth.get("user_id") or "ok")))
+            checks.append(
+                _check("bot.auth_test", True, str(auth.get("user_id") or "ok"))
+            )
         except Exception as exc:
             checks.append(_check("bot.auth_test", False, str(exc)))
     else:
         checks.append(_check("bot.auth_test", False, "missing token"))
-    checks.append(_check("state.writable", _path_parent_writable(cfg.state_sqlite_path), cfg.state_sqlite_path))
-    checks.append(_check("controlplane.writable", _path_parent_writable(cp_cfg.sqlite_path), cp_cfg.sqlite_path))
+    checks.append(
+        _check(
+            "state.writable",
+            _path_parent_writable(cfg.state_sqlite_path),
+            cfg.state_sqlite_path,
+        )
+    )
+    checks.append(
+        _check(
+            "controlplane.writable",
+            _path_parent_writable(cp_cfg.sqlite_path),
+            cp_cfg.sqlite_path,
+        )
+    )
     checks.append(_check("transport.mode", True, cfg.mode, required=False))
     checks.append(_check("pairing.mode", False, "blocked on CCP", required=False))
-    checks.append(_check("pairings.active", True, str(_count_active_channel_subjects(cp_cfg.sqlite_path, "slack")), required=False))
-    checks.append(_check("daemon.reachable", _daemon_reachable(config_path), "runner/daemon status", required=False))
+    checks.append(
+        _check(
+            "pairings.active",
+            True,
+            str(_count_active_channel_subjects(cp_cfg.sqlite_path, "slack")),
+            required=False,
+        )
+    )
+    checks.append(
+        _check(
+            "daemon.reachable",
+            _daemon_reachable(config_path),
+            "runner/daemon status",
+            required=False,
+        )
+    )
     return checks
 
 

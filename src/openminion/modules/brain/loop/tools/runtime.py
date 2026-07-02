@@ -115,7 +115,10 @@ def _validated_model(
     if aliases:
         normalized_payload = dict(payload)
         for source_key, target_key in aliases.items():
-            if source_key in normalized_payload and target_key not in normalized_payload:
+            if (
+                source_key in normalized_payload
+                and target_key not in normalized_payload
+            ):
                 normalized_payload[target_key] = normalized_payload.pop(source_key)
         payload = normalized_payload
     try:

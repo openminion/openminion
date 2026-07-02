@@ -40,7 +40,9 @@ def test_slack_config_enabled_channels_is_authoritative(tmp_path: Path) -> None:
     config.enabled_channels = ["slack"]
     config.channels = {"slack": {"enabled": False, "botToken": "xoxb-local"}}
 
-    cfg = from_base_config(base_config=config, home_root=tmp_path, data_root=tmp_path).slack
+    cfg = from_base_config(
+        base_config=config, home_root=tmp_path, data_root=tmp_path
+    ).slack
 
     assert cfg.enabled is True
     assert cfg.bot_token == "xoxb-local"

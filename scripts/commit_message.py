@@ -8,7 +8,18 @@ from pathlib import Path
 REPO_NAME = "openminion"
 REQUIRE_SCOPE = True
 ALLOWED_TYPES = ("feat", "fix", "docs", "refactor", "test", "chore", "style", "build")
-SCOPE_EXAMPLES = ("agent", "api", "cli", "e2e", "gateway", "runtime", "telemetry", "tool", "tools", "tui")
+SCOPE_EXAMPLES = (
+    "agent",
+    "api",
+    "cli",
+    "e2e",
+    "gateway",
+    "runtime",
+    "telemetry",
+    "tool",
+    "tools",
+    "tui",
+)
 FORBIDDEN_SUMMARIES = {"update"}
 COMMIT_PATTERN = re.compile(
     r"^(?P<type>feat|fix|docs|refactor|test|chore|style|build)"
@@ -70,7 +81,7 @@ def _usage_message() -> str:
         "  <type>(<scope>): <summary>\n\n"
         f"Allowed types: {allowed_types}\n"
         f"Scope examples: {scope_examples}\n"
-        "Special cases allowed: Merge..., Revert \"...\", Initial commit, fixup!, squash!\n\n"
+        'Special cases allowed: Merge..., Revert "...", Initial commit, fixup!, squash!\n\n'
         "Examples:\n"
         "  docs(cli): explain hook installation\n"
         "  feat(runtime): add turn route timing metadata"
@@ -79,7 +90,9 @@ def _usage_message() -> str:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_commit_message.py <commit-message-file>", file=sys.stderr)
+        print(
+            "usage: validate_commit_message.py <commit-message-file>", file=sys.stderr
+        )
         return 2
     subject = _read_subject(Path(argv[1]))
     error = _validate_subject(subject)

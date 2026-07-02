@@ -192,8 +192,7 @@ def test_non_signal_trailing_json_response_stays_visible() -> None:
 
 def test_finalization_status_bare_json_signal_is_stripped_from_final_text() -> None:
     response_text = (
-        "Done.\n\n"
-        '{"status": "final_answer", "reasoning": "Complete enough to answer."}'
+        'Done.\n\n{"status": "final_answer", "reasoning": "Complete enough to answer."}'
     )
     client = _FakeClient(
         response=LLMResponse(
@@ -5304,9 +5303,8 @@ def test_engine_allows_one_duplicate_tool_batch_retry_before_stopping() -> None:
         if getattr(message, "role", "") == "system"
     )
     assert any(
-        "Successful tool evidence already gathered" in str(
-            getattr(message, "content", "") or ""
-        )
+        "Successful tool evidence already gathered"
+        in str(getattr(message, "content", "") or "")
         for message in third_call_messages
         if getattr(message, "role", "") == "user"
     )

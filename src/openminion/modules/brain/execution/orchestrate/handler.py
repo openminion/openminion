@@ -106,9 +106,13 @@ def _topologically_sort_subtasks(subtasks: list[SubtaskSpec]) -> list[SubtaskSpe
             message
             == "Parallel execution requires unique orchestrate subtask_id values."
         ):
-            raise ValueError("Orchestrate subtasks must have unique subtask_id values.") from exc
+            raise ValueError(
+                "Orchestrate subtasks must have unique subtask_id values."
+            ) from exc
         if message == "Orchestrate parallel graph contains a cycle.":
-            raise ValueError("Orchestrate subtasks contain a cyclic depends_on graph.") from exc
+            raise ValueError(
+                "Orchestrate subtasks contain a cyclic depends_on graph."
+            ) from exc
         if message.startswith("Unknown dependency "):
             dependency, _, remainder = message.partition(" for subtask ")
             normalized = dependency.removeprefix("Unknown dependency ").strip()

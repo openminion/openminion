@@ -139,7 +139,9 @@ class DemoRuntime:
         if normalized not in PERMISSION_MODE_VALUES:
             valid = ", ".join(sorted(PERMISSION_MODE_VALUES))
             raise ValueError(f"unknown permission mode {mode!r}; valid modes: {valid}")
-        self._permission_mode = "" if normalized == PERMISSION_MODE_DEFAULT else normalized
+        self._permission_mode = (
+            "" if normalized == PERMISSION_MODE_DEFAULT else normalized
+        )
         return self.permission_mode
 
     def cycle_permission_mode(self) -> str:
@@ -152,7 +154,9 @@ class DemoRuntime:
     def set_session_action_policy_mode(self, mode: str) -> str:
         normalized = normalize_action_policy_mode_override(mode)
         if normalized is None:
-            raise ValueError("unknown action policy mode; valid modes: ask, auto, bypass")
+            raise ValueError(
+                "unknown action policy mode; valid modes: ask, auto, bypass"
+            )
         self._action_policy_mode_override = normalized
         return normalized
 

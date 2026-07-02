@@ -49,7 +49,10 @@ RUNNER_ONLINE_MESSAGE = (
 
 TELEGRAM_BOT_COMMANDS: list[dict[str, str]] = [
     {"command": "help", "description": "Show OpenMinion commands"},
-    {"command": "status", "description": "Show connection, profile, and session status"},
+    {
+        "command": "status",
+        "description": "Show connection, profile, and session status",
+    },
     {"command": "new", "description": "Start a fresh session"},
     {"command": "sessions", "description": "List sessions for this chat"},
     {"command": "profile", "description": "List or switch runtime profiles"},
@@ -124,7 +127,11 @@ def telegram_setup(args: argparse.Namespace) -> int:
         )
         return 2
 
-    config = load_cli_config(str(config_path)) if config_path.exists() else OpenMinionConfig()
+    config = (
+        load_cli_config(str(config_path))
+        if config_path.exists()
+        else OpenMinionConfig()
+    )
     _patch_telegram_channel_config(config, bot_token_value=config_value)
     save_config(config, str(config_path))
 
@@ -146,14 +153,8 @@ def telegram_doctor(args: argparse.Namespace) -> int:
             status = "ok" if check["ok"] else "fail"
             detail = f" - {check['detail']}" if check.get("detail") else ""
             print(f"[{status}] {check['id']}{detail}")
-        print(
-            "Next: openminion channel telegram identify --config " + str(args.config)
-        )
-    return (
-        0
-        if all(bool(check["ok"]) for check in checks if check["required"])
-        else 1
-    )
+        print("Next: openminion channel telegram identify --config " + str(args.config))
+    return 0 if all(bool(check["ok"]) for check in checks if check["required"]) else 1
 
 
 def telegram_identify(args: argparse.Namespace) -> int:
@@ -362,9 +363,7 @@ def _telegram_pair_wait(args: argparse.Namespace) -> int:
         return 1
     _print_candidate(candidate)
     if candidate.chat_type in {"group", "supergroup"}:
-        print(
-            "Warning: group pairing grants access to the room, not just one person."
-        )
+        print("Warning: group pairing grants access to the room, not just one person.")
     if not _confirm("Create a constrained pairing token for this chat?", default=False):
         print("Pairing cancelled.")
         return 1
@@ -388,26 +387,59 @@ def _telegram_doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
     except Exception as exc:
         return [_check("config.parse", False, str(exc))]
     cp_cfg = _load_controlplane_config(config_path)
-    checks.append(_check("channel.enabled", bool(cfg.enabled), "channels.telegram.enabled"))
+    checks.append(
+        _check("channel.enabled", bool(cfg.enabled), "channels.telegram.enabled")
+    )
     token_present = bool(str(cfg.bot_token or "").strip())
-    checks.append(_check("token.present", token_present, "token=[redacted]" if token_present else "missing"))
+    checks.append(
+        _check(
+            "token.present",
+            token_present,
+            "token=[redacted]" if token_present else "missing",
+        )
+    )
     if token_present:
         try:
             me = TelegramBotAPI(cfg.bot_token).get_me()
-            checks.append(_check("bot.get_me", True, f"@{me.get('username', '')}".rstrip("@")))
+            checks.append(
+                _check("bot.get_me", True, f"@{me.get('username', '')}".rstrip("@"))
+            )
         except Exception as exc:
             checks.append(_check("bot.get_me", False, str(exc)))
     else:
         checks.append(_check("bot.get_me", False, "missing token"))
-    checks.append(_check("poll_state.writable", _path_parent_writable(cfg.polling.state_sqlite_path), cfg.polling.state_sqlite_path))
-    checks.append(_check("controlplane.writable", _path_parent_writable(cp_cfg.sqlite_path), cp_cfg.sqlite_path))
+    checks.append(
+        _check(
+            "poll_state.writable",
+            _path_parent_writable(cfg.polling.state_sqlite_path),
+            cfg.polling.state_sqlite_path,
+        )
+    )
+    checks.append(
+        _check(
+            "controlplane.writable",
+            _path_parent_writable(cp_cfg.sqlite_path),
+            cp_cfg.sqlite_path,
+        )
+    )
     checks.append(_check("pairing.mode", True, cfg.pairing.mode, required=False))
     checks.append(_check("transport.mode", True, cfg.mode, required=False))
-    webhook_ok = (not cfg.webhook.enabled) or bool(str(cfg.webhook.secret or "").strip())
+    webhook_ok = (not cfg.webhook.enabled) or bool(
+        str(cfg.webhook.secret or "").strip()
+    )
     checks.append(_check("webhook.secret", webhook_ok, "required when webhook enabled"))
-    checks.append(_check("pairings.active", True, str(_count_active_pairings(cp_cfg.sqlite_path)), required=False))
+    checks.append(
+        _check(
+            "pairings.active",
+            True,
+            str(_count_active_pairings(cp_cfg.sqlite_path)),
+            required=False,
+        )
+    )
     daemon_ok = _daemon_reachable(config_path)
-    checks.append(_check("daemon.reachable", daemon_ok, "runner/daemon status", required=False))
+    checks.append(
+        _check("daemon.reachable", daemon_ok, "runner/daemon status", required=False)
+    )
     return checks
 
 

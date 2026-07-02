@@ -134,9 +134,10 @@ def test_self_awareness_segment_is_budget_accounted_and_redacted() -> None:
     assert segment.pinned is True
     assert "[SELF AWARENESS]" in segment.content
     assert "secret" not in segment.content
-    assert policy.get("actions") or segment.token_estimate <= bucket_caps_for(budgets)[
-        "self_awareness"
-    ]
+    assert (
+        policy.get("actions")
+        or segment.token_estimate <= bucket_caps_for(budgets)["self_awareness"]
+    )
 
 
 def test_self_awareness_segment_truncates_under_tight_budget() -> None:

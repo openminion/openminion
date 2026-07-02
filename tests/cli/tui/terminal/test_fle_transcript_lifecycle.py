@@ -302,7 +302,9 @@ def test_completed_ignores_live_clear_failure() -> None:
     assert "ok" in buf.getvalue()
 
 
-def test_agent_render_uses_prompt_safe_terminal_hook_when_app_running(monkeypatch) -> None:
+def test_agent_render_uses_prompt_safe_terminal_hook_when_app_running(
+    monkeypatch,
+) -> None:
     async def _case() -> None:
         t, buf = _make("normal")
 
@@ -349,7 +351,9 @@ def test_terminal_writer_overrides_direct_console_print() -> None:
         rendered.append(buf.getvalue())
 
     t.set_terminal_writer(_writer)
-    t.push_message(ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="hello"))
+    t.push_message(
+        ChatMessage(kind=MessageKind.AGENT, sender="assistant", body="hello")
+    )
 
     assert rendered
     assert "hello" in rendered[0]

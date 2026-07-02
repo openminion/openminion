@@ -22,16 +22,19 @@ def test_access_allows_dm_and_app_mention() -> None:
     policy = SlackAccessPolicy()
 
     assert policy.evaluate(_env()).allowed is True
-    assert policy.evaluate(
-        _env(event_type="app_mention", channel_type="channel", channel_id="C1")
-    ).allowed is True
+    assert (
+        policy.evaluate(
+            _env(event_type="app_mention", channel_type="channel", channel_id="C1")
+        ).allowed
+        is True
+    )
 
 
 def test_access_denies_channel_without_mention_and_allowlist_miss() -> None:
     assert (
-        SlackAccessPolicy().evaluate(
-            _env(channel_id="C1", channel_type="channel")
-        ).reason
+        SlackAccessPolicy()
+        .evaluate(_env(channel_id="C1", channel_type="channel"))
+        .reason
         == "app_mention_required"
     )
     assert (

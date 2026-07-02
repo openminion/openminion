@@ -30,7 +30,9 @@ def slack_session_scope_key(
     return base
 
 
-def event_callback_from_payload(payload: Mapping[str, Any]) -> SlackEventCallback | None:
+def event_callback_from_payload(
+    payload: Mapping[str, Any],
+) -> SlackEventCallback | None:
     if payload.get("type") != "event_callback":
         return None
     event = payload.get("event")
@@ -77,9 +79,7 @@ def envelope_from_event_callback(
         return None
     normalized_text = normalize_command_text(text)
     blocks = tuple(
-        block
-        for block in (event.get("blocks") or ())
-        if isinstance(block, dict)
+        block for block in (event.get("blocks") or ()) if isinstance(block, dict)
     )
     return SlackInboundEnvelope(
         team_id=callback.team_id,

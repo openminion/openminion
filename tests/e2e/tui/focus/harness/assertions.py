@@ -58,7 +58,9 @@ def assert_focus_turn_completed(transcript: str) -> None:
         assert marker not in visible, marker
 
 
-def assert_expected_markers(transcript: str, prompt: str, markers: tuple[str, ...]) -> None:
+def assert_expected_markers(
+    transcript: str, prompt: str, markers: tuple[str, ...]
+) -> None:
     output = turn_output_text(transcript, prompt).lower()
     for marker in markers:
         assert marker.lower() in output, marker
