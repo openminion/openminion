@@ -1,5 +1,3 @@
-import traceback
-
 from .reasons import ReasonCode
 from .schemas import (
     BudgetAdjust,
@@ -182,7 +180,6 @@ class MetaRulesEngine:
         code: ReasonCode,
         exc: Exception,
     ) -> MetaResult:
-        _ = traceback.format_exc()  # consumed for side-effect-free logging if needed
         directive = MetaDirective(
             require_confirmation=True,
             prompt_constraints=["Evaluation error — proceed conservatively."],

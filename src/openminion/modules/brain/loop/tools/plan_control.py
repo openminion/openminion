@@ -15,8 +15,6 @@ from openminion.modules.task.plan import (
 )
 
 from .task_ops import (
-    PLAN_TASK_OPS_OUTPUT_KEY,
-    PLAN_TASK_OPS_TOUCHED_TASK_IDS_OUTPUT_KEY,
     task_ops_for_plan_declare,
     task_ops_for_step_blocked,
     task_ops_for_step_completed,
@@ -29,7 +27,6 @@ from .plan import (
     _append_task_plan_event,
     _clear_active_plan_override,
     _current_active_plan,
-    _emit_task_plan_progress_event,
     _failed_result,
     _merge_redeclared_active_plan,
     _pae_cancel_idle_tick,
@@ -75,13 +72,6 @@ PLAN_TOOL_ACTIONS = frozenset(
 )
 PLAN_STEP_STATUSES = ("pending", "in_progress", "completed", "blocked")
 PLAN_STEP_DIFFICULTIES = ("low", "medium", "high")
-_TEST_AND_COMPAT_EXPORTS = (
-    PLAN_TASK_OPS_OUTPUT_KEY,
-    PLAN_TASK_OPS_TOUCHED_TASK_IDS_OUTPUT_KEY,
-    _emit_task_plan_progress_event,
-)
-
-
 def _plan_step_input_schema() -> dict[str, Any]:
     return {
         "type": "object",

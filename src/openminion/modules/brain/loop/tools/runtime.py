@@ -43,6 +43,10 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 _THINKING_CTL = ThinkingCtl()
 
+_SIGNAL_PAYLOAD_ALIASES: dict[str, dict[str, str]] = {
+    "confident_complete": {"confident_complete": "complete"},
+}
+
 _CONFIDENT_COMPLETE_RE = re.compile(
     r"(?s)(?P<body>.*?)(?:\n\s*)?<confident_complete>\s*(?P<payload>\{.*\})\s*</confident_complete>\s*$"
 )
@@ -102,14 +106,42 @@ def _tool_spec_description(
 def _validated_model(
     payload: Any,
     *,
+    field_name: str,
     model: type[ModelT],
 ) -> ModelT | None:
     if not isinstance(payload, dict):
         return None
+    aliases = _SIGNAL_PAYLOAD_ALIASES.get(field_name, {})
+    if aliases:
+        normalized_payload = dict(payload)
+        for source_key, target_key in aliases.items():
+            if source_key in normalized_payload and target_key not in normalized_payload:
+                normalized_payload[target_key] = normalized_payload.pop(source_key)
+        payload = normalized_payload
     try:
         return model.model_validate(payload)
     except ValidationError:
         return None
+
+
+def _trailing_json_object(raw_text: str) -> tuple[str, dict[str, Any]] | None:
+    stripped = raw_text.rstrip()
+    if not stripped.endswith("}"):
+        return None
+    decoder = json.JSONDecoder()
+    for start, character in enumerate(stripped):
+        if character != "{":
+            continue
+        body = stripped[:start].rstrip()
+        if not body:
+            continue
+        try:
+            payload, end = decoder.raw_decode(stripped[start:])
+        except json.JSONDecodeError:
+            continue
+        if end == len(stripped) - start and isinstance(payload, dict):
+            return body, payload
+    return None
 
 
 def _updated_assistant_messages(
@@ -133,7 +165,11 @@ def _normalize_structured_signal_response(
     field_name: str,
     model: type[ModelT],
 ) -> LLMResponse | None:
-    structured = _validated_model(getattr(response, field_name, None), model=model)
+    structured = _validated_model(
+        getattr(response, field_name, None),
+        field_name=field_name,
+        model=model,
+    )
     if structured is None:
         return None
     return _with_typed_signal_source(
@@ -163,13 +199,24 @@ def _normalize_signal_response(
     if not raw_text:
         return response
     match = trailer_pattern.match(raw_text)
-    if match is None:
+    payload: dict[str, Any]
+    if match is not None:
+        try:
+            loaded = json.loads(match.group("payload"))
+        except json.JSONDecodeError:
+            return response
+        if not isinstance(loaded, dict):
+            return response
+        stripped_text = str(match.group("body") or "").rstrip()
+        payload = loaded
+    else:
+        trailing = _trailing_json_object(raw_text)
+        if trailing is None:
+            return response
+        stripped_text, payload = trailing
+    structured = _validated_model(payload, field_name=field_name, model=model)
+    if structured is None:
         return response
-    try:
-        structured = model.model_validate(json.loads(match.group("payload")))
-    except (ValidationError, json.JSONDecodeError):
-        return response
-    stripped_text = str(match.group("body") or "").rstrip()
     return _with_typed_signal_source(
         response,
         field_name=field_name,

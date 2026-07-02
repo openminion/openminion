@@ -96,6 +96,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_ITERATION_CAP,
     ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_NEEDS_USER,
@@ -3561,6 +3562,129 @@ class TestFinalizeIterationCapExit:
         assert result is not None
         assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
 
+    def test_force_finalization_recovers_status_after_answer_missing_trailer(
+        self,
+    ) -> None:
+        prof = _profile(allowed_tools=frozenset({"x"}))
+        st_loop = AdaptiveToolLoopState(
+            messages=[
+                Message(
+                    role="user",
+                    content=(
+                        "Research the latest situation and append "
+                        "<finalization_status>{...}</finalization_status>."
+                    ),
+                ),
+                Message(role="tool", content='{"status":"success"}'),
+            ],
+            total_tool_calls=2,
+        )
+        state = _state()
+        state.last_user_input = (
+            "Append <finalization_status>{...}</finalization_status> after the answer."
+        )
+        loop_ctx = _LoopContext(state=state)
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="Here is the researched answer from the gathered evidence.",
+                    finish_reason="stop",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="",
+                    finalization_status={
+                        "status": "final_answer",
+                        "reasoning": "The prior answer completed the request.",
+                    },
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"x"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert result.final_text == "Here is the researched answer from the gathered evidence."
+        assert result.finalization_status == {
+            "status": "final_answer",
+            "reasoning": "The prior answer completed the request.",
+            "remaining_work": "",
+            "blocking_reason": "",
+        }
+        assert len(runtime.calls) == 2
+        assert runtime.calls[1]["tool_choice"] == "none"
+        retry_messages = runtime.calls[1]["messages"]
+        assert retry_messages[-2].role == "assistant"
+        assert retry_messages[-2].content == result.final_text
+        assert retry_messages[-1].role == "system"
+        assert "Return only the structured finalization_status signal" in (
+            retry_messages[-1].content
+        )
+
+    def test_force_finalization_preserves_incomplete_typed_status(self) -> None:
+        prof = _profile(allowed_tools=frozenset({"x"}))
+        st_loop = AdaptiveToolLoopState(
+            messages=[
+                Message(role="user", content="Answer with finalization_status."),
+                Message(role="tool", content='{"status":"success"}'),
+            ],
+            total_tool_calls=1,
+        )
+        state = _state()
+        state.last_user_input = "Answer with finalization_status."
+        loop_ctx = _LoopContext(state=state)
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="I found partial evidence but not enough to finish.",
+                    finalization_status={
+                        "status": "incomplete",
+                        "reasoning": "More evidence is required.",
+                        "remaining_work": "Fetch one more source.",
+                    },
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"x"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+        assert result.final_text == "I found partial evidence but not enough to finish."
+        assert result.finalization_status is not None
+        assert result.finalization_status["remaining_work"] == "Fetch one more source."
+
     def test_force_finalization_fail_closes_when_explicit_contract_missing(
         self,
     ) -> None:
@@ -3590,6 +3714,13 @@ class TestFinalizeIterationCapExit:
                     provider="fake",
                     model="m",
                     output_text="PLAN\n- done\n\nTABLE\n- compared\n\nUNCERTAINTIES\n- none",
+                    finish_reason="stop",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="still missing status",
                     finish_reason="stop",
                 ),
             ]
@@ -4579,6 +4710,9 @@ def test_execution_preface_draft_detects_progress_note_after_tool_results() -> N
     assert _looks_like_execution_preface_draft(
         "Based on the existing tool results, I can see the project is mostly "
         "complete. Let me verify the tests."
+    )
+    assert _looks_like_execution_preface_draft(
+        "Proceeding to add `tests/` and `pyproject.toml`, then run validation."
     )
 
 

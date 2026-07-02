@@ -63,7 +63,7 @@ class CodingPlanningMixin:
             messages=[
                 Message(
                     role="system",
-                    content=self._build_plan_system_prompt(ctx, goal=goal),
+                    content=self._build_plan_system_prompt(ctx),
                 ),
                 Message(role="user", content=goal),
             ],
@@ -91,8 +91,6 @@ class CodingPlanningMixin:
     def _build_plan_system_prompt(
         self: Any,
         ctx: ExecutionContext,
-        *,
-        goal: str,
     ) -> str:
         parts = [
             "Return a JSON CodingPlan with fields goal, phases, current_phase, "
@@ -273,8 +271,7 @@ class CodingPlanningMixin:
             },
         )
 
-    def _append_phase_instruction(self: Any, ctx: ExecutionContext) -> None:
-        del ctx
+    def _append_phase_instruction(self: Any) -> None:
         if self._coding_plan is None:
             return
         phase = self._coding_plan.current_phase_entry()

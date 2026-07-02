@@ -1440,6 +1440,28 @@ def test_build_pause_response_message_omits_budget_only_placeholder_synthesis() 
     assert "usable partial answer" in message
 
 
+def test_build_synthesis_text_falls_back_when_findings_are_placeholders() -> None:
+    mode = _make_mode(max_iterations=3)
+    findings = [
+        ResearchFinding(
+            iteration=0,
+            source_tool="act",
+            source_query="q1",
+            content="[act] repeated the same tool pattern without reaching a final answer.",
+        ).model_dump(mode="python")
+    ]
+
+    message = mode._build_synthesis_text(
+        None,
+        query="What is WebAssembly?",
+        findings=findings,
+        allow_llm_synthesis=False,
+    )
+
+    assert "did not produce a usable synthesized answer" in message
+    assert "Next steps:" in message
+
+
 def test_execute_records_findings_in_checkpoint_state() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tm = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")

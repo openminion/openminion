@@ -13,9 +13,6 @@ from openminion.modules.brain.runtime.review.observation import REVIEW_TOOL_NAME
 from openminion.modules.brain.schemas import ActionError, ActionResult, new_uuid
 from openminion.modules.llm.schemas import ToolSpec
 
-
-__REVIEW_TOOL_NAME = REVIEW_TOOL_NAME  # noqa: F401
-
 REVIEW_TOOL_ATTEMPTED_SCRATCHPAD_KEY = "review_tool.attempted"
 REVIEW_TOOL_USED_SCRATCHPAD_KEY = "review_tool.used"
 

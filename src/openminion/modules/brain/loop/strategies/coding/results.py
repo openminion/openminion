@@ -225,7 +225,7 @@ def _maybe_continue_after_tool_failure(
         ctx,
         failure_summary=str(failure_summary or "").strip(),
     )
-    runner._append_phase_instruction(ctx)
+    runner._append_phase_instruction()
     runner._emit_phase_status(ctx)
     return True
 
@@ -351,7 +351,7 @@ def _exit_final_text(
         disposition = None
 
     if disposition == BRAIN_DISPOSITION_CONTINUE:
-        runner._append_phase_instruction(ctx)
+        runner._append_phase_instruction()
         runner._sync_coding_module_state(ctx)
         return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
 

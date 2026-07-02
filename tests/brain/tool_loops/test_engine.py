@@ -120,6 +120,105 @@ class _FakeClient:
         return self.response
 
 
+def test_confident_complete_bare_json_signal_is_stripped_from_final_text() -> None:
+    response_text = (
+        "Weather summary.\n\n"
+        '{\n"confident_complete": true,\n"reasoning": "Weather data returned."\n}'
+    )
+    client = _FakeClient(
+        response=LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            output_text=response_text,
+            assistant_messages=[Message(role="assistant", content=response_text)],
+            finish_reason="stop",
+        )
+    )
+    runtime = DefaultAdaptiveToolLoopLLMRuntime(client)
+
+    response = runtime.complete(messages=[], tools=[], model="fake-model")
+
+    assert response.output_text == "Weather summary."
+    assert response.assistant_messages[-1].content == "Weather summary."
+    assert response.confident_complete == {
+        "complete": True,
+        "reasoning": "Weather data returned.",
+    }
+
+
+def test_confident_complete_pure_json_response_stays_visible() -> None:
+    response_text = '{"confident_complete": true, "reasoning": "Only control JSON."}'
+    client = _FakeClient(
+        response=LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            output_text=response_text,
+            assistant_messages=[Message(role="assistant", content=response_text)],
+            finish_reason="stop",
+        )
+    )
+    runtime = DefaultAdaptiveToolLoopLLMRuntime(client)
+
+    response = runtime.complete(messages=[], tools=[], model="fake-model")
+
+    assert response.output_text == response_text
+    assert response.assistant_messages[-1].content == response_text
+    assert response.confident_complete is None
+
+
+def test_non_signal_trailing_json_response_stays_visible() -> None:
+    response_text = 'Here is JSON.\n{"city": "San Francisco"}'
+    client = _FakeClient(
+        response=LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            output_text=response_text,
+            assistant_messages=[Message(role="assistant", content=response_text)],
+            finish_reason="stop",
+        )
+    )
+    runtime = DefaultAdaptiveToolLoopLLMRuntime(client)
+
+    response = runtime.complete(messages=[], tools=[], model="fake-model")
+
+    assert response.output_text == response_text
+    assert response.assistant_messages[-1].content == response_text
+    assert response.confident_complete is None
+    assert response.finalization_status is None
+
+
+def test_finalization_status_bare_json_signal_is_stripped_from_final_text() -> None:
+    response_text = (
+        "Done.\n\n"
+        '{"status": "final_answer", "reasoning": "Complete enough to answer."}'
+    )
+    client = _FakeClient(
+        response=LLMResponse(
+            ok=True,
+            provider="fake",
+            model="fake-model",
+            output_text=response_text,
+            assistant_messages=[Message(role="assistant", content=response_text)],
+            finish_reason="stop",
+        )
+    )
+    runtime = DefaultAdaptiveToolLoopLLMRuntime(client)
+
+    response = runtime.complete(messages=[], tools=[], model="fake-model")
+
+    assert response.output_text == "Done."
+    assert response.assistant_messages[-1].content == "Done."
+    assert response.finalization_status == {
+        "status": "final_answer",
+        "reasoning": "Complete enough to answer.",
+        "remaining_work": "",
+        "blocking_reason": "",
+    }
+
+
 @dataclass
 class _LoopContext:
     state: WorkingState
@@ -5198,10 +5297,18 @@ def test_engine_allows_one_duplicate_tool_batch_retry_before_stopping() -> None:
     assert len(duplicate_runtime.calls) == 3
     assert duplicate_runtime.calls[2]["tool_choice"] == "none"
     third_call_messages = duplicate_runtime.calls[2]["messages"]
+    assert len(third_call_messages) <= 3
     assert any(
-        "already completed successfully" in str(getattr(message, "content", "") or "")
+        "Do not call more tools" in str(getattr(message, "content", "") or "")
         for message in third_call_messages
         if getattr(message, "role", "") == "system"
+    )
+    assert any(
+        "Successful tool evidence already gathered" in str(
+            getattr(message, "content", "") or ""
+        )
+        for message in third_call_messages
+        if getattr(message, "role", "") == "user"
     )
 
 
@@ -6856,6 +6963,106 @@ def test_three_identical_tool_sequences_trigger_circular_pattern() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN
+
+
+def test_circular_pattern_finalization_uses_compact_reserved_answer_call() -> None:
+    large_output = "x" * 5000
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="file.read", arguments={"path": "a.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c2", name="file.read", arguments={"path": "b.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c3", name="file.read", arguments={"path": "c.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Final answer from compact evidence.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=10, llm_calls_max=20),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="read a.py",
+                    outputs={"content": large_output},
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="read b.py",
+                    outputs={"content": large_output},
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="read c.py",
+                    outputs={"content": large_output},
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile_with_budget_hint(
+            allowed_tools=frozenset({"file.read"}),
+            max_iterations=10,
+            max_llm_calls_per_loop=3,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="read and summarize")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Final answer from compact evidence."
+    assert len(runtime.calls) == 4
+    final_messages = runtime.calls[-1]["messages"]
+    assert len(final_messages) == 2
+    assert "read and summarize" in final_messages[0].content
+    assert len(final_messages[0].content) < 6000
+    assert runtime.calls[-1]["tool_choice"] == "none"
 
 
 def test_two_identical_tool_sequences_do_not_trigger_circular_pattern() -> None:

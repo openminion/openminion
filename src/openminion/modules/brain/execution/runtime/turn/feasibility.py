@@ -17,6 +17,8 @@ def assess_plan_feasibility(
     user_input: str | None,
     logger: CanonicalEventLogger,
 ) -> FeasibilityReport | None:
+    from ... import feasibility as feasibility_module
+
     structured_sub_intents = _structured_sub_intents(state)
     if (
         runner.llm_api is None
@@ -25,12 +27,11 @@ def assess_plan_feasibility(
         or not structured_sub_intents
     ):
         return None
-    feasibility_barrel = _feasibility_barrel()
     runtime_tool_schemas = runner._collect_runtime_tool_schemas()
-    runtime_facts = feasibility_barrel.build_runtime_supplement(
+    runtime_facts = feasibility_module.build_runtime_supplement(
         tool_schemas=runtime_tool_schemas
     )
-    shortcut = feasibility_barrel._simple_single_step_feasibility(
+    shortcut = feasibility_module._simple_single_step_feasibility(
         state=state,
         runtime_tool_schemas=runtime_tool_schemas,
         runtime_facts=runtime_facts,
@@ -215,9 +216,3 @@ def _fallback_feasibility_report(
         blocked_intent_ids=declared_ids,
         assessments=[],
     )
-
-
-def _feasibility_barrel() -> Any:
-    from ... import feasibility as feasibility_module
-
-    return feasibility_module

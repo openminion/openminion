@@ -399,7 +399,10 @@ _REQUIRED_MEMBERS: dict[str, tuple[str, ...]] = {
     ),
     "safety": (
         "contract_version",
-        "evaluate",
+        "is_normal",
+        "stop",
+        "kill",
+        "panic",
     ),
     "meta": (
         "contract_version",

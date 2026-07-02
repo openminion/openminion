@@ -108,6 +108,33 @@ class AdaptiveLoopRunnerClosureMixin:
                 set(self.active_tool_names) - repeated_tool_names
             )
             if eligible_facts is not None and not has_alternative_tool:
+                duplicate_outcome, duration_ms, duplicate_tokens = (
+                    _force_duplicate_batch_answer_only_closure(
+                        loop_ctx=self.loop_ctx,
+                        profile=self.profile,
+                        loop_state=self.loop_state,
+                        runtime=self.runtime,
+                        model=self.model,
+                        tool_calls=tool_calls,
+                        tool_specs=self.active_tool_specs,
+                        max_output_tokens=self.max_output_tokens,
+                        metadata=self.metadata,
+                        allowed_tools=self.allowed_tools,
+                        public_mode_tag=self.public_mode_tag,
+                        signature=signature,
+                    )
+                )
+                if duplicate_outcome is not None:
+                    return False, self._finalize_answer_only_closure_outcome(
+                        outcome=duplicate_outcome,
+                        llm_duration_ms=prepared.iter_llm_duration_ms
+                        + duration_ms,
+                        tokens_used=(
+                            prepared.iter_input_tokens
+                            + prepared.iter_output_tokens
+                            + duplicate_tokens
+                        ),
+                    )
                 self.loop_state.scratchpad[
                     "duplicate_batch_answer_only_closure_pending"
                 ] = True

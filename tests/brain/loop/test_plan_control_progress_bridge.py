@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from openminion.modules.brain.loop.tools.plan_control import (
+from openminion.modules.brain.loop.tools.plan import (
     _append_task_plan_event,
     _emit_task_plan_progress_event,
 )

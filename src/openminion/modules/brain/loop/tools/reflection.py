@@ -15,9 +15,7 @@ def detect_anomaly(
     *,
     result: Any,  # ActionResult-like
     history: list[Any],  # prior ActionResults for same tool
-    tool_name: str,
 ) -> AnomalyScore:
-    del tool_name  # reserved for future per-tool tuning
     conditions: list[tuple[str, float]] = []
 
     status = getattr(result, "status", None) or ""

@@ -1,5 +1,17 @@
 SELF_COMPACTION_EVENT_TYPE = "context.self_compaction"
 SELF_COMPACTION_MAX_CHARS = 800
+BUDGET_FINALIZATION_STATUS_RETRY_PROMPT = (
+    "You already produced the user-facing final answer above. Do not repeat or "
+    "expand it. Return only the structured finalization_status signal now. Do "
+    "not call tools. Set status=final_answer only if that prior answer fully "
+    "completed the request. Use status=incomplete or status=blocked otherwise."
+)
+BUDGET_ANSWER_ONLY_COLLECTION_ITEM_LIMIT = 8
+BUDGET_ANSWER_ONLY_NESTED_TEXT_LIMIT = 300
+BUDGET_ANSWER_ONLY_STRING_TEXT_LIMIT = 600
+BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT = 8
+BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT = 80
+BUDGET_ANSWER_ONLY_TEXT_LIMIT = 1200
 
 PROVIDER_RETRYABLE_CATEGORIES: frozenset[str] = frozenset(
     {"RATE_LIMITED", "TIMEOUT", "PROVIDER_ERROR"}

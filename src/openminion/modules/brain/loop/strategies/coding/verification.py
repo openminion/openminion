@@ -84,22 +84,6 @@ def load_verifier_candidate(
         return None
 
 
-def reduce_coding_verifier_verdict(
-    *,
-    goal: Goal,
-    results: list[VerifierResult],
-    budget_exhausted: bool = False,
-    blocked: bool = False,
-) -> CodingVerifierVerdict:
-    if budget_exhausted:
-        return CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED
-    if blocked:
-        return CODING_VERIFIER_VERDICT_BLOCKED
-    if is_run_completion_confirmed(goal=goal, results=list(results)):
-        return CODING_VERIFIER_VERDICT_COMPLETE
-    return CODING_VERIFIER_VERDICT_INCOMPLETE
-
-
 def evaluate_coding_verifier(
     *,
     goal: Goal,
@@ -145,12 +129,12 @@ def evaluate_coding_verifier(
                 logger=logger,
             )
         )
-    return CodingVerifierEvaluation(
-        verdict=reduce_coding_verifier_verdict(
-            goal=goal,
-            results=results,
-            budget_exhausted=budget_exhausted,
-            blocked=blocked,
-        ),
-        results=tuple(results),
-    )
+    if budget_exhausted:
+        verdict = CODING_VERIFIER_VERDICT_BUDGET_EXHAUSTED
+    elif blocked:
+        verdict = CODING_VERIFIER_VERDICT_BLOCKED
+    elif is_run_completion_confirmed(goal=goal, results=list(results)):
+        verdict = CODING_VERIFIER_VERDICT_COMPLETE
+    else:
+        verdict = CODING_VERIFIER_VERDICT_INCOMPLETE
+    return CodingVerifierEvaluation(verdict=verdict, results=tuple(results))

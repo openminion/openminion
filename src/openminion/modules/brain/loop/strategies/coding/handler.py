@@ -70,15 +70,7 @@ from .results import (
     _maybe_continue_after_tool_failure as _results_maybe_continue_after_tool_failure,
     _result_from_outcome as _results_from_outcome,
 )
-from .subtasks import (
-    _append_subtask_synthesis as _subtasks_append_synthesis,
-    _child_budget_payload as _subtasks_child_budget_payload,
-    _debit_parent_budget_for_subtask as _subtasks_debit_parent_budget,
-    _dispatch_subtasks_if_needed as _subtasks_dispatch_if_needed,
-    _invoke_coding_subtask as _subtasks_invoke,
-    _parent_subtask_budget_exhausted as _subtasks_budget_exhausted,
-    _subtask_batches as _subtasks_batches,
-)
+from .subtasks import _dispatch_subtasks_if_needed as _subtasks_dispatch_if_needed
 from .verification_flow import CodingVerificationMixin
 
 
@@ -436,7 +428,7 @@ class CodingProfileRunner(
                         allowed_tools=allowed_tools,
                     )
                 continue
-            self._append_phase_instruction(ctx)
+            self._append_phase_instruction()
             self._sync_coding_module_state(ctx)
 
     def snapshot_state(self) -> dict[str, Any]:
@@ -494,51 +486,6 @@ class CodingProfileRunner(
         # that still monkeypatch coding.handler.invoke_decision_direct.
         _subtasks_module.invoke_decision_direct = invoke_decision_direct
         _subtasks_dispatch_if_needed(self, ctx)
-
-    def _subtask_batches(self, pending_indices: list[int]) -> list[list[int]]:
-        return _subtasks_batches(self, pending_indices)
-
-    def _child_budget_payload(
-        self,
-        ctx: ExecutionContext,
-        *,
-        total_subtasks: int,
-    ) -> dict[str, int]:
-        return _subtasks_child_budget_payload(self, ctx, total_subtasks=total_subtasks)
-
-    def _parent_subtask_budget_exhausted(self, ctx: ExecutionContext) -> bool:
-        return _subtasks_budget_exhausted(self, ctx)
-
-    def _debit_parent_budget_for_subtask(
-        self,
-        ctx: ExecutionContext,
-        *,
-        child_budget: dict[str, int],
-    ) -> None:
-        _subtasks_debit_parent_budget(self, ctx, child_budget=child_budget)
-
-    def _invoke_coding_subtask(
-        self,
-        ctx: ExecutionContext,
-        *,
-        runner: Any,
-        subtask_index: int,
-        child_budget: dict[str, int],
-    ) -> ExecutionResult:
-        return _subtasks_invoke(
-            self,
-            ctx,
-            runner_obj=runner,
-            subtask_index=subtask_index,
-            child_budget=child_budget,
-        )
-
-    def _append_subtask_synthesis(
-        self,
-        ctx: ExecutionContext,
-        outcomes: dict[int, ExecutionResult],
-    ) -> None:
-        _subtasks_append_synthesis(self, ctx, outcomes)
 
     def _as_adaptive_state(self, loop_state: CodingLoopState) -> AdaptiveToolLoopState:
         return AdaptiveToolLoopState(

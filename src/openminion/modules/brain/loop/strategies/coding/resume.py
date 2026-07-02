@@ -9,6 +9,7 @@ from openminion.modules.brain.constants import (
     BRAIN_STATE_ACTIVE,
     BRAIN_STATE_ERROR,
     BRAIN_STATE_WAITING_USER,
+    CODING_MODULE_STATE_KEY as _CODING_MODULE_STATE_KEY,
     RESPOND_KIND_POLICY_CONFIRMATION_PROMPT,
     STATE_KEY_MODULE_STATE,
     STATE_KEY_TASK_BACKED_RESUME,
@@ -33,10 +34,6 @@ from openminion.modules.brain.runner.tick.context import (
 )
 from openminion.modules.brain.schemas import refresh_command_identity, new_uuid
 from openminion.modules.llm.schemas import Message
-
-from openminion.modules.brain.constants import (
-    CODING_MODULE_STATE_KEY as _CODING_MODULE_STATE_KEY,
-)
 from .runtime import _build_blocked_result, _runner_and_profile_from_context
 
 
