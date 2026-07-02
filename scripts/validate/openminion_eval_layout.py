@@ -51,6 +51,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "skills",
     "tools",
 }
+REQUIRED_TOP_LEVEL_DIRS = ALLOWED_TOP_LEVEL_DIRS - {"memory_effectiveness"}
 
 
 def _resolve_eval_root() -> Path:
@@ -106,7 +107,7 @@ def validate_root_layout(root: Path = EVAL_ROOT) -> list[str]:
             "Unexpected top-level openminion-eval dirs: " + ", ".join(unexpected_dirs)
         )
 
-    missing_dirs = sorted(ALLOWED_TOP_LEVEL_DIRS.difference(top_level_dirs))
+    missing_dirs = sorted(REQUIRED_TOP_LEVEL_DIRS.difference(top_level_dirs))
     if missing_dirs:
         errors.append(
             "Missing admitted openminion-eval subpackages: " + ", ".join(missing_dirs)
@@ -123,6 +124,7 @@ def main() -> int:
         "ok": not errors,
         "allowed_root_files": sorted(ALLOWED_ROOT_FILES),
         "admitted_subpackages": sorted(ALLOWED_TOP_LEVEL_DIRS),
+        "required_subpackages": sorted(REQUIRED_TOP_LEVEL_DIRS),
     }
     emit_json_report(
         "validate_openminion_eval_layout",
@@ -131,6 +133,7 @@ def main() -> int:
             ("package root", EVAL_ROOT),
             ("allowed root files", len(ALLOWED_ROOT_FILES)),
             ("admitted subpackages", len(ALLOWED_TOP_LEVEL_DIRS)),
+            ("required subpackages", len(REQUIRED_TOP_LEVEL_DIRS)),
         ),
         findings=errors,
         ok_message="openminion-eval layout is clean.",
