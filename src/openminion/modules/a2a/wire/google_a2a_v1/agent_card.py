@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
 A2A_PROTOCOL_VERSION = "1.0"
@@ -112,6 +112,3 @@ def build_agent_card(
         provider_url=provider_url,
         documentation_url=documentation_url,
     )
-
-
-_asdict = asdict

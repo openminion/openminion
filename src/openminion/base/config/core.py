@@ -432,13 +432,6 @@ def resolve_agent_config(
         runtime_set=runtime.has_trailer_guidance_variant,
     )
 
-    effective_thinking_policy = profile.thinking_policy
-    effective_provider_policy = profile.provider_policy
-    effective_plugins = profile.plugins
-
-    effective_modes = dict(profile.modes or {})
-    effective_tools = profile.tools
-
     return replace(
         profile,
         tool_schema_shortlisting_enabled=tss_value,
@@ -447,11 +440,11 @@ def resolve_agent_config(
         has_allow_background_write_authorization=bwa_has,
         trailer_guidance_variant=(dict(variant_value or {}) if variant_has else None),
         has_trailer_guidance_variant=variant_has,
-        thinking_policy=effective_thinking_policy,
-        provider_policy=effective_provider_policy,
-        plugins=effective_plugins,
-        modes=effective_modes,
-        tools=effective_tools,
+        thinking_policy=profile.thinking_policy,
+        provider_policy=profile.provider_policy,
+        plugins=profile.plugins,
+        modes=dict(profile.modes or {}),
+        tools=profile.tools,
     )
 
 

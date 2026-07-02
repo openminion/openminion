@@ -366,6 +366,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
         "allow": [
             "git",
             "python",
+            "python3",
             "python3.11",
             "node",
             "npm",

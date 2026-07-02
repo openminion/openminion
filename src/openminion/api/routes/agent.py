@@ -22,10 +22,6 @@ _INSPECT_RE = re.compile(r"/v1/agents/([^/]+)/inspect")
 _EVICT_RE = re.compile(r"/v1/agents/([^/]+)/evict")
 
 
-def _runtime_unavailable_response(path: str, exc: Exception) -> RouteResult:
-    return runtime_unavailable_route_result(path=path, exc=exc)
-
-
 def _handle_list_agents(ctx: APIRouteContext, *, path: str) -> RouteResult:
     try:
         payload = list_agents(
@@ -33,7 +29,7 @@ def _handle_list_agents(ctx: APIRouteContext, *, path: str) -> RouteResult:
             runtime=ctx.runtime,
         )
     except Exception as exc:  # noqa: BLE001
-        return _runtime_unavailable_response(path, exc)
+        return runtime_unavailable_route_result(path=path, exc=exc)
     return RouteResult(status=HTTPStatus.OK, payload=payload)
 
 
@@ -85,7 +81,7 @@ def _handle_evict_agent(
             reason=reason,
         )
     except Exception as exc:  # noqa: BLE001
-        return _runtime_unavailable_response(path, exc)
+        return runtime_unavailable_route_result(path=path, exc=exc)
     return RouteResult(status=HTTPStatus.OK, payload=payload)
 
 

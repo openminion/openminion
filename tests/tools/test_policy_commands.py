@@ -196,6 +196,15 @@ def test_default_policy_allows_skill_model_tool(tmp_path):
     policy.ensure_tool_allowed("skill.list")
 
 
+@pytest.mark.parametrize("argv", [["python", "--version"], ["python3", "--version"]])
+def test_default_policy_allows_python_executable_aliases(tmp_path, argv):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    assert policy.ensure_command_allowed(argv) == argv[0]
+
+
 @pytest.mark.parametrize(
     "argv",
     [
