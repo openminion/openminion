@@ -247,6 +247,46 @@ def test_completed_during_live_turn_appends_via_handle() -> None:
     assert "second-marker" in out
 
 
+def test_started_during_live_turn_appends_running_block_via_handle() -> None:
+    t, buf = _make("normal")
+
+    class _CapturingHandle:
+        def __init__(self) -> None:
+            self.active: dict[str, object] | None = None
+            self.renderables: list[object] = []
+
+        def set_active_tool(self, **kwargs: object) -> None:
+            self.active = dict(kwargs)
+
+        def append_renderable(self, renderable: object) -> None:
+            self.renderables.append(renderable)
+
+    handle = _CapturingHandle()
+    t._active_handle = handle
+
+    t.handle_tool_started(
+        {
+            "call_id": "c1",
+            "tool_name": "file.list_dir",
+            "args": {"path": "."},
+        }
+    )
+
+    assert handle.active is not None
+    assert handle.active["call_id"] == "c1"
+    assert len(handle.renderables) == 1
+    assert "Running" not in buf.getvalue()
+    assert "c1" in t._live_narrated_call_ids
+
+    rendered = io.StringIO()
+    console = Console(file=rendered, force_terminal=False, width=160)
+    console.print(handle.renderables[0])
+    out = rendered.getvalue()
+    assert "Running" in out
+    assert "file.list_dir(.)" in out
+    assert "0s" not in out
+
+
 def test_completed_ignores_live_clear_failure() -> None:
     t, buf = _make("normal")
 

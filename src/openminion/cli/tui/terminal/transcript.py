@@ -295,6 +295,7 @@ class TerminalTranscript:
             if call_id:
                 self._live_narrated_call_ids.add(call_id)
             return
+        renderable = _render_in_progress_tool_block(tool_name, args)
         handle = self._active_handle
         if handle is not None and hasattr(handle, "set_active_tool"):
             try:
@@ -304,12 +305,14 @@ class TerminalTranscript:
                     args=args,
                     started_at=_time.monotonic(),
                 )
+                if not self._append_live_renderable(renderable):
+                    self._write_render(lambda: self._console.print(renderable))
                 if call_id:
                     self._live_narrated_call_ids.add(call_id)
                 return
             except (AttributeError, RuntimeError, ValueError):
                 pass
-        self._console.print(_render_in_progress_tool_block(tool_name, args))
+        self._console.print(renderable)
         if call_id:
             self._live_narrated_call_ids.add(call_id)
 

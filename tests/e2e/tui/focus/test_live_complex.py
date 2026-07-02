@@ -23,13 +23,18 @@ def test_live_focus_complex_scenarios(
     tmp_path,
 ) -> None:
     require_complex_focus()
-    scratch_dir = tmp_path / scenario.scenario_id
-    scratch_dir.mkdir()
+    root = artifact_root(tmp_path)
+    scratch_dir = root / "scratch" / scenario.scenario_id
+    scratch_dir.mkdir(parents=True)
     scenario = replace(
         scenario,
         prompt=scenario.prompt.format(scratch_dir=scratch_dir),
     )
     with focus_probe.session(rows=50, cols=160) as session:
         focus_probe.wait_ready(session)
-        transcript = focus_probe.run_turn(session, scenario)
-        write_transcript(artifact_root(tmp_path), scenario.scenario_id, transcript)
+        try:
+            transcript = focus_probe.run_turn(session, scenario)
+        except Exception:
+            write_transcript(root, scenario.scenario_id, session.transcript)
+            raise
+        write_transcript(root, scenario.scenario_id, transcript)

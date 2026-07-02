@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 
 import pytest
 
 from tests.e2e.tui.focus.harness import FocusProbe
+from tests.e2e.tui.focus.harness.artifacts import artifact_root
 
 
 @pytest.fixture(scope="session")
@@ -40,6 +42,8 @@ def minimax_agent_id() -> str:
 @pytest.fixture
 def focus_probe(
     *,
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
     python_bin: Path,
     openminion_root: Path,
     framework_root: Path,
@@ -50,10 +54,15 @@ def focus_probe(
         pytest.skip(f"missing MiniMax focus config: {minimax_config_path}")
     if os.name != "posix":
         pytest.skip("focus PTY E2E harness requires a POSIX platform")
+    run_root = artifact_root(tmp_path)
+    node_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", request.node.name).strip("-")
+    data_root = run_root / "data" / (node_name or "focus-e2e")
+    data_root.mkdir(parents=True, exist_ok=True)
     return FocusProbe(
         python_bin=python_bin,
         openminion_root=openminion_root,
         framework_root=framework_root,
+        data_root=data_root,
         config_path=minimax_config_path,
         agent_id=minimax_agent_id,
         workdir=openminion_root,

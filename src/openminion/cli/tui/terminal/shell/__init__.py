@@ -20,6 +20,7 @@ from rich.text import Text
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.cli.status import format_token_usage_summary
+from openminion.cli.status.tool_calls import format_tool_args_preview
 from openminion.cli.tui.presentation.models import (
     ChatMessage,
     MessageKind,
@@ -66,7 +67,9 @@ __all__ = [
     "_run_one_shot_stdin",
     "_run_agent_turn",
     "_run_interruptible_agent_turn",
+    "_build_terminal_approval_callback",
     "_route_durable_activity_event",
+    "_normalize_progress_kind",
     "_build_turn_progress_callback",
     "_finalize_turn_status_line",
     "_start_escape_interrupt_watcher",
@@ -551,6 +554,31 @@ def _route_durable_activity_event(
     return False
 
 
+def _normalize_progress_kind(payload: dict[str, Any] | None) -> str:
+    """Normalize equivalent runtime progress event names for TUI routing."""
+
+    if not payload:
+        return ""
+    aliases = {
+        "tool_start": "tool_started",
+        "tool_started": "tool_started",
+        "tool_call_start": "tool_started",
+        "tool_call_started": "tool_started",
+        "tool_complete": "tool_completed",
+        "tool_completed": "tool_completed",
+        "tool_finish": "tool_completed",
+        "tool_finished": "tool_completed",
+        "tool_call_complete": "tool_completed",
+        "tool_call_completed": "tool_completed",
+    }
+    for key in ("kind", "source_event", "source_event_type", "event_type"):
+        raw = payload.get(key)
+        normalized = str(raw or "").strip().lower().replace(".", "_").replace("-", "_")
+        if normalized in aliases:
+            return aliases[normalized]
+    return ""
+
+
 def _build_turn_progress_callback(
     *,
     transcript: TerminalTranscript,
@@ -560,7 +588,7 @@ def _build_turn_progress_callback(
 ):
     """Build the progress callback passed to ``runtime.send_message``."""
     def _handle_progress(payload: dict[str, Any]) -> None:
-        kind = str(payload.get("kind", "") or "").strip() if payload else ""
+        kind = _normalize_progress_kind(payload)
         if kind == "tool_started":
             transcript.handle_tool_started(payload)
             return
@@ -582,6 +610,37 @@ def _build_turn_progress_callback(
                 setter(label)
 
     return _handle_progress
+
+
+def _format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str:
+    name = str(tool_name or "tool").strip() or "tool"
+    args_preview = format_tool_args_preview(name, dict(args or {}))
+    call_line = f"{name}({args_preview})" if args_preview else f"{name}()"
+    return f"Approval required: {call_line}"
+
+
+def _build_terminal_approval_callback(
+    *,
+    overlay: TerminalOverlayPresenter,
+    session_grants: set[str],
+) -> Callable[[str, dict[str, Any], Any], Any]:
+    async def _approval_callback(
+        tool_name: str,
+        args: dict[str, Any],
+        call_id: Any,
+    ) -> bool:
+        del call_id
+        normalized = str(tool_name or "").strip()
+        if normalized and normalized in session_grants:
+            return True
+        prompt = _format_terminal_approval_prompt(normalized, dict(args or {}))
+        decision = await overlay._present_approval_async(prompt)
+        if decision == "always" and normalized:
+            session_grants.add(normalized)
+            return True
+        return decision == "allow"
+
+    return _approval_callback
 
 
 def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) -> None:

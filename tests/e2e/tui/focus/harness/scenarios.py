@@ -87,6 +87,7 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         ),
         expected_markers=("result",),
         timeout=900,
+        requires_approval=True,
     ),
     FocusScenario(
         scenario_id="coding_complex_debug_loop",
@@ -97,6 +98,7 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         ),
         expected_markers=("result",),
         timeout=1200,
+        requires_approval=True,
     ),
     FocusScenario(
         scenario_id="coding_long_project_slice",
@@ -107,6 +109,7 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         ),
         expected_markers=("result",),
         timeout=1500,
+        requires_approval=True,
     ),
 )
 
