@@ -38,6 +38,18 @@ class _FakeHTTPResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
+def _single_operation(
+    telemetry: _RecordingTelemetryCtl,
+) -> tuple[dict[str, object], dict[str, object]]:
+    assert len(telemetry.operations) == 1
+    operation = telemetry.operations[0]
+    kwargs = operation["kwargs"]
+    assert isinstance(kwargs, dict)
+    extra = kwargs["extra"]
+    assert isinstance(extra, dict)
+    return operation, extra
+
+
 def test_http_json_post_timeout_emits_transport_counter(monkeypatch) -> None:
     telemetry = _RecordingTelemetryCtl()
 
@@ -61,11 +73,11 @@ def test_http_json_post_timeout_emits_transport_counter(monkeypatch) -> None:
     assert len(telemetry.counters) == 1
     assert telemetry.counters[0]["args"][3] == "llm_transport_timeout"
     assert telemetry.counters[0]["kwargs"]["extra"]["method"] == "POST"
-    assert len(telemetry.operations) == 1
-    assert telemetry.operations[0]["args"][3] == "http_json_post"
-    assert telemetry.operations[0]["kwargs"]["status"] == "error"
-    assert telemetry.operations[0]["kwargs"]["extra"]["provider_round_trip_ms"] is None
-    assert telemetry.operations[0]["kwargs"]["extra"]["method"] == "POST"
+    operation, extra = _single_operation(telemetry)
+    assert operation["args"][3] == "http_json_post"
+    assert operation["kwargs"]["status"] == "error"
+    assert extra["provider_round_trip_ms"] is None
+    assert extra["method"] == "POST"
 
 
 def test_http_json_get_timeout_emits_transport_counter(monkeypatch) -> None:
@@ -90,10 +102,10 @@ def test_http_json_get_timeout_emits_transport_counter(monkeypatch) -> None:
     assert len(telemetry.counters) == 1
     assert telemetry.counters[0]["args"][3] == "llm_transport_timeout"
     assert telemetry.counters[0]["kwargs"]["extra"]["method"] == "GET"
-    assert len(telemetry.operations) == 1
-    assert telemetry.operations[0]["args"][3] == "http_json_get"
-    assert telemetry.operations[0]["kwargs"]["status"] == "error"
-    assert telemetry.operations[0]["kwargs"]["extra"]["method"] == "GET"
+    operation, extra = _single_operation(telemetry)
+    assert operation["args"][3] == "http_json_get"
+    assert operation["kwargs"]["status"] == "error"
+    assert extra["method"] == "GET"
 
 
 def test_http_json_post_success_emits_transport_timing(monkeypatch) -> None:
@@ -116,11 +128,9 @@ def test_http_json_post_success_emits_transport_timing(monkeypatch) -> None:
 
     assert response == {"ok": True}
     assert telemetry.counters == []
-    assert len(telemetry.operations) == 1
-    operation = telemetry.operations[0]
+    operation, extra = _single_operation(telemetry)
     assert operation["args"][3] == "http_json_post"
     assert operation["kwargs"]["status"] == "ok"
-    extra = operation["kwargs"]["extra"]
     assert extra["method"] == "POST"
     assert extra["transport"] == "urllib"
     assert extra["request_bytes"] > 0

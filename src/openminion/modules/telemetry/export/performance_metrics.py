@@ -125,11 +125,7 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _storage_operation_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
-    value = (
-        payload.get("duration_ms")
-        or payload.get("latency_ms")
-        or payload.get("elapsed_ms")
-    )
+    value = _first_present(payload, "duration_ms", "latency_ms", "elapsed_ms")
     _append_metric(
         metrics,
         "openminion_storage_operation_ms",
@@ -171,7 +167,7 @@ def _storage_pool_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         metrics,
         "openminion_background_write_queue_depth",
         _KIND_GAUGE,
-        payload.get("queue_depth") or payload.get("depth"),
+        _first_present(payload, "queue_depth", "depth"),
         common,
     )
     _append_metric(
@@ -194,21 +190,21 @@ def _module_stats_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         metrics,
         "openminion_active_turns",
         _KIND_GAUGE,
-        payload.get("active_turns") or payload.get("active"),
+        _first_present(payload, "active_turns", "active"),
         {"route_class": route_class},
     )
     _append_metric(
         metrics,
         "openminion_queued_prompts",
         _KIND_GAUGE,
-        payload.get("queued_prompts") or payload.get("queue_depth"),
+        _first_present(payload, "queued_prompts", "queue_depth"),
         {"route_class": route_class},
     )
     _append_metric(
         metrics,
         "openminion_process_rss_bytes",
         _KIND_GAUGE,
-        payload.get("process_rss_bytes") or payload.get("rss_bytes"),
+        _first_present(payload, "process_rss_bytes", "rss_bytes"),
         {
             "process_family": _bounded_label(
                 payload.get("process_family") or route_class, default="runtime"
@@ -252,16 +248,14 @@ def _tui_render_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         metrics,
         "openminion_tui_render_chunk_ms",
         _KIND_HISTOGRAM,
-        payload.get("render_chunk_ms")
-        or payload.get("duration_ms")
-        or payload.get("elapsed_ms"),
+        _first_present(payload, "render_chunk_ms", "duration_ms", "elapsed_ms"),
         common,
     )
     _append_metric(
         metrics,
         "openminion_tui_queue_pressure",
         _KIND_GAUGE,
-        payload.get("queue_pressure") or payload.get("queue_depth"),
+        _first_present(payload, "queue_pressure", "queue_depth"),
         common,
     )
     _append_metric(
@@ -312,6 +306,10 @@ def _optional_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return None if number < 0 else number
+
+
+def _first_present(payload: dict[str, Any], *keys: str) -> Any:
+    return next((payload[key] for key in keys if key in payload), None)
 
 
 def _bounded_label(value: Any, *, default: str) -> str:

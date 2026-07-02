@@ -454,9 +454,7 @@ def test_otel_04_every_catalog_event_resolves_to_a_valid_class() -> None:
     assert classified["span"].issuperset(
         {
             "tool.run",
-            "tool_call" not in classified["span"]
-            and "storage.query"
-            or "storage.query",
+            "storage.query",
             "storage.slow_query",
             "storage.migration",
             "chat.phase_timing",
@@ -522,7 +520,8 @@ def test_pomv2_storage_query_exports_low_cardinality_operation_metric() -> None:
     exported = exporter.export(
         _event(
             "storage.query",
-            duration_ms=11,
+            duration_ms=0,
+            latency_ms=11,
             module_id="session-store",
             operation="append_turn",
             criticality="current_turn",
@@ -535,7 +534,7 @@ def test_pomv2_storage_query_exports_low_cardinality_operation_metric() -> None:
         item for item in sink.records if item.name == "openminion_storage_operation_ms"
     )
     assert metric.metric_kind == "histogram"
-    assert metric.metric_value == 11.0
+    assert metric.metric_value == 0.0
     assert metric.attributes == {
         "store_family": "session-store",
         "operation": "append_turn",
