@@ -178,6 +178,24 @@ def test_is_read_only_exec_command_accepts_direct_discovery(command: str) -> Non
 @pytest.mark.parametrize(
     "command",
     [
+        "PATH=/usr/bin command -v nasm",
+        "LC_ALL=C which clang",
+        "PYTHONPATH=. python --version",
+    ],
+)
+def test_is_read_only_exec_command_accepts_leading_env_assignment(
+    command: str,
+) -> None:
+    assert is_read_only_exec_command(command)
+
+
+def test_is_read_only_exec_command_rejects_env_assignment_without_command() -> None:
+    assert not is_read_only_exec_command("PYTHONPATH=.")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "command -v nasm && nasm --version",
         "clang -v",
         "nasm -f macho64 ping.asm",

@@ -227,6 +227,17 @@ def test_default_policy_allows_python_executable_aliases(tmp_path, argv):
     assert policy.ensure_command_allowed(argv) == argv[0]
 
 
+def test_default_policy_allows_python_with_leading_env_assignment(tmp_path):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    assert (
+        policy.ensure_command_allowed(["PYTHONPATH=.", "python", "-m", "pytest"])
+        == "python"
+    )
+
+
 @pytest.mark.parametrize(
     "argv",
     [
@@ -245,6 +256,36 @@ def test_default_policy_allows_exact_discovery_patterns(tmp_path, argv):
     policy = Policy.load(policy_path)
 
     assert policy.ensure_command_allowed(argv) == argv[0]
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["PATH=/usr/bin", "command", "-v", "nasm"], "command"),
+        (["LC_ALL=C", "which", "clang"], "which"),
+    ],
+)
+def test_default_policy_allows_discovery_with_leading_env_assignment(
+    tmp_path,
+    argv,
+    expected,
+):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    assert policy.ensure_command_allowed(argv) == expected
+
+
+def test_default_policy_denies_env_assignment_without_command(tmp_path):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        policy.ensure_command_allowed(["PYTHONPATH=."])
+
+    assert excinfo.value.code == "INVALID_ARGUMENT"
 
 
 @pytest.mark.parametrize(
@@ -299,6 +340,26 @@ commands:
     assert excinfo.value.details["rule"] == "commands.deny_regex"
 
 
+def test_default_policy_deny_rules_win_with_leading_env_assignment(tmp_path):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text(
+        """
+version: 1
+commands:
+  deny_exact:
+    - rm
+""",
+        encoding="utf-8",
+    )
+    policy = Policy.load(policy_path)
+
+    with pytest.raises(ToolRuntimeError) as excinfo:
+        policy.ensure_command_allowed(["PYTHONPATH=.", "rm", "-rf", "scratch"])
+
+    assert excinfo.value.code == "POLICY_DENIED"
+    assert excinfo.value.details["rule"] == "commands.deny_exact"
+
+
 def test_exec_approval_honors_command_discovery_allow_pattern(tmp_path):
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text("version: 1\n", encoding="utf-8")
@@ -307,6 +368,21 @@ def test_exec_approval_honors_command_discovery_allow_pattern(tmp_path):
     assert (
         policy.ensure_exec_allowed(
             argv=["command", "-v", "nasm"],
+            workspace=tmp_path,
+            confirm=False,
+        )
+        == "command"
+    )
+
+
+def test_exec_approval_honors_discovery_allow_pattern_after_env_assignment(tmp_path):
+    policy_path = tmp_path / "policy.yaml"
+    policy_path.write_text("version: 1\n", encoding="utf-8")
+    policy = Policy.load(policy_path)
+
+    assert (
+        policy.ensure_exec_allowed(
+            argv=["PATH=/usr/bin", "command", "-v", "nasm"],
             workspace=tmp_path,
             confirm=False,
         )

@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, cast
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+
     class _YamlFallback:
         @staticmethod
         def safe_load(raw: str) -> Any:
@@ -48,6 +49,7 @@ from .command_patterns import (
     COMMAND_ALLOW_PATTERNS,
     DISCOVERY_KNOWN_TOOLS,
     command_action_class,
+    effective_command_argv,
     matching_allow_pattern,
 )
 
@@ -645,11 +647,12 @@ class Policy:
     def ensure_exec_allowed(
         self, *, argv: list[str], workspace: Path, confirm: bool
     ) -> str:
-        if not argv:
+        effective_argv = effective_command_argv(argv)
+        if not effective_argv:
             raise ToolRuntimeError(
                 "INVALID_ARGUMENT", "cmd.run argv must include executable"
             )
-        raw_exec = str(argv[0])
+        raw_exec = str(effective_argv[0])
         exec_name = self._normalize_exec_name(raw_exec)
         if not exec_name:
             raise ToolRuntimeError(
@@ -660,7 +663,7 @@ class Policy:
         ask_mode = self.exec_ask_mode()
         allowlist = self.exec_allowlist()
         commands = cast(Dict[str, Any], self.raw.get("commands", {}))
-        allow_pattern = matching_allow_pattern(argv, commands)
+        allow_pattern = matching_allow_pattern(effective_argv, commands)
 
         def _ask_required(rule: str, details: Dict[str, Any]) -> None:
             if confirm:
@@ -905,11 +908,12 @@ class Policy:
         )
 
     def ensure_command_allowed(self, argv: list[str]) -> str:
-        if not argv:
+        effective_argv = effective_command_argv(argv)
+        if not effective_argv:
             raise ToolRuntimeError(
                 "INVALID_ARGUMENT", "cmd.run argv must include executable"
             )
-        raw_exec = argv[0]
+        raw_exec = effective_argv[0]
         exec_name = (
             os.path.basename(raw_exec)
             if ("/" in raw_exec or "\\" in raw_exec)
@@ -941,8 +945,8 @@ class Policy:
         mode_raw = str(commands.get("mode", TOOL_EXEC_SECURITY_ALLOWLIST))
         mode = mode_raw.lower()
         allow = set(commands.get("allow", []))
-        allow_pattern = matching_allow_pattern(argv, commands)
-        action_class = command_action_class(argv)
+        allow_pattern = matching_allow_pattern(effective_argv, commands)
+        action_class = command_action_class(effective_argv)
 
         if mode == TOOL_EXEC_SECURITY_ALLOWLIST and action_class == "install":
             raise ToolRuntimeError(
@@ -981,7 +985,9 @@ class Policy:
     def filter_env(self, raw_env: Dict[str, str]) -> Dict[str, str]:
         env_cfg = cast(Dict[str, Any], self.raw.get("env", {}))
         allow_keys = set(env_cfg.get("allow_keys", []))
-        deny_regex = [re.compile(str(expr)) for expr in env_cfg.get("deny_keys_regex", [])]
+        deny_regex = [
+            re.compile(str(expr)) for expr in env_cfg.get("deny_keys_regex", [])
+        ]
         process_env = resolve_environment_config().snapshot()
 
         out: Dict[str, str] = {}

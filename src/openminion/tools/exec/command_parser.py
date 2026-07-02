@@ -68,6 +68,21 @@ def _is_read_only_discovery_argv(argv: tuple[str, ...]) -> bool:
     return argv in _READ_ONLY_PLATFORM_PATTERNS
 
 
+def _effective_posix_command_argv(argv: tuple[str, ...]) -> tuple[str, ...]:
+    while argv and _is_posix_env_assignment(argv[0]):
+        argv = argv[1:]
+    return argv
+
+
+def _is_posix_env_assignment(token: str) -> bool:
+    name, separator, _value = token.partition("=")
+    if not separator or not name:
+        return False
+    if not (name[0].isalpha() or name[0] == "_"):
+        return False
+    return all(ch.isalnum() or ch == "_" for ch in name)
+
+
 def _segment_bounds(command: str) -> tuple[int, int]:
     start = 0
     end = len(command)
@@ -334,7 +349,11 @@ def is_read_only_exec_command(
         return False
     if len(parsed.segments) != 1 or parsed.operators:
         return False
-    argv = tuple(str(arg).strip() for arg in parsed.segments[0].argv)
+    argv = _effective_posix_command_argv(
+        tuple(str(arg).strip() for arg in parsed.segments[0].argv)
+    )
+    if not argv:
+        return False
     executable = argv[0].lower()
     return executable in _READ_ONLY_EXECUTABLES or _is_read_only_discovery_argv(argv)
 
