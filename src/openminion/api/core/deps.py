@@ -107,6 +107,14 @@ def v1_runtime_posture(
     return runtime.runtime_posture(agent_id=agent_id)
 
 
+def v1_runtime_self_model(
+    runtime: APIRuntime,
+    *,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    return runtime.runtime_self_model(agent_id=agent_id)
+
+
 def v1_tool_result_artifact_refs(
     *, trace_id: str, session_id: str, result: Any
 ) -> list[dict[str, str]]:
@@ -179,6 +187,25 @@ def _runtime_subsystem_health(runtime: APIRuntime) -> dict[str, Any]:
     }
 
 
+def _register_debug_provider(
+    registry: DebugRegistry,
+    *,
+    module_name: str,
+    probe_fn: Callable[[], ModuleDebugPayload],
+) -> None:
+    registry.register(
+        type(
+            "DebugProvider",
+            (),
+            {
+                "module_name": module_name,
+                "probe_fn": probe_fn,
+                "wiring_check_fn": None,
+            },
+        )()
+    )
+
+
 def register_api_debug_providers(
     registry: DebugRegistry, runtime: Optional[APIRuntime]
 ) -> None:
@@ -207,70 +234,46 @@ def register_api_debug_providers(
         provider = getattr(runtime, "provider", None)
         provider_name = str(getattr(provider, "name", "") or "unknown")
 
-        registry.register(
-            type(
-                "DebugProvider",
-                (),
-                {
-                    "module_name": "openminion",
-                    "probe_fn": make_probe(
-                        "openminion",
-                        DebugStatus.OK,
-                        WiringSource.REAL,
-                        {"provider": provider_name},
-                    ),
-                    "wiring_check_fn": None,
-                },
-            )()
+        _register_debug_provider(
+            registry,
+            module_name="openminion",
+            probe_fn=make_probe(
+                "openminion",
+                DebugStatus.OK,
+                WiringSource.REAL,
+                {"provider": provider_name},
+            ),
         )
-        registry.register(
-            type(
-                "DebugProvider",
-                (),
-                {
-                    "module_name": "openminion-tool",
-                    "probe_fn": make_probe(
-                        "openminion-tool",
-                        DebugStatus.OK,
-                        WiringSource.REAL,
-                        {"tool_count": tool_count},
-                    ),
-                    "wiring_check_fn": None,
-                },
-            )()
+        _register_debug_provider(
+            registry,
+            module_name="openminion-tool",
+            probe_fn=make_probe(
+                "openminion-tool",
+                DebugStatus.OK,
+                WiringSource.REAL,
+                {"tool_count": tool_count},
+            ),
         )
-        registry.register(
-            type(
-                "DebugProvider",
-                (),
-                {
-                    "module_name": "openminion-plugins",
-                    "probe_fn": make_probe(
-                        "openminion-plugins",
-                        DebugStatus.OK,
-                        WiringSource.REAL if plugin_names else WiringSource.STUB,
-                        {"loaded_plugins": plugin_names},
-                    ),
-                    "wiring_check_fn": None,
-                },
-            )()
+        _register_debug_provider(
+            registry,
+            module_name="openminion-plugins",
+            probe_fn=make_probe(
+                "openminion-plugins",
+                DebugStatus.OK,
+                WiringSource.REAL if plugin_names else WiringSource.STUB,
+                {"loaded_plugins": plugin_names},
+            ),
         )
     else:
-        registry.register(
-            type(
-                "DebugProvider",
-                (),
-                {
-                    "module_name": "openminion",
-                    "probe_fn": make_probe(
-                        "openminion",
-                        DebugStatus.WARN,
-                        WiringSource.UNKNOWN,
-                        {"note": "runtime not available"},
-                    ),
-                    "wiring_check_fn": None,
-                },
-            )()
+        _register_debug_provider(
+            registry,
+            module_name="openminion",
+            probe_fn=make_probe(
+                "openminion",
+                DebugStatus.WARN,
+                WiringSource.UNKNOWN,
+                {"note": "runtime not available"},
+            ),
         )
 
 

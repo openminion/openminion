@@ -128,6 +128,7 @@ class ContextCtlAdapter(ContextAPI):
             live_state_overlay=live_state_overlay,
             phase_hints=phase_hints,
             gateway_system_context=gateway_system_context,
+            self_awareness=_dict_hint(hints, "self_awareness"),
         )
         pack = self.service.build_pack(req)
         result = cast(dict[str, Any], pack.model_dump())

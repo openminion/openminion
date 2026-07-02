@@ -45,7 +45,9 @@ from ..schemas import (
     RenderMessage,
     SessionSlice,
     SessionTurn,
+    bucket_caps_for,
 )
+from .self_awareness import render_self_awareness_block
 
 
 def _tool_inventory_lines(
@@ -518,6 +520,30 @@ def append_prefix_and_mission_segments(
         budget_telemetry_items = 1
     runtime.bucket_stats["budget_telemetry"] = {
         "total_available": budget_telemetry_items,
+        "dropped": 0,
+    }
+
+    self_awareness_items = 0
+    self_awareness_block = render_self_awareness_block(request)
+    if self_awareness_block.strip():
+        cap = max(
+            32,
+            bucket_caps_for(runtime.budgets).get(
+                "self_awareness",
+                runtime.budgets.instructions_tokens,
+            ),
+        )
+        runtime.segments.append(
+            runtime.make(
+                "self_awareness",
+                "self_awareness",
+                runtime.fit_section("self_awareness", self_awareness_block, cap),
+                pinned=True,
+            )
+        )
+        self_awareness_items = 1
+    runtime.bucket_stats["self_awareness"] = {
+        "total_available": self_awareness_items,
         "dropped": 0,
     }
 
