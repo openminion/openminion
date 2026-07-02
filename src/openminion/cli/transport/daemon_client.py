@@ -9,7 +9,6 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from openminion.cli.bootstrap.loader import load_config_with_path
-from openminion.daemon import resolve_ipc_bind
 
 
 @dataclass(frozen=True)
@@ -34,6 +33,8 @@ _DEFAULT_DAEMON_PROBE_TIMEOUT_S = 1.5
 
 
 def resolve_daemon_endpoint(config_path: str | None) -> DaemonEndpoint:
+    from openminion.daemon import resolve_ipc_bind
+
     config, resolved = load_config_with_path(config_path)
     host, port = resolve_ipc_bind(config)
     token = str(config.runtime.ipc_token or "").strip()

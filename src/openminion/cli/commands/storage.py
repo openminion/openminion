@@ -2,24 +2,23 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from openminion.cli.bootstrap.loader import load_config
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.modules.telemetry import storage_hook
-from openminion.modules.telemetry.service import TelemetryService
-from openminion.modules.storage.engine import StorageEngine
-from openminion.modules.storage.migrations.module_ids import MODULE_APPLICATION_IDS
-from openminion.modules.storage.migrations.registry import POSTGRES_VALIDATED_MODULES
-from openminion.modules.storage.migrations.runner import MigrationRunner
-from openminion.modules.storage.telemetry import StorageTelemetryHook
+
+if TYPE_CHECKING:
+    from openminion.modules.storage.migrations.runner import MigrationRunner
+    from openminion.modules.storage.migrations.telemetry import StorageTelemetryHook
 
 
 _BACKEND_POSTGRES: str = "postgres"
 
 
 def run_storage(args) -> int:
+    from openminion.cli.bootstrap.loader import load_config
+    from openminion.modules.storage.engine import StorageEngine
+
     cfg = load_config(args.config)
     sqlite_path = _resolve_sqlite_path(args.sqlite, default=cfg.storage.path)
     root = _resolve_root(args.root, sqlite_path=sqlite_path)
@@ -115,6 +114,9 @@ def _make_runner(
     engine: object = None,
     telemetry_hook: StorageTelemetryHook | None = None,
 ) -> MigrationRunner:
+    from openminion.modules.storage.migrations.module_ids import MODULE_APPLICATION_IDS
+    from openminion.modules.storage.migrations.runner import MigrationRunner
+
     app_id = MODULE_APPLICATION_IDS.get(module_id, 0)
     kwargs: dict = dict(
         module_id=module_id,
@@ -129,6 +131,9 @@ def _make_runner(
 
 
 def _build_storage_telemetry_hook() -> StorageTelemetryHook:
+    from openminion.modules.telemetry import storage_hook
+    from openminion.modules.telemetry.service import TelemetryService
+
     service = TelemetryService()
     return storage_hook.TelemetryServiceStorageHook(service)
 
@@ -158,6 +163,9 @@ def _redact_url(url: str) -> str:
 def _get_validated_module_ids(
     backend_type: str, requested_module: str | None
 ) -> tuple[list[str], list[str]]:
+    from openminion.modules.storage.migrations.module_ids import MODULE_APPLICATION_IDS
+    from openminion.modules.storage.migrations.registry import POSTGRES_VALIDATED_MODULES
+
     all_ids = list(MODULE_APPLICATION_IDS.keys())
 
     if requested_module:

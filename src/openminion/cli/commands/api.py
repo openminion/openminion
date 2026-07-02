@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 
-from openminion.api.server import build_api_server
-from openminion.cli.bootstrap.loader import load_config
-
 
 def run_api(args) -> int:
+    from openminion.api.server import build_api_server
+    from openminion.cli.bootstrap.loader import load_config
+
     config = load_config(args.config)
     host = str(args.host or config.gateway.host)
     port = int(args.port or config.gateway.port)
