@@ -168,9 +168,6 @@ def _handle_pair_create(*, line: str, config) -> None:
         elif parts[i] == "--chat-id" and i + 1 < len(parts):
             chat_id = parts[i + 1]
             i += 2
-        elif parts[i] == "--ttl-seconds" and i + 1 < len(parts):
-            parts[i + 1]
-            i += 2
         else:
             i += 1
 
@@ -181,15 +178,18 @@ def _handle_pair_create(*, line: str, config) -> None:
         print("Example: /pair create --user-id 123456789 --chat-id 123456789")
         return
 
-    print("Creating pairing token...")
-    print("Note: Pairing creation is available via CLI:")
-    print(
-        "  openminion-controlplane-telegram pair-create --user-id <id> --chat-id <id>"
-    )
-    if user_id:
-        print(f"  (with --user-id {user_id})")
-    if chat_id:
-        print(f"  (with --chat-id {chat_id})")
+    try:
+        from openminion.cli.commands import channel
+
+        output = channel.create_telegram_pair_token_from_chat_line(line=line, config=config)
+    except Exception as exc:
+        print(f"Could not create Telegram pairing token: {exc}")
+        print(
+            "Fallback: openminion-controlplane-telegram pair-create "
+            "--user-id <id> --chat-id <id>"
+        )
+        return
+    channel.print_pair_token_output(output)
 
 
 def _handle_pair_revoke(*, line: str, config) -> None:

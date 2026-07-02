@@ -136,3 +136,44 @@ def test_main_run_path_uses_registry_lifecycle(monkeypatch: pytest.MonkeyPatch) 
     assert rc == 0
     assert fake.started is True
     assert fake.stopped is True
+
+
+def test_pair_create_prints_compat_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class _FakeAPI:
+        def __init__(self, _token: str) -> None:
+            pass
+
+        def get_me(self) -> dict[str, str]:
+            return {"username": "compat_bot"}
+
+    monkeypatch.setenv("OPENMINION_MODULE_STANDALONE", "1")
+    monkeypatch.setattr(
+        "openminion.modules.controlplane.channels.telegram.cli.TelegramBotAPI",
+        _FakeAPI,
+    )
+    config_path = _write_telegram_runtime_config(tmp_path, mode="polling")
+
+    rc = main(
+        [
+            "pair-create",
+            "--config",
+            str(config_path),
+            "--user-id",
+            "11",
+            "--chat-id",
+            "22",
+            "--token",
+            "fixedToken123",
+        ]
+    )
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "PAIR_TOKEN=fixedToken123" in output
+    assert "PAIR_TOKEN_HINT=" in output
+    assert "PAIR_TOKEN_HASH_PREFIX=" in output
+    assert "PAIR_EXPIRES_AT=" in output
+    assert "PAIR_SCOPES=" in output
+    assert "PAIR_DEEP_LINK=https://t.me/compat_bot?start=fixedToken123" in output
