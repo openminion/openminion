@@ -95,6 +95,28 @@ def test_preflight_denies_unallowlisted_exec_before_confirmation(tmp_path):
     assert excinfo.value.details["suggested_tool"] == "file.write"
 
 
+def test_preflight_normalizes_cd_prefix_before_command_check(tmp_path):
+    policy = _exec_policy_for_preflight(tmp_path)
+    project = tmp_path / "project"
+    project.mkdir()
+    args = {
+        "command": f"cd {project} && pwd",
+    }
+
+    run_policy_preflight(
+        policy=policy,
+        tool_spec=_exec_tool_spec(dangerous=False),
+        tool_name="exec.run",
+        args=args,
+        effective_scope="POWER_USER",
+        confirm=False,
+        workspace=tmp_path,
+    )
+
+    assert args["command"] == "pwd"
+    assert args["workdir"] == str(project)
+
+
 def test_preflight_still_prompts_for_allowed_dangerous_exec(tmp_path):
     policy = _exec_policy_for_preflight(tmp_path)
 
