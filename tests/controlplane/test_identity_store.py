@@ -110,6 +110,41 @@ def test_sqlite_upsert_pairing_dual_writes_principal_mapping(tmp_path: Path) -> 
         store.close()
 
 
+def test_sqlite_list_pairings_filters_active_channel(tmp_path: Path) -> None:
+    store = SQLiteControlPlaneStore(tmp_path / "cp.db")
+    try:
+        active_id = store.upsert_pairing(
+            channel="telegram",
+            chat_id="400",
+            user_id="42",
+            session_id="sess-400",
+            scopes=["cp.message.read"],
+            status="active",
+        )
+        store.upsert_pairing(
+            channel="telegram",
+            chat_id="401",
+            user_id="43",
+            session_id="sess-401",
+            status="revoked",
+        )
+        store.upsert_pairing(
+            channel="discord",
+            chat_id="402",
+            user_id="44",
+            session_id="sess-402",
+            status="active",
+        )
+
+        rows = store.list_pairings(channel="telegram")
+
+        assert [row["pairing_id"] for row in rows] == [active_id]
+        assert rows[0]["chat_id"] == "400"
+        assert rows[0]["scopes"] == ["cp.message.read"]
+    finally:
+        store.close()
+
+
 def test_sqlite_backfill_pairings_to_principals_roundtrip(tmp_path: Path) -> None:
     store = SQLiteControlPlaneStore(tmp_path / "cp.db")
     try:

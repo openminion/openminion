@@ -72,6 +72,7 @@ from openminion.modules.controlplane.channels.telegram.state import (
 )
 from openminion.modules.controlplane.channels.telegram.runtime.helpers import (
     _audit_event as _runtime_audit_event,
+    _chat_action_pulse as _runtime_chat_action_pulse,
     _deliver_sync_fallback as _runtime_deliver_sync_fallback,
     _dispatch_runtime_with_parity_error,
     _enqueue_outbox as _runtime_enqueue_outbox,
@@ -81,6 +82,7 @@ from openminion.modules.controlplane.channels.telegram.runtime.helpers import (
     _resolve_controlplane_clarify_store,
     _resolve_controlplane_pairing_store,
     _resolve_reply_target,
+    _send_runner_online_notice as _runtime_send_runner_online_notice,
     _validate_component_contracts as _runtime_validate_component_contracts,
 )
 from openminion.base.config.env import resolve_environment_config
@@ -181,6 +183,7 @@ class TelegramPollingRunner:
         self._last_poll_started_ts: float | None = None
         self._last_poll_success_ts: float | None = None
         self._last_poll_error: str | None = None
+        self._runner_online_notice_sent = False
         self._validate_component_contracts()
 
     def _validate_component_contracts(self) -> None:
@@ -241,6 +244,8 @@ class TelegramPollingRunner:
 
         self._start_outbox_worker(stop_event)
         try:
+            self.initialize()
+            self._send_runner_online_notice()
             self.run_forever(stop_event)
         finally:
             self._stop_outbox_worker()
@@ -285,6 +290,9 @@ class TelegramPollingRunner:
                 continue
             if result is None:
                 self._sleep(0.1)
+
+    def _send_runner_online_notice(self) -> None:
+        _runtime_send_runner_online_notice(self)
 
     def deliver(
         self,
@@ -479,13 +487,14 @@ class TelegramPollingRunner:
             update_id=envelope.update_id,
             chat_id=str(envelope.chat_id),
         )
-        payload, dispatch_error = _dispatch_runtime_with_parity_error(
-            runtime=self._runtime,
-            inbound=inbound,
-            envelope=envelope,
-            audit_event=self._audit_event,
-            logger=self._log,
-        )
+        with _runtime_chat_action_pulse(self, envelope=envelope):
+            payload, dispatch_error = _dispatch_runtime_with_parity_error(
+                runtime=self._runtime,
+                inbound=inbound,
+                envelope=envelope,
+                audit_event=self._audit_event,
+                logger=self._log,
+            )
         if dispatch_error is not None:
             self._last_poll_error = str(dispatch_error.get("error") or "")
             self._answer_callback_if_needed(envelope)

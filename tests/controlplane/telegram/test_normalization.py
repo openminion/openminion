@@ -72,21 +72,32 @@ def test_command_alias_normalization() -> None:
         == "/start abc123"
     )
     assert normalize_command_aliases("/new", bot_username="mybot") == "/session new"
-    assert (
-        normalize_command_aliases("/status", bot_username="mybot") == "/session status"
-    )
+    assert normalize_command_aliases("/status", bot_username="mybot") == "/status"
     assert normalize_command_aliases("/pair", bot_username="mybot") == "/pair"
     assert normalize_command_aliases("/diag", bot_username="mybot") == "/diag"
     assert (
         normalize_command_aliases("/run status abc", bot_username="mybot") == "/job ls"
     )
     assert (
-        normalize_command_aliases("/cancel abc", bot_username="mybot") == "/agent stop"
+        normalize_command_aliases("/cancel abc", bot_username="mybot")
+        == "/profile stop"
     )
-    assert normalize_command_aliases("/stop", bot_username="mybot") == "/agent stop"
+    assert normalize_command_aliases("/stop", bot_username="mybot") == "/profile stop"
     assert (
         normalize_command_aliases("/agent researcher", bot_username="mybot")
-        == "/agent use researcher"
+        == "/profile use researcher"
+    )
+    assert (
+        normalize_command_aliases("/profile use minimax-m2-5", bot_username="mybot")
+        == "/profile use minimax-m2-5"
+    )
+    assert (
+        normalize_command_aliases("/profile current", bot_username="mybot")
+        == "/profile"
+    )
+    assert (
+        normalize_command_aliases("/profile list", bot_username="mybot")
+        == "/profile ls"
     )
     assert normalize_command_aliases("/help@mybot", bot_username="mybot") == "/help"
     assert (

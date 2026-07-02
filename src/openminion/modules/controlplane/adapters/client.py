@@ -4,10 +4,43 @@ from typing import Any, Callable
 
 from openminion.modules.controlplane.interfaces import CONTROLPLANE_INTERFACE_VERSION
 from openminion.modules.controlplane.contracts.models import BrainClient
+from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
 
 
 class OpenMinionIntegrationError(RuntimeError):
     """Raised when OpenMinion integration cannot be initialized."""
+
+
+_TURN_FAILURE_TEXT_MAP: tuple[tuple[str, str], ...] = (
+    (
+        "finalization_status contract",
+        "The model ended the turn without the required completion contract. "
+        "Please try again.",
+    ),
+    (
+        "required completion contract",
+        "The model ended the turn without the required completion contract. "
+        "Please try again.",
+    ),
+    (
+        "adaptive loop stopped unexpectedly",
+        "The turn stopped unexpectedly before it could complete. Please try again.",
+    ),
+)
+
+
+def _user_facing_turn_failure(text: str, metadata: dict[str, Any]) -> str | None:
+    candidates = [text]
+    for key in ("error", "error_message", "tool_loop_termination_reason"):
+        value = str(metadata.get(key, "") or "").strip()
+        if value:
+            candidates.append(value)
+
+    lowered_candidates = [candidate.lower() for candidate in candidates if candidate]
+    for marker, rendered in _TURN_FAILURE_TEXT_MAP:
+        if any(marker in candidate for candidate in lowered_candidates):
+            return rendered
+    return None
 
 
 @dataclass
@@ -15,6 +48,8 @@ class OpenMinionBrainClient(BrainClient):
     """Brain client backed by the OpenMinion runtime."""
 
     config_path: str | None = None
+    home_root: str | None = None
+    data_root: str | None = None
     channel: str = "console"
     target: str = "controlplane"
     deliver: bool = False
@@ -25,6 +60,16 @@ class OpenMinionBrainClient(BrainClient):
     def __post_init__(self) -> None:
         self._openminion_runtime = self._build_runtime()
         self._gateway = self._openminion_runtime.runtime_manager.gateway
+
+    def _gateway_for_profile(self, profile_id: str) -> Any:
+        resolver = getattr(self._openminion_runtime, "resolve_gateway", None)
+        if callable(resolver):
+            return resolver(profile_id)
+        runtime_manager = getattr(self._openminion_runtime, "runtime_manager", None)
+        manager_resolver = getattr(runtime_manager, "resolve_gateway", None)
+        if callable(manager_resolver):
+            return manager_resolver(profile_id)
+        return self._gateway
 
     def _build_runtime(self) -> Any:
         if self.runtime_factory is not None:
@@ -37,7 +82,11 @@ class OpenMinionBrainClient(BrainClient):
                 "OpenMinion is not installed. Install the openminion package to enable integration."
             ) from exc
 
-        return OpenMinionRuntime.from_config_path(self.config_path)
+        return OpenMinionRuntime.from_config_path(
+            self.config_path,
+            home_root=self.home_root,
+            data_root=self.data_root,
+        )
 
     def run(
         self,
@@ -49,10 +98,13 @@ class OpenMinionBrainClient(BrainClient):
         trace_id: str,
     ) -> dict[str, Any]:
         message = user_text or ""
+        target = str(agent_id or self.target).strip() or self.target
+        gateway = self._gateway_for_profile(target)
         inbound_metadata = {
             "controlplane.session_id": session_id,
             "controlplane.agent_id": agent_id,
             "controlplane.trace_id": trace_id,
+            CALLER_HANDLES_DELIVERY_METADATA_KEY: "true",
             "turn_timeout_seconds": str(int(self.timeout_seconds)),
         }
         if attachment_refs:
@@ -61,11 +113,12 @@ class OpenMinionBrainClient(BrainClient):
         try:
             result = asyncio.run(
                 asyncio.wait_for(
-                    self._gateway.run_once(
+                    gateway.run_once(
                         channel=self.channel,
-                        target=self.target,
+                        target=target,
                         message=message,
                         session_id=session_id,
+                        idempotency_key=trace_id,
                         request_id=trace_id,
                         inbound_metadata=inbound_metadata,
                         deliver=self.deliver,
@@ -81,7 +134,7 @@ class OpenMinionBrainClient(BrainClient):
                 "agent_id": agent_id,
                 "trace_id": trace_id,
                 "channel": self.channel,
-                "target": self.target,
+                "target": target,
                 "metadata": {
                     "trace_id": trace_id,
                     "session_id": session_id,
@@ -102,13 +155,16 @@ class OpenMinionBrainClient(BrainClient):
             metadata["lifecycle_stage"] = last_event.get("stage", "unknown")
             metadata["lifecycle_timestamp"] = last_event.get("timestamp")
 
+        raw_text = str(getattr(result, "body", "") or "")
+        text = _user_facing_turn_failure(raw_text, metadata) or raw_text
+
         return {
-            "text": getattr(result, "body", ""),
+            "text": text,
             "session_id": metadata.get("session_id", session_id),
             "agent_id": agent_id,
             "trace_id": metadata.get("trace_id", trace_id),
             "channel": getattr(result, "channel", self.channel),
-            "target": getattr(result, "target", self.target),
+            "target": getattr(result, "target", target),
             "metadata": metadata,
         }
 

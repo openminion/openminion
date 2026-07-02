@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 
@@ -26,7 +27,13 @@ class OpenMinionRuntime:
     runtime_manager: object
 
     @classmethod
-    def from_config_path(cls, config_path: Optional[str] = None) -> "OpenMinionRuntime":
+    def from_config_path(
+        cls,
+        config_path: Optional[str] = None,
+        *,
+        home_root: Optional[str] = None,
+        data_root: Optional[str] = None,
+    ) -> "OpenMinionRuntime":
         from importlib import import_module
         from openminion.base.config import ConfigManager
 
@@ -35,7 +42,21 @@ class OpenMinionRuntime:
             "openminion.services.bootstrap.config"
         ).bootstrap_config_manager
 
-        manager = ConfigManager.load(config_path)
+        resolved_home_root = (
+            Path(home_root).expanduser().resolve()
+            if home_root and str(home_root).strip()
+            else None
+        )
+        resolved_data_root = (
+            Path(data_root).expanduser().resolve()
+            if data_root and str(data_root).strip()
+            else None
+        )
+        manager = ConfigManager.load(
+            config_path,
+            home_root=resolved_home_root,
+            data_root=resolved_data_root,
+        )
         bootstrap_config_manager(manager)
         cfg = manager.base_config
         api_runtime = APIRuntime.from_manager(manager)

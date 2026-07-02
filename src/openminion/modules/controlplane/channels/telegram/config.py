@@ -25,6 +25,7 @@ from openminion.modules.config import (
     resolve_module_data_root,
     resolve_module_home_root,
 )
+from openminion.modules.controlplane.constants import DEFAULT_MINIMAL_SCOPES
 
 from .constants import (
     ALLOWED_MODES,
@@ -98,11 +99,7 @@ class PairingConfig:
     hash_pepper: str | None = None
     allow_in_groups: bool = False
     default_scopes: list[str] = field(
-        default_factory=lambda: [
-            "chat.interact",
-            "tool.weather.read",
-            "tool.search.read",
-        ]
+        default_factory=lambda: list(DEFAULT_MINIMAL_SCOPES)
     )
 
 
@@ -540,7 +537,7 @@ def _pairing_config_from_raw(
         hash_pepper=_resolve_secret_or_none(raw.get("hashPepper"), env_map=env_map),
         allow_in_groups=_as_bool(raw.get("allowInGroups"), default=False),
         default_scopes=_as_list_str(raw.get("defaultScopes"))
-        or ["chat.interact", "tool.weather.read", "tool.search.read"],
+        or list(DEFAULT_MINIMAL_SCOPES),
     )
 
 

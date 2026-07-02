@@ -32,23 +32,26 @@ def normalize_command_aliases(text: str, *, bot_username: str | None) -> str:
     if cmd in _DIRECT_ALIASES:
         return _DIRECT_ALIASES[cmd]
     if cmd == "status":
-        return "/session status"
+        return "/status"
     if cmd == "new":
         return "/session new"
     if cmd in {"stop", "cancel"}:
-        return "/agent stop"
+        return "/profile stop"
     if cmd == "run":
         if args and args[0].lower() == "status":
             return "/job ls"
         return "/run " + " ".join(args)
 
-    if cmd == "agent":
+    if cmd in {"agent", "profile"}:
         if not args:
-            return "/agent ls"
+            return "/profile ls"
         first = args[0].lower()
-        if first in {"use", "ls", "info", "stop"}:
-            return "/" + " ".join([cmd] + args)
-        return f"/agent use {args[0]}"
+        if first in {"current", "show"}:
+            return "/profile"
+        if first in {"use", "ls", "list", "info", "stop"}:
+            normalized = "ls" if first == "list" else first
+            return "/" + " ".join(["profile", normalized, *args[1:]])
+        return f"/profile use {args[0]}"
 
     # Skill command routing for controlplane parity
     if cmd == "skill":

@@ -15,6 +15,7 @@ from openminion.cli.parser.base import build_parser
 class FakeTelegramBotAPI:
     updates: list[dict] = []
     fail_get_me = False
+    command_syncs: list[list[dict[str, str]]] = []
 
     def __init__(self, token: str):
         self.token = token
@@ -33,6 +34,10 @@ class FakeTelegramBotAPI:
         allowed_updates: list[str],
     ) -> list[dict]:
         return list(self.updates)
+
+    def set_my_commands(self, commands: list[dict[str, str]]) -> dict:
+        self.command_syncs.append(list(commands))
+        return {"value": True}
 
 
 def _write_profile(tmp_path: Path, *, token: str = "good-token") -> Path:
@@ -95,6 +100,11 @@ def test_channel_telegram_subcommands_registered() -> None:
     assert args.telegram_command == "setup"
     assert args.config == "a.json"
 
+    sync_args = parser.parse_args(
+        ["channel", "telegram", "commands-sync", "--config", "a.json"]
+    )
+    assert sync_args.telegram_command == "commands-sync"
+
 
 def test_setup_writes_unified_config_from_stdin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -111,6 +121,20 @@ def test_setup_writes_unified_config_from_stdin(
     assert payload["channels"]["telegram"]["enabled"] is True
     assert payload["channels"]["telegram"]["botToken"] == "good-token"
     assert "good-token" not in capsys.readouterr().out
+
+
+def test_setup_stdin_reads_one_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(channel, "TelegramBotAPI", FakeTelegramBotAPI)
+    monkeypatch.setattr("sys.stdin", io.StringIO("good-token\nignored-extra\n"))
+    config_path = tmp_path / "agent.json"
+
+    rc = channel.telegram_setup(_setup_args(config_path))
+
+    assert rc == 0
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["channels"]["telegram"]["botToken"] == "good-token"
 
 
 def test_setup_invalid_token_does_not_write_config(
@@ -261,20 +285,27 @@ def test_pair_wait_reports_active_runner_conflict(
     assert "--user-id" in output
 
 
-def test_run_delegates_to_existing_runner(
+def test_run_starts_unified_profile_runner(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    calls: list[list[str]] = []
-    monkeypatch.setattr(
-        "openminion.modules.controlplane.channels.telegram.cli.main",
-        lambda argv: calls.append(list(argv)) or 0,
-    )
+    class _Runner:
+        def __init__(self) -> None:
+            self.run_once_calls = 0
+
+        def run_once(self) -> int:
+            self.run_once_calls += 1
+            return 0
+
+    runner = _Runner()
     config_path = _write_profile(tmp_path)
+    monkeypatch.setattr(
+        channel, "_build_unified_telegram_runner", lambda _config_path: runner
+    )
 
     rc = channel.telegram_run(SimpleNamespace(config=str(config_path), once=True))
 
     assert rc == 0
-    assert calls == [["run", "--config", str(config_path), "--once"]]
+    assert runner.run_once_calls == 1
     assert "runner is online" in capsys.readouterr().out
 
 
@@ -289,4 +320,21 @@ def test_status_prints_runner_requirement(
     assert rc == 0
     output = capsys.readouterr().out
     assert "telegram.enabled=True" in output
+    assert "daemon.state=not observed from this process" in output
     assert "runner is online" in output
+
+
+def test_commands_sync_updates_bot_menu(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    FakeTelegramBotAPI.command_syncs = []
+    monkeypatch.setattr(channel, "TelegramBotAPI", FakeTelegramBotAPI)
+    config_path = _write_profile(tmp_path)
+
+    rc = channel.telegram_commands_sync(SimpleNamespace(config=str(config_path)))
+
+    assert rc == 0
+    assert FakeTelegramBotAPI.command_syncs
+    commands = {item["command"] for item in FakeTelegramBotAPI.command_syncs[-1]}
+    assert {"help", "status", "new", "profile", "pair"} <= commands
+    assert "Synced" in capsys.readouterr().out
