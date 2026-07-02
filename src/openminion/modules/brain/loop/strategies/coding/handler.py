@@ -265,7 +265,7 @@ class CodingProfileRunner(
             )
 
         allowed_tools = CODING_ALLOWED_TOOLS
-        tool_specs = _build_tool_specs(allowed_tools)
+        tool_specs = _build_tool_specs(allowed_tools, ctx=ctx)
         model = _resolve_model(ctx)
         self._init_checkpoint(ctx)
         seed_response: Any | None = getattr(ctx.decision, "_entry_response", None)
