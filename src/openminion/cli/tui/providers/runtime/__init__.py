@@ -117,6 +117,7 @@ class OpenMinionRuntime(
         self._agent_id: str | None = None
         self._gateway = None
         self._session_id: str | None = None
+        self._conversation_id: str = ""
         self._prompt_on_resume = bool(prompt_on_resume)
         self._completed_session_usage = TokenUsageTotals()
         self._last_turn_usage = TokenUsageTotals()
@@ -150,6 +151,7 @@ class OpenMinionRuntime(
                 session_id=session_id,
             )
             self._session_id = session.id
+            self._sync_conversation_id()
         elif self._prompt_on_resume:
             self._ensure_agent_resolved()
             if str(session_id or "").strip():
@@ -381,8 +383,10 @@ class OpenMinionRuntime(
         self._reset_token_usage_accounting()
         if self.is_bound and self._target == _TARGET_KIND_FOCUS:
             self._session_id = None
+            self._sync_conversation_id()
         elif self._prompt_on_resume:
             self._session_id = None
+            self._sync_conversation_id()
             self._refresh_pending_candidate()
         else:
             session = self._rt.sessions.resolve_session(
@@ -391,6 +395,7 @@ class OpenMinionRuntime(
                 target=self._target,
             )
             self._session_id = session.id
+            self._sync_conversation_id()
 
     def new_session(self) -> str:
         return self.create_new_session()
@@ -406,6 +411,7 @@ class OpenMinionRuntime(
         if str(getattr(record, "target", "") or "").strip() != self._target:
             raise ValueError(f"session target mismatch: {record.target}")
         self._session_id = record.id
+        self._sync_conversation_id()
         self._project_context_pending = False
         self._reset_token_usage_accounting()
 
@@ -420,6 +426,7 @@ class OpenMinionRuntime(
             metadata=self._session_metadata_patch(),
         )
         self._session_id = session.id
+        self._sync_conversation_id()
         metadata_patch = self._session_metadata_patch()
         if metadata_patch:
             self._rt.sessions.update_session_metadata(
@@ -545,7 +552,9 @@ class OpenMinionRuntime(
                             if isinstance(final_message, Mapping):
                                 metadata = final_message.get("metadata", {})
                                 final_metadata = (
-                                    dict(metadata) if isinstance(metadata, Mapping) else {}
+                                    dict(metadata)
+                                    if isinstance(metadata, Mapping)
+                                    else {}
                                 )
                                 response = Message(
                                     channel=str(final_message.get("channel", "") or ""),
@@ -555,7 +564,9 @@ class OpenMinionRuntime(
                                 )
                                 final_text = self._message_text(response)
                             continue
-                        progress_payload = self._progress_payload_from_stream_event(event)
+                        progress_payload = self._progress_payload_from_stream_event(
+                            event
+                        )
                         if progress_payload:
                             wrapped_progress(progress_payload)
                 except Exception:
@@ -617,6 +628,11 @@ class OpenMinionRuntime(
         if self._project_context_pending and self._project_context is not None:
             merged.update(build_project_context_metadata(self._project_context))
             self._project_context_pending = False
+        if (
+            self._conversation_id
+            and not str(merged.get("conversation_id", "") or "").strip()
+        ):
+            merged["conversation_id"] = self._conversation_id
         if (
             self._target == _TARGET_KIND_FOCUS
             and not str(merged.get(CALLER_HANDLES_DELIVERY_METADATA_KEY, "")).strip()
@@ -724,6 +740,13 @@ class OpenMinionRuntime(
         self._last_turn_elapsed_seconds = None
         self._last_live_usage_update_at = None
         self._usage_updated_at_monotonic = None
+
+    def _sync_conversation_id(self) -> None:
+        session_id = str(self._session_id or "").strip()
+        if self._target == _TARGET_KIND_FOCUS and session_id:
+            self._conversation_id = f"focus-{session_id}"
+            return
+        self._conversation_id = ""
 
     def _context_limit_tokens(self) -> int | None:
         try:

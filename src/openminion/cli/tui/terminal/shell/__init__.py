@@ -310,6 +310,7 @@ async def _handle_slash_input(
     status_line: TerminalStatusLine,
     working_dir: str,
     custom_commands: dict,
+    approval_grants: set[str] | None = None,
 ) -> bool:
     """Dispatch a slash command and return whether the shell should exit."""
 
@@ -344,6 +345,12 @@ async def _handle_slash_input(
             runtime=runtime,
             transcript=transcript,
             status_line=status_line,
+            approval_callback=_build_terminal_approval_callback(
+                overlay=overlay,
+                session_grants=approval_grants
+                if approval_grants is not None
+                else set(),
+            ),
         )
         return False
     return await _handle_slash(
@@ -463,6 +470,7 @@ async def _run_terminal_focus_async(
                         status_line=status_line,
                         working_dir=working_dir,
                         custom_commands=custom_commands,
+                        approval_grants=approval_grants,
                     )
                     if should_exit:
                         return 0
@@ -592,6 +600,7 @@ def _build_turn_progress_callback(
     status_line: TerminalStatusLine | None = None,
 ):
     """Build the progress callback passed to ``runtime.send_message``."""
+
     def _handle_progress(payload: dict[str, Any]) -> None:
         kind = _normalize_progress_kind(payload)
         if kind == "tool_started":
@@ -718,7 +727,9 @@ async def _run_agent_turn(
         status_line.set_state(state="idle", elapsed_seconds=0.0)
     handle = transcript.begin_turn(
         role="assistant",
-        footer_provider=status_line.live_turn_footer if status_line is not None else None,
+        footer_provider=status_line.live_turn_footer
+        if status_line is not None
+        else None,
     )
     reply = ""
     from openminion.cli.status import PhaseStatusController

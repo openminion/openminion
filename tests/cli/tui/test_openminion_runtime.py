@@ -113,7 +113,7 @@ class _FakeSessions:
 class _FakeGateway:
     def __init__(self, name: str) -> None:
         self._name = name
-        self.calls: list[dict[str, str]] = []
+        self.calls: list[dict[str, object]] = []
         self.metadata: dict[str, str] = {}
         self.progress_events: list[dict[str, object]] = []
 
@@ -124,6 +124,7 @@ class _FakeGateway:
         target: str,
         body: str,
         session_id: str,
+        inbound_metadata=None,
         progress_callback=None,
     ) -> Message:
         self.calls.append(
@@ -132,6 +133,7 @@ class _FakeGateway:
                 "target": target,
                 "body": body,
                 "session_id": session_id,
+                "inbound_metadata": dict(inbound_metadata or {}),
             }
         )
         if progress_callback is not None:
@@ -378,6 +380,31 @@ async def test_openminion_runtime_injects_project_context_once_per_session() -> 
 
 
 @pytest.mark.asyncio
+async def test_openminion_focus_runtime_reuses_stable_conversation_id() -> None:
+    rt = _FakeRuntime()
+    focus_rt = OpenMinionRuntime(
+        rt,
+        target="focus",
+        working_dir="/tmp/focus-ws",
+    )
+
+    first_session_id = focus_rt.session_id
+    _ = [chunk async for chunk in focus_rt.send_message("first")]
+    _ = [chunk async for chunk in focus_rt.send_message("second")]
+
+    calls = rt.resolve_gateway("alpha").calls
+    first_metadata = calls[0]["inbound_metadata"]
+    second_metadata = calls[1]["inbound_metadata"]
+
+    assert isinstance(first_metadata, dict)
+    assert isinstance(second_metadata, dict)
+    assert first_metadata["conversation_id"] == f"focus-{first_session_id}"
+    assert second_metadata["conversation_id"] == f"focus-{first_session_id}"
+    assert first_metadata["caller_handles_delivery"] == "true"
+    assert second_metadata["caller_handles_delivery"] == "true"
+
+
+@pytest.mark.asyncio
 async def test_openminion_runtime_rearms_project_context_on_new_session() -> None:
     rt = _FakeRuntime()
     gateway = rt.resolve_gateway("alpha")
@@ -433,6 +460,8 @@ async def test_openminion_runtime_rearms_project_context_on_new_session() -> Non
     assert new_session_id != first_session_id
     assert captured_metadata[0]["project_context_name"] == "OPENMINION.md"
     assert captured_metadata[1]["project_context_name"] == "OPENMINION.md"
+    assert captured_metadata[0]["conversation_id"] == f"focus-{first_session_id}"
+    assert captured_metadata[1]["conversation_id"] == f"focus-{new_session_id}"
     assert gateway.calls[0]["session_id"] == first_session_id
     assert gateway.calls[1]["session_id"] == new_session_id
 
