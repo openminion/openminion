@@ -64,6 +64,18 @@ def test_idle_text_includes_all_segments_when_set() -> None:
     assert text.index("model:") < text.index("^P palette")
 
 
+def test_idle_text_includes_goal_loop_segment() -> None:
+    line = FocusStatusLine()
+    line.set_state(
+        state="idle",
+        model="openai/gpt",
+        goal_loop="goal: active turn 2 · tests still failing",
+    )
+    text = _idle_text(line)
+    assert "goal: active turn 2" in text
+    assert text.index("model:") < text.index("goal: active")
+
+
 def test_idle_text_omits_empty_segments_cleanly() -> None:
     line = FocusStatusLine()
     line.set_state(

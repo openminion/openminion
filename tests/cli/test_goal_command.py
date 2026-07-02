@@ -142,6 +142,7 @@ def test_goal_command_rejects_cross_session_show_abort_verify(
         "/goal show goal-b",
         "/goal verify goal-b",
         "/goal abort goal-b",
+        "/goal run goal-b",
     ):
         _, output = _capture(
             command,
@@ -150,6 +151,50 @@ def test_goal_command_rejects_cross_session_show_abort_verify(
             monkeypatch=monkeypatch,
         )
         assert "not active for this session" in output
+
+
+def test_goal_command_run_status_stop_and_replay_e2e(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "brain.db"
+    store = SQLiteGoalStore(db_path)
+    store.create(_goal("goal-run"))
+    store.bind_to_session("goal-run", "sess-goal")
+
+    _, started = _capture(
+        "/goal run goal-run",
+        session_id="sess-goal",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "goal=goal-run" in started
+    assert "status=active" in started
+    assert "turns=0/3" in started
+
+    _, status = _capture(
+        "/goal status",
+        session_id="sess-goal",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "goal=goal-run" in status
+
+    _, stopped = _capture(
+        "/goal stop",
+        session_id="sess-goal",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "status=cancelled" in stopped
+
+    _, replayed = _capture(
+        "/goal run goal-run --replay continue:needs-more-tests,satisfied:done",
+        session_id="sess-goal",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "status=completed" in replayed
+    assert "turns=2/3" in replayed
+    assert "latest_reason=done" in replayed
+    assert "goal-run-proofs/proof/" in replayed
 
 
 def test_goal_command_unknown_subaction_prints_usage(tmp_path, monkeypatch) -> None:

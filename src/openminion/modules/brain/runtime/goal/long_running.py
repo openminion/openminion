@@ -20,6 +20,13 @@ from ...storage.goals import GoalStore
 from ...storage.missions import MissionStateStore
 from .policy import authorize_goal_action
 from .verification import GoalVerificationResult, verify_goal_completion
+from .loop import (
+    AutonomyRunStore,
+    GoalRunController,
+    SQLiteGoalRunStore,
+    parse_replay_evaluations,
+    render_goal_run_status,
+)
 
 
 @dataclass(frozen=True)
@@ -365,10 +372,15 @@ def project_goal_status_for_termination(
 
 
 __all__ = [
+    "AutonomyRunStore",
+    "GoalRunController",
     "GoalSessionResumeSnapshot",
     "LongRunningGoalRuntime",
+    "SQLiteGoalRunStore",
     "TerminationReason",
+    "parse_replay_evaluations",
     "project_goal_status_for_termination",
+    "render_goal_run_status",
     "render_goal_summary",
     "render_goal_verification",
 ]
