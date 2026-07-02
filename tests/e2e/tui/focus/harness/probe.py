@@ -17,9 +17,6 @@ _APPROVAL_RE = re.compile(r"Reply exactly yes to confirm|Policy confirmation req
 _TURN_EVENT_RE = re.compile(
     r"Reply exactly yes to confirm|Policy confirmation required|\bDone in \d+(?:m\d{2}s|s)\b"
 )
-_MAX_AUTO_APPROVALS = 5
-
-
 class FocusProbe:
     def __init__(
         self,
@@ -110,7 +107,7 @@ class FocusProbe:
                 continue
             assert scenario.requires_approval, transcript[-2000:]
             approvals += 1
-            assert approvals <= _MAX_AUTO_APPROVALS, transcript[-2000:]
+            assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
             wait_offset = len(transcript)
             session.type_line("yes")
         assert_focus_turn_completed(turn_slice)
