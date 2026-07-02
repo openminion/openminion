@@ -105,7 +105,6 @@ class _CronJobItem(Static):
             id=f"cron-{job.get('id', '')}",
         )
         self._job = job
-        self._selected = False
         self.set_selected(selected)
 
     @property
@@ -113,7 +112,6 @@ class _CronJobItem(Static):
         return str(self._job.get("id", ""))
 
     def set_selected(self, selected: bool) -> None:
-        self._selected = selected
         if selected:
             self.add_class("selected")
         else:
@@ -240,11 +238,12 @@ class CronTab(Widget):
             body.remove_class("--stacked")
 
     def on_hide(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
+        self._stop_timer()
 
     def on_unmount(self) -> None:
+        self._stop_timer()
+
+    def _stop_timer(self) -> None:
         if self._timer is not None:
             self._timer.stop()
             self._timer = None

@@ -32,7 +32,6 @@ class _AgentRow(Widget):
             id=f"agent-row-{safe_id}" if safe_id else None,
         )
         self._agent = agent
-        self._selected = False
         self.set_selected(selected)
 
     def compose(self) -> ComposeResult:
@@ -511,17 +510,13 @@ class AgentsTab(Widget):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id or ""
         if btn_id == "agents-new-btn":
-            self.app.push_screen(_NewAgentModal(), self._on_new_agent)
+            self.action_new_agent()
         elif btn_id == "agents-switch-btn" and self._selected_agent_id:
             self.post_message(self.SwitchRequested(self._selected_agent_id))
-        elif btn_id == "agents-edit-btn" and self._selected_agent_id:
-            profile = self._detail.get("profile", {})
-            if profile:
-                self.app.push_screen(_EditProfileModal(profile), self._on_edit)
-        elif btn_id == "agents-delete-btn" and self._selected_agent_id:
-            self.app.push_screen(
-                _ConfirmDeleteModal(self._selected_agent_id), self._on_delete
-            )
+        elif btn_id == "agents-edit-btn":
+            self.action_edit_agent()
+        elif btn_id == "agents-delete-btn":
+            self.action_delete_agent()
 
     def action_new_agent(self) -> None:
         self.app.push_screen(_NewAgentModal(), self._on_new_agent)

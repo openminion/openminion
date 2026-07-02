@@ -39,10 +39,6 @@ from .messages import (
 
 ApprovalCallback = Callable[[str, dict[str, Any], Any], Awaitable[bool]]
 _LIVE_USAGE_THROTTLE_SECONDS = 0.5
-_RETRYABLE_TURN_ERROR_MARKERS = (
-    "required completion contract",
-    "finalization_status contract",
-)
 _TURN_FAILURE_TEXT_MAP: tuple[tuple[str, str], ...] = (
     (
         "finalization_status contract",
@@ -71,7 +67,7 @@ def _is_retryable_turn_failure_text(text: str) -> bool:
     lowered = str(text or "").strip().lower()
     if not lowered:
         return False
-    return any(marker in lowered for marker in _RETRYABLE_TURN_ERROR_MARKERS)
+    return any(marker in lowered for marker, _ in _TURN_FAILURE_TEXT_MAP)
 
 
 def _session_sort_key(session: Any) -> str:
