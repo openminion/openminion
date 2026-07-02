@@ -634,7 +634,7 @@ def _build_terminal_approval_callback(
         if normalized and normalized in session_grants:
             return True
         prompt = _format_terminal_approval_prompt(normalized, dict(args or {}))
-        decision = await overlay._present_approval_async(prompt)
+        decision = await overlay.present_approval_async(prompt)
         if decision == "always" and normalized:
             session_grants.add(normalized)
             return True

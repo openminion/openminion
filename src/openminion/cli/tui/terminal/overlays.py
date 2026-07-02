@@ -55,9 +55,9 @@ class TerminalOverlayPresenter:
         return _session_id(items[idx - 1])
 
     def present_approval(self, prompt: str) -> Literal["allow", "deny", "always"]:
-        return asyncio.run(self._present_approval_async(prompt))
+        return asyncio.run(self.present_approval_async(prompt))
 
-    async def _present_approval_async(
+    async def present_approval_async(
         self, prompt: str
     ) -> Literal["allow", "deny", "always"]:
         self._console.print(Text(prompt, style="bold"))
