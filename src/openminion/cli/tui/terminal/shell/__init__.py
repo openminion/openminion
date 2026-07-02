@@ -419,6 +419,7 @@ async def _run_terminal_focus_async(
         console=console,
         prompt_session=composer.prompt_session,
     )
+    approval_grants: set[str] = set()
 
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
     startup_notice_task = _schedule_startup_notice(
@@ -483,6 +484,10 @@ async def _run_terminal_focus_async(
                     runtime=runtime,
                     transcript=transcript,
                     status_line=status_line,
+                    approval_callback=_build_terminal_approval_callback(
+                        overlay=overlay,
+                        session_grants=approval_grants,
+                    ),
                 )
             except KeyboardInterrupt:
                 if await _confirm_terminal_exit(console=console, overlay=overlay):
@@ -667,6 +672,7 @@ async def _run_interruptible_agent_turn(
     runtime: Any,
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     """Run one agent turn and let Escape cancel it in terminal focus."""
 
@@ -676,6 +682,7 @@ async def _run_interruptible_agent_turn(
             runtime=runtime,
             transcript=transcript,
             status_line=status_line,
+            approval_callback=approval_callback,
         )
     )
     watcher = _start_escape_interrupt_watcher(turn_task)
@@ -703,6 +710,7 @@ async def _run_agent_turn(
     runtime: Any,
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     """Stream tokens through the transcript turn handle."""
 
@@ -729,10 +737,10 @@ async def _run_agent_turn(
             status_controller=status_controller,
             status_line=status_line,
         )
-        async for chunk in runtime.send_message(
-            text,
-            progress_callback=progress_callback,
-        ):
+        send_kwargs: dict[str, Any] = {"progress_callback": progress_callback}
+        if approval_callback is not None:
+            send_kwargs["approval_callback"] = approval_callback
+        async for chunk in runtime.send_message(text, **send_kwargs):
             chunk_str = str(chunk or "")
             if not chunk_str:
                 continue
