@@ -478,7 +478,9 @@ def test_live_profile_matrix_bundle_agents_resolve_from_aggregate_configs() -> N
         )
 
 
-def test_live_tool_profile_provider_unavailable_classifier_covers_retired_models() -> None:
+def test_live_tool_profile_provider_unavailable_classifier_covers_retired_models() -> (
+    None
+):
     assert _is_infra_unavailable_response(
         "The configured model provider failed before it could return a decision "
         "(No endpoints found for anthropic/claude-3.5-haiku.).",

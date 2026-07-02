@@ -7,7 +7,10 @@ from unittest.mock import MagicMock
 
 from rich.console import Console
 
-from openminion.cli.tui.terminal.shell import _run_agent_turn
+from openminion.cli.tui.terminal.shell import (
+    _normalize_progress_kind,
+    _run_agent_turn,
+)
 from openminion.cli.tui.terminal.status_line import TerminalStatusLine
 from openminion.cli.tui.terminal.transcript import TerminalTranscript
 
@@ -77,6 +80,34 @@ def test_tool_started_payload_routes_to_transcript_handler() -> None:
     assert spy_started.call_args.args[0]["call_id"] == "c1"
 
 
+def test_dotted_tool_started_payload_routes_to_transcript_handler() -> None:
+    transcript, _ = _make_transcript()
+    spy_started = MagicMock(wraps=transcript.handle_tool_started)
+    transcript.handle_tool_started = spy_started  # type: ignore[method-assign]
+
+    runtime = _ScriptedRuntime(
+        pre_chunk_events=[
+            {
+                "source_event": "tool.started",
+                "call_id": "c1",
+                "tool_name": "Bash",
+                "args": {"cmd": "ls"},
+            }
+        ],
+        chunks=["hi"],
+    )
+    asyncio.run(
+        _run_agent_turn(
+            text="x",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
+        )
+    )
+    assert spy_started.call_count == 1
+    assert spy_started.call_args.args[0]["call_id"] == "c1"
+
+
 def test_tool_started_payload_routes_only_to_transcript_handler() -> None:
     transcript, _ = _make_transcript()
     spy_started = MagicMock(wraps=transcript.handle_tool_started)
@@ -125,6 +156,35 @@ def test_tool_completed_payload_routes_to_transcript_handler() -> None:
                 "content": "ok",
                 "exit_code": 0,
             },
+        ],
+        chunks=["done"],
+    )
+    asyncio.run(
+        _run_agent_turn(
+            text="x",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
+        )
+    )
+    assert spy_completed.call_count == 1
+    assert spy_completed.call_args.args[0]["call_id"] == "c1"
+
+
+def test_tool_call_completed_payload_routes_to_transcript_handler() -> None:
+    transcript, _ = _make_transcript()
+    spy_completed = MagicMock(wraps=transcript.handle_tool_completed)
+    transcript.handle_tool_completed = spy_completed  # type: ignore[method-assign]
+
+    runtime = _ScriptedRuntime(
+        pre_chunk_events=[
+            {
+                "kind": "tool_call_completed",
+                "call_id": "c1",
+                "tool_name": "Bash",
+                "args": {"cmd": "ls"},
+                "content": "ok",
+            }
         ],
         chunks=["done"],
     )
@@ -361,6 +421,16 @@ def test_footer_stays_identity_only_across_tool_events() -> None:
     )
     assert "tool" not in state_history, state_history
     assert status_line.state == "idle"
+
+
+def test_normalize_progress_kind_handles_runtime_event_aliases() -> None:
+    assert _normalize_progress_kind({"kind": "tool_started"}) == "tool_started"
+    assert _normalize_progress_kind({"source_event": "tool.started"}) == "tool_started"
+    assert (
+        _normalize_progress_kind({"event_type": "tool-call-completed"})
+        == "tool_completed"
+    )
+    assert _normalize_progress_kind({"kind": "phase"}) == ""
 
 
 # ── (6) Bounded-fallback / zero-chunk safety ──────────────────────

@@ -2,7 +2,12 @@ from pathlib import Path
 from typing import Literal
 
 from openminion.modules.brain.runtime.goal.long_running import (
+    AutonomyRunStore,
+    GoalRunController,
     LongRunningGoalRuntime,
+    SQLiteGoalRunStore,
+    parse_replay_evaluations,
+    render_goal_run_status,
     render_goal_summary,
     render_goal_verification,
 )
@@ -31,6 +36,18 @@ def build_goal_cli_runtime(db_path: Path) -> LongRunningGoalRuntime:
     return LongRunningGoalRuntime(
         goal_store=SQLiteGoalStore(db_path),
         mission_store=SQLiteMissionStateStore(db_path),
+    )
+
+
+def build_goal_run_controller(
+    runtime: LongRunningGoalRuntime,
+    *,
+    db_path: Path,
+) -> GoalRunController:
+    return GoalRunController(
+        goal_store=runtime.goal_store,
+        run_store=SQLiteGoalRunStore(db_path),
+        proof_store=AutonomyRunStore(db_path.parent / "goal-run-proofs"),
     )
 
 
@@ -132,11 +149,87 @@ def execute_goal_cli_command(
         )
         return ("info", render_goal_verification(goal_id, result))
 
-    return ("error", "usage: /goal [list|all|show <id>|abort <id>|verify <id>]")
+    controller = build_goal_run_controller(runtime, db_path=db_path)
+
+    if stripped == "/goal status":
+        return (
+            "info",
+            render_goal_run_status(controller.active_state(session_id=session_id)),
+        )
+
+    if stripped in {"/goal stop", "/goal clear"}:
+        stopped = controller.stop_session_run(session_id=session_id)
+        if stopped is None:
+            return ("info", "No active goal run for this session.")
+        return ("success", render_goal_run_status(stopped))
+
+    if stripped.startswith("/goal run "):
+        return _run_goal_command(
+            stripped,
+            runtime=runtime,
+            controller=controller,
+            session_id=session_id,
+        )
+
+    return (
+        "error",
+        "usage: /goal [list|all|show <id>|abort <id>|verify <id>|run <id>|status|stop|clear]",
+    )
+
+
+def _run_goal_command(
+    line: str,
+    *,
+    runtime: LongRunningGoalRuntime,
+    controller: GoalRunController,
+    session_id: str,
+) -> tuple[GoalCliTone, str]:
+    parts = line.split()
+    if len(parts) < 3:
+        return ("error", "usage: /goal run <goal_id> [--replay outcome:reason,...]")
+    goal_id = parts[2].strip()
+    goal, error = _session_goal_or_error(
+        runtime,
+        goal_id=goal_id,
+        session_id=session_id,
+    )
+    if error:
+        return ("error", error)
+    replay = _option_value(parts[3:], "--replay")
+    if replay:
+        try:
+            evaluations = parse_replay_evaluations(goal.goal_id, replay)
+            state = controller.run_replay(
+                session_id=session_id,
+                goal_id=goal.goal_id,
+                evaluations=evaluations,
+            )
+        except (KeyError, ValueError) as exc:
+            return ("error", str(exc))
+        return ("success", render_goal_run_status(state))
+    try:
+        state = controller.start_goal_run(
+            session_id=session_id,
+            goal_id=goal.goal_id,
+        )
+    except (KeyError, ValueError) as exc:
+        return ("error", str(exc))
+    return ("success", render_goal_run_status(state))
+
+
+def _option_value(args: list[str], name: str) -> str:
+    for index, item in enumerate(args):
+        if item == name and index + 1 < len(args):
+            return args[index + 1].strip()
+        prefix = f"{name}="
+        if item.startswith(prefix):
+            return item.removeprefix(prefix).strip()
+    return ""
 
 
 __all__ = [
     "GoalCliTone",
     "build_goal_cli_runtime",
+    "build_goal_run_controller",
     "execute_goal_cli_command",
 ]

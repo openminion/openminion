@@ -76,6 +76,24 @@ class _BlockingRuntime:
             raise
 
 
+class _ApprovalRuntime:
+    def __init__(self) -> None:
+        self.callback_seen = False
+        self.approved = False
+
+    async def send_message(
+        self, text, *, progress_callback=None, approval_callback=None
+    ):
+        del text, progress_callback
+        self.callback_seen = approval_callback is not None
+        if approval_callback is not None:
+            self.approved = bool(
+                await approval_callback("file.write", {"path": "scratch.txt"}, "call-1")
+            )
+        yield "approval ok"
+        await asyncio.sleep(0)
+
+
 def _make_transcript() -> tuple[TerminalTranscript, io.StringIO]:
     buf = io.StringIO()
     return TerminalTranscript(Console(file=buf, force_terminal=False, width=80)), buf
@@ -113,6 +131,29 @@ def test_single_chunk_takes_bounded_fallback() -> None:
     )
     output = buf.getvalue()
     assert "one shot" in output
+
+
+def test_agent_turn_passes_terminal_approval_callback() -> None:
+    transcript, buf = _make_transcript()
+    runtime = _ApprovalRuntime()
+
+    async def approve(*args):
+        del args
+        return True
+
+    asyncio.run(
+        _run_agent_turn(
+            text="write file",
+            runtime=runtime,
+            transcript=transcript,
+            status_line=None,
+            approval_callback=approve,
+        )
+    )
+
+    assert runtime.callback_seen
+    assert runtime.approved
+    assert "approval ok" in buf.getvalue()
 
 
 def test_mid_stream_error_preserves_partial_and_emits_error() -> None:

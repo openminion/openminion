@@ -316,7 +316,6 @@ def execute_iteration_results(
             score = detect_anomaly(
                 result=action_result,
                 history=tool_history,
-                tool_name=tool_name,
             )
             triggered = score.score >= profile.reflection_anomaly_threshold
             if triggered:
@@ -336,7 +335,6 @@ def execute_iteration_results(
         micro_score = detect_anomaly(
             result=action_result,
             history=[],
-            tool_name=tool_name,
         )
         if micro_score.score >= MICRO_CORRECTION_ANOMALY_THRESHOLD:
             result_summary = str(getattr(action_result, "summary", "") or "")

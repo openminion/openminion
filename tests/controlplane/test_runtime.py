@@ -46,11 +46,14 @@ def _make_runtime(
 
 
 def _ctx(
-    user_key: str = "u1", session_id: str = "s1", agent_id: str = "agent:default"
+    user_key: str = "u1",
+    chat_key: str = "chat1",
+    session_id: str = "s1",
+    agent_id: str = "agent:default",
 ) -> ResolvedContext:
     return ResolvedContext(
         user_key=user_key,
-        chat_key="chat1",
+        chat_key=chat_key,
         session_id=session_id,
         agent_id=agent_id,
         role="user",
@@ -124,6 +127,14 @@ def test_parser_space_form() -> None:
     assert cmd.canonical == "agent.ls"
 
 
+def test_parser_profile_space_form() -> None:
+    parser = SlashCommandParser()
+    cmd = parser.parse("/profile use minimax-m2-5")
+    assert cmd is not None
+    assert cmd.canonical == "profile.use"
+    assert cmd.args == ["minimax-m2-5"]
+
+
 def test_parser_dot_form() -> None:
     parser = SlashCommandParser()
     cmd = parser.parse("/agent.use brain")
@@ -152,20 +163,73 @@ def test_command_help_lists_all_commands() -> None:
     result = registry.execute(cmd, _ctx())
     assert result.ok
     assert "session.new" in result.text
+    assert "Profile = runtime/model/tools config" in result.text
 
 
-def test_command_agent_ls() -> None:
+def test_command_profile_ls() -> None:
     store = InMemoryControlPlaneStore()
     registry = CommandRegistry(store=store)
     parser = SlashCommandParser()
-    cmd = parser.parse("/agent ls")
+    cmd = parser.parse("/profile ls")
     assert cmd is not None
     result = registry.execute(cmd, _ctx())
     assert result.ok
     assert "agent:default" in result.text
+    assert "Configured profiles" in result.text
 
 
-def test_command_agent_use() -> None:
+def test_command_profile_use() -> None:
+    store = InMemoryControlPlaneStore()
+    registry = CommandRegistry(store=store)
+    parser = SlashCommandParser()
+    cmd = parser.parse("/profile use agent:brain")
+    assert cmd is not None
+    result = registry.execute(cmd, _ctx(session_id="sess-0001"))
+    assert result.ok
+    assert "agent:brain" in result.text
+    assert "Context is preserved" in result.text
+
+
+def test_command_profile_current_reports_selected_profile() -> None:
+    store = InMemoryControlPlaneStore()
+    store.ensure_agent("minimax-m2-5")
+    store.set_agent("sess-current", "minimax-m2-5")
+    registry = CommandRegistry(store=store)
+    parser = SlashCommandParser()
+    cmd = parser.parse("/profile current")
+    assert cmd is not None
+
+    result = registry.execute(cmd, _ctx(session_id="sess-current"))
+
+    assert result.ok
+    assert "minimax-m2-5" in result.text
+    assert result.data["profile_id"] == "minimax-m2-5"
+
+
+def test_profile_switch_preserves_session_context_until_session_new() -> None:
+    store = InMemoryControlPlaneStore()
+    session_id = store.resolve_session("u1", "chat1")
+    store.ensure_agent("minimax-m2-5")
+    store.append_turn(session_id=session_id, role="user", content="remember this")
+    registry = CommandRegistry(store=store)
+    parser = SlashCommandParser()
+    use_profile = parser.parse("/profile use minimax-m2-5")
+    new_session = parser.parse("/session new")
+    assert use_profile is not None
+    assert new_session is not None
+
+    use_result = registry.execute(use_profile, _ctx(session_id=session_id))
+    fresh_result = registry.execute(new_session, _ctx(session_id=session_id))
+
+    assert use_result.ok
+    assert store.resolve_agent(session_id) == "minimax-m2-5"
+    assert [turn.content for turn in store.list_turns(session_id)] == ["remember this"]
+    assert fresh_result.ok
+    assert fresh_result.data["session_id"] != session_id
+    assert store.list_turns(str(fresh_result.data["session_id"])) == []
+
+
+def test_command_agent_use_remains_compat_alias() -> None:
     store = InMemoryControlPlaneStore()
     registry = CommandRegistry(store=store)
     parser = SlashCommandParser()
@@ -173,7 +237,7 @@ def test_command_agent_use() -> None:
     assert cmd is not None
     result = registry.execute(cmd, _ctx(session_id="sess-0001"))
     assert result.ok
-    assert "agent:brain" in result.text
+    assert result.data["profile_id"] == "agent:brain"
 
 
 def test_command_session_id() -> None:
@@ -198,6 +262,78 @@ def test_command_session_status() -> None:
     result = registry.execute(cmd, _ctx(session_id="sess-0001"))
     assert result.ok
     assert "sess-0001" in result.text
+    assert "profile=" in result.text
+
+
+def test_command_status_summarizes_profile_session_and_pairing() -> None:
+    store = InMemoryControlPlaneStore()
+    session_id = store.resolve_session("telegram:111", "telegram:222")
+    store.append_turn(session_id=session_id, role="user", content="hi")
+    registry = CommandRegistry(store=store)
+    parser = SlashCommandParser()
+    cmd = parser.parse("/status")
+    assert cmd is not None
+
+    result = registry.execute(
+        cmd,
+        _ctx(user_key="telegram:111", session_id=session_id, agent_id="agent:default"),
+    )
+
+    assert result.ok
+    assert "profile: agent:default" in result.text
+    assert f"session: {session_id}" in result.text
+    assert "pairing: not observed" in result.text
+    assert result.data["profile_id"] == "agent:default"
+
+
+class _PairingStore(InMemoryControlPlaneStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pairing = {
+            "pairing_id": "pair-1",
+            "channel": "telegram",
+            "chat_id": "222",
+            "user_id": "111",
+            "session_id": "sess-pair",
+            "status": "active",
+            "scopes": ["chat.interact"],
+        }
+        self.upserts: list[dict[str, object]] = []
+
+    def get_pairing(self, *, channel: str, chat_id: str) -> dict[str, object] | None:
+        if channel == self.pairing["channel"] and chat_id == self.pairing["chat_id"]:
+            return dict(self.pairing)
+        return None
+
+    def upsert_pairing(self, **kwargs: object) -> str:
+        self.upserts.append(dict(kwargs))
+        self.pairing.update(kwargs)
+        return str(kwargs.get("pairing_id") or self.pairing["pairing_id"])
+
+
+def test_command_pair_status_and_revoke_current_chat() -> None:
+    store = _PairingStore()
+    registry = CommandRegistry(store=store)
+    parser = SlashCommandParser()
+    status = parser.parse("/pair status")
+    revoke = parser.parse("/pair revoke")
+    assert status is not None
+    assert revoke is not None
+    ctx = _ctx(
+        user_key="telegram:111",
+        chat_key="telegram:222",
+        session_id="sess-pair",
+    )
+
+    status_result = registry.execute(status, ctx)
+    revoke_result = registry.execute(revoke, ctx)
+
+    assert status_result.ok
+    assert "Pairing active" in status_result.text
+    assert "chat with OpenMinion (chat.interact)" in status_result.text
+    assert revoke_result.ok
+    assert "revoked" in revoke_result.text
+    assert store.upserts[-1]["status"] == "revoked"
 
 
 def test_command_unknown_returns_error() -> None:
@@ -228,11 +364,14 @@ def test_agent_use_missing_arg_returns_error() -> None:
     store = InMemoryControlPlaneStore()
     registry = CommandRegistry(store=store)
     parser = SlashCommandParser()
-    cmd = parser.parse("/agent use")
+    cmd = parser.parse("/profile use")
     assert cmd is not None
-    cmd_no_arg = type(cmd)(canonical="agent.use", original_text="/agent use", args=[])
+    cmd_no_arg = type(cmd)(
+        canonical="profile.use", original_text="/profile use", args=[]
+    )
     result = registry.execute(cmd_no_arg, _ctx())
     assert not result.ok
+    assert "/profile use <profile_id>" in result.text
 
 
 def test_memory_promote_missing_arg_returns_error() -> None:

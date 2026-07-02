@@ -572,9 +572,7 @@ class BrainConfig(BaseModel):
     plan_auto_scale: PlanAutoScaleConfig = Field(default_factory=PlanAutoScaleConfig)
     reflection: ReflectionConfig = Field(default_factory=ReflectionConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
-    clarify: ClarifyConfig = Field(
-        default_factory=ClarifyConfig
-    )
+    clarify: ClarifyConfig = Field(default_factory=ClarifyConfig)
     mission: MissionConfig = Field(default_factory=MissionConfig)
     skill_selection_strategy: str = "llm"
     max_skills_per_session: int = Field(default=MAX_SKILLS_PER_SESSION, ge=1)

@@ -41,6 +41,7 @@ class _StubGateway:
         target: str,
         message: str,
         session_id: str,
+        idempotency_key: str,
         request_id: str,
         inbound_metadata: dict[str, str],
         deliver: bool,
@@ -51,6 +52,7 @@ class _StubGateway:
                 "target": target,
                 "message": message,
                 "session_id": session_id,
+                "idempotency_key": idempotency_key,
                 "request_id": request_id,
                 "inbound_metadata": dict(inbound_metadata),
                 "deliver": deliver,
@@ -60,6 +62,41 @@ class _StubGateway:
             raise RuntimeError("brain server returned HTTP 500")
         return _StubMessage(
             body=self.reply_text,
+            channel=channel,
+            target=target,
+            metadata={"trace_id": request_id, "session_id": session_id},
+        )
+
+
+class _MessageMappedGateway(_StubGateway):
+    def __init__(self, replies: dict[str, str]) -> None:
+        super().__init__(reply_text="")
+        self._replies = dict(replies)
+
+    async def run_once(
+        self,
+        *,
+        channel: str,
+        target: str,
+        message: str,
+        session_id: str,
+        idempotency_key: str,
+        request_id: str,
+        inbound_metadata: dict[str, str],
+        deliver: bool,
+    ) -> _StubMessage:
+        await super().run_once(
+            channel=channel,
+            target=target,
+            message=message,
+            session_id=session_id,
+            idempotency_key=idempotency_key,
+            request_id=request_id,
+            inbound_metadata=inbound_metadata,
+            deliver=deliver,
+        )
+        return _StubMessage(
+            body=self._replies[message],
             channel=channel,
             target=target,
             metadata={"trace_id": request_id, "session_id": session_id},
@@ -77,6 +114,32 @@ class _StubRuntimeManager:
 class _StubRuntime:
     def __init__(self, gateway: _StubGateway) -> None:
         self.runtime_manager = _StubRuntimeManager(gateway)
+        self.resolved_profiles: list[str] = []
+
+    def resolve_gateway(self, profile_id: str) -> _StubGateway:
+        self.resolved_profiles.append(profile_id)
+        return self.runtime_manager.gateway
+
+    def close(self) -> None:  # pragma: no cover - lifecycle only
+        pass
+
+
+class _CompatRuntime:
+    def __init__(self, gateway: _StubGateway) -> None:
+        self.runtime_manager = _CompatRuntimeManager(gateway)
+
+    def close(self) -> None:  # pragma: no cover - lifecycle only
+        pass
+
+
+class _CompatRuntimeManager:
+    def __init__(self, gateway: _StubGateway) -> None:
+        self.gateway = gateway
+        self.resolved_profiles: list[str] = []
+
+    def resolve_gateway(self, profile_id: str) -> _StubGateway:
+        self.resolved_profiles.append(profile_id)
+        return self.gateway
 
     def close(self) -> None:  # pragma: no cover - lifecycle only
         pass
@@ -133,6 +196,105 @@ def _telegram_inbound(text: str) -> InboundMessage:
     )
 
 
+def test_brain_client_targets_session_selected_profile() -> None:
+    gateway = _StubGateway(reply_text="from selected profile")
+    runtime = _StubRuntime(gateway)
+    brain = OpenMinionBrainClient(
+        config_path=None,
+        target="configured-default",
+        runtime_factory=lambda _config_path: runtime,
+    )
+
+    result = brain.run(
+        session_id="sess-profile",
+        agent_id="minimax-m2-5",
+        user_text="hello",
+        attachment_refs=[],
+        trace_id="trace-profile",
+    )
+
+    assert runtime.resolved_profiles == ["minimax-m2-5"]
+    assert gateway.calls[0]["target"] == "minimax-m2-5"
+    assert gateway.calls[0]["idempotency_key"] == "trace-profile"
+    assert gateway.calls[0]["inbound_metadata"]["caller_handles_delivery"] == "true"
+    assert result["target"] == "minimax-m2-5"
+    brain.close()
+
+
+def test_brain_client_uses_configured_target_when_profile_missing() -> None:
+    gateway = _StubGateway(reply_text="from fallback profile")
+    runtime = _StubRuntime(gateway)
+    brain = OpenMinionBrainClient(
+        config_path=None,
+        target="configured-default",
+        runtime_factory=lambda _config_path: runtime,
+    )
+
+    result = brain.run(
+        session_id="sess-profile",
+        agent_id="",
+        user_text="hello",
+        attachment_refs=[],
+        trace_id="trace-profile",
+    )
+
+    assert runtime.resolved_profiles == ["configured-default"]
+    assert gateway.calls[0]["target"] == "configured-default"
+    assert result["target"] == "configured-default"
+    brain.close()
+
+
+def test_brain_client_resolves_profile_gateway_through_runtime_manager() -> None:
+    gateway = _StubGateway(reply_text="from compat wrapper")
+    runtime = _CompatRuntime(gateway)
+    brain = OpenMinionBrainClient(
+        config_path=None,
+        target="configured-default",
+        runtime_factory=lambda _config_path: runtime,
+    )
+
+    result = brain.run(
+        session_id="sess-profile",
+        agent_id="minimax-m2-5",
+        user_text="hello",
+        attachment_refs=[],
+        trace_id="trace-profile",
+    )
+
+    assert runtime.runtime_manager.resolved_profiles == ["minimax-m2-5"]
+    assert result["text"] == "from compat wrapper"
+    brain.close()
+
+
+def test_brain_client_renders_internal_turn_contract_failure_for_users() -> None:
+    gateway = _StubGateway(
+        reply_text=(
+            "General act work ended without the required typed "
+            "finalization_status contract."
+        )
+    )
+    runtime = _StubRuntime(gateway)
+    brain = OpenMinionBrainClient(
+        config_path=None,
+        target="minimax-m2-5",
+        runtime_factory=lambda _config_path: runtime,
+    )
+
+    result = brain.run(
+        session_id="sess-finalization",
+        agent_id="minimax-m2-5",
+        user_text="research latest news",
+        attachment_refs=[],
+        trace_id="trace-finalization",
+    )
+
+    assert result["text"] == (
+        "The model ended the turn without the required completion contract. "
+        "Please try again."
+    )
+    brain.close()
+
+
 def test_brain_client_e2e_success(tmp_path: Path) -> None:
     gateway = _StubGateway(reply_text="hello from stub brain")
     dispatcher, store, outbound, _audit, brain = _build_dispatcher(
@@ -162,6 +324,45 @@ def test_brain_client_e2e_success(tmp_path: Path) -> None:
     assert len(chat_dispatch_rows) >= 1
     assert store.list_audit(event_type="inbound.received")
     assert store.list_audit(event_type="outbound.sent")
+
+    brain.close()
+    store.close()
+
+
+def test_brain_client_e2e_does_not_replay_previous_turn_for_local_delivery(
+    tmp_path: Path,
+) -> None:
+    gateway = _MessageMappedGateway(
+        {
+            "what's weather at sf?": "weather answer",
+            "check latest news on fifa": "fifa news answer",
+            "hi": "fresh greeting",
+        }
+    )
+    dispatcher, store, outbound, _audit, brain = _build_dispatcher(
+        tmp_path / "cp.db", gateway
+    )
+
+    first = dispatcher.handle_inbound(_telegram_inbound("what's weather at sf?"))
+    second = dispatcher.handle_inbound(_telegram_inbound("check latest news on fifa"))
+    third = dispatcher.handle_inbound(_telegram_inbound("hi"))
+
+    assert first["text"] == "weather answer"
+    assert second["text"] == "fifa news answer"
+    assert third["text"] == "fresh greeting"
+    assert [call["message"] for call in gateway.calls] == [
+        "what's weather at sf?",
+        "check latest news on fifa",
+        "hi",
+    ]
+    assert {
+        call["inbound_metadata"]["caller_handles_delivery"] for call in gateway.calls
+    } == {"true"}
+    assert [item["text"] for item in outbound[-3:]] == [
+        "weather answer",
+        "fifa news answer",
+        "fresh greeting",
+    ]
 
     brain.close()
     store.close()

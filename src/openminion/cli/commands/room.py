@@ -3,10 +3,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from openminion.api.runtime import APIRuntime
-
 
 def run_room_create(args) -> int:
+    from openminion.api.runtime import APIRuntime
+
     try:
         runtime = APIRuntime.from_config_path(
             getattr(args, "config", None),
@@ -63,6 +63,8 @@ def run_room_create(args) -> int:
 
 
 def run_room_invite(args) -> int:
+    from openminion.api.runtime import APIRuntime
+
     session_id = str(getattr(args, "session_id", "") or "").strip()
     if not session_id:
         print("openminion room: missing session id", file=sys.stderr)

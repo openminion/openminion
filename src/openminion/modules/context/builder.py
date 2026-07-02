@@ -41,6 +41,7 @@ class BuildOptions:
     user_input: str
     provider_pref: str | None = None
     constraints: dict[str, Any] | None = None
+    self_awareness: dict[str, Any] | None = None
 
 
 class _StaticIdentityClient:
@@ -379,6 +380,7 @@ class ContextPackBuilder:
                 query=options.user_input,
                 provider_pref=options.provider_pref,
                 constraints=BuildConstraints(**(options.constraints or {})),
+                self_awareness=dict(options.self_awareness or {}),
             )
         )
         return pack.model_dump()

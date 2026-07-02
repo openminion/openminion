@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
@@ -9,9 +10,19 @@ from openminion.modules.brain.constants import (
     STOP_USER_DECLINED,
     STOP_USER_TIMEOUT,
 )
+from openminion.modules.brain.loop.constants import (
+    BUDGET_ANSWER_ONLY_COLLECTION_ITEM_LIMIT,
+    BUDGET_ANSWER_ONLY_NESTED_TEXT_LIMIT,
+    BUDGET_ANSWER_ONLY_STRING_TEXT_LIMIT,
+    BUDGET_ANSWER_ONLY_TEXT_LIMIT,
+    BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT,
+    BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT,
+    BUDGET_FINALIZATION_STATUS_RETRY_PROMPT,
+)
 from openminion.modules.brain.schemas import (
     AdaptiveBudgetConfig,
     AskUserCommand,
+    FinalizationStatus,
 )
 from openminion.modules.llm.schemas import Message
 
@@ -27,7 +38,9 @@ from .budget_extension import (
 from .contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_FINAL_TEXT,
+    ADAPTIVE_TERM_FINALIZATION_BLOCKED,
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_NEEDS_USER,
     AdaptiveToolLoopContext,
@@ -529,15 +542,38 @@ def _force_budget_answer_only_finalization(
             error_message=error_message,
         )
     final_text = str(getattr(response, "output_text", "") or "").strip()
-    has_finalization_contract = bool(
-        getattr(response, STATE_KEY_FINALIZATION_STATUS, None)
-    ) or (
+    finalization_status = _finalization_status_from_response(response)
+    has_finalization_contract = finalization_status is not None or (
         f"<{STATE_KEY_FINALIZATION_STATUS}>" in final_text
         and f"</{STATE_KEY_FINALIZATION_STATUS}>" in final_text
     )
     if _answer_only_finalization_contract_requested(loop_ctx, loop_state) and not (
         has_finalization_contract
     ):
+        if final_text and not list(getattr(response, "tool_calls", []) or []):
+            finalization_status = _recover_budget_finalization_status(
+                loop_ctx=loop_ctx,
+                profile=profile,
+                loop_state=loop_state,
+                runtime=runtime,
+                model=model,
+                max_output_tokens=max_output_tokens,
+                metadata=metadata,
+                final_text=final_text,
+                public_mode_tag=public_mode_tag,
+            )
+            if finalization_status is not None:
+                status = str(finalization_status.get("status", "") or "")
+                loop_state.termination_reason = _termination_reason_for_status(status)
+                return AdaptiveToolLoopOutcome(
+                    profile_name=profile.profile_name,
+                    mode_name=profile.mode_name,
+                    termination_reason=loop_state.termination_reason,
+                    state=loop_state,
+                    allowed_tools=allowed_tools,
+                    final_text=final_text,
+                    finalization_status=finalization_status,
+                )
         loop_state.termination_reason = ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
         return AdaptiveToolLoopOutcome(
             profile_name=profile.profile_name,
@@ -550,14 +586,21 @@ def _force_budget_answer_only_finalization(
             ),
         )
     if final_text and not list(getattr(response, "tool_calls", []) or []):
-        loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
+        loop_state.termination_reason = (
+            _termination_reason_for_status(
+                str(finalization_status.get("status", "") or "")
+            )
+            if finalization_status is not None
+            else ADAPTIVE_TERM_FINAL_TEXT
+        )
         return AdaptiveToolLoopOutcome(
             profile_name=profile.profile_name,
             mode_name=profile.mode_name,
-            termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+            termination_reason=loop_state.termination_reason,
             state=loop_state,
             allowed_tools=allowed_tools,
             final_text=final_text,
+            finalization_status=finalization_status,
         )
     loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
     return AdaptiveToolLoopOutcome(
@@ -568,6 +611,67 @@ def _force_budget_answer_only_finalization(
         allowed_tools=allowed_tools,
         error_message="Answer-only budget finalization did not produce final text.",
     )
+
+
+def _finalization_status_from_response(response: Any) -> dict[str, Any] | None:
+    payload = getattr(response, STATE_KEY_FINALIZATION_STATUS, None)
+    if not isinstance(payload, dict):
+        return None
+    try:
+        return FinalizationStatus.model_validate(payload).model_dump(mode="json")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _termination_reason_for_status(status: str) -> str:
+    if status == "blocked":
+        return ADAPTIVE_TERM_FINALIZATION_BLOCKED
+    if status == "incomplete":
+        return ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+    return ADAPTIVE_TERM_FINAL_TEXT
+
+
+def _recover_budget_finalization_status(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    runtime: Any,
+    model: str,
+    max_output_tokens: int | None,
+    metadata: dict[str, Any] | None,
+    final_text: str,
+    public_mode_tag: str,
+) -> dict[str, Any] | None:
+    loop_state.scratchpad["budget_finalization_status_retry_used"] = True
+    retry_messages = list(loop_state.messages)
+    retry_messages.append(Message(role="assistant", content=final_text))
+    retry_messages.append(
+        Message(role="system", content=BUDGET_FINALIZATION_STATUS_RETRY_PROMPT)
+    )
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} budget finalization status retry",
+        mode_state="budget_finalization_status_retry",
+    )
+    try:
+        retry_response = runtime.complete(
+            messages=retry_messages,
+            tools=[],
+            model=model,
+            tool_choice="none",
+            max_output_tokens=int(max_output_tokens)
+            if max_output_tokens is not None
+            else None,
+            metadata=metadata,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    _debit_llm_usage(loop_ctx, retry_response)
+    loop_state.llm_calls += 1
+    return _finalization_status_from_response(retry_response)
 
 
 def _budget_finalization_has_substantive_user_message(
@@ -604,6 +708,126 @@ def _budget_finalization_original_request(loop_ctx: AdaptiveToolLoopContext) -> 
     return ""
 
 
+def _truncate_answer_only_text(
+    value: Any, *, limit: int = BUDGET_ANSWER_ONLY_TEXT_LIMIT
+) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...[truncated]"
+
+
+def _compact_answer_only_value(value: Any, *, depth: int = 0) -> Any:
+    if depth >= 2:
+        return _truncate_answer_only_text(
+            value, limit=BUDGET_ANSWER_ONLY_NESTED_TEXT_LIMIT
+        )
+    if isinstance(value, str):
+        return _truncate_answer_only_text(
+            value, limit=BUDGET_ANSWER_ONLY_STRING_TEXT_LIMIT
+        )
+    if isinstance(value, dict):
+        compacted: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= BUDGET_ANSWER_ONLY_COLLECTION_ITEM_LIMIT:
+                compacted["__truncated__"] = f"{len(value) - index} more key(s)"
+                break
+            compacted[str(key)] = _compact_answer_only_value(item, depth=depth + 1)
+        return compacted
+    if isinstance(value, (list, tuple)):
+        items = []
+        for index, item in enumerate(value):
+            if index >= BUDGET_ANSWER_ONLY_COLLECTION_ITEM_LIMIT:
+                remaining = len(value) - index
+                items.append(f"...[{remaining} more item(s)]")
+                break
+            items.append(_compact_answer_only_value(item, depth=depth + 1))
+        return items
+    return value
+
+
+def _compact_answer_only_tool_results(
+    tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for item in tool_results[:BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT]:
+        compacted.append(
+            {
+                "tool_name": _truncate_answer_only_text(
+                    item.get("tool_name"), limit=BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT
+                ),
+                "summary": _truncate_answer_only_text(item.get("content")),
+                "data": _compact_answer_only_value(item.get("data", {})),
+            }
+        )
+    return compacted
+
+
+def _last_user_message_text(messages: list[Message]) -> str:
+    for message in reversed(messages):
+        if str(getattr(message, "role", "") or "").strip().lower() != "user":
+            continue
+        text = str(getattr(message, "content", "") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _answer_only_finalization_messages(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+    tool_results: list[dict[str, Any]],
+    reason: str,
+) -> list[Message]:
+    original_request = _budget_finalization_original_request(loop_ctx)
+    if not original_request:
+        original_request = _last_user_message_text(list(loop_state.messages or []))
+    evidence_json = json.dumps(
+        _compact_answer_only_tool_results(tool_results),
+        ensure_ascii=False,
+        indent=2,
+    )
+    return [
+        Message(
+            role="user",
+            content=(
+                "Original user request for this turn:\n"
+                f"{original_request or '<unknown>'}\n\n"
+                "Successful tool evidence already gathered:\n"
+                f"{evidence_json}"
+            ),
+        ),
+        Message(
+            role="system",
+            content=(
+                f"{reason} Use only the successful tool evidence above and write "
+                "the best user-facing final answer now. Do not narrate future "
+                "steps, do not say you will continue, and preserve any explicit "
+                "output format or headings the user requested. If evidence is "
+                "partial, say that briefly and still answer."
+            ),
+        ),
+    ]
+
+
+def _circular_answer_only_messages(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+    tool_results: list[dict[str, Any]],
+) -> list[Message]:
+    return _answer_only_finalization_messages(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
+        tool_results=tool_results,
+        reason=(
+            "You have repeated the same tool pattern. Do not call more tools. "
+            "This must be the final answer for the current turn."
+        ),
+    )
+
+
 def _force_circular_pattern_answer_only_finalization(
     *,
     loop_ctx: AdaptiveToolLoopContext,
@@ -622,6 +846,7 @@ def _force_circular_pattern_answer_only_finalization(
         loop_ctx=loop_ctx,
         profile=profile,
         loop_state=loop_state,
+        reserve_final_answer=True,
     ):
         return None
     tool_results = [
@@ -632,19 +857,10 @@ def _force_circular_pattern_answer_only_finalization(
     if not tool_results:
         return None
     loop_state.scratchpad["circular_pattern_answer_only_finalization_forced"] = True
-    loop_state.messages.append(
-        Message(
-            role="system",
-            content=(
-                "You have repeated the same tool pattern. Do not call more tools. "
-                "This must be the final answer for the current turn. Use the "
-                "successful tool results already available and write the best "
-                "user-facing final answer now. Do not narrate future steps, do "
-                "not say you will continue, and preserve any explicit output "
-                "format or headings the user requested. If evidence is partial, "
-                "say that briefly and still answer."
-            ),
-        )
+    finalization_messages = _circular_answer_only_messages(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
+        tool_results=tool_results,
     )
     emit_adaptive_status(
         loop_ctx,
@@ -655,7 +871,7 @@ def _force_circular_pattern_answer_only_finalization(
     )
     try:
         response = runtime.complete(
-            messages=loop_state.messages,
+            messages=finalization_messages,
             tools=[],
             model=model,
             tool_choice="none",

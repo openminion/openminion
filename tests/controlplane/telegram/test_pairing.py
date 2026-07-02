@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from openminion.modules.controlplane.constants import DEFAULT_MINIMAL_SCOPES
 from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
 from openminion.modules.controlplane.channels.telegram.config import PairingConfig
 from openminion.modules.controlplane.channels.telegram.models import (
@@ -169,7 +170,7 @@ def test_successful_pairing_bridges_to_controlplane_pairings(tmp_path: Path) -> 
     assert pairing["chat_id"] == "22"
     assert pairing["user_id"] == "11"
     assert str(pairing.get("session_id") or "").strip() != ""
-    assert "chat.interact" in list(pairing.get("scopes") or [])
+    assert list(pairing.get("scopes") or []) == list(DEFAULT_MINIMAL_SCOPES)
     principal_id = controlplane_store.resolve_principal(
         channel="telegram", subject_id="22"
     )

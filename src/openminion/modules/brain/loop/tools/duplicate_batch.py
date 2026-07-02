@@ -17,6 +17,10 @@ from openminion.modules.llm.providers.tool_calling import (
 from openminion.modules.llm.schemas import Message
 
 from .budget import _debit_llm_usage, _profile_budget_exhausted, _token_budget_exhausted
+from .budget_control import (
+    _answer_only_finalization_messages,
+    _llm_budget_available_for_answer_only,
+)
 from .contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
@@ -181,14 +185,58 @@ def _build_duplicate_batch_answer_only_closure_message(
     )
 
 
+def _duplicate_batch_answer_only_messages(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+    tool_calls: list[Any],
+) -> list[Message]:
+    tool_results = [
+        item
+        for item in list(loop_state.scratchpad.get("adaptive.tool_results", []) or [])
+        if isinstance(item, dict) and bool(item.get("ok"))
+    ]
+    messages = _answer_only_finalization_messages(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
+        tool_results=tool_results,
+        reason=(
+            "You have repeated an identical successful tool batch. Do not call "
+            "more tools. This must be the final answer for the current turn."
+        ),
+    )
+    if tool_results:
+        return messages
+    return [*messages, _build_duplicate_batch_answer_only_closure_message(tool_calls)]
+
+
 def _looks_like_unexecutable_tool_markup_final_text(text: str) -> bool:
     token = str(text or "").strip()
     if not token:
         return False
+    lower = token.lower()
     return (
         detect_raw_envelope(token)
         or detect_raw_tool_markup(token)
         or detect_raw_tool_payload_json(token)
+        or (
+            any(tool_key in lower for tool_key in ('"tool"', '"tool_name"'))
+            and any(
+                arg_key in lower
+                for arg_key in (
+                    '"arguments"',
+                    '"args"',
+                    '"cmd"',
+                    '"command"',
+                    '"content"',
+                    '"parameters"',
+                    '"path"',
+                    '"query"',
+                )
+            )
+        )
+        or ("file.write" in lower and "path:" in lower and "content:" in lower)
+        or ("exec.run" in lower and ("cmd:" in lower or "command:" in lower))
     )
 
 
@@ -234,10 +282,19 @@ def _force_duplicate_batch_answer_only_closure(
             0,
             0,
         )
+    if not _llm_budget_available_for_answer_only(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        reserve_final_answer=True,
+    ):
+        return None, 0, 0
     facts["answer_only_closure_consumed"] = True
     loop_state.scratchpad["duplicate_batch_answer_only_closure_forced"] = True
-    loop_state.messages.append(
-        _build_duplicate_batch_answer_only_closure_message(tool_calls)
+    finalization_messages = _duplicate_batch_answer_only_messages(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
+        tool_calls=tool_calls,
     )
     emit_adaptive_status(
         loop_ctx,
@@ -249,7 +306,7 @@ def _force_duplicate_batch_answer_only_closure(
     closure_start = time.monotonic()
     try:
         response = runtime.complete(
-            messages=loop_state.messages,
+            messages=finalization_messages,
             tools=[],
             model=model,
             tool_choice="none",

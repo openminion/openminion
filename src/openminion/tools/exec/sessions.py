@@ -17,6 +17,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_SEND_KEYS,
     MODEL_EXEC_SUBMIT,
 )
+from openminion.modules.tool.commands import normalize_cd_prefixed_command
 from openminion.modules.tool.runtime.context import RuntimeContext
 from openminion.modules.tool.family.events import emit_family_event
 from openminion.modules.brain.runtime.escalation import (
@@ -58,7 +59,6 @@ from .results import (
 )
 from .workspace import (
     _normalize_capture_redirection_suffix,
-    _normalize_cd_prefixed_command,
     _resolve_workspace_cwd,
 )
 
@@ -214,7 +214,7 @@ def _prepare_exec_run(
     tool_name: str,
     request_payload: dict[str, Any],
 ) -> tuple[_ExecRunPreparation | None, dict[str, Any] | None]:
-    normalized_command, normalized_workdir = _normalize_cd_prefixed_command(
+    normalized_command, normalized_workdir = normalize_cd_prefixed_command(
         command=params.command,
         workdir=params.workdir,
     )

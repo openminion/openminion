@@ -180,7 +180,9 @@ async def test_busy_focus_keeps_input_enabled_and_queues_next_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_escape_interrupt_preserves_queued_focus_message_without_running_it() -> None:
+async def test_escape_interrupt_preserves_queued_focus_message_without_running_it() -> (
+    None
+):
     runtime = _StreamingRuntimeDouble(
         working_dir="/tmp/focus-stream-queue-interrupt",
         chunks=["reply"],

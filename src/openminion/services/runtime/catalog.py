@@ -214,13 +214,11 @@ def _channel_records(config: OpenMinionConfig) -> list[ExtensionRecord]:
             if name in raw_channels
             else "legacy"
         )
-        module = (
-            "openminion.base.channel.console"
-            if name == "console"
-            else "openminion.modules.controlplane.channels.telegram"
-            if name == "telegram"
-            else None
-        )
+        module = {
+            "console": "openminion.base.channel.console",
+            "telegram": "openminion.modules.controlplane.channels.telegram",
+            "slack": "openminion.modules.controlplane.channels.slack",
+        }.get(name)
         records.append(
             ExtensionRecord(
                 name=name,

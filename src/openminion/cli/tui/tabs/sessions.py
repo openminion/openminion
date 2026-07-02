@@ -53,7 +53,6 @@ class _SessionRow(Static):
             id=f"sess-row-{safe_id}" if safe_id else None,
         )
         self._session = session
-        self._selected = False
         self.set_selected(selected)
 
     @property
@@ -61,7 +60,6 @@ class _SessionRow(Static):
         return str(self._session.get("id", ""))
 
     def set_selected(self, selected: bool) -> None:
-        self._selected = selected
         if selected:
             self.add_class("selected")
         else:
@@ -280,14 +278,10 @@ class SessionsTab(Widget):
         self.call_after_refresh(self._sync_layout_mode)
 
     def on_hide(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
+        self._stop_timer()
 
     def on_unmount(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
+        self._stop_timer()
 
     def _refresh_tick(self) -> None:
         self.run_worker(self._async_refresh(), exclusive=True)
@@ -303,6 +297,11 @@ class SessionsTab(Widget):
         await self.recompose()
         self._sync_selected_session()
         self._sync_layout_mode()
+
+    def _stop_timer(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
 
     async def on__session_row_clicked(self, event: _SessionRow.Clicked) -> None:
         self._selected_session_id = event.session_id

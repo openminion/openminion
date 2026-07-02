@@ -211,6 +211,7 @@ class _FakeAPI:
         self._batches = list(batches)
         self.get_updates_calls: list[dict[str, Any]] = []
         self.sent_payloads: list[dict[str, Any]] = []
+        self.chat_actions: list[dict[str, Any]] = []
         self.deleted_webhook = False
         self.callback_answers: list[str] = []
 
@@ -249,6 +250,10 @@ class _FakeAPI:
             "message_thread_id": payload.get("message_thread_id"),
         }
 
+    def send_chat_action(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.chat_actions.append(dict(payload))
+        return {"ok": True}
+
     def edit_message_text(self, payload: dict[str, Any]) -> dict[str, Any]:
         return payload
 
@@ -267,6 +272,21 @@ class _AuditCollector:
         payload = dict(details)
         payload.update(kwargs)
         self.events.append((event_type, payload))
+
+
+class _PairingStore:
+    def __init__(self, pairings: list[dict[str, Any]]) -> None:
+        self.pairings = pairings
+
+    def list_pairings(
+        self, *, channel: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        selected = [
+            pairing
+            for pairing in self.pairings
+            if channel is None or pairing.get("channel") == channel
+        ]
+        return selected[:limit]
 
 
 def _message_update(update_id: int, text: str = "hello") -> dict[str, Any]:
@@ -458,6 +478,86 @@ def test_polling_persists_offset_and_processes_updates(tmp_path: Path) -> None:
     store = TelegramPollStateStore(str(tmp_path / "state.db"))
     assert store.get_last_update_id("telegram-bot:99") == 2
     store.close()
+
+
+def test_polling_sends_typing_action_while_dispatching(tmp_path: Path) -> None:
+    api = _FakeAPI([[_message_update(1, "hello")]])
+    runner, runtime = _runner(api, tmp_path / "state.db")
+
+    processed = runner.run_once()
+
+    assert processed == 1
+    assert runtime.inputs == ["hello"]
+    assert api.chat_actions == [{"chat_id": -1001, "action": "typing"}]
+    assert not any(
+        "Still working on it" in payload["text"] for payload in api.sent_payloads
+    )
+
+
+def test_polling_sends_bounded_progress_notice_for_long_turn(tmp_path: Path) -> None:
+    class _SlowRuntime(_FakeRuntime):
+        def handle_inbound(self, inbound: Any) -> dict[str, Any]:
+            threading.Event().wait(0.15)
+            return super().handle_inbound(inbound)
+
+    api = _FakeAPI([[_message_update(1, "slow request")]])
+    runner, runtime = _runner(
+        api,
+        tmp_path / "state.db",
+        runtime=_SlowRuntime(),
+    )
+    runner._chat_action_interval_seconds = 0.05  # noqa: SLF001
+    runner._progress_notice_after_seconds = 0.05  # noqa: SLF001
+
+    processed = runner.run_once()
+
+    assert processed == 1
+    assert runtime.inputs == ["slow request"]
+    progress_messages = [
+        payload["text"]
+        for payload in api.sent_payloads
+        if "Still working on it" in payload["text"]
+    ]
+    assert progress_messages == [
+        "Still working on it. OpenMinion will reply here when the turn finishes."
+    ]
+
+
+def test_runner_online_notice_sends_once_to_active_pairings(tmp_path: Path) -> None:
+    api = _FakeAPI([])
+    audit = _AuditCollector()
+    runner, _runtime = _runner(api, tmp_path / "state.db", audit_logger=audit)
+    runner._store = _PairingStore(  # noqa: SLF001
+        [
+            {
+                "channel": "telegram",
+                "chat_id": "7105273251",
+                "status": "active",
+            }
+        ]
+    )
+
+    runner._send_runner_online_notice()  # noqa: SLF001
+    runner._send_runner_online_notice()  # noqa: SLF001
+
+    assert len(api.sent_payloads) == 1
+    assert api.sent_payloads[0]["chat_id"] == 7105273251
+    assert "runner is online" in api.sent_payloads[0]["text"]
+    assert "/status" in api.sent_payloads[0]["text"]
+    assert [event[0] for event in audit.events] == [
+        "cp.telegram.runner.online_notice_sent"
+    ]
+    assert audit.events[0][1]["paired_chat_count"] == 1
+
+
+def test_runner_online_notice_skips_when_no_active_pairings(tmp_path: Path) -> None:
+    api = _FakeAPI([])
+    runner, _runtime = _runner(api, tmp_path / "state.db")
+    runner._store = _PairingStore([])  # noqa: SLF001
+
+    runner._send_runner_online_notice()  # noqa: SLF001
+
+    assert api.sent_payloads == []
 
 
 def test_polling_resumes_from_persisted_offset(tmp_path: Path) -> None:

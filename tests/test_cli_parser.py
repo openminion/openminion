@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
+import sys
 import types
 import unittest
 from argparse import Namespace
@@ -83,6 +85,22 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.host, "0.0.0.0")
         self.assertEqual(args.port, 8080)
         self.assertTrue(callable(args.handler))
+
+    def test_build_parser_does_not_import_api_server(self) -> None:
+        script = (
+            "import sys; "
+            "from openminion.cli.parser.base import build_parser; "
+            "build_parser(); "
+            "print('openminion.api.server' in sys.modules)"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.stdout.strip(), "False")
 
     def test_root_parser_accepts_allow_unsandboxed_exec_flag(self) -> None:
         parser = build_parser()
@@ -1080,11 +1098,14 @@ class ParserTests(unittest.TestCase):
             [
                 "config",
                 "api",
+                "autonomy",
                 "data",
                 "daemon",
                 "run",
                 "room",
+                "channel",
                 "chat",
+                "dashboard",
                 "tui",
                 "sessions",
                 "sidecar",
@@ -1104,6 +1125,7 @@ class ParserTests(unittest.TestCase):
                 "setup",
                 "storage",
                 "verify",
+                "version",
                 "scaffold",
                 "cron",
                 "debug",
@@ -1129,11 +1151,14 @@ class ParserTests(unittest.TestCase):
             [
                 "config",
                 "api",
+                "autonomy",
                 "data",
                 "daemon",
                 "run",
                 "room",
+                "channel",
                 "chat",
+                "dashboard",
                 "tui",
                 "sessions",
                 "sidecar",
@@ -1152,6 +1177,7 @@ class ParserTests(unittest.TestCase):
                 "setup",
                 "storage",
                 "verify",
+                "version",
                 "scaffold",
                 "cron",
                 "debug",

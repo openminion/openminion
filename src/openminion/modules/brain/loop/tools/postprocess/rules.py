@@ -21,8 +21,8 @@ from ..iteration.helpers import _count_substantive_non_control_tool_results
 
 _HTTP_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
 _EXECUTION_PREFACE_RE = re.compile(
-    r"\b(?:i['’]?ll|i will|we['’]?ll|we will|now|next)\b.*\b"
-    r"(?:execute|run|call|fetch|write|read|verify|check|inspect|review|"
+    r"\b(?:i['’]?ll|i will|we['’]?ll|we will|now|next|proceeding to)\b.*\b"
+    r"(?:add|execute|run|call|fetch|write|read|verify|check|inspect|review|"
     r"continue|finish|complete|understand)\b",
     re.IGNORECASE | re.DOTALL,
 )

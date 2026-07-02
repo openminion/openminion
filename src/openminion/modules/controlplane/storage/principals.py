@@ -201,6 +201,31 @@ class PrincipalsStore:
         out["scopes"] = _scopes_list(out.get("scopes_json"))
         return out
 
+    def list_pairings(
+        self, *, channel: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        max_items = max(1, int(limit))
+        params: list[Any] = [self._binding_status_active]
+        where = ["status = ?"]
+        if channel:
+            where.append("channel = ?")
+            params.append(channel)
+        params.append(max_items)
+        rows = self._rs.query_dicts(
+            f"""
+            SELECT pairing_id, channel, chat_id, user_id, session_id, created_at,
+                   last_seen_at, status, scopes_json, note
+            FROM cp_pairings
+            WHERE {" AND ".join(where)}
+            ORDER BY last_seen_at DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        for row in rows:
+            row["scopes"] = _scopes_list(row.get("scopes_json"))
+        return rows
+
     def touch_pairing(self, *, channel: str, chat_id: str) -> None:
         now = _iso_now()
         with self._rs.transaction():

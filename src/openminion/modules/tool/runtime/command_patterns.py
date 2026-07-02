@@ -2,6 +2,13 @@ from collections.abc import Mapping as ABCMapping
 from collections.abc import Sequence as ABCSequence
 from typing import Any, Mapping, Sequence
 
+
+def effective_command_argv(argv: Sequence[str]) -> tuple[str, ...]:
+    effective = tuple(str(arg) for arg in argv)
+    while effective and _is_posix_env_assignment(effective[0]):
+        effective = effective[1:]
+    return effective
+
 DISCOVERY_KNOWN_TOOLS = (
     "as",
     "clang",
@@ -56,6 +63,7 @@ COMMAND_ALLOW_PATTERNS = (
 
 
 def command_action_class(argv: Sequence[str]) -> str:
+    argv = effective_command_argv(argv)
     if not argv:
         return "unknown"
     exec_name = str(argv[0] or "").strip().lower()
@@ -80,6 +88,7 @@ def matching_allow_pattern(
     argv: Sequence[str],
     commands: Mapping[str, Any],
 ) -> Mapping[str, Any] | None:
+    argv = effective_command_argv(argv)
     known_tools = _known_command_tools(commands)
     patterns = commands.get("allow_patterns", COMMAND_ALLOW_PATTERNS)
     if not isinstance(patterns, ABCSequence) or isinstance(patterns, (str, bytes)):
@@ -114,3 +123,12 @@ def _match_pattern_token(token: str, value: str, known_tools: set[str]) -> bool:
     if token == "{known_tool}":
         return value in known_tools
     return token == value
+
+
+def _is_posix_env_assignment(token: str) -> bool:
+    name, separator, _value = token.partition("=")
+    if not separator or not name:
+        return False
+    if not (name[0].isalpha() or name[0] == "_"):
+        return False
+    return all(ch.isalnum() or ch == "_" for ch in name)

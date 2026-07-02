@@ -12,9 +12,7 @@ from openminion.modules.llm.providers.tool_calling import (
     detect_raw_tool_markup,
 )
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.agent.constants import (
-    DEFAULT_TOOL_LOOP_CONTINUE_PROMPT,
-)
+from openminion.services.agent.constants import DEFAULT_TOOL_LOOP_CONTINUE_PROMPT
 from openminion.services.agent.execution.finalization import (
     FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE,
     FINALIZATION_STATUS_RETRY_GUIDANCE,
@@ -76,6 +74,7 @@ def _tool_feedback_context(
         message = f"{message}\n\n{FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE}"
     return str(payload), message, requires_status
 
+
 def _pre_tool_draft_message(response: ProviderResponse) -> ProviderHistoryMessage:
     return ProviderHistoryMessage(
         role="assistant",
@@ -85,11 +84,13 @@ def _pre_tool_draft_message(response: ProviderResponse) -> ProviderHistoryMessag
         ),
     )
 
+
 def _needs_plain_text_retry(response: ProviderResponse) -> bool:
     if response.tool_calls:
         return False
     text = str(getattr(response, "text", "") or "")
     return _looks_like_embedded_tool_response_text(text)
+
 
 def _looks_like_pre_tool_draft_echo(
     *,
@@ -103,6 +104,7 @@ def _looks_like_pre_tool_draft_echo(
     if not pre_tool_text or not final_text:
         return False
     return final_text == pre_tool_text
+
 
 async def _call_initial_final_response(
     runner: "RequiredLaneRunner",
@@ -126,6 +128,7 @@ async def _call_initial_final_response(
         tool_call_strategy=tool_call_strategy,
     )
     return recover_text_tool_calls(runner, response=final_response)
+
 
 async def _retry_plain_text_final_response(
     runner: "RequiredLaneRunner",
@@ -196,6 +199,7 @@ async def _retry_plain_text_final_response(
     )
     return recover_text_tool_calls(runner, response=final_response)
 
+
 async def _retry_stale_draft_final_response(
     runner: "RequiredLaneRunner",
     *,
@@ -245,6 +249,7 @@ async def _retry_stale_draft_final_response(
         tool_call_strategy=tool_call_strategy,
     )
     return recover_text_tool_calls(runner, response=final_response)
+
 
 def _finalization_contract_missing_result(
     runner: "RequiredLaneRunner",
@@ -938,9 +943,7 @@ async def phase_post_execution(
     response = state.response
     batch = state.batch
     if response is None or batch is None:
-        return _PhaseResult(
-            action="break", state_updates={"termination_reason": "tool_no_success"}
-        )
+        return _PhaseResult(action="break", state_updates={"termination_reason": "tool_no_success"})
 
     tool_to_try = str(state.tool_to_try or "")
     all_attempts = list(state.all_attempts or [])
@@ -982,11 +985,7 @@ async def phase_post_execution(
     if argument_retry_result is not None:
         return argument_retry_result
 
-    return post_execution_terminal_failure_result(
-        runner,
-        batch=batch,
-        all_attempts=all_attempts,
-    )
+    return post_execution_terminal_failure_result(runner, batch=batch, all_attempts=all_attempts)
 
 
 __all__ = [

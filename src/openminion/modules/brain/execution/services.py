@@ -14,6 +14,12 @@ class RunnerExecutionServices:
     runner: Any
     suppress_lifecycle_exit_statuses: bool = False
 
+    def _task_manager(self, *, required: bool = False) -> Any | None:
+        manager = getattr(self.runner, "task_manager", None)
+        if manager is None and required:
+            raise RuntimeError("Task service is unavailable")
+        return manager
+
     def save_state(self, *, state: WorkingState) -> None:
         self.runner._save_state(state)
 
@@ -346,9 +352,7 @@ class RunnerExecutionServices:
         metadata: dict[str, Any] | None = None,
         task_id: str | None = None,
     ) -> Any:
-        manager = getattr(self.runner, "task_manager", None)
-        if manager is None:
-            raise RuntimeError("Task service is unavailable")
+        manager = self._task_manager(required=True)
         return manager.create_task(
             session_id=session_id,
             mode_name=mode_name,
@@ -359,7 +363,7 @@ class RunnerExecutionServices:
         )
 
     def get_task(self, *, task_id: str) -> Any | None:
-        manager = getattr(self.runner, "task_manager", None)
+        manager = self._task_manager()
         if manager is None:
             return None
         return manager.get_task(task_id)
@@ -371,7 +375,7 @@ class RunnerExecutionServices:
         mode_name: str | None = None,
         limit: int = 100,
     ) -> list[Any]:
-        manager = getattr(self.runner, "task_manager", None)
+        manager = self._task_manager()
         if manager is None:
             return []
         return manager.list_open_tasks_for_session(
@@ -387,29 +391,25 @@ class RunnerExecutionServices:
         checkpoint_id: str,
         state: dict[str, Any],
     ) -> None:
-        manager = getattr(self.runner, "task_manager", None)
-        if manager is None:
-            raise RuntimeError("Task service is unavailable")
+        manager = self._task_manager(required=True)
         manager.save_checkpoint(task_id, checkpoint_id, state)
 
     def get_latest_checkpoint(
         self, *, task_id: str
     ) -> tuple[str, dict[str, Any]] | None:
-        manager = getattr(self.runner, "task_manager", None)
+        manager = self._task_manager()
         if manager is None:
             return None
         return manager.get_latest_checkpoint(task_id)
 
     def list_checkpoints(self, *, task_id: str) -> list[str]:
-        manager = getattr(self.runner, "task_manager", None)
+        manager = self._task_manager()
         if manager is None:
             return []
         return manager.list_checkpoints(task_id)
 
     def update_task_progress(self, *, task_id: str, progress: dict[str, Any]) -> None:
-        manager = getattr(self.runner, "task_manager", None)
-        if manager is None:
-            raise RuntimeError("Task service is unavailable")
+        manager = self._task_manager(required=True)
         manager.update_progress(task_id, progress)
 
     def transition_task(
@@ -419,9 +419,7 @@ class RunnerExecutionServices:
         to_state: str,
         failure_reason: str | None = None,
     ) -> Any:
-        manager = getattr(self.runner, "task_manager", None)
-        if manager is None:
-            raise RuntimeError("Task service is unavailable")
+        manager = self._task_manager(required=True)
         return manager.transition_task(
             task_id=task_id,
             to_state=to_state,

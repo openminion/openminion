@@ -7,7 +7,15 @@ from openminion.api.agent import (
 )
 from openminion.api.handoff import Handoff, subagent
 from openminion.api.runtime import APIRuntime
-from openminion.api.server import dispatch_request
+
+
+def __getattr__(name: str):
+    if name == "dispatch_request":
+        from openminion.api.server import dispatch_request
+
+        return dispatch_request
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "APIRuntime",

@@ -13,6 +13,7 @@ from openminion.modules.brain.constants import (
     BRAIN_STATE_WAITING_USER,
 )
 from openminion.modules.brain.loop.tools import (
+    ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
     ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
 )
@@ -175,6 +176,17 @@ def _result_from_outcome(
             message=message,
             action_result=build_error_result(message, "coding_duplicate_tool_calls"),
         )
+    if outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN:
+        message = (
+            "[act:coding] repeated the same tool pattern without making progress. "
+            "Continue in a follow-up turn with a narrower implementation step."
+        )
+        return ExecutionResult(
+            status=BRAIN_STATE_ACTIVE,
+            working_state=ctx.state,
+            message=message,
+            action_result=build_error_result(message, "coding_circular_tool_pattern"),
+        )
     if outcome.termination_reason == CODING_TERM_ITERATION_CAP:
         message = (
             "[act:coding] reached maximum iterations without a final answer. "
@@ -225,7 +237,7 @@ def _maybe_continue_after_tool_failure(
         ctx,
         failure_summary=str(failure_summary or "").strip(),
     )
-    runner._append_phase_instruction(ctx)
+    runner._append_phase_instruction()
     runner._emit_phase_status(ctx)
     return True
 
@@ -351,7 +363,7 @@ def _exit_final_text(
         disposition = None
 
     if disposition == BRAIN_DISPOSITION_CONTINUE:
-        runner._append_phase_instruction(ctx)
+        runner._append_phase_instruction()
         runner._sync_coding_module_state(ctx)
         return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
 

@@ -167,7 +167,9 @@ def test_run_turn_payload_records_simple_turn_phases(monkeypatch):
             pass
         return SimpleNamespace(as_payload=lambda: {"message": "hello"})
 
-    monkeypatch.setattr(ingress, "runtime_turn_request_from_payload", _stub_request_from_payload)
+    monkeypatch.setattr(
+        ingress, "runtime_turn_request_from_payload", _stub_request_from_payload
+    )
     monkeypatch.setattr(ingress, "execute_runtime_turn", _stub_execute_runtime_turn)
 
     assert ingress.run_turn_payload(runtime=runtime, payload={"message": "hello"}) == {
@@ -194,7 +196,9 @@ def test_run_turn_payload_records_tool_turn_phases(monkeypatch):
             pass
         return SimpleNamespace(as_payload=lambda: {"message": "tool done"})
 
-    monkeypatch.setattr(ingress, "runtime_turn_request_from_payload", _stub_request_from_payload)
+    monkeypatch.setattr(
+        ingress, "runtime_turn_request_from_payload", _stub_request_from_payload
+    )
     monkeypatch.setattr(ingress, "execute_runtime_turn", _stub_execute_runtime_turn)
 
     assert ingress.run_turn_payload(

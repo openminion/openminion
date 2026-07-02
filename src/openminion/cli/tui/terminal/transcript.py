@@ -211,6 +211,7 @@ class TerminalTranscript:
 
     def _render(self, message: ChatMessage) -> None:
         if message.kind == MessageKind.USER:
+
             def _render_user() -> None:
                 line = Text()
                 line.append("> ", style=_USER_PREFIX_STYLE)
@@ -221,6 +222,7 @@ class TerminalTranscript:
             return
         if message.kind == MessageKind.AGENT:
             body = str(message.body or "")
+
             def _render_agent() -> None:
                 if body and _looks_like_markdown(body):
                     self._console.print(
@@ -245,7 +247,9 @@ class TerminalTranscript:
             return
         if message.kind == MessageKind.ERROR:
             self._write_render(
-                lambda: self._console.print(Text(message.body or "", style=_ERROR_STYLE))
+                lambda: self._console.print(
+                    Text(message.body or "", style=_ERROR_STYLE)
+                )
             )
             return
         if message.kind == MessageKind.TOOL and message.tool_event is not None:
@@ -295,6 +299,7 @@ class TerminalTranscript:
             if call_id:
                 self._live_narrated_call_ids.add(call_id)
             return
+        renderable = _render_in_progress_tool_block(tool_name, args)
         handle = self._active_handle
         if handle is not None and hasattr(handle, "set_active_tool"):
             try:
@@ -304,12 +309,14 @@ class TerminalTranscript:
                     args=args,
                     started_at=_time.monotonic(),
                 )
+                if not self._append_live_renderable(renderable):
+                    self._write_render(lambda: self._console.print(renderable))
                 if call_id:
                     self._live_narrated_call_ids.add(call_id)
                 return
             except (AttributeError, RuntimeError, ValueError):
                 pass
-        self._console.print(_render_in_progress_tool_block(tool_name, args))
+        self._console.print(renderable)
         if call_id:
             self._live_narrated_call_ids.add(call_id)
 

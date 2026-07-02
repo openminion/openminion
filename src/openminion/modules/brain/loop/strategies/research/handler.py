@@ -909,8 +909,17 @@ class ResearchMode(SimpleCheckpointMixin):
                 if partial_texts:
                     synthesis = f"Research complete for '{query}': {' '.join(partial_texts[:3])}"
                 else:
-                    synthesis = ""
+                    synthesis = self._build_no_synthesis_closeout(query=query)
         return synthesis
+
+    def _build_no_synthesis_closeout(self, *, query: str) -> str:
+        return (
+            f"Research finished for '{query}', but the run did not produce a "
+            "usable synthesized answer from the collected tool evidence.\n\n"
+            "Next steps:\n- Retry with a narrower research scope.\n"
+            "- Lower the number of requested comparison dimensions.\n"
+            "- Ask for one source family or one decision at a time."
+        )
 
     def _build_pause_response_message(
         self,

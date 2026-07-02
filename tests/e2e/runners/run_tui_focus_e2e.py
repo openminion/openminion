@@ -45,6 +45,11 @@ SUITES: dict[str, Suite] = {
         live=True,
         complex=True,
     ),
+    "soak": Suite(
+        ("tests/e2e/tui/focus/test_live_soak.py",),
+        live=True,
+        complex=True,
+    ),
     "queued-input": Suite(
         (
             "tests/cli/tui/focus/test_focus_input_chrome.py",

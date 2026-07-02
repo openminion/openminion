@@ -12,45 +12,10 @@ from openminion.modules.controlplane.runtime.audit import emit_audit_event
 from openminion.modules.controlplane.runtime.client import RuntimeClient
 from openminion.modules.controlplane.contracts.policy_client import PolicyClient
 from openminion.modules.controlplane.runtime.store import InMemoryControlPlaneStore
-from .module import CommandSpec, CommandSchema, AuthRequirement, Handler
+from .module import CommandSpec, AuthRequirement, Handler
 from .broken_module import BrokenModuleTracker
+from .builtin_specs import COMMAND_HELP, SCOPE_DESCRIPTIONS, builtin_command_specs
 
-_COMMAND_HELP: dict[str, str] = {
-    "help": "Show available commands",
-    "new": "Start a fresh session",
-    "sessions": "List sessions for this chat/user",
-    "session.use": "Rebind this chat to an existing session: /session use <session_id>",
-    "session.title": "Set current session title: /session title <text>",
-    "export": "Export current session: /export [md|json]",
-    "agent": "Show current agent",
-    "agent.list": "List registered agents",
-    "agent.set": "Switch session to an agent: /agent set <agent_id>",
-    "agent.ls": "List registered agents",
-    "agent.use": "Switch session to an agent: /agent use <agent_id>",
-    "agent.info": "Show details for an agent: /agent info <agent_id>",
-    "agent.stop": "Stop current agent session",
-    "session.new": "Start a fresh session",
-    "session.id": "Show current session ID",
-    "session.status": "Show session summary",
-    "run": "Show active runs",
-    "run.status": "Show run status: /run status <run_id>",
-    "cancel": "Cancel run: /cancel <run_id>",
-    "job.ls": "List active runs (compatibility alias)",
-    "approve": "[admin] Approve policy request: /approve <request_id> [once|10m|1h|forever]",
-    "deny": "[admin] Deny policy request: /deny <request_id>",
-    "grants": "List active grants",
-    "diag": "Show high-level health",
-    "logs": "Show run log summary: /logs <run_id>",
-    "artifact.ls": "List recent artifacts (stub)",
-    "memory.ls": "List memory candidates (stub)",
-    "config.show": "Show current config (stub)",
-    "config.set": "[admin] Set a config value: /config set <key> <value>",
-    "artifact.purge": "[admin] Purge deleted artifacts",
-    "memory.promote": "[admin] Promote a memory candidate",
-    "skill.ingest": "Ingest a SKILL.md file: /skill ingest <path>",
-    "skill.list": "List ingested skills",
-    "modules": "Show loaded/shadowed/broken module diagnostics",
-}
 _LOGGER = get_logger("modules.controlplane.commands.registry")
 
 
@@ -73,64 +38,7 @@ class CommandRegistry:
 
     def _register_builtin_commands(self) -> None:
         """Register all built-in commands as CommandSpecs."""
-        handlers_map: Dict[str, Handler] = {
-            "help": self._help,
-            "new": self._session_new,
-            "sessions": self._sessions,
-            "session.use": self._session_use,
-            "session.title": self._session_title,
-            "export": self._export,
-            "agent": self._agent_show,
-            "agent.list": self._agent_ls,
-            "agent.set": self._agent_use,
-            "agent.ls": self._agent_ls,
-            "agent.use": self._agent_use,
-            "agent.info": self._agent_info,
-            "agent.stop": self._agent_stop,
-            "session.new": self._session_new,
-            "session.id": self._session_id,
-            "session.status": self._session_status,
-            "run": self._run_show,
-            "run.status": self._run_status,
-            "cancel": self._cancel_run,
-            "job.ls": self._job_ls,
-            "approve": self._approve,
-            "deny": self._deny,
-            "grants": self._grants,
-            "diag": self._diag,
-            "logs": self._logs,
-            "artifact.ls": self._artifact_ls,
-            "artifact.purge": self._artifact_purge,
-            "memory.ls": self._memory_ls,
-            "memory.promote": self._memory_promote,
-            "config.show": self._config_show,
-            "config.set": self._config_set,
-            "skill.ingest": self._skill_ingest,
-            "skill.list": self._skill_list,
-            "modules": self._modules,
-        }
-
-        for cmd_name, handler in handlers_map.items():
-            schema = CommandSchema(
-                name=cmd_name,
-                description=_COMMAND_HELP.get(
-                    cmd_name, f"Built-in command: {cmd_name}"
-                ),
-                usage=f"/{cmd_name} [args...]",
-            )
-            auth_req = (
-                AuthRequirement.ADMIN
-                if "[admin]" in _COMMAND_HELP.get(cmd_name, "")
-                else AuthRequirement.USER
-            )
-            spec = CommandSpec(
-                name=cmd_name,
-                schema=schema,
-                handler=handler,
-                auth_requirement=auth_req,
-                module_name="builtin",
-                version="1.0.0",
-            )
+        for spec in builtin_command_specs(self).values():
             self.register_command_spec(spec)
 
     def register_command_spec(
@@ -246,13 +154,52 @@ class CommandRegistry:
 
     def _help(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         is_admin = self.auth is not None and self.auth.is_admin(ctx.user_key)
-        lines = ["Available commands:"]
-        for name, desc in sorted(_COMMAND_HELP.items()):
+        lines = [
+            "Available commands:",
+            "Profile = runtime/model/tools config. Session = conversation context.",
+            "Use /profile use <profile_id> to switch runtime profile; use /session new for fresh context.",
+        ]
+        for name, desc in sorted(COMMAND_HELP.items()):
             if "[admin]" in desc and not is_admin:
                 continue
             lines.append(f"  /{name} — {desc}")
         return CommandResult(
             ok=True, text="\n".join(lines), data={"is_admin": is_admin}
+        )
+
+    def _status(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
+        turns = self._list_turns(ctx.session_id)
+        profile_id = self.store.resolve_agent(ctx.session_id)
+        title = (
+            self.store.get_session_title(ctx.session_id)
+            if hasattr(self.store, "get_session_title")
+            else None
+        )
+        pairing = self._current_pairing(ctx)
+        pairing_status = (
+            str(pairing.get("status") or "active") if pairing else "not observed"
+        )
+        lines = [
+            "Status:",
+            "  runner: online from this chat if replies are arriving; otherwise not observed from this process",
+            f"  profile: {profile_id}",
+            f"  session: {ctx.session_id}",
+            f"  turns: {len(turns)}",
+            f"  pairing: {pairing_status}",
+            "  access: broad non-admin controlplane access until ACL exists",
+        ]
+        if title:
+            lines.insert(4, f"  title: {title}")
+        return CommandResult(
+            ok=True,
+            text="\n".join(lines),
+            data={
+                "session_id": ctx.session_id,
+                "agent_id": profile_id,
+                "profile_id": profile_id,
+                "turn_count": len(turns),
+                "pairing_status": pairing_status,
+            },
         )
 
     def _sessions(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
@@ -369,7 +316,9 @@ class CommandRegistry:
     ) -> CommandResult:
         agent_id = self.store.resolve_agent(ctx.session_id)
         return CommandResult(
-            ok=True, text=f"Current agent: {agent_id}", data={"agent_id": agent_id}
+            ok=True,
+            text=f"Current profile: {agent_id}",
+            data={"agent_id": agent_id, "profile_id": agent_id},
         )
 
     def _agent_ls(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
@@ -377,20 +326,23 @@ class CommandRegistry:
         lines = [f"  {a['id']}: {a.get('name', '')}" for a in agents]
         return CommandResult(
             ok=True,
-            text="Registered agents:\n" + "\n".join(lines),
-            data={"agents": agents},
+            text="Configured profiles:\n" + "\n".join(lines),
+            data={"agents": agents, "profiles": agents},
         )
 
     def _agent_use(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
         if not command.args:
-            return CommandResult(ok=False, text="Usage: /agent use <agent_id>")
+            return CommandResult(ok=False, text="Usage: /profile use <profile_id>")
         agent_id = command.args[0]
         self.store.ensure_agent(agent_id)
         self.store.set_agent(ctx.session_id, agent_id)
         return CommandResult(
             ok=True,
-            text=f"Session {ctx.session_id} now uses {agent_id}",
-            data={"agent_id": agent_id},
+            text=(
+                f"Session {ctx.session_id} now uses profile {agent_id}. "
+                "Context is preserved; use /session new for a fresh context."
+            ),
+            data={"agent_id": agent_id, "profile_id": agent_id},
         )
 
     def _agent_info(
@@ -399,17 +351,26 @@ class CommandRegistry:
         target = command.args[0] if command.args else ctx.agent_id
         agents = {a["id"]: a for a in self.store.list_agents()}
         if target not in agents:
-            return CommandResult(ok=False, text=f"Agent not found: {target}")
+            return CommandResult(ok=False, text=f"Profile not found: {target}")
         info = agents[target]
-        return CommandResult(ok=True, text=f"Agent {target}: {info}", data=info)
+        data = dict(info)
+        data.setdefault("profile_id", target)
+        return CommandResult(ok=True, text=f"Profile {target}: {info}", data=data)
 
     def _agent_stop(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
         return CommandResult(
             ok=True,
-            text=f"Agent {ctx.agent_id} stopped for session {ctx.session_id}. Use /session new to start fresh.",
-            data={"session_id": ctx.session_id, "agent_id": ctx.agent_id},
+            text=(
+                f"Profile {ctx.agent_id} stopped for session {ctx.session_id}. "
+                "Use /session new to start fresh."
+            ),
+            data={
+                "session_id": ctx.session_id,
+                "agent_id": ctx.agent_id,
+                "profile_id": ctx.agent_id,
+            },
         )
 
     def _session_new(
@@ -435,15 +396,78 @@ class CommandRegistry:
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
         turns = self._list_turns(ctx.session_id)
-        agent_id = self.store.resolve_agent(ctx.session_id)
+        profile_id = self.store.resolve_agent(ctx.session_id)
         return CommandResult(
             ok=True,
-            text=f"Session {ctx.session_id}: agent={agent_id}, turns={len(turns)}",
+            text=(
+                f"Session {ctx.session_id}: profile={profile_id}, turns={len(turns)}"
+            ),
             data={
                 "session_id": ctx.session_id,
-                "agent_id": agent_id,
+                "agent_id": profile_id,
+                "profile_id": profile_id,
                 "turn_count": len(turns),
             },
+        )
+
+    def _pair_status(
+        self, command: ParsedCommand, ctx: ResolvedContext
+    ) -> CommandResult:
+        pairing = self._current_pairing(ctx)
+        if pairing is None:
+            return CommandResult(
+                ok=True,
+                text=(
+                    "No active pairing found for this chat. "
+                    "Ask the owner to run `openminion channel telegram pair`."
+                ),
+                data={"paired": False},
+            )
+        scopes = pairing.get("scopes") or []
+        scope_text = self._describe_scopes(scopes)
+        return CommandResult(
+            ok=True,
+            text=(
+                "Pairing active for this chat.\n"
+                f"  pairing_id: {pairing.get('pairing_id', 'unknown')}\n"
+                f"  scopes: {scope_text}\n"
+                "  access: broad non-admin controlplane access until ACL exists"
+            ),
+            data={"paired": True, "pairing": pairing},
+        )
+
+    def _pair_revoke(
+        self, command: ParsedCommand, ctx: ResolvedContext
+    ) -> CommandResult:
+        channel, chat_id = self._current_channel_subject(ctx)
+        pairing = self._current_pairing(ctx)
+        if channel is None or chat_id is None or pairing is None:
+            return CommandResult(
+                ok=True,
+                text="No active pairing found for this chat.",
+                data={"revoked": False},
+            )
+        upsert_pairing = getattr(self.store, "upsert_pairing", None)
+        if not callable(upsert_pairing):
+            return CommandResult(
+                ok=False,
+                text="Pairing revoke is not available in this backend.",
+                error={"code": "PAIRING_REVOKE_UNAVAILABLE"},
+            )
+        upsert_pairing(
+            channel=channel,
+            chat_id=chat_id,
+            user_id=str(pairing.get("user_id") or ctx.user_key),
+            session_id=str(pairing.get("session_id") or ctx.session_id),
+            status="revoked",
+            scopes=pairing.get("scopes") or [],
+            note="revoked_from_controlplane_chat",
+            pairing_id=str(pairing.get("pairing_id") or ""),
+        )
+        return CommandResult(
+            ok=True,
+            text="Pairing revoked for this chat.",
+            data={"revoked": True, "chat_id": chat_id, "channel": channel},
         )
 
     def _job_ls(self, command: ParsedCommand, ctx: ResolvedContext) -> CommandResult:
@@ -915,6 +939,41 @@ class CommandRegistry:
         if hasattr(self.store, "list_turns"):
             return self.store.list_turns(session_id)
         return []
+
+    def _current_channel_subject(
+        self, ctx: ResolvedContext
+    ) -> tuple[str | None, str | None]:
+        raw = str(ctx.chat_key or "").strip()
+        if ":" not in raw:
+            return None, None
+        channel, subject_id = raw.split(":", 1)
+        channel = channel.strip()
+        subject_id = subject_id.strip()
+        if not channel or not subject_id:
+            return None, None
+        return channel, subject_id
+
+    def _current_pairing(self, ctx: ResolvedContext) -> dict[str, Any] | None:
+        channel, subject_id = self._current_channel_subject(ctx)
+        if channel is None or subject_id is None:
+            return None
+        get_pairing = getattr(self.store, "get_pairing", None)
+        if not callable(get_pairing):
+            return None
+        pairing = get_pairing(channel=channel, chat_id=subject_id)
+        return dict(pairing) if isinstance(pairing, dict) else None
+
+    def _describe_scopes(self, scopes: object) -> str:
+        if not isinstance(scopes, (list, tuple, set)):
+            return "none"
+        rendered: list[str] = []
+        for scope in scopes:
+            raw = str(scope or "").strip()
+            if not raw:
+                continue
+            label = SCOPE_DESCRIPTIONS.get(raw, raw)
+            rendered.append(f"{label} ({raw})" if label != raw else raw)
+        return ", ".join(rendered) if rendered else "none"
 
     def _emit_audit(self, event_type: str, **details: object) -> None:
         emit_audit_event(self.audit_logger, event_type, **details)

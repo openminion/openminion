@@ -323,7 +323,9 @@ class ToolRegistryManager:
         compiled = self._ensure_compiled()
         defaults: dict[str, tuple[str, tuple[str, ...]]] = {}
         for binding_id, candidates in compiled.runtime_binding_to_candidates.items():
-            ordered = tuple(str(item).strip() for item in candidates if str(item).strip())
+            ordered = tuple(
+                str(item).strip() for item in candidates if str(item).strip()
+            )
             if ordered:
                 defaults[binding_id] = (ordered[0], ordered[1:])
         return defaults

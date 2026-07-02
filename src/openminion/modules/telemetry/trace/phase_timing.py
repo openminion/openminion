@@ -224,7 +224,9 @@ __all__ = [
 
 def _validate_phase_name(name: str) -> None:
     if name not in CHAT_PHASES:
-        raise ValueError(f"Unknown chat phase: {name!r}. Allowed: {sorted(CHAT_PHASES)}")
+        raise ValueError(
+            f"Unknown chat phase: {name!r}. Allowed: {sorted(CHAT_PHASES)}"
+        )
 
 
 @contextmanager

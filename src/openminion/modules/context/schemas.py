@@ -87,6 +87,7 @@ SegmentBucket = Literal[
     "active_plan",
     "task_digest",
     "trailer_feedback",
+    "self_awareness",
     "recent_window",
     "retrieval",
     "evidence_refs",
@@ -161,6 +162,7 @@ class BuildPackRequest(BaseModel):
     live_state_overlay: Dict[str, Any] = Field(default_factory=dict)
     phase_hints: Dict[str, Any] = Field(default_factory=dict)
     gateway_system_context: str = ""
+    self_awareness: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SessionTurn(BaseModel):
@@ -631,6 +633,7 @@ BUCKET_TOKEN_FRACTIONS: dict[str, float] = {
     "conversation_summary": 0.12,
     "active_plan": 0.12,
     "task_digest": 0.08,
+    "self_awareness": 0.05,
     "recent_window": 0.30,
     "retrieval": 0.15,
     "evidence_refs": 0.12,
@@ -649,6 +652,9 @@ def bucket_caps_for(budgets: ContextBudgets) -> Dict[str, int]:
         "conversation_summary": budgets.conversation_summary_tokens,
         "active_plan": budgets.active_plan_tokens,
         "task_digest": budgets.task_digest_tokens,
+        "self_awareness": max(
+            64, int(total * BUCKET_TOKEN_FRACTIONS["self_awareness"])
+        ),
         "recent_window": budgets.recent_turn_tokens,
         "retrieval": budgets.facts_tokens
         + budgets.memory_tokens

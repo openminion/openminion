@@ -227,6 +227,11 @@ class ControlplaneStore(ABC):
     def get_pairing(self, *, channel: str, chat_id: str) -> dict[str, Any] | None: ...
 
     @abstractmethod
+    def list_pairings(
+        self, *, channel: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
     def touch_pairing(self, *, channel: str, chat_id: str) -> None: ...
 
     @abstractmethod

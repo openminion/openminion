@@ -26,17 +26,13 @@ from openminion.base.config.env import EnvironmentConfig, resolve_environment_co
 from openminion.modules.brain.schemas import DelegationContext, DelegationResultSummary
 
 
-def _normalized_text(value: Any) -> str:
-    return str(value or "").strip()
-
-
 def _delegate_result_summary(
     payload: dict[str, Any],
     *,
     fallback: str,
 ) -> str:
     for key in ("body", "message", "summary", "answer", "result", "output"):
-        text = _normalized_text(payload.get(key))
+        text = str(payload.get(key) or "").strip()
         if text:
             return text
     return fallback

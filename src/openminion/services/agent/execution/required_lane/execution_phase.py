@@ -131,9 +131,7 @@ async def phase_execute(
                         },
                     )
         unavailable_message = (
-            ""
-            if denied
-            else unavailable_discovery_or_version_message(response, batch)
+            "" if denied else unavailable_discovery_or_version_message(response, batch)
         )
         if unavailable_message:
             retry_response = await runner.runtime_ops.call_provider(
@@ -169,10 +167,9 @@ async def phase_execute(
                         capability_fallback_trigger_reason=state.capability_fallback_trigger_reason,
                     ),
                 )
-            if (
-                deps.tool_calls_payload(retry_response.tool_calls)
-                == deps.tool_calls_payload(response.tool_calls)
-            ):
+            if deps.tool_calls_payload(
+                retry_response.tool_calls
+            ) == deps.tool_calls_payload(response.tool_calls):
                 return _PhaseResult(
                     action="return",
                     outcome=build_required_outcome(
@@ -181,8 +178,7 @@ async def phase_execute(
                         text=unavailable_message,
                         model=str(getattr(retry_response, "model", "") or ""),
                         finish_reason=str(
-                            getattr(retry_response, "finish_reason", "")
-                            or "tool_calls"
+                            getattr(retry_response, "finish_reason", "") or "tool_calls"
                         ),
                         intent_category=intent_category,
                         termination_reason="tool_unavailable_final",

@@ -58,7 +58,6 @@ class _TaskItem(Static):
             id=f"task-{task.get('id', '')}",
         )
         self._task_payload = task
-        self._selected = False
         self.set_selected(selected)
 
     @property
@@ -66,7 +65,6 @@ class _TaskItem(Static):
         return str(self._task_payload.get("id", ""))
 
     def set_selected(self, selected: bool) -> None:
-        self._selected = selected
         if selected:
             self.add_class("selected")
         else:
@@ -267,14 +265,10 @@ class TasksTab(Widget):
         self.call_after_refresh(self._sync_layout_mode)
 
     def on_hide(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
+        self._stop_timer()
 
     def on_unmount(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
+        self._stop_timer()
 
     def _sync_layout_mode(self) -> None:
         try:
@@ -298,6 +292,11 @@ class TasksTab(Widget):
         self._tasks = self._provider.list_tasks()
         await self.recompose()
         self._sync_selected_task()
+
+    def _stop_timer(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
 
     def on__task_item_clicked(self, event: _TaskItem.Clicked) -> None:
         self._selected_task_id = event.task_id

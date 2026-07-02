@@ -64,9 +64,11 @@ from .strategies import (
 )
 from .parallel import (
     ConservativeSideEffectPolicy,
+    CyclicDependencyError,
     DefaultConcurrencyPolicy,
     EvenSplitBudgetAllocator,
     ParallelExecutionStrategy,
+    TopologicalDependencyAnalyzer,
 )
 from openminion.modules.brain.loop.services import runner_from_context
 
@@ -96,34 +98,29 @@ def _subtask_failure_error(result: ExecutionResult) -> str:
 
 
 def _topologically_sort_subtasks(subtasks: list[SubtaskSpec]) -> list[SubtaskSpec]:
-    by_id = {item.subtask_id: item for item in subtasks}
-    if len(by_id) != len(subtasks):
-        raise ValueError("Orchestrate subtasks must have unique subtask_id values.")
-    in_degree = {item.subtask_id: 0 for item in subtasks}
-    outgoing: dict[str, list[str]] = {item.subtask_id: [] for item in subtasks}
-    for item in subtasks:
-        for dependency in item.depends_on:
-            normalized = str(dependency or "").strip()
-            if not normalized:
-                continue
-            if normalized not in by_id:
-                raise ValueError(
-                    f"Subtask {item.subtask_id!r} depends on unknown subtask {normalized!r}."
-                )
-            outgoing[normalized].append(item.subtask_id)
-            in_degree[item.subtask_id] += 1
-    ready = [item.subtask_id for item in subtasks if in_degree[item.subtask_id] == 0]
-    ordered: list[SubtaskSpec] = []
-    while ready:
-        current = ready.pop(0)
-        ordered.append(by_id[current])
-        for successor in outgoing[current]:
-            in_degree[successor] -= 1
-            if in_degree[successor] == 0:
-                ready.append(successor)
-    if len(ordered) != len(subtasks):
-        raise ValueError("Orchestrate subtasks contain a cyclic depends_on graph.")
-    return ordered
+    try:
+        groups = TopologicalDependencyAnalyzer().analyze(subtasks)
+    except CyclicDependencyError as exc:
+        message = str(exc)
+        if (
+            message
+            == "Parallel execution requires unique orchestrate subtask_id values."
+        ):
+            raise ValueError(
+                "Orchestrate subtasks must have unique subtask_id values."
+            ) from exc
+        if message == "Orchestrate parallel graph contains a cycle.":
+            raise ValueError(
+                "Orchestrate subtasks contain a cyclic depends_on graph."
+            ) from exc
+        if message.startswith("Unknown dependency "):
+            dependency, _, remainder = message.partition(" for subtask ")
+            normalized = dependency.removeprefix("Unknown dependency ").strip()
+            raise ValueError(
+                f"Subtask {remainder.rstrip('.')} depends on unknown subtask {normalized}."
+            ) from exc
+        raise ValueError(message) from exc
+    return [subtask for group in groups for subtask in group.subtasks]
 
 
 def _parent_task_id_from_context(ctx: ExecutionContext) -> str:

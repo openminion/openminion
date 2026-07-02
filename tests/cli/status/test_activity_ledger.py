@@ -121,9 +121,7 @@ def test_adapter_scrubs_hidden_reasoning_args_before_rendering() -> None:
                 "command": "pwd",
                 "reasoning": "secret chain text",
                 "nested": {"thinking": "hidden path", "safe": "shown"},
-                "items": [
-                    {"raw_provider_reasoning": "hidden branch", "safe": "ok"}
-                ],
+                "items": [{"raw_provider_reasoning": "hidden branch", "safe": "ok"}],
             },
         }
     )

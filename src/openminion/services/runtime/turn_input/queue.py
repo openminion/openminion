@@ -193,7 +193,9 @@ class TurnInputQueue:
                 entry
                 for entry in self._entries
                 if entry.session_id == normalized_session_id
-                and (normalized_agent_id is None or entry.agent_id == normalized_agent_id)
+                and (
+                    normalized_agent_id is None or entry.agent_id == normalized_agent_id
+                )
                 and (not normalized_statuses or entry.status in normalized_statuses)
             ]
 
@@ -321,7 +323,9 @@ class TurnInputQueue:
             TurnInputQueueStatus.CANCELLED,
             TurnInputQueueStatus.FAILED,
         }:
-            raise TurnInputQueueError("INVALID_STATUS", f"Invalid terminal status: {status}")
+            raise TurnInputQueueError(
+                "INVALID_STATUS", f"Invalid terminal status: {status}"
+            )
         self._replace_by_id(
             queue_id,
             lambda entry: replace(
@@ -350,12 +354,18 @@ class TurnInputQueue:
         if pending >= self._max_pending_per_session:
             self._emit(
                 QUEUE_EVENT_FULL,
-                {"session_id": session_id, "max_pending": self._max_pending_per_session},
+                {
+                    "session_id": session_id,
+                    "max_pending": self._max_pending_per_session,
+                },
             )
             raise TurnInputQueueError(
                 "QUEUE_FULL",
                 "Turn input queue is full.",
-                {"session_id": session_id, "max_pending": self._max_pending_per_session},
+                {
+                    "session_id": session_id,
+                    "max_pending": self._max_pending_per_session,
+                },
             )
 
     def _find_for_session_locked(
@@ -364,7 +374,10 @@ class TurnInputQueue:
         normalized_session_id = _require_non_empty(session_id, "session_id")
         normalized_queue_id = _require_non_empty(queue_id, "queue_id")
         for index, entry in enumerate(self._entries):
-            if entry.session_id == normalized_session_id and entry.queue_id == normalized_queue_id:
+            if (
+                entry.session_id == normalized_session_id
+                and entry.queue_id == normalized_queue_id
+            ):
                 return index, entry
         raise TurnInputQueueError(
             "QUEUE_ENTRY_NOT_FOUND",
@@ -415,7 +428,7 @@ class TurnInputQueue:
                     "expected_status_version": entry.status_version,
                     "received_status_version": int(status_version),
                 },
-        )
+            )
 
     def _replace_by_id(
         self,
@@ -463,7 +476,9 @@ def redact_text_preview(text: str, *, limit: int = 80) -> str:
 
 def _coerce_intent(value: TurnInputIntent | str) -> TurnInputIntent:
     try:
-        return value if isinstance(value, TurnInputIntent) else TurnInputIntent(str(value))
+        return (
+            value if isinstance(value, TurnInputIntent) else TurnInputIntent(str(value))
+        )
     except ValueError as exc:
         raise TurnInputQueueError(
             "INVALID_INTENT",
@@ -473,7 +488,11 @@ def _coerce_intent(value: TurnInputIntent | str) -> TurnInputIntent:
 
 def _coerce_status(value: TurnInputQueueStatus | str) -> TurnInputQueueStatus:
     try:
-        return value if isinstance(value, TurnInputQueueStatus) else TurnInputQueueStatus(str(value))
+        return (
+            value
+            if isinstance(value, TurnInputQueueStatus)
+            else TurnInputQueueStatus(str(value))
+        )
     except ValueError as exc:
         raise TurnInputQueueError(
             "INVALID_STATUS",

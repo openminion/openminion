@@ -67,16 +67,36 @@ class PtySession:
         self.send(f"{text}\n")
 
     def wait_for(self, pattern: str | re.Pattern[str], *, timeout: float) -> str:
+        return self.wait_for_after(pattern, offset=0, timeout=timeout)
+
+    def wait_for_after(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        offset: int,
+        timeout: float,
+    ) -> str:
+        return self.wait_for_match_after(pattern, offset=offset, timeout=timeout).string
+
+    def wait_for_match_after(
+        self,
+        pattern: str | re.Pattern[str],
+        *,
+        offset: int,
+        timeout: float,
+    ) -> re.Match[str]:
         compiled = re.compile(pattern) if isinstance(pattern, str) else pattern
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self._read_available(timeout=0.1)
-            if compiled.search(self._transcript):
-                return self._transcript
+            match = compiled.search(self._transcript[offset:])
+            if match is not None:
+                return match
             if self._process is not None and self._process.poll() is not None:
                 self._read_available(timeout=0.1)
-                if compiled.search(self._transcript):
-                    return self._transcript
+                match = compiled.search(self._transcript[offset:])
+                if match is not None:
+                    return match
                 raise AssertionError(
                     f"process exited before pattern {compiled.pattern!r}\n"
                     f"{self._transcript[-2000:]}"

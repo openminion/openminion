@@ -647,6 +647,11 @@ class _ControlPlaneStoreMixin(ControlplaneStore):
     def get_pairing(self, *, channel: str, chat_id: str) -> dict[str, Any] | None:
         return self._principals.get_pairing(channel=channel, chat_id=chat_id)
 
+    def list_pairings(
+        self, *, channel: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        return self._principals.list_pairings(channel=channel, limit=limit)
+
     def touch_pairing(self, *, channel: str, chat_id: str) -> None:
         self._principals.touch_pairing(channel=channel, chat_id=chat_id)
 

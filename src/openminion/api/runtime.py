@@ -805,6 +805,44 @@ class APIRuntime:
             capability_layering_ref=_CAPABILITY_LAYERING_REF,
         )
 
+    def runtime_self_model(
+        self,
+        agent_id: Optional[str] = None,
+        overrides: RunProfileOverrides | None = None,
+    ) -> dict[str, Any]:
+        from openminion.api.queries.self_model import build_runtime_self_model
+
+        snapshot = build_runtime_self_model(
+            self,
+            agent_id=agent_id,
+            overrides=overrides,
+        )
+        self._emit_runtime_self_model_snapshot(snapshot.model_dump(mode="json"))
+        return snapshot.model_dump(mode="json")
+
+    def _emit_runtime_self_model_snapshot(self, snapshot: dict[str, Any]) -> None:
+        try:
+            from openminion.modules.telemetry.self_awareness import (
+                build_self_model_snapshot_event,
+            )
+            from openminion.modules.telemetry.schemas import TelemetryEvent
+
+            telemetry_service = getattr(self, "telemetry_service", None)
+            record_sync = getattr(telemetry_service, "record_event_sync", None)
+            if record_sync is None:
+                return
+            event_type, data = build_self_model_snapshot_event(snapshot)
+            record_sync(
+                TelemetryEvent(
+                    session_id="runtime",
+                    turn_id="self-model",
+                    event_type=event_type,
+                    data=data,
+                )
+            )
+        except Exception:
+            return
+
     def resolve_gateway(
         self,
         agent_id: Optional[str] = None,

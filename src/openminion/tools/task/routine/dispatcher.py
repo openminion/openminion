@@ -32,8 +32,7 @@ class PreTurnContext(Protocol):
 
 
 class PostTurnSink(Protocol):
-    def write_artifact(self, *, routine_id: str, body: str) -> str:
-        ...
+    def write_artifact(self, *, routine_id: str, body: str) -> str: ...
 
     def announce(self, *, routine_id: str, summary: str) -> None: ...
 

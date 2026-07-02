@@ -116,14 +116,9 @@ class RuntimeThirdBrainProvider:
 def _provider_names(provider_names: list[str] | None) -> tuple[str, ...] | None:
     if not provider_names:
         return None
-    return (
-        tuple(
-            text
-            for text in (str(name or "").strip() for name in provider_names)
-            if text
-        )
-        or None
-    )
+    names = tuple(str(name or "").strip() for name in provider_names)
+    filtered = tuple(name for name in names if name)
+    return filtered or None
 
 
 def _query_result_payload(result: Any) -> dict[str, Any]:

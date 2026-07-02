@@ -297,16 +297,24 @@ def build_channel_registry(
         for item in getattr(config, "enabled_channels", []) or []
         if str(item).strip()
     }
-    if "telegram" not in enabled_channels:
-        return registry
-
-    adapter = _build_telegram_adapter(
-        config=config,
-        home_root=home_root,
-        data_root=data_root,
-        logger=logger.getChild("telegram"),
-    )
-    registry.register(adapter)
+    if "telegram" in enabled_channels:
+        registry.register(
+            _build_telegram_adapter(
+                config=config,
+                home_root=home_root,
+                data_root=data_root,
+                logger=logger.getChild("telegram"),
+            )
+        )
+    if "slack" in enabled_channels:
+        registry.register(
+            _build_slack_adapter(
+                config=config,
+                home_root=home_root,
+                data_root=data_root,
+                logger=logger.getChild("slack"),
+            )
+        )
     return registry
 
 
@@ -419,6 +427,8 @@ def _build_telegram_adapter(
         if not cp_cfg.openminion_enabled
         else OpenMinionBrainClient(
             config_path=cp_cfg.openminion_config_path,
+            home_root=str(home_root),
+            data_root=str(data_root),
             channel=cp_cfg.openminion_channel,
             target=cp_cfg.openminion_target,
             deliver=cp_cfg.openminion_deliver,
@@ -520,6 +530,168 @@ def _audit_cross_owner_bindings(
             session_chat_key,
         )
     return warnings, scanned
+
+
+def _build_slack_adapter(
+    *,
+    config: OpenMinionConfig,
+    home_root: Path,
+    data_root: Path,
+    logger: logging.Logger,
+) -> Any:
+    from openminion.modules.controlplane.adapters.client import OpenMinionBrainClient
+    from openminion.modules.controlplane.channels.slack.adapter import (
+        build_slack_runner,
+    )
+    from openminion.modules.controlplane.channels.slack.bot_api import SlackWebAPI
+    from openminion.modules.controlplane.channels.slack.config import (
+        from_base_config as slack_from_base_config,
+    )
+    from openminion.modules.controlplane.channels.slack.delivery import (
+        SlackDeliveryService,
+    )
+    from openminion.modules.controlplane.channels.slack.state import SlackStateStore
+    from openminion.modules.controlplane.commands.registry import CommandRegistry
+    from openminion.modules.controlplane.config import (
+        from_base_config as controlplane_from_base_config,
+    )
+    from openminion.modules.controlplane.constants import (
+        PRINCIPAL_BINDING_STATUS_ACTIVE,
+    )
+    from openminion.modules.controlplane.runtime import EchoBrain
+    from openminion.modules.controlplane.runtime.audit import AuditLogger
+    from openminion.modules.controlplane.runtime.auth import AuthEvaluator
+    from openminion.modules.controlplane.runtime.channels import (
+        ChannelRegistry as ControlPlaneChannelRegistry,
+    )
+    from openminion.modules.controlplane.runtime.dispatcher import (
+        ControlPlaneDispatcher,
+    )
+    from openminion.modules.controlplane.runtime.parser import SlashCommandParser
+    from openminion.modules.controlplane.runtime.rate_limit import (
+        ControlPlaneRateLimiter,
+        RateLimitPolicy,
+    )
+    from openminion.modules.controlplane.runtime.router import Router
+    from openminion.modules.controlplane.runtime.worker.outbox import OutboxWorker
+    from openminion.modules.controlplane.storage import (
+        SQLiteControlPlaneStore,
+        build_controlplane_store,
+    )
+    from openminion.modules.controlplane.wizard.store import (
+        SqliteWizardStore,
+        register_store as register_wizard_store,
+    )
+    from openminion.modules.storage.engine import StorageEngineConfig
+
+    cp_cfg = controlplane_from_base_config(
+        base_config=config,
+        home_root=home_root,
+        data_root=data_root,
+    )
+    slack_cfg = slack_from_base_config(
+        base_config=config,
+        home_root=home_root,
+        data_root=data_root,
+    ).slack
+
+    cp_db_path = Path(cp_cfg.sqlite_path).expanduser().resolve(strict=False)
+    store = build_controlplane_store(
+        config=StorageEngineConfig(
+            root_dir=cp_db_path.parent,
+            sqlite_path=cp_db_path,
+            fallback_root=cp_db_path.parent,
+            wal=cp_cfg.wal,
+            record_backend=config.storage.record_backend(),
+            record_backend_options=config.storage.record_backend_options(),
+        ),
+        database_path=cp_db_path,
+    )
+    if hasattr(store, "backfill_pairings_to_principals"):
+        store.backfill_pairings_to_principals(status=PRINCIPAL_BINDING_STATUS_ACTIVE)
+    if isinstance(store, SQLiteControlPlaneStore):
+        wizard_db_path = cp_db_path.parent / "wizard.db"
+        wizard_db_path.parent.mkdir(parents=True, exist_ok=True)
+        register_wizard_store("sqlite", SqliteWizardStore(wizard_db_path))
+
+    audit_logger = AuditLogger(sink=store.put_audit)
+    auth = AuthEvaluator(admin_user_keys=cp_cfg.admin_user_keys)
+    binding_warning_count, binding_scan_count = _audit_cross_owner_bindings(
+        store=store,
+        logger=logger,
+    )
+    router = Router(store, auth=auth, audit_logger=audit_logger)
+    command_registry = CommandRegistry(
+        store=store,
+        auth=auth,
+        audit_logger=audit_logger,
+    )
+    brain = (
+        EchoBrain()
+        if not cp_cfg.openminion_enabled
+        else OpenMinionBrainClient(
+            config_path=cp_cfg.openminion_config_path,
+            home_root=str(home_root),
+            data_root=str(data_root),
+            channel=cp_cfg.openminion_channel,
+            target=cp_cfg.openminion_target,
+            deliver=cp_cfg.openminion_deliver,
+        )
+    )
+    runtime = ControlPlaneDispatcher(
+        store=store,
+        router=router,
+        parser=SlashCommandParser(),
+        command_registry=command_registry,
+        brain_client=brain,
+        outbound_sender=lambda _payload: None,
+        audit_logger=audit_logger,
+    )
+    api = SlackWebAPI(slack_cfg.bot_token)
+    delivery = SlackDeliveryService(
+        api=api,
+        delivery_config=slack_cfg.delivery,
+        audit_logger=audit_logger,
+    )
+    state_store = SlackStateStore(slack_cfg.state_sqlite_path)
+    cp_channel_registry = ControlPlaneChannelRegistry()
+    outbox_worker = OutboxWorker(
+        store=store,
+        registry=cp_channel_registry,
+        audit_logger=audit_logger,
+        max_attempts=cp_cfg.outbox_max_attempts,
+        max_backoff_s=cp_cfg.outbox_max_backoff_s,
+    )
+    rate_limiter = ControlPlaneRateLimiter(
+        store=store,
+        policy=RateLimitPolicy(
+            chat_window_s=cp_cfg.rate_limit_chat_window_s,
+            chat_limit=cp_cfg.rate_limit_chat_limit,
+            user_window_s=cp_cfg.rate_limit_user_window_s,
+            user_limit=cp_cfg.rate_limit_user_limit,
+            session_window_s=cp_cfg.rate_limit_session_window_s,
+            session_limit=cp_cfg.rate_limit_session_limit,
+        ),
+    )
+    # The Slack helper path currently applies adapter-level filtering. The
+    # constructed limiter is attached for the next shared-helper pass and for
+    # parity with Telegram's lifecycle wiring.
+    runner = build_slack_runner(
+        config=slack_cfg,
+        runtime=runtime,
+        delivery=delivery,
+        state_store=state_store,
+        audit_logger=audit_logger,
+        logger=logger,
+        store=store,
+        outbox_worker=outbox_worker,
+    )
+    setattr(runner, "_rate_limiter", rate_limiter)
+    setattr(runner, "_brain_client", brain)
+    setattr(runner, "_binding_warning_count", binding_warning_count)
+    setattr(runner, "_binding_scan_count", binding_scan_count)
+    cp_channel_registry.register(runner)
+    return runner
 
 
 def _load_tool_plugin_statuses() -> list[dict[str, Any]]:

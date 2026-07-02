@@ -1,4 +1,6 @@
 import logging
+import threading
+import time
 from typing import Any, Callable
 
 from openminion.modules.controlplane.constants import PRINCIPAL_BINDING_STATUS_ACTIVE
@@ -338,6 +340,175 @@ def _has_active_principal_binding(
         str(binding.get("status") or PRINCIPAL_BINDING_STATUS_ACTIVE).strip().lower()
     )
     return status == PRINCIPAL_BINDING_STATUS_ACTIVE
+
+
+def _send_runner_online_notice(runner: Any) -> None:
+    if getattr(runner, "_runner_online_notice_sent", False):
+        return
+    setattr(runner, "_runner_online_notice_sent", True)
+
+    store = getattr(runner, "_store", None)
+    list_pairings = getattr(store, "list_pairings", None)
+    if not callable(list_pairings):
+        return
+
+    try:
+        pairings = list_pairings(channel=runner.channel_id, limit=50)
+    except Exception as exc:  # noqa: BLE001 - startup notice must not stop runner
+        runner._log.warning(  # noqa: SLF001
+            "telegram runner online notice skipped: failed to list pairings: %s",
+            exc,
+        )
+        return
+
+    text = (
+        "OpenMinion Telegram runner is online. "
+        "This computer is now listening for this chat. "
+        "Use /status to check the active profile/session or /help for commands."
+    )
+    sent_count = 0
+    for pairing in pairings:
+        chat_id = _as_str_or_none(pairing.get("chat_id"))
+        if chat_id is None:
+            continue
+        try:
+            runner._delivery.send_text(  # noqa: SLF001
+                text=text,
+                target=TelegramReplyTarget(
+                    chat_id=_parse_chat_id(chat_id),
+                    message_id=0,
+                ),
+            )
+            sent_count += 1
+            runner._audit_event(  # noqa: SLF001
+                "cp.telegram.runner.online_notice_sent",
+                reason="runner_online",
+                chat_id=chat_id,
+                paired_chat_count=len(pairings),
+                sent_count=sent_count,
+            )
+        except Exception as exc:  # noqa: BLE001 - keep listener online
+            runner._log.warning(  # noqa: SLF001
+                "telegram runner online notice failed chat_id=%s: %s",
+                chat_id,
+                exc,
+            )
+
+
+class _TelegramChatActionPulse:
+    def __init__(
+        self,
+        *,
+        runner: Any,
+        envelope: TelegramInboundEnvelope,
+        action: str = "typing",
+        interval_seconds: float = 4.0,
+        progress_threshold_seconds: float | None = 30.0,
+    ) -> None:
+        self._runner = runner
+        self._envelope = envelope
+        self._action = action
+        self._interval_seconds = max(0.05, float(interval_seconds))
+        self._progress_threshold_seconds = (
+            None
+            if progress_threshold_seconds is None
+            else max(0.0, float(progress_threshold_seconds))
+        )
+        self._progress_sent = False
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __enter__(self) -> "_TelegramChatActionPulse":
+        self._send_once()
+        thread = threading.Thread(
+            target=self._run,
+            daemon=True,
+            name=f"telegram-chat-action-{self._envelope.chat_id}",
+        )
+        self._thread = thread
+        thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=0.2)
+            self._thread = None
+
+    def _run(self) -> None:
+        started_at = time.monotonic()
+        while not self._stop.wait(self._interval_seconds):
+            self._send_once()
+            threshold = self._progress_threshold_seconds
+            if (
+                threshold is not None
+                and not self._progress_sent
+                and time.monotonic() - started_at >= threshold
+            ):
+                self._send_progress_notice()
+
+    def _send_once(self) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": self._envelope.chat_id,
+            "action": self._action,
+        }
+        if self._envelope.topic_id is not None:
+            payload["message_thread_id"] = self._envelope.topic_id
+        try:
+            api = self._runner._api  # noqa: SLF001
+            sender = getattr(api, "send_chat_action", None)
+            if callable(sender):
+                sender(payload)
+                return
+            caller = getattr(api, "call", None)
+            if callable(caller):
+                caller("sendChatAction", payload)
+        except Exception as exc:  # noqa: BLE001 - typing indicator is best-effort
+            self._runner._log.debug(  # noqa: SLF001
+                "telegram chat action failed chat_id=%s action=%s: %s",
+                self._envelope.chat_id,
+                self._action,
+                exc,
+            )
+
+    def _send_progress_notice(self) -> None:
+        self._progress_sent = True
+        try:
+            self._runner._delivery.send_text(  # noqa: SLF001
+                text="Still working on it. OpenMinion will reply here when the turn finishes.",
+                target=TelegramReplyTarget(
+                    chat_id=self._envelope.chat_id,
+                    message_id=0,
+                    topic_id=self._envelope.topic_id,
+                ),
+            )
+            self._runner._audit_event(  # noqa: SLF001
+                "cp.telegram.turn.progress_notice_sent",
+                reason="turn_still_running",
+                chat_id=str(self._envelope.chat_id),
+                update_id=self._envelope.update_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - progress notice is best-effort
+            self._runner._log.debug(  # noqa: SLF001
+                "telegram progress notice failed chat_id=%s: %s",
+                self._envelope.chat_id,
+                exc,
+            )
+
+
+def _chat_action_pulse(
+    runner: Any,
+    *,
+    envelope: TelegramInboundEnvelope,
+) -> _TelegramChatActionPulse:
+    interval = getattr(runner, "_chat_action_interval_seconds", 4.0)
+    threshold = getattr(runner, "_progress_notice_after_seconds", 30.0)
+    return _TelegramChatActionPulse(
+        runner=runner,
+        envelope=envelope,
+        interval_seconds=interval,
+        progress_threshold_seconds=threshold,
+    )
 
 
 def _dispatch_runtime_with_parity_error(

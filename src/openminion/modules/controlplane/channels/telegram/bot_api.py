@@ -142,6 +142,12 @@ class TelegramBotAPI:
     def send_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.call("sendMessage", payload)
 
+    def send_chat_action(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.call("sendChatAction", payload)
+
+    def set_my_commands(self, commands: list[dict[str, str]]) -> dict[str, Any]:
+        return self.call("setMyCommands", {"commands": commands})
+
     def edit_message_text(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self.call("editMessageText", payload)
 

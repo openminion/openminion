@@ -9,6 +9,7 @@ from openminion.modules.brain.constants import (
     BRAIN_INTERNAL_MODE_ACT_CODING,
 )
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
+from openminion.modules.brain.tools.schema import collect_runtime_tool_schemas
 from openminion.modules.brain.schemas import ActionError, ActionResult, new_uuid
 from openminion.modules.llm.schemas import ToolSpec
 
@@ -77,7 +78,41 @@ def _resolve_model(ctx: ExecutionContext) -> str:
     return ""
 
 
-def _build_tool_specs(allowed_tools: frozenset[str]) -> list[ToolSpec]:
+def _runtime_tool_schemas_by_name(
+    ctx: ExecutionContext | None,
+) -> dict[str, dict[str, Any]]:
+    if ctx is None:
+        return {}
+    runner, _profile = _runner_and_profile_from_context(ctx)
+    if runner is None:
+        return {}
+    return {
+        str(item.get("name", "") or "").strip(): item
+        for item in collect_runtime_tool_schemas(runner)
+        if str(item.get("name", "") or "").strip()
+    }
+
+
+def _input_schema_for_tool(
+    tool_id: str,
+    runtime_schemas: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    runtime_schema = runtime_schemas.get(tool_id, {})
+    parameters = runtime_schema.get("parameters") if runtime_schema else None
+    if isinstance(parameters, dict) and parameters:
+        return dict(parameters)
+    return {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+
+
+def _build_tool_specs(
+    allowed_tools: frozenset[str],
+    *,
+    ctx: ExecutionContext | None = None,
+) -> list[ToolSpec]:
     descriptions: dict[str, str] = {
         "file.list_dir": "List files and directories at a path.",
         "file.read": "Read file contents.",
@@ -96,23 +131,22 @@ def _build_tool_specs(allowed_tools: frozenset[str]) -> list[ToolSpec]:
             "Run one allowlisted direct shell command for verification or "
             "existing-file workflows; do not use pipes, redirections, chaining, "
             "fallback operators, or file/directory creation when structured tools "
-            "can do that directly."
+            "or structured file tools can do that directly. For target "
+            "directories, pass path/cwd/working_directory instead of prefixing "
+            "the command with cd."
         ),
         "exec.poll": "Poll the status or output of a running process.",
         "exec.list": "List currently running processes.",
         "exec.kill": "Kill a running process by ID.",
     }
+    runtime_schemas = _runtime_tool_schemas_by_name(ctx)
     specs = []
     for tool_id in sorted(allowed_tools):
         specs.append(
             ToolSpec(
                 name=tool_id,
                 description=descriptions.get(tool_id, tool_id),
-                input_schema={
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": True,
-                },
+                input_schema=_input_schema_for_tool(tool_id, runtime_schemas),
             )
         )
     return specs

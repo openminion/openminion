@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import logging
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -45,6 +47,18 @@ RUNNER_ONLINE_MESSAGE = (
     "Keep this terminal open, or run OpenMinion as a daemon/service."
 )
 
+TELEGRAM_BOT_COMMANDS: list[dict[str, str]] = [
+    {"command": "help", "description": "Show OpenMinion commands"},
+    {
+        "command": "status",
+        "description": "Show connection, profile, and session status",
+    },
+    {"command": "new", "description": "Start a fresh session"},
+    {"command": "sessions", "description": "List sessions for this chat"},
+    {"command": "profile", "description": "List or switch runtime profiles"},
+    {"command": "pair", "description": "Show pairing status"},
+]
+
 
 @dataclass(frozen=True)
 class PairTokenOutput:
@@ -68,20 +82,27 @@ class TelegramCandidate:
 
 def run_channel(args: argparse.Namespace) -> int:
     channel = str(getattr(args, "channel_name", "") or "").strip().lower()
-    if channel != "telegram":
-        raise RuntimeError("unknown channel command")
-    action = str(getattr(args, "telegram_command", "") or "").strip().lower()
-    handler = {
-        "setup": telegram_setup,
-        "doctor": telegram_doctor,
-        "identify": telegram_identify,
-        "pair": telegram_pair,
-        "run": telegram_run,
-        "status": telegram_status,
-    }.get(action)
-    if handler is None:
-        raise RuntimeError("unknown telegram channel command")
-    return handler(args)
+    if channel == "telegram":
+        action = str(getattr(args, "telegram_command", "") or "").strip().lower()
+        handler = {
+            "setup": telegram_setup,
+            "doctor": telegram_doctor,
+            "identify": telegram_identify,
+            "pair": telegram_pair,
+            "run": telegram_run,
+            "status": telegram_status,
+            "commands-sync": telegram_commands_sync,
+        }.get(action)
+        if handler is None:
+            raise RuntimeError("unknown telegram channel command")
+        return handler(args)
+    if channel == "slack":
+        from openminion.modules.controlplane.channels.slack.cli import (
+            run_slack_channel,
+        )
+
+        return run_slack_channel(args, runner_builder=build_unified_slack_runner)
+    raise RuntimeError("unknown channel command")
 
 
 def telegram_setup(args: argparse.Namespace) -> int:
@@ -106,7 +127,11 @@ def telegram_setup(args: argparse.Namespace) -> int:
         )
         return 2
 
-    config = load_cli_config(str(config_path)) if config_path.exists() else OpenMinionConfig()
+    config = (
+        load_cli_config(str(config_path))
+        if config_path.exists()
+        else OpenMinionConfig()
+    )
     _patch_telegram_channel_config(config, bot_token_value=config_value)
     save_config(config, str(config_path))
 
@@ -128,14 +153,8 @@ def telegram_doctor(args: argparse.Namespace) -> int:
             status = "ok" if check["ok"] else "fail"
             detail = f" - {check['detail']}" if check.get("detail") else ""
             print(f"[{status}] {check['id']}{detail}")
-        print(
-            "Next: openminion channel telegram identify --config " + str(args.config)
-        )
-    return (
-        0
-        if all(bool(check["ok"]) for check in checks if check["required"])
-        else 1
-    )
+        print("Next: openminion channel telegram identify --config " + str(args.config))
+    return 0 if all(bool(check["ok"]) for check in checks if check["required"]) else 1
 
 
 def telegram_identify(args: argparse.Namespace) -> int:
@@ -175,14 +194,25 @@ def telegram_pair(args: argparse.Namespace) -> int:
 
 def telegram_run(args: argparse.Namespace) -> int:
     print(RUNNER_ONLINE_MESSAGE)
-    from openminion.modules.controlplane.channels.telegram.cli import main as tg_main
-
-    argv = ["run"]
-    if getattr(args, "config", None):
-        argv.extend(["--config", str(args.config)])
+    runner = _build_unified_telegram_runner(getattr(args, "config", None))
     if bool(getattr(args, "once", False)):
-        argv.append("--once")
-    return int(tg_main(argv) or 0)
+        run_once = getattr(runner, "run_once", None)
+        if not callable(run_once):
+            raise SystemExit("--once is only supported in polling mode")
+        run_once()
+        return 0
+
+    stop = threading.Event()
+    try:
+        runner.start(stop_event=stop)
+    except KeyboardInterrupt:
+        stop.set()
+    finally:
+        stop.set()
+        stop_runner = getattr(runner, "stop", None)
+        if callable(stop_runner):
+            stop_runner()
+    return 0
 
 
 def telegram_status(args: argparse.Namespace) -> int:
@@ -196,7 +226,21 @@ def telegram_status(args: argparse.Namespace) -> int:
     print(f"controlplane.sqlite={cp_cfg.sqlite_path}")
     print(f"pairings.active={_count_active_pairings(cp_cfg.sqlite_path)}")
     print(f"daemon.reachable={str(reachable).lower()}")
+    if not reachable:
+        print("daemon.state=not observed from this process")
     print(RUNNER_ONLINE_MESSAGE)
+    return 0
+
+
+def telegram_commands_sync(args: argparse.Namespace) -> int:
+    cfg = _load_telegram_channel_config(getattr(args, "config", None))
+    if not cfg.enabled:
+        print("channels.telegram.enabled is false")
+        return 1
+    api = TelegramBotAPI(cfg.bot_token)
+    api.set_my_commands(TELEGRAM_BOT_COMMANDS)
+    print(f"Synced {len(TELEGRAM_BOT_COMMANDS)} Telegram bot commands.")
+    print("Open the bot menu in Telegram or send /help.")
     return 0
 
 
@@ -319,9 +363,7 @@ def _telegram_pair_wait(args: argparse.Namespace) -> int:
         return 1
     _print_candidate(candidate)
     if candidate.chat_type in {"group", "supergroup"}:
-        print(
-            "Warning: group pairing grants access to the room, not just one person."
-        )
+        print("Warning: group pairing grants access to the room, not just one person.")
     if not _confirm("Create a constrained pairing token for this chat?", default=False):
         print("Pairing cancelled.")
         return 1
@@ -345,26 +387,59 @@ def _telegram_doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
     except Exception as exc:
         return [_check("config.parse", False, str(exc))]
     cp_cfg = _load_controlplane_config(config_path)
-    checks.append(_check("channel.enabled", bool(cfg.enabled), "channels.telegram.enabled"))
+    checks.append(
+        _check("channel.enabled", bool(cfg.enabled), "channels.telegram.enabled")
+    )
     token_present = bool(str(cfg.bot_token or "").strip())
-    checks.append(_check("token.present", token_present, "token=[redacted]" if token_present else "missing"))
+    checks.append(
+        _check(
+            "token.present",
+            token_present,
+            "token=[redacted]" if token_present else "missing",
+        )
+    )
     if token_present:
         try:
             me = TelegramBotAPI(cfg.bot_token).get_me()
-            checks.append(_check("bot.get_me", True, f"@{me.get('username', '')}".rstrip("@")))
+            checks.append(
+                _check("bot.get_me", True, f"@{me.get('username', '')}".rstrip("@"))
+            )
         except Exception as exc:
             checks.append(_check("bot.get_me", False, str(exc)))
     else:
         checks.append(_check("bot.get_me", False, "missing token"))
-    checks.append(_check("poll_state.writable", _path_parent_writable(cfg.polling.state_sqlite_path), cfg.polling.state_sqlite_path))
-    checks.append(_check("controlplane.writable", _path_parent_writable(cp_cfg.sqlite_path), cp_cfg.sqlite_path))
+    checks.append(
+        _check(
+            "poll_state.writable",
+            _path_parent_writable(cfg.polling.state_sqlite_path),
+            cfg.polling.state_sqlite_path,
+        )
+    )
+    checks.append(
+        _check(
+            "controlplane.writable",
+            _path_parent_writable(cp_cfg.sqlite_path),
+            cp_cfg.sqlite_path,
+        )
+    )
     checks.append(_check("pairing.mode", True, cfg.pairing.mode, required=False))
     checks.append(_check("transport.mode", True, cfg.mode, required=False))
-    webhook_ok = (not cfg.webhook.enabled) or bool(str(cfg.webhook.secret or "").strip())
+    webhook_ok = (not cfg.webhook.enabled) or bool(
+        str(cfg.webhook.secret or "").strip()
+    )
     checks.append(_check("webhook.secret", webhook_ok, "required when webhook enabled"))
-    checks.append(_check("pairings.active", True, str(_count_active_pairings(cp_cfg.sqlite_path)), required=False))
+    checks.append(
+        _check(
+            "pairings.active",
+            True,
+            str(_count_active_pairings(cp_cfg.sqlite_path)),
+            required=False,
+        )
+    )
     daemon_ok = _daemon_reachable(config_path)
-    checks.append(_check("daemon.reachable", daemon_ok, "runner/daemon status", required=False))
+    checks.append(
+        _check("daemon.reachable", daemon_ok, "runner/daemon status", required=False)
+    )
     return checks
 
 
@@ -386,7 +461,7 @@ def _resolve_setup_token(args: argparse.Namespace) -> tuple[str, str, bool]:
         token = Path(file_path).expanduser().read_text(encoding="utf-8").strip()
         return token, token, True
     if bool(getattr(args, "bot_token_stdin", False)):
-        token = sys.stdin.read().strip()
+        token = sys.stdin.readline().strip()
         return token, token, True
     unsafe = str(getattr(args, "unsafe_bot_token", "") or "").strip()
     if unsafe:
@@ -515,6 +590,38 @@ def _load_controlplane_config(config_path: str | None):
     return load_controlplane_config(config_path, env=_env_snapshot())
 
 
+def _build_unified_telegram_runner(config_path: str | None):
+    from openminion.services.runtime.lifecycle import (
+        build_channel_registry as lifecycle_build_channel_registry,
+    )
+
+    base = load_cli_config(config_path)
+    roots = resolve_cli_roots(config_path=config_path)
+    registry = lifecycle_build_channel_registry(
+        config=base,
+        home_root=roots.home_root,
+        data_root=roots.data_root,
+        logger=logging.getLogger("openminion.cli.channel.telegram"),
+    )
+    return registry.get("telegram")
+
+
+def build_unified_slack_runner(config_path: str | None):
+    from openminion.services.runtime.lifecycle import (
+        build_channel_registry as lifecycle_build_channel_registry,
+    )
+
+    base = load_cli_config(config_path)
+    roots = resolve_cli_roots(config_path=config_path)
+    registry = lifecycle_build_channel_registry(
+        config=base,
+        home_root=roots.home_root,
+        data_root=roots.data_root,
+        logger=logging.getLogger("openminion.cli.channel.slack"),
+    )
+    return registry.get("slack")
+
+
 def _env_snapshot() -> dict[str, str]:
     return resolve_environment_config().snapshot()
 
@@ -631,6 +738,18 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     status = telegram_subcommands.add_parser("status", help="Show Telegram status")
     _add_config_arg(status)
     status.set_defaults(handler=run_channel, needs_app=False)
+
+    commands_sync = telegram_subcommands.add_parser(
+        "commands-sync", help="Sync Telegram slash-command menu"
+    )
+    _add_config_arg(commands_sync)
+    commands_sync.set_defaults(handler=run_channel, needs_app=False)
+
+    from openminion.modules.controlplane.channels.slack.cli import (
+        register_slack_subcommands,
+    )
+
+    register_slack_subcommands(channel_subcommands, handler=run_channel)
 
 
 def _add_config_arg(parser: argparse.ArgumentParser) -> None:

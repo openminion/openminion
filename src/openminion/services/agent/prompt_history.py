@@ -111,3 +111,17 @@ def _resolve_system_prompt(config: OpenMinionConfig | str) -> str:
     if profile is not None and profile.system_prompt:
         return profile.system_prompt
     return "You are a helpful assistant."
+
+
+def resolve_self_awareness_prompt_answer(
+    snapshot: dict[str, Any],
+    *,
+    question: str,
+) -> str:
+    """Return a snapshot-grounded answer for explicit self-awareness prompts."""
+
+    from openminion.modules.brain.runtime.self_awareness import (
+        answer_self_awareness_question,
+    )
+
+    return answer_self_awareness_question(snapshot, question=question)

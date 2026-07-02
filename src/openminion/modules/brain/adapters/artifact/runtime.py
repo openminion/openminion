@@ -21,40 +21,27 @@ class ArtifactctlAdapter:
             "cost_estimate": 0.0,
         }
 
-    def _success_response(
+    def _response(
         self,
         *,
+        status: str,
         summary: str,
-        outputs: dict[str, Any],
         start_time: float,
+        outputs: dict[str, Any] | None = None,
         artifact_refs: list[dict[str, str]] | None = None,
+        error: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        return {
-            "status": "success",
+        response: dict[str, Any] = {
+            "status": status,
             "summary": summary,
-            "outputs": outputs,
+            "outputs": outputs or {},
             "artifact_refs": artifact_refs or [],
             "memory_refs": [],
             "metrics": self._metrics(start_time),
         }
-
-    def _error_response(
-        self,
-        *,
-        summary: str,
-        code: str,
-        message: str,
-        start_time: float,
-    ) -> dict[str, Any]:
-        return {
-            "status": "error",
-            "summary": summary,
-            "outputs": {},
-            "artifact_refs": [],
-            "memory_refs": [],
-            "metrics": self._metrics(start_time),
-            "error": {"code": code, "message": message},
-        }
+        if error is not None:
+            response["error"] = error
+        return response
 
     def _create_artifact(
         self,
@@ -100,7 +87,8 @@ class ArtifactctlAdapter:
                     session_id=session_id,
                     trace_id=trace_id,
                 )
-                return self._success_response(
+                return self._response(
+                    status="success",
                     summary=f"Artifact created: {ref.ref}",
                     outputs={
                         "id": ref.ref,
@@ -111,30 +99,34 @@ class ArtifactctlAdapter:
                     start_time=start_time,
                 )
             except Exception as exc:
-                return self._error_response(
+                return self._response(
+                    status="error",
                     summary="Failed to create artifact",
-                    code="ARTIFACT_ERROR",
-                    message=str(exc),
                     start_time=start_time,
+                    error={"code": "ARTIFACT_ERROR", "message": str(exc)},
                 )
         if tool_name == "read_artifact":
             try:
                 ref_id, data = self._read_artifact(args)
-                return self._success_response(
+                return self._response(
+                    status="success",
                     summary=f"Artifact read: {ref_id}",
                     outputs={"content": data},
                     start_time=start_time,
                 )
             except Exception as exc:
-                return self._error_response(
+                return self._response(
+                    status="error",
                     summary="Failed to read artifact",
-                    code="ARTIFACT_ERROR",
-                    message=str(exc),
                     start_time=start_time,
+                    error={"code": "ARTIFACT_ERROR", "message": str(exc)},
                 )
-        return self._error_response(
+        return self._response(
+            status="error",
             summary=f"Unknown artifact tool: {tool_name}",
-            code="NOT_FOUND",
-            message=f"Tool '{tool_name}' not supported by ArtifactctlAdapter.",
             start_time=start_time,
+            error={
+                "code": "NOT_FOUND",
+                "message": f"Tool '{tool_name}' not supported by ArtifactctlAdapter.",
+            },
         )

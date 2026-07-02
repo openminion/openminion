@@ -237,8 +237,7 @@ def _content(data: dict[str, Any]) -> str:
         percent = memory.get("used_percent")
         percent_text = f", {percent}% used" if percent is not None else ""
         lines.append(
-            f"Memory: {used} used / {total} total "
-            f"({available} available{percent_text})"
+            f"Memory: {used} used / {total} total ({available} available{percent_text})"
         )
     return "\n".join(lines) if lines else "Host metrics unavailable."
 

@@ -57,6 +57,16 @@ PYTHONDONTWRITEBYTECODE=1 \
 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py deep
 ```
 
+Run the long autonomous coding/research soak scenarios:
+
+```bash
+OPENMINION_LIVE_TUI_FOCUS_E2E=1 \
+OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 \
+OPENMINION_TUI_FOCUS_E2E_ARTIFACT_ROOT="$(cd .. && pwd)/workspace-tmp/tui-focus-soak" \
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py soak
+```
+
 Suite names:
 
 - `local`: deterministic PTY launch and slash-command smoke.
@@ -66,6 +76,7 @@ Suite names:
 - `research`: live complex/deep research prompts.
 - `coding`: live complex/deep coding prompts.
 - `long-running`: live long-running research/coding prompts.
+- `soak`: live goal-style long coding and research-to-code loops.
 - `queued-input`: focused queued-input/status tests without live credentials.
 - `progress-visibility`: progress/status rendering tests without live credentials.
 - `regression`: broad local focus/terminal/status regression suite.

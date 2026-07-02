@@ -28,6 +28,8 @@ from .base import (
 
 
 _CANCEL_RE = re.compile(r"/v1/turn/([^/]+)/cancel")
+
+
 def _handle_cancel_turn(
     ctx: APIRouteContext,
     *,

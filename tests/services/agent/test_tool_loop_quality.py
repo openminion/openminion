@@ -69,9 +69,7 @@ def test_loop_quality_observes_redundant_discovery_version_across_batches() -> N
     assert len(observations) == 1
     assert observations[0]["event_kind"] == "redundant_discovery_version_observed"
     assert observations[0]["action_class"] == "version"
-    assert (
-        observations[0]["guard_action"] == GUARD_ACTION_FINALIZE_FROM_PRIOR_RESULT
-    )
+    assert observations[0]["guard_action"] == GUARD_ACTION_FINALIZE_FROM_PRIOR_RESULT
     assert observations[0]["guard_owner"] == GUARD_OWNER_LOOP_QUALITY
     assert observations[0]["suppression_candidate"] == "true"
     assert observations[0]["turn_count"] == "2"

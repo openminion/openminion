@@ -3,6 +3,23 @@ from .interfaces import (
     TaskCtlInterface,
     ensure_task_compatibility,
 )
+from .autonomy import (
+    AutonomyProofPacket,
+    AutonomyRun,
+    AutonomyRunError,
+    AutonomyRunPhase,
+    AutonomyRunStatus,
+    AutonomyRunStore,
+    CommandEvidence,
+    ContinuationPolicy,
+    EvidenceStatus,
+    TestEvidence,
+    TestEvidenceStatus,
+    build_autonomy_run,
+    build_local_workspace_ref,
+    build_terminal_proof_packet,
+    resolve_autonomy_state_root,
+)
 from .schemas import (
     DecisionDigest,
     PendingAction,
@@ -41,7 +58,16 @@ from .runtime.persistent_service import SqlTaskCtl
 __version__ = "0.0.1"
 
 __all__ = (
+    "AutonomyProofPacket",
+    "AutonomyRun",
+    "AutonomyRunError",
+    "AutonomyRunPhase",
+    "AutonomyRunStatus",
+    "AutonomyRunStore",
+    "CommandEvidence",
+    "ContinuationPolicy",
     "DecisionDigest",
+    "EvidenceStatus",
     "InMemoryTaskCtl",
     "PendingAction",
     "PendingActionNotFoundError",
@@ -56,6 +82,8 @@ __all__ = (
     "StepNotFoundError",
     "StepUpdateInput",
     "TASK_INTERFACE_VERSION",
+    "TestEvidence",
+    "TestEvidenceStatus",
     "TaskCreateInput",
     "TaskCtlInterface",
     "TaskDigest",
@@ -71,6 +99,10 @@ __all__ = (
     "TaskOps",
     "TaskRecord",
     "TaskStatus",
+    "build_autonomy_run",
+    "build_local_workspace_ref",
+    "build_terminal_proof_packet",
     "ensure_task_compatibility",
+    "resolve_autonomy_state_root",
     "__version__",
 )

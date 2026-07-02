@@ -580,9 +580,9 @@ class SqlTaskCtl:
                     "policy_request_id": policy_request_id,
                     "decision_id": decision_id,
                     "pending_backlog_count": self._repo.count_pending_actions(),
-                "resume_latency_ms": latency_ms,
-            },
-        )
+                    "resume_latency_ms": latency_ms,
+                },
+            )
 
         cursor = ResumePointer(
             task_id=pending_row["task_id"],

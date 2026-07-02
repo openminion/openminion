@@ -24,7 +24,9 @@ def test_policy_manager_from_config_reorders_runtime_chain() -> None:
     assert ordered == ("search.tavily.search", "search.fallback")
 
 
-def test_policy_manager_config_overrides_registry_defaults_without_hiding_new_bindings() -> None:
+def test_policy_manager_config_overrides_registry_defaults_without_hiding_new_bindings() -> (
+    None
+):
     bootstrap = build_runtime_bootstrap(config=None, workspace_root=None, run_root=None)
     defaults = {
         binding_id: policy

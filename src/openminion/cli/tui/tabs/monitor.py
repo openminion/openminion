@@ -283,28 +283,26 @@ class MonitorTab(Widget):
                     yield from self._iter_right_column_blocks(mem, proc)
 
     def on_show(self) -> None:
-        self._refresh_now()
+        self._schedule_refresh()
         if self._timer is None:
-            self._timer = self.set_interval(2, self._refresh_tick)
+            self._timer = self.set_interval(2, self._schedule_refresh)
 
     def on_hide(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
+        self._stop_timer()
 
     def on_unmount(self) -> None:
+        self._stop_timer()
+
+    def action_refresh(self) -> None:
+        self._schedule_refresh()
+
+    def _schedule_refresh(self) -> None:
+        self.run_worker(self._async_refresh(), exclusive=True)
+
+    def _stop_timer(self) -> None:
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
-
-    def action_refresh(self) -> None:
-        self._refresh_now()
-
-    def _refresh_tick(self) -> None:
-        self.run_worker(self._async_refresh(), exclusive=True)
-
-    def _refresh_now(self) -> None:
-        self.run_worker(self._async_refresh(), exclusive=True)
 
     async def _async_refresh(self) -> None:
         import asyncio

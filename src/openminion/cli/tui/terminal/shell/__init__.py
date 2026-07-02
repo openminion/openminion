@@ -20,6 +20,7 @@ from rich.text import Text
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.cli.status import format_token_usage_summary
+from openminion.cli.status.tool_calls import format_tool_args_preview
 from openminion.cli.tui.presentation.models import (
     ChatMessage,
     MessageKind,
@@ -66,7 +67,9 @@ __all__ = [
     "_run_one_shot_stdin",
     "_run_agent_turn",
     "_run_interruptible_agent_turn",
+    "_build_terminal_approval_callback",
     "_route_durable_activity_event",
+    "_normalize_progress_kind",
     "_build_turn_progress_callback",
     "_finalize_turn_status_line",
     "_start_escape_interrupt_watcher",
@@ -307,6 +310,7 @@ async def _handle_slash_input(
     status_line: TerminalStatusLine,
     working_dir: str,
     custom_commands: dict,
+    approval_grants: set[str] | None = None,
 ) -> bool:
     """Dispatch a slash command and return whether the shell should exit."""
 
@@ -341,6 +345,12 @@ async def _handle_slash_input(
             runtime=runtime,
             transcript=transcript,
             status_line=status_line,
+            approval_callback=_build_terminal_approval_callback(
+                overlay=overlay,
+                session_grants=approval_grants
+                if approval_grants is not None
+                else set(),
+            ),
         )
         return False
     return await _handle_slash(
@@ -416,6 +426,7 @@ async def _run_terminal_focus_async(
         console=console,
         prompt_session=composer.prompt_session,
     )
+    approval_grants: set[str] = set()
 
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
     startup_notice_task = _schedule_startup_notice(
@@ -459,6 +470,7 @@ async def _run_terminal_focus_async(
                         status_line=status_line,
                         working_dir=working_dir,
                         custom_commands=custom_commands,
+                        approval_grants=approval_grants,
                     )
                     if should_exit:
                         return 0
@@ -480,6 +492,10 @@ async def _run_terminal_focus_async(
                     runtime=runtime,
                     transcript=transcript,
                     status_line=status_line,
+                    approval_callback=_build_terminal_approval_callback(
+                        overlay=overlay,
+                        session_grants=approval_grants,
+                    ),
                 )
             except KeyboardInterrupt:
                 if await _confirm_terminal_exit(console=console, overlay=overlay):
@@ -551,6 +567,31 @@ def _route_durable_activity_event(
     return False
 
 
+def _normalize_progress_kind(payload: dict[str, Any] | None) -> str:
+    """Normalize equivalent runtime progress event names for TUI routing."""
+
+    if not payload:
+        return ""
+    aliases = {
+        "tool_start": "tool_started",
+        "tool_started": "tool_started",
+        "tool_call_start": "tool_started",
+        "tool_call_started": "tool_started",
+        "tool_complete": "tool_completed",
+        "tool_completed": "tool_completed",
+        "tool_finish": "tool_completed",
+        "tool_finished": "tool_completed",
+        "tool_call_complete": "tool_completed",
+        "tool_call_completed": "tool_completed",
+    }
+    for key in ("kind", "source_event", "source_event_type", "event_type"):
+        raw = payload.get(key)
+        normalized = str(raw or "").strip().lower().replace(".", "_").replace("-", "_")
+        if normalized in aliases:
+            return aliases[normalized]
+    return ""
+
+
 def _build_turn_progress_callback(
     *,
     transcript: TerminalTranscript,
@@ -559,8 +600,9 @@ def _build_turn_progress_callback(
     status_line: TerminalStatusLine | None = None,
 ):
     """Build the progress callback passed to ``runtime.send_message``."""
+
     def _handle_progress(payload: dict[str, Any]) -> None:
-        kind = str(payload.get("kind", "") or "").strip() if payload else ""
+        kind = _normalize_progress_kind(payload)
         if kind == "tool_started":
             transcript.handle_tool_started(payload)
             return
@@ -582,6 +624,37 @@ def _build_turn_progress_callback(
                 setter(label)
 
     return _handle_progress
+
+
+def _format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str:
+    name = str(tool_name or "tool").strip() or "tool"
+    args_preview = format_tool_args_preview(name, dict(args or {}))
+    call_line = f"{name}({args_preview})" if args_preview else f"{name}()"
+    return f"Approval required: {call_line}"
+
+
+def _build_terminal_approval_callback(
+    *,
+    overlay: TerminalOverlayPresenter,
+    session_grants: set[str],
+) -> Callable[[str, dict[str, Any], Any], Any]:
+    async def _approval_callback(
+        tool_name: str,
+        args: dict[str, Any],
+        call_id: Any,
+    ) -> bool:
+        del call_id
+        normalized = str(tool_name or "").strip()
+        if normalized and normalized in session_grants:
+            return True
+        prompt = _format_terminal_approval_prompt(normalized, dict(args or {}))
+        decision = await overlay.present_approval_async(prompt)
+        if decision == "always" and normalized:
+            session_grants.add(normalized)
+            return True
+        return decision == "allow"
+
+    return _approval_callback
 
 
 def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) -> None:
@@ -608,6 +681,7 @@ async def _run_interruptible_agent_turn(
     runtime: Any,
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     """Run one agent turn and let Escape cancel it in terminal focus."""
 
@@ -617,6 +691,7 @@ async def _run_interruptible_agent_turn(
             runtime=runtime,
             transcript=transcript,
             status_line=status_line,
+            approval_callback=approval_callback,
         )
     )
     watcher = _start_escape_interrupt_watcher(turn_task)
@@ -644,6 +719,7 @@ async def _run_agent_turn(
     runtime: Any,
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     """Stream tokens through the transcript turn handle."""
 
@@ -651,7 +727,9 @@ async def _run_agent_turn(
         status_line.set_state(state="idle", elapsed_seconds=0.0)
     handle = transcript.begin_turn(
         role="assistant",
-        footer_provider=status_line.live_turn_footer if status_line is not None else None,
+        footer_provider=status_line.live_turn_footer
+        if status_line is not None
+        else None,
     )
     reply = ""
     from openminion.cli.status import PhaseStatusController
@@ -670,10 +748,10 @@ async def _run_agent_turn(
             status_controller=status_controller,
             status_line=status_line,
         )
-        async for chunk in runtime.send_message(
-            text,
-            progress_callback=progress_callback,
-        ):
+        send_kwargs: dict[str, Any] = {"progress_callback": progress_callback}
+        if approval_callback is not None:
+            send_kwargs["approval_callback"] = approval_callback
+        async for chunk in runtime.send_message(text, **send_kwargs):
             chunk_str = str(chunk or "")
             if not chunk_str:
                 continue

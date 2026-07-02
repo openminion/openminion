@@ -53,7 +53,6 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(state.unresolved_clarify_items, [])
         session_api.put_working_state.assert_called_once()
 
-
     def test_pending_session_action_policy_metadata_applies_to_new_state(self) -> None:
         class _SessionApi:
             store = None

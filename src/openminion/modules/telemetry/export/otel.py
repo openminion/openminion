@@ -8,8 +8,8 @@ import time
 from typing import Any, Protocol
 
 from openminion.base.config import OTELExporterConfig
-
 from ..schemas import TelemetryEvent
+from .performance_metrics import performance_metrics_for_event
 
 _LOG = logging.getLogger(__name__)
 _PROSE_KEYS = frozenset(
@@ -36,6 +36,9 @@ _CLASS_SPAN = "span"
 _CLASS_METRIC = "metric"
 _CLASS_LOG = "log_record"
 _CLASS_EXCLUDED = "excluded"
+_KIND_COUNTER = "counter"
+_KIND_GAUGE = "gauge"
+_KIND_HISTOGRAM = "histogram"
 
 _EVENT_CLASSIFICATION: dict[str, str] = {
     "storage.query": _CLASS_SPAN,
@@ -50,6 +53,7 @@ _EVENT_CLASSIFICATION: dict[str, str] = {
     "llm.cache.metrics": _CLASS_METRIC,
     "chat.phase_timing": _CLASS_SPAN,
     "module.stats": _CLASS_METRIC,
+    "tui.render": _CLASS_METRIC,
     # Generic catchalls stay out of OTel emission; module.debug.failure remains
     # a log record so runtime failure diagnostics are still visible.
     "metric": _CLASS_EXCLUDED,
@@ -444,6 +448,11 @@ class OpenTelemetryTraceExporter:
                     attributes=attributes,
                     timestamp_ns=timestamp_ns,
                 )
+                self._emit_performance_metrics(
+                    event=event,
+                    timestamp_ns=timestamp_ns,
+                    trace_key=trace_key,
+                )
             elif classification == _CLASS_METRIC:
                 self._sink.emit_metric(
                     trace_key=trace_key,
@@ -454,6 +463,11 @@ class OpenTelemetryTraceExporter:
                     value=_metric_value_for_event(event),
                     attributes=attributes,
                     timestamp_ns=timestamp_ns,
+                )
+                self._emit_performance_metrics(
+                    event=event,
+                    timestamp_ns=timestamp_ns,
+                    trace_key=trace_key,
                 )
             else:
                 self._sink.emit_event(
@@ -473,6 +487,27 @@ class OpenTelemetryTraceExporter:
                 exc,
             )
             return False
+
+    def _emit_performance_metrics(
+        self,
+        *,
+        event: TelemetryEvent,
+        timestamp_ns: int,
+        trace_key: str,
+    ) -> None:
+        if self._sink is None:
+            return
+        for metric in performance_metrics_for_event(event):
+            self._sink.emit_metric(
+                trace_key=trace_key,
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                metric_name=metric["name"],
+                metric_kind=metric["kind"],
+                value=float(metric["value"]),
+                attributes=dict(metric["attributes"]),
+                timestamp_ns=timestamp_ns,
+            )
 
     def _capture_paired_start(
         self,
@@ -796,12 +831,13 @@ def _timestamp_ns(raw_timestamp: float) -> int:
 
 
 _METRIC_KIND_BY_EVENT: dict[str, str] = {
-    "storage.pool.stats": "gauge",
-    "memory.scope_capacity.evicted": "counter",
-    "memory.soft_deleted.purged": "counter",
+    "storage.pool.stats": _KIND_GAUGE,
+    "memory.scope_capacity.evicted": _KIND_COUNTER,
+    "memory.soft_deleted.purged": _KIND_COUNTER,
     # OTEL-04 additions
-    "llm.cache.metrics": "gauge",
-    "module.stats": "gauge",
+    "llm.cache.metrics": _KIND_GAUGE,
+    "module.stats": _KIND_GAUGE,
+    "tui.render": _KIND_HISTOGRAM,
 }
 
 

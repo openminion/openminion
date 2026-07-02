@@ -1117,6 +1117,7 @@ class AdapterInterfaceContractTests(unittest.TestCase):
     def test_local_adapters_satisfy_interface_contract(self) -> None:
         from openminion.modules.brain.adapters.a2a import LocalA2AAdapter
         from openminion.modules.brain.adapters.context import LocalContextAdapter
+        from openminion.modules.brain.adapters.factory import create_safety_adapter
         from openminion.modules.brain.adapters.llm import LocalLLMAdapter
         from openminion.modules.brain.adapters.memory import LocalMemoryAdapter
         from openminion.modules.brain.adapters.policy import LocalPolicyAdapter
@@ -1136,6 +1137,7 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             policy = LocalPolicyAdapter()
             rlm = LocalRLMAdapter()
             retrieve = LocalRetrieveAdapter()
+            safety = create_safety_adapter(mode="local")
 
             self.assertEqual(session.contract_version, BRAIN_ADAPTER_INTERFACE_VERSION)
             self.assertEqual(context.contract_version, BRAIN_ADAPTER_INTERFACE_VERSION)
@@ -1149,6 +1151,7 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             ensure_adapter_compatibility(a2a, adapter_type="a2a")
             ensure_adapter_compatibility(memory, adapter_type="memory")
             ensure_adapter_compatibility(policy, adapter_type="policy")
+            ensure_adapter_compatibility(safety, adapter_type="safety")
             ensure_adapter_compatibility(rlm, adapter_type="rlm")
             ensure_adapter_compatibility(retrieve, adapter_type="retrieve")
 
@@ -1233,6 +1236,34 @@ class AdapterInterfaceContractTests(unittest.TestCase):
 
         with self.assertRaises(TypeError):
             ensure_adapter_compatibility(_Broken(), adapter_type="context")
+
+    def test_interface_validator_rejects_incompatible_safety_adapter(self) -> None:
+        class _BrokenSafety:
+            contract_version = "v1"
+
+            def is_normal(self) -> bool:  # pragma: no cover - shape only
+                return True
+
+            def stop(
+                self,
+                *,
+                session_id: str | None = None,
+                reason: str = "",
+            ) -> bool:  # pragma: no cover - shape only
+                del session_id, reason
+                return True
+
+            def kill(
+                self,
+                *,
+                session_id: str | None = None,
+                reason: str = "",
+            ) -> bool:  # pragma: no cover - shape only
+                del session_id, reason
+                return True
+
+        with self.assertRaises(TypeError):
+            ensure_adapter_compatibility(_BrokenSafety(), adapter_type="safety")
 
     def test_runner_contract_validator_accepts_state_machine_runner(self) -> None:
         profile = AgentProfile(

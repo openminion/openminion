@@ -17,12 +17,6 @@ from openminion.cli.transport.daemon_client import (
     resolve_daemon_endpoint,
 )
 from openminion.cli.bootstrap.loader import load_config
-from openminion.daemon import (
-    process_alive,
-    read_pid,
-    resolve_daemon_log_file,
-    resolve_daemon_pid_file,
-)
 
 _PROBE_STATUS_MISMATCH: str = "mismatch"
 
@@ -81,6 +75,8 @@ def daemon_start(config_path: Optional[str]) -> int:
 
 
 def daemon_stop(config_path: Optional[str]) -> int:
+    from openminion.daemon import process_alive, read_pid, resolve_daemon_pid_file
+
     endpoint = resolve_daemon_endpoint(config_path)
     config = load_config(endpoint.config_path)
     pid_file = resolve_daemon_pid_file(config)
@@ -130,6 +126,13 @@ def daemon_stop(config_path: Optional[str]) -> int:
 
 
 def daemon_status(config_path: Optional[str]) -> int:
+    from openminion.daemon import (
+        process_alive,
+        read_pid,
+        resolve_daemon_log_file,
+        resolve_daemon_pid_file,
+    )
+
     endpoint = resolve_daemon_endpoint(config_path)
     config = load_config(endpoint.config_path)
     pid_file = resolve_daemon_pid_file(config)
@@ -161,6 +164,8 @@ def daemon_status(config_path: Optional[str]) -> int:
 
 
 def daemon_logs(config_path: Optional[str], *, lines: int = 200) -> int:
+    from openminion.daemon import resolve_daemon_log_file
+
     endpoint = resolve_daemon_endpoint(config_path)
     config = load_config(endpoint.config_path)
     log_file = resolve_daemon_log_file(config)
@@ -178,6 +183,13 @@ def daemon_logs(config_path: Optional[str], *, lines: int = 200) -> int:
 
 
 def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
+    from openminion.daemon import (
+        process_alive,
+        read_pid,
+        resolve_daemon_log_file,
+        resolve_daemon_pid_file,
+    )
+
     config = load_config(endpoint.config_path)
     pid_file = resolve_daemon_pid_file(config)
     log_file = resolve_daemon_log_file(config)

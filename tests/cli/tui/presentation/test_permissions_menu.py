@@ -30,8 +30,13 @@ class _RuntimeDouble:
 def test_permission_choice_aliases_cover_human_labels() -> None:
     assert permission_choice_for_id("read-only").choice_id == PERMISSION_CHOICE_READONLY
     assert permission_choice_for_id("ask").choice_id == PERMISSION_CHOICE_ASK
-    assert permission_choice_for_id("approve-for-me").choice_id == PERMISSION_CHOICE_AUTO
-    assert permission_choice_for_id("full access").choice_id == PERMISSION_CHOICE_FULL_ACCESS
+    assert (
+        permission_choice_for_id("approve-for-me").choice_id == PERMISSION_CHOICE_AUTO
+    )
+    assert (
+        permission_choice_for_id("full access").choice_id
+        == PERMISSION_CHOICE_FULL_ACCESS
+    )
 
 
 def test_apply_ask_maps_to_default_permission_plus_action_policy_ask() -> None:

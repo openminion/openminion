@@ -403,10 +403,8 @@ def _completed_direct_tool_batch_signature(
 def _should_force_direct_tool_closure(
     loop_state: AdaptiveToolLoopState,
 ) -> bool:
-    requested_tool_names = _direct_tool_turn_requested_tool_names(loop_state)
     return (
         _direct_tool_turn_active(loop_state)
-        and len(requested_tool_names) <= 1
         and bool(getattr(loop_state, "direct_tool_requested_batch_satisfied", False))
         and not bool(getattr(loop_state, "direct_tool_closure_consumed", False))
     )

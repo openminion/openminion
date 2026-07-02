@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import inspect
 import unittest
+from unittest.mock import patch
 
 from openminion.modules.brain.loop.strategies.coding import handler
+from openminion.modules.brain.loop.strategies.coding import runtime as coding_runtime
 from openminion.modules.brain.loop.strategies.coding.handler import (
     CodingMode,
     CodingProfileRunner,
@@ -115,3 +117,36 @@ class CodingHandlerPureHelperBehaviorTests(unittest.TestCase):
         self.assertIn("scaffold", by_name["file.write"].description.lower())
         self.assertIn("structured file tools", by_name["exec.run"].description)
         self.assertIn("directories", by_name["exec.run"].description)
+
+    def test_build_tool_specs_uses_runtime_schema_when_available(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "workdir": {"type": "string"},
+            },
+            "required": ["command"],
+            "additionalProperties": False,
+        }
+        with (
+            patch.object(
+                coding_runtime,
+                "_runner_and_profile_from_context",
+                return_value=(object(), None),
+            ),
+            patch.object(
+                coding_runtime,
+                "collect_runtime_tool_schemas",
+                return_value=[
+                    {
+                        "name": "exec.run",
+                        "parameters": schema,
+                    }
+                ],
+            ),
+        ):
+            specs = handler._build_tool_specs(frozenset({"exec.run"}), ctx=object())
+
+        [spec] = specs
+        self.assertEqual(spec.input_schema, schema)
+        self.assertIn("path/cwd/working_directory", spec.description)

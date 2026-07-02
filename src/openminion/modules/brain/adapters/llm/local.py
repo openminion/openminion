@@ -277,10 +277,7 @@ class LocalLLMAdapter:
         if len(real_tool_names) == 1:
             only_tool = next(iter(real_tool_names))
             lower = str(user_input or "").strip().lower()
-            clarify_question = {
-                "file.read": "What path should I read?",
-                "weather": "Which location should I check the weather for?",
-            }.get(only_tool)
+            clarify_question = _clarify_question_for_tool(only_tool)
             if (
                 clarify_question
                 and not lower.startswith("tool ")
@@ -460,6 +457,13 @@ def _clarify_tool_response(*, model: str, question: str) -> LLMResponse:
     )
 
 
+def _clarify_question_for_tool(tool_name: str) -> str:
+    return {
+        "file.read": "What path should I read?",
+        "weather": "Which location should I check the weather for?",
+    }.get(str(tool_name or "").strip().lower(), "")
+
+
 def _context_hints(context: dict[str, Any]) -> dict[str, Any]:
     hints = context.get("hints")
     return dict(hints) if isinstance(hints, dict) else {}
@@ -514,23 +518,10 @@ def _mock_decision_from_context(
     lower = normalized.lower()
     hints = context.get("hints", {}) if isinstance(context.get("hints"), dict) else {}
     if not lower:
-        forced_tools = hints.get("forced_tools")
-        capability_category = str(hints.get("capability_category", "") or "").strip()
-        if isinstance(forced_tools, list) and forced_tools:
-            forced_name = str(forced_tools[0] or "").strip()
-            if forced_name:
-                return _mock_targeted_tool_decision(
-                    tool_name=forced_name,
-                    user_input=normalized,
-                    reason_code="mock_forced_tool",
-                )
-        if capability_category:
-            return _mock_targeted_tool_decision(
-                tool_name=capability_category,
-                user_input=normalized,
-                reason_code="mock_capability_tool",
-            )
-        return None
+        return _mock_targeted_tool_decision_from_hints(
+            hints=hints,
+            user_input=normalized,
+        )
     if lower.startswith("plan tool "):
         return {
             "route": "act",
@@ -554,20 +545,31 @@ def _mock_decision_from_context(
             "respond_kind": "answer",
             "answer": "I'm here. What can I help you with?",
         }
+    return _mock_targeted_tool_decision_from_hints(
+        hints=hints,
+        user_input=normalized,
+    )
+
+
+def _mock_targeted_tool_decision_from_hints(
+    *,
+    hints: dict[str, Any],
+    user_input: str,
+) -> dict[str, Any] | None:
     forced_tools = hints.get("forced_tools")
-    capability_category = str(hints.get("capability_category", "") or "").strip()
     if isinstance(forced_tools, list) and forced_tools:
         forced_name = str(forced_tools[0] or "").strip()
         if forced_name:
             return _mock_targeted_tool_decision(
                 tool_name=forced_name,
-                user_input=normalized,
+                user_input=user_input,
                 reason_code="mock_forced_tool",
             )
+    capability_category = str(hints.get("capability_category", "") or "").strip()
     if capability_category:
         return _mock_targeted_tool_decision(
             tool_name=capability_category,
-            user_input=normalized,
+            user_input=user_input,
             reason_code="mock_capability_tool",
         )
     return None
@@ -578,21 +580,18 @@ def _mock_targeted_tool_decision(
 ) -> dict[str, Any]:
     normalized_tool = str(tool_name or "").strip().lower()
     normalized_input = str(user_input or "").strip().lower()
-    if normalized_tool == "file.read" and not normalized_input.startswith("tool "):
+    clarify_question = _clarify_question_for_tool(normalized_tool)
+    if clarify_question and not normalized_input.startswith("tool "):
         return {
             "route": "respond",
             "confidence": 0.8,
-            "reason_code": "mock_file_read_needs_path",
+            "reason_code": (
+                "mock_file_read_needs_path"
+                if normalized_tool == "file.read"
+                else "mock_weather_needs_location"
+            ),
             "respond_kind": "clarify",
-            "question": "What path should I read?",
-        }
-    if normalized_tool == "weather" and not normalized_input.startswith("tool "):
-        return {
-            "route": "respond",
-            "confidence": 0.8,
-            "reason_code": "mock_weather_needs_location",
-            "respond_kind": "clarify",
-            "question": "Which location should I check the weather for?",
+            "question": clarify_question,
         }
     return {
         "route": "act",

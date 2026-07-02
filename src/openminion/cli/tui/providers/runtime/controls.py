@@ -147,7 +147,9 @@ class RuntimeControlsMixin:
     def set_session_action_policy_mode(self, mode: str) -> str:
         normalized = normalize_action_policy_mode_override(mode)
         if normalized is None:
-            raise ValueError("unknown action policy mode; valid modes: ask, auto, bypass")
+            raise ValueError(
+                "unknown action policy mode; valid modes: ask, auto, bypass"
+            )
         self._action_policy_mode_override = normalized
         self._persist_session_action_policy_mode(normalized)
         return normalized

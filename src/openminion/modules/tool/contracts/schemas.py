@@ -8,6 +8,7 @@ ErrorCode = Literal[
     "INVALID_ARGUMENT",
     "INVALID_REQUEST",
     "INVALID_RESPONSE",
+    "CONFIRM_REQUIRED",
     "POLICY_DENIED",
     "NOT_FOUND",
     "TIMEOUT",

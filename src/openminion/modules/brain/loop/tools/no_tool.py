@@ -250,7 +250,7 @@ class AdaptiveLoopRunnerNoToolMixin:
                 or {}
             )
             retry_count = int(retry_counts.get(retry_key, 0) or 0)
-            if retry_count < 2:
+            if retry_count < 1:
                 rendered_tools = (
                     ", ".join(requested_tools)
                     if requested_tools
@@ -261,6 +261,7 @@ class AdaptiveLoopRunnerNoToolMixin:
                     retry_counts
                 )
                 return self._retry_with_system_message(
+                    f"This is an explicit tool command for {rendered_tools}. "
                     f"The remaining required tool sequence is exactly: {rendered_tools}. "
                     "Call that sequence next and do not call other tools before it. "
                     "Do not emit submit_output yet. Do not stop to argue that more "

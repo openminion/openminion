@@ -67,7 +67,7 @@ def extract_success_memories(
     )
     if skipped is not None:
         return skipped
-    strategy_outcome_refs = _memory_barrel().write_strategy_outcome_memory(
+    strategy_outcome_refs = memory_barrel().write_strategy_outcome_memory(
         runner,
         state=state,
         outcome_status="success",
@@ -113,7 +113,7 @@ def extract_failure_memories(
     logger: CanonicalEventLogger,
     outcome_snapshot: dict[str, Any] | None = None,
 ) -> list[str]:
-    strategy_outcome_refs = _memory_barrel().write_strategy_outcome_memory(
+    strategy_outcome_refs = memory_barrel().write_strategy_outcome_memory(
         runner,
         state=state,
         outcome_status="failure",
@@ -466,7 +466,3 @@ def _complete_success_reflection(
         status="ok",
     )
     return strategy_outcome_refs + candidate_ids
-
-
-def _memory_barrel() -> Any:
-    return memory_barrel()

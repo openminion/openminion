@@ -34,11 +34,7 @@ def dispatch_execution(
     mode_name = str(getattr(handler, "mode_name", "") or "").strip()
     if not mode_name:
         raise ValueError("Execution handler must define mode_name")
-    return dispatch_execution_call(
-        ctx,
-        mode_name=mode_name,
-        execute=lambda owned_ctx: handler.execute(owned_ctx),
-    )
+    return dispatch_execution_call(ctx, mode_name=mode_name, execute=handler.execute)
 
 
 def dispatch_execution_call(

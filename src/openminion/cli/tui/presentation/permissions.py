@@ -95,7 +95,9 @@ def permission_choice_for_id(choice_id: str) -> PermissionMenuChoice:
         return _PERMISSION_CHOICES_BY_ID[normalized]
     except KeyError as exc:
         valid = ", ".join(choice.choice_id for choice in PERMISSION_MENU_CHOICES)
-        raise ValueError(f"unknown permission menu choice {choice_id!r}; valid: {valid}") from exc
+        raise ValueError(
+            f"unknown permission menu choice {choice_id!r}; valid: {valid}"
+        ) from exc
 
 
 def permission_choice_for_modes(
@@ -147,7 +149,9 @@ def apply_permission_menu_choice(
     mode = _set_runtime_permission_mode(runtime, choice.permission_mode)
     action_mode = None
     if choice.action_policy_mode is not None:
-        action_mode = _set_runtime_action_policy_mode(runtime, choice.action_policy_mode)
+        action_mode = _set_runtime_action_policy_mode(
+            runtime, choice.action_policy_mode
+        )
     status = format_permission_status_label(
         permission_mode=mode,
         action_policy_mode=action_mode,

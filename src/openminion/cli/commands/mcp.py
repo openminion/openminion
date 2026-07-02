@@ -3,17 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from openminion.api.runtime import APIRuntime
-from openminion.base.config.io import load_config, save_config
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.base.config.mcp import (
-    MCPPackageMetadataConfig,
-    MCPServerConfig,
-    coerce_mcp_server_configs,
-)
-from openminion.tools.mcp.manager import MCPFleetManager
+
+if TYPE_CHECKING:
+    from openminion.base.config.mcp import MCPServerConfig
 
 _SECRET_KEY_TOKENS = ("token", "secret", "password", "key", "authorization")
 
@@ -36,6 +31,8 @@ def run_mcp(args: argparse.Namespace) -> int:
 
 
 def _mcp_import(args: argparse.Namespace) -> int:
+    from openminion.base.config.io import load_config, save_config
+
     source_path = Path(str(getattr(args, "source", "") or "")).expanduser()
     payload = json.loads(source_path.read_text(encoding="utf-8"))
     imported = _servers_from_external_payload(payload)
@@ -58,6 +55,8 @@ def _mcp_import(args: argparse.Namespace) -> int:
 
 
 def _mcp_list(args: argparse.Namespace) -> int:
+    from openminion.base.config.io import load_config
+
     config = load_config(getattr(args, "config", None))
     print_json_payload(
         {
@@ -72,6 +71,9 @@ def _mcp_list(args: argparse.Namespace) -> int:
 
 
 def _mcp_validate(args: argparse.Namespace) -> int:
+    from openminion.base.config.io import load_config
+    from openminion.base.config.mcp import coerce_mcp_server_configs
+
     config = load_config(getattr(args, "config", None))
     servers = coerce_mcp_server_configs(config.runtime.mcp_servers)
     issues = []
@@ -95,6 +97,9 @@ def _mcp_validate(args: argparse.Namespace) -> int:
 
 
 def _mcp_test(args: argparse.Namespace) -> int:
+    from openminion.base.config.io import load_config
+    from openminion.tools.mcp.manager import MCPFleetManager
+
     config = load_config(getattr(args, "config", None))
     servers = _filter_servers(config.runtime.mcp_servers, getattr(args, "name", ""))
     manager = MCPFleetManager(servers)
@@ -121,6 +126,8 @@ def _mcp_test(args: argparse.Namespace) -> int:
 
 
 def _mcp_restart(args: argparse.Namespace) -> int:
+    from openminion.api.runtime import APIRuntime
+
     runtime = APIRuntime.from_config_path(getattr(args, "config", None))
     try:
         manager = getattr(runtime.tools, "mcp_manager", None)
@@ -139,6 +146,8 @@ def _mcp_restart(args: argparse.Namespace) -> int:
 
 
 def _mcp_logs(args: argparse.Namespace) -> int:
+    from openminion.api.runtime import APIRuntime
+
     runtime = APIRuntime.from_config_path(getattr(args, "config", None))
     try:
         manager = getattr(runtime.tools, "mcp_manager", None)
@@ -159,6 +168,11 @@ def _mcp_logs(args: argparse.Namespace) -> int:
 
 
 def _servers_from_external_payload(payload: Any) -> list[MCPServerConfig]:
+    from openminion.base.config.mcp import (
+        MCPPackageMetadataConfig,
+        MCPServerConfig,
+    )
+
     if not isinstance(payload, dict):
         raise RuntimeError("MCP import payload must be a JSON object")
     raw_servers = payload.get("mcpServers") or payload.get("servers") or {}

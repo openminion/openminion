@@ -102,8 +102,11 @@ def test_transcript_routes_tool_started_to_active_handle() -> None:
         transcript.handle_tool_started(
             {"call_id": "c1", "tool_name": "bash", "args": {"command": "ls"}}
         )
-        # Block now lives on the handle, not in scrollback.
+        # The handle owns active-tool state while the transcript gets a durable row.
         assert handle.has_active_tool() is True
+        out = buf.getvalue()
+        assert "Running" in out
+        assert "bash(ls)" in out
     finally:
         handle.complete(final_text="done")
 

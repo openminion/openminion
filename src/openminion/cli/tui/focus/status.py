@@ -53,6 +53,7 @@ class FocusLabelsMixin:
                 getattr(self._runtime, "action_policy_mode_override", "") or ""
             ),
             custom=self._statusline_custom_label(),
+            goal_loop=self._statusline_goal_loop_label(),
             queued_count=self._queued_count()
             if callable(getattr(self, "_queued_count", None))
             else len(getattr(self, "_queued_turns", []) or []),
@@ -61,6 +62,15 @@ class FocusLabelsMixin:
 
     def _statusline_custom_label(self) -> str:
         getter = getattr(self._runtime, "statusline_label", None)
+        if not callable(getter):
+            return ""
+        try:
+            return str(getter() or "").strip()
+        except (AttributeError, TypeError, ValueError):
+            return ""
+
+    def _statusline_goal_loop_label(self) -> str:
+        getter = getattr(self._runtime, "goal_statusline_label", None)
         if not callable(getter):
             return ""
         try:

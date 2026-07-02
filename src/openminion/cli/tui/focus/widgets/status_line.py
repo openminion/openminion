@@ -69,6 +69,7 @@ class FocusStatusLine(Widget):
     permission_mode: reactive[str] = reactive("default")
     action_policy_mode: reactive[str] = reactive("")
     custom_label: reactive[str] = reactive("")
+    goal_loop_label: reactive[str] = reactive("")
     agent_label: reactive[str] = reactive("")
     queued_count: reactive[int] = reactive(0)
     input_state: reactive[str] = reactive("empty")
@@ -92,6 +93,7 @@ class FocusStatusLine(Widget):
         permission_mode: str | None = None,
         action_policy_mode: str | None = None,
         custom: str | None = None,
+        goal_loop: str | None = None,
         agent: str | None = None,
         queued_count: int | None = None,
         input_state: str | None = None,
@@ -121,11 +123,11 @@ class FocusStatusLine(Widget):
                 str(permission_mode or "default").strip().lower() or "default"
             )
         if action_policy_mode is not None:
-            self.action_policy_mode = (
-                str(action_policy_mode or "").strip().lower()
-            )
+            self.action_policy_mode = str(action_policy_mode or "").strip().lower()
         if custom is not None:
             self.custom_label = str(custom or "").strip()
+        if goal_loop is not None:
+            self.goal_loop_label = str(goal_loop or "").strip()
         if agent is not None:
             self.agent_label = str(agent or "").strip()
         if queued_count is not None:
@@ -182,6 +184,9 @@ class FocusStatusLine(Widget):
         self._refresh()
 
     def watch_custom_label(self, _value: str) -> None:
+        self._refresh()
+
+    def watch_goal_loop_label(self, _value: str) -> None:
         self._refresh()
 
     def watch_agent_label(self, _value: str) -> None:
@@ -259,6 +264,8 @@ class FocusStatusLine(Widget):
             segments.append(f"permissions: {permission_label}")
         if self.custom_label:
             segments.append(f"status: {self.custom_label}")
+        if self.goal_loop_label:
+            segments.append(self.goal_loop_label)
         return segments
 
     @staticmethod

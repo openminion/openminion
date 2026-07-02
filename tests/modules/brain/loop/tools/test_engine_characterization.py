@@ -96,6 +96,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_ITERATION_CAP,
     ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_NEEDS_USER,
@@ -3561,6 +3562,132 @@ class TestFinalizeIterationCapExit:
         assert result is not None
         assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
 
+    def test_force_finalization_recovers_status_after_answer_missing_trailer(
+        self,
+    ) -> None:
+        prof = _profile(allowed_tools=frozenset({"x"}))
+        st_loop = AdaptiveToolLoopState(
+            messages=[
+                Message(
+                    role="user",
+                    content=(
+                        "Research the latest situation and append "
+                        "<finalization_status>{...}</finalization_status>."
+                    ),
+                ),
+                Message(role="tool", content='{"status":"success"}'),
+            ],
+            total_tool_calls=2,
+        )
+        state = _state()
+        state.last_user_input = (
+            "Append <finalization_status>{...}</finalization_status> after the answer."
+        )
+        loop_ctx = _LoopContext(state=state)
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="Here is the researched answer from the gathered evidence.",
+                    finish_reason="stop",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="",
+                    finalization_status={
+                        "status": "final_answer",
+                        "reasoning": "The prior answer completed the request.",
+                    },
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"x"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert (
+            result.final_text
+            == "Here is the researched answer from the gathered evidence."
+        )
+        assert result.finalization_status == {
+            "status": "final_answer",
+            "reasoning": "The prior answer completed the request.",
+            "remaining_work": "",
+            "blocking_reason": "",
+        }
+        assert len(runtime.calls) == 2
+        assert runtime.calls[1]["tool_choice"] == "none"
+        retry_messages = runtime.calls[1]["messages"]
+        assert retry_messages[-2].role == "assistant"
+        assert retry_messages[-2].content == result.final_text
+        assert retry_messages[-1].role == "system"
+        assert "Return only the structured finalization_status signal" in (
+            retry_messages[-1].content
+        )
+
+    def test_force_finalization_preserves_incomplete_typed_status(self) -> None:
+        prof = _profile(allowed_tools=frozenset({"x"}))
+        st_loop = AdaptiveToolLoopState(
+            messages=[
+                Message(role="user", content="Answer with finalization_status."),
+                Message(role="tool", content='{"status":"success"}'),
+            ],
+            total_tool_calls=1,
+        )
+        state = _state()
+        state.last_user_input = "Answer with finalization_status."
+        loop_ctx = _LoopContext(state=state)
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="I found partial evidence but not enough to finish.",
+                    finalization_status={
+                        "status": "incomplete",
+                        "reasoning": "More evidence is required.",
+                        "remaining_work": "Fetch one more source.",
+                    },
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"x"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+        assert result.final_text == "I found partial evidence but not enough to finish."
+        assert result.finalization_status is not None
+        assert result.finalization_status["remaining_work"] == "Fetch one more source."
+
     def test_force_finalization_fail_closes_when_explicit_contract_missing(
         self,
     ) -> None:
@@ -3590,6 +3717,13 @@ class TestFinalizeIterationCapExit:
                     provider="fake",
                     model="m",
                     output_text="PLAN\n- done\n\nTABLE\n- compared\n\nUNCERTAINTIES\n- none",
+                    finish_reason="stop",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="still missing status",
                     finish_reason="stop",
                 ),
             ]
@@ -3848,6 +3982,219 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
             max_output_tokens=None,
             metadata=None,
             allowed_tools=frozenset({"file.write"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_prose_prefixed_raw_tool_json_final_text(self) -> None:
+        signature = "sig-raw-tool-json"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"file.write"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "I'll create it now.\n\n"
+                        '{"tool": "file.write", "path": "README.md", '
+                        '"content": "updated"}'
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="file.read", arguments={})],
+            tool_specs=_tool_specs("file.write"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.write"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_raw_cmd_tool_json_final_text(self) -> None:
+        signature = "sig-raw-cmd-json"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"exec.run"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "Let me verify it.\n\n"
+                        '{"tool": "cmd.run", "cmd": "python -m pytest"}'
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="file.list_dir", arguments={})],
+            tool_specs=_tool_specs("exec.run"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"exec.run"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_tool_name_parameters_json_final_text(self) -> None:
+        signature = "sig-raw-tool-name-json"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"file.write", "exec.run"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "I'll build the files now.\n\n"
+                        '{"tool_name": "file.write", "parameters": {'
+                        '"path": "README.md", "content": "updated"}}'
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="plan", arguments={})],
+            tool_specs=_tool_specs("file.write", "exec.run"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_plaintext_file_write_final_text(self) -> None:
+        signature = "sig-raw-file-write-text"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"file.write"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "file.write\n"
+                        "path: /tmp/project/README.md\n"
+                        "content: # Project"
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="plan", arguments={})],
+            tool_specs=_tool_specs("file.write"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.write"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_plaintext_exec_run_final_text(self) -> None:
+        signature = "sig-raw-exec-run-text"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"exec.run"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "exec.run cmd: cd /tmp/project && PYTHONPATH=. "
+                        "python -m pytest"
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="plan", arguments={})],
+            tool_specs=_tool_specs("exec.run"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"exec.run"}),
             public_mode_tag="act",
             signature=signature,
         )
@@ -4579,6 +4926,9 @@ def test_execution_preface_draft_detects_progress_note_after_tool_results() -> N
     assert _looks_like_execution_preface_draft(
         "Based on the existing tool results, I can see the project is mostly "
         "complete. Let me verify the tests."
+    )
+    assert _looks_like_execution_preface_draft(
+        "Proceeding to add `tests/` and `pyproject.toml`, then run validation."
     )
 
 

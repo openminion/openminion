@@ -2,6 +2,8 @@ from pathlib import Path
 import shlex
 from typing import Any, Dict
 
+from openminion.modules.tool.commands import normalize_cd_prefixed_command
+
 from .policy import Policy, canonical_tool_name
 from .dangerous import detect_dangerous_command
 from ..registry.catalog import ToolSpec
@@ -27,6 +29,15 @@ def run_policy_preflight(
 
     if canonical_name in ("cmd.run", "exec.run"):
         if canonical_name == "exec.run":
+            raw_command = str(args.get("command", "") or "")
+            normalized_command, normalized_workdir = normalize_cd_prefixed_command(
+                command=raw_command,
+                workdir=args.get("workdir") or args.get("cwd"),
+            )
+            if normalized_command != raw_command:
+                args["command"] = normalized_command
+                if normalized_workdir:
+                    args["workdir"] = normalized_workdir
             raw_command = str(args.get("command", "") or "")
             argv = shlex.split(raw_command) if raw_command else []
         else:

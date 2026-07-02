@@ -8,6 +8,7 @@ _RUNTIME_BUDGET_ONLY_MESSAGES = (
     "[act] budget exhausted before a final answer.",
     "[act] reached the adaptive iteration cap without a final answer.",
     "[act] repeated identical tool calls detected without reaching a final answer.",
+    "[act] repeated the same tool pattern without reaching a final answer.",
 )
 _TEMPORAL_FACT_DATE_KEYS = (
     "published_at",

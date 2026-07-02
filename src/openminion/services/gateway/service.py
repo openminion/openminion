@@ -1,5 +1,7 @@
 import asyncio
+import concurrent.futures
 import contextlib
+import inspect
 import logging
 from collections.abc import AsyncIterator
 from typing import Any, Callable, Dict, Optional, Tuple, cast
@@ -190,6 +192,7 @@ class GatewayService:
         typed_turn_intent: TypedTurnIntent | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> AsyncIterator[GatewayStreamEvent]:
+        loop = asyncio.get_running_loop()
         queue: asyncio.Queue[GatewayStreamEvent] = asyncio.Queue()
 
         def _progress_callback(payload: object) -> None:
@@ -207,27 +210,73 @@ class GatewayService:
             if event is None:
                 return
             try:
-                queue.put_nowait(event)
+                loop.call_soon_threadsafe(queue.put_nowait, event)
             except Exception:
                 return
 
-        task = asyncio.create_task(
-            self.handle_message(
-                channel=channel,
-                target=target,
-                body=body,
-                session_id=session_id,
-                idempotency_key=idempotency_key,
-                request_id=request_id,
-                inbound_metadata=inbound_metadata,
-                deliver=deliver,
-                forced_tools=forced_tools,
-                capability_category=capability_category,
-                typed_turn_intent=typed_turn_intent,
-                progress_callback=_progress_callback,
-                approval_callback=approval_callback,
-            )
-        )
+        def _approval_callback_bridge(
+            callback: Callable[..., Any] | None,
+        ) -> Callable[..., Any] | None:
+            if callback is None:
+                return None
+
+            async def _approval_callback(*args: Any, **kwargs: Any) -> Any:
+                future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+
+                def _invoke_on_stream_loop() -> None:
+                    try:
+                        result = callback(*args, **kwargs)
+                        if inspect.isawaitable(result):
+
+                            async def _await_result() -> None:
+                                try:
+                                    future.set_result(await result)
+                                except Exception as exc:  # pragma: no cover - bridge
+                                    future.set_exception(exc)
+
+                            asyncio.create_task(_await_result())
+                        else:
+                            future.set_result(result)
+                    except Exception as exc:  # pragma: no cover - bridge
+                        future.set_exception(exc)
+
+                loop.call_soon_threadsafe(_invoke_on_stream_loop)
+                return await asyncio.to_thread(future.result)
+
+            return _approval_callback
+
+        bridged_approval_callback = _approval_callback_bridge(approval_callback)
+
+        def _run_message_turn() -> Message:
+            worker_loop = asyncio.new_event_loop()
+            try:
+                return worker_loop.run_until_complete(
+                    self.handle_message(
+                        channel=channel,
+                        target=target,
+                        body=body,
+                        session_id=session_id,
+                        idempotency_key=idempotency_key,
+                        request_id=request_id,
+                        inbound_metadata=inbound_metadata,
+                        deliver=deliver,
+                        forced_tools=forced_tools,
+                        capability_category=capability_category,
+                        typed_turn_intent=typed_turn_intent,
+                        progress_callback=_progress_callback,
+                        approval_callback=bridged_approval_callback,
+                    )
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    worker_loop.run_until_complete(worker_loop.shutdown_asyncgens())
+                with contextlib.suppress(Exception):
+                    worker_loop.run_until_complete(
+                        worker_loop.shutdown_default_executor()
+                    )
+                worker_loop.close()
+
+        task = asyncio.create_task(asyncio.to_thread(_run_message_turn))
         try:
             while True:
                 if task.done() and queue.empty():

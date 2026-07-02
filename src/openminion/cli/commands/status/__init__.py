@@ -2,35 +2,32 @@ from __future__ import annotations
 
 import argparse
 
+from openminion.cli.config import load_cli_config
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.cli.config import load_cli_config
-from .action_policy import run_action_policy_status
-from .identity import run_identity_status, run_self_improvement_status
-from .runtime import (
-    run_capabilities_status,
-    run_extensions_status,
-    run_onboarding_status,
-    run_runtime_status,
-    run_tools_status,
-)
-from openminion.api.queries.owner import get_owner_status
-from openminion.services.runtime.run_status import (
-    list_session_run_events,
-    list_session_runs,
-)
-from openminion.modules.storage.runtime.context import build_runtime_storage
-from openminion.modules.storage.runtime.sqlite import resolve_database_path
 
 
 def run_status(args) -> int:
     if args.status_command == "onboarding":
+        from .runtime import run_onboarding_status
+
         return run_onboarding_status(args)
     config = load_cli_config(args.config)
+    from .action_policy import run_action_policy_status
+    from .identity import run_identity_status, run_self_improvement_status
+    from .runtime import (
+        run_capabilities_status,
+        run_extensions_status,
+        run_runtime_status,
+        run_tools_status,
+    )
+    from .self import run_self_status
+
     handler = {
         "tools": run_tools_status,
         "capabilities": run_capabilities_status,
         "runtime": run_runtime_status,
+        "self": run_self_status,
         "identity": run_identity_status,
         "action-policy": run_action_policy_status,
         "extensions": run_extensions_status,
@@ -40,6 +37,8 @@ def run_status(args) -> int:
     if args.status_command in {"notes", "note-activate"}:
         return run_self_improvement_status(args, config=config)
     if args.status_command == "owner":
+        from openminion.api.queries.owner import get_owner_status
+
         payload = {
             "ok": True,
             **get_owner_status(
@@ -51,6 +50,13 @@ def run_status(args) -> int:
         }
         _print_owner_status(payload=payload, as_json=bool(args.json))
         return 0
+
+    from openminion.modules.storage.runtime.context import build_runtime_storage
+    from openminion.modules.storage.runtime.sqlite import resolve_database_path
+    from openminion.services.runtime.run_status import (
+        list_session_run_events,
+        list_session_runs,
+    )
 
     storage_path = resolve_database_path(config.storage.path)
     runtime_storage = build_runtime_storage(storage_path)
@@ -386,6 +392,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         status_subcommands,
         "runtime",
         "Inspect runtime mode, bridge posture, and execution-boundary posture",
+    )
+    _register_simple_status_subcommand(
+        status_subcommands,
+        "self",
+        "Inspect runtime self-awareness snapshot and degraded sections",
     )
     _register_status_owner_subcommand(status_subcommands)
     _register_simple_status_subcommand(

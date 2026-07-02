@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest import mock
 
 from openminion.base.types import Message
@@ -97,9 +98,113 @@ class GatewayServiceStreamingTests(GatewayServiceTestCase):
         assert budget.kind == "budget_event"
         assert budget.budget_event_type == "budget.extended"
 
+    def test_handle_message_streaming_flushes_progress_during_blocking_turn(
+        self,
+    ) -> None:
+        async def _fake_handle_message(**kwargs):  # type: ignore[no-untyped-def]
+            progress_callback = kwargs.get("progress_callback")
+            assert callable(progress_callback)
+            progress_callback(
+                {
+                    "kind": "tool_started",
+                    "trace_id": "trace-blocking",
+                    "tool_name": "weather",
+                    "args": {"location": "Tokyo"},
+                }
+            )
+            time.sleep(0.25)
+            progress_callback(
+                {
+                    "kind": "tool_completed",
+                    "trace_id": "trace-blocking",
+                    "tool_name": "weather",
+                    "args": {"location": "Tokyo"},
+                    "ok": True,
+                    "duration_ms": 250,
+                    "content": "Tokyo weather now.",
+                }
+            )
+            return Message(
+                channel="console",
+                target="cli-chat",
+                body="final answer",
+                metadata={"run_id": "trace-blocking"},
+            )
+
+        with mock.patch.object(
+            self.gateway, "handle_message", side_effect=_fake_handle_message
+        ):
+            first_elapsed, events = asyncio.run(
+                _collect_stream_with_first_elapsed(
+                    self.gateway.handle_message_streaming(
+                        channel="console",
+                        target="cli-chat",
+                        body="weather please",
+                    )
+                )
+            )
+
+        assert first_elapsed < 0.15
+        assert [event.kind for event in events] == [
+            "tool_call_started",
+            "tool_call_completed",
+            "final_message",
+        ]
+
+    def test_handle_message_streaming_runs_approval_callback_on_stream_loop(
+        self,
+    ) -> None:
+        approval_calls: list[str] = []
+
+        async def _approval_callback(tool_name, arguments, context):  # type: ignore[no-untyped-def]
+            del arguments, context
+            approval_calls.append(str(tool_name))
+            return True
+
+        async def _fake_handle_message(**kwargs):  # type: ignore[no-untyped-def]
+            approval_callback = kwargs.get("approval_callback")
+            assert callable(approval_callback)
+            approved = await approval_callback("file.write", {"path": "x"}, None)
+            return Message(
+                channel="console",
+                target="cli-chat",
+                body=f"approved={approved}",
+                metadata={"run_id": "trace-approval"},
+            )
+
+        with mock.patch.object(
+            self.gateway, "handle_message", side_effect=_fake_handle_message
+        ):
+            events = asyncio.run(
+                _collect_stream(
+                    self.gateway.handle_message_streaming(
+                        channel="console",
+                        target="cli-chat",
+                        body="write file",
+                        approval_callback=_approval_callback,
+                    )
+                )
+            )
+
+        assert approval_calls == ["file.write"]
+        assert events[-1].final_message is not None
+        assert events[-1].final_message["body"] == "approved=True"
+
 
 async def _collect_stream(stream):  # noqa: ANN001, ANN201
     events = []
     async for item in stream:
         events.append(item)
     return events
+
+
+async def _collect_stream_with_first_elapsed(stream):  # noqa: ANN001, ANN201
+    events = []
+    first_elapsed = None
+    started_at = time.perf_counter()
+    async for item in stream:
+        if first_elapsed is None:
+            first_elapsed = time.perf_counter() - started_at
+        events.append(item)
+    assert first_elapsed is not None
+    return first_elapsed, events
