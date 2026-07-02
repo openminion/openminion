@@ -3994,6 +3994,219 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
             is True
         )
 
+    def test_returns_none_on_prose_prefixed_raw_tool_json_final_text(self) -> None:
+        signature = "sig-raw-tool-json"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"file.write"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "I'll create it now.\n\n"
+                        '{"tool": "file.write", "path": "README.md", '
+                        '"content": "updated"}'
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="file.read", arguments={})],
+            tool_specs=_tool_specs("file.write"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.write"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_raw_cmd_tool_json_final_text(self) -> None:
+        signature = "sig-raw-cmd-json"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"exec.run"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "Let me verify it.\n\n"
+                        '{"tool": "cmd.run", "cmd": "python -m pytest"}'
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="file.list_dir", arguments={})],
+            tool_specs=_tool_specs("exec.run"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"exec.run"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_tool_name_parameters_json_final_text(self) -> None:
+        signature = "sig-raw-tool-name-json"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"file.write", "exec.run"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "I'll build the files now.\n\n"
+                        '{"tool_name": "file.write", "parameters": {'
+                        '"path": "README.md", "content": "updated"}}'
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="plan", arguments={})],
+            tool_specs=_tool_specs("file.write", "exec.run"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_plaintext_file_write_final_text(self) -> None:
+        signature = "sig-raw-file-write-text"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"file.write"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "file.write\n"
+                        "path: /tmp/project/README.md\n"
+                        "content: # Project"
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="plan", arguments={})],
+            tool_specs=_tool_specs("file.write"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.write"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
+    def test_returns_none_on_plaintext_exec_run_final_text(self) -> None:
+        signature = "sig-raw-exec-run-text"
+        st_loop = self._prepare_state_with_facts(signature)
+        prof = _profile(allowed_tools=frozenset({"exec.run"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "exec.run cmd: cd /tmp/project && PYTHONPATH=. "
+                        "python -m pytest"
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="plan", arguments={})],
+            tool_specs=_tool_specs("exec.run"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"exec.run"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert dur >= 0
+        assert tok >= 0
+        assert (
+            st_loop.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"]
+            is True
+        )
+
     def test_returns_budget_exhausted_when_tokens_zero(self) -> None:
         signature = "sig-7"
         st_loop = self._prepare_state_with_facts(signature)

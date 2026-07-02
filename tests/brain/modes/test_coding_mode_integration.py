@@ -14,6 +14,11 @@ import pytest
 
 from openminion.modules.brain.loop.strategies.coding import CodingMode
 from openminion.modules.brain.loop.strategies.coding.loop_state import CodingLoopState
+from openminion.modules.brain.loop.tools import (
+    ADAPTIVE_TERM_CIRCULAR_PATTERN,
+    AdaptiveToolLoopOutcome,
+    AdaptiveToolLoopState,
+)
 from openminion.modules.brain.loop.tools.confirmation import (
     attach_confirmation_replay_queue,
     confirmation_required_user_message,
@@ -2844,6 +2849,33 @@ def test_coding_loop_stops_on_token_budget_exhausted() -> None:
     assert result.status in ("active",)
     assert result.action_result is not None
     assert "budget" in (result.message or "").lower()
+
+
+def test_coding_loop_circular_pattern_returns_recoverable_result() -> None:
+    llm_client = _FakeLLMClient()
+    executor = _FakeCommandExecutor()
+    handler = CodingMode()
+    ctx = _ctx(llm_client, executor)
+    outcome = AdaptiveToolLoopOutcome(
+        profile_name="coding_v1",
+        mode_name="act_loop_adaptive",
+        state=AdaptiveToolLoopState(),
+        termination_reason=ADAPTIVE_TERM_CIRCULAR_PATTERN,
+        allowed_tools=frozenset({"file.write", "exec.run"}),
+        error_message="circular pattern",
+    )
+
+    result = handler._result_from_outcome(
+        ctx,
+        outcome=outcome,
+        allowed_tools=frozenset({"file.write", "exec.run"}),
+    )
+
+    assert result.status == "active"
+    assert "repeated the same tool pattern" in (result.message or "")
+    assert result.action_result is not None
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_circular_tool_pattern"
 
 
 # LLM error response

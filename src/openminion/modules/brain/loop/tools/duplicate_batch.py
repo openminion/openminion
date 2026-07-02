@@ -214,10 +214,29 @@ def _looks_like_unexecutable_tool_markup_final_text(text: str) -> bool:
     token = str(text or "").strip()
     if not token:
         return False
+    lower = token.lower()
     return (
         detect_raw_envelope(token)
         or detect_raw_tool_markup(token)
         or detect_raw_tool_payload_json(token)
+        or (
+            any(tool_key in lower for tool_key in ('"tool"', '"tool_name"'))
+            and any(
+                arg_key in lower
+                for arg_key in (
+                    '"arguments"',
+                    '"args"',
+                    '"cmd"',
+                    '"command"',
+                    '"content"',
+                    '"parameters"',
+                    '"path"',
+                    '"query"',
+                )
+            )
+        )
+        or ("file.write" in lower and "path:" in lower and "content:" in lower)
+        or ("exec.run" in lower and ("cmd:" in lower or "command:" in lower))
     )
 
 
