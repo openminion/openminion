@@ -100,6 +100,20 @@ def test_copyable_text_for_system_and_error_returns_body() -> None:
     assert copyable_text_for_message(err_msg) == "boom"
 
 
+def test_message_widget_records_render_chunk_measurement() -> None:
+    widget = MessageWidget(_agent(""))
+
+    widget.update_body("partial response", streaming=False)
+
+    snapshot = widget.render_measurement_snapshot()
+    assert snapshot is not None
+    assert snapshot["view_family"] == "chat"
+    assert snapshot["render_chunk_ms"] >= 0
+    assert snapshot["queue_pressure"] == 0
+    assert snapshot["retained_messages"] == 1
+    assert snapshot["outcome"] in {"ok", "missing_widget"}
+
+
 @pytest.mark.asyncio
 async def test_chat_view_selection_apis_track_one_message() -> None:
     app = _ChatHarness()
@@ -131,6 +145,26 @@ async def test_chat_view_selection_apis_track_one_message() -> None:
 
         app.chat.clear_selection()
         assert app.chat.selected_message_id is None
+
+
+@pytest.mark.asyncio
+async def test_chat_view_records_bounded_render_measurements() -> None:
+    app = _ChatHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.chat.set_messages([_user("a"), _agent("b")])
+        await pilot.pause()
+        app.chat.push_message(_tool(body="exec.run: pwd"))
+        await pilot.pause()
+
+        snapshots = app.chat.render_measurements_snapshot()
+        assert len(snapshots) >= 2
+        latest = snapshots[-1]
+        assert latest["view_family"] == "chat"
+        assert latest["render_chunk_ms"] >= 0
+        assert latest["queue_pressure"] == 1
+        assert latest["retained_messages"] == 3
+        assert latest["outcome"] == "ok"
 
 
 @pytest.mark.asyncio

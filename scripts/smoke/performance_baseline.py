@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import cProfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+import io
 import json
+import math
 import os
 from pathlib import Path
 import platform
+import pstats
 import statistics
 import subprocess
 import sys
@@ -24,8 +28,8 @@ from openminion.services.context.budget import (
     assemble_budgeted_context,
 )
 
-ARTIFACT_SCHEMA_VERSION = "pbhg.baseline.v1"
-LANE_ARTIFACT_DIR = "openminion-performance-baseline-harness-and-gates-2026-07-01"
+ARTIFACT_SCHEMA_VERSION = "pomv2.performance.v2"
+LANE_ARTIFACT_DIR = "openminion-performance-observability-and-measurement-v2-2026-07-02"
 DEFAULT_SCENARIOS = (
     "cold_focus_startup",
     "warm_focus_startup",
@@ -39,6 +43,10 @@ DEFAULT_SCENARIOS = (
 LOCAL_VARIANCE = "local_deterministic"
 REPLAY_VARIANCE = "replay_fixture"
 WARN_ONLY_VARIANCE = "provider_warn_only"
+DEFAULT_THRESHOLD_MODE = "warn"
+PROFILE_TOP_LIMIT = 20
+IMPORTTIME_TOP_LIMIT = 20
+TRACEMALLOC_TOP_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -62,6 +70,9 @@ class RunOptions:
     timeout_seconds: int
     include_importtime: bool
     profile: bool
+    warmup_runs: int = 0
+    compare_baseline: Path | None = None
+    threshold_mode: str = DEFAULT_THRESHOLD_MODE
 
 
 def _workspace_root() -> Path:
@@ -93,6 +104,26 @@ def _current_rss_bytes() -> int:
             return 0
 
 
+def _dirty_worktree_summary(workspace_root: Path) -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(workspace_root / "openminion"), "status", "--short"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except Exception:
+        return {"available": False, "has_changes": None, "change_count": None}
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    return {
+        "available": result.returncode == 0,
+        "has_changes": bool(lines),
+        "change_count": len(lines),
+        "sample": lines[:20],
+    }
+
+
 def _elapsed_ms(started: float) -> int:
     return max(0, int((time.perf_counter() - started) * 1000))
 
@@ -110,6 +141,7 @@ def _base_metrics() -> dict[str, Any]:
         "context_assembly_ms": None,
         "prompt_tokens_estimated": None,
         "prompt_bytes": None,
+        "tool_schema_bytes": None,
         "tool_call_count": 0,
         "duplicate_call_count": 0,
         "rss_start_bytes": _current_rss_bytes(),
@@ -119,6 +151,11 @@ def _base_metrics() -> dict[str, Any]:
         "tracemalloc_peak_bytes": None,
         "import_self_us": None,
         "import_cumulative_us": None,
+        "importtime_artifact": None,
+        "importtime_summary_artifact": None,
+        "importtime_top_modules": [],
+        "importtime_module_families": [],
+        "tracemalloc_snapshot_diff": [],
     }
 
 
@@ -136,6 +173,26 @@ def _finish_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     return metrics
 
 
+def _tracemalloc_diff_summary(
+    before: tracemalloc.Snapshot,
+    after: tracemalloc.Snapshot,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for stat in after.compare_to(before, "lineno")[:TRACEMALLOC_TOP_LIMIT]:
+        frame = stat.traceback[0] if stat.traceback else None
+        entries.append(
+            {
+                "filename": str(frame.filename) if frame else "",
+                "lineno": int(frame.lineno) if frame else 0,
+                "size_diff_bytes": int(stat.size_diff),
+                "count_diff": int(stat.count_diff),
+                "size_bytes": int(stat.size),
+                "count": int(stat.count),
+            }
+        )
+    return entries
+
+
 def _run_with_metrics(
     *,
     scenario_id: str,
@@ -145,6 +202,7 @@ def _run_with_metrics(
     action: Callable[[dict[str, Any]], list[str]],
 ) -> ScenarioRun:
     tracemalloc.start()
+    before_snapshot = tracemalloc.take_snapshot()
     metrics = _base_metrics()
     started = time.perf_counter()
     notes: list[str] = []
@@ -172,6 +230,14 @@ def _run_with_metrics(
             error=f"{type(exc).__name__}: {exc}",
         )
     finally:
+        if tracemalloc.is_tracing():
+            try:
+                metrics["tracemalloc_snapshot_diff"] = _tracemalloc_diff_summary(
+                    before_snapshot,
+                    tracemalloc.take_snapshot(),
+                )
+            except Exception:
+                metrics["tracemalloc_snapshot_diff"] = []
         tracemalloc.stop()
 
 
@@ -217,24 +283,78 @@ def _run_subprocess(command: list[str], *, options: RunOptions, data_root: Path)
     )
 
 
-def _parse_importtime(stderr: str) -> tuple[int | None, int | None]:
-    self_values: list[int] = []
-    cumulative_values: list[int] = []
+def _module_family(module_name: str) -> str:
+    normalized = str(module_name or "").strip()
+    if not normalized:
+        return "unknown"
+    parts = normalized.split(".")
+    if parts[0] == "openminion" and len(parts) >= 2:
+        return ".".join(parts[:2])
+    return parts[0]
+
+
+def _parse_importtime_report(stderr: str) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
     for line in stderr.splitlines():
         if not line.startswith("import time:"):
             continue
         parts = [part.strip() for part in line.removeprefix("import time:").split("|")]
-        if len(parts) < 2:
+        if len(parts) < 3:
             continue
         try:
-            self_values.append(int(parts[0]))
-            cumulative_values.append(int(parts[1]))
+            self_us = int(parts[0])
+            cumulative_us = int(parts[1])
         except ValueError:
             continue
-    return (
-        max(self_values) if self_values else None,
-        max(cumulative_values) if cumulative_values else None,
-    )
+        module_name = parts[2].strip()
+        entries.append(
+            {
+                "module": module_name,
+                "module_family": _module_family(module_name),
+                "self_us": self_us,
+                "cumulative_us": cumulative_us,
+            }
+        )
+    families: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        family = str(entry["module_family"])
+        bucket = families.setdefault(
+            family,
+            {
+                "module_family": family,
+                "self_us": 0,
+                "cumulative_us": 0,
+                "module_count": 0,
+            },
+        )
+        bucket["self_us"] = int(bucket["self_us"]) + int(entry["self_us"])
+        bucket["cumulative_us"] = max(
+            int(bucket["cumulative_us"]),
+            int(entry["cumulative_us"]),
+        )
+        bucket["module_count"] = int(bucket["module_count"]) + 1
+    return {
+        "max_self_us": max((int(entry["self_us"]) for entry in entries), default=None),
+        "max_cumulative_us": max(
+            (int(entry["cumulative_us"]) for entry in entries),
+            default=None,
+        ),
+        "top_self": sorted(
+            entries,
+            key=lambda item: int(item["self_us"]),
+            reverse=True,
+        )[:IMPORTTIME_TOP_LIMIT],
+        "top_cumulative": sorted(
+            entries,
+            key=lambda item: int(item["cumulative_us"]),
+            reverse=True,
+        )[:IMPORTTIME_TOP_LIMIT],
+        "module_families": sorted(
+            families.values(),
+            key=lambda item: int(item["cumulative_us"]),
+            reverse=True,
+        )[:IMPORTTIME_TOP_LIMIT],
+    }
 
 
 def _capture_importtime(
@@ -243,17 +363,39 @@ def _capture_importtime(
     command: list[str],
     options: RunOptions,
     data_root: Path,
-) -> tuple[int | None, int | None, str | None]:
+) -> dict[str, Any]:
     if not options.include_importtime:
-        return None, None, None
+        return {
+            "max_self_us": None,
+            "max_cumulative_us": None,
+            "raw_artifact": None,
+            "summary_artifact": None,
+            "top_self": [],
+            "top_cumulative": [],
+            "module_families": [],
+        }
     import_command = [str(options.python), "-X", "importtime", *command[1:]]
     completed = _run_subprocess(import_command, options=options, data_root=data_root)
-    self_us, cumulative_us = _parse_importtime(completed.stderr)
+    report = _parse_importtime_report(completed.stderr)
     out_dir = options.output_root / "importtime"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{_utc_timestamp()}-{scenario_id}.txt"
     path.write_text(completed.stderr, encoding="utf-8")
-    return self_us, cumulative_us, str(path)
+    summary_path = out_dir / f"{_utc_timestamp()}-{scenario_id}.json"
+    summary = {
+        "scenario_id": scenario_id,
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        **report,
+    }
+    summary_path.write_text(
+        json.dumps(summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    return {
+        **report,
+        "raw_artifact": str(path),
+        "summary_artifact": str(summary_path),
+    }
 
 
 def _measure_focus_startup(
@@ -280,20 +422,26 @@ def _measure_focus_startup(
             metrics["prompt_ready_marker"] = prompt_ready
             if not prompt_ready or completed.returncode != 0:
                 metrics["stderr_tail"] = completed.stderr[-500:]
-            self_us, cumulative_us, import_path = _capture_importtime(
+            import_report = _capture_importtime(
                 scenario_id=scenario_id,
                 command=command,
                 options=options,
                 data_root=data_root,
             )
-            metrics["import_self_us"] = self_us
-            metrics["import_cumulative_us"] = cumulative_us
+            metrics["import_self_us"] = import_report["max_self_us"]
+            metrics["import_cumulative_us"] = import_report["max_cumulative_us"]
+            metrics["importtime_artifact"] = import_report["raw_artifact"]
+            metrics["importtime_summary_artifact"] = import_report["summary_artifact"]
+            metrics["importtime_top_modules"] = import_report["top_cumulative"]
+            metrics["importtime_module_families"] = import_report["module_families"]
             notes = [
                 "Startup command uses `openminion focus --help` as a non-interactive prompt-readiness proxy.",
                 "RSS fields measure the harness process; child process max RSS is not portable in this runner.",
             ]
-            if import_path:
-                notes.append(f"Import-time stderr captured at {import_path}.")
+            if import_report["raw_artifact"]:
+                notes.append(
+                    f"Import-time stderr captured at {import_report['raw_artifact']}."
+                )
             return notes
         finally:
             if temp_context is not None:
@@ -322,6 +470,18 @@ def _measure_replay_turn(scenario_id: str, prompt: str, answer: str) -> Scenario
         metrics["prompt_tokens_estimated"] = _estimate_tokens(prompt)
         metrics["prompt_bytes"] = len(prompt.encode("utf-8"))
         metrics["transcript_bytes"] = len(payload.encode("utf-8"))
+        metrics["segment_family_metrics"] = [
+            {
+                "segment_family": "replay_user",
+                "prompt_bytes": len(prompt.encode("utf-8")),
+                "prompt_tokens_estimated": _estimate_tokens(prompt),
+            },
+            {
+                "segment_family": "replay_assistant",
+                "prompt_bytes": len(answer.encode("utf-8")),
+                "prompt_tokens_estimated": _estimate_tokens(answer),
+            },
+        ]
         metrics["tool_call_count"] = 0
         return [
             "Replay fixture path: measures harness/payload shape without provider latency.",
@@ -348,6 +508,23 @@ def _measure_local_status_tool_turn() -> ScenarioRun:
         metrics["phase_timings_ms"] = {"local_status_collect_ms": 0}
         metrics["prompt_tokens_estimated"] = _estimate_tokens(serialized)
         metrics["prompt_bytes"] = len(serialized.encode("utf-8"))
+        metrics["tool_schema_bytes"] = len(
+            json.dumps(
+                {
+                    "name": "local.status",
+                    "description": "Collect local deterministic status facts.",
+                    "input_schema": {"type": "object", "properties": {}},
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        metrics["tool_family_metrics"] = [
+            {
+                "tool_family": "local_status",
+                "tool_schema_bytes": metrics["tool_schema_bytes"],
+                "tool_call_count": 1,
+            }
+        ]
         metrics["tool_call_count"] = 1
         return ["Local deterministic status/tool-style fixture; no provider or network work."]
 
@@ -399,6 +576,28 @@ def _measure_context_heavy_turn() -> ScenarioRun:
         metrics["segment_count"] = len(history)
         metrics["messages_after_trim"] = telemetry["messages_after_trim"]
         metrics["trimmed_count"] = telemetry["trimmed_count"]
+        metrics["segment_family_metrics"] = [
+            {
+                "segment_family": "system",
+                "prompt_bytes": sum(
+                    len(str(message.body or "").encode("utf-8"))
+                    for message in system
+                ),
+                "prompt_tokens_estimated": sum(
+                    _estimate_tokens(str(message.body or "")) for message in system
+                ),
+            },
+            {
+                "segment_family": "history",
+                "prompt_bytes": sum(
+                    len(str(message.body or "").encode("utf-8"))
+                    for message in history
+                ),
+                "prompt_tokens_estimated": sum(
+                    _estimate_tokens(str(message.body or "")) for message in history
+                ),
+            },
+        ]
         return ["Uses the existing context budget owner to create a replayable context-heavy measurement."]
 
     return _run_with_metrics(
@@ -492,24 +691,95 @@ def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
 def _percentile(values: list[int], pct: int) -> int | None:
     if not values:
         return None
-    if len(values) == 1:
-        return values[0]
-    return int(statistics.quantiles(values, n=100)[pct - 1])
+    index = max(0, min(len(values) - 1, math.ceil((pct / 100.0) * len(values)) - 1))
+    return values[index]
 
 
 def _metric_summary(values: Iterable[Any]) -> dict[str, int | None]:
     ints = sorted(int(value) for value in values if isinstance(value, int))
     if not ints:
-        return {"min": None, "median": None, "p95": None, "max": None}
+        return {
+            "count": 0,
+            "min": None,
+            "median": None,
+            "p90": None,
+            "p95": None,
+            "max": None,
+            "mean": None,
+            "stddev": None,
+            "coefficient_of_variation": None,
+        }
+    mean = statistics.mean(ints)
+    stddev = statistics.pstdev(ints) if len(ints) > 1 else 0.0
     return {
+        "count": len(ints),
         "min": ints[0],
         "median": int(statistics.median(ints)),
-        "p95": _percentile(ints, 95) if len(ints) >= 5 else None,
+        "p90": _percentile(ints, 90),
+        "p95": _percentile(ints, 95),
         "max": ints[-1],
+        "mean": round(mean, 2),
+        "stddev": round(stddev, 2),
+        "coefficient_of_variation": (
+            round(stddev / mean, 4) if mean > 0 else None
+        ),
     }
 
 
-def summarize_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
+def _load_comparison_baseline(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _threshold_result(
+    *,
+    current: dict[str, Any],
+    baseline: dict[str, Any] | None,
+    scenario_id: str,
+    threshold_mode: str,
+) -> dict[str, Any]:
+    if threshold_mode == "off" or not baseline:
+        return {
+            "mode": threshold_mode,
+            "status": "not_applicable",
+            "reason": "no comparison baseline",
+        }
+    baseline_scenario = dict((baseline.get("scenarios") or {}).get(scenario_id) or {})
+    baseline_wall = dict(baseline_scenario.get("wall_time_ms") or {})
+    baseline_median = baseline_wall.get("median")
+    current_median = dict(current.get("wall_time_ms") or {}).get("median")
+    if not isinstance(baseline_median, int) or not isinstance(current_median, int):
+        return {
+            "mode": threshold_mode,
+            "status": "not_applicable",
+            "reason": "missing comparable wall median",
+        }
+    ratio = round(current_median / float(max(1, baseline_median)), 4)
+    if ratio <= 1.20:
+        status = "pass"
+    else:
+        status = "fail" if threshold_mode == "hard" else "warn"
+    return {
+        "mode": threshold_mode,
+        "status": status,
+        "baseline_wall_median_ms": baseline_median,
+        "current_wall_median_ms": current_median,
+        "ratio": ratio,
+        "warn_ratio": 1.20,
+    }
+
+
+def summarize_runs(
+    runs: list[dict[str, Any]],
+    *,
+    comparison_baseline: dict[str, Any] | None = None,
+    threshold_mode: str = DEFAULT_THRESHOLD_MODE,
+) -> dict[str, Any]:
     by_scenario: dict[str, list[dict[str, Any]]] = {}
     for run in runs:
         by_scenario.setdefault(str(run["scenario_id"]), []).append(run)
@@ -538,28 +808,77 @@ def summarize_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "warn_only": scenario_runs[0].get("provider_variance_class")
             == WARN_ONLY_VARIANCE,
         }
+        scenarios[scenario_id]["threshold_result"] = _threshold_result(
+            current=scenarios[scenario_id],
+            baseline=comparison_baseline,
+            scenario_id=scenario_id,
+            threshold_mode=threshold_mode,
+        )
     return {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
         "generated_at_utc": _utc_timestamp(),
         "scenario_count": len(scenarios),
         "run_count": len(runs),
+        "threshold_mode": threshold_mode,
+        "comparison_baseline_artifact": (
+            str(comparison_baseline.get("artifact_path", ""))
+            if isinstance(comparison_baseline, dict)
+            else ""
+        ),
         "scenarios": scenarios,
     }
 
 
-def _run_to_artifact(run: ScenarioRun, *, run_index: int, options: RunOptions) -> dict[str, Any]:
+def _run_to_artifact(
+    run: ScenarioRun,
+    *,
+    run_index: int,
+    options: RunOptions,
+    profile_artifact: str | None = None,
+    profile_pstats_artifact: str | None = None,
+) -> dict[str, Any]:
+    metrics = dict(run.metrics)
     return {
         "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "run_started_at": _utc_timestamp(),
         "scenario_id": run.scenario_id,
         "run_id": f"{_utc_timestamp()}-{run.scenario_id}-{run_index}-{uuid4().hex[:8]}",
         "timestamp_utc": _utc_timestamp(),
         "git_head": _git_head(options.workspace_root),
+        "dirty_worktree_summary": _dirty_worktree_summary(options.workspace_root),
         "python_version": platform.python_version(),
         "platform": platform.platform(),
+        "runs_requested": int(options.runs),
+        "runs_completed": 1,
+        "warmup_runs": int(options.warmup_runs),
+        "sample_index": int(run_index),
         "command": run.command,
         "provider_profile": run.provider_profile,
         "provider_variance_class": run.provider_variance_class,
-        "metrics": run.metrics,
+        "wall_ms": metrics.get("wall_time_ms"),
+        "time_to_first_visible_text_ms": metrics.get(
+            "time_to_first_visible_text_ms"
+        ),
+        "phase_timings_ms": metrics.get("phase_timings_ms", {}),
+        "provider_round_trip_ms": metrics.get("provider_round_trip_ms"),
+        "context_assembly_ms": metrics.get("context_assembly_ms"),
+        "prompt_bytes": metrics.get("prompt_bytes"),
+        "prompt_tokens_estimated": metrics.get("prompt_tokens_estimated"),
+        "tool_schema_bytes": metrics.get("tool_schema_bytes"),
+        "tool_call_count": metrics.get("tool_call_count"),
+        "process_rss_bytes": metrics.get("rss_end_bytes"),
+        "tracemalloc_current_bytes": metrics.get("tracemalloc_current_bytes"),
+        "tracemalloc_peak_bytes": metrics.get("tracemalloc_peak_bytes"),
+        "tracemalloc_snapshot_diff": metrics.get("tracemalloc_snapshot_diff", []),
+        "importtime_artifact": metrics.get("importtime_artifact"),
+        "profile_artifact": profile_artifact,
+        "profile_pstats_artifact": profile_pstats_artifact,
+        "comparison_baseline_artifact": (
+            str(options.compare_baseline) if options.compare_baseline else None
+        ),
+        "threshold_mode": options.threshold_mode,
+        "threshold_result": "not_applicable",
+        "metrics": metrics,
         "notes": run.notes,
         "ok": run.ok,
         "error": run.error,
@@ -596,16 +915,17 @@ def _write_summary_markdown(summary: dict[str, Any], output_root: Path) -> None:
         f"Runs: `{summary['run_count']}`",
         f"Scenarios: `{summary['scenario_count']}`",
         "",
-        "| Scenario | Runs | Variance | Wall median ms | Wall max ms | Peak alloc max bytes | Warn only |",
-        "| --- | ---: | --- | ---: | ---: | ---: | --- |",
+        "| Scenario | Runs | Variance | Wall median ms | Wall p95 ms | Wall max ms | CV | Gate | Warn only |",
+        "| --- | ---: | --- | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for scenario_id, data in summary["scenarios"].items():
         wall = data["wall_time_ms"]
-        peak = data["tracemalloc_peak_bytes"]
+        gate = data.get("threshold_result", {})
         lines.append(
             "| "
             f"`{scenario_id}` | {data['count']} | `{data['provider_variance_class']}` | "
-            f"{wall['median']} | {wall['max']} | {peak['max']} | {data['warn_only']} |"
+            f"{wall['median']} | {wall['p95']} | {wall['max']} | "
+            f"{wall['coefficient_of_variation']} | `{gate.get('status', 'not_applicable')}` | {data['warn_only']} |"
         )
     lines.extend(
         [
@@ -640,6 +960,35 @@ def _copy_baseline_plan(options: RunOptions) -> None:
         )
 
 
+def _run_scenario_with_optional_profile(
+    scenario_id: str,
+    *,
+    run_index: int,
+    options: RunOptions,
+) -> tuple[ScenarioRun, str | None, str | None]:
+    if not options.profile:
+        return run_scenario(scenario_id, options), None, None
+    profiler = cProfile.Profile()
+    run = profiler.runcall(run_scenario, scenario_id, options)
+    profiles_dir = options.output_root / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{_utc_timestamp()}-{scenario_id}-{run_index}"
+    pstats_path = profiles_dir / f"{stem}.pstats"
+    summary_path = profiles_dir / f"{stem}.txt"
+    profiler.dump_stats(str(pstats_path))
+    stream = io.StringIO()
+    stream.write("## Top cumulative time\n\n")
+    pstats.Stats(profiler, stream=stream).strip_dirs().sort_stats(
+        "cumulative"
+    ).print_stats(PROFILE_TOP_LIMIT)
+    stream.write("\n## Top internal time\n\n")
+    pstats.Stats(profiler, stream=stream).strip_dirs().sort_stats(
+        "tottime"
+    ).print_stats(PROFILE_TOP_LIMIT)
+    summary_path.write_text(stream.getvalue(), encoding="utf-8")
+    return run, str(summary_path), str(pstats_path)
+
+
 def _scenario_list(raw: str) -> list[str]:
     if raw.strip() == "all":
         return list(DEFAULT_SCENARIOS)
@@ -657,17 +1006,41 @@ def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
 
     artifacts: list[dict[str, Any]] = []
     for scenario_id in scenarios:
+        for warmup_index in range(options.warmup_runs):
+            print(
+                f"[performance-baseline] {scenario_id} warmup {warmup_index + 1}/{options.warmup_runs}"
+            )
+            run_scenario(scenario_id, options)
         per_scenario_runs = 1 if scenario_id == "repeated_local_turns" else options.runs
         for run_index in range(per_scenario_runs):
             print(f"[performance-baseline] {scenario_id} run {run_index + 1}/{per_scenario_runs}")
-            run = run_scenario(scenario_id, options)
-            artifact = _run_to_artifact(run, run_index=run_index, options=options)
+            run, profile_artifact, profile_pstats_artifact = (
+                _run_scenario_with_optional_profile(
+                    scenario_id,
+                    run_index=run_index,
+                    options=options,
+                )
+            )
+            artifact = _run_to_artifact(
+                run,
+                run_index=run_index,
+                options=options,
+                profile_artifact=profile_artifact,
+                profile_pstats_artifact=profile_pstats_artifact,
+            )
             _write_run_artifact(artifact, options.output_root)
             artifacts.append(artifact)
             if not run.ok:
                 print(f"  error: {run.error}")
 
-    summary = summarize_runs(artifacts)
+    comparison_baseline = _load_comparison_baseline(options.compare_baseline)
+    if comparison_baseline is not None and options.compare_baseline is not None:
+        comparison_baseline["artifact_path"] = str(options.compare_baseline)
+    summary = summarize_runs(
+        artifacts,
+        comparison_baseline=comparison_baseline,
+        threshold_mode=options.threshold_mode,
+    )
     (options.output_root / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -684,6 +1057,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated scenario ids or 'all'.",
     )
     parser.add_argument("--runs", type=int, default=3, help="Runs per scenario.")
+    parser.add_argument(
+        "--warmup-runs",
+        type=int,
+        default=0,
+        help="Warmup runs per scenario; artifacts are not written for warmups.",
+    )
     parser.add_argument(
         "--output-root",
         default=None,
@@ -713,7 +1092,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--profile",
         action="store_true",
-        help="Reserved for explicit cProfile diagnostic captures.",
+        help="Write cProfile .pstats files and top cumulative/internal summaries.",
+    )
+    parser.add_argument(
+        "--compare-baseline",
+        default=None,
+        help="Existing summary.json to compare against.",
+    )
+    parser.add_argument(
+        "--threshold-mode",
+        choices=("warn", "hard", "off"),
+        default=DEFAULT_THRESHOLD_MODE,
+        help="Threshold behavior for comparison results.",
     )
     parser.add_argument("--list-scenarios", action="store_true")
     return parser
@@ -745,6 +1135,13 @@ def main(argv: list[str] | None = None) -> int:
             timeout_seconds=max(1, int(args.timeout_seconds)),
             include_importtime=not bool(args.no_importtime),
             profile=bool(args.profile),
+            warmup_runs=max(0, int(args.warmup_runs)),
+            compare_baseline=(
+                Path(args.compare_baseline).expanduser().resolve()
+                if args.compare_baseline
+                else None
+            ),
+            threshold_mode=str(args.threshold_mode),
         )
         scenarios = _scenario_list(str(args.scenarios))
         summary = run_baseline(options, scenarios)

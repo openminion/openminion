@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
 from dataclasses import replace
 
 from rich.markdown import Markdown as RichMarkdown
@@ -32,11 +34,14 @@ __all__ = [
     "MessageContent",
     "MessageKind",
     "MessageWidget",
+    "TUIRenderMeasurement",
     "ToolBlockWidget",
     "ToolEvent",
     "format_chat_timestamp",
 ]
 
+_MAX_RENDER_MEASUREMENTS = 128
+_TUI_RENDER_VIEW_FAMILY = "chat"
 _STREAM_CURSOR = "▍"
 _TOOL_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _SEARCH_MATCH_STYLE = "black on rgb(255,215,0) underline"
@@ -180,6 +185,28 @@ _EMPTY_STATE_FRAMES = (
 )
 
 
+@dataclass(frozen=True)
+class TUIRenderMeasurement:
+    view_family: str
+    render_chunk_ms: int
+    queue_pressure: int
+    retained_messages: int
+    outcome: str = "ok"
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "view_family": self.view_family,
+            "render_chunk_ms": self.render_chunk_ms,
+            "queue_pressure": self.queue_pressure,
+            "retained_messages": self.retained_messages,
+            "outcome": self.outcome,
+        }
+
+
+def _elapsed_ms_since_ns(started_ns: int) -> int:
+    return max(0, int((time.perf_counter_ns() - started_ns) // 1_000_000))
+
+
 class MessageContent(Static):
     DEFAULT_CSS = "MessageContent { height: auto; }"
 
@@ -309,6 +336,7 @@ class MessageWidget(Widget):
         self._stream_timer: Timer | None = None
         self._tool_spinner_frame = 0
         self._tool_spinner_timer: Timer | None = None
+        self._last_render_measurement: TUIRenderMeasurement | None = None
         if not message.show_header and message.kind in {
             MessageKind.USER,
             MessageKind.AGENT,
@@ -422,6 +450,8 @@ class MessageWidget(Widget):
             pass
 
     def update_body(self, text: str, streaming: bool = False) -> None:
+        started_ns = time.perf_counter_ns()
+        outcome = "ok"
         self._message.body = text
         self._streaming = streaming
         self._sync_stream_timer()
@@ -436,7 +466,21 @@ class MessageWidget(Widget):
             )
             self.refresh_timestamp()
         except (QueryError, AttributeError):
+            outcome = "missing_widget"
             pass
+        finally:
+            self._last_render_measurement = TUIRenderMeasurement(
+                view_family=_TUI_RENDER_VIEW_FAMILY,
+                render_chunk_ms=_elapsed_ms_since_ns(started_ns),
+                queue_pressure=1 if streaming else 0,
+                retained_messages=1,
+                outcome=outcome,
+            )
+
+    def render_measurement_snapshot(self) -> dict[str, object] | None:
+        if self._last_render_measurement is None:
+            return None
+        return self._last_render_measurement.as_dict()
 
     def set_search_query(self, query: str) -> None:
         self._search_query = str(query or "").strip().lower()
@@ -746,6 +790,7 @@ class ChatView(ChatSelectionMixin, ScrollableContainer):
         self._bottom_gap = 0
         self._search_query = ""
         self._selected_message_id: str | None = None
+        self._render_measurements: list[TUIRenderMeasurement] = []
 
     @property
     def bottom_gap(self) -> int:
@@ -766,22 +811,34 @@ class ChatView(ChatSelectionMixin, ScrollableContainer):
         self.call_after_refresh(self._sync_layout_state)
 
     def push_message(self, message: ChatMessage) -> MessageWidget:
+        started_ns = time.perf_counter_ns()
+        outcome = "ok"
         was_tail_selected = False
-        if self._messages:
-            previous = self._messages[-1]
-            message.show_header = self._starts_new_group(previous, message)
-            if self._selected_message_id == previous.msg_id:
+        try:
+            if self._messages:
+                previous = self._messages[-1]
+                message.show_header = self._starts_new_group(previous, message)
+                if self._selected_message_id == previous.msg_id:
+                    was_tail_selected = True
+            elif self._selected_message_id is None:
                 was_tail_selected = True
-        elif self._selected_message_id is None:
-            was_tail_selected = True
-        self._messages.append(message)
-        widget = MessageWidget(message)
-        self.mount(widget)
-        if was_tail_selected:
-            self._apply_selection(message.msg_id)
-        self.call_after_refresh(self._sync_layout_state)
-        self.call_after_refresh(lambda: self.scroll_end(animate=False))
-        return widget
+            self._messages.append(message)
+            widget = MessageWidget(message)
+            self.mount(widget)
+            if was_tail_selected:
+                self._apply_selection(message.msg_id)
+            self.call_after_refresh(self._sync_layout_state)
+            self.call_after_refresh(lambda: self.scroll_end(animate=False))
+            return widget
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            self._record_render_measurement(
+                started_ns=started_ns,
+                queue_pressure=1,
+                outcome=outcome,
+            )
 
     def clear_messages(self) -> None:
         self._messages.clear()
@@ -790,17 +847,51 @@ class ChatView(ChatSelectionMixin, ScrollableContainer):
         self.call_after_refresh(self._sync_layout_state)
 
     def set_messages(self, messages: list[ChatMessage]) -> None:
+        started_ns = time.perf_counter_ns()
+        outcome = "ok"
         self.clear_messages()
-        previous: ChatMessage | None = None
-        for msg in messages:
-            msg.show_header = (
-                True if previous is None else self._starts_new_group(previous, msg)
+        try:
+            previous: ChatMessage | None = None
+            for msg in messages:
+                msg.show_header = (
+                    True if previous is None else self._starts_new_group(previous, msg)
+                )
+                self._messages.append(msg)
+                self.mount(MessageWidget(msg))
+                previous = msg
+            self.call_after_refresh(self._sync_layout_state)
+            self.call_after_refresh(lambda: self.scroll_end(animate=False))
+        except Exception:
+            outcome = "error"
+            raise
+        finally:
+            self._record_render_measurement(
+                started_ns=started_ns,
+                queue_pressure=len(messages),
+                outcome=outcome,
             )
-            self._messages.append(msg)
-            self.mount(MessageWidget(msg))
-            previous = msg
-        self.call_after_refresh(self._sync_layout_state)
-        self.call_after_refresh(lambda: self.scroll_end(animate=False))
+
+    def render_measurements_snapshot(self) -> list[dict[str, object]]:
+        return [measurement.as_dict() for measurement in self._render_measurements]
+
+    def _record_render_measurement(
+        self,
+        *,
+        started_ns: int,
+        queue_pressure: int,
+        outcome: str,
+    ) -> None:
+        self._render_measurements.append(
+            TUIRenderMeasurement(
+                view_family=_TUI_RENDER_VIEW_FAMILY,
+                render_chunk_ms=_elapsed_ms_since_ns(started_ns),
+                queue_pressure=max(0, int(queue_pressure)),
+                retained_messages=len(self._messages),
+                outcome=outcome,
+            )
+        )
+        if len(self._render_measurements) > _MAX_RENDER_MEASUREMENTS:
+            del self._render_measurements[:-_MAX_RENDER_MEASUREMENTS]
 
     def _refresh_timestamps(self) -> None:
         for widget in self.query(MessageWidget):

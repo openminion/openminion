@@ -237,8 +237,7 @@ def test_storage_query_event_routes_to_span_classification() -> None:
     exported = exporter.export(_event("storage.query", duration_ms=12.5, rows=4))
 
     assert exported is True
-    assert len(sink.records) == 1
-    record = sink.records[0]
+    record = next(item for item in sink.records if item.kind == "span")
     assert record.kind == "span"
     assert record.name == "storage.query"
     assert record.attributes["openminion.payload.duration_ms"] == 12.5
@@ -469,6 +468,7 @@ def test_otel_04_every_catalog_event_resolves_to_a_valid_class() -> None:
         "memory.soft_deleted.purged",
         "llm.cache.metrics",
         "module.stats",
+        "tui.render",
     }
 
 
@@ -476,14 +476,106 @@ def test_otel_04_chat_phase_timing_routes_to_span() -> None:
     exporter, sink = _make_exporter()
 
     exported = exporter.export(
-        _event("chat.phase_timing", phase="respond", duration_ms=8.4)
+        _event(
+            "chat.phase_timing",
+            total_turn_ms=120,
+            time_to_first_text_ms=35,
+            provider_round_trip_ms=70,
+            context_pack_build_ms=12,
+            provider_request_build_ms=3,
+            transport="urllib",
+            process_mode="single-process",
+            session_id="must-not-be-metric-label",
+            turn_id="must-not-be-metric-label",
+        )
     )
 
     assert exported is True
-    assert len(sink.records) == 1
-    record = sink.records[0]
+    record = next(item for item in sink.records if item.kind == "span")
     assert record.kind == "span"
     assert record.name == "chat.phase_timing"
+    metrics = [item for item in sink.records if item.kind == "metric"]
+    metric_names = {item.name for item in metrics}
+    assert {
+        "openminion_turn_wall_ms",
+        "openminion_turn_ttft_ms",
+        "openminion_chat_phase_duration_ms",
+        "openminion_provider_round_trip_ms",
+        "openminion_context_assembly_ms",
+    }.issubset(metric_names)
+    turn_wall = next(item for item in metrics if item.name == "openminion_turn_wall_ms")
+    assert turn_wall.metric_kind == "histogram"
+    assert turn_wall.metric_value == 120.0
+    assert turn_wall.attributes == {
+        "route_class": "single-process",
+        "outcome": "ok",
+        "cold_start": "false",
+    }
+    for metric in metrics:
+        assert "session_id" not in metric.attributes
+        assert "turn_id" not in metric.attributes
+
+
+def test_pomv2_storage_query_exports_low_cardinality_operation_metric() -> None:
+    exporter, sink = _make_exporter()
+
+    exported = exporter.export(
+        _event(
+            "storage.query",
+            duration_ms=11,
+            module_id="session-store",
+            operation="append_turn",
+            criticality="current_turn",
+            session_id="must-not-be-metric-label",
+        )
+    )
+
+    assert exported is True
+    metric = next(
+        item for item in sink.records if item.name == "openminion_storage_operation_ms"
+    )
+    assert metric.metric_kind == "histogram"
+    assert metric.metric_value == 11.0
+    assert metric.attributes == {
+        "store_family": "session-store",
+        "operation": "append_turn",
+        "criticality": "current_turn",
+        "outcome": "ok",
+    }
+
+
+def test_pomv2_tui_render_exports_low_cardinality_metrics() -> None:
+    exporter, sink = _make_exporter()
+
+    exported = exporter.export(
+        _event(
+            "tui.render",
+            render_chunk_ms=7,
+            queue_pressure=3,
+            retained_messages=22,
+            view_family="chat",
+            session_id="must-not-be-metric-label",
+            turn_id="must-not-be-metric-label",
+            path="/tmp/not-a-label",
+        )
+    )
+
+    assert exported is True
+    metrics = [item for item in sink.records if item.kind == "metric"]
+    names = {item.name for item in metrics}
+    assert {
+        "openminion_tui_render_chunk_ms",
+        "openminion_tui_queue_pressure",
+        "openminion_tui_retained_messages",
+    }.issubset(names)
+    chunk = next(item for item in metrics if item.name == "openminion_tui_render_chunk_ms")
+    assert chunk.metric_kind == "histogram"
+    assert chunk.metric_value == 7.0
+    assert chunk.attributes == {"view_family": "chat", "outcome": "ok"}
+    for metric in metrics:
+        assert "session_id" not in metric.attributes
+        assert "turn_id" not in metric.attributes
+        assert "path" not in metric.attributes
 
 
 def test_otel_04_module_stats_routes_to_metric_gauge() -> None:
