@@ -7,7 +7,6 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, cast
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
-
     class _YamlFallback:
         @staticmethod
         def safe_load(raw: str) -> Any:
@@ -982,9 +981,7 @@ class Policy:
     def filter_env(self, raw_env: Dict[str, str]) -> Dict[str, str]:
         env_cfg = cast(Dict[str, Any], self.raw.get("env", {}))
         allow_keys = set(env_cfg.get("allow_keys", []))
-        deny_regex = [
-            re.compile(str(expr)) for expr in env_cfg.get("deny_keys_regex", [])
-        ]
+        deny_regex = [re.compile(str(expr)) for expr in env_cfg.get("deny_keys_regex", [])]
         process_env = resolve_environment_config().snapshot()
 
         out: Dict[str, str] = {}
