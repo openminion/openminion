@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,19 @@ from openminion.modules.cli_common import (
 from openminion.modules.storage.module_cli import (
     add_storage_subcommands,
     run_module_storage_command,
+)
+
+_REPLAY_STATUS_CHOICES = ("passed", "failed", "blocked", "skipped")
+_LEARNING_COMMANDS = frozenset(
+    {
+        "learning-scan",
+        "learning-inspect",
+        "learning-save-workflow",
+        "learning-propose",
+        "learning-replay-proof",
+        "learning-apply-proved",
+        "learning-trust-status",
+    }
 )
 
 
@@ -289,6 +303,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     proposal_apply.add_argument("proposal_id")
 
+    _add_learning_subcommands(sub)
+
     suggestion_inbox = sub.add_parser(
         "suggestion-inbox",
         help="List currently-pending proposals as operator suggestions.",
@@ -331,6 +347,65 @@ def _build_parser() -> argparse.ArgumentParser:
     add_storage_subcommands(sub)
 
     return parser
+
+
+def _add_learning_subcommands(sub: Any) -> None:
+    learning_scan = sub.add_parser(
+        "learning-scan",
+        help="Mine workflow shapes from a JSON list of evidence bundles.",
+    )
+    learning_scan.add_argument("--bundle-json", required=True)
+
+    learning_inspect = sub.add_parser(
+        "learning-inspect",
+        help="Inspect one workflow-shape JSON file.",
+    )
+    learning_inspect.add_argument("--shape-json", required=True)
+
+    learning_save = sub.add_parser(
+        "learning-save-workflow",
+        help="Emit an explicit save-workflow signal for one shape.",
+    )
+    learning_save.add_argument("--shape-json", required=True)
+    learning_save.add_argument("--actor-id", required=True)
+    learning_save.add_argument("--source-run-ref", default="")
+
+    learning_propose = sub.add_parser(
+        "learning-propose",
+        help="Stage a workflow shape through the existing proposal queue.",
+    )
+    learning_propose.add_argument("--shape-json", required=True)
+
+    learning_replay = sub.add_parser(
+        "learning-replay-proof",
+        help="Emit a deterministic replay proof payload.",
+    )
+    learning_replay.add_argument("--proposal-id", required=True)
+    learning_replay.add_argument("--shape-id", required=True)
+    learning_replay.add_argument("--proof-id", required=True)
+    learning_replay.add_argument("--status", required=True, choices=_REPLAY_STATUS_CHOICES)
+    learning_replay.add_argument("--evidence", default="")
+
+    learning_apply = sub.add_parser(
+        "learning-apply-proved",
+        help="Apply an accepted proposal only when replay proof passed.",
+    )
+    learning_apply.add_argument("--proposal-id", required=True)
+    learning_apply.add_argument("--shape-id", required=True)
+    learning_apply.add_argument("--proof-id", required=True)
+    learning_apply.add_argument(
+        "--proof-status",
+        required=True,
+        choices=_REPLAY_STATUS_CHOICES,
+    )
+    learning_apply.add_argument("--evidence", default="")
+
+    learning_trust = sub.add_parser(
+        "learning-trust-status",
+        help="Show initial execution-trust status for a learned skill.",
+    )
+    learning_trust.add_argument("--skill-id", required=True)
+    learning_trust.add_argument("--shape-id", required=True)
 
 
 def _dispatch(ctl: Skill, args: argparse.Namespace) -> None:
@@ -571,6 +646,10 @@ def _dispatch(ctl: Skill, args: argparse.Namespace) -> None:
         _dispatch_proposal_cmd(ctl, args)
         return
 
+    if args.cmd in _LEARNING_COMMANDS:
+        _dispatch_learning_cmd(ctl, args)
+        return
+
     if args.cmd in {"suggestion-inbox", "suggestion-status", "suggestion-surface-pass"}:
         _dispatch_suggestion_cmd(ctl, args)
         return
@@ -712,6 +791,132 @@ def _dispatch_proposal_cmd(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     raise SkillError("INVALID_ARGUMENT", "Unsupported proposal command")
+
+
+def _dispatch_learning_cmd(ctl: Skill, args: argparse.Namespace) -> None:
+    from openminion.modules.skill.learning import (
+        SkillExecutionTrustRecord,
+        WorkflowEvidenceBundle,
+        WorkflowShape,
+        WorkflowShapeMiner,
+        apply_proposal_with_replay,
+        stage_shape_as_skill_proposal,
+    )
+    from openminion.modules.skill.learning.replay import ReplayGateError
+
+    if args.cmd == "learning-scan":
+        raw = _read_json_path(args.bundle_json)
+        bundles = [
+            WorkflowEvidenceBundle.model_validate(item)
+            for item in (raw if isinstance(raw, list) else [raw])
+        ]
+        shapes = WorkflowShapeMiner().mine(bundles)
+        _print_json(
+            {
+                "ok": True,
+                "shapes": [shape.model_dump(mode="json") for shape in shapes],
+            }
+        )
+        return
+
+    if args.cmd == "learning-inspect":
+        shape = WorkflowShape.model_validate(_read_json_path(args.shape_json))
+        _print_json({"ok": True, "shape": shape.model_dump(mode="json")})
+        return
+
+    if args.cmd == "learning-save-workflow":
+        shape = WorkflowShape.model_validate(_read_json_path(args.shape_json))
+        actor_id = str(args.actor_id or "").strip()
+        if not actor_id:
+            raise SkillError("INVALID_ARGUMENT", "--actor-id is required")
+        _print_json(
+            {
+                "ok": True,
+                "save_workflow": {
+                    "shape_id": shape.shape_id,
+                    "actor_id": actor_id,
+                    "source_run_ref": str(args.source_run_ref or ""),
+                    "explicit_save": True,
+                },
+            }
+        )
+        return
+
+    if args.cmd == "learning-propose":
+        shape = WorkflowShape.model_validate(_read_json_path(args.shape_json))
+        result = stage_shape_as_skill_proposal(
+            shape,
+            store=ctl.store,
+            current_catalog=ctl.list_skills({}) or [],
+        )
+        _print_json({"ok": True, "result": result.model_dump(mode="json")})
+        return
+
+    if args.cmd == "learning-replay-proof":
+        proof = _learning_replay_proof_from_args(
+            proposal_id=args.proposal_id,
+            shape_id=args.shape_id,
+            proof_id=args.proof_id,
+            status=args.status,
+            evidence=args.evidence,
+        )
+        _print_json({"ok": True, "proof": proof.model_dump(mode="json")})
+        return
+
+    if args.cmd == "learning-apply-proved":
+        proof = _learning_replay_proof_from_args(
+            proposal_id=args.proposal_id,
+            shape_id=args.shape_id,
+            proof_id=args.proof_id,
+            status=args.proof_status,
+            evidence=args.evidence,
+        )
+        try:
+            addition = apply_proposal_with_replay(
+                ctl.store,
+                proposal_id=args.proposal_id,
+                current_catalog=ctl.list_skills({}) or [],
+                replay_proof=proof,
+            )
+        except (ReplayGateError, ValueError) as exc:
+            raise SkillError("INVALID_ARGUMENT", str(exc)) from exc
+        _print_json({"ok": True, "addition": addition.model_dump(mode="json")})
+        return
+
+    if args.cmd == "learning-trust-status":
+        record = SkillExecutionTrustRecord(
+            skill_id=args.skill_id,
+            shape_id=args.shape_id,
+        )
+        _print_json({"ok": True, "trust": record.model_dump(mode="json")})
+        return
+
+    raise SkillError("INVALID_ARGUMENT", "Unsupported learning command")
+
+
+def _read_json_path(path: str) -> Any:
+    text = Path(path).read_text(encoding="utf-8")
+    return json.loads(text)
+
+
+def _learning_replay_proof_from_args(
+    *,
+    proposal_id: str,
+    shape_id: str,
+    proof_id: str,
+    status: str,
+    evidence: str,
+) -> Any:
+    from openminion.modules.skill.learning import ReplayProof
+
+    evidence_refs = [item.strip() for item in evidence.split(",") if item.strip()]
+    return ReplayProof(
+        proof_id=proof_id,
+        proposal_id=proposal_id,
+        shape_id=shape_id,
+        status=status,
+        evidence_refs=evidence_refs,
+    )
 
 
 def _parse_criterion_args(raw_values: list[str]) -> list[dict[str, str]]:

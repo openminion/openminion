@@ -122,6 +122,13 @@ PROMPT_CACHE_OBSERVATION = "prompt_cache_observation"
 MSPO_MEMORY_SPAN_READ = "mspo_memory_span_read"
 
 CHAT_PHASE_TIMING = "chat.phase_timing"
+WORKFLOW_SHAPE_MINED = "skill.workflow_shape.mined"
+WORKFLOW_CANDIDATE_PROPOSED = "skill.workflow_candidate.proposed"
+WORKFLOW_REPLAY_PROOF_RECORDED = "skill.workflow_replay.proof_recorded"
+WORKFLOW_PROPOSAL_APPLIED = "skill.workflow_proposal.applied"
+WORKFLOW_SKILL_REUSED = "skill.workflow_skill.reused"
+WORKFLOW_TRUST_PROMOTED = "skill.workflow_trust.promoted"
+WORKFLOW_TRUST_DOWNGRADED = "skill.workflow_trust.downgraded"
 
 SFRX_SESSION_FORK = "sfrx_session_fork"
 SFRX_FILE_RESTORE = "sfrx_file_restore"
@@ -268,6 +275,13 @@ EVENT_TYPES: frozenset[str] = frozenset(
         PROMPT_CACHE_OBSERVATION,
         MSPO_MEMORY_SPAN_READ,
         CHAT_PHASE_TIMING,
+        WORKFLOW_SHAPE_MINED,
+        WORKFLOW_CANDIDATE_PROPOSED,
+        WORKFLOW_REPLAY_PROOF_RECORDED,
+        WORKFLOW_PROPOSAL_APPLIED,
+        WORKFLOW_SKILL_REUSED,
+        WORKFLOW_TRUST_PROMOTED,
+        WORKFLOW_TRUST_DOWNGRADED,
         SFRX_SESSION_FORK,
         SFRX_FILE_RESTORE,
         TOOL_RUN,
@@ -445,6 +459,13 @@ __all__ = [
     "PROMPT_CACHE_OBSERVATION",
     "MSPO_MEMORY_SPAN_READ",
     "CHAT_PHASE_TIMING",
+    "WORKFLOW_SHAPE_MINED",
+    "WORKFLOW_CANDIDATE_PROPOSED",
+    "WORKFLOW_REPLAY_PROOF_RECORDED",
+    "WORKFLOW_PROPOSAL_APPLIED",
+    "WORKFLOW_SKILL_REUSED",
+    "WORKFLOW_TRUST_PROMOTED",
+    "WORKFLOW_TRUST_DOWNGRADED",
     "SFRX_SESSION_FORK",
     "SFRX_FILE_RESTORE",
     "TOOL_RUN",
