@@ -403,9 +403,11 @@ def _completed_direct_tool_batch_signature(
 def _should_force_direct_tool_closure(
     loop_state: AdaptiveToolLoopState,
 ) -> bool:
+    requested_calls = _direct_tool_turn_requested_calls(loop_state)
     return (
         _direct_tool_turn_active(loop_state)
         and bool(getattr(loop_state, "direct_tool_requested_batch_satisfied", False))
+        and len(requested_calls) <= 1
         and not bool(getattr(loop_state, "direct_tool_closure_consumed", False))
     )
 

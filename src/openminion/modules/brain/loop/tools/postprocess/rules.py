@@ -21,14 +21,20 @@ from ..iteration.helpers import _count_substantive_non_control_tool_results
 
 _HTTP_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
 _EXECUTION_PREFACE_RE = re.compile(
-    r"\b(?:i['’]?ll|i will|we['’]?ll|we will|let me|now|next|proceeding to)\b.*\b"
+    r"\b(?:i['’]?ll|i will|we['’]?ll|we will|let me|now|next|continuing|"
+    r"proceeding to)\b.*\b"
     r"(?:add|execute|run|call|fetch|write|read|verify|check|inspect|review|"
-    r"continue|finish|complete|understand)\b",
+    r"continue|finish|complete|understand|fix|repair|rerun|debug)\b",
     re.IGNORECASE | re.DOTALL,
 )
 _PROGRESS_GERUND_RE = re.compile(
     r"^(?:reading|writing|running|checking|verifying|fetching|updating|rewriting|"
     r"inspecting|looking)\b",
+    re.IGNORECASE,
+)
+_UNFULFILLED_FILE_PLAN_RE = re.compile(
+    r"\b(?:files?\s+to\s+(?:create|write)|(?:i['’]?ll|i will|we['’]?ll|we will)"
+    r"\s+(?:write|create|add)\s+(?:all\s+)?files?)\b",
     re.IGNORECASE,
 )
 _PLAINTEXT_FILE_WRITE_TOOL_RE = re.compile(
@@ -167,6 +173,8 @@ def _looks_like_execution_preface_draft(text: str) -> bool:
     current = str(text or "").strip()
     if not current:
         return False
+    if _UNFULFILLED_FILE_PLAN_RE.search(current):
+        return True
     if len(current) > 280:
         return False
     lowered = current.lower()

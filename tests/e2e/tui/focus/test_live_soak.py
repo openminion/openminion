@@ -42,7 +42,7 @@ def test_live_focus_soak_scenarios(
     require_complex_focus()
     root = artifact_root(tmp_path)
     scratch_dir = root / "scratch" / scenario.scenario_id
-    scratch_dir.mkdir(parents=True)
+    scratch_dir.mkdir(parents=True, exist_ok=True)
     scenario = replace(
         scenario,
         prompt=scenario.prompt.format(
