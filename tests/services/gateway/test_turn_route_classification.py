@@ -51,6 +51,13 @@ def test_route_classifier_marks_local_status_request():
     assert route.label == "local_status_request"
 
 
+def test_route_classifier_does_not_fast_path_code_hint_as_local_status():
+    route = classify_setup_cost_route(message="fix my disk usage script")
+
+    assert route.label == "ambiguous_request"
+    assert route.reason == "code_hint_without_file"
+
+
 def test_route_classifier_falls_back_to_ambiguous_for_unclear_long_prompt():
     route = classify_setup_cost_route(
         message=(

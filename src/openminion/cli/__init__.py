@@ -1,5 +1,6 @@
-import importlib
 import sys
+from importlib import import_module
+from typing import Any
 
 _PUBLIC_MODULES = {
     "parser": "openminion.cli.parser",
@@ -17,10 +18,13 @@ _COMPAT_MODULE_ALIASES = {
 
 __all__ = tuple(sorted((*_PUBLIC_MODULES, *_COMPAT_MODULE_ALIASES)))
 
-for _public_name, _canonical_name in _PUBLIC_MODULES.items():
-    globals()[_public_name] = importlib.import_module(_canonical_name)
 
-for _legacy_name, _canonical_name in _COMPAT_MODULE_ALIASES.items():
-    _module = importlib.import_module(_canonical_name)
-    globals()[_legacy_name] = _module
-    sys.modules[f"{__name__}.{_legacy_name}"] = _module
+def __getattr__(name: str) -> Any:
+    module_name = _PUBLIC_MODULES.get(name) or _COMPAT_MODULE_ALIASES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = import_module(module_name)
+    globals()[name] = module
+    if name in _COMPAT_MODULE_ALIASES:
+        sys.modules[f"{__name__}.{name}"] = module
+    return module

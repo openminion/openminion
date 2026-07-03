@@ -1310,6 +1310,13 @@ class ManifestV12Tests(unittest.TestCase):
         self.assertEqual(metadata.get("block_kind"), "static_prefix")
         self.assertTrue(bool(metadata.get("cache_eligible")))
         self.assertIn("static_prefix", metadata.get("segment_ids", []))
+        self.assertTrue(str(metadata.get("cache_key", "")).startswith("static_prefix:"))
+        self.assertTrue(
+            all(
+                str(item).startswith("content_hash:")
+                for item in metadata.get("cache_invalidation_refs", [])
+            )
+        )
 
     def test_budget_telemetry_render_message_carries_non_cacheable_block_metadata(
         self,

@@ -283,6 +283,8 @@ class ContextSegment(BaseModel):
     refs: List[str] = Field(default_factory=list)
     is_artifact_preview: bool = False
     is_cacheable: bool = False
+    cache_key: str = ""
+    cache_invalidation_refs: List[str] = Field(default_factory=list)
     pinned: bool = False  # mission_snapshot/safety/identity: always True
 
 

@@ -62,6 +62,20 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
                 "rss_delta_bytes": 100,
                 "tracemalloc_peak_bytes": 1000,
                 "prompt_tokens_estimated": 5,
+                "segment_family_metrics": [
+                    {
+                        "segment_family": "replay_user",
+                        "prompt_bytes": 40,
+                        "prompt_tokens_estimated": 10,
+                    }
+                ],
+                "tool_family_metrics": [
+                    {
+                        "tool_family": "local_status",
+                        "tool_schema_bytes": 120,
+                        "tool_call_count": 1,
+                    }
+                ],
             },
         },
         {
@@ -92,7 +106,12 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     local = summary["scenarios"]["local_status_tool_turn"]
     assert local["count"] == 2
     assert local["wall_time_ms"]["median"] == 15
+    assert local["wall_time_ns"]["count"] == 0
     assert local["prompt_tokens_estimated"]["max"] == 7
+    assert local["segment_family_metrics"][0]["segment_family"] == "replay_user"
+    assert local["segment_family_metrics"][0]["prompt_bytes"] == 40
+    assert local["tool_family_metrics"][0]["tool_family"] == "local_status"
+    assert local["tool_family_metrics"][0]["tool_schema_bytes"] == 120
     assert local["warn_only"] is False
     assert summary["scenarios"]["provider_turn"]["warn_only"] is True
 
@@ -117,6 +136,7 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
     assert run.provider_variance_class == module.LOCAL_VARIANCE
     for key in (
         "wall_time_ms",
+        "wall_time_ns",
         "rss_start_bytes",
         "rss_end_bytes",
         "rss_delta_bytes",
@@ -126,6 +146,9 @@ def test_local_status_scenario_records_required_metric_keys() -> None:
     ):
         assert key in run.metrics
     assert run.metrics["tool_call_count"] == 1
+    assert run.metrics["wall_time_ns"] >= 0
+    assert run.metrics["measurement_resolution"] == "perf_counter_ns"
+    assert "local_status_collect_ns" in run.metrics["phase_timings_ns"]
 
 
 def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
@@ -150,3 +173,5 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     payload = json.loads(run_files[0].read_text(encoding="utf-8"))
     assert payload["artifact_schema_version"] == module.ARTIFACT_SCHEMA_VERSION
     assert payload["scenario_id"] == "local_status_tool_turn"
+    assert isinstance(payload["wall_ns"], int)
+    assert payload["phase_timings_ns"]["local_status_collect_ns"] >= 0

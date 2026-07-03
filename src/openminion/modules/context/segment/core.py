@@ -47,6 +47,7 @@ from ..schemas import (
     SessionTurn,
     bucket_caps_for,
 )
+from .cache import segment_cache_fields, segment_render_cache_metadata
 from .self_awareness import render_self_awareness_block
 
 
@@ -102,16 +103,18 @@ def make_segment(
     estimate_tokens: Callable[[str], int],
 ) -> ContextSegment:
     is_cacheable = bucket == "static_prefix"
+    content_hash = _content_hash(content) if content else ""
     return ContextSegment(
         id=seg_id,
         bucket=bucket,  # type: ignore[arg-type]
         role=role,  # type: ignore[arg-type]
         content=content,
         token_estimate=estimate_tokens(content) if content else 0,
-        content_hash=_content_hash(content) if content else "",
+        content_hash=content_hash,
         refs=refs or [],
         is_artifact_preview=is_artifact_preview,
         is_cacheable=is_cacheable,
+        **segment_cache_fields(bucket, content_hash),
         pinned=pinned or bucket in PINNED_BUCKETS,
     )
 
@@ -301,6 +304,7 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
                             merged_system_segment_ids.get(segment.bucket, [])
                         ),
                         "refs": list(merged_system_refs.get(segment.bucket, [])),
+                        **segment_render_cache_metadata(segment),
                     },
                 )
             )
@@ -318,6 +322,7 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
                         "cache_eligible": bool(segment.is_cacheable),
                         "segment_ids": [segment.id],
                         "refs": list(segment.refs),
+                        **segment_render_cache_metadata(segment),
                     },
                 )
             )

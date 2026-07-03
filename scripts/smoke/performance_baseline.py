@@ -128,6 +128,14 @@ def _elapsed_ms(started: float) -> int:
     return max(0, int((time.perf_counter() - started) * 1000))
 
 
+def _elapsed_ns(started: int) -> int:
+    return max(0, time.perf_counter_ns() - started)
+
+
+def _ns_to_ms(elapsed_ns: int) -> int:
+    return max(0, int(elapsed_ns / 1_000_000))
+
+
 def _estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:
     return max(0, int(len(text) / max(0.1, chars_per_token)))
 
@@ -135,8 +143,11 @@ def _estimate_tokens(text: str, chars_per_token: float = 4.0) -> int:
 def _base_metrics() -> dict[str, Any]:
     return {
         "wall_time_ms": None,
+        "wall_time_ns": None,
         "time_to_first_visible_text_ms": None,
         "phase_timings_ms": {},
+        "phase_timings_ns": {},
+        "measurement_resolution": "perf_counter_ns",
         "provider_round_trip_ms": None,
         "context_assembly_ms": None,
         "prompt_tokens_estimated": None,
@@ -204,11 +215,12 @@ def _run_with_metrics(
     tracemalloc.start()
     before_snapshot = tracemalloc.take_snapshot()
     metrics = _base_metrics()
-    started = time.perf_counter()
+    started_ns = time.perf_counter_ns()
     notes: list[str] = []
     try:
         notes.extend(action(metrics))
-        metrics["wall_time_ms"] = _elapsed_ms(started)
+        metrics["wall_time_ns"] = _elapsed_ns(started_ns)
+        metrics["wall_time_ms"] = _ns_to_ms(int(metrics["wall_time_ns"]))
         return ScenarioRun(
             scenario_id=scenario_id,
             command=command,
@@ -218,7 +230,8 @@ def _run_with_metrics(
             notes=notes,
         )
     except Exception as exc:  # noqa: BLE001 - baseline artifacts must record failure
-        metrics["wall_time_ms"] = _elapsed_ms(started)
+        metrics["wall_time_ns"] = _elapsed_ns(started_ns)
+        metrics["wall_time_ms"] = _ns_to_ms(int(metrics["wall_time_ns"]))
         return ScenarioRun(
             scenario_id=scenario_id,
             command=command,
@@ -469,6 +482,10 @@ def _measure_replay_turn(scenario_id: str, prompt: str, answer: str) -> Scenario
             "replay_payload_build_ms": 0,
             "transcript_persistence_ms": 0,
         }
+        metrics["phase_timings_ns"] = {
+            "replay_payload_build_ns": 0,
+            "transcript_persistence_ns": 0,
+        }
         metrics["prompt_tokens_estimated"] = _estimate_tokens(prompt)
         metrics["prompt_bytes"] = len(prompt.encode("utf-8"))
         metrics["transcript_bytes"] = len(payload.encode("utf-8"))
@@ -500,6 +517,7 @@ def _measure_replay_turn(scenario_id: str, prompt: str, answer: str) -> Scenario
 
 def _measure_local_status_tool_turn() -> ScenarioRun:
     def action(metrics: dict[str, Any]) -> list[str]:
+        collect_started_ns = time.perf_counter_ns()
         facts = {
             "platform": platform.platform(),
             "python": platform.python_version(),
@@ -507,7 +525,9 @@ def _measure_local_status_tool_turn() -> ScenarioRun:
             "time_ns": time.time_ns(),
         }
         serialized = json.dumps(facts, sort_keys=True)
-        metrics["phase_timings_ms"] = {"local_status_collect_ms": 0}
+        collect_ns = _elapsed_ns(collect_started_ns)
+        metrics["phase_timings_ms"] = {"local_status_collect_ms": _ns_to_ms(collect_ns)}
+        metrics["phase_timings_ns"] = {"local_status_collect_ns": collect_ns}
         metrics["prompt_tokens_estimated"] = _estimate_tokens(serialized)
         metrics["prompt_bytes"] = len(serialized.encode("utf-8"))
         metrics["tool_schema_bytes"] = len(
@@ -561,16 +581,18 @@ def _measure_context_heavy_turn() -> ScenarioRun:
             )
             for index in range(24)
         ]
-        started = time.perf_counter()
+        started_ns = time.perf_counter_ns()
         budgeted = assemble_budgeted_context(
             system_messages=system,
             history_messages=history,
             budget=ContextBudgetConfig(max_tokens=900, chars_per_token=4.0),
         )
-        context_ms = _elapsed_ms(started)
+        context_ns = _elapsed_ns(started_ns)
+        context_ms = _ns_to_ms(context_ns)
         telemetry = budgeted.telemetry.to_dict()
         metrics["context_assembly_ms"] = context_ms
         metrics["phase_timings_ms"] = {"context_assembly_ms": context_ms}
+        metrics["phase_timings_ns"] = {"context_assembly_ns": context_ns}
         metrics["prompt_tokens_estimated"] = telemetry["estimated_tokens_total"]
         metrics["prompt_bytes"] = sum(
             len(str(message.body or "").encode("utf-8"))
@@ -616,7 +638,7 @@ def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
         iteration_metrics: list[dict[str, int]] = []
         start_rss = _current_rss_bytes()
         for index in range(max(1, options.runs)):
-            iteration_started = time.perf_counter()
+            iteration_started_ns = time.perf_counter_ns()
             payload = {
                 "index": index,
                 "platform": platform.system(),
@@ -625,10 +647,12 @@ def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
             }
             _ = json.dumps(payload, sort_keys=True)
             current, peak = tracemalloc.get_traced_memory()
+            iteration_wall_ns = _elapsed_ns(iteration_started_ns)
             iteration_metrics.append(
                 {
                     "iteration": index,
-                    "wall_time_ms": _elapsed_ms(iteration_started),
+                    "wall_time_ns": iteration_wall_ns,
+                    "wall_time_ms": _ns_to_ms(iteration_wall_ns),
                     "rss_bytes": _current_rss_bytes(),
                     "tracemalloc_current_bytes": int(current),
                     "tracemalloc_peak_bytes": int(peak),
@@ -731,6 +755,44 @@ def _metric_summary(values: Iterable[Any]) -> dict[str, int | None]:
     }
 
 
+def _family_metric_summary(
+    metrics: list[dict[str, Any]],
+    *,
+    field_name: str,
+    family_key: str,
+) -> list[dict[str, Any]]:
+    families: dict[str, dict[str, Any]] = {}
+    for metric in metrics:
+        for item in metric.get(field_name) or []:
+            if not isinstance(item, dict):
+                continue
+            family = str(item.get(family_key, "") or "").strip()
+            if not family:
+                continue
+            bucket = families.setdefault(
+                family,
+                {
+                    family_key: family,
+                    "sample_count": 0,
+                    "prompt_bytes": 0,
+                    "prompt_tokens_estimated": 0,
+                    "tool_schema_bytes": 0,
+                    "tool_call_count": 0,
+                },
+            )
+            bucket["sample_count"] = int(bucket["sample_count"]) + 1
+            for key in (
+                "prompt_bytes",
+                "prompt_tokens_estimated",
+                "tool_schema_bytes",
+                "tool_call_count",
+            ):
+                value = item.get(key)
+                if isinstance(value, int):
+                    bucket[key] = int(bucket[key]) + value
+    return sorted(families.values(), key=lambda item: str(item[family_key]))
+
+
 def _load_comparison_baseline(path: Path | None) -> dict[str, Any] | None:
     if path is None:
         return None
@@ -801,6 +863,9 @@ def summarize_runs(
             "wall_time_ms": _metric_summary(
                 metric.get("wall_time_ms") for metric in metrics
             ),
+            "wall_time_ns": _metric_summary(
+                metric.get("wall_time_ns") for metric in metrics
+            ),
             "rss_delta_bytes": _metric_summary(
                 metric.get("rss_delta_bytes") for metric in metrics
             ),
@@ -809,6 +874,16 @@ def summarize_runs(
             ),
             "prompt_tokens_estimated": _metric_summary(
                 metric.get("prompt_tokens_estimated") for metric in metrics
+            ),
+            "segment_family_metrics": _family_metric_summary(
+                metrics,
+                field_name="segment_family_metrics",
+                family_key="segment_family",
+            ),
+            "tool_family_metrics": _family_metric_summary(
+                metrics,
+                field_name="tool_family_metrics",
+                family_key="tool_family",
             ),
             "warn_only": scenario_runs[0].get("provider_variance_class")
             == WARN_ONLY_VARIANCE,
@@ -861,8 +936,10 @@ def _run_to_artifact(
         "provider_profile": run.provider_profile,
         "provider_variance_class": run.provider_variance_class,
         "wall_ms": metrics.get("wall_time_ms"),
+        "wall_ns": metrics.get("wall_time_ns"),
         "time_to_first_visible_text_ms": metrics.get("time_to_first_visible_text_ms"),
         "phase_timings_ms": metrics.get("phase_timings_ms", {}),
+        "phase_timings_ns": metrics.get("phase_timings_ns", {}),
         "provider_round_trip_ms": metrics.get("provider_round_trip_ms"),
         "context_assembly_ms": metrics.get("context_assembly_ms"),
         "prompt_bytes": metrics.get("prompt_bytes"),
