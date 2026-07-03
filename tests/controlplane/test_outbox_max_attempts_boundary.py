@@ -57,9 +57,6 @@ def test_outbox_dead_letters_on_nth_failure(tmp_path: Path, max_attempts: int) -
             max_backoff_s=1,
         )
 
-        # Drive exactly ``max_attempts`` invocations of run_once. Each
-        # run_once claims (incrementing attempts), dispatches, fails, and
-        # then either retries (status=failed) or dead-letters on the Nth.
         last_status: str | None = None
         for i in range(max_attempts):
             _force_due(store, outbox_id)
@@ -67,13 +64,11 @@ def test_outbox_dead_letters_on_nth_failure(tmp_path: Path, max_attempts: int) -
             assert result is not None, f"run_once {i + 1} returned None"
             last_status = str(result["status"])
             if i < max_attempts - 1:
-                # Earlier failures must keep the row alive for retry.
                 assert last_status in {"retry", "failed"}, (
                     f"max_attempts={max_attempts} attempt {i + 1}: "
                     f"expected retry/failed, got {last_status}"
                 )
 
-        # The Nth failure must have dead-lettered the row.
         assert last_status == "dead", (
             f"max_attempts={max_attempts}: expected status=dead on attempt "
             f"{max_attempts}, got {last_status}"
@@ -85,9 +80,6 @@ def test_outbox_dead_letters_on_nth_failure(tmp_path: Path, max_attempts: int) -
         assert final["status"] == "dead"
         assert int(final["attempts"]) == max_attempts
 
-        # An (N+1)-th run_once must NOT re-dispatch the dead row. Reset
-        # next_attempt_at first to confirm the dead status (not the
-        # backoff window) is what blocks claiming.
         _force_due(store, outbox_id)
         post_dead = worker.run_once()
         assert post_dead is None

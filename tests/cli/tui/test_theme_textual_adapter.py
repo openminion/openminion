@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import tempfile
-
 import pytest
 
 from openminion.cli.theme import DARK, LIGHT
@@ -59,15 +57,15 @@ async def test_dashboard_mounts_with_theme_preamble_injected() -> None:
 
 
 @pytest.mark.asyncio
-async def test_focus_mounts_with_theme_preamble_injected() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        app = FocusApp(runtime=_DemoFocusRuntime(working_dir=tmp), working_dir=tmp)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            assert app.active_theme.name == "dark"
-            variables = app.stylesheet._variables
-            assert "openminion-chat-user-bg" in variables
-            assert variables["openminion-chat-user-bg"] == DARK.chat_user_bg
+async def test_focus_mounts_with_theme_preamble_injected(tmp_path) -> None:
+    working_dir = str(tmp_path)
+    app = FocusApp(runtime=_DemoFocusRuntime(working_dir=working_dir), working_dir=working_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.active_theme.name == "dark"
+        variables = app.stylesheet._variables
+        assert "openminion-chat-user-bg" in variables
+        assert variables["openminion-chat-user-bg"] == DARK.chat_user_bg
 
 
 @pytest.mark.asyncio
@@ -87,15 +85,15 @@ async def test_dashboard_apply_theme_updates_active_theme() -> None:
 
 
 @pytest.mark.asyncio
-async def test_focus_apply_theme_updates_active_theme() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        app = FocusApp(runtime=_DemoFocusRuntime(working_dir=tmp), working_dir=tmp)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            ok = app.apply_theme(LIGHT)
-            await pilot.pause()
-            assert ok is True
-            assert app.active_theme.name == "light"
+async def test_focus_apply_theme_updates_active_theme(tmp_path) -> None:
+    working_dir = str(tmp_path)
+    app = FocusApp(runtime=_DemoFocusRuntime(working_dir=working_dir), working_dir=working_dir)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        ok = app.apply_theme(LIGHT)
+        await pilot.pause()
+        assert ok is True
+        assert app.active_theme.name == "light"
 
 
 @pytest.mark.asyncio

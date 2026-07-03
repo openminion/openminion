@@ -56,10 +56,8 @@ def test_audit_chain_chat_flow(tmp_path: Path) -> None:
     session_id = payload["session_id"]
     assert outbound[-1]["session_id"] == session_id
 
-    # Collect event names in emission order for this session / turn.
     event_names = [ev.event_type for ev in audit.events]
 
-    # Assert each expected bookend is present and in the required order.
     assert "inbound.received" in event_names
     assert "inbound.resolved" in event_names
     assert "outbound.sent" in event_names
@@ -69,14 +67,9 @@ def test_audit_chain_chat_flow(tmp_path: Path) -> None:
         < event_names.index("outbound.sent")
     )
 
-    # All session-scoped events on this turn share the same session_id.
     resolved_event = next(e for e in audit.events if e.event_type == "inbound.resolved")
     outbound_event = next(e for e in audit.events if e.event_type == "outbound.sent")
-    # inbound.resolved records session_id in its details.
     assert resolved_event.details.get("session_id") == session_id
-    # outbound.sent doesn't carry session_id on details (see dispatcher
-    # line 95) — it is a bookend event — but the payload stored in the
-    # outbound list is the source of truth for session linkage.
     assert outbound_event.event_type == "outbound.sent"
 
     store.close()
@@ -102,7 +95,6 @@ def test_audit_chain_command_flow(tmp_path: Path) -> None:
 
     event_names = [ev.event_type for ev in audit.events]
 
-    # The full ordered command chain.
     required_sequence = [
         "inbound.received",
         "inbound.resolved",
@@ -113,13 +105,9 @@ def test_audit_chain_command_flow(tmp_path: Path) -> None:
     for name in required_sequence:
         assert name in event_names, f"missing {name} in {event_names}"
 
-    # Strict chronological order (each required event appears after the
-    # previous one in the emitted list).
     indices = [event_names.index(name) for name in required_sequence]
     assert indices == sorted(indices), f"command chain out of order: {event_names}"
 
-    # cp.command.detected and cp.command.executed record session_id in
-    # their details (dispatcher lines 314 & 318), tying them to this turn.
     detected_event = next(
         e for e in audit.events if e.event_type == "cp.command.detected"
     )

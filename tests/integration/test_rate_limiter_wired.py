@@ -87,7 +87,6 @@ def _outbox_rows(store: Any) -> list[dict[str, Any]]:
 
 
 def test_rate_limiter_wired_chat_limit_blocks_excess(tmp_path: Path) -> None:
-
     runtime = _build_runtime_with_rate_limit(tmp_path, chat_limit=2)
     try:
         runner = runtime.channels.get("telegram")
@@ -110,12 +109,10 @@ def test_rate_limiter_wired_chat_limit_blocks_excess(tmp_path: Path) -> None:
         processed = runner.run_once()
         assert processed == 3
 
-        # 1) Exactly two outbox rows enqueued (N=2 chat limit).
         store = runner._store
         rows = _outbox_rows(store)
         assert len(rows) == 2, rows
 
-        # 2) Drain the outbox so the transport captures them.
         worker = runner._outbox_worker
         for _ in range(4):
             result = worker.run_once()
@@ -123,12 +120,10 @@ def test_rate_limiter_wired_chat_limit_blocks_excess(tmp_path: Path) -> None:
                 break
 
         outbound = transport.get_outbound_texts()
-        # Two dispatched dispatches + one throttle reply.
         assert len(outbound) == 3, outbound
         bodies = sorted(outbound)
         assert any("Rate limit exceeded" in s for s in bodies), bodies
 
-        # 3) Audit shows exactly one cp.rate_limit.exceeded for the third.
         events = _audit_events(runner)
         rl_events = [
             ev for ev in events if ev["event_type"] == "cp.rate_limit.exceeded"
@@ -138,12 +133,9 @@ def test_rate_limiter_wired_chat_limit_blocks_excess(tmp_path: Path) -> None:
             rl_events[0]["details"].get("reason") == "rate limit exceeded for chat_id"
         )
         assert rl_events[0]["outcome"] == "denied"
-        # session_id was resolved by the dispatcher's router.
         assert rl_events[0]["details"].get("session_id"), rl_events[0]
         assert str(rl_events[0]["details"].get("chat_id")) == "123"
 
-        # 4) Only two ``cp.outbox.enqueued`` events emitted (the third was
-        # rejected by the limiter before enqueue).
         enqueue_events = [
             ev for ev in events if ev["event_type"] == "cp.outbox.enqueued"
         ]
@@ -226,9 +218,6 @@ def test_rate_limiter_disabled_when_store_lacks_increment(tmp_path: Path) -> Non
     try:
         runner = runtime.channels.get("telegram")
 
-        # Replace the store on the rate limiter with one that does NOT
-        # implement ``increment_rate_limit`` — exercises the disabled
-        # short-circuit path inside ``ControlPlaneRateLimiter.check``.
         class _NoLimiterStore:
             pass
 
@@ -253,7 +242,6 @@ def test_rate_limiter_disabled_when_store_lacks_increment(tmp_path: Path) -> Non
         ]
         assert rl_events == [], events
 
-        # All three messages enqueued to outbox.
         store = runner._store
         rows = _outbox_rows(store)
         assert len(rows) == 3, rows
@@ -280,6 +268,5 @@ def test_rate_limit_config_defaults_match_policy(
 
     cfg = ControlPlaneConfig()
     assert getattr(cfg, field) == expected_default
-    # Mirror the matching RateLimitPolicy field.
     policy_field = field.removeprefix("rate_limit_")
     assert getattr(RateLimitPolicy(), policy_field) == expected_default

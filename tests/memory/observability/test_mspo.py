@@ -36,9 +36,6 @@ def _make_ctx(record_id="rec-1", rel=0.8, fresh=0.9, scope="agent:test", sess="s
     )
 
 
-# --- MSPO-01 schema ---
-
-
 def test_span_record_is_frozen():
     span = build_span_record(
         span_id="sp-1",
@@ -92,9 +89,6 @@ def test_span_telemetry_payload_round_trips_fields():
     assert payload["outcome_tag"] == "success"
 
 
-# --- MSPO-02 emitter ---
-
-
 def test_emitter_records_default_emits_every_read():
     emitter = SpanEmitter()
     emitter.record(_make_ctx())
@@ -117,7 +111,6 @@ def test_emitter_swallows_logger_failures():
             raise RuntimeError("boom")
 
     emitter = SpanEmitter(logger=_Bad())
-    # No raise expected
     span = emitter.record(_make_ctx())
     assert isinstance(span, MemorySpanRecord)
 
@@ -137,9 +130,6 @@ def test_record_span_read_functional_wrapper():
     assert len(emitter.spans) == 1
 
 
-# --- MSPO-03 outcome-tag backref ---
-
-
 def test_apply_outcome_tag_returns_new_span_with_tag():
     span = build_span_record(
         span_id="sp",
@@ -150,7 +140,7 @@ def test_apply_outcome_tag_returns_new_span_with_tag():
     )
     tagged = apply_outcome_tag(span, outcome_tag="success")
     assert tagged.outcome_tag == "success"
-    assert span.outcome_tag is None  # original unchanged
+    assert span.outcome_tag is None
 
 
 def test_backref_stamps_only_target_record_ids():
@@ -171,9 +161,6 @@ def test_backref_stamps_all_when_record_ids_is_none():
     emitter.record(_make_ctx(record_id="B"))
     tagged = backref_outcome_to_spans(emitter.spans, outcome_tag="positive")
     assert all(s.outcome_tag == "positive" for s in tagged)
-
-
-# --- MSPO-04 stale-read detector ---
 
 
 def test_detect_stale_read_returns_signal_above_threshold():
@@ -201,9 +188,6 @@ def test_detect_stale_read_returns_none_at_or_below_threshold():
     assert detect_stale_read(span, threshold=0.5) is None
 
 
-# --- MSPO-05 scoring-integration ---
-
-
 def test_aggregate_for_scoring_buckets_by_record_id():
     emitter = SpanEmitter()
     emitter.record(_make_ctx(record_id="A", rel=0.5))
@@ -225,33 +209,26 @@ def test_aggregate_categorizes_outcomes_correctly():
     spans = list(emitter.spans)
     spans[0] = apply_outcome_tag(spans[0], outcome_tag="success")
     spans[1] = apply_outcome_tag(spans[1], outcome_tag="failure")
-    # spans[2] left untagged (neutral)
     inputs = {i.record_id: i for i in aggregate_for_scoring(spans)}
     assert inputs["A"].positive_outcomes == 1
     assert inputs["B"].negative_outcomes == 1
     assert inputs["C"].neutral_outcomes == 1
 
 
-# --- MSPO-07 E2E smoke ---
-
-
 def test_e2e_smoke_read_emit_backref_score_audit():
     logger = _Logger()
     emitter = SpanEmitter(logger=logger)
 
-    # Surface 1: memory reads emit spans
     emitter.record(_make_ctx(record_id="r-1", rel=0.9, fresh=0.9))
     emitter.record(_make_ctx(record_id="r-2", rel=0.4, fresh=0.7))
 
     assert len(emitter.spans) == 2
     assert len(logger.events) == 2
 
-    # Surface 2: stale-read detector flags r-1 if threshold low
     stale = [detect_stale_read(s, threshold=0.5) for s in emitter.spans]
     flagged = [s for s in stale if s is not None]
     assert len(flagged) == 2
 
-    # Surface 3: outcome back-reference
     rewritten = backref_outcome_to_spans(
         emitter.spans, outcome_tag="success", record_ids={"r-1"}
     )
@@ -259,10 +236,8 @@ def test_e2e_smoke_read_emit_backref_score_audit():
     assert tagged["r-1"] == "success"
     assert tagged["r-2"] is None
 
-    # Surface 4: scoring aggregate
     inputs = {i.record_id: i for i in aggregate_for_scoring(rewritten)}
     assert inputs["r-1"].positive_outcomes == 1
     assert inputs["r-2"].positive_outcomes == 0
 
-    # Surface 5: telemetry-audit was stamped per read
     assert all(e[0] == "mspo_memory_span_read" for e in logger.events)

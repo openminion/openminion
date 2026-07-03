@@ -10,9 +10,6 @@ def _turn(turn_id: str, role: str, content: str = "x") -> SessionTurn:
     return SessionTurn(turn_id=turn_id, role=role, content=content)
 
 
-# Decide purpose, assistant anchor present — UNCHANGED behavior.
-
-
 def test_decide_with_user_assistant_pair_protects_pair() -> None:
     turns = [
         _turn("t1", "user", "task"),
@@ -39,9 +36,6 @@ def test_decide_scans_from_end_for_last_assistant() -> None:
     ]
     result = protected_decide_recent_turn_indexes(turns, purpose="decide")
     assert result == {2, 3}
-
-
-# MCT-RWTH: orphan-user-turn protection (the post-PCHC/GOPP case).
 
 
 def test_decide_with_only_user_turn_returns_empty() -> None:
@@ -95,9 +89,6 @@ def test_summarize_purpose_with_user_turn_protects_anchor() -> None:
     assert result == {0}
 
 
-# Mixed shapes and edge cases.
-
-
 def test_act_purpose_with_assistant_present_returns_empty() -> None:
     turns = [
         _turn("t1", "user", "task"),
@@ -149,10 +140,6 @@ def test_three_user_turns_protects_first_and_last_only() -> None:
     assert result == {0, 2}
 
 
-# Cross-fix guard: this protection must not depend on the prose content
-# (no MiniMax-specific or keyword heuristics).
-
-
 def test_protection_is_structural_not_prose_based() -> None:
     turns_a = [
         _turn("t1", "user", "Create a tiny Python project..."),
@@ -170,7 +157,6 @@ def test_protection_is_structural_not_prose_based() -> None:
 def test_non_decide_purpose_no_assistant_still_protects_via_fallback() -> None:
     turns = [_turn("t1", "user", "task")]
     assert protected_decide_recent_turn_indexes(turns, purpose="not-decide") == {0}
-    # Empty list still returns empty regardless of purpose.
     assert protected_decide_recent_turn_indexes([], purpose="not-decide") == set()
 
 

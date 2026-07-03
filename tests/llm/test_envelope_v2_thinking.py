@@ -30,8 +30,6 @@ class TestToolCallEnvelopeV2_Thinking:
             turn_id="turn-1",
         )
         assert env.thinking_blocks == []
-        # Contract version stays "v2" — the v2.1 minor bump is documented
-        # in the v2 contract spec; the envelope itself keeps the v2 tag.
         assert env.contract_version == CONTRACT_VERSION_V2
 
     def test_thinking_blocks_populated(self):
@@ -50,12 +48,7 @@ class TestToolCallEnvelopeV2_Thinking:
 
 
 def test_minor_version_constant_exists():
-
     assert CONTRACT_MINOR_VERSION_V2_1 == "v2.1"
-
-
-# ITE-07 round-trip tests — without these the parse/serialize pair drops
-# thinking_blocks silently, which was the High-severity gap caught in the
 
 
 class TestParseSerializeRoundTrip:
@@ -80,14 +73,11 @@ class TestParseSerializeRoundTrip:
             ],
         )
         wire = serialize_tool_call_envelope_v2(original)
-        # thinking_blocks must be present on the wire when non-empty.
         assert "thinking_blocks" in wire
         assert len(wire["thinking_blocks"]) == 2
-        # signature only emitted when non-None.
         assert "signature" not in wire["thinking_blocks"][0]
         assert wire["thinking_blocks"][1]["signature"] == "sig-abc"
 
-        # Round-trip back through the parser.
         revived = parse_tool_call_envelope_v2(wire)
         assert len(revived.thinking_blocks) == 2
         assert revived.thinking_blocks[0].content == "Need to call weather"
@@ -95,7 +85,6 @@ class TestParseSerializeRoundTrip:
         assert revived.thinking_blocks[1].signature == "sig-abc"
 
     def test_v2_0_payload_without_thinking_blocks_still_parses(self):
-
         from openminion.modules.llm.providers.envelope_v2 import (
             parse_tool_call_envelope_v2,
         )
@@ -120,7 +109,6 @@ class TestParseSerializeRoundTrip:
         assert parsed.thinking_blocks == []
 
     def test_envelope_with_empty_thinking_blocks_omits_field_on_wire(self):
-
         from openminion.modules.llm.providers.envelope_v2 import (
             serialize_tool_call_envelope_v2,
         )

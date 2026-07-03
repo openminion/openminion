@@ -53,15 +53,12 @@ def test_lifecycle_registers_sqlite_wizard_store(tmp_path: Path) -> None:
     try:
         runner = runtime.channels.get("telegram")
         assert runner is not None
-        # Sanity: controlplane store is SQLite-backed.
         assert isinstance(runner._store, SQLiteControlPlaneStore)
 
-        # Wizard registry now has a sqlite entry.
         assert "sqlite" in _STORE_REGISTRY
         wizard_store = _STORE_REGISTRY["sqlite"]
         assert isinstance(wizard_store, SqliteWizardStore)
 
-        # The wizard DB lives next to cp.db.
         wizard_db = tmp_path / ".openminion" / "controlplane" / "wizard.db"
         assert wizard_db.exists() or wizard_db.parent.exists()
     finally:
@@ -107,11 +104,8 @@ def test_wizard_session_persists_across_runtime_rebuild(tmp_path: Path) -> None:
     finally:
         _close_runtime(runtime)
 
-    # Clear the singleton so the rebuild registers a fresh handle, but
-    # the underlying sqlite file in tmp_path persists.
     _STORE_REGISTRY.clear()
 
-    # Rebuild against the same data_root → same wizard.db file.
     runtime2 = _build_runtime(tmp_path)
     try:
         loop = asyncio.new_event_loop()

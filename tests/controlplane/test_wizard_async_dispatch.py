@@ -20,9 +20,6 @@ from openminion.modules.controlplane.runtime.store import InMemoryControlPlaneSt
 from openminion.modules.controlplane.wizard.runtime import WizardResult
 
 
-# Stubs — mirror the shape used by test_dispatcher_wizard_session_resolution.
-
-
 @dataclass
 class _StubWizardSession:
     wizard_id: str
@@ -108,15 +105,10 @@ def _wire_stubs(monkeypatch, *, executor: Any) -> None:
     )
 
 
-# Tests
-
-
 def test_wizard_dispatch_standalone_no_running_loop(monkeypatch) -> None:
-
     dispatcher, _audit = _build_dispatcher()
     _wire_stubs(monkeypatch, executor=_StubWizardExecutor())
 
-    # Sanity: there is no running loop in this thread.
     with pytest.raises(RuntimeError):
         asyncio.get_running_loop()
 
@@ -134,7 +126,6 @@ def test_wizard_dispatch_standalone_no_running_loop(monkeypatch) -> None:
 
 
 def test_wizard_dispatch_inside_running_loop(monkeypatch) -> None:
-
     dispatcher, _audit = _build_dispatcher()
     _wire_stubs(monkeypatch, executor=_StubWizardExecutor())
 
@@ -145,7 +136,6 @@ def test_wizard_dispatch_inside_running_loop(monkeypatch) -> None:
     )
 
     async def _drive() -> tuple[Any, Any]:
-        # Inside this coroutine we *do* have a running loop.
         asyncio.get_running_loop()
         return dispatcher.dispatch(inbound)
 
@@ -162,7 +152,6 @@ def test_wizard_dispatch_inside_running_loop(monkeypatch) -> None:
 
 
 def test_wizard_step_failure_emits_audit_and_propagates(monkeypatch) -> None:
-
     dispatcher, audit = _build_dispatcher()
     _wire_stubs(monkeypatch, executor=_RaisingWizardExecutor())
 
@@ -180,8 +169,6 @@ def test_wizard_step_failure_emits_audit_and_propagates(monkeypatch) -> None:
     details = failed[0].details
     assert details.get("exc_type") == "ValueError"
     assert details.get("message") == "boom"
-    # session_id is best-effort but for the in-memory store/router it should
-    # resolve to a non-empty string.
     assert isinstance(details.get("session_id"), str)
     assert details.get("wizard_id") == "wiz-async-1"
 

@@ -215,8 +215,6 @@ def test_instantiate_allows_second_brain_advertising_durable_memory():
 
 
 def test_instantiate_allows_third_brain_hybrid_with_promotes_to_durable():
-    # Hybrids advertise promotes_to_durable, not durable_memory — this is the
-    # invariant the registry enforces.
     registry = KnowledgeGraphRegistry()
     registry.register(
         "graphify_sophiagraph_hybrid",
@@ -257,8 +255,6 @@ def test_optional_capability_reporting():
 
 
 def test_validate_provider_capabilities_standalone():
-    # The validator is also exposed as a free function for callers that
-    # construct sources outside the registry (e.g. integration tests).
     source = _FakeSource(
         name="x",
         layer=LAYER_SECOND_BRAIN,
@@ -287,15 +283,10 @@ def test_empty_provider_name_raises():
 
 
 def test_registry_does_not_import_provider_sdks_at_module_load():
-    # Re-import the module and confirm none of its top-level imports reference
-    # known provider SDK names. This prevents drift back toward import-time
-    # provider coupling.
     import openminion.modules.context.knowledge.registry as registry_mod
 
     code = registry_mod.__loader__.get_data(registry_mod.__file__).decode()  # type: ignore[union-attr]
     forbidden = ("graphify", "sophiagraph", "neo4j")
     for name in forbidden:
-        # `from .interfaces import ...` is fine; what we forbid is direct
-        # `import graphify` / `import sophiagraph` style coupling.
         assert f"import {name}" not in code, name
         assert f"from {name}" not in code, name

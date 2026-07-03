@@ -22,11 +22,7 @@ from openminion.modules.llm.providers.envelope_v2 import (
 )
 
 
-# (a) all 11 classes importable + base class shape
-
-
 def test_all_eleven_catalog_classes_importable() -> None:
-
     classes = [
         InvalidEnvelopeShapeError,
         InvalidEnvelopeVersionError,
@@ -66,9 +62,6 @@ def test_each_class_carries_documented_code_string() -> None:
         assert cls.code == code
 
 
-# (b) to_envelope() returns the documented shape
-
-
 def test_to_envelope_returns_documented_shape_with_details() -> None:
     err = DuplicateCallIdError(
         "duplicate call id 'x' at index 1",
@@ -99,9 +92,6 @@ def test_to_envelope_isolates_details_copy() -> None:
     assert err.details == {"a": 1}, "to_envelope() must return a defensive copy"
 
 
-# (c) ENVELOPE_ERROR_CODES matches the markdown spec
-
-
 def test_envelope_error_codes_frozenset_shape() -> None:
     assert isinstance(ENVELOPE_ERROR_CODES, frozenset)
     assert len(ENVELOPE_ERROR_CODES) == 10
@@ -120,19 +110,15 @@ def test_envelope_error_codes_frozenset_shape() -> None:
 
 
 def test_spec_numbered_count_is_eleven() -> None:
-
     numbered_codes = [
-        # parse-time (codes 1-5)
         "INVALID_ENVELOPE_SHAPE",
         "INVALID_ENVELOPE_VERSION",
         "INVALID_CALL_SHAPE",
         "INVALID_RESULT_SHAPE",
-        "DUPLICATE_CALL_ID",  # 5 — parse-time
-        # normalization (codes 6-7)
+        "DUPLICATE_CALL_ID",
         "UNKNOWN_TOOL_NAME",
         "INVALID_TOOL_ARGUMENTS",
-        # execution-time (codes 8-11)
-        "DUPLICATE_CALL_ID",  # 8 — runtime variant, same string value
+        "DUPLICATE_CALL_ID",
         "UNKNOWN_DEPENDENCY",
         "DEPENDENCY_CYCLE",
         "DEPENDENCY_FAILED",
@@ -157,9 +143,6 @@ def test_every_catalog_class_code_is_registered() -> None:
         assert cls.code in ENVELOPE_ERROR_CODES
 
 
-# (d) migrated consumer raises typed class with correct code
-
-
 def _envelope_with_duplicate_call_ids() -> dict:
     return {
         "contract_version": CONTRACT_VERSION_V2,
@@ -174,16 +157,13 @@ def _envelope_with_duplicate_call_ids() -> dict:
 
 
 def test_parser_raises_typed_duplicate_call_id_error() -> None:
-
     try:
         parse_tool_call_envelope_v2(_envelope_with_duplicate_call_ids())
     except DuplicateCallIdParseError as exc:
-        # Multi-inheritance: must also be catchable as both bases.
         assert isinstance(exc, EnvelopeParseError)
         assert isinstance(exc, DuplicateCallIdError)
         assert exc.code == "DUPLICATE_CALL_ID"
         assert exc.details.get("duplicate_call_id") == "a"
-        # to_envelope() returns the documented shape
         envelope = exc.to_envelope()
         assert envelope["code"] == "DUPLICATE_CALL_ID"
         assert envelope["details"]["duplicate_call_id"] == "a"
@@ -192,7 +172,6 @@ def test_parser_raises_typed_duplicate_call_id_error() -> None:
 
 
 def test_legacy_envelope_parse_error_consumers_still_match() -> None:
-
     try:
         parse_tool_call_envelope_v2(_envelope_with_duplicate_call_ids())
     except EnvelopeParseError as exc:

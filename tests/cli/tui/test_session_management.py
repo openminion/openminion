@@ -10,9 +10,6 @@ from openminion.modules.storage.runtime.session_store import (
 )
 
 
-# ── SESSMGMT-00: agent_id round-trip ─────────────────────────────────────────
-
-
 def test_agent_id_from_session_key_round_trip() -> None:
     key = build_session_key(agent_id="my-agent", channel="cli", target="tui")
     assert agent_id_from_session_key(key) == "my-agent"
@@ -20,9 +17,7 @@ def test_agent_id_from_session_key_round_trip() -> None:
 
 def test_agent_id_from_session_key_url_encoded() -> None:
     key = build_session_key(agent_id="My Agent", channel="cli", target="tui")
-    assert (
-        agent_id_from_session_key(key) == "my agent"
-    )  # _normalize_identity lower-cases
+    assert agent_id_from_session_key(key) == "my agent"
 
 
 def test_agent_id_from_session_key_no_agent_segment() -> None:
@@ -33,9 +28,6 @@ def test_agent_id_from_session_key_empty() -> None:
     assert agent_id_from_session_key("") == ""
 
 
-# ── SESSMGMT-01: Sessions tab shows agent_id + channel ───────────────────────
-
-
 @pytest.mark.asyncio
 async def test_sessions_tab_rows_show_agent_and_channel() -> None:
     app = OpenMinionApp()
@@ -43,16 +35,12 @@ async def test_sessions_tab_rows_show_agent_and_channel() -> None:
         await pilot.press("ctrl+4")  # navigate to Sessions tab
         await pilot.pause()
         sessions_tab = app.screen.query_one(SessionsTab)
-        # list_all_sessions should include agent_id and channel
         sessions = sessions_tab._all_sessions
         assert len(sessions) > 0
         for s in sessions:
             assert "agent_id" in s
             assert "channel" in s
             assert "name" in s
-
-
-# ── SESSMGMT-01: search filters by agent_id ──────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -63,7 +51,6 @@ async def test_sessions_tab_search_by_agent_id() -> None:
         await pilot.pause()
         sessions_tab = app.screen.query_one(SessionsTab)
 
-        # DemoSessionsProvider has sessions for "agent-02" and "default"
         sessions_tab._all_sessions = [
             {
                 "id": "sess-aaa",
@@ -83,7 +70,6 @@ async def test_sessions_tab_search_by_agent_id() -> None:
             },
         ]
 
-        # Simulate filtering by agent-02
         query = "agent-02"
         sessions_tab._sessions = [
             s
@@ -99,9 +85,6 @@ async def test_sessions_tab_search_by_agent_id() -> None:
         assert sessions_tab._sessions[0]["agent_id"] == "agent-02"
 
 
-# ── SESSMGMT-02: resume from Sessions tab ────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_resume_requested_message_on_r_key() -> None:
     app = OpenMinionApp()
@@ -110,12 +93,10 @@ async def test_resume_requested_message_on_r_key() -> None:
         await pilot.pause()
         sessions_tab = app.screen.query_one(SessionsTab)
 
-        # Manually select a session
         sessions_tab._selected_session_id = "sess-abc123"
 
         received: list[SessionsTab.ResumeRequested] = []
 
-        # Patch post_message to capture ResumeRequested
         original_post = sessions_tab.post_message
 
         def _patched_post(msg):
@@ -136,9 +117,6 @@ async def test_resume_requested_message_on_r_key() -> None:
         assert received[0].session_id == "sess-abc123"
 
 
-# ── SESSMGMT-03: DemoSessionsProvider.update_session_name ────────────────────
-
-
 def test_demo_sessions_provider_update_session_name() -> None:
     provider = DemoSessionsProvider()
     provider.update_session_name("sess-abc123", "My Session")
@@ -154,9 +132,6 @@ def test_demo_sessions_provider_update_session_name_empty() -> None:
     sessions = provider.list_all_sessions()
     abc = next(s for s in sessions if s["id"] == "sess-abc123")
     assert abc["name"] == ""
-
-
-# ── SESSMGMT-06: close_session removes session from demo provider ─────────────
 
 
 def test_demo_sessions_provider_close_session_removes_session() -> None:
