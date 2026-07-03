@@ -51,6 +51,7 @@ from openminion.modules.brain.loop.constants import (
 from openminion.modules.brain.loop.entry import decompose_tool_spec
 from openminion.modules.brain.loop.tools.engine import (
     _repeated_plan_only_without_substantive_work,
+    _suppress_plan_family_tools,
 )
 from openminion.modules.brain.loop.tools.confirmation import (
     confirmation_required_user_message,
@@ -788,6 +789,16 @@ def test_repeated_plan_only_detection_treats_plan_family_as_control() -> None:
             )
         ],
     )
+
+
+def test_suppress_plan_family_tools_removes_plan_family_variants() -> None:
+    filtered_specs, filtered_allowed = _suppress_plan_family_tools(
+        _tool_specs("plan", "plan.set", "plan.update", "file.write"),
+        frozenset({"plan", "plan.set", "plan.update", "file.write"}),
+    )
+
+    assert [spec.name for spec in filtered_specs] == ["file.write"]
+    assert filtered_allowed == frozenset({"file.write"})
 
 
 def test_engine_recovers_seeded_policy_denial_with_suggested_tool() -> None:
