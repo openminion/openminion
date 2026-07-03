@@ -3624,9 +3624,7 @@ class TestFinalizeIterationCapExit:
 
         assert result is not None
         assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
-        assert "runtime" in st_loop.scratchpad[
-            "budget_answer_only_finalization_error"
-        ]
+        assert "runtime" in st_loop.scratchpad["budget_answer_only_finalization_error"]
 
     def test_force_finalization_not_ok_response_returns_llm_error(self) -> None:
         from openminion.modules.llm.schemas import ResponseError
@@ -4022,9 +4020,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         _record_duplicate_batch_execution_facts(
             st_loop,
             signature=signature,
-            ordered_tool_results=[
-                (call, SimpleNamespace(action_result=ar, job=None))
-            ],
+            ordered_tool_results=[(call, SimpleNamespace(action_result=ar, job=None))],
         )
         prof = _profile(allowed_tools=frozenset({"plan"}))
         loop_ctx = _LoopContext(state=_state())

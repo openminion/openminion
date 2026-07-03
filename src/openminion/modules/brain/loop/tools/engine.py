@@ -40,8 +40,8 @@ from .postprocess.engine import (
 from .postprocess.rules import _is_empty_plan_lookup_diversion
 from .plan_control import (
     PLAN_TOOL_ACTIONS,
-    PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
     PLAN_TOOL_NAME,
+    is_plan_family_tool_name,
 )
 from .decompose import (  # noqa: F401
     _DECOMPOSE_TOOL_NAME,
@@ -241,7 +241,7 @@ def _repeated_plan_only_message(
         return None
     guidance = (
         "You have already recorded a plan update without doing task-relevant "
-        "work after it. Do not call the plan tool again now. Continue the "
+        "work after it. Do not call the plan tool family again now. Continue the "
         "original user request with substantive tools such as file or command "
         "tools, or provide the final answer if no more tools are needed."
     )
@@ -260,24 +260,15 @@ def _repeated_plan_only_without_substantive_work(
     if not tool_calls:
         return False
     if any(
-        str(getattr(call, "name", "") or "").strip() != PLAN_TOOL_NAME
-        for call in tool_calls
+        not is_plan_family_tool_name(getattr(call, "name", "")) for call in tool_calls
     ):
         return False
-    prior_actions = list(
-        loop_state.scratchpad.get(PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY, []) or []
-    )
-    if not prior_actions:
+    scratchpad = dict(loop_state.scratchpad or {})
+    if PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY not in scratchpad:
         return False
-    for call in tool_calls:
-        arguments = dict(getattr(call, "arguments", {}) or {})
-        action = str(arguments.get("action", "") or "").strip()
-        if action not in PLAN_TOOL_ACTIONS:
-            return False
     current_substantive_count = _count_substantive_non_control_tool_results(loop_state)
     last_plan_substantive_count = int(
-        loop_state.scratchpad.get(PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY, -1)
-        or 0
+        scratchpad.get(PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY, -1) or 0
     )
     return current_substantive_count <= last_plan_substantive_count
 

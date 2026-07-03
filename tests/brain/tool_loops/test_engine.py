@@ -45,7 +45,13 @@ from openminion.modules.brain.loop.tools import (
     run_adaptive_tool_loop,
     semantic_batch_signature,
 )
+from openminion.modules.brain.loop.constants import (
+    PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
+)
 from openminion.modules.brain.loop.entry import decompose_tool_spec
+from openminion.modules.brain.loop.tools.engine import (
+    _repeated_plan_only_without_substantive_work,
+)
 from openminion.modules.brain.loop.tools.confirmation import (
     confirmation_required_user_message,
     extract_confirmation_replay_queue,
@@ -507,6 +513,283 @@ def test_engine_retries_empty_plan_lookup_after_substantive_tool_results() -> No
     assert outcome.state.scratchpad["empty_plan_lookup_diversion_count"] == 1
 
 
+def test_engine_redirects_invalid_loop_control_plan_call_to_substantive_work() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="plan-declare",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            "action": "declare",
+                            "plan_id": "build-demo",
+                            "objective": "Build the demo",
+                            "steps": [
+                                {
+                                    "step_id": "write",
+                                    "description": "Write the app",
+                                }
+                            ],
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="plan-noop",
+                        name=PLAN_TOOL_NAME,
+                        arguments={},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="write",
+                        name="file.write",
+                        arguments={"path": "app.py", "content": "print('ok')\n"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="SOURCES\n- wrote app.py\n\nCHANGES\n- created app\n\nTESTS\n- not run",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The requested project file was written.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4, llm_calls_max=6),
+        session_api=_FakeSessionAPI(),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="wrote file",
+                    outputs={"path": "app.py"},
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.write"}),
+            max_iterations=6,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="build the demo")],
+        tool_specs=_tool_specs("file.write"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
+    assert outcome.state.scratchpad["plan_control.noop_retries"] == 1
+    assert outcome.state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] is True
+    assert any(
+        "It cannot inspect or list the current plan" in message.content
+        for message in runtime.calls[2]["messages"]
+        if message.role == "system"
+    )
+
+
+def test_engine_redirects_repeated_plan_only_calls_to_substantive_work() -> None:
+    plan_call = ToolCall(
+        id="plan-call",
+        name=PLAN_TOOL_NAME,
+        arguments={
+            "action": "declare",
+            "plan_id": "demo",
+            "objective": "Build the demo",
+            "steps": [
+                {
+                    "step_id": "write",
+                    "description": "Write app.py",
+                    "depends_on": [],
+                    "estimated_difficulty": "low",
+                    "tool_families": ["file"],
+                }
+            ],
+        },
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[plan_call],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="plan-call-2",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            **dict(plan_call.arguments),
+                            "plan_id": "demo-again",
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="plan-call-3",
+                        name=PLAN_TOOL_NAME,
+                        arguments={
+                            **dict(plan_call.arguments),
+                            "plan_id": "demo-third",
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="write-call",
+                        name="file.write",
+                        arguments={"path": "app.py", "content": "print('ok')\n"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Wrote app.py and validated the loop.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The requested file was written.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    session_api = _FakeSessionAPI()
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4, llm_calls_max=6),
+        session_api=session_api,
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="wrote file",
+                    outputs={"path": "app.py"},
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.write"}),
+            max_iterations=6,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="build the demo")],
+        tool_specs=_tool_specs("file.write"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
+    assert outcome.state.scratchpad["plan_control.noop_retries"] == 2
+    assert outcome.state.scratchpad["plan_control.tool_suppressed"] is True
+    assert [event["event_type"] for event in session_api.events] == [
+        "task_plan.declared"
+    ]
+    assert PLAN_TOOL_NAME not in {spec.name for spec in runtime.calls[3]["tools"]}
+    assert any(
+        "already recorded a plan update" in message.content
+        for message in runtime.calls[2]["messages"]
+        if message.role == "system"
+    )
+
+
+def test_repeated_plan_only_detection_treats_plan_family_as_control() -> None:
+    loop_state = AdaptiveToolLoopState()
+    loop_state.scratchpad[PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY] = 0
+
+    assert _repeated_plan_only_without_substantive_work(
+        loop_state,
+        [
+            ToolCall(
+                id="plan-set",
+                name="plan.set",
+                arguments={"plan_id": "demo", "objective": "Build demo"},
+            )
+        ],
+    )
+
+    loop_state.scratchpad["adaptive.tool_results"] = [
+        {
+            "tool_name": "file.write",
+            "ok": True,
+            "summary": "wrote file",
+            "path": "app.py",
+        }
+    ]
+
+    assert not _repeated_plan_only_without_substantive_work(
+        loop_state,
+        [
+            ToolCall(
+                id="plan-set-2",
+                name="plan.set",
+                arguments={"plan_id": "demo", "objective": "Build demo"},
+            )
+        ],
+    )
+
+
 def test_engine_recovers_seeded_policy_denial_with_suggested_tool() -> None:
     runtime = _FakeRuntime(
         responses=[
@@ -815,6 +1098,117 @@ def test_engine_recovers_seeded_invalid_workdir_with_llm_guidance() -> None:
         "absolute workspace directory" in message.content
         for message in runtime.calls[0]["messages"]
         if message.role == "system"
+    )
+
+
+def test_engine_seeded_recovery_drops_direct_tool_latch_for_later_validation() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="verify-1",
+                        name="exec.run",
+                        arguments={"command": "python -m pytest -q tests"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Validation failure diagnosed; adding __main__.py next.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="seeded command failed",
+                    outputs={
+                        "error": {
+                            "code": "EXEC_ERROR",
+                            "message": "command exited with code 1",
+                        },
+                        "stderr_preview": "Usage: loopcalc <numbers>",
+                    },
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="pytest failed",
+                    outputs={
+                        "error": {
+                            "code": "EXEC_ERROR",
+                            "message": "command exited with code 1",
+                        },
+                        "stderr_preview": (
+                            "No module named loopcalc.__main__; "
+                            "'loopcalc' is a package and cannot be directly executed"
+                        ),
+                    },
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"exec.run", "file.write"}),
+            max_iterations=4,
+            allow_llm_recovery_after_tool_failure=True,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[
+            Message(role="user", content="create a small package and validate it")
+        ],
+        tool_specs=_tool_specs("exec.run", "file.write"),
+        seeded_commands=[
+            ToolCommand(
+                title="run pytest",
+                kind="tool",
+                tool_name="exec.run",
+                args={"command": "python -m pytest -q tests"},
+                inputs={"command": "python -m pytest -q tests"},
+            )
+        ],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert (
+        outcome.final_text == "Validation failure diagnosed; adding __main__.py next."
+    )
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        "exec.run",
+        "exec.run",
+    ]
+    assert runtime.calls, "the seeded failure should reopen model recovery"
+    assert len(runtime.calls) == 2, "the later pytest failure should stay recoverable"
+    assert any(
+        "confirmed seeded tool command failed" in message.content
+        for message in runtime.calls[0]["messages"]
+        if message.role == "system"
+    )
+    assert any(
+        "loopcalc.__main__" in message.content
+        for message in runtime.calls[1]["messages"]
+        if message.role in {"tool", "system"}
     )
 
 
