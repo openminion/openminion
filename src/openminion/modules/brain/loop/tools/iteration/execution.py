@@ -78,7 +78,7 @@ def _is_confirm_required(action_result: Any) -> bool:
     )
 
 
-def _record_successful_plan_family_call(
+def _record_plan_family_call(
     loop_state: AdaptiveToolLoopState,
     *,
     tool_name: str,
@@ -155,7 +155,6 @@ def execute_iteration_results(
         )
         loop_state.tool_calls_made.append(tool_name)
         loop_state.total_tool_calls += 1
-
         if not (dispatch_budget_managed and not iter_tc_cache_hit):
             debit_tool_budget(loop_ctx)
 
@@ -167,9 +166,7 @@ def execute_iteration_results(
             tool_name=tool_name,
             action_result=action_result,
         )
-        _record_successful_plan_family_call(
-            loop_state, tool_name=tool_name, action_result=action_result
-        )
+        _record_plan_family_call(loop_state, tool_name=tool_name, action_result=action_result)
 
         tc_args_for_cache = dict(getattr(tool_call, "arguments", {}) or {})
         loop_cache.invalidate_for_write(tool_name, tc_args_for_cache)
