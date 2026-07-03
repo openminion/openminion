@@ -13,6 +13,11 @@ from openminion.modules.brain.schemas import Command
 
 _COMMAND_ADAPTER = TypeAdapter(Command)
 _CONFIRMATION_REPLAY_QUEUE_KEY = "_confirmation_replay_queue"
+_SESSION_CONFIRMATION_RESPONSES = {
+    "yes for session",
+    "yes this session",
+    "yes for the session",
+}
 
 _CONFIRMATION_MESSAGE_ARG_KEYS = ("path", "file_path", "command", "cwd", "url")
 
@@ -108,6 +113,24 @@ def attach_confirmation_replay_queue(
 
 def confirmation_replay_batch_size(command: Any) -> int:
     return 1 + len(extract_confirmation_replay_queue(command))
+
+
+def is_session_confirmation_response(text: str) -> bool:
+    normalized = " ".join(str(text or "").strip().lower().split())
+    return normalized in _SESSION_CONFIRMATION_RESPONSES
+
+
+def apply_session_confirmation_grant(state: Any, command: Any) -> None:
+    inputs = (
+        dict(getattr(command, "inputs", None))
+        if isinstance(getattr(command, "inputs", None), dict)
+        else {}
+    )
+    inputs["confirmation_scope"] = "session"
+    session_id = str(getattr(state, "session_id", "") or "").strip()
+    if session_id:
+        inputs["confirmation_scope_session_id"] = session_id
+    command.inputs = inputs
 
 
 def confirmation_required_user_message(command: Any) -> str:

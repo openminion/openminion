@@ -1,10 +1,10 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-06-23
+Last updated: 2026-07-03
 
 Purpose: give maintainers a compact package-local release smoke checklist for
-the public `openminion` package surface, starting from `0.0.1`.
+the public `openminion` package surface on the current `0.0.2` alpha line.
 
 ## Release floor
 

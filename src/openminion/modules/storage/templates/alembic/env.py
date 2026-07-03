@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from logging.config import fileConfig
 
 from alembic import context
+from openminion.base.version import OPENMINION_VERSION
 from sqlalchemy import engine_from_config, pool, text
 
 # Revision scripts in this template are operation-centric; no ORM metadata required.
@@ -30,7 +31,7 @@ def _xarg(name: str, default: str) -> str:
 
 def _sync_openminion_identity(connection) -> None:
     module_id = _xarg("module_id", MODULE_ID)
-    module_version = _xarg("module_version", "0.0.1")
+    module_version = _xarg("module_version", OPENMINION_VERSION)
     app_id = int(_xarg("module_app_id", str(MODULE_APPLICATION_ID)))
     target_user_version = int(_xarg("target_user_version", str(TARGET_USER_VERSION)))
 

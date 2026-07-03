@@ -2,8 +2,10 @@
 
 from typing import Any
 
+from openminion.base.version import OPENMINION_VERSION
+
 # Bind __version__ before public re-exports to avoid circular import reads.
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION
 
 __all__ = [
     "APIRuntime",

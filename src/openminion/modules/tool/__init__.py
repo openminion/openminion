@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.tool.constants import (
     TOOL_BOOTSTRAP_STATUS_ALREADY_REGISTERED,
     TOOL_BOOTSTRAP_STATUS_REGISTERED,
@@ -87,7 +88,7 @@ from openminion.modules.tool.runtime.registrar import (
     ToolModuleRegistrar,
 )
 
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION
 
 # Module-first tool source gates. Wave-1 TMFC/WOMC migrations forced
 _MODULES_ONLY = True
