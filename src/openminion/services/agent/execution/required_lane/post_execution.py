@@ -37,7 +37,6 @@ from .unavailable import (
     unavailable_discovery_retry_instruction,
 )
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS  # noqa: F401  (re-exported for in-module callers)
-
 if TYPE_CHECKING:
     from .runner import RequiredLaneRunner
 
