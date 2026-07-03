@@ -15,9 +15,6 @@ from openminion.services.brain.post_execution.postprocess import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Files that emit `tool_contract_version` in tool-turn metadata. Every entry
-# here must go through `CONTRACT_VERSION_V2`. If a new emission site lands,
-# add it here in the same change.
 GUARDED_FILES: tuple[Path, ...] = (
     REPO_ROOT / "src" / "openminion" / "services" / "agent" / "service.py",
     REPO_ROOT / "src" / "openminion" / "services" / "agent" / "execution" / "base.py",
@@ -36,11 +33,9 @@ METADATA_KEY = "tool_contract_version"
 
 
 def _find_inline_constant_emissions(tree: ast.AST) -> list[tuple[int, str]]:
-
     findings: list[tuple[int, str]] = []
 
     for node in ast.walk(tree):
-        # Form 1: dict literal pair
         if isinstance(node, ast.Dict):
             for key_node, value_node in zip(node.keys, node.values):
                 if (
@@ -56,7 +51,6 @@ def _find_inline_constant_emissions(tree: ast.AST) -> list[tuple[int, str]]:
                         )
                     )
 
-        # Form 2: subscript assignment `obj["tool_contract_version"] = "..."`
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if (
@@ -78,7 +72,6 @@ def _find_inline_constant_emissions(tree: ast.AST) -> list[tuple[int, str]]:
 
 
 def _has_canonical_import(tree: ast.AST) -> bool:
-
     for node in ast.iter_child_nodes(tree):
         if not isinstance(node, ast.ImportFrom):
             continue
@@ -97,7 +90,6 @@ class CanonicalConstantValueTests(unittest.TestCase):
 
 class SourceCentralizationGuardTests(unittest.TestCase):
     def test_all_guarded_files_exist(self) -> None:
-        # Catches accidental file moves/deletes that would silently skip the guard.
         for path in GUARDED_FILES:
             self.assertTrue(
                 path.exists(),

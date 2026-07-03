@@ -1,6 +1,5 @@
 import pytest
 import asyncio
-import os
 from pathlib import Path
 
 from openminion.modules.secret.service import (
@@ -17,7 +16,6 @@ def _run(coro):
 
 @pytest.fixture
 def master_key():
-    # Generate a valid Fernet key for testing
     from cryptography.fernet import Fernet
 
     return Fernet.generate_key().decode()
@@ -67,15 +65,10 @@ def test_namespace_isolation(service):
     assert v2 == "value2"
 
 
-def test_missing_master_key():
-    # Clear the env var if set
-    old_val = os.environ.pop("OPENMINION_SECRET_KEY", None)
-    try:
-        with pytest.raises(SecretKeyError):
-            SecretService()
-    finally:
-        if old_val:
-            os.environ["OPENMINION_SECRET_KEY"] = old_val
+def test_missing_master_key(monkeypatch):
+    monkeypatch.delenv("OPENMINION_SECRET_KEY", raising=False)
+    with pytest.raises(SecretKeyError):
+        SecretService()
 
 
 def test_secret_pattern():

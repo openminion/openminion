@@ -32,9 +32,6 @@ def validator():
     return _load_module("tmri_validator", VALIDATOR_PATH)
 
 
-# split_markdown_row: backtick awareness and balanced/unbalanced runs
-
-
 def test_split_well_formed_row_returns_expected_cells(reconciler):
     line = "| ID | P0 | done | mod | Task | Exit | unit |"
     cells = reconciler.split_markdown_row(line)
@@ -66,9 +63,6 @@ def test_split_balanced_backtick_run_treated_as_code_span(reconciler):
     line = "| A | ``code with | pipe`` | rest |"
     cells = reconciler.split_markdown_row(line)
     assert len(cells) == 3
-
-
-# CCRS-shape integrity: malformed extra-column row is rejected
 
 
 CCRS_SHAPE_ROW = (
@@ -156,10 +150,8 @@ def test_ccrs_shape_malformed_row_is_not_counted(reconciler, tmp_path):
         [CCRS_SHAPE_ROW, CLEAN_TODO_ROW],
     )
     result = reconciler.reconcile_file(tracker, write=False, touch_last_updated=False)
-    # The malformed row is not counted as `done`.
     assert result.counts["done"] == 0
     assert result.counts["todo"] == 1
-    # A warning is emitted explaining the shape mismatch.
     assert any("9 cells, expected 7" in w for w in result.malformed_row_warnings)
 
 
@@ -180,9 +172,6 @@ def test_well_formed_rows_have_no_malformed_warning(reconciler, tmp_path):
     assert result.counts["done"] == 1
     assert result.counts["todo"] == 1
     assert result.malformed_row_warnings == []
-
-
-# DP4-shape integrity: status drift from evidence
 
 
 def test_dp4_shape_status_drift_is_flagged(validator, tmp_path):
@@ -215,9 +204,6 @@ def test_dp4_shape_status_drift_is_flagged(validator, tmp_path):
     ]
     assert drift_warnings, f"expected DRIFT-01 status-drift warning, got: {warnings!r}"
     assert not any("DRIFT-02" in w and "drifted from evidence" in w for w in warnings)
-
-
-# Validator row-width check (strict mode emits warning, not error)
 
 
 def test_validator_flags_ccrs_shape_row_width(validator, tmp_path):

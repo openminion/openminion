@@ -65,18 +65,12 @@ class _StubHarnessReport:
     global_errors: tuple[str, ...] = ()
 
 
-# Literal discipline
-
-
 def test_skill_validation_severity_closed_set() -> None:
     assert set(SkillValidationSeverity.__args__) == {"error", "warning", "info"}
 
 
 def test_skill_test_outcome_closed_set() -> None:
     assert set(SkillTestOutcome.__args__) == {"passed", "failed", "skipped"}
-
-
-# Validation builder
 
 
 def test_build_skill_validation_report_maps_lint_and_harness() -> None:
@@ -161,9 +155,6 @@ def test_build_skill_validation_report_handles_missing_inputs() -> None:
     assert report.harness_summary == {"warnings": 0, "errors": 0}
 
 
-# Test builder
-
-
 def test_build_skill_test_report_passed_outcome() -> None:
     harness_report = _StubHarnessReport(
         results=(_StubHarnessResult(),),
@@ -229,9 +220,6 @@ def test_build_skill_test_report_none_harness_is_skipped() -> None:
     assert report.harness_report_ref == ""
 
 
-# Debug view builder
-
-
 def test_build_skill_authoring_debug_view_with_mapping_payload() -> None:
     package = _StubPackage()
     debug_payload = {
@@ -288,9 +276,6 @@ def test_build_skill_authoring_debug_view_determinism() -> None:
     assert a == b
 
 
-# Anti-LLM field-naming
-
-
 def test_authoring_has_no_prose_verdict_fields() -> None:
     forbidden = {
         "verdict",
@@ -314,9 +299,6 @@ def test_authoring_has_no_prose_verdict_fields() -> None:
         )
 
 
-# CLI verb-parity regression
-
-
 def test_umbrella_cli_exposes_unified_verbs() -> None:
     from openminion.cli.commands import skill as skill_cmd
 
@@ -324,7 +306,6 @@ def test_umbrella_cli_exposes_unified_verbs() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     skill_cmd.register(subparsers)
 
-    # Inspect registered subcommands under 'skill'
     skill_subparser = subparsers.choices["skill"]
     skill_actions = [
         action
@@ -363,9 +344,6 @@ def test_module_local_cli_exposes_unified_verbs() -> None:
         )
 
 
-# Operator-guide doc resolution (SADX audit §2.6)
-
-
 def test_skill_authoring_validation_operator_guide_reference_resolves() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     module_readme = repo_root / "docs/modules/openminion-skill/docs/README.md"
@@ -376,11 +354,7 @@ def test_skill_authoring_validation_operator_guide_reference_resolves() -> None:
     assert guide.exists(), f"missing operator guide at {guide}"
 
 
-# Harness integration (SADX-03)
-
-
 def test_harness_end_to_end_exercises_all_three_builders(tmp_path: Path) -> None:
-
     from openminion.services.integration.skill_harness import run_skill_harness
 
     skill_root = tmp_path / "examples" / "demo"
@@ -435,5 +409,4 @@ def test_harness_end_to_end_exercises_all_three_builders(tmp_path: Path) -> None
     assert debug_view.test_ref.startswith("test:examples.demo:")
 
 
-# Silence unused-import linter complaints for type-only imports.
 _ = (Sequence,)

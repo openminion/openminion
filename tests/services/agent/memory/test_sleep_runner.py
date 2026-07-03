@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from openminion.modules.memory.storage.audit import (
     InMemoryMemoryAuditSink,
 )
@@ -70,9 +72,6 @@ def _make_runner(config=None, candidates=None, deduper_count=0):
     )
 
 
-# --- STC-01 runner skeleton ---
-
-
 def test_disabled_runner_is_strict_noop():
     runner = _make_runner(config=SleepRunnerConfig(enabled=False))
     result = runner.run_once()
@@ -130,15 +129,11 @@ def test_runner_budget_yields_when_exhausted():
 
 
 def test_runner_idempotent_when_promoter_drains_state():
-
     runner = _make_runner(candidates=[])
     a = runner.run_once()
     b = runner.run_once()
     assert (a.promoted, a.pruned, a.deduped) == (0, 0, 0)
     assert (b.promoted, b.pruned, b.deduped) == (0, 0, 0)
-
-
-# --- STC-02 config defaults ---
 
 
 def test_default_config_is_disabled():
@@ -150,8 +145,6 @@ def test_default_config_is_disabled():
 
 
 def test_config_validates_thresholds():
-    import pytest
-
     with pytest.raises(ValueError):
         SleepRunnerConfig(interval_seconds=0)
     with pytest.raises(ValueError):
@@ -160,11 +153,7 @@ def test_config_validates_thresholds():
         SleepRunnerConfig(prune_utility_threshold=1.5)
 
 
-# --- STC-03 cron payload ---
-
-
 def test_build_cron_payload_uses_systemEvent_kind_not_agent_idle_tick():
-
     payload = build_cron_payload(SleepRunnerConfig(enabled=True))
     assert payload["kind"] == CRON_PAYLOAD_KIND_SYSTEM_EVENT
     assert payload["kind"] != "agentIdleTick"
@@ -182,9 +171,6 @@ def test_cron_payload_carries_budget_metadata():
     assert payload["metadata"]["prune_utility_threshold"] == 0.5
 
 
-# --- STC-04 audit emission ---
-
-
 def test_runner_emits_audit_event_on_each_run():
     sink = InMemoryMemoryAuditSink()
     candidates = [
@@ -199,7 +185,6 @@ def test_runner_emits_audit_event_on_each_run():
         audit_sink=sink,
     )
     runner.run_once()
-    # The sink retains events
     assert len(sink.events) == 1
     event = sink.events[0]
     assert event.event_type == EVENT_TYPE_SLEEP_CONSOLIDATION
@@ -225,5 +210,4 @@ def test_runner_emits_audit_event_with_errors_recorded():
     )
     result = runner.run_once()
     assert any("promote:" in e for e in result.errors)
-    # Audit still emitted
     assert len(sink.events) == 1

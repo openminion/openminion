@@ -23,9 +23,6 @@ from openminion.services.runtime.verifier_binding import (
 )
 
 
-# Closed-set forbidden field names; mirrors the TGCR + APBR + MTRR +
-# ASRR + AATR + SPRR rosters verbatim. The seven lanes' rosters MUST
-# stay aligned.
 FORBIDDEN_FIELDS: Sequence[str] = (
     "verdict",
     "reasoning",
@@ -36,9 +33,6 @@ FORBIDDEN_FIELDS: Sequence[str] = (
     "summary_text",
     "notes",
 )
-
-
-# Builders mirror the TGCR forbidden-fields suite verbatim.
 
 
 def _success_criterion_kwargs() -> Dict[str, Any]:
@@ -111,8 +105,6 @@ def _run_checkpoint_kwargs() -> Dict[str, Any]:
     }
 
 
-# Each record exposes (constructor, builder, expected-exception-type).
-# Pydantic BaseModel → ValidationError. Frozen dataclass → TypeError.
 _RECORDS: Sequence[
     tuple[str, Callable[..., Any], Callable[[], Dict[str, Any]], type[Exception]]
 ] = (
@@ -182,7 +174,6 @@ def test_derive_run_terminal_state_accepts_only_typed_inputs() -> None:
     assert param_names == ["goal", "verifier_results", "fired_failure_conditions"], (
         f"derive_run_terminal_state signature must be typed-only; got {param_names!r}"
     )
-    # The forbidden field names must not appear as parameter names.
     for name in FORBIDDEN_FIELDS:
         assert name not in param_names
 

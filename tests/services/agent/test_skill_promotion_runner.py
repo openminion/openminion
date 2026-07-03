@@ -67,7 +67,7 @@ def _shape(
 
 
 def test_promotion_runner_no_op_when_cadence_disabled() -> None:
-    config = SkillConfig()  # promotion_cadence_enabled = False (default)
+    config = SkillConfig()
     audit_sink = InMemoryMemoryAuditSink()
     memory = _StubMemoryAPI(
         shapes=[_shape(success_count=10, utility_score=0.95)], catalog=[]
@@ -82,7 +82,6 @@ def test_promotion_runner_no_op_when_cadence_disabled() -> None:
     assert isinstance(result, SkillPromotionRunResult)
     assert result.enabled is False
     assert result.report is None
-    # No recorder calls and no audit emission.
     assert memory.recorded_proposals == []
     assert memory.recorded_reviews == []
     assert audit_sink.events == []
@@ -110,10 +109,8 @@ def test_promotion_runner_emits_audit_event_when_enabled() -> None:
     assert result.report is not None
     assert result.report.candidates_considered == 1
     assert result.report.pending_operator_review == 1
-    # Novel proposal recorded as pending — no auto-approval.
     assert len(memory.recorded_proposals) == 1
     assert memory.recorded_reviews == []
-    # Exactly one audit event with the documented event type.
     assert len(audit_sink.events) == 1
     event = audit_sink.events[0]
     assert event.event_type == SKILL_PROMOTION_PASS_EVENT_TYPE
@@ -126,8 +123,7 @@ def test_promotion_runner_emits_audit_event_when_enabled() -> None:
 
 
 def test_promotion_runner_force_enabled_overrides_config_flag() -> None:
-
-    config = SkillConfig()  # default disabled
+    config = SkillConfig()
     memory = _StubMemoryAPI(
         shapes=[_shape(success_count=10, utility_score=0.9)], catalog=[]
     )
@@ -145,7 +141,6 @@ def test_promotion_runner_force_enabled_overrides_config_flag() -> None:
 
 
 def test_promotion_runner_no_audit_sink_does_not_crash() -> None:
-
     config = SkillConfig(promotion_cadence_enabled=True)
     memory = _StubMemoryAPI(
         shapes=[_shape(success_count=10, utility_score=0.9)], catalog=[]
