@@ -282,7 +282,6 @@ def _write_echo_config(tmp_path: Path) -> Path:
     config_path = tmp_path / "config.json"
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
-    # Set OPENMINION_DATA_ROOT to tmp for test isolation
     os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")
     config.runtime.log_level = "ERROR"
     _csc_install_default_agent(config, provider="echo")

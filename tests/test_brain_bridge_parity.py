@@ -256,7 +256,6 @@ def _build_service(
             db_path="/tmp/brain-tests.db",
         )
 
-    # Force runner to dummy for test consistency
     service._runner = _DummyRunner(step_out=step_out)
     if session_api is not None:
         service._runner.session_api = session_api

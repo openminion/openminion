@@ -183,8 +183,6 @@ def test_invalid_tool_arguments_metadata_with_single_field() -> None:
 
 def test_hopeless_malformed_call_has_non_empty_missing_fields() -> None:
     spec = _spec_with_required("query")
-    # Simulates a model that sends arguments as a string instead of dict
-    # and then after normalization still has no "query" key.
     call = _tool_call("test_tool", {})  # no args at all
     missing = missing_required_for_call(call, spec_lookup=_spec_lookup_for(spec))
     assert len(missing) > 0, (
@@ -194,7 +192,6 @@ def test_hopeless_malformed_call_has_non_empty_missing_fields() -> None:
 
 def test_corrected_call_passes_missing_check() -> None:
     spec = _spec_with_required("query")
-    # Simulates the repaired call after one repair attempt
     repaired_call = _tool_call("test_tool", {"query": "latest AI news"})
     missing = missing_required_for_call(
         repaired_call, spec_lookup=_spec_lookup_for(spec)

@@ -11,7 +11,6 @@ class TestPlanSkillScenario:
         plan_skill_path = CLI_CHAT_SMOKE_DIR / "plan" / "SKILL.md"
         content = plan_skill_path.read_text()
 
-        # Check for planning trigger keywords
         assert "when_to_use:" in content, "Missing when_to_use section"
         assert "plan" in content.lower(), "Missing plan trigger word"
         assert (
@@ -22,7 +21,6 @@ class TestPlanSkillScenario:
         plan_skill_path = CLI_CHAT_SMOKE_DIR / "plan" / "SKILL.md"
         content = plan_skill_path.read_text()
 
-        # Verify checkpoint requirements in Checks section
         assert "checkpoint" in content.lower(), "Missing checkpoint in skill"
         assert "Contains 2-3 checkpoints" in content, (
             "Missing checkpoint count requirement"
@@ -35,7 +33,6 @@ class TestPlanSkillScenario:
         plan_skill_path = CLI_CHAT_SMOKE_DIR / "plan" / "SKILL.md"
         content = plan_skill_path.read_text()
 
-        # Parse frontmatter
         lines = content.split("\n")
         in_frontmatter = False
         found_tools_line = False
@@ -58,7 +55,6 @@ class TestDebugSkillScenario:
         debug_skill_path = CLI_CHAT_SMOKE_DIR / "debug" / "SKILL.md"
         content = debug_skill_path.read_text()
 
-        # Check for debugging trigger keywords
         assert (
             "debug" in content.lower()
             or "triage" in content.lower()
@@ -70,13 +66,11 @@ class TestDebugSkillScenario:
         debug_skill_path = CLI_CHAT_SMOKE_DIR / "debug" / "SKILL.md"
         content = debug_skill_path.read_text()
 
-        # Verify checklist requirements
         assert "checklist" in content.lower() or "steps" in content.lower(), (
             "Missing checklist/steps in skill"
         )
         assert "# Procedure" in content, "Missing Procedure section"
 
-        # Count steps - should have multiple debugging steps
         step_count = content.count("## Step")
         assert step_count >= 2, (
             f"Debug skill should have at least 2 steps, found {step_count}"
@@ -97,7 +91,6 @@ class TestWebResearchSkillScenario:
         research_skill_path = CLI_CHAT_SMOKE_DIR / "web-research" / "SKILL.md"
         content = research_skill_path.read_text()
 
-        # Check for research trigger keywords
         assert "research" in content.lower() or "search" in content.lower(), (
             "Missing research trigger words"
         )
@@ -108,7 +101,6 @@ class TestWebResearchSkillScenario:
         research_skill_path = CLI_CHAT_SMOKE_DIR / "web-research" / "SKILL.md"
         content = research_skill_path.read_text()
 
-        # Verify source-related requirements
         assert "source" in content.lower(), "Missing source keyword"
         assert "# Procedure" in content, "Missing Procedure section"
         assert "# Checks" in content, "Missing Checks section"
@@ -117,7 +109,6 @@ class TestWebResearchSkillScenario:
         research_skill_path = CLI_CHAT_SMOKE_DIR / "web-research" / "SKILL.md"
         content = research_skill_path.read_text()
 
-        # Check for web.search tool
         assert "tools:" in content, "Missing tools in frontmatter"
         assert "web.search" in content, "Missing web.search tool"
 
@@ -127,7 +118,6 @@ class TestApiPostSkillScenario:
         api_skill_path = CLI_CHAT_SMOKE_DIR / "api-post" / "SKILL.md"
         content = api_skill_path.read_text()
 
-        # Check for API trigger keywords
         assert (
             "api" in content.lower()
             or "http" in content.lower()
@@ -139,11 +129,9 @@ class TestApiPostSkillScenario:
         api_skill_path = CLI_CHAT_SMOKE_DIR / "api-post" / "SKILL.md"
         content = api_skill_path.read_text()
 
-        # Verify steps structure
         assert "# Procedure" in content, "Missing Procedure section"
         assert "step" in content.lower(), "Missing step references"
 
-        # Count steps - should have multiple API steps
         step_count = content.count("## Step")
         assert step_count >= 2, (
             f"API skill should have at least 2 steps, found {step_count}"
@@ -153,7 +141,6 @@ class TestApiPostSkillScenario:
         api_skill_path = CLI_CHAT_SMOKE_DIR / "api-post" / "SKILL.md"
         content = api_skill_path.read_text()
 
-        # Check for http_request tool
         assert "tools:" in content, "Missing tools in frontmatter"
         assert "http_request" in content, "Missing http_request tool"
 
@@ -170,20 +157,17 @@ class TestSkillScenarioAssertions:
             content = skill_path.read_text()
             lines = content.split("\n")
 
-            # Extract id from frontmatter
             for line in lines:
                 if line.startswith("id:"):
                     skill_id = line.split(":", 1)[1].strip()
                     skill_ids.append((skill_dir, skill_id))
                     break
 
-        # Verify distinct IDs
         ids_only = [sid for _, sid in skill_ids]
         assert len(ids_only) == len(set(ids_only)), (
             f"Duplicate skill IDs found: {skill_ids}"
         )
 
-        # Verify expected IDs
         expected_prefix = "cli-chat-smoke-"
         for skill_dir, skill_id in skill_ids:
             assert skill_id.startswith(expected_prefix), (
@@ -199,7 +183,6 @@ class TestSkillScenarioAssertions:
             content = skill_path.read_text()
             lines = content.split("\n")
 
-            # Extract version from frontmatter
             version = None
             for line in lines:
                 if line.startswith("version:"):
@@ -207,7 +190,6 @@ class TestSkillScenarioAssertions:
                     break
 
             assert version is not None, f"{skill_dir} missing version"
-            # Basic semver check (x.y.z or x.y)
             parts = version.split(".")
             assert len(parts) >= 2, f"{skill_dir} invalid version format: {version}"
             assert all(p.isdigit() or p.isalnum() for p in parts[:2]), (

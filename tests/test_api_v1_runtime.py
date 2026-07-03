@@ -8,9 +8,6 @@ from tests._csc_fixtures import _csc_install_default_agent
 from openminion.api.server import dispatch_request
 from openminion.base.config import OpenMinionConfig, save_config
 
-# Set soft enforcement mode for tests
-
-
 class APIV1RuntimeTests(unittest.TestCase):
     def test_v1_health_and_agents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -158,12 +155,10 @@ def _write_echo_config(tmp_path: Path) -> Path:
     config_path = tmp_path / "config.json"
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
-    # Set OPENMINION_DATA_ROOT to tmp for test isolation
     os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")
     config.runtime.log_level = "ERROR"
     _csc_install_default_agent(config, provider="echo")
     config.storage.path = str(tmp_path / "state" / "api-v1.db")
-    # Set OPENMINION_DATA_ROOT for path validation
     old_data_root = os.environ.get("OPENMINION_DATA_ROOT")
     try:
         os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")

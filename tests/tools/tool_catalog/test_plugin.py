@@ -47,13 +47,10 @@ def test_tool_search_returns_ok():
 def test_tool_search_returns_model_facing_tools_only():
     result = _h_tool_search({}, _CTX)
     returned_names = {t["name"] for t in result["tools"]}
-    # All returned names must be canonical model tool ids
     for name in returned_names:
         assert name in ALL_MODEL_TOOL_IDS_SET, f"non-canonical tool returned: {name}"
     assert MODEL_TOOL_SEARCH not in returned_names
     if MODEL_TOOL_LIST in returned_names:
-        # Sanity check when the registry HAS been bootstrapped with
-        # the catalog plugin: tool.list is canonical.
         assert MODEL_TOOL_LIST in ALL_MODEL_TOOL_IDS_SET
 
 

@@ -32,7 +32,6 @@ def test_normalize_raw_model_tool_name_rejects_unknown_aliases() -> None:
 
 def test_manager_resolves_registered_model_tool_ids() -> None:
     mgr = _get_bootstrap_manager()
-    # Test a sample of core tools that should always be registered
     sample_ids = ("file.list_dir", "file.read", "exec.run", "web.search")
     for model_tool_id in sample_ids:
         runtime_binding_id = mgr.resolve_binding(model_tool_id)

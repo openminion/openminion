@@ -53,7 +53,6 @@ class TestSkillSourceExtraction:
         assert "skill.md?v=1.0&token=abc" in result["value"]
 
     def test_url_precedence_over_path(self, extractor):
-        # Message containing both - should extract URL
         result = extractor("learn from https://example.com/skill.md or /local/skill.md")
         assert result is not None
         assert result["type"] == "url"
@@ -108,13 +107,11 @@ class TestURLSafetyChecks:
         assert blocked_host_checker("1.1.1.1") is False
 
     def test_validates_markdown_headings(self, markdown_validator):
-        # Need at least 50 chars and 2 indicators or a heading
         content = "# Title\n\n## Section\n\nSome content here that makes it long enough for validation"
         assert len(content) >= 50
         assert markdown_validator(content) is True
 
     def test_validates_markdown_lists(self, markdown_validator):
-        # Need both list indicators and heading or other indicator
         content = "# List\n\n- Item 1\n- Item 2\n\n* Item 3\n\nMore text here to make it long enough"
         assert len(content) >= 50
         assert markdown_validator(content) is True
@@ -146,11 +143,9 @@ class TestSkillNameExtraction:
         assert result == "my-skill"
 
     def test_extracts_with_path(self, name_extractor):
-        # When filename is exactly SKILL.md, it becomes imported_skill
         result = name_extractor("https://example.com/skills/plan-checkpoints/SKILL.md")
         assert result == "imported_skill"
 
-        # When filename has other content, extract that
         result2 = name_extractor(
             "https://example.com/skills/plan-checkpoints/my-guide.md"
         )

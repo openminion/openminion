@@ -79,7 +79,6 @@ class TestRetrieveDebugProvider:
         provider = OpenMinionRetrieveDebugProvider()
         payload = provider._probe()
 
-        # Verify all expected keys are present
         expected_keys = [
             "import_ok",
             "config_resolved",
@@ -107,7 +106,6 @@ class TestRetrieveAdapterFactory:
             adapter = create_retrieve_adapter(mode="auto", service=retrieve_service)
 
             assert adapter is not None
-            # Should be real adapter, not local fallback
             from openminion.modules.brain.adapters.retrieve import (
                 RetrievectlAdapter,
             )
@@ -126,7 +124,6 @@ class TestRetrieveAdapterFactory:
         adapter = create_retrieve_adapter(mode="auto", service=None)
 
         assert adapter is not None
-        # Adapter should have retrieve method
         assert hasattr(adapter, "retrieve")
         assert callable(getattr(adapter, "retrieve"))
 
@@ -136,18 +133,15 @@ class TestRetrieveNoRegression:
         import logging
         from openminion.cli.commands.debug import OpenMinionRetrieveDebugProvider
 
-        # Set logging level to capture warnings
         logging.getLogger().setLevel(logging.WARNING)
 
         provider = OpenMinionRetrieveDebugProvider()
         payload = provider._probe()
 
-        # Verify status is OK, not FAIL or WARN
         assert payload.status.value in ["ok", "warn"], (
             f"Unexpected status: {payload.status}"
         )
 
-        # Check that no retrieve-related errors in last_error
         if payload.last_error:
             assert "unavailable" not in payload.last_error.lower(), (
                 f"'unavailable' found in error: {payload.last_error}"

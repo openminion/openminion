@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-# Try to import openminion modules
 try:
     importlib.import_module("openminion.services.agent.identity")
     importlib.import_module("openminion.api.runtime")
@@ -53,7 +52,6 @@ class TestMemoryIdentityInProcessE2E(unittest.TestCase):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.config_path = Path(self.tmp_dir.name) / "test_config.json"
 
-        # Create minimal config
         config = {
             "runtime": {
                 "storage_path": self.tmp_dir.name,
@@ -72,7 +70,6 @@ class TestMemoryIdentityInProcessE2E(unittest.TestCase):
         payload = provider.get_debug()
 
         self.assertEqual(payload.module, "openminion-identity")
-        # Should be OK or WARN (if module issues), not FAIL
         self.assertIn(payload.status, [DebugStatus.OK, DebugStatus.WARN])
 
     def test_inprocess_memory_debug_module_returns_ok(self) -> None:
@@ -82,7 +79,6 @@ class TestMemoryIdentityInProcessE2E(unittest.TestCase):
         payload = provider.get_debug()
 
         self.assertEqual(payload.module, "openminion-memory")
-        # Should be OK or WARN, not FAIL
         self.assertIn(payload.status, [DebugStatus.OK, DebugStatus.WARN])
 
     def test_inprocess_retrieve_debug_module_returns_ok(self) -> None:
@@ -92,7 +88,6 @@ class TestMemoryIdentityInProcessE2E(unittest.TestCase):
         payload = provider.get_debug()
 
         self.assertEqual(payload.module, "openminion-retrieve")
-        # Should be OK or WARN, not FAIL
         self.assertIn(payload.status, [DebugStatus.OK, DebugStatus.WARN])
 
 
@@ -115,21 +110,16 @@ class TestMemoryIdentityDaemonE2E(unittest.TestCase):
         self.tmp_dir.cleanup()
 
     def test_daemon_lane_parity_with_inprocess(self) -> None:
-        # This test verifies that daemon and in-process return similar
-        # core fields for identity/memory debug modules
-
         from openminion.cli.commands.debug import (
             OpenMinionIdentityDebugProvider,
             OpenMinionMemoryDebugProvider,
             OpenMinionRetrieveDebugProvider,
         )
 
-        # Get in-process payloads
         identity_inproc = OpenMinionIdentityDebugProvider().get_debug()
         memory_inproc = OpenMinionMemoryDebugProvider().get_debug()
         retrieve_inproc = OpenMinionRetrieveDebugProvider().get_debug()
 
-        # Verify core fields exist
         self.assertIsNotNone(identity_inproc.details.get("import_ok"))
         self.assertIsNotNone(memory_inproc.details.get("import_ok"))
         self.assertIsNotNone(retrieve_inproc.details.get("import_ok"))
@@ -144,7 +134,6 @@ class TestMemoryIdentityNegativePaths(unittest.TestCase):
         store = InMemoryIdentityStore()
         ctl = IdentityCtl(store=store)
 
-        # Try to get non-existent profile
         profile = ctl.get_profile("nonexistent-agent-12345")
         self.assertIsNone(profile)
 
@@ -155,7 +144,6 @@ class TestMemoryIdentityNegativePaths(unittest.TestCase):
         store = InMemoryIdentityStore()
         ctl = IdentityCtl(store=store)
 
-        # Invalid profile data (empty required fields)
         invalid_data = {
             "agent_id": "",
             "display_name": "",
@@ -173,7 +161,6 @@ class TestMemoryIdentityPerformanceBudget(unittest.TestCase):
 
         for fixture_file in fixtures_dir.rglob("*.yaml"):
             size = fixture_file.stat().st_size
-            # Fixtures should be under 10KB
             self.assertLess(
                 size, 10 * 1024, f"Fixture {fixture_file} too large: {size} bytes"
             )
@@ -184,5 +171,4 @@ class TestMemoryIdentityPerformanceBudget(unittest.TestCase):
         )
         content = fixture_path.read_text()
 
-        # Should be reasonable length for prompt inclusion
         self.assertLess(len(content), 5000, "Identity fixture content too long")

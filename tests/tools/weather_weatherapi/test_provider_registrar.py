@@ -20,9 +20,6 @@ def _isolated_weather_registry():
     registry._order = order
 
 
-# Provider-only invariants
-
-
 def test_registrar_module_id() -> None:
     assert REGISTRAR.module_id == "weather.weatherapi"
 
@@ -41,9 +38,6 @@ def test_registrar_class_attributes() -> None:
     assert r.is_provider_only is True
 
 
-# No standalone ToolSpec
-
-
 def test_register_does_not_add_standalone_tool() -> None:
     tool_registry = ToolRegistry()
     REGISTRAR.register(tool_registry)
@@ -51,11 +45,7 @@ def test_register_does_not_add_standalone_tool() -> None:
     names = set(tool_registry.list().keys())
     assert "weather.weatherapi" not in names
     assert "weather.weatherapi.current" not in names
-    # The shared weather tool is also not added by this module
     assert "weather" not in names
-
-
-# Registers into the facade provider registry
 
 
 def test_register_adds_weatherapi_provider_to_facade() -> None:
@@ -76,9 +66,6 @@ def test_register_idempotent_provider_id() -> None:
     registry = provider_registry()
     order = list(registry.list_provider_ids())
     assert order.count("weatherapi") == 1
-
-
-# Bootstrap order: openmeteo registers before weatherapi
 
 
 def test_openmeteo_registers_before_weatherapi_in_default_order() -> None:
