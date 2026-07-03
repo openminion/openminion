@@ -122,9 +122,6 @@ def test_live_minimax_m2_7_pae_idle_tick_schedule_and_cancel() -> None:
         "model did not declare a plan via the plan tool\n" + failure_diag
     )
 
-    # PAE plan-tool scheduling hook: with PAE enabled and the signal on
-    # the declared plan, exactly one `pae.idle_tick.scheduled` event
-    # should fire (deterministic job id → idempotent repeat is a no-op).
     assert scheduled, (
         "expected pae.idle_tick.scheduled event on plan declare with "
         "continue_plan_autonomously=true under PAE-enabled config. "
@@ -142,8 +139,6 @@ def test_live_minimax_m2_7_pae_idle_tick_schedule_and_cancel() -> None:
         + failure_diag
     )
 
-    # PAE cancellation on plan terminal: either completed or abandoned
-    # path should fire `pae.idle_tick.cancelled`.
     assert plan_completed or plan_abandoned, (
         "model did not reach a terminal plan state (complete/abandon). "
         "PAE cancellation requires a terminal plan event.\n" + failure_diag
@@ -153,11 +148,7 @@ def test_live_minimax_m2_7_pae_idle_tick_schedule_and_cancel() -> None:
         "(completed/abandoned).\n" + failure_diag
     )
 
-    # Cron job row should have been removed during cancellation.
-    # Residual rows indicate the cancel path failed to reach the store.
     remaining_jobs = _cron_jobs(state_db)
-    # We allow zero here — a cancelled job is deleted, so the
-    # expectation is exactly zero idle-tick rows left.
     assert not remaining_jobs, (
         "expected zero remaining agentIdleTick cron jobs after "
         "cancellation; residual rows indicate cancel-path store write "

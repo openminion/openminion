@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import unittest
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,7 +33,7 @@ class _FakeSessionAPI:
         )
 
 
-class TrailerFeedbackConstructionTests(unittest.TestCase):
+class TestTrailerFeedbackConstruction:
     def test_missing_apd_trailer_emits_feedback_pending(self) -> None:
         session_api = _FakeSessionAPI()
         response = SimpleNamespace(
@@ -60,18 +59,18 @@ class TrailerFeedbackConstructionTests(unittest.TestCase):
             },
         )
 
-        self.assertTrue(result.feedback_pending)
+        assert result.feedback_pending
         feedback_events = [
             event
             for event in session_api.events
             if event["event_type"] == "trailer.feedback_pending"
         ]
-        self.assertEqual(len(feedback_events), 1)
+        assert len(feedback_events) == 1
         payload = feedback_events[0]["payload"]
-        self.assertEqual(payload["kind"], "missing_trailer")
-        self.assertEqual(payload["missing_lanes"], [TRAILER_LANE_APD])
-        self.assertTrue(payload["hints"])
-        self.assertIn("task_plan", payload["hints"][0])
+        assert payload["kind"] == "missing_trailer"
+        assert payload["missing_lanes"] == [TRAILER_LANE_APD]
+        assert payload["hints"]
+        assert "task_plan" in payload["hints"][0]
 
     def test_expected_trailer_emitted_does_not_emit_feedback(self) -> None:
         session_api = _FakeSessionAPI()
@@ -97,13 +96,13 @@ class TrailerFeedbackConstructionTests(unittest.TestCase):
             },
         )
 
-        self.assertFalse(result.feedback_pending)
+        assert not result.feedback_pending
         feedback_events = [
             event
             for event in session_api.events
             if event["event_type"] == "trailer.feedback_pending"
         ]
-        self.assertEqual(feedback_events, [])
+        assert feedback_events == []
 
     def test_no_expected_trailers_does_not_emit_feedback(self) -> None:
         session_api = _FakeSessionAPI()
@@ -118,13 +117,13 @@ class TrailerFeedbackConstructionTests(unittest.TestCase):
             request_metadata=None,
         )
 
-        self.assertFalse(result.feedback_pending)
+        assert not result.feedback_pending
         feedback_events = [
             event
             for event in session_api.events
             if event["event_type"] == "trailer.feedback_pending"
         ]
-        self.assertEqual(feedback_events, [])
+        assert feedback_events == []
 
     def test_feedback_payload_contains_route(self) -> None:
         session_api = _FakeSessionAPI()
@@ -155,10 +154,10 @@ class TrailerFeedbackConstructionTests(unittest.TestCase):
             for event in session_api.events
             if event["event_type"] == "trailer.feedback_pending"
         ]
-        self.assertEqual(feedback_events[0]["payload"]["route"], "adaptive_final")
+        assert feedback_events[0]["payload"]["route"] == "adaptive_final"
 
 
-class TrailerFeedbackRenderingTests(unittest.TestCase):
+class TestTrailerFeedbackRendering:
     def test_render_missing_trailer_feedback(self) -> None:
         feedback = {
             "kind": "missing_trailer",
@@ -169,23 +168,23 @@ class TrailerFeedbackRenderingTests(unittest.TestCase):
             ],
         }
         text = _render_trailer_feedback(feedback)
-        self.assertIn("kind: missing_trailer", text)
-        self.assertIn("route: direct_respond", text)
-        self.assertIn('["apd"]', text)
-        self.assertIn("task_plan", text)
+        assert "kind: missing_trailer" in text
+        assert "route: direct_respond" in text
+        assert '["apd"]' in text
+        assert "task_plan" in text
 
     def test_render_empty_feedback_returns_empty(self) -> None:
-        self.assertEqual(_render_trailer_feedback({}), "")
+        assert _render_trailer_feedback({}) == ""
 
 
-class TrailerFeedbackSliceFieldTests(unittest.TestCase):
+class TestTrailerFeedbackSliceField:
     def test_slice_pending_trailer_feedback_defaults_to_none(self) -> None:
         slice_obj = SessionSlice(
             session_id="s1",
             slice_version="v1",
             summary_short="x",
         )
-        self.assertIsNone(slice_obj.pending_trailer_feedback)
+        assert slice_obj.pending_trailer_feedback is None
 
     def test_slice_pending_trailer_feedback_accepts_dict(self) -> None:
         slice_obj = SessionSlice(
@@ -198,4 +197,4 @@ class TrailerFeedbackSliceFieldTests(unittest.TestCase):
                 "hints": ["Emit <task_plan> on next response."],
             },
         )
-        self.assertEqual(slice_obj.pending_trailer_feedback["kind"], "missing_trailer")
+        assert slice_obj.pending_trailer_feedback["kind"] == "missing_trailer"

@@ -170,8 +170,6 @@ class TypedTerminalDispatchTests(unittest.TestCase):
         run_idx = types.index(f"run.{RUN_STATE_COMPLETED}")
         self.assertLess(cp_idx, run_idx)
 
-        # The persisted run.<state> event carries typed-reduction
-        # provenance on the payload.
         events = self.sessions.list_events(
             session_id=self.session.id,
             limit=50,
@@ -205,9 +203,6 @@ class TypedTerminalDispatchTests(unittest.TestCase):
             raise RuntimeError("synthetic resolver failure")
 
         runner = _make_runner(self.sessions, typed_terminal_resolver=resolver)
-        # Must not raise — defensive fall-through preserves the
-        # structural invariant that every terminating turn emits a
-        # terminal run.<state> event.
         runner._emit_terminal_run_state(
             session_id=self.session.id,
             run_id="r-alvb",

@@ -30,9 +30,6 @@ def _build_webhook_runtime(tmp_path: Path):
         "groupPolicy": "deny",
     }
     telegram["pairing"] = {"enabled": False, "mode": "off"}
-    # _make_config does not supply a webhook block; the LifecycleService
-    # pipeline tolerates that for registration tests, but CPE-13 explicitly
-    # needs a webhook secret to exercise the auth path.
     telegram["webhook"] = {
         "enabled": True,
         "url": "https://example.test/webhook",
@@ -81,8 +78,6 @@ def test_unified_config_webhook_runner_dispatches_inbound_to_outbound(
         runner._api = transport.api
         runner._delivery._api = transport.api
 
-        # initialize() fetches bot info via _api.get_me() — the mock returns
-        # a stub bot record, so this should not raise.
         runner.initialize()
 
         result = runner.handle_webhook_update(
@@ -92,7 +87,6 @@ def test_unified_config_webhook_runner_dispatches_inbound_to_outbound(
 
         assert result["success"] is True
         assert result.get("update_id") == 1
-        # drive the lifecycle-attached worker to flush the outbox.
         outbox_worker = getattr(runner, "_outbox_worker", None)
         assert outbox_worker is not None, (
             "lifecycle did not wire outbox worker into telegram webhook runner"
@@ -118,8 +112,6 @@ def test_unified_config_webhook_runner_rejects_invalid_secret(
         runner._delivery._api = transport.api
         runner.initialize()
 
-        # Wrong secret — webhook.py returns a structured unauthorized payload
-        # rather than raising.
         bad = runner.handle_webhook_update(
             _make_update(text="nope", update_id=2),
             secret_token="not-the-right-secret",
@@ -129,7 +121,6 @@ def test_unified_config_webhook_runner_rejects_invalid_secret(
         assert bad.get("reason") == "invalid_secret_token"
         assert transport.get_outbound_texts() == []
 
-        # Missing secret path — distinct reason code.
         missing = runner.handle_webhook_update(
             _make_update(text="still nope", update_id=3),
             secret_token=None,

@@ -2,13 +2,6 @@ import asyncio
 from unittest.mock import MagicMock
 import pytest
 
-from openminion.modules.controlplane.runtime.interaction import (
-    InteractionChannel,
-    PromptResponse,
-    ChoiceResponse,
-    ConfirmResponse,
-    MessageResponse,
-)
 from openminion.modules.controlplane.contracts.models import ResolvedContext
 from openminion.modules.controlplane.wizard.store import InMemoryWizardStore
 from openminion.modules.controlplane.wizard.runtime import WizardExecutor, WizardResult
@@ -18,75 +11,6 @@ from openminion.modules.controlplane.wizard.terminal import (
 from openminion.modules.controlplane.wizard.telegram import (
     TelegramInteractionChannel,
 )
-
-
-class MockInteractionChannel(InteractionChannel):
-    def __init__(self):
-        self.responses = []
-        self.messages_sent = []
-        self.mock_answers = {}
-        self._cancel_triggered = False
-
-    async def prompt(self, message: str, default_value: str = None, hint: str = None):
-        key = f"prompt:{message}:{default_value}:{hint}"
-        response = self.mock_answers.get(key, default_value or "test_input")
-        return PromptResponse(value=response)
-
-    async def choose(
-        self,
-        message: str,
-        options,
-        default_index: int = None,
-        allow_multiple: bool = False,
-    ):
-        key = f"choose:{message}"
-        choice_idx = self.mock_answers.get(key, default_index or 0)
-        selected_value = (
-            options[choice_idx]
-            if choice_idx is not None and choice_idx < len(options)
-            else "invalid_choice"
-        )
-        return ChoiceResponse(value=selected_value, index=choice_idx)
-
-    async def confirm(self, message: str, default: bool = True, danger: bool = False):
-        key = f"confirm:{message}:{danger}"
-        answer = self.mock_answers.get(key, default)
-        return ConfirmResponse(confirmed=answer)
-
-    async def message(self, content: str, title: str = None, style: str = None):
-        self.messages_sent.append({"content": content, "title": title, "style": style})
-        return MessageResponse(delivered=True)
-
-    async def diff(self, original: str, modified: str, title: str = None):
-        self.messages_sent.append(
-            {"content": f"Diff: {original} vs {modified}", "title": title}
-        )
-        return MessageResponse(delivered=True)
-
-    async def progress(self, description: str, percent: float, details: str = None):
-        self.messages_sent.append({"progress": (description, percent, details)})
-        return MessageResponse(delivered=True)
-
-    def get_interaction_mode(self):
-        return "test"
-
-    def supports_advanced_ui(self):
-        return True
-
-    async def start_wizard_context(self, wizard_session_id: str) -> bool:
-        return True
-
-    async def end_wizard_context(self, wizard_session_id: str) -> bool:
-        return True
-
-    def is_cancel_requested(self) -> bool:
-        return self._cancel_triggered
-
-    async def cancel_wizard(self, message: str = None):
-        self._cancel_triggered = True
-        return self._cancel_triggered
-
-
 @pytest.mark.asyncio
 async def test_wizard_session_lifecycle():
     store = InMemoryWizardStore()
@@ -251,8 +175,6 @@ async def test_negative_paths_handling():
 
 @pytest.mark.asyncio
 async def test_context_extension_with_ui_and_wizard_session():
-
-    # Test creation with extended context
     ctx = ResolvedContext(
         session_id="test_sess",
         user_key="test_user",
@@ -261,11 +183,10 @@ async def test_context_extension_with_ui_and_wizard_session():
         role="test_role",
         trace_id="test_trace",
         span_id="test_span",
-        ui=None,  # Will be None initially
+        ui=None,
         wizard_session_id="test_wiz_id",
     )
 
-    # Verify properties exist
     assert hasattr(ctx, "ui")
     assert hasattr(ctx, "wizard_session_id")
     assert ctx.wizard_session_id == "test_wiz_id"
@@ -276,34 +197,22 @@ async def test_context_extension_with_ui_and_wizard_session():
 async def test_wizard_store_operations_comprehensive():
     store = InMemoryWizardStore()
 
-    # Create session
     session1 = await store.create_session("cmd1", 1, 3, "user1", "chat1")
-    await store.create_session("cmd2", 1, 2, "user1", "chat2")  # Different chat
+    await store.create_session("cmd2", 1, 2, "user1", "chat2")
 
-    # Find in user's active sessions
     user_active = await store.get_active_sessions_for_user("user1")
     assert len(user_active) == 2
 
-    # Find in specific chat session
     chat_active = await store.get_active_sessions_for_chat("chat1")
     assert len(chat_active) == 1
     assert chat_active[0].wizard_id == session1.wizard_id
 
-    # Update state of one
     updated = await store.update_session_state(session1.wizard_id, "COMPLETED")
-    if updated:  # Check it's not None - depends on enum representation
+    if updated:
         await store.get_active_sessions_for_chat("chat1")
-        # There should now be fewer active sessions
-        # This depends on implementation details of get_active_sessions_for_chat
 
-    # Test deletion
     deleted = await store.delete_session(session1.wizard_id)
     assert deleted is True
 
     not_found = await store.get_session(session1.wizard_id)
     assert not_found is None
-
-
-def run_tests():
-    print("✓ Wizard integration tests validated")
-    return True

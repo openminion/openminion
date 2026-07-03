@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import inspect
+import subprocess
 from typing import Any
 from unittest.mock import patch
 
@@ -17,20 +19,13 @@ def _make_console_and_transcript() -> tuple[Console, TerminalTranscript, io.Stri
     return console, TerminalTranscript(console), buf
 
 
-# ── Composer accepts the new kwargs ──────────────────────────────
-
-
 def test_composer_accepts_on_ctrl_l() -> None:
-    import inspect
-
     sig = inspect.signature(TerminalComposer.__init__)
     assert "on_ctrl_l" in sig.parameters
     assert sig.parameters["on_ctrl_l"].default is None
 
 
 def test_composer_accepts_on_ctrl_o() -> None:
-    import inspect
-
     sig = inspect.signature(TerminalComposer.__init__)
     assert "on_ctrl_o" in sig.parameters
     assert sig.parameters["on_ctrl_o"].default is None
@@ -56,18 +51,10 @@ def test_composer_with_callbacks_works() -> None:
         on_ctrl_o=_o,
     )
     assert composer is not None
-    # We can't easily fire keybindings without a real
-    # prompt_toolkit event loop; the registration test is
-    # whether the composer accepts the params without raising.
     assert fired == {"l": 0, "o": 0}
 
 
-# ── _copy_to_clipboard helper ────────────────────────────────────
-
-
 def test_copy_to_clipboard_uses_pbcopy_when_available() -> None:
-    import subprocess
-
     class _OK:
         returncode = 0
 
@@ -82,13 +69,10 @@ def test_copy_to_clipboard_uses_pbcopy_when_available() -> None:
     with patch.object(subprocess, "run", _fake_run):
         ok = _copy_to_clipboard("hello world")
     assert ok is True
-    # First candidate tried.
     assert calls[0][0] == "pbcopy"
 
 
 def test_copy_to_clipboard_falls_through_to_xclip() -> None:
-    import subprocess
-
     class _OK:
         returncode = 0
 
@@ -107,8 +91,6 @@ def test_copy_to_clipboard_falls_through_to_xclip() -> None:
 
 
 def test_copy_to_clipboard_returns_false_when_no_tool_available() -> None:
-    import subprocess
-
     def _fake_run(cmd: tuple[str, ...], **kwargs: Any) -> Any:
         raise FileNotFoundError(cmd[0])
 
@@ -118,8 +100,6 @@ def test_copy_to_clipboard_returns_false_when_no_tool_available() -> None:
 
 
 def test_copy_to_clipboard_returns_false_when_tool_fails() -> None:
-    import subprocess
-
     class _Fail:
         returncode = 1
 
@@ -132,8 +112,6 @@ def test_copy_to_clipboard_returns_false_when_tool_fails() -> None:
 
 
 def test_copy_to_clipboard_handles_arbitrary_exception() -> None:
-    import subprocess
-
     def _fake_run(cmd: tuple[str, ...], **kwargs: Any) -> Any:
         raise RuntimeError("unexpected")
 
@@ -143,8 +121,6 @@ def test_copy_to_clipboard_handles_arbitrary_exception() -> None:
 
 
 def test_copy_to_clipboard_passes_payload_as_utf8() -> None:
-    import subprocess
-
     captured: dict[str, Any] = {}
 
     class _OK:
@@ -162,14 +138,8 @@ def test_copy_to_clipboard_passes_payload_as_utf8() -> None:
     assert "héllo".encode("utf-8") in captured["input"]
 
 
-# ── No new dependency (gate #6) ──────────────────────────────────
-
-
 def test_no_pyperclip_import() -> None:
-    import inspect
-
     from openminion.cli.tui.terminal import shell
 
     src = inspect.getsource(shell)
-    # `pyperclip` should not appear in the source at all.
     assert "pyperclip" not in src

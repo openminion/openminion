@@ -9,9 +9,6 @@ from openminion.cli.tui.focus.tokens import (
 )
 
 
-# ── active_at_token edge cases ────────────────────────────────────────────────
-
-
 def test_bare_at_at_cursor_returns_empty_query() -> None:
     result = active_at_token("@", cursor=1)
     assert result is not None
@@ -52,15 +49,13 @@ def test_email_address_does_not_trigger_overlay() -> None:
 
 def test_completed_path_with_trailing_space_deactivates_overlay() -> None:
     text = "please review @src/foo.py "
-    cursor = len(text)  # cursor right after the trailing space
-    # Active token after the space is empty → no overlay.
+    cursor = len(text)
     result = active_at_token(text, cursor)
     assert result is None
 
 
 def test_active_at_token_in_middle_of_long_path() -> None:
     text = "please review @src/foo.py here"
-    # Cursor immediately after `@src/foo.py` (offset == 25).
     cursor = text.index("@") + len("@src/foo.py")
     result = active_at_token(text, cursor)
     assert result is not None
@@ -81,10 +76,8 @@ def test_cursor_at_zero_returns_none() -> None:
 
 def test_cursor_clamping_for_out_of_range_input() -> None:
     text = "@sr"
-    # Past-end cursor → clamps to len(text).
     big = active_at_token(text, cursor=99)
     assert big is not None and big.text == "@sr"
-    # Negative cursor → clamps to 0 → returns None.
     assert active_at_token(text, cursor=-5) is None
 
 
@@ -104,9 +97,6 @@ def test_at_token_is_frozen_dataclass() -> None:
         token.start = 99  # type: ignore[misc]
 
 
-# ── cursor_offset_for_text_area edge cases ────────────────────────────────────
-
-
 def test_text_area_cursor_offset_single_line() -> None:
     assert cursor_offset_for_text_area("hello world", 0, 0) == 0
     assert cursor_offset_for_text_area("hello world", 0, 5) == 5
@@ -115,21 +105,16 @@ def test_text_area_cursor_offset_single_line() -> None:
 
 def test_text_area_cursor_offset_multi_line() -> None:
     text = "line0\nline1\nline2"
-    # `(0, 5)` end-of-line0 → offset 5
     assert cursor_offset_for_text_area(text, 0, 5) == 5
-    # `(1, 0)` start-of-line1 → offset 6 (5 + the `\n`)
     assert cursor_offset_for_text_area(text, 1, 0) == 6
-    # `(2, 0)` start-of-line2 → offset 12
     assert cursor_offset_for_text_area(text, 2, 0) == 12
-    # `(2, 5)` end-of-text → offset 17
     assert cursor_offset_for_text_area(text, 2, 5) == 17
 
 
 def test_text_area_cursor_offset_clamps_oversized_line() -> None:
     text = "a\nb"
-    assert cursor_offset_for_text_area(text, line=99, col=0) == 2  # start of line 1
-    # Col past end of line → clamps to that line's length.
-    assert cursor_offset_for_text_area(text, line=0, col=99) == 1  # end of line 0
+    assert cursor_offset_for_text_area(text, line=99, col=0) == 2
+    assert cursor_offset_for_text_area(text, line=0, col=99) == 1
 
 
 def test_text_area_cursor_offset_empty_text() -> None:
@@ -137,12 +122,8 @@ def test_text_area_cursor_offset_empty_text() -> None:
     assert cursor_offset_for_text_area("", line=99, col=99) == 0
 
 
-# ── Integration: detection through textarea cursor conversion ───────────────
-
-
 def test_textarea_at_token_works_through_offset_conversion() -> None:
     text = "first line\nplease review\n@sr"
-    # Cursor at end of `@sr` on line 2 (0-indexed); col == 3.
     offset = cursor_offset_for_text_area(text, line=2, col=3)
     result = active_at_token(text, offset)
     assert result is not None

@@ -11,7 +11,6 @@ from openminion.services.runtime import (
 
 
 def test_chunk_order() -> None:
-
     def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
         del cancel_event
         for i in range(5):
@@ -34,7 +33,6 @@ def test_chunk_order() -> None:
             )
         )
         chunks = list(handle.stream(timeout_s=5))
-        # Filter executor-pushed token chunks
         token_chunks = [c for c in chunks if c.kind == "token"]
         indices = [c.data["index"] for c in token_chunks]
         assert indices == list(range(5)), f"Out-of-order chunks: {indices}"
@@ -43,7 +41,6 @@ def test_chunk_order() -> None:
 
 
 def test_result_after_stream() -> None:
-
     def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
         del cancel_event
         emit_chunk(
@@ -65,11 +62,9 @@ def test_result_after_stream() -> None:
                 input_text="go",
             )
         )
-        # Exhaust the stream first
         all_chunks = list(handle.stream(timeout_s=5))
         assert any(c.kind == "partial" for c in all_chunks)
 
-        # Then get the result — must be available
         result = handle.result(timeout_s=1)
         assert result.final_text == "hello"
     finally:
@@ -77,7 +72,6 @@ def test_result_after_stream() -> None:
 
 
 def test_stream_receives_manager_status_chunks() -> None:
-
     def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
         del emit_chunk, cancel_event
         return TurnResponse(final_text="ok")
@@ -95,7 +89,6 @@ def test_stream_receives_manager_status_chunks() -> None:
         )
         chunks = list(handle.stream(timeout_s=5))
         kinds = {c.kind for c in chunks}
-        # Manager always pushes "status" and "final_text" chunks
         assert "status" in kinds, f"Missing status chunk, got kinds: {kinds}"
         assert "final_text" in kinds, f"Missing final_text chunk, got kinds: {kinds}"
         status_chunk = next(c for c in chunks if c.kind == "status")
@@ -106,7 +99,6 @@ def test_stream_receives_manager_status_chunks() -> None:
 
 
 def test_no_chunks_after_stream_closed() -> None:
-
     def _executor(req, emit_chunk, cancel_event):  # noqa: ANN001
         del emit_chunk, cancel_event
         sleep(0.05)
@@ -125,9 +117,7 @@ def test_no_chunks_after_stream_closed() -> None:
         )
         first_pass = list(handle.stream(timeout_s=5))
         second_pass = list(handle.stream(timeout_s=1))
-        # Second pass should yield nothing (stream already closed)
         assert second_pass == [], f"Expected empty second pass, got: {second_pass}"
-        # First pass had content
         assert first_pass, "First pass should have chunks"
     finally:
         manager.shutdown()

@@ -17,9 +17,6 @@ from openminion.base.runtime.sandbox import (
 )
 
 
-# Fakes
-
-
 class _AllowPolicy:
     contract_version = RUNTIME_INTERFACE_VERSION
 
@@ -69,9 +66,6 @@ def _collect(engine: RuntimeEngine, call: ToolCall) -> list[tuple[str, dict]]:
     return events
 
 
-# Exec audit events
-
-
 def test_exec_full_event_sequence():
     engine = RuntimeEngine(runner=_StubRunner(), policy=_AllowPolicy())
     call = ToolCall(
@@ -103,9 +97,6 @@ def test_exec_completed_has_returncode():
     assert completed["returncode"] == 0
 
 
-# Fs.write audit events
-
-
 def test_fs_write_event_sequence():
     engine = RuntimeEngine(runner=_StubRunner(), policy=_AllowPolicy())
     call = ToolCall(
@@ -134,9 +125,6 @@ def test_fs_write_event_has_path():
     assert fw_event["path"] == "/ws/file.txt"
 
 
-# Fs.delete audit events
-
-
 def test_fs_delete_event_sequence():
     engine = RuntimeEngine(runner=_StubRunner(), policy=_AllowPolicy())
     call = ToolCall(
@@ -149,9 +137,6 @@ def test_fs_delete_event_sequence():
     names = [e[0] for e in events]
     assert "runtime.fs.delete" in names
     assert "tool.call.completed" in names
-
-
-# Net.fetch audit events
 
 
 def test_net_fetch_event_sequence():
@@ -179,9 +164,6 @@ def test_net_requested_event_has_url():
     events = _collect(engine, call)
     net_event = next(p for n, p in events if n == "runtime.net.requested")
     assert net_event["url"] == "https://api.example.com/v1"
-
-
-# runtime.violation audit events
 
 
 def test_deny_emits_violation():
@@ -230,9 +212,6 @@ def test_runner_enforcement_error_emits_violation(tmp_path):
     assert "runtime.violation" in names
 
 
-# All events have ts and correlation fields
-
-
 def test_all_events_have_ts():
     engine = RuntimeEngine(runner=_StubRunner(), policy=_AllowPolicy())
     call = ToolCall(
@@ -262,9 +241,6 @@ def test_all_events_have_tool_call_id():
             assert payload.get("tool_call_id") == "my-call-id", (
                 f"{name} has wrong tool_call_id"
             )
-
-
-# Idempotency replay guard acceptance test
 
 
 def test_idempotency_replay_prevents_duplicate_exec():

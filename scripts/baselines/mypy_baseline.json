@@ -9,11 +9,11 @@
     "tools": -50
   },
   "package_errors": {
-    "api": 147,
-    "cli": 802,
-    "modules": 2900,
-    "services": 640,
-    "tools": 345
+    "api": 127,
+    "cli": 804,
+    "modules": 2907,
+    "services": 638,
+    "tools": 307
   },
-  "total_errors": 4834
+  "total_errors": 4783
 }

@@ -1,7 +1,7 @@
 # OpenMinion API Compatibility
 
 Status: active
-Last updated: 2026-06-23
+Last updated: 2026-07-03
 
 Purpose: record the supported public import roots and entrypoint compatibility
 posture for `openminion`.
@@ -87,7 +87,7 @@ surface instead of assumed from importability.
 
 Current project stage: alpha.
 
-Current public package line: `0.0.1`.
+Current public package line: `0.0.2`.
 
 Compatibility expectations for the documented public surface:
 

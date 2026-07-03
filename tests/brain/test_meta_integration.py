@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import tempfile
-import unittest
 from pathlib import Path
 
 from openminion.modules.brain.adapters.a2a import LocalA2AAdapter
@@ -51,73 +49,64 @@ class AllowAllPolicy:
         return PolicyDecision(outcome="ALLOW", explanation="Mock allow")
 
 
-class MetaIntegrationTests(unittest.TestCase):
-    def test_runner_uses_builtin_meta_engine(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            session = LocalSessionStore(root / "sessions")
-            runner = BrainRunner(
-                profile=_profile(),
-                session_api=session,
-                context_api=LocalContextAdapter(session_store=session),
-                tool_api=LocalToolAdapter(),
-                a2a_api=LocalA2AAdapter(),
-                memory_api=LocalMemoryAdapter(root / "memory"),
-                policy_api=AllowAllPolicy(),
-                meta_api=None,
-                options=RunnerOptions(reflection_enabled=False, metactl_enabled=True),
-            )
+class TestMetaIntegration:
+    def test_runner_uses_builtin_meta_engine(self, tmp_path: Path) -> None:
+        session = LocalSessionStore(tmp_path / "sessions")
+        runner = BrainRunner(
+            profile=_profile(),
+            session_api=session,
+            context_api=LocalContextAdapter(session_store=session),
+            tool_api=LocalToolAdapter(),
+            a2a_api=LocalA2AAdapter(),
+            memory_api=LocalMemoryAdapter(tmp_path / "memory"),
+            policy_api=AllowAllPolicy(),
+            meta_api=None,
+            options=RunnerOptions(reflection_enabled=False, metactl_enabled=True),
+        )
 
-            # High risk tool should trigger HIGH_ASSURANCE via built-in meta engine.
-            command = ToolCommand(
-                title="high risk op",
-                tool_name="dangerous",
-                args={"msg": "x"},
-                success_criteria={"status": "success"},
-                idempotency_key="idem-meta-1",
-                risk_level="high",
-            )
-            state = WorkingState(
-                session_id="s_meta",
-                agent_id="router-agent",
-                budgets_remaining=BudgetCounters(
-                    ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
-                ),
-                plan=Plan(
-                    objective="do risky",
-                    steps=[command],
-                    stop_conditions=[],
-                    assumptions=[],
-                    risk_summary="",
-                    success_criteria={},
-                ),
-                cursor=0,
-                status="active",
-                trace_id="trace-meta",
-            )
-            session.put_working_state(
-                "s_meta", state_inline=state.model_dump(mode="json")
-            )
+        command = ToolCommand(
+            title="high risk op",
+            tool_name="dangerous",
+            args={"msg": "x"},
+            success_criteria={"status": "success"},
+            idempotency_key="idem-meta-1",
+            risk_level="high",
+        )
+        state = WorkingState(
+            session_id="s_meta",
+            agent_id="router-agent",
+            budgets_remaining=BudgetCounters(
+                ticks=10, tool_calls=5, a2a_calls=5, tokens=1000, time_ms=10000
+            ),
+            plan=Plan(
+                objective="do risky",
+                steps=[command],
+                stop_conditions=[],
+                assumptions=[],
+                risk_summary="",
+                success_criteria={},
+            ),
+            cursor=0,
+            status="active",
+            trace_id="trace-meta",
+        )
+        session.put_working_state("s_meta", state_inline=state.model_dump(mode="json"))
 
-            runner.step(session_id="s_meta")
+        runner.step(session_id="s_meta")
 
-            # Check properties of the meta events
-            events = session.list_events("s_meta")
-            meta_directives = [e for e in events if e["type"] == "meta.directive"]
-            self.assertTrue(len(meta_directives) > 0)
+        events = session.list_events("s_meta")
+        meta_directives = [event for event in events if event["type"] == "meta.directive"]
+        assert meta_directives
 
-            # Since the built-in meta engine sees a high-risk command, at least one
-            # pre-execution/response checkpoint should emit HIGH_ASSURANCE & tier T3.
-            directive_event = next(
-                e
-                for e in meta_directives
-                if e["payload"]["meta_state"] == "HIGH_ASSURANCE"
-            )
-            self.assertIn(
-                directive_event["payload"]["hook"],
-                {"before_plan", "before_act", "before_respond"},
-            )
-            self.assertEqual(directive_event["payload"]["meta_state"], "HIGH_ASSURANCE")
-            self.assertTrue(
-                directive_event["payload"]["directive"]["require_verification"]
-            )
+        directive_event = next(
+            event
+            for event in meta_directives
+            if event["payload"]["meta_state"] == "HIGH_ASSURANCE"
+        )
+        assert directive_event["payload"]["hook"] in {
+            "before_plan",
+            "before_act",
+            "before_respond",
+        }
+        assert directive_event["payload"]["meta_state"] == "HIGH_ASSURANCE"
+        assert directive_event["payload"]["directive"]["require_verification"]

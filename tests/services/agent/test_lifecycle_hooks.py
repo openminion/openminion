@@ -23,17 +23,11 @@ from openminion.services.agent.lifecycle import (
 )
 
 
-# ── isolation fixture: clear default registry between tests ────────
-
-
 @pytest.fixture(autouse=True)
 def _reset_default_registry():
     reset_default_lifecycle_registry()
     yield
     reset_default_lifecycle_registry()
-
-
-# ── canonical event-type catalog ───────────────────────────────────
 
 
 def test_six_canonical_event_types_exposed() -> None:
@@ -47,16 +41,12 @@ def test_six_canonical_event_types_exposed() -> None:
             LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
         }
     )
-    # Constants must match Claude Code's vocabulary verbatim.
     assert LIFECYCLE_EVENT_PRE_TOOL_USE == "pre_tool_use"
     assert LIFECYCLE_EVENT_POST_TOOL_USE == "post_tool_use"
     assert LIFECYCLE_EVENT_SESSION_START == "session_start"
     assert LIFECYCLE_EVENT_SESSION_STOP == "session_stop"
     assert LIFECYCLE_EVENT_ON_ERROR == "on_error"
     assert LIFECYCLE_EVENT_ON_SUBAGENT_STOP == "on_subagent_stop"
-
-
-# ── LifecycleEvent dataclass ───────────────────────────────────────
 
 
 def test_lifecycle_event_default_safe_fields() -> None:
@@ -87,9 +77,6 @@ def test_lifecycle_event_carries_populated_fields() -> None:
     )
     assert event.tool_args == {"command": "ls"}
     assert event.tool_duration_ms == 42
-
-
-# ── LifecycleHookRegistry ──────────────────────────────────────────
 
 
 def test_registry_default_empty() -> None:
@@ -135,7 +122,6 @@ def test_register_and_fire_dispatches_per_event_type() -> None:
 def test_fire_event_with_no_registered_hooks_is_noop() -> None:
     reg = LifecycleHookRegistry()
     ctx = HookContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
-    # Must not raise even with no hooks registered.
     reg.fire(LifecycleEvent(event_type=LIFECYCLE_EVENT_PRE_TOOL_USE), ctx)
 
 
@@ -190,9 +176,6 @@ def test_reset_clears_all_hooks() -> None:
     assert reg.count() == 0
 
 
-# ── observe-only invariant (Gate E = E1) ───────────────────────────
-
-
 def test_hook_return_value_is_ignored_v1() -> None:
     reg = LifecycleHookRegistry()
     received: list[Any] = []
@@ -211,17 +194,12 @@ def test_hook_return_value_is_ignored_v1() -> None:
     reg.fire(
         LifecycleEvent(event_type=LIFECYCLE_EVENT_PRE_TOOL_USE, tool_name="bash"), ctx
     )
-    # Both hooks fired — neither was treated as a directive.
     assert received == [("block", "bash"), ("mutate", "bash")]
-
-
-# ── default registry + fire_lifecycle_event helper ─────────────────
 
 
 def test_default_registry_lazy_init() -> None:
     reg = get_default_lifecycle_registry()
     assert isinstance(reg, LifecycleHookRegistry)
-    # Repeated calls return the same instance.
     assert get_default_lifecycle_registry() is reg
 
 
@@ -254,21 +232,14 @@ def test_reset_default_lifecycle_registry_clears_state() -> None:
     assert new_reg is not reg
 
 
-# ── message-transformation Hook class unchanged ────────────────────
-
-
 def test_message_hook_class_behavior_unchanged() -> None:
     hook = Hook()
     assert hook.name == "hook"
     assert hook.inbound_hook_mode == "mutating"
     assert hook.outbound_hook_mode == "mutating"
-    # Default on_message + on_response are identity transformations.
     msg = SimpleNamespace(body="hello", channel="x", target="y", metadata={})
     ctx = HookContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
     assert hook.on_message(msg, ctx) is msg
-
-
-# ── tool-dispatch producer wiring (smoke proof) ────────────────────
 
 
 def test_action_dispatch_imports_lifecycle_helpers() -> None:

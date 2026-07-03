@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import unittest
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,16 +30,12 @@ _BANNED_NEXT_STEP_PHRASES = (
 )
 
 
-def _assert_no_next_step_prose(testcase: unittest.TestCase, content: str) -> None:
+def _assert_no_next_step_prose(content: str) -> None:
     lowered = content.lower()
     for phrase in _BANNED_NEXT_STEP_PHRASES:
-        testcase.assertNotIn(
-            phrase.lower(),
-            lowered,
-            msg=(
-                f"Rail content includes banned next-step phrase "
-                f"{phrase!r}; ALCR contract violated."
-            ),
+        assert phrase.lower() not in lowered, (
+            f"Rail content includes banned next-step phrase "
+            f"{phrase!r}; ALCR contract violated."
         )
 
 
@@ -57,7 +52,7 @@ class _FakeActionResult:
     summary: str = ""
 
 
-class FailureRecoveryContractTests(unittest.TestCase):
+class TestFailureRecoveryContract:
     def test_exact_content_on_failed_action(self) -> None:
         action = _FakeActionResult(
             status="failed",
@@ -67,12 +62,9 @@ class FailureRecoveryContractTests(unittest.TestCase):
             tool_name="weather.lookup", action_result=action
         )
         assert msg is not None
-        self.assertEqual(
-            msg.content,
-            (
-                "The previous weather.lookup tool call failed (code=E_INPUT): "
-                "missing city argument Do not repeat the same invalid call."
-            ),
+        assert msg.content == (
+            "The previous weather.lookup tool call failed (code=E_INPUT): "
+            "missing city argument Do not repeat the same invalid call."
         )
 
     def test_exact_content_without_error_code(self) -> None:
@@ -84,12 +76,9 @@ class FailureRecoveryContractTests(unittest.TestCase):
             tool_name="weather.lookup", action_result=action
         )
         assert msg is not None
-        self.assertEqual(
-            msg.content,
-            (
-                "The previous weather.lookup tool call failed: "
-                "tool crashed Do not repeat the same invalid call."
-            ),
+        assert msg.content == (
+            "The previous weather.lookup tool call failed: "
+            "tool crashed Do not repeat the same invalid call."
         )
 
     def test_absence_of_next_step_prose(self) -> None:
@@ -101,7 +90,7 @@ class FailureRecoveryContractTests(unittest.TestCase):
             tool_name="any.tool", action_result=action
         )
         assert msg is not None
-        _assert_no_next_step_prose(self, msg.content)
+        _assert_no_next_step_prose(msg.content)
 
     def test_direct_tool_shortlist_restores_requested_tool_schema(self) -> None:
         state = AdaptiveToolLoopState(
@@ -126,21 +115,13 @@ class FailureRecoveryContractTests(unittest.TestCase):
             requestable_tool_specs=requestable_specs,
         )
 
-        self.assertEqual(
-            [spec.name for spec in restored],
-            ["exec.run", "mcp.fixture.echo_text"],
-        )
-        self.assertEqual(
-            state.scratchpad["direct_tool_shortlist_restored_tools"],
-            ["mcp.fixture.echo_text"],
-        )
-        self.assertEqual(
-            [
-                spec.name
-                for spec in _visible_tool_specs_for_direct_tool_turn(state, restored)
-            ],
-            ["mcp.fixture.echo_text"],
-        )
+        assert [spec.name for spec in restored] == ["exec.run", "mcp.fixture.echo_text"]
+        assert state.scratchpad["direct_tool_shortlist_restored_tools"] == [
+            "mcp.fixture.echo_text"
+        ]
+        assert [spec.name for spec in _visible_tool_specs_for_direct_tool_turn(state, restored)] == [
+            "mcp.fixture.echo_text"
+        ]
 
     def test_retains_fact_and_hard_constraint(self) -> None:
         action = _FakeActionResult(
@@ -151,11 +132,9 @@ class FailureRecoveryContractTests(unittest.TestCase):
             tool_name="any.tool", action_result=action
         )
         assert msg is not None
-        # Fact
-        self.assertIn("any.tool", msg.content)
-        self.assertIn("boom", msg.content)
-        # Hard constraint
-        self.assertIn("Do not repeat the same invalid call.", msg.content)
+        assert "any.tool" in msg.content
+        assert "boom" in msg.content
+        assert "Do not repeat the same invalid call." in msg.content
 
     def test_timeout_status_also_emits_rail(self) -> None:
         action = _FakeActionResult(
@@ -166,10 +145,10 @@ class FailureRecoveryContractTests(unittest.TestCase):
             tool_name="slow.tool", action_result=action
         )
         assert msg is not None
-        _assert_no_next_step_prose(self, msg.content)
+        _assert_no_next_step_prose(msg.content)
 
 
-class DuplicateBatchRecoveryContractTests(unittest.TestCase):
+class TestDuplicateBatchRecoveryContract:
     def _fake_tool_calls(self, names: list[str]) -> list[Any]:
         @dataclass
         class _FakeCall:
@@ -181,35 +160,30 @@ class DuplicateBatchRecoveryContractTests(unittest.TestCase):
         msg = _duplicate_batch_recovery_message(
             self._fake_tool_calls(["web.search", "web.fetch"])
         )
-        self.assertEqual(
-            msg.content,
-            (
-                "The tool batch (web.search, web.fetch) was already executed with "
-                "the same arguments and produced tool results in this loop. Do not "
-                "repeat the same tool call with identical arguments unless the "
-                "prior tool result explicitly instructed you to poll or retry with "
-                "changed inputs."
-            ),
+        assert msg.content == (
+            "The tool batch (web.search, web.fetch) was already executed with "
+            "the same arguments and produced tool results in this loop. Do not "
+            "repeat the same tool call with identical arguments unless the "
+            "prior tool result explicitly instructed you to poll or retry with "
+            "changed inputs."
         )
 
     def test_absence_of_next_step_prose(self) -> None:
         msg = _duplicate_batch_recovery_message(self._fake_tool_calls(["web.search"]))
-        _assert_no_next_step_prose(self, msg.content)
+        _assert_no_next_step_prose(msg.content)
 
     def test_retains_fact_and_conditional_constraint(self) -> None:
         msg = _duplicate_batch_recovery_message(self._fake_tool_calls(["web.search"]))
-        # Fact
-        self.assertIn("web.search", msg.content)
-        self.assertIn("already executed", msg.content)
-        # Conditional constraint (typed — references the prior tool result)
-        self.assertIn("Do not repeat the same tool call", msg.content)
-        self.assertIn(
-            "unless the prior tool result explicitly instructed you to poll",
-            msg.content,
+        assert "web.search" in msg.content
+        assert "already executed" in msg.content
+        assert "Do not repeat the same tool call" in msg.content
+        assert (
+            "unless the prior tool result explicitly instructed you to poll"
+            in msg.content
         )
 
 
-class DirectToolClosureContractTests(unittest.TestCase):
+class TestDirectToolClosureContract:
     def _fake_loop_state(self, requested_tools: list[str] | None) -> Any:
         @dataclass
         class _FakeDirectTurn:
@@ -230,25 +204,20 @@ class DirectToolClosureContractTests(unittest.TestCase):
     def test_exact_content_on_named_tools(self) -> None:
         state = self._fake_loop_state(["web.search", "web.fetch"])
         msg = _build_direct_tool_closure_message(state)
-        self.assertEqual(
-            msg.content,
-            (
-                "The explicit requested tool batch (web.search, web.fetch) "
-                "already completed successfully for this turn. Do not call "
-                "more tools."
-            ),
+        assert msg.content == (
+            "The explicit requested tool batch (web.search, web.fetch) "
+            "already completed successfully for this turn. Do not call "
+            "more tools."
         )
 
     def test_absence_of_next_step_prose(self) -> None:
         state = self._fake_loop_state(["web.search"])
         msg = _build_direct_tool_closure_message(state)
-        _assert_no_next_step_prose(self, msg.content)
+        _assert_no_next_step_prose(msg.content)
 
     def test_retains_fact_and_hard_constraint(self) -> None:
         state = self._fake_loop_state(["web.search"])
         msg = _build_direct_tool_closure_message(state)
-        # Fact
-        self.assertIn("web.search", msg.content)
-        self.assertIn("already completed successfully", msg.content)
-        # Hard constraint (also enforced structurally via tool_choice=none)
-        self.assertIn("Do not call more tools.", msg.content)
+        assert "web.search" in msg.content
+        assert "already completed successfully" in msg.content
+        assert "Do not call more tools." in msg.content

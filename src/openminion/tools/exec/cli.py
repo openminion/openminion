@@ -40,7 +40,7 @@ def _parse_env_overrides(items: List[str]) -> Dict[str, str]:
 
 def _print_env_and_exit(env: ResultEnvelope, exit_code: int, json_out: bool) -> None:
     payload = env.model_dump_json(indent=2)
-    print(payload if json_out else payload)
+    print(payload)
     if exit_code:
         raise typer.Exit(code=exit_code)
 

@@ -54,9 +54,6 @@ def _args(
     )
 
 
-# ── Auto-detect ──────────────────────────────────────────────────
-
-
 def test_auto_detect_tty_returns_full(clean_env: None, force_tty: None) -> None:
     assert resolve_progress(_args()) == "full"
 
@@ -69,9 +66,6 @@ def test_explicit_default_overrides_auto_detect(
     clean_env: None, force_piped: None
 ) -> None:
     assert resolve_progress(_args(), default="minimal") == "minimal"
-
-
-# ── Canonical flag ───────────────────────────────────────────────
 
 
 def test_flag_full(clean_env: None, force_piped: None) -> None:
@@ -106,9 +100,6 @@ def test_canonical_flag_beats_legacy_alias(clean_env: None, force_tty: None) -> 
 
 def test_canonical_flag_beats_plain_spinner(clean_env: None, force_tty: None) -> None:
     assert resolve_progress(_args(progress="off", plain_spinner=True)) == "off"
-
-
-# ── Canonical env ────────────────────────────────────────────────
 
 
 def test_env_full(
@@ -191,9 +182,6 @@ def test_canonical_env_beats_legacy(
     assert "deprecated" not in capsys.readouterr().err
 
 
-# ── NO_COLOR (FTR-07 contract) ───────────────────────────────────
-
-
 def test_no_color_returns_minimal(
     clean_env: None, force_tty: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -234,9 +222,6 @@ def test_canonical_env_beats_no_color(
     assert resolve_progress(_args()) == "full"
 
 
-# ── Argparse registration ───────────────────────────────────────
-
-
 def test_add_progress_flag_accepts_choices() -> None:
     parser = argparse.ArgumentParser()
     add_progress_flag(parser)
@@ -273,14 +258,10 @@ def test_add_progress_flag_with_aliases() -> None:
 def test_add_progress_flag_without_aliases() -> None:
     parser = argparse.ArgumentParser()
     add_progress_flag(parser, include_aliases=False)
-    # Aliases should NOT be registered.
     with pytest.raises(SystemExit):
         parser.parse_args(["--no-progress"])
     with pytest.raises(SystemExit):
         parser.parse_args(["--plain-spinner"])
-
-
-# ── Env-allowlist regression guard ──────────────────────────────
 
 
 def test_only_ux_module_reads_progress_env() -> None:

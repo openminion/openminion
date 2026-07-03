@@ -60,7 +60,6 @@ def test_live_minimax_m2_7_ppl_proof_of_life_emission_chain() -> None:
     finally:
         runtime.close()
 
-    # --- Sanity: the callback fired at all --------------------------------
     assert captured, (
         "progress_callback received no PhaseStatus emissions during a "
         "live turn. The display would sit on its initial Working... label "
@@ -70,9 +69,6 @@ def test_live_minimax_m2_7_ppl_proof_of_life_emission_chain() -> None:
         "(c) no emission sites fired."
     )
 
-    # --- Gap D (PPL-07) — bridge prep emits before the LLM call ----------
-    # The first emission should carry the bridge-prep detail_text.
-    # status_key must be "analyzing" (not "preparing" — schema guardrail).
     prep_emissions = [
         status
         for status in captured
@@ -87,7 +83,6 @@ def test_live_minimax_m2_7_ppl_proof_of_life_emission_chain() -> None:
         f"captured (first 5): {[(s.status_key, s.detail_text, s.label) for s in captured[:5]]}"
     )
 
-    # --- Gap A (PPL-02) — DECIDE pre-call emits even without token estimate
     decide_emissions = [
         status
         for status in captured
@@ -103,21 +98,14 @@ def test_live_minimax_m2_7_ppl_proof_of_life_emission_chain() -> None:
         f"captured source_phase values: {sorted({s.source_phase for s in captured if s.source_phase})}"
     )
 
-    # --- Gap C (PPL-06) — rendered text never bare 'Working...' ----------
-    # Any captured status that has progress segments AND a specific
-    # phase must compose the label alongside those segments.
     for status in captured:
         if status.status_key in {"completed", "error", "waiting_for_user"}:
-            # Terminal/waiting carveout — label-only is correct.
             continue
         if status.llm_call_count is None and not status.total_tokens_used:
-            continue  # No progress segments; nothing to compose.
+            continue
         rendered = format_phase_status_text(status)
         if status.status_key == "working":
-            # Generic working — progress-only render is correct.
             continue
-        # Specific phase with progress segments: the phase label must
-        # appear alongside the progress text, not be replaced by it.
         label = str(status.label or "").strip()
         if not label:
             continue

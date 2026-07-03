@@ -1,83 +1,136 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import sys
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 from openminion.base.config import DEFAULT_CONFIG_PATH
-from openminion.cli.commands import agent as agent_cmd
-from openminion.cli.commands import agent_check as agent_check_cmd
-from openminion.cli.commands import agents as agents_cmd
-from openminion.cli.commands import api as api_cmd
-from openminion.cli.commands import autonomy as autonomy_cmd
-from openminion.cli.commands import chat as chat_cmd
-from openminion.cli.commands import channel as channel_cmd
-from openminion.cli.commands import config as config_cmd
-from openminion.cli.commands import cron as cron_cmd
-from openminion.cli.commands import daemon as daemon_cmd
-from openminion.cli.commands import data as data_cmd
-from openminion.cli.commands import doctor as doctor_cmd
-from openminion.cli.commands import export as export_cmd
-from openminion.cli.commands import focus as focus_cmd
-from openminion.cli.commands import gateway as gateway_cmd
-from openminion.cli.commands import identity as identity_cmd
-from openminion.cli.commands import memory as memory_cmd
-from openminion.cli.commands import mcp as mcp_cmd
-from openminion.cli.commands import message as message_cmd
-from openminion.cli.commands import plugins as plugins_cmd
-from openminion.cli.commands import room as room_cmd
-from openminion.cli.commands import run as run_cmd
-from openminion.cli.commands import scaffold as scaffold_cmd
-from openminion.cli.commands import sessions as sessions_cmd
-from openminion.cli.commands import setup as setup_cmd
-from openminion.cli.commands import sidecar as sidecar_cmd
-from openminion.cli.commands import skill as skill_cmd
-from openminion.cli.commands import status as status_cmd
-from openminion.cli.commands import storage as storage_cmd
-from openminion.cli.commands import time as time_cmd
-from openminion.cli.commands import toolctl as toolctl_cmd
-from openminion.cli.commands import tools as tools_cmd
-from openminion.cli.commands import tui as tui_cmd
-from openminion.cli.commands import verify as verify_cmd
-from openminion.cli.commands import version as version_cmd
-from openminion.cli.commands.debug import cli as debug_cli_cmd
 
-COMMAND_MODULES = (
-    config_cmd,
-    api_cmd,
-    autonomy_cmd,
-    data_cmd,
-    daemon_cmd,
-    run_cmd,
-    room_cmd,
-    channel_cmd,
-    chat_cmd,
-    tui_cmd,
-    sessions_cmd,
-    sidecar_cmd,
-    tools_cmd,
-    toolctl_cmd,
-    time_cmd,
-    gateway_cmd,
-    agent_cmd,
-    agent_check_cmd,
-    agents_cmd,
-    message_cmd,
-    plugins_cmd,
-    doctor_cmd,
-    status_cmd,
-    export_cmd,
-    focus_cmd,
-    setup_cmd,
-    storage_cmd,
-    verify_cmd,
-    version_cmd,
-    scaffold_cmd,
-    cron_cmd,
-    debug_cli_cmd,
-    skill_cmd,
-    identity_cmd,
-    memory_cmd,
-    mcp_cmd,
+
+@dataclass(frozen=True)
+class CommandSpec:
+    name: str
+    module: str
+    help: str
+
+
+COMMAND_SPECS = (
+    CommandSpec("config", "openminion.cli.commands.config", "Config operations"),
+    CommandSpec("api", "openminion.cli.commands.api", "HTTP API controls"),
+    CommandSpec("autonomy", "openminion.cli.commands.autonomy", "Autonomy runs"),
+    CommandSpec("data", "openminion.cli.commands.data", "Data root operations"),
+    CommandSpec("daemon", "openminion.cli.commands.daemon", "Daemon lifecycle controls"),
+    CommandSpec("run", "openminion.cli.commands.run", "Run a prompt"),
+    CommandSpec("room", "openminion.cli.commands.room", "Create and manage room sessions"),
+    CommandSpec("channel", "openminion.cli.commands.channel", "Channel setup and operations"),
+    CommandSpec("chat", "openminion.cli.commands.chat", "Interactive chat client"),
+    CommandSpec("dashboard", "openminion.cli.commands.tui", "Launch the monitoring dashboard"),
+    CommandSpec("tui", "openminion.cli.commands.tui", "Launch focus mode"),
+    CommandSpec("sessions", "openminion.cli.commands.sessions", "Session operations"),
+    CommandSpec("sidecar", "openminion.cli.commands.sidecar", "Sidecar lifecycle controls"),
+    CommandSpec("tools", "openminion.cli.commands.tools", "Tool catalog and invocation"),
+    CommandSpec("toolctl", "openminion.cli.commands.toolctl", "Operator controls for authored tools"),
+    CommandSpec("time", "openminion.cli.commands.time", "Trusted time helpers"),
+    CommandSpec("gateway", "openminion.cli.commands.gateway", "Gateway runtime controls"),
+    CommandSpec("agent", "openminion.cli.commands.agent", "Run an agent turn or manage agent runtimes"),
+    CommandSpec("agent-check", "openminion.cli.commands.agent_check", "Run an agent check"),
+    CommandSpec("agent-ctl", "openminion.cli.commands.agents", argparse.SUPPRESS),
+    CommandSpec("message", "openminion.cli.commands.message", "Message operations"),
+    CommandSpec("plugins", "openminion.cli.commands.plugins", "Plugin operations"),
+    CommandSpec("doctor", "openminion.cli.commands.doctor", "Run diagnostics"),
+    CommandSpec("status", "openminion.cli.commands.status", "Inspect run/task lifecycle status"),
+    CommandSpec("export", "openminion.cli.commands.export", "Export commands"),
+    CommandSpec("focus", "openminion.cli.commands.focus", "Launch the focus shell"),
+    CommandSpec("setup", "openminion.cli.commands.setup", "Configure OpenMinion"),
+    CommandSpec("storage", "openminion.cli.commands.storage", "Shared storage-core operations"),
+    CommandSpec("verify", "openminion.cli.commands.verify", "Verify runtime configuration"),
+    CommandSpec("version", "openminion.cli.commands.version", "Show package version"),
+    CommandSpec("scaffold", "openminion.cli.commands.scaffold", "Scaffold package assets"),
+    CommandSpec("cron", "openminion.cli.commands.cron", "Cron operations"),
+    CommandSpec("debug", "openminion.cli.commands.debug.cli", "Debug module diagnostics"),
+    CommandSpec("skill", "openminion.cli.commands.skill", "Skill management operations"),
+    CommandSpec("identity", "openminion.cli.commands.identity", "Identity profile management"),
+    CommandSpec("memory", "openminion.cli.commands.memory", "Memory operations"),
+    CommandSpec("mcp", "openminion.cli.commands.mcp", "Manage MCP servers"),
 )
+COMMAND_MODULES = tuple(dict.fromkeys(spec.module for spec in COMMAND_SPECS))
+COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECS)
+_ROOT_OPTIONS_WITH_VALUES = frozenset(
+    {
+        "--home-root",
+        "--data-root",
+        "--generated-root",
+        "--config",
+    }
+)
+
+
+class LazyCommandArgumentParser(argparse.ArgumentParser):
+    def parse_args(
+        self,
+        args: Sequence[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> argparse.Namespace:
+        selected_command = _selected_command(args)
+        if selected_command is not None:
+            return build_parser(selected_command=selected_command).parse_args(
+                args,
+                namespace,
+            )
+        return super().parse_args(args, namespace)
+
+    def parse_known_args(
+        self,
+        args: Sequence[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> tuple[argparse.Namespace, list[str]]:
+        selected_command = _selected_command(args)
+        if selected_command is not None:
+            return build_parser(selected_command=selected_command).parse_known_args(
+                args,
+                namespace,
+            )
+        return super().parse_known_args(args, namespace)
+
+
+def _selected_command(args: Sequence[str] | None) -> str | None:
+    tokens = list(sys.argv[1:] if args is None else args)
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return None
+        if token in ("-h", "--help"):
+            return None
+        if token.startswith("--"):
+            option = token.split("=", 1)[0]
+            if option in _ROOT_OPTIONS_WITH_VALUES and "=" not in token:
+                index += 2
+            else:
+                index += 1
+            continue
+        return token if token in COMMAND_NAMES else None
+    return None
+
+
+def _register_command_modules(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    *,
+    selected_command: str | None,
+) -> None:
+    if selected_command is None:
+        for spec in COMMAND_SPECS:
+            subparsers.add_parser(spec.name, help=spec.help)
+        return
+
+    modules = [
+        spec.module for spec in COMMAND_SPECS if spec.name == selected_command
+    ]
+    for module_name in dict.fromkeys(modules):
+        module = importlib.import_module(module_name)
+        module.register(subparsers)
 
 
 def _hide_suppressed_subcommands(parser: argparse.ArgumentParser) -> None:
@@ -100,8 +153,11 @@ def _hide_suppressed_subcommands(parser: argparse.ArgumentParser) -> None:
             _hide_suppressed_subcommands(child_parser)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+def build_parser(
+    *, selected_command: str | None = None
+) -> argparse.ArgumentParser:
+    parser_class = argparse.ArgumentParser if selected_command else LazyCommandArgumentParser
+    parser = parser_class(
         prog="openminion",
         description=(
             "Python-first OpenMinion runtime. Bare `openminion` opens the "
@@ -156,7 +212,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command")
-    for module in COMMAND_MODULES:
-        module.register(subparsers)
+    _register_command_modules(subparsers, selected_command=selected_command)
     _hide_suppressed_subcommands(parser)
     return parser

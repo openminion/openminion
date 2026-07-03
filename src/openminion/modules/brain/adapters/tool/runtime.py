@@ -31,6 +31,7 @@ from openminion.modules.tool.adapters import AllowAllSafetyAdapter, LocalPolicyA
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.plugin_api import PolicyAdapter, PolicyDecision
 from openminion.modules.tool.contracts.model_ids import MODEL_FILE_WRITE
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.routing import (
     build_runtime_tool_routing_metadata,
     resolve_runtime_tool_config,
@@ -57,6 +58,10 @@ from .results import (
 )
 
 _log = get_logger("brain.adapters.tool.runtime")
+
+
+def _is_confirm_required_code(code: Any) -> bool:
+    return str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED
 
 try:
     import openminion_tool_os.plugin
@@ -417,7 +422,7 @@ class ToolAdapter:
             return _error_envelope(
                 status=BRAIN_ACTION_STATUS_NEEDS_USER,
                 summary="Background watch write authorization requires approval.",
-                code="CONFIRM_REQUIRED",
+                code=TOOL_ERROR_CONFIRM_REQUIRED,
                 message=(
                     "Background watch write authorization requires explicit "
                     "operator confirmation."
@@ -524,7 +529,7 @@ class ToolAdapter:
                     else BRAIN_STATE_ERROR
                 )
                 error_code = (
-                    "CONFIRM_REQUIRED"
+                    TOOL_ERROR_CONFIRM_REQUIRED
                     if requires_confirm
                     else str(policy_decision.code or "POLICY_DENIED")
                 )
@@ -608,7 +613,7 @@ class ToolAdapter:
             return result
 
         except ToolRuntimeError as exc:
-            requires_confirm = str(exc.code or "").strip().upper() == "CONFIRM_REQUIRED"
+            requires_confirm = _is_confirm_required_code(exc.code)
             return _error_envelope(
                 status=(
                     BRAIN_ACTION_STATUS_NEEDS_USER
@@ -616,7 +621,7 @@ class ToolAdapter:
                     else BRAIN_STATE_ERROR
                 ),
                 summary=exc.message or "Tool execution failed",
-                code="CONFIRM_REQUIRED" if requires_confirm else exc.code,
+                code=TOOL_ERROR_CONFIRM_REQUIRED if requires_confirm else exc.code,
                 message=exc.message or "Tool execution failed",
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details=dict(exc.details or {}),
@@ -716,7 +721,7 @@ class ToolAdapter:
             raw_details = data.get("details")
             if isinstance(raw_details, Mapping):
                 error_details = dict(raw_details)
-        requires_confirm = error_code.upper() == "CONFIRM_REQUIRED"
+        requires_confirm = _is_confirm_required_code(error_code)
         response: dict[str, Any] = {
             "status": (
                 BRAIN_ACTION_STATUS_SUCCESS

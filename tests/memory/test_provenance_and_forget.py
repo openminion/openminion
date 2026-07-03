@@ -12,9 +12,6 @@ from openminion.modules.memory.errors import MemctlError
 from openminion.modules.memory.models import MemoryRecord
 
 
-# --- Provenance contract tests (MPF-01) ----------------------------------
-
-
 class TestMemoryProvenanceEntry:
     def test_round_trip(self):
         entry = MemoryProvenanceEntry(
@@ -87,9 +84,6 @@ class TestTurnProvenanceTrace:
             )
 
 
-# --- delete_record + forget_by_source contract tests (MPF-05) ------------
-
-
 class _RecordingStore:
     def __init__(self, records: list[MemoryRecord]) -> None:
         self._records: dict[str, MemoryRecord] = {r.id: r for r in records}
@@ -105,7 +99,6 @@ class _RecordingStore:
         reason: str | None = None,
         deleted_at: str | None = None,
     ) -> None:
-        # Store supports the MPF-05 audit kwargs.
         self.delete_calls.append(
             {"id": record_id, "reason": reason, "deleted_at": deleted_at}
         )
@@ -153,7 +146,6 @@ def memory_service_with_recording_store():
 
     from openminion.modules.memory.service import MemoryService
 
-    # These tests only touch ``self._store.get`` and ``self._store.delete``.
     svc = MemoryService.__new__(MemoryService)
     svc._store = _RecordingStore(  # type: ignore[attr-defined]
         [
@@ -183,7 +175,6 @@ class TestDeleteRecordWithReason:
         svc = memory_service_with_recording_store
         assert svc.delete_record("m1") is True
         call = svc._store.delete_calls[0]  # type: ignore[attr-defined]
-        # No reason → no audit fields populated.
         assert call == {"id": "m1", "reason": None, "deleted_at": None}
 
     def test_returns_false_for_missing_record(
@@ -201,12 +192,10 @@ class TestDeleteRecordWithReason:
         assert call["id"] == "m1"
         assert call["reason"] == "operator request"
         assert call["deleted_at"] is not None
-        # deleted_at must be ISO-shaped (sanity check).
         assert "T" in call["deleted_at"]
 
     def test_legacy_store_falls_back_cleanly(self, memory_service_with_legacy_store):
         svc = memory_service_with_legacy_store
-        # without the audit kwargs — and the service returns True.
         assert svc.delete_record("legacy-1", reason="audit") is True
         assert svc._store.legacy_deletes == ["legacy-1"]  # type: ignore[attr-defined]
 
@@ -230,7 +219,6 @@ class TestForgetBySource:
             "tool_output", reason="audit cleanup", dry_run=True
         )
         assert set(matched) == {"m1", "m2"}
-        # No delete calls because dry_run=True.
         assert svc._store.delete_calls == []  # type: ignore[attr-defined]
 
     def test_apply_mutates_matched_records(self, memory_service_with_recording_store):
@@ -241,7 +229,6 @@ class TestForgetBySource:
         assert set(matched) == {"m1", "m2"}
         deleted_ids = {call["id"] for call in svc._store.delete_calls}  # type: ignore[attr-defined]
         assert deleted_ids == {"m1", "m2"}
-        # The agent_inferred record is untouched.
         store = svc._store  # type: ignore[attr-defined]
         agent_record = store.get("m3")
         assert agent_record is not None
@@ -251,9 +238,7 @@ class TestForgetBySource:
         self, memory_service_with_recording_store
     ):
         svc = memory_service_with_recording_store
-        # First pass deletes.
         first = svc.forget_by_source("tool_output", reason="first", dry_run=False)
-        # Second pass — all records are now is_deleted=True and skipped.
         second = svc.forget_by_source("tool_output", reason="second", dry_run=False)
         assert set(first) == {"m1", "m2"}
         assert second == []

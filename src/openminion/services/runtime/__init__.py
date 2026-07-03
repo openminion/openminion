@@ -1,3 +1,4 @@
+from openminion.base.version import OPENMINION_VERSION
 from openminion.services.runtime.composition import OpenMinionRuntime
 from openminion.services.runtime.daemon import build_runtime_manager, build_turn_request
 from openminion.services.runtime.env import apply_runtime_environment
@@ -23,7 +24,7 @@ from openminion.services.runtime.turn_input import (
     TurnInputQueueStatus,
 )
 
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION
 
 __all__ = [
     "AgentHandle",

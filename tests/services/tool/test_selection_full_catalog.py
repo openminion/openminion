@@ -13,6 +13,7 @@ from openminion.services.tool.selection import (
     SchemaExposure,
     SelectionMode,
     ToolSelectionService,
+    create_validation_error,
 )
 
 
@@ -82,6 +83,7 @@ def _make_service(
     service._registry = registry
     service._mode = mode
     service._schema_exposure = SchemaExposure(config.schema_exposure)
+    service._identity_filter_cache = {}
     # Override the live-registry probe so these tests run without a
     # wired tool registry manager.
     service._registry_specs = MagicMock(return_value=list(specs))  # type: ignore[method-assign]
@@ -198,6 +200,31 @@ class FullCatalogTruncationTests(unittest.TestCase):
             self.assertEqual(len(truncation_markers), 1)
 
 
+class SchemaTieringTests(unittest.TestCase):
+    def test_stub_first_exposes_stub_until_validation_error_requests_full_schema(
+        self,
+    ) -> None:
+        service = _make_service(
+            [_spec("alpha")],
+            mode=SelectionMode.TYPED,
+        )
+
+        initial = service.select_tools(query="", intent_categories=None)
+        self.assertEqual(initial.shortlist, ["alpha"])
+        self.assertEqual(initial.full_schema_tools, [])
+        self.assertEqual([stub.name for stub in initial.stubs], ["alpha"])
+
+        error = create_validation_error(
+            tool_name="alpha",
+            missing_required=["path"],
+            wrong_type=[],
+        )
+        self.assertTrue(service.should_expand_schema("alpha", error))
+        expanded = service.get_full_schema("alpha")
+        self.assertIsNotNone(expanded)
+        self.assertEqual(expanded.name, "alpha")
+
+
 class TypedSignalStillRoutesDeterministicTests(unittest.TestCase):
     def test_forced_category_typed_mode_hits_deterministic_path(self) -> None:
         service = _make_service(
@@ -237,7 +264,7 @@ class LegacyModeMigrationTests(unittest.TestCase):
         self.assertIn("typed", msg)
         self.assertIn("deterministic", msg)
         # Spec reference for operators following the migration trail
-        self.assertIn("tool-schema-selection-ranking-retirement-spec", msg)
+        self.assertIn("tool-selection migration guide", msg)
 
     def test_legacy_hybrid_mode_raises_config_error_with_migration(self) -> None:
         with self.assertRaises(ConfigError) as cm:

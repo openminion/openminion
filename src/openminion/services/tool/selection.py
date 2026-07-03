@@ -52,6 +52,7 @@ class ToolSelectionService:
         self._registry = registry
         self._mode = SelectionMode(config.mode)
         self._schema_exposure = SchemaExposure(config.schema_exposure)
+        self._identity_filter_cache: dict[str, _FilterOutcome] = {}
         # typed telemetry — mode_resolved.
         _LOG.info(
             "selection.mode_resolved",
@@ -115,13 +116,21 @@ class ToolSelectionService:
         if tool_use_type and "tool_use" not in filter_payload:
             filter_payload["tool_use"] = str(tool_use_type).strip().lower()
         filter_outcome: _FilterOutcome | None = None
+        filter_cache_hit = False
         if filter_payload:
-            filter_outcome = self._apply_identity_tool_filter(
-                list(specs)
-                if specs is not None
-                else self._registry_specs(self._registry),
-                filter_payload,
+            source_specs = (
+                list(specs) if specs is not None else self._registry_specs(self._registry)
             )
+            cache_key = self._identity_filter_cache_key(source_specs, filter_payload)
+            filter_outcome = self._identity_filter_cache.get(cache_key)
+            if filter_outcome is None:
+                filter_outcome = self._apply_identity_tool_filter(
+                    source_specs,
+                    filter_payload,
+                )
+                self._identity_filter_cache[cache_key] = filter_outcome
+            else:
+                filter_cache_hit = True
             specs = list(filter_outcome.specs)
 
         result = self._route_selection(
@@ -133,6 +142,12 @@ class ToolSelectionService:
         if filter_outcome and filter_outcome.unresolved_category_count > 0:
             result.reason_codes.append(
                 f"read_only:unresolved_categories:{filter_outcome.unresolved_category_count}"
+            )
+        if filter_payload:
+            result.reason_codes.append(
+                "identity_filter_cache_hit"
+                if filter_cache_hit
+                else "identity_filter_cache_miss"
             )
         return result
 
@@ -591,6 +606,22 @@ class ToolSelectionService:
         return _FilterOutcome(
             specs=list(tools),
             unresolved_category_count=unresolved_category_count,
+        )
+
+    @staticmethod
+    def _identity_filter_cache_key(
+        tools: list[ProviderToolSpec],
+        identity_tool_filter: dict[str, Any],
+    ) -> str:
+        tool_names = tuple(sorted(str(tool.name or "").strip() for tool in tools))
+        return json.dumps(
+            {
+                "filter": identity_tool_filter,
+                "tool_names": tool_names,
+            },
+            default=str,
+            sort_keys=True,
+            separators=(",", ":"),
         )
 
     def _is_write_exec_tool(self, tool_name: str) -> bool | None:

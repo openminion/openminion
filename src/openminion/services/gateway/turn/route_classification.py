@@ -42,6 +42,8 @@ def classify_setup_cost_route(
         return SetupCostRoute("file_context_request", "file_hint")
     if words & _RESEARCH_HINTS:
         return SetupCostRoute("research_request", "research_hint")
+    if words & _CODE_HINTS:
+        return SetupCostRoute("ambiguous_request", "code_hint_without_file")
     if words & _LOCAL_HINTS:
         return SetupCostRoute("local_status_request", "local_status_hint")
     if forced_count == 1:

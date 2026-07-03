@@ -18,6 +18,17 @@ from openminion.cli.commands.agent import run_agent
 from openminion.cli.parser.base import build_parser
 
 
+def _command_parser(command: str):
+    parser = build_parser(selected_command=command)
+    for action in parser._actions:
+        if getattr(action, "dest", None) != "command":
+            continue
+        command_parser = getattr(action, "choices", {}).get(command)
+        if command_parser is not None:
+            return command_parser
+    raise AssertionError(f"command parser not found: {command}")
+
+
 class ParserTests(unittest.TestCase):
     def test_root_parser_rejects_conf_alias(self) -> None:
         parser = build_parser()
@@ -101,6 +112,56 @@ class ParserTests(unittest.TestCase):
         )
 
         self.assertEqual(result.stdout.strip(), "False")
+
+    def test_help_and_common_parse_paths_avoid_api_runtime_imports(self) -> None:
+        scenarios = (
+            "root_help",
+            "focus_help",
+            "status_help",
+            "focus_parse",
+            "status_parse",
+        )
+        script = r"""
+import json
+import sys
+from openminion.cli.parser.base import build_parser
+
+commands = {
+    "root_help": ["--help"],
+    "focus_help": ["focus", "--help"],
+    "status_help": ["status", "--help"],
+    "focus_parse": ["focus", "--agent", "ops"],
+    "status_parse": ["status", "runs", "--session-id", "session-1"],
+}
+results = {}
+for name, argv in commands.items():
+    for module_name in [
+        module
+        for module in sys.modules
+        if module.startswith(("openminion.api", "openminion.services.runtime"))
+    ]:
+        sys.modules.pop(module_name, None)
+    try:
+        build_parser().parse_args(argv)
+    except SystemExit:
+        pass
+    results[name] = sorted(
+        module
+        for module in sys.modules
+        if module.startswith(("openminion.api", "openminion.services.runtime"))
+    )
+print(json.dumps(results, sort_keys=True))
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        loaded_by_scenario = __import__("json").loads(result.stdout.splitlines()[-1])
+        self.assertEqual(set(loaded_by_scenario), set(scenarios))
+        self.assertTrue(all(not loaded for loaded in loaded_by_scenario.values()))
 
     def test_root_parser_accepts_allow_unsandboxed_exec_flag(self) -> None:
         parser = build_parser()
@@ -768,18 +829,9 @@ class ParserTests(unittest.TestCase):
     def test_status_identity_help_mentions_identityctl_and_deprecated_root(
         self,
     ) -> None:
-        parser = build_parser()
-        status_parser = None
+        status_parser = _command_parser("status")
         status_identity_parser = None
-        for action in parser._actions:
-            if getattr(action, "dest", None) != "command":
-                continue
-            command_map = getattr(action, "choices", {})
-            status_parser = command_map.get("status")
-            if status_parser is not None:
-                break
 
-        self.assertIsNotNone(status_parser)
         self.assertIn(
             "Inspect IdentityCtl profile/render state for an agent",
             status_parser.format_help(),
@@ -884,19 +936,11 @@ class ParserTests(unittest.TestCase):
     def test_identity_help_mentions_startup_precedence_and_directory_upsert(
         self,
     ) -> None:
-        parser = build_parser()
-        identity_parser = None
+        identity_parser = _command_parser("identity")
         identity_upsert_parser = None
         identity_import_parser = None
         identity_export_parser = None
-        for action in parser._actions:
-            if getattr(action, "dest", None) != "command":
-                continue
-            identity_parser = getattr(action, "choices", {}).get("identity")
-            if identity_parser is not None:
-                break
 
-        self.assertIsNotNone(identity_parser)
         identity_help = identity_parser.format_help()
         self.assertIn("Startup precedence: YAML sync first", identity_help)
         self.assertIn("default fallback last.", identity_help)
@@ -1208,17 +1252,9 @@ class ParserTests(unittest.TestCase):
         self.assertTrue(callable(args.handler))
 
     def test_sessions_list_help_mentions_json_output(self) -> None:
-        parser = build_parser()
-        sessions_parser = None
+        sessions_parser = _command_parser("sessions")
         sessions_list_parser = None
-        for action in parser._actions:
-            if getattr(action, "dest", None) != "command":
-                continue
-            sessions_parser = getattr(action, "choices", {}).get("sessions")
-            if sessions_parser is not None:
-                break
 
-        self.assertIsNotNone(sessions_parser)
         for action in sessions_parser._actions:
             if getattr(action, "dest", None) != "sessions_command":
                 continue
@@ -1231,17 +1267,9 @@ class ParserTests(unittest.TestCase):
         self.assertIn("--json", sessions_list_help)
 
     def test_tools_list_help_mentions_catalog_operation(self) -> None:
-        parser = build_parser()
-        tools_parser = None
+        tools_parser = _command_parser("tools")
         tools_list_parser = None
-        for action in parser._actions:
-            if getattr(action, "dest", None) != "command":
-                continue
-            tools_parser = getattr(action, "choices", {}).get("tools")
-            if tools_parser is not None:
-                break
 
-        self.assertIsNotNone(tools_parser)
         for action in tools_parser._actions:
             if getattr(action, "dest", None) != "tools_command":
                 continue

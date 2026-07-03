@@ -45,17 +45,11 @@ def _attach_finalization(response: _FakeResponse, payload: Any) -> _FakeResponse
     return response
 
 
-# ----------------------------------------------------------------------
-# Contract: the predicate behaves exactly as B-09 defined it.
-# ----------------------------------------------------------------------
-
-
 def test_predicate_fires_on_tri_empty() -> None:
     assert is_empty_provider_response(_FakeResponse(text="", tool_calls=[])) is True
 
 
 def test_predicate_skips_whitespace_only_text() -> None:
-    # Whitespace-only text is treated as empty.
     assert (
         is_empty_provider_response(_FakeResponse(text="   \t\n", tool_calls=[])) is True
     )
@@ -84,11 +78,6 @@ def test_predicate_skips_when_finalization_status_present() -> None:
 def test_predicate_treats_falsy_finalization_as_absent() -> None:
     resp = _attach_finalization(_FakeResponse(text="", tool_calls=[]), {})
     assert is_empty_provider_response(resp) is True
-
-
-# ----------------------------------------------------------------------
-# Structural: the predicate is shared (no duplicated copies remain).
-# ----------------------------------------------------------------------
 
 
 def _file_imports_shared_validator(path: Path) -> bool:
@@ -164,5 +153,5 @@ def test_unforced_lane_has_empty_provider_response_builder() -> None:
     )
     text = metadata_file.read_text(encoding="utf-8")
     assert "def empty_provider_response_response(" in text
-    assert "empty_provider_response" in text  # termination_reason value
-    assert "EMPTY_PROVIDER_RESPONSE" in text  # error_code value
+    assert "empty_provider_response" in text
+    assert "EMPTY_PROVIDER_RESPONSE" in text

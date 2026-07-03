@@ -45,7 +45,6 @@ def test_is_retryable_convenience_predicate() -> None:
 
 
 def test_unknown_code_falls_through_classifier() -> None:
-    """Unknown exceptions still return a typed classifier verdict."""
     cat, retry = classify_retryable(RuntimeError("mystery"))
     assert isinstance(cat, str)
     assert isinstance(retry, bool)

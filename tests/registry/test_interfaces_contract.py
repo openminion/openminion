@@ -10,7 +10,6 @@ from openminion.modules.registry.agents import AgentRegistry
 
 class TestRegistryContractVersion:
     def test_registry_contract_version_declared(self):
-        # Create a mock store for AgentRegistry
         mock_store = Mock()
         mock_store.close = Mock()
         mock_store.list_agent_records = Mock(return_value=[])
@@ -29,7 +28,6 @@ class TestRegistryContractVersion:
 
 class TestRegistryCompatibilityValidator:
     def test_registry_valid_implementation_passes(self):
-        # Create a mock store for AgentRegistry
         mock_store = Mock()
         mock_store.close = Mock()
         mock_store.list_agent_records = Mock(return_value=[])
@@ -50,7 +48,6 @@ class TestRegistryCompatibilityValidator:
 
         class BrokenRegistry:
             contract_version = REGISTRY_INTERFACE_VERSION
-            # Missing required methods like load, get, register, etc.
 
         registry = BrokenRegistry()
         success, errors = ensure_registry_compatibility(registry, strict=False)
@@ -61,7 +58,7 @@ class TestRegistryCompatibilityValidator:
     def test_registry_version_mismatch_fails(self):
 
         class WrongVersionRegistry:
-            contract_version = "v99"  # Wrong version
+            contract_version = "v99"
 
         registry = WrongVersionRegistry()
         success, errors = ensure_registry_compatibility(registry, strict=False)
@@ -72,8 +69,8 @@ class TestRegistryCompatibilityValidator:
     def test_registry_strict_mode_raises_error(self):
 
         class BadRegistry:
-            contract_version = "v99"  # Wrong version
+            contract_version = "v99"
 
         registry = BadRegistry()
-        with pytest.raises(Exception):  # RegistryError will be raised
+        with pytest.raises(Exception):
             ensure_registry_compatibility(registry, strict=True)

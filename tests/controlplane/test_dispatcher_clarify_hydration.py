@@ -92,13 +92,9 @@ def test_two_pending_clarifies_seed_in_memory_map() -> None:
 
 
 def test_dispatch_consumes_clarify_from_store_and_memory(tmp_path: Path) -> None:
-
     db_path = tmp_path / "cp.db"
     store = SQLiteControlPlaneStore(db_path)
 
-    # Bind the chat -> session so the second dispatcher (and the dispatch
-    # call below) resolves to the same session id we seeded with the
-    # pending clarify row.
     session_id = store.resolve_session("telegram:1", "telegram:chat-1")
     trace_id = "trace-consume-1"
     store.set_pending_clarify(
@@ -121,10 +117,8 @@ def test_dispatch_consumes_clarify_from_store_and_memory(tmp_path: Path) -> None
     brain = _CompletedBrain()
     dispatcher = _build_dispatcher(store, brain=brain)
 
-    # Hydration kicked in: the rebuilt dispatcher already knows about it.
     assert session_id in dispatcher._pending_clarify_by_session
 
-    # Feed the clarify answer with the matching clarify_id and trace_id.
     payload = dispatcher.handle_inbound(
         InboundMessage(
             user_key="telegram:1",
@@ -147,8 +141,6 @@ def test_dispatch_consumes_clarify_from_store_and_memory(tmp_path: Path) -> None
     assert payload["status"] == "completed"
     assert brain.calls == 1
 
-    # Both the durable store and the in-memory map must be empty for this
-    # session — the dispatcher consumed the pending clarify on resolution.
     assert session_id not in dispatcher._pending_clarify_by_session
     assert store.get_pending_clarify(session_id) is None
 

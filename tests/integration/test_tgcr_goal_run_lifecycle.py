@@ -102,7 +102,6 @@ def _derive_run_terminal_from_results(
     goal: Goal,
     results: list[VerifierResult],
 ) -> str:
-
     if is_run_completion_confirmed(goal=goal, results=results):
         return RUN_TERMINAL_COMPLETED
     return RUN_TERMINAL_FAILED
@@ -120,9 +119,6 @@ def test_success_path(
         apd_plan_id=goal.apd_plan_id,
     )
 
-    # Structural execution produces a typed ActionResult that satisfies
-    # both the success criterion (outputs.ok == True) and the deliverable
-    # (artifact_refs non-empty).
     cmd = ToolCommand(
         kind="tool",
         title="produce_report",
@@ -173,7 +169,6 @@ def test_success_path(
 def test_deliverable_failure_path(
     working_state: WorkingState, logger: CanonicalEventLogger
 ) -> None:
-
     goal = _build_goal()
     run = Run(
         run_id="run-002",
@@ -188,7 +183,6 @@ def test_deliverable_failure_path(
         tool_name="produce_report",
         success_criteria={"ok": True},
     )
-    # Outputs satisfy the success criterion but no artifact was produced.
     action_result = ActionResult(
         command_id=cmd.command_id,
         status="success",
@@ -240,7 +234,6 @@ def test_deliverable_failure_path(
 def test_verifier_disagrees_path(
     working_state: WorkingState, logger: CanonicalEventLogger
 ) -> None:
-
     goal = _build_goal()
     run = Run(
         run_id="run-003",
@@ -255,9 +248,6 @@ def test_verifier_disagrees_path(
         tool_name="produce_report",
         success_criteria={"ok": True},
     )
-    # The action returned a "successful" status but the structured
-    # outputs DO NOT match the success criterion. A model-only judge
-    # would call this complete; the structural verifier does not.
     action_result = ActionResult(
         command_id=cmd.command_id,
         status="success",
@@ -292,9 +282,6 @@ def test_verifier_disagrees_path(
         ),
     ]
 
-    # The deliverable verifier passes (artifact present) but the
-    # success-criterion verifier fails. is_run_completion_confirmed
-    # MUST refuse to confirm the run as complete.
     assert any(r.passed for r in results)
     assert any(not r.passed for r in results)
     assert is_run_completion_confirmed(goal=goal, results=results) is False

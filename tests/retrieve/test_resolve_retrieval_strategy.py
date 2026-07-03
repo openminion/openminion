@@ -27,9 +27,6 @@ def _resolve(
     )
 
 
-# Explicit caller pass-through
-
-
 def test_explicit_contextual_passes_through() -> None:
     assert _resolve(requested_strategy="contextual") == "contextual"
 
@@ -60,9 +57,6 @@ def test_explicit_semantic_kept_when_vector_and_embeddings_enabled() -> None:
     )
 
 
-# Auto path: structural inputs that remain
-
-
 def test_auto_with_verify_purpose_returns_contextual() -> None:
     assert _resolve(requested_strategy="auto", purpose="verify") == "contextual"
 
@@ -79,9 +73,6 @@ def test_auto_invalid_default_falls_back_to_contextual() -> None:
     assert (
         _resolve(requested_strategy="auto", default_strategy="invalid") == "contextual"
     )
-
-
-# RQHC-03 negative regressions: query keywords / filters.tags must NOT classify
 
 
 def test_auto_query_keyword_handbook_no_longer_routes_to_longrag() -> None:

@@ -37,6 +37,7 @@ from openminion.modules.brain.loop.tools.iteration.helpers import (
     _finalize_tool_result_from_context,
 )
 from openminion.modules.llm.schemas import ToolCall
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.brain.trailers import (
     EXPECTED_TRAILERS_METADATA_KEY,
     TRAILER_LANE_MACC,
@@ -354,7 +355,7 @@ class _AdaptiveLoopContextAdapter:
                 error_code = str(raw_error.get("code", "") or "")
             else:
                 error_code = str(getattr(raw_error, "code", "") or "")
-            if error_code.strip().upper() == "CONFIRM_REQUIRED":
+            if error_code.strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED:
                 from openminion.modules.brain.runner.tick.context import (
                     _store_pending_confirmation_metadata,
                 )  # noqa: PLC0415

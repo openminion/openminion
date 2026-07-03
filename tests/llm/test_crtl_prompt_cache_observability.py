@@ -19,11 +19,7 @@ from openminion.modules.llm.providers.message_payloads import (
 from openminion.modules.llm.schemas import UsageInfo
 
 
-# Discipline 1: supported-provider request shaping
-
-
 def test_prefix_cache_adapter_emits_openai_cache_control():
-
     adapter = PrefixCacheAdapter(provider="openai")
     blocks = adapter.cache_control_blocks(prefix_hash="abc123")
     assert blocks["cache_control"] == "auto"
@@ -31,7 +27,6 @@ def test_prefix_cache_adapter_emits_openai_cache_control():
 
 
 def test_prefix_cache_adapter_emits_anthropic_cache_control():
-
     adapter = PrefixCacheAdapter(provider="anthropic")
     blocks = adapter.cache_control_blocks(prefix_hash="abc123")
     assert blocks["cache_control"] == {"type": "ephemeral"}
@@ -39,26 +34,20 @@ def test_prefix_cache_adapter_emits_anthropic_cache_control():
 
 
 def test_prefix_cache_adapter_generic_is_neutral_no_op():
-
     adapter = PrefixCacheAdapter(provider="generic")
     blocks = adapter.cache_control_blocks(prefix_hash="abc")
     assert "cache_control" not in blocks
     assert blocks == {"prefix_hash": "abc"}
 
 
-# Discipline 2: unsupported-provider truthful no-op
-
-
 def test_usage_from_openai_like_without_prompt_tokens_details_returns_none():
-
     payload = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
     usage = _usage_from_openai_like(payload)
-    assert usage.cached_tokens is None  # truthful no-op
+    assert usage.cached_tokens is None
     assert usage.cache_creation_tokens is None
 
 
 def test_usage_from_anthropic_without_cache_fields_returns_none():
-
     payload = {"input_tokens": 100, "output_tokens": 30}
     usage = _usage_from_anthropic(payload)
     assert usage.cached_tokens is None
@@ -66,27 +55,24 @@ def test_usage_from_anthropic_without_cache_fields_returns_none():
 
 
 def test_token_usage_totals_default_cached_tokens_is_none():
-
     t = TokenUsageTotals()
     assert t.cached_tokens is None
     assert t.is_empty is True
 
 
 def test_usage_totals_from_mapping_returns_none_when_no_cache_field():
-
     totals = usage_totals_from_mapping({"prompt_tokens": 50, "completion_tokens": 10})
     assert totals is not None
     assert totals.cached_tokens is None
 
 
 def test_observation_payload_supported_false_for_no_cache_data():
-
     usage = UsageInfo(input_tokens=100, output_tokens=20, total_tokens=120)
     payload = build_prompt_cache_observation_payload(
         provider="openai", model="MiniMax-M2.7", usage=usage
     )
     assert payload["supported"] is False
-    assert "cached_tokens" not in payload  # absent, not zero
+    assert "cached_tokens" not in payload
 
 
 def test_observation_payload_with_none_usage():
@@ -98,11 +84,7 @@ def test_observation_payload_with_none_usage():
     assert "cached_tokens" not in payload
 
 
-# Discipline 3: usage extraction / observability
-
-
 def test_usage_from_openai_like_extracts_cached_tokens_from_details():
-
     payload = {
         "prompt_tokens": 100,
         "completion_tokens": 20,
@@ -116,7 +98,6 @@ def test_usage_from_openai_like_extracts_cached_tokens_from_details():
 
 
 def test_usage_from_openai_like_handles_malformed_details_gracefully():
-
     p1 = {"prompt_tokens": 50, "prompt_tokens_details": "not-a-dict"}
     p2 = {"prompt_tokens": 50, "prompt_tokens_details": {"cached_tokens": "many"}}
     assert _usage_from_openai_like(p1).cached_tokens is None
@@ -124,7 +105,6 @@ def test_usage_from_openai_like_handles_malformed_details_gracefully():
 
 
 def test_usage_from_anthropic_extracts_cache_read_input_tokens():
-
     payload = {
         "input_tokens": 100,
         "output_tokens": 30,
@@ -137,12 +117,10 @@ def test_usage_from_anthropic_extracts_cache_read_input_tokens():
 
 
 def test_usage_from_anthropic_handles_partial_cache_fields():
-
     payload = {
         "input_tokens": 100,
         "output_tokens": 30,
         "cache_read_input_tokens": 80,
-        # No cache_creation_input_tokens
     }
     usage = _usage_from_anthropic(payload)
     assert usage.cached_tokens == 80
@@ -150,8 +128,6 @@ def test_usage_from_anthropic_handles_partial_cache_fields():
 
 
 def test_observation_payload_supported_true_when_any_cache_field_present():
-
-    # OpenAI-style: only cached_tokens
     usage1 = UsageInfo(
         input_tokens=100, output_tokens=20, total_tokens=120, cached_tokens=64
     )
@@ -162,7 +138,6 @@ def test_observation_payload_supported_true_when_any_cache_field_present():
     assert p1["cached_tokens"] == 64
     assert "cache_creation_tokens" not in p1
 
-    # Anthropic-style: both
     usage2 = UsageInfo(
         input_tokens=100,
         output_tokens=30,
@@ -178,7 +153,6 @@ def test_observation_payload_supported_true_when_any_cache_field_present():
 
 
 def test_usage_totals_from_mapping_extracts_cached_tokens_from_canonical_keys():
-
     t1 = usage_totals_from_mapping({"prompt_tokens": 50, "cached_tokens": 30})
     t2 = usage_totals_from_mapping({"prompt_tokens": 50, "cache_read_input_tokens": 30})
     t3 = usage_totals_from_mapping({"prompt_tokens": 50, "usage_cached_tokens": 30})
@@ -187,11 +161,7 @@ def test_usage_totals_from_mapping_extracts_cached_tokens_from_canonical_keys():
         assert t.cached_tokens == 30
 
 
-# Discipline 4: footer / operator visibility
-
-
 def test_footer_renders_cached_suffix_when_turn_cached_tokens_non_none():
-
     snapshot = TokenUsageSnapshot(
         turn_total_tokens=120,
         session_total_tokens=200,
@@ -203,7 +173,6 @@ def test_footer_renders_cached_suffix_when_turn_cached_tokens_non_none():
 
 
 def test_footer_omits_cached_suffix_when_turn_cached_tokens_is_none():
-
     snapshot = TokenUsageSnapshot(
         turn_total_tokens=120,
         session_total_tokens=200,
@@ -215,7 +184,6 @@ def test_footer_omits_cached_suffix_when_turn_cached_tokens_is_none():
 
 
 def test_footer_includes_cached_suffix_only_in_turn_position_not_session():
-
     snapshot = TokenUsageSnapshot(
         turn_total_tokens=120,
         session_total_tokens=500,
@@ -223,12 +191,10 @@ def test_footer_includes_cached_suffix_only_in_turn_position_not_session():
         session_cached_tokens=200,
     )
     out = format_token_usage_summary(snapshot)
-    # Cache suffix is positioned next to `turn`, not next to `session`
     assert out.index("(64 cached)") < out.index("session")
 
 
 def test_build_snapshot_propagates_cached_tokens_from_totals():
-
     turn = TokenUsageTotals(
         prompt_tokens=80, completion_tokens=40, total_tokens=120, cached_tokens=64
     )
@@ -252,12 +218,11 @@ def test_build_snapshot_propagates_cached_tokens_from_totals():
 
 
 def test_accumulate_usage_preserves_truthful_none_when_neither_side_reports():
-
     a = TokenUsageTotals(prompt_tokens=10, completion_tokens=5, total_tokens=15)
     b = TokenUsageTotals(prompt_tokens=20, completion_tokens=10, total_tokens=30)
     total = accumulate_usage(a, b)
     assert total is not None
-    assert total.cached_tokens is None  # truthful no-op preserved
+    assert total.cached_tokens is None
 
 
 def test_accumulate_usage_sums_cached_tokens_when_either_side_reports():
@@ -272,11 +237,7 @@ def test_accumulate_usage_sums_cached_tokens_when_either_side_reports():
     assert total.cached_tokens == 12
 
 
-# Telemetry-catalog registration regression
-
-
 def test_prompt_cache_observation_is_registered_in_event_catalog():
-
     from openminion.modules.telemetry.events.catalog import (
         EVENT_TYPES,
         PROMPT_CACHE_OBSERVATION,

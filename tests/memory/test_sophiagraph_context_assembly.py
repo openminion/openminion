@@ -66,9 +66,6 @@ def _seed_records_via_omss(store) -> None:
         )
 
 
-# SGCARM-06 — end-to-end fixture
-
-
 def test_openminion_assembles_structural_context_package(store) -> None:
     _seed_records_via_omss(store)
 
@@ -81,11 +78,9 @@ def test_openminion_assembles_structural_context_package(store) -> None:
             budget=ContextBudget(max_items=5),
         ),
     )
-    # At least two task records mention "sophiagraph".
     record_ids = {item.item_id for item in package.items}
     assert "rec-task-1" in record_ids
     assert "rec-task-2" in record_ids
-    # Every selected item carries an explanation + provenance with record id.
     for item in package.items:
         assert item.scores
         assert item.provenance["record_id"] == item.item_id
@@ -94,7 +89,6 @@ def test_openminion_assembles_structural_context_package(store) -> None:
 def test_openminion_attaches_vector_scores_and_summary_references(store) -> None:
     _seed_records_via_omss(store)
 
-    # Caller-supplied summary record (so the global mode has anchors).
     submit_envelope(
         store,
         SubmissionEnvelope(
@@ -112,7 +106,6 @@ def test_openminion_attaches_vector_scores_and_summary_references(store) -> None
         ),
     )
 
-    # Hybrid mode with caller-supplied vector adapter.
     def vector_scores(ids: Sequence[str]) -> Mapping[str, float]:
         return {rid: 0.5 for rid in ids}
 
@@ -127,7 +120,6 @@ def test_openminion_attaches_vector_scores_and_summary_references(store) -> None
     )
     assert hybrid_package.request_provenance["vector_adapter_attached"] is True
 
-    # Global mode with caller-supplied summary record id (no provider).
     global_package = assemble_context(
         store,
         ContextRequest(

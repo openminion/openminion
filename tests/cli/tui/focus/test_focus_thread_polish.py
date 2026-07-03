@@ -17,9 +17,6 @@ from openminion.cli.tui.presentation.tool.blocks import ToolBlockWidget
 from openminion.cli.tui.focus.widgets import FocusTranscript
 
 
-# ── Diff rendering uses theme tokens ─────────────────────────────────────────
-
-
 def _build_diff_widget(theme) -> ToolBlockWidget:
     event = ToolEvent(
         tool_name="file.edit",
@@ -28,8 +25,6 @@ def _build_diff_widget(theme) -> ToolBlockWidget:
         content_type="diff",
     )
     widget = ToolBlockWidget(event, pending=False)
-    # Force expanded so `_body_renderable()` returns the diff Text
-    # rather than the empty placeholder.
     widget.collapsed = False
     widget._active_theme = lambda: theme  # type: ignore[method-assign]
     return widget
@@ -57,8 +52,6 @@ def test_diff_renderer_uses_light_theme_state_tokens() -> None:
     style_strings = {str(span.style) for span in rendered.spans}
     assert any(LIGHT.state_ok in s for s in style_strings)
     assert any(LIGHT.state_error in s for s in style_strings)
-    # Cross-check: LIGHT and DARK actually differ on these tokens, so
-    # the swap is observable and not a no-op.
     assert LIGHT.state_ok != DARK.state_ok
     assert LIGHT.state_error != DARK.state_error
 
@@ -96,9 +89,6 @@ def test_diff_renderer_handles_empty_content() -> None:
     assert "(empty diff)" in rendered.plain
 
 
-# ── Code-block / markdown rendering ──────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_agent_message_with_code_block_renders_via_markdown(
     tmp_path: Path,
@@ -133,9 +123,6 @@ async def test_agent_message_with_code_block_renders_via_markdown(
             f"agent code block should render via RichMarkdown, got "
             f"{type(renderable).__name__}"
         )
-
-
-# ── Same-sender header collapse ──────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

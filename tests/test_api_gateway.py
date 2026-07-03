@@ -50,7 +50,6 @@ class TestAPIGatewayNoLegacy(unittest.TestCase):
             config_path = self._create_test_config(Path(tmp))
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
-                # Run turn via API
                 result = run_turn(
                     str(config_path),
                     {
@@ -61,11 +60,9 @@ class TestAPIGatewayNoLegacy(unittest.TestCase):
                     runtime=runtime,
                 )
 
-                # Verify turn completed
                 self.assertIsNotNone(result)
                 self.assertIn("run_id", result)
 
-                # Verify runtime mode after turn
                 runtime_info = extract_runtime_info_from_api_runtime(runtime)
                 assert_module_lane(
                     runtime_mode=runtime_info["runtime_mode"],
@@ -201,11 +198,9 @@ class TestAPIGatewayNoLegacy(unittest.TestCase):
             config_path = self._create_test_config(Path(tmp))
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
-                # Get gateway service
                 gateway = runtime.gateway
                 self.assertIsNotNone(gateway)
 
-                # Verify runtime mode
                 runtime_info = extract_runtime_info_from_api_runtime(runtime)
                 assert_module_lane(
                     runtime_mode=runtime_info["runtime_mode"],
@@ -214,7 +209,6 @@ class TestAPIGatewayNoLegacy(unittest.TestCase):
                     strict=True,
                 )
 
-                # Verify brain integration mode
                 brain_mode = getattr(gateway, "_brain_integration_mode", "unknown")
                 self.assertEqual(
                     brain_mode,
@@ -229,14 +223,11 @@ class TestAPIGatewayNoLegacy(unittest.TestCase):
             config_path = self._create_test_config(Path(tmp))
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
-                # Get tool registry
                 tools = runtime.tools
                 tool_names = [spec.name for spec in tools.provider_specs()]
 
-                # Verify tools available
                 self.assertGreater(len(tool_names), 0, "No tools in gateway registry")
 
-                # Verify runtime mode
                 runtime_info = extract_runtime_info_from_api_runtime(runtime)
                 assert_module_lane(
                     runtime_mode=runtime_info["runtime_mode"],
@@ -252,7 +243,6 @@ class TestAPIGatewayNoLegacy(unittest.TestCase):
             config_path = self._create_test_config(Path(tmp))
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
-                # Run multiple turns
                 for i in range(3):
                     result = run_turn(
                         str(config_path),
@@ -265,7 +255,6 @@ class TestAPIGatewayNoLegacy(unittest.TestCase):
                     )
                     self.assertIsNotNone(result)
 
-                # Verify no fallback occurred
                 runtime_info = extract_runtime_info_from_api_runtime(runtime)
                 self.assertFalse(
                     runtime_info["fallback_reason"],

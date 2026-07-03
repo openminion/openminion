@@ -28,9 +28,6 @@ def _env_with_token(value: str) -> EnvironmentConfig:
     )
 
 
-# base/config/env.py seam
-
-
 def test_base_env_seam_routes_five_step_flow() -> None:
     log = InMemoryCredentialAuditLog()
     env = _env_with_token(SECRET_VALUE)
@@ -62,9 +59,6 @@ def test_base_env_seam_routes_five_step_flow() -> None:
         assert SECRET_VALUE not in str(event)
 
 
-# tools/config.py seam
-
-
 def test_tools_config_seam_routes_five_step_flow() -> None:
     log = InMemoryCredentialAuditLog()
     env = _env_with_token(SECRET_VALUE)
@@ -90,9 +84,6 @@ def test_tools_config_seam_routes_five_step_flow() -> None:
     assert len(log.access_events()) == 1
 
 
-# tools/github/env.py seam
-
-
 def test_github_env_seam_resolves_through_boundary() -> None:
     log = InMemoryCredentialAuditLog()
     env = _env_with_token(SECRET_VALUE)
@@ -111,14 +102,10 @@ def test_github_env_seam_resolves_through_boundary() -> None:
     assert len(log.access_events()) == 1
 
 
-# tools/github/auth.py seam — auth-failure reload
-
-
 def test_github_auth_invalid_path_emits_rotation_event() -> None:
     log = InMemoryCredentialAuditLog()
     env = _env_with_token(SECRET_VALUE)
 
-    # Initial resolve.
     _value, ref = resolve_github_pat_through_credential_boundary(
         caller_agent_id="agent-1",
         caller_profile_id="profile-gh",
@@ -126,7 +113,6 @@ def test_github_auth_invalid_path_emits_rotation_event() -> None:
         env=env,
     )
 
-    # Simulate AUTH_INVALID response → typed reload path.
     new_env = _env_with_token(SECRET_VALUE + "_rotated")
     new_value, rotation_event = reload_github_pat_after_auth_invalid(
         ref,
@@ -137,15 +123,12 @@ def test_github_auth_invalid_path_emits_rotation_event() -> None:
     assert isinstance(rotation_event, CredentialRotationEvent)
     assert rotation_event.trigger == "auth_invalid"
     assert rotation_event.credential_id == "github_pat"
-    # Reload never widens scope.
     assert rotation_event.scope_kind == ref.scope_kind
     assert rotation_event.scope_id == ref.scope_id
-    # Reload picked up the rotated value but never stored it on the event.
     assert new_value == SECRET_VALUE + "_rotated"
     assert SECRET_VALUE not in str(rotation_event)
     assert (SECRET_VALUE + "_rotated") not in str(rotation_event)
 
-    # Rotation event is in the log exactly once.
     assert len(log.rotation_events()) == 1
 
 
@@ -158,11 +141,7 @@ def test_no_rotation_event_when_auth_invalid_path_did_not_run() -> None:
         audit_log=log,
         env=env,
     )
-    # No reload called — rotation event MUST NOT be present.
     assert log.rotation_events() == ()
-
-
-# tools/gws/plugin.py seam — canonical credential placeholder
 
 
 def test_gws_credential_placeholder_never_returns_raw_value_or_env_name() -> None:
@@ -183,9 +162,6 @@ def test_gws_credential_placeholder_never_returns_raw_value_or_env_name() -> Non
     assert "source=secret_ref" in placeholder
 
 
-# Cross-seam: read ↔ access-event parity
-
-
 def test_read_count_matches_access_event_count_across_seams() -> None:
     log = InMemoryCredentialAuditLog()
     env = _env_with_token(SECRET_VALUE)
@@ -198,7 +174,6 @@ def test_read_count_matches_access_event_count_across_seams() -> None:
         rotation_policy="reload_on_auth_failure",
     )
 
-    # Three credential reads at three named seams.
     resolve_credential_env_value(
         ref,
         caller_agent_id="agent-1",
@@ -224,14 +199,12 @@ def test_read_count_matches_access_event_count_across_seams() -> None:
 
     access_events = log.access_events()
     assert len(access_events) == 3
-    # All events name distinct caller-declared sites.
     sites = tuple(e.access_site for e in access_events)
     assert sites == (
         "base.config.env",
         "tools.config",
         "tools.github.env.resolve_github_pat_through_credential_boundary",
     )
-    # None of the events carry the secret value.
     for event in access_events:
         assert isinstance(event, CredentialAccessEvent)
         assert SECRET_VALUE not in str(event)

@@ -12,9 +12,6 @@ from openminion.modules.brain.loop.recursive.schemas import (
 from openminion.modules.brain.loop.recursive.service import RLMService
 
 
-# Shared fakes
-
-
 class _Sess:
     def __init__(self) -> None:
         self._latest: dict[str, Any] | None = None
@@ -146,9 +143,6 @@ class _Skill:
         return f"Skill snippet for {skill_id}", "hash-1"
 
 
-# M3 Integration tests
-
-
 def test_m3_session_events_correlate_to_session_id() -> None:
     session = _Sess()
     llm = _LLM([{"final": True, "answer": "Done.", "episode_note": "ok"}])
@@ -191,13 +185,11 @@ def test_m3_wm_state_persisted_after_each_tick() -> None:
     assert latest is not None
     wm = latest.get("state_inline", {}).get("wm_state", {})
     assert isinstance(wm, dict)
-    # After tick 1 update, open_questions should have been merged in
     assert "open_questions" in wm
 
 
 def test_m3_meta_max_ticks_override_limits_ticks() -> None:
     session = _Sess()
-    # LLM always says not final but max_ticks_override prevents looping
     llm = _LLM([{"final": False, "answer": "Need more.", "next_query": "continue"}])
     service = RLMService(sessctl=session, contextctl=_Ctx(), llmctl=llm)
     resp = service.generate(
@@ -223,7 +215,6 @@ def test_m3_require_evidence_constraint_sets_must_cite() -> None:
         query="verify claim",
         meta_directive=MetaDirective(require_evidence=True, max_ticks_override=2),
     )
-    # With no evidence refs, may stop via max_ticks or bad retrieval streak
     assert resp.telemetry.stop_reason in {
         "max_ticks_reached",
         "model_marked_final",
@@ -265,13 +256,11 @@ def test_m3_skill_retrieval_counts_in_telemetry() -> None:
     )
     assert resp.telemetry.ticks_used >= 1
     total_skill = sum(t.retrieved_skill for t in resp.telemetry.tick_reports)
-    # The skill client always returns a result, so at least one tick should show retrieved_skill >= 1
     assert total_skill >= 0  # conservative: just ensure field exists and is numeric
 
 
 def test_m3_malformed_llm_response_falls_back_to_empty_answer() -> None:
     session = _Sess()
-    # Return completely empty payload → service should handle gracefully
     llm = _LLM([{}])
     service = RLMService(sessctl=session, contextctl=_Ctx(), llmctl=llm)
     resp = service.generate(
@@ -308,7 +297,6 @@ def test_m3_task_state_persisted_alongside_wm() -> None:
 
 def test_m3_bad_retrieval_streak_stops_loop_with_continuation() -> None:
     session = _Sess()
-    # LLM never marks final but bad retrieval streak should stop after 1 bad tick
     llm = _LLM([{"final": False, "answer": "not done", "next_query": "keep going"}])
     service = RLMService(sessctl=session, contextctl=_Ctx(), llmctl=llm)
     resp = service.generate(

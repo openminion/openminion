@@ -22,8 +22,10 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionResult,
 )
 from openminion.modules.brain.loop.tools.confirmation import (
+    apply_session_confirmation_grant,
     confirmation_required_user_message,
     extract_confirmation_replay_queue,
+    is_session_confirmation_response,
     strip_confirmation_replay_queue,
 )
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
@@ -35,6 +37,30 @@ from openminion.modules.brain.runner.tick.context import (
 from openminion.modules.brain.schemas import refresh_command_identity, new_uuid
 from openminion.modules.llm.schemas import Message
 from .runtime import _build_blocked_result, _runner_and_profile_from_context
+
+
+def _confirmation_replay_commands(confirmed: Any) -> list[Any]:
+    return [strip_confirmation_replay_queue(confirmed)] + [
+        strip_confirmation_replay_queue(queued)
+        for queued in extract_confirmation_replay_queue(confirmed)
+    ]
+
+
+def _confirmation_grant_failed_response(
+    ctx: ExecutionContext,
+    confirmed: Any,
+) -> ExecutionResult:
+    ctx.state.pending_confirmation_command = confirmed
+    return ExecutionResult.from_step_output(
+        ctx.respond(
+            message="I could not apply your confirmation yet. Please try again in a moment.",
+            status=BRAIN_STATE_WAITING_USER,
+            action_result=_build_blocked_result(
+                "Confirmation grant could not be applied.",
+                "confirmation_grant_failed",
+            ),
+        )
+    )
 
 
 class CodingResumeMixin:
@@ -191,7 +217,9 @@ class CodingResumeMixin:
         if command is None or ctx.user_input is None:
             return None
         runner, _profile = _runner_and_profile_from_context(ctx)
-        reply = _parse_confirmation_response(runner, str(ctx.user_input or ""))
+        user_reply = str(ctx.user_input or "")
+        reply = _parse_confirmation_response(runner, user_reply)
+        session_grant = is_session_confirmation_response(user_reply)
         if reply == BRAIN_CONFIRM_RESPONSE_DENY:
             ctx.state.pending_confirmation_command = None
             _clear_pending_confirmation_metadata(ctx.state)
@@ -206,7 +234,7 @@ class CodingResumeMixin:
                     ),
                 )
             )
-        if reply != BRAIN_CONFIRM_RESPONSE_AFFIRM:
+        if reply != BRAIN_CONFIRM_RESPONSE_AFFIRM and not session_grant:
             message = str(
                 getattr(ctx.state, "post_action_user_message", "") or ""
             ).strip() or confirmation_required_user_message(command)
@@ -223,12 +251,11 @@ class CodingResumeMixin:
             )
         confirmed = command.model_copy(deep=True)
         ctx.state.pending_confirmation_command = None
-        replay_commands = [strip_confirmation_replay_queue(confirmed)] + [
-            strip_confirmation_replay_queue(queued)
-            for queued in extract_confirmation_replay_queue(confirmed)
-        ]
+        replay_commands = _confirmation_replay_commands(confirmed)
         prepared_commands = []
         for replay_command in replay_commands:
+            if session_grant:
+                apply_session_confirmation_grant(ctx.state, replay_command)
             replay_inputs = (
                 dict(replay_command.inputs)
                 if isinstance(getattr(replay_command, "inputs", None), dict)
@@ -241,20 +268,7 @@ class CodingResumeMixin:
                 logger=ctx.logger,
             )
             if grant_supported and not grant_id:
-                ctx.state.pending_confirmation_command = confirmed
-                return ExecutionResult.from_step_output(
-                    ctx.respond(
-                        message=(
-                            "I could not apply your confirmation yet. "
-                            "Please try again in a moment."
-                        ),
-                        status=BRAIN_STATE_WAITING_USER,
-                        action_result=_build_blocked_result(
-                            "Confirmation grant could not be applied.",
-                            "confirmation_grant_failed",
-                        ),
-                    )
-                )
+                return _confirmation_grant_failed_response(ctx, confirmed)
             replay_inputs["confirmation_source"] = "policy_replay"
             if grant_id:
                 replay_inputs["confirmation_grant_id"] = grant_id

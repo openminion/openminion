@@ -11,8 +11,6 @@ pytestmark = pytest.mark.postgres
 
 
 def test_record_store_base_pool_health_returns_none() -> None:
-
-    # Use SQLite as a concrete backend with no pool; should fall back to base.
     store = RecordStoreSQLite(":memory:")
     try:
         assert store.pool_health() is None
@@ -21,7 +19,6 @@ def test_record_store_base_pool_health_returns_none() -> None:
 
 
 def test_sqlite_healthcheck_omits_pool_key(tmp_path: Path) -> None:
-
     store = RecordStoreSQLite(tmp_path / "p.db")
     try:
         health = store.healthcheck()
@@ -49,7 +46,6 @@ def test_postgres_pool_health_returns_stats_dict() -> None:
 
     store = RecordStorePostgres(postgres_url)
     try:
-        # Trigger one query so the pool actually has a connection.
         store.healthcheck()
         stats = store.pool_health()
         assert stats is not None
@@ -87,7 +83,6 @@ def test_postgres_healthcheck_includes_pool_subdict() -> None:
 
 @pytest.mark.postgres
 def test_postgres_oldest_connection_age_grows_after_use() -> None:
-
     postgres_url = _require_postgres()
     from openminion.modules.storage.backends.postgres import (
         RecordStorePostgres,
@@ -99,8 +94,6 @@ def test_postgres_oldest_connection_age_grows_after_use() -> None:
         stats = store.pool_health()
         assert stats is not None
         age = stats["oldest_connection_age_seconds"]
-        # Either tracking caught it (float >= 0) or the listener was not
-        # available (None) — both are documented states.
         assert age is None or (isinstance(age, (int, float)) and age >= 0.0)
     finally:
         store.close()

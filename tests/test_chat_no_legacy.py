@@ -48,7 +48,6 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
             config_path = self._create_test_config(Path(tmp))
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
-                # Extract runtime mode info
                 runtime_info = extract_runtime_info_from_api_runtime(runtime)
 
                 assert_module_lane(
@@ -87,7 +86,6 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
             config_path = self._create_test_config(Path(tmp))
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
-                # Run a turn
                 result = run_turn(
                     str(config_path),
                     {
@@ -98,11 +96,9 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
                     runtime=runtime,
                 )
 
-                # Verify turn completed
                 self.assertIsNotNone(result)
                 self.assertIn("run_id", result)
 
-                # Verify runtime still in module mode after turn
                 runtime_info = extract_runtime_info_from_api_runtime(runtime)
                 assert_module_lane(
                     runtime_mode=runtime_info["runtime_mode"],
@@ -118,7 +114,6 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
             config_path = self._create_test_config(Path(tmp))
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
-                # Run multiple turns
                 for i in range(3):
                     result = run_turn(
                         str(config_path),
@@ -131,7 +126,6 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
                     )
                     self.assertIsNotNone(result)
 
-                # Verify still in module mode
                 runtime_info = extract_runtime_info_from_api_runtime(runtime)
                 assert_module_lane(
                     runtime_mode=runtime_info["runtime_mode"],
@@ -147,13 +141,10 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
             config_path = self._create_test_config(Path(tmp))
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
-                # Get tool registry
                 tool_names = [spec.name for spec in runtime.tools.provider_specs()]
 
-                # Verify tools are available (indicates module registry is working)
                 self.assertGreater(len(tool_names), 0, "No tools available in registry")
 
-                # Verify runtime mode
                 runtime_info = extract_runtime_info_from_api_runtime(runtime)
                 assert_module_lane(
                     runtime_mode=runtime_info["runtime_mode"],
@@ -165,7 +156,6 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
                 runtime.close()
 
     def test_no_legacy_warning_in_logs(self):
-        # This test uses NoLegacyTestContext to enforce strict checking
         with NoLegacyTestContext(source="log_validation", strict=True):
             with tempfile.TemporaryDirectory() as tmp:
                 config_path = self._create_test_config(Path(tmp))
@@ -173,13 +163,11 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
                 try:
                     runtime_info = extract_runtime_info_from_api_runtime(runtime)
 
-                    # Assert no implicit fallback occurred
                     self.assertIsNone(
                         runtime_info["fallback_reason"] or None,
                         f"Unexpected fallback reason: {runtime_info['fallback_reason']}",
                     )
 
-                    # Assert module mode
                     self.assertEqual(
                         runtime_info["runtime_mode"],
                         "brain",
@@ -191,7 +179,6 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
 
 class TestInProcessChatNegativePath(unittest.TestCase):
     def test_strict_mode_fails_fast_on_brain_import_error(self):
-        # Simulate missing brain bridge by using invalid env
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "config.json"
             config = OpenMinionConfig()
@@ -201,23 +188,18 @@ class TestInProcessChatNegativePath(unittest.TestCase):
             config.storage.path = str(Path(tmp) / "state" / "api.db")
             save_config(config, str(config_path))
 
-            # Force strict mode with brain runtime
             env_vars = {
                 "OPENMINION_AGENT_RUNTIME_MODE": "brain",
             }
 
             with mock.patch.dict(os.environ, env_vars, clear=False):
-                # This should work if brain modules are installed
-                # If not installed, it should raise RuntimeError (not silently fall back)
                 try:
                     runtime = APIRuntime.from_config_path(str(config_path))
                     runtime_info = extract_runtime_info_from_api_runtime(runtime)
 
-                    # If we get here, brain mode worked
                     self.assertEqual(runtime_info["runtime_mode"], "brain")
                     runtime.close()
                 except RuntimeError as e:
-                    # Expected behavior in strict mode when brain unavailable
                     self.assertIn(
                         "brain",
                         str(e).lower(),

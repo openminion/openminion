@@ -16,7 +16,6 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 
 def _engine_with_captured_note(tmp: str) -> SelfImprovementEngine:
-
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
     config.storage.path = str(Path(tmp) / "state" / "openminion.db")
@@ -53,7 +52,6 @@ class SIRH03HardenedInvariants(unittest.TestCase):
     def test_sirh03_guardrail_builder_and_record_applied_are_removed(
         self,
     ) -> None:
-
         self.assertFalse(
             hasattr(SelfImprovementEngine, "build_guardrail_block"),
             "SIRH-03: `SelfImprovementEngine.build_guardrail_block` was "
@@ -72,7 +70,6 @@ class SIRH03HardenedInvariants(unittest.TestCase):
     def test_sirh03_constructor_rejects_removed_selection_params(
         self,
     ) -> None:
-
         notes_root = Path(tempfile.gettempdir()) / "sirh-harden-ctor"
         with self.assertRaises(TypeError):
             SelfImprovementEngine(
@@ -90,11 +87,8 @@ class SIRH03HardenedInvariants(unittest.TestCase):
     def test_sirh03_self_improvement_source_has_no_forbidden_preamble_call(
         self,
     ) -> None:
-
         source_path = Path(self_improvement_module.__file__)
         source = source_path.read_text(encoding="utf-8")
-        # Iterate line-by-line so tombstone comments can reference the
-        # preamble without tripping the check.
         for lineno, line in enumerate(source.splitlines(), start=1):
             stripped = line.lstrip()
             is_comment_or_docstring_prose = (
@@ -106,7 +100,6 @@ class SIRH03HardenedInvariants(unittest.TestCase):
                     "the retired preamble literal {preamble!r} outside a "
                     "comment.".format(lineno=lineno, preamble=_FORBIDDEN_PREAMBLE)
                 )
-            # `._record_applied(` is banned anywhere it could execute.
             if "._record_applied(" in line and not is_comment_or_docstring_prose:
                 self.fail(
                     "SIRH-03: `self_improvement.py:{lineno}` reintroduced "
@@ -116,7 +109,6 @@ class SIRH03HardenedInvariants(unittest.TestCase):
     def test_sirh03_call_site_modules_have_no_forbidden_call_patterns(
         self,
     ) -> None:
-
         for module in (agent_execution_base, brain_post_execution_context):
             path = Path(module.__file__)
             source = path.read_text(encoding="utf-8")
@@ -139,7 +131,6 @@ class SIRH03HardenedInvariants(unittest.TestCase):
     def test_sirh03_call_site_assembly_pattern_never_produces_preamble(
         self,
     ) -> None:
-
         with tempfile.TemporaryDirectory() as tmp:
             engine = _engine_with_captured_note(tmp)
             base_system_prompt = "You are a helpful assistant."
@@ -147,8 +138,6 @@ class SIRH03HardenedInvariants(unittest.TestCase):
                 hasattr(engine, "build_guardrail_block"),
                 "SIRH-03: engine must not expose a guardrail-build method.",
             )
-            # The production call site now skips the guardrail-build
-            # altogether and passes the base prompt through unchanged.
             assembled = base_system_prompt
             self.assertNotIn(_FORBIDDEN_PREAMBLE, assembled)
             self.assertNotIn("learned mistakes to avoid", assembled)

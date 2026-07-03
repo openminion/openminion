@@ -42,9 +42,6 @@ def _prov(turn: str = "turn-1") -> SubmissionProvenance:
     return SubmissionProvenance(source_owner="task-runner", turn_id=turn)
 
 
-# Payload-kind enum
-
-
 def test_new_payload_kinds_registered() -> None:
     for kind in (
         "entity_candidate",
@@ -58,9 +55,6 @@ def test_new_payload_kinds_registered() -> None:
         "procedure",
     ):
         assert kind in PAYLOAD_KINDS
-
-
-# SEFT-05 — direct trust writes to typed entity/fact surface
 
 
 def test_entity_candidate_direct_writes_entity(store) -> None:
@@ -87,7 +81,6 @@ def test_entity_candidate_candidate_mode_stages_to_candidate_store(store) -> Non
         idempotency_key="idem-ent-cand-1",
     )
     assert result.ok
-    # Nothing in the entity table; everything in candidate table.
     assert store.list_entities() == []
     assert store.get_candidate(result.object_id) is not None
 
@@ -119,7 +112,6 @@ def test_fact_candidate_direct_writes_fact_with_provenance(store) -> None:
 
 
 def test_contradiction_decision_invalidates_target(store) -> None:
-    # Seed two facts.
     for fid, lit in (("f-a", "manager"), ("f-b", "ic")):
         envelope = SubmissionEnvelope(
             namespace=_ns(),
@@ -179,9 +171,6 @@ def test_entity_summary_direct_persists_typed_record(store) -> None:
     assert result.ok
     rows = store.list_entity_summaries(entity_id="ent-1")
     assert len(rows) == 1
-
-
-# SEPM-04 — episode/step/decision/procedure
 
 
 def test_episode_event_direct_writes_episode(store) -> None:
@@ -265,11 +254,8 @@ def test_procedure_emitter_default_experimental(store) -> None:
     assert result.ok
     proc = store.get_procedure("p-1")
     assert proc is not None
-    assert proc.promotion_tier == "experimental"  # never auto-promoted
+    assert proc.promotion_tier == "experimental"
     assert len(proc.steps) == 2
-
-
-# Non-blocking failure on entity/episode payloads
 
 
 class _BrokenStore:

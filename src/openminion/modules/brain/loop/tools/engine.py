@@ -3,6 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+from openminion.modules.brain.loop.constants import (
+    PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
+)
 from openminion.modules.llm.schemas import Message
 from .contracts import (
     ADAPTIVE_CLOSURE_ENGINE_SINGLE_PASS,
@@ -34,6 +38,11 @@ from .postprocess.engine import (
     AdaptiveLoopRunnerPostprocessMixin,
 )
 from .postprocess.rules import _is_empty_plan_lookup_diversion
+from .plan_control import (
+    PLAN_TOOL_ACTIONS,
+    PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
+    PLAN_TOOL_NAME,
+)
 from .decompose import (  # noqa: F401
     _DECOMPOSE_TOOL_NAME,
     _decompose_decline_result,
@@ -189,6 +198,90 @@ class _PreparedLoopResponse:
     iter_output_tokens: int
 
 
+def _plan_control_retry_message(
+    tool_calls: list[Any], retry_count: int
+) -> Message | None:
+    if not tool_calls:
+        return None
+    if any(
+        str(getattr(call, "name", "") or "").strip() != PLAN_TOOL_NAME
+        for call in tool_calls
+    ):
+        return None
+    invalid_actions = []
+    for call in tool_calls:
+        arguments = dict(getattr(call, "arguments", {}) or {})
+        action = str(arguments.get("action", "") or "").strip()
+        if action not in PLAN_TOOL_ACTIONS:
+            invalid_actions.append(action or "<missing>")
+    if not invalid_actions:
+        return None
+    guidance = (
+        "The loop-control plan tool only records plan lifecycle actions "
+        "(declare, step_completed, step_blocked, revise, abandon, complete). "
+        "It cannot inspect or list the current plan. Do not call plan again "
+        "unless you are recording one of those lifecycle actions. Continue the "
+        "original user request now with task-relevant tools, or provide the "
+        "final answer if no more tools are needed."
+    )
+    if retry_count > 1:
+        guidance += (
+            " This is a repeated no-op plan-control call; switch away from "
+            "plan-control immediately."
+        )
+    return Message(role="system", content=guidance)
+
+
+def _repeated_plan_only_message(
+    loop_state: AdaptiveToolLoopState,
+    tool_calls: list[Any],
+    retry_count: int,
+) -> Message | None:
+    if not _repeated_plan_only_without_substantive_work(loop_state, tool_calls):
+        return None
+    guidance = (
+        "You have already recorded a plan update without doing task-relevant "
+        "work after it. Do not call the plan tool again now. Continue the "
+        "original user request with substantive tools such as file or command "
+        "tools, or provide the final answer if no more tools are needed."
+    )
+    if retry_count > 1:
+        guidance += (
+            " This is a repeated plan-only loop; switch away from plan-control "
+            "immediately."
+        )
+    return Message(role="system", content=guidance)
+
+
+def _repeated_plan_only_without_substantive_work(
+    loop_state: AdaptiveToolLoopState,
+    tool_calls: list[Any],
+) -> bool:
+    if not tool_calls:
+        return False
+    if any(
+        str(getattr(call, "name", "") or "").strip() != PLAN_TOOL_NAME
+        for call in tool_calls
+    ):
+        return False
+    prior_actions = list(
+        loop_state.scratchpad.get(PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY, []) or []
+    )
+    if not prior_actions:
+        return False
+    for call in tool_calls:
+        arguments = dict(getattr(call, "arguments", {}) or {})
+        action = str(arguments.get("action", "") or "").strip()
+        if action not in PLAN_TOOL_ACTIONS:
+            return False
+    current_substantive_count = _count_substantive_non_control_tool_results(loop_state)
+    last_plan_substantive_count = int(
+        loop_state.scratchpad.get(PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY, -1)
+        or 0
+    )
+    return current_substantive_count <= last_plan_substantive_count
+
+
 @dataclass
 class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
     _PreparedLoopResponse = _PreparedLoopResponse
@@ -341,13 +434,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 assert outcome is not None
                 return outcome
 
-            pre_tool_draft = str(
-                payloads["final_text"]
-                or getattr(prepared.response, "output_text", "")
-                or ""
-            ).strip()
-            if pre_tool_draft:
-                self.loop_state.scratchpad["last_pre_tool_draft_text"] = pre_tool_draft
+            self._record_pre_tool_draft(payloads, prepared.response)
 
             outcome = self._maybe_force_direct_closure(
                 prepared=prepared,
@@ -355,6 +442,9 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
             )
             if outcome is not None:
                 return outcome
+
+            if self._handle_plan_control_retry(tool_calls):
+                continue
 
             signature = semantic_batch_signature(tool_calls)
             continue_loop, outcome = self._handle_duplicate_signature(
@@ -556,6 +646,59 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
             trigger_macro_correction=trigger_macro_correction,
             dispatch_correction_plan=dispatch_correction_plan,
         )
+
+    def _handle_plan_control_retry(self, tool_calls: list[Any]) -> bool:
+        plan_retry_count = (
+            int(self.loop_state.scratchpad.get("plan_control.noop_retries", 0) or 0) + 1
+        )
+        repeated_plan_only = _repeated_plan_only_without_substantive_work(
+            self.loop_state,
+            tool_calls,
+        )
+        plan_retry_message = _plan_control_retry_message(
+            tool_calls, retry_count=plan_retry_count
+        )
+        if plan_retry_message is None:
+            plan_retry_message = _repeated_plan_only_message(
+                self.loop_state,
+                tool_calls,
+                retry_count=plan_retry_count,
+            )
+        if plan_retry_message is None:
+            return False
+        self.loop_state.scratchpad["plan_control.noop_retries"] = plan_retry_count
+        if repeated_plan_only and plan_retry_count >= 2:
+            self.active_tool_specs = [
+                spec
+                for spec in self.active_tool_specs
+                if str(getattr(spec, "name", "") or "").strip() != PLAN_TOOL_NAME
+            ]
+            self.allowed_tools = frozenset(
+                name for name in self.allowed_tools if name != PLAN_TOOL_NAME
+            )
+            self.loop_state.scratchpad["plan_control.tool_suppressed"] = True
+        self.loop_state.messages.append(plan_retry_message)
+        emit_adaptive_status(
+            self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            detail_text=f"{self.public_mode_tag} plan-control retry",
+            mode_state="plan_control_noop_retry",
+            extra={
+                "plan_control_retry_count": plan_retry_count,
+                "plan_tool_suppressed": bool(
+                    self.loop_state.scratchpad.get("plan_control.tool_suppressed")
+                ),
+            },
+        )
+        return True
+
+    def _record_pre_tool_draft(self, payloads: dict[str, Any], response: Any) -> None:
+        pre_tool_draft = str(
+            payloads["final_text"] or getattr(response, "output_text", "") or ""
+        ).strip()
+        if pre_tool_draft:
+            self.loop_state.scratchpad["last_pre_tool_draft_text"] = pre_tool_draft
 
 
 __all__ = [

@@ -1,5 +1,7 @@
 from typing import Any
 
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+
 
 # Canonical typed approval choices shared by channel-facing approval payloads.
 APPROVAL_CHOICES: tuple[str, ...] = (
@@ -26,7 +28,7 @@ def extract_approval_request(payload: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(error, dict):
         return None
     code = str(error.get("code", "")).strip()
-    if code != "CONFIRM_REQUIRED":
+    if code != TOOL_ERROR_CONFIRM_REQUIRED:
         return None
     details = error.get("details")
     if not isinstance(details, dict):

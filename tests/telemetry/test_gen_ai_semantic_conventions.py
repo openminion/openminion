@@ -45,7 +45,6 @@ def test_gen_ai_system_inferred_from_model_when_provider_missing() -> None:
 
 
 def test_gen_ai_prompt_completion_token_keys_supported() -> None:
-    # OpenAI-style payload uses prompt_tokens / completion_tokens.
     event = _make_llm_event(
         payload={
             "model": "gpt-4o",
@@ -67,12 +66,10 @@ def test_non_llm_events_omit_gen_ai_attributes() -> None:
 
 
 def test_missing_usage_keys_omit_token_attributes_not_zero_fill() -> None:
-    # OTel convention: absence is distinct from a reported zero.
     event = _make_llm_event(payload={"model": "claude-opus-4-7"})
     attrs = _attributes_for_event(event, include_assistant_body=False)
     assert "gen_ai.usage.input_tokens" not in attrs
     assert "gen_ai.usage.output_tokens" not in attrs
-    # But the model + system should still come through.
     assert attrs["gen_ai.request.model"] == "claude-opus-4-7"
     assert attrs["gen_ai.system"] == "anthropic"
 

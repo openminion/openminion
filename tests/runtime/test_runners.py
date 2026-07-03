@@ -1,13 +1,14 @@
 import os
 import sys
-import tempfile
+
 import pytest
+
 from openminion.base.runtime.runners import LocalRunner
 from openminion.base.runtime.sandbox import (
     ExecutionSandboxSpec,
     ExecSpec,
-    FsWriteSpec,
     FsDeleteSpec,
+    FsWriteSpec,
 )
 
 
@@ -28,9 +29,6 @@ def _sandbox(tmp_path, **overrides) -> ExecutionSandboxSpec:
 
 
 runner = LocalRunner()
-
-
-# exec tests
 
 
 def test_exec_simple_command(tmp_path):
@@ -120,9 +118,6 @@ def test_exec_blocked_env_not_passed(tmp_path):
     assert "MISSING" in result.stdout
 
 
-# fs_write tests
-
-
 def test_fs_write_allowed_path(tmp_path):
     target = tmp_path / "out.txt"
     sb = _sandbox(tmp_path)
@@ -151,9 +146,6 @@ def test_fs_write_creates_parent_dirs(tmp_path):
     result = runner.fs_write(FsWriteSpec(path=str(target), content="nested"), sb)
     assert result.success is True
     assert target.read_text() == "nested"
-
-
-# fs_delete tests
 
 
 def test_fs_delete_allowed(tmp_path):
@@ -188,9 +180,6 @@ def test_fs_delete_directory(tmp_path):
     assert not subdir.exists()
 
 
-# net_fetch tests
-
-
 def test_net_fetch_denied_when_net_mode_deny(tmp_path):
     sb = _sandbox(tmp_path, net_mode="deny")
     from openminion.base.runtime.sandbox import NetFetchSpec
@@ -207,19 +196,11 @@ def test_net_fetch_domain_not_in_allowlist_denied(tmp_path):
         runner.net_fetch(NetFetchSpec(url="https://evil.com/api"), sb)
 
 
-# Symlink escape tests (SPEC-X04)
-
-
 def test_symlink_escape_denied(tmp_path):
-    outside = tempfile.mkdtemp()
-    try:
-        link = tmp_path / "escape"
-        os.symlink(outside, str(link))
-        sb = _sandbox(tmp_path, write_allow=[str(tmp_path)])
-        # Writing to symlink target that resolves outside workspace should be denied
-        with pytest.raises(PermissionError):
-            runner.fs_write(FsWriteSpec(path=str(link / "evil.txt"), content="x"), sb)
-    finally:
-        import shutil
-
-        shutil.rmtree(outside, ignore_errors=True)
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir(exist_ok=True)
+    link = tmp_path / "escape"
+    os.symlink(outside, str(link))
+    sb = _sandbox(tmp_path, write_allow=[str(tmp_path)])
+    with pytest.raises(PermissionError):
+        runner.fs_write(FsWriteSpec(path=str(link / "evil.txt"), content="x"), sb)

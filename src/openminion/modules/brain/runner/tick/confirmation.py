@@ -12,7 +12,9 @@ from ...loop.tools.budget_extension import (
     is_pending_extension_expired,
 )
 from ...loop.tools.confirmation import (
+    apply_session_confirmation_grant,
     extract_confirmation_replay_queue,
+    is_session_confirmation_response,
     strip_confirmation_replay_queue,
 )
 from ...loop.tools.direct_reasons import is_explicit_direct_tool_reason
@@ -163,12 +165,32 @@ def _process_adaptive_budget_extension_reply(
     )
 
 
+def _transition_to_replan_after_deny(*, runner, state, reason: str) -> bool:
+    retained_limit = int(
+        getattr(
+            runner.options,
+            "adaptive_replan_retained_step_outputs",
+            0,
+        )
+        or 0
+    )
+    transitioned, _retained_count = transition_to_replan_state(
+        state=state,
+        max_replans=int(getattr(runner.options, "max_replans", 0) or 0),
+        retained_step_outputs=retained_limit,
+    )
+    del reason
+    return transitioned
+
+
 def process(*, runner, state, logger, tick_ctx: TickRunContext):
     if (
         state.pending_confirmation_command is not None
         and tick_ctx.user_input is not None
     ):
-        confirmation_reply = _parse_confirmation_response(runner, tick_ctx.user_input)
+        confirmation_text = str(tick_ctx.user_input or "")
+        confirmation_reply = _parse_confirmation_response(runner, confirmation_text)
+        session_grant = is_session_confirmation_response(confirmation_text)
         if _is_adaptive_budget_extension(state.pending_confirmation_command):
             budget_result = _process_adaptive_budget_extension_reply(
                 runner=runner,
@@ -181,7 +203,8 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
                 return budget_result
             if confirmation_reply == "affirm":
                 return None
-        if confirmation_reply == "affirm":
+            session_grant = False
+        if confirmation_reply == "affirm" or session_grant:
             confirmed = state.pending_confirmation_command.model_copy(deep=True)
             state.pending_confirmation_command = None
             prior_reason_code = str(
@@ -197,6 +220,8 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
             ]
             replay_plan_commands = []
             for replay_command in replay_commands:
+                if session_grant:
+                    apply_session_confirmation_grant(state, replay_command)
                 replay_inputs = (
                     dict(replay_command.inputs)
                     if isinstance(getattr(replay_command, "inputs", None), dict)
@@ -323,23 +348,6 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
                 trace_id=state.trace_id,
             )
 
-            def _transition_to_replan_after_deny(*, reason: str) -> bool:
-                retained_limit = int(
-                    getattr(
-                        runner.options,
-                        "adaptive_replan_retained_step_outputs",
-                        0,
-                    )
-                    or 0
-                )
-                transitioned, _retained_count = transition_to_replan_state(
-                    state=state,
-                    max_replans=int(getattr(runner.options, "max_replans", 0) or 0),
-                    retained_step_outputs=retained_limit,
-                )
-                del reason
-                return transitioned
-
             judgment = _runner_delegate(
                 "_evaluate_post_action_judgment",
                 runner,
@@ -375,7 +383,11 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
                 max_retries_per_step=int(
                     getattr(runner.options, "max_retries_per_step", 0) or 0
                 ),
-                transition_to_replan=_transition_to_replan_after_deny,
+                transition_to_replan=lambda *, reason: _transition_to_replan_after_deny(
+                    runner=runner,
+                    state=state,
+                    reason=reason,
+                ),
             )
             tick_ctx.user_input = None
             if state.status == BRAIN_STATE_DONE:

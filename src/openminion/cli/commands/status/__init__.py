@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
-from openminion.cli.config import load_cli_config
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
 
@@ -12,7 +12,7 @@ def run_status(args) -> int:
         from .runtime import run_onboarding_status
 
         return run_onboarding_status(args)
-    config = load_cli_config(args.config)
+    config = _load_status_config(args.config)
     from .action_policy import run_action_policy_status
     from .identity import run_identity_status, run_self_improvement_status
     from .runtime import (
@@ -108,6 +108,12 @@ def run_status(args) -> int:
         )
     finally:
         runtime_storage.close()
+
+
+def _load_status_config(config_path: str) -> Any:
+    from openminion.cli.config import load_cli_config
+
+    return load_cli_config(config_path)
 
 
 def _build_session_payload(session) -> dict[str, object]:

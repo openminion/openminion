@@ -8,7 +8,6 @@ from openminion.tools.gws.interfaces import (
 
 
 def test_request_schema_valid_calls() -> None:
-    # Test GWS call schema validation
     valid_call_request = {
         "service": "drive",
         "resource_path": ["files"],
@@ -19,16 +18,13 @@ def test_request_schema_valid_calls() -> None:
     }
     assert validate_request_schema("gws.call", valid_call_request) is True
 
-    # Test GWS schema validation
     valid_schema_request = {"method_full": "drive.files.list", "timeout_seconds": 30.0}
     assert validate_request_schema("gws.schema", valid_schema_request) is True
 
-    # Test GWS auth request validation
     valid_auth_request = {"timeout_seconds": 30.0}
     assert validate_request_schema("gws.auth.setup", valid_auth_request) is True
     assert validate_request_schema("gws.auth.login", valid_auth_request) is True
 
-    # Test GWS auth export request validation
     valid_auth_export_request = {
         "output_path": "credentials.json",
         "overwrite": True,
@@ -39,16 +35,13 @@ def test_request_schema_valid_calls() -> None:
 
 def test_request_schema_invalid_call_missing_required_field() -> None:
     invalid_call_request = {
-        # Missing required service field
         "resource_path": ["files"],
         "method": "list",
     }
-    # Should fail validation due to missing required field
     assert validate_request_schema("gws.call", invalid_call_request) is False
 
 
 def test_request_schema_invalid_operation_name() -> None:
-    # Test with an unknown operation that should fail
     valid_request = {
         "service": "drive",
         "resource_path": ["files"],
@@ -78,7 +71,6 @@ def test_response_schema_with_minimal_payload() -> None:
 
 def test_response_schema_negative_invalid_missing_fields() -> None:
     invalid_response = {
-        # Missing 'ok', 'source', 'content' required fields
         "data": {"files": []}
     }
     assert validate_response_schema(invalid_response) is False
@@ -86,7 +78,7 @@ def test_response_schema_negative_invalid_missing_fields() -> None:
 
 def test_response_schema_negative_invalid_types() -> None:
     response_with_invalid_types = {
-        "ok": "not a boolean",  # Should be boolean
+        "ok": "not a boolean",
         "source": "gws",
         "content": "API call succeeded",
     }
@@ -95,7 +87,7 @@ def test_response_schema_negative_invalid_types() -> None:
 
 def test_request_schema_enforces_field_types() -> None:
     invalid_call_request = {
-        "service": 123,  # Should be string, not number
+        "service": 123,
         "resource_path": ["files"],
         "method": "list",
     }
@@ -107,7 +99,7 @@ def test_request_schema_enforces_numeric_constraints() -> None:
         "service": "drive",
         "resource_path": ["files"],
         "method": "list",
-        "timeout_seconds": -10,  # Should be >= 0
+        "timeout_seconds": -10,
     }
     assert validate_request_schema("gws.call", invalid_call_request) is False
 
@@ -115,7 +107,7 @@ def test_request_schema_enforces_numeric_constraints() -> None:
 def test_request_schema_enforces_array_items_types() -> None:
     invalid_call_request = {
         "service": "drive",
-        "resource_path": ["files", 123],  # Array elements should be strings, not mixed
+        "resource_path": ["files", 123],
         "method": "list",
     }
     assert validate_request_schema("gws.call", invalid_call_request) is False

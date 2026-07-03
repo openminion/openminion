@@ -97,11 +97,9 @@ class TestSQLiteRecords(unittest.TestCase):
         self.store.put(r1)
         self.store.put(r2)
 
-        # Test basic list filtering
         res = self.store.list(ListQueryOptions(scopes=["session:foo"]))
         self.assertEqual(len(res), 2)
 
-        # Delete one and list again
         self.store.delete("r1")
         res2 = self.store.list(ListQueryOptions(scopes=["session:foo"]))
         self.assertEqual(len(res2), 1)
@@ -129,9 +127,6 @@ class TestSQLiteRecords(unittest.TestCase):
                 scopes=["session:foo"], order_by=RecordOrder.UPDATED_AT_DESC
             )
         )
-        # Since r3 was added after r1 (or they might have same timestamp if too fast)
-        # We can just verify it doesn't crash here. In true test we would pause, but
-        # python tests execute fast.
         self.assertEqual(len(res_order), 2)
 
     def test_list_excludes_invalidated_by_default_and_can_include_them(self):

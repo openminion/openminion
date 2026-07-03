@@ -5,7 +5,6 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-from openminion.api.runtime import APIRuntime
 from openminion.base.config.bootstrap import bootstrap_env, bootstrap_env_strict
 from openminion.base.config.env import EnvironmentConfig
 from openminion.cli.config import infer_workspace_home_root
@@ -219,6 +218,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if getattr(args, "needs_app", False):
+            from openminion.api.runtime import APIRuntime
+
             app = APIRuntime.from_config_path(
                 args.config,
                 home_root=home_root or None,

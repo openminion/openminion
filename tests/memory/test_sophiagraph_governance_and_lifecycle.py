@@ -122,7 +122,6 @@ def test_openminion_policy_denial_flow_uses_public_sophiagraph_types(store) -> N
     def recorder(event: MemoryAuditEvent) -> None:
         audit_log.append(event)
 
-    # Hook denies writes with no required idempotency_key.
     def hook(req: PolicyRequest) -> PolicyDecision:
         if not req.payload_meta.get("idempotency_key"):
             return PolicyDecision(
@@ -303,19 +302,16 @@ def test_openminion_lifecycle_evaluate_then_apply_via_public_api(store) -> None:
 
     aged = replace(record, updated_at=_iso(NOW - timedelta(days=40)))
     decision = evaluate_policy(aged, policy, _iso(NOW))
-    # Aged record with no access bumps → TTL_ACTIVE elapsed → COOLING.
     assert decision.transition_reason == "ttl_active_elapsed"
     assert decision.next_phase.value == "cooling"
 
     new_meta = apply_decision_to_record_meta(aged.meta, decision)
     assert new_meta["lifecycle_phase"] == "cooling"
-    # Re-application is idempotent.
     second = apply_decision_to_record_meta(new_meta, decision)
     assert second == new_meta
 
 
 def test_openminion_lifecycle_promotion_path_via_access_signal(store) -> None:
-    # Simulate cumulative access signals reaching the promotion threshold.
     submit_envelope(
         store,
         SubmissionEnvelope(
@@ -361,7 +357,6 @@ def test_openminion_lifecycle_promotion_path_via_access_signal(store) -> None:
     assert decision.transition_reason == "promotion_predicate_matched"
     assert decision.next_phase.value == "active"
 
-    # Audit-log the lifecycle action via the typed sophiagraph event.
     action_event = LifecycleActionEvent(
         namespace=_sg_ns(),
         record_id="rec-lc-2",
@@ -376,12 +371,7 @@ def test_openminion_lifecycle_promotion_path_via_access_signal(store) -> None:
     assert audit.details["action"] == "promotion_applied"
 
 
-# Anti-LLM boundary regression.
-
-
 def test_no_prose_inference_helpers_on_governance_or_lifecycle_surface() -> None:
-    # OpenMinion submissions __all__ must not advertise any prose-inference
-    # helpers for governance/lifecycle.
     from openminion.modules.memory import submissions as mod
 
     forbidden = {

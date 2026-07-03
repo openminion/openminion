@@ -4,18 +4,14 @@ import openminion.modules.tool as tool_facade
 
 
 P8_HOISTED_SYMBOLS = (
-    # Already at facade pre-P8
     "ToolRegistry",
     "ToolExecutionContext",
     "resolve_binding_for_call",
     "build_default_tool_registry",
-    # New in P8 (from tool.runtime.policy)
     "Policy",
     "DEFAULT_POLICY",
     "canonical_tool_name",
-    # New in P8 (from tool.registry)
     "ToolSpec",
-    # New in P8 (from tool.runtime)
     "RuntimeContext",
     "build_runtime_repositories",
     "create_run_root",
@@ -80,7 +76,6 @@ def test_brain_adapter_imports_through_facade() -> None:
 
     source = inspect.getsource(brain_tool_runtime)
 
-    # These deep paths MUST NOT appear — they were hoisted to the facade.
     forbidden_deep_imports = (
         "from openminion.modules.tool.runtime.dispatch import",
         "from openminion.modules.tool.runtime.policy import",

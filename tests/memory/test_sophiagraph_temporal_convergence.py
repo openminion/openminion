@@ -32,9 +32,6 @@ def _prov(turn: str = "turn-1") -> SubmissionProvenance:
     return SubmissionProvenance(source_owner="task-runner", turn_id=turn)
 
 
-# Helpers
-
-
 def _submit_raw_episode(store, episode_id: str = "ep-r1") -> None:
     from sophiagraph.models import MemoryNamespace, RawEpisode
     from sophiagraph.models.entity_fact import EntityFactProvenance
@@ -58,9 +55,6 @@ def _submit_raw_episode(store, episode_id: str = "ep-r1") -> None:
     )
 
 
-# SGTKG-06 — end-to-end flow
-
-
 def test_openminion_submits_episode_and_fact_then_retrieves_active(store) -> None:
     # Step 1: persist a RawEpisode (direct package call — OMSS does not
     # yet ship a raw_episode payload kind by design; SGTKG owns that
@@ -68,8 +62,6 @@ def test_openminion_submits_episode_and_fact_then_retrieves_active(store) -> Non
     _submit_raw_episode(store, "ep-r1")
     assert store.get_raw_episode("ep-r1") is not None
 
-    # Step 2: submit a model-authored fact candidate via OMSS that
-    # references the raw episode in source_episode_ids.
     fact_result = submit_envelope(
         store,
         SubmissionEnvelope(
@@ -93,7 +85,6 @@ def test_openminion_submits_episode_and_fact_then_retrieves_active(store) -> Non
     assert fact is not None
     assert "ep-r1" in fact.source_episode_ids
 
-    # The fact appears under the source_episode_id filter.
     by_episode = store.list_facts(source_episode_id="ep-r1")
     assert [f.fact_id for f in by_episode] == ["f-role-1"]
 
@@ -101,7 +92,6 @@ def test_openminion_submits_episode_and_fact_then_retrieves_active(store) -> Non
 def test_openminion_invalidates_fact_via_contradiction_decision(store) -> None:
     _submit_raw_episode(store, "ep-r1")
     _submit_raw_episode(store, "ep-r2")
-    # Two competing facts, both referencing distinct raw episodes.
     submit_envelope(
         store,
         SubmissionEnvelope(
@@ -186,10 +176,8 @@ def test_point_in_time_query_returns_historical_with_provenance(store) -> None:
             trust_mode="direct",
         ),
     )
-    # Point-in-time: what did we know about 2021?
     in_2021 = store.list_facts(valid_at="2021-06-01", active_state="all")
     assert [f.fact_id for f in in_2021] == ["f-1"]
-    # And provenance survives — source_episode_ids are intact.
     assert in_2021[0].source_episode_ids == ["ep-r1"]
 
 

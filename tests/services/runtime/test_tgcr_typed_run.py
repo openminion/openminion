@@ -69,9 +69,6 @@ class TestResolveRunTerminalPersistence:
         ],
     )
     def test_non_completed_persists_as_run_state_failed(self, terminal: str) -> None:
-        # TGCR design: the persisted event vocabulary stays unchanged
-        # (run.completed / run.failed); the typed terminal value carries
-        # the finer-grained reason on the payload.
         assert resolve_run_terminal_persistence(terminal) == RUN_STATE_FAILED
 
     def test_unknown_terminal_raises(self) -> None:
@@ -144,8 +141,6 @@ class TestRunCheckpoint:
         assert cp.sequence == 3
         assert cp.state_snapshot == {"current_step": "exec.tool"}
         payload = cp.to_dict()
-        # to_dict copies the snapshot so callers can't mutate the frozen
-        # record's state.
         assert payload["state_snapshot"] == {"current_step": "exec.tool"}
         payload["state_snapshot"]["mutated"] = True
         assert cp.state_snapshot == {"current_step": "exec.tool"}

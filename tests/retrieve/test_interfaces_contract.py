@@ -13,7 +13,6 @@ from openminion.modules.storage.errors import StorageDomainError
 
 class TestRetrieveCtlContractVersion:
     def test_retrieve_ctl_contract_version_declared(self):
-        # Create a mock RetrieveCtl config
         mock_config = Mock()
         mock_config.storage = Mock()
         mock_config.storage.blob_root = "/tmp/retrieve-test-blob"
@@ -25,8 +24,6 @@ class TestRetrieveCtlContractVersion:
         mock_config.defaults.raptor_internal_k = 5
         mock_config.defaults.doc_group_min_tokens = 50
         mock_config.defaults.doc_group_max_tokens = 500
-
-        # Mock storage components appropriately
 
         retrieve_ctl = RetrieveCtl(config=mock_config)
         assert hasattr(retrieve_ctl, "contract_version")
@@ -35,7 +32,6 @@ class TestRetrieveCtlContractVersion:
 
 class TestRetrieveCtlCompatibilityValidator:
     def test_retrieve_ctl_valid_implementation_passes(self):
-        # Create a mock RetrieveCtl config
         mock_config = Mock()
         mock_config.storage = Mock()
         mock_config.storage.blob_root = "/tmp/retrieve-test-blob"
@@ -48,7 +44,6 @@ class TestRetrieveCtlCompatibilityValidator:
         mock_config.defaults.doc_group_min_tokens = 50
         mock_config.defaults.doc_group_max_tokens = 500
 
-        # Mock storage components
         retrieve_ctl = RetrieveCtl(config=mock_config)
         success, errors = ensure_retrieve_compatibility(retrieve_ctl, strict=False)
         assert success is True
@@ -58,7 +53,6 @@ class TestRetrieveCtlCompatibilityValidator:
 
         class BrokenCtl:
             contract_version = RETRIEVE_INTERFACE_VERSION
-            # Missing required methods like retrieve, expand, explain, etc.
 
         ctl = BrokenCtl()
         success, errors = ensure_retrieve_compatibility(ctl, strict=False)
@@ -69,7 +63,7 @@ class TestRetrieveCtlCompatibilityValidator:
     def test_retrieve_ctl_version_mismatch_fails(self):
 
         class WrongVersionCtl:
-            contract_version = "v99"  # Wrong version
+            contract_version = "v99"
 
         ctl = WrongVersionCtl()
         success, errors = ensure_retrieve_compatibility(ctl, strict=False)
@@ -80,10 +74,10 @@ class TestRetrieveCtlCompatibilityValidator:
     def test_retrieve_ctl_strict_mode_raises_error(self):
 
         class BadCtl:
-            contract_version = "v99"  # Wrong version
+            contract_version = "v99"
 
         ctl = BadCtl()
-        with pytest.raises(Exception):  # RetrieveError will be raised
+        with pytest.raises(Exception):
             ensure_retrieve_compatibility(ctl, strict=True)
 
 

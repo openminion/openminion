@@ -13,9 +13,6 @@ from openminion.tools.browser.providers.playwright.config import (
     provider_config_from_mapping,
 )
 
-# Re-use the fake playwright from test_provider if possible, or redefine it here.
-# Since we want a self-contained test, let's redefine a minimal version.
-
 
 @dataclass
 class ToolContext:
@@ -85,7 +82,6 @@ class _FakePlaywright:
 def test_canonical_invocation_reaches_playwright_provider_with_mode(
     tmp_path: Path,
 ) -> None:
-    # 1. Setup real PlaywrightProvider with fake playwright
     fake_pw = _FakePlaywright()
     cfg = provider_config_from_mapping(
         {
@@ -97,7 +93,6 @@ def test_canonical_invocation_reaches_playwright_provider_with_mode(
     )
     provider = PlaywrightProvider(cfg, playwright_factory=lambda: fake_pw)
 
-    # 2. Setup real BrowserTool with the real provider registered
     reg = BrowserProviderRegistry()
     reg.register(provider)
     tool = BrowserTool(
@@ -106,7 +101,6 @@ def test_canonical_invocation_reaches_playwright_provider_with_mode(
         )
     )
 
-    # 3. Target canonical invocation: mode="headed"
     ctx = ToolContext(extras={"workspace_root": str(tmp_path)})
     result_headed = tool.execute({"op": "instance.start", "mode": "headed"}, ctx)
 
@@ -114,14 +108,12 @@ def test_canonical_invocation_reaches_playwright_provider_with_mode(
     assert result_headed.data["instance"]["mode"] == "headed"
     assert fake_pw.chromium.launch_calls[-1]["headless"] is False
 
-    # 4. Target canonical invocation: mode="headless"
     result_headless = tool.execute({"op": "instance.start", "mode": "headless"}, ctx)
 
     assert result_headless.ok is True
     assert result_headless.data["instance"]["mode"] == "headless"
     assert fake_pw.chromium.launch_calls[-1]["headless"] is True
 
-    # 5. Target canonical invocation: mode="ui" (alias)
     result_ui = tool.execute({"op": "instance.start", "mode": "ui"}, ctx)
 
     assert result_ui.ok is True

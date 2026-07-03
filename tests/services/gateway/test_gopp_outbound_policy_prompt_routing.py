@@ -15,10 +15,6 @@ from openminion.modules.storage.runtime.session_store import (
 )
 
 
-# Minimal mock harness — exercises the routing branch directly without
-# spinning up the full GatewayTurnExecutor.
-
-
 @dataclass
 class _RecordingSessions:
     append_message_calls: list[dict[str, Any]] = field(default_factory=list)
@@ -106,9 +102,6 @@ def _apply_routing(
     )
 
 
-# Default kind path — preserves today's append_message behavior.
-
-
 def test_default_kind_writes_outbound_message_to_transcript() -> None:
     sessions = _RecordingSessions()
     outbound = _MockOutbound(
@@ -141,9 +134,6 @@ def test_missing_kind_metadata_defaults_to_append_message() -> None:
     assert record.role == "outbound"
 
 
-# Policy-confirmation kind path — the GOPP-03 routing fix.
-
-
 def test_policy_confirmation_kind_routes_to_typed_event() -> None:
     sessions = _RecordingSessions()
     prose = (
@@ -161,16 +151,12 @@ def test_policy_confirmation_kind_routes_to_typed_event() -> None:
 
     record = _apply_routing(sessions, outbound)
 
-    # The persistent transcript path is NOT used.
     assert sessions.append_message_calls == []
-    # The typed audit event is used.
     assert len(sessions.append_event_calls) == 1
     event = sessions.append_event_calls[0]
     assert event["event_type"] == SESSION_EVENT_POLICY_CONFIRMATION_PROMPT
     assert event["payload"]["body"] == prose
     assert event["payload"]["conversation_id"] == "conv-1"
-    # Synthetic MessageRecord returned so downstream code still gets
-    # an `.id` to thread into `response.persisted` events.
     assert record.id.startswith("event-")
     assert record.role == "event"
     assert record.body == prose
@@ -219,9 +205,6 @@ def test_policy_confirmation_metadata_attached_to_record() -> None:
     assert record.metadata["run_state"] == "completed"
 
 
-# Keep this import wired to the gateway module so constant renames fail loudly.
-
-
 def test_gateway_module_imports_respond_kind_constants() -> None:
     import openminion.services.gateway.turn as gateway_turn
 
@@ -241,8 +224,6 @@ def test_postprocess_propagates_step_out_kind_into_metadata() -> None:
     import openminion.services.brain.post_execution.postprocess as pp
 
     source = open(pp.__file__).read()
-    # The exact assignment is the load-bearing contract; if anyone
-    # removes or renames it, this test fails fast.
     assert 'metadata["respond_kind"]' in source
     assert 'getattr(step_out, "kind"' in source
 
@@ -255,9 +236,6 @@ def test_step_output_carries_kind_field() -> None:
     assert fields["kind"].default == RESPOND_KIND_ASSISTANT
 
 
-# A small smoke check that MagicMock-based call counting works for the
-# session-store double, in case future tests adopt MagicMock instead of
-# the dataclass double.
 def test_sessions_double_can_be_substituted_with_magicmock() -> None:
     sessions = MagicMock()
     sessions.append_event.return_value = EventRecord(

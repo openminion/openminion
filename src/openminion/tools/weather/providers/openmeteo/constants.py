@@ -1,3 +1,5 @@
+from openminion.base.version import OPENMINION_VERSION
+
 WEATHER_OPENMETEO_CONFIG_ENV = "OPENMINION_WEATHER_OPENMETEO_CONFIG"
 WEATHER_OPENMETEO_CANONICAL_TOOL = "weather.openmeteo.current"
 WEATHER_OPENMETEO_GEOCODING_ENDPOINT = "https://geocoding-api.open-meteo.com/v1/search"
@@ -15,9 +17,11 @@ WEATHER_OPENMETEO_RETRYABLE_STATUS_CODES: frozenset[int] = frozenset(
 )
 WEATHER_OPENMETEO_BACKOFF_SECONDS: tuple[float, ...] = (0.2, 0.5, 1.0)
 WEATHER_OPENMETEO_RAW_BODY_DETAIL_LIMIT = 32_000
-WEATHER_OPENMETEO_DEFAULT_USER_AGENT = "openminion-tool-weather-openmeteo/0.0.1"
+WEATHER_OPENMETEO_DEFAULT_USER_AGENT = (
+    f"openminion-tool-weather-openmeteo/{OPENMINION_VERSION}"
+)
 WEATHER_OPENMETEO_SECONDARY_USER_AGENT = (
-    "openminion-tool-weather-openmeteo/0.0.1 (nominatim-fallback)"
+    f"openminion-tool-weather-openmeteo/{OPENMINION_VERSION} (nominatim-fallback)"
 )
 WEATHER_OPENMETEO_ARTIFACTS_SUBDIR = "artifacts/weather-openmeteo"
 

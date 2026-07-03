@@ -1,7 +1,6 @@
 from pathlib import Path
 
 
-# Fixture paths
 CLI_CHAT_SMOKE_DIR = (
     Path(__file__).resolve().parents[1] / "examples" / "skills" / "cli-chat-smoke"
 )
@@ -71,7 +70,6 @@ class TestNegativeFixtures:
         assert skill_path.exists(), f"Missing-sections fixture not found: {skill_path}"
 
         content = skill_path.read_text()
-        # Should have incomplete Procedure (only 1 step)
         assert content.count("## Step") < 3, "Should have incomplete Procedure"
 
     def test_malformed_headings_fixture_exists(self):
@@ -81,7 +79,6 @@ class TestNegativeFixtures:
         )
 
         content = skill_path.read_text()
-        # Should have malformed YAML (missing colons in frontmatter)
         lines = content.split("\n")
         in_frontmatter = False
         frontmatter_lines = []
@@ -94,7 +91,6 @@ class TestNegativeFixtures:
             if in_frontmatter:
                 frontmatter_lines.append(line)
 
-        # Check for malformed YAML (lines without colons)
         has_malformed = any(
             ": " not in line and line.strip() for line in frontmatter_lines[:10]
         )

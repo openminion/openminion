@@ -7,9 +7,6 @@ from pathlib import Path
 import pytest
 
 
-# ── Identity: shared owners expose one set of objects ─────────────────────────
-
-
 def test_chat_models_come_from_shared_owner() -> None:
     from openminion.cli.tui.presentation.models import (
         ChatMessage,
@@ -85,11 +82,8 @@ def test_tool_context_hint_is_shared() -> None:
 def test_progress_label_is_shared() -> None:
     from openminion.cli.tui.presentation.status import format_progress_label
 
-    # Fallback kicks in when the payload cannot produce a label.
     assert format_progress_label({}, fallback_label="Working...") == "Working..."
 
-
-# ── Ownership direction: shared owners do not reach into shells ──────────────
 
 _SHARED_OWNER_MODULES = [
     "openminion/src/openminion/cli/tui/presentation/models.py",
@@ -146,9 +140,6 @@ def test_focus_screen_does_not_import_dashboard_chat(_repo_root: Path) -> None:
     )
 
 
-# ── Header facts ──────────────────────────────────────────────────────────────
-
-
 def test_header_helpers_format_shared_facts() -> None:
     import os
 
@@ -159,15 +150,12 @@ def test_header_helpers_format_shared_facts() -> None:
         shorten_working_dir,
     )
 
-    # Session shortening is deterministic.
     assert shorten_session_id("sess-abc-1234567890", length=8) == "sess-abc"
 
-    # Working-dir shortening normalizes home-prefixed paths.
     home = os.path.expanduser("~")
     assert shorten_working_dir(home) == "~"
     assert shorten_working_dir(os.path.join(home, "repos")) == "~/repos"
 
-    # Clock format is HH:MM.
     clock = format_clock()
     assert len(clock) == 5 and clock[2] == ":"
 
@@ -178,10 +166,8 @@ def test_header_helpers_format_shared_facts() -> None:
         f"expected mid-elided form like `/x/…/end`, got {short!r}"
     )
 
-    # Short paths pass through unchanged.
     assert shorten_working_dir("/usr/bin", max_length=40) == "/usr/bin"
 
-    # Shared model surfaces the same labels to both shells.
     ctx = RuntimeHeaderContext(
         agent_id="alice", session_id="sess-abc-1234567890", working_dir=home
     )
@@ -189,9 +175,6 @@ def test_header_helpers_format_shared_facts() -> None:
     assert labels["agent_id"] == "alice"
     assert labels["session_id"] == "sess-abc"
     assert labels["working_dir"] == "~"
-
-
-# ── Tool-progress mapper ─────────────────────────────────────────────────────
 
 
 def test_build_tool_event_from_progress_normalizes_payload() -> None:
@@ -240,9 +223,6 @@ def test_build_tool_event_applies_normalize_args() -> None:
     assert event.args == {"path": "foo.py"}
 
 
-# ── Owner-attachment sanity check ────────────────────────────────────────────
-
-
 def test_presentation_package_reexports() -> None:
     mod = importlib.import_module("openminion.cli.tui.presentation")
     expected = {
@@ -266,9 +246,6 @@ def test_presentation_package_reexports() -> None:
     assert not missing, f"presentation package missing exports: {missing}"
 
 
-# ── Dashboard adopts shared ToolBlockWidget for tool_event messages ──────────
-
-
 def test_dashboard_push_tool_event_mounts_shared_tool_block() -> None:
     import inspect
 
@@ -284,13 +261,8 @@ def test_dashboard_push_tool_event_mounts_shared_tool_block() -> None:
         "MessageWidget.compose must branch on `msg.tool_event` to mount the "
         "shared ToolBlockWidget."
     )
-    # Identity check: the class MessageWidget.compose references is the same
-    # shared owner both shells consume.
     mod = importlib.import_module("openminion.cli.tui.widgets.chat")
     assert getattr(mod, "ToolBlockWidget", None) is ToolBlockWidget
-
-
-# ── Focus feature verification on shared owners (TUISPF-05/06/07) ─────────────
 
 
 def test_focus_live_and_history_both_flow_through_shared_tool_block() -> None:
@@ -299,16 +271,12 @@ def test_focus_live_and_history_both_flow_through_shared_tool_block() -> None:
     from openminion.cli.tui.focus.screen import FocusScreen
 
     focus_src = inspect.getsource(FocusScreen)
-    # Live progress path
     assert "build_tool_event_from_progress" in focus_src
     assert "tool_call_body" in focus_src
-    # History replay path: runtime message normalization populates tool_event
-    # via the shared RuntimeMessageMixin helper.
     from openminion.cli.tui.providers.runtime.messages import RuntimeMessageMixin
 
     runtime_src = inspect.getsource(RuntimeMessageMixin)
     assert "_tool_event_from_metadata" in runtime_src
-    # Both paths produce the same shared ToolEvent type.
     from openminion.cli.tui.presentation.models import ToolEvent as SharedToolEvent
     from openminion.cli.tui.presentation.tool.progress import (
         build_tool_event_from_progress,
@@ -332,7 +300,6 @@ def test_focus_directory_session_affinity_uses_shared_runtime() -> None:
     assert "create_new_session" in focus_src
 
     runtime_src = inspect.getsource(OpenMinionRuntime)
-    # All three methods live on the shared runtime adapter.
     for name in (
         "def find_candidate_session",
         "def bind_session",
@@ -340,7 +307,6 @@ def test_focus_directory_session_affinity_uses_shared_runtime() -> None:
         "def list_directory_sessions",
     ):
         assert name in runtime_src, f"shared runtime missing {name!r}"
-    # And the new-session path tags session metadata with working_dir.
     assert "update_session_metadata" in runtime_src
 
 
@@ -351,10 +317,8 @@ def test_focus_inline_approval_uses_shared_approval_callback() -> None:
     from openminion.cli.tui.providers.runtime import OpenMinionRuntime
 
     focus_src = inspect.getsource(FocusScreen)
-    # FocusScreen passes approval_callback into send_message().
     assert "approval_callback=self._approval_callback" in focus_src
     assert "ToolApprovalWidget" in focus_src
-    # Shared runtime forwards approval_callback through send_message.
     send_src = inspect.getsource(OpenMinionRuntime.send_message)
     assert "approval_callback" in send_src
 
@@ -364,7 +328,6 @@ def test_dashboard_progress_callback_builds_shared_tool_event() -> None:
 
     from openminion.cli.tui.tabs.chat.turns import ChatTurnMixin
 
-    # The dashboard turn mixin owns tool_started/tool_completed normalization.
     src = inspect.getsource(ChatTurnMixin)
     assert "build_tool_event_from_progress" in src, (
         "Dashboard ChatTab no longer uses the shared tool-event builder; "

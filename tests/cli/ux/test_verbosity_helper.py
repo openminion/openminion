@@ -23,9 +23,6 @@ def _args(*, verbosity: str | None = None) -> argparse.Namespace:
     return argparse.Namespace(verbosity=verbosity)
 
 
-# ── Default / flag ───────────────────────────────────────────────
-
-
 def test_default_returns_normal(clean_env: None) -> None:
     assert resolve_verbosity(_args()) == "normal"
 
@@ -44,9 +41,6 @@ def test_flag_verbose(clean_env: None) -> None:
 
 def test_flag_normal_explicit(clean_env: None) -> None:
     assert resolve_verbosity(_args(verbosity="normal")) == "normal"
-
-
-# ── Canonical env ────────────────────────────────────────────────
 
 
 def test_env_quiet(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,9 +146,6 @@ def test_flag_beats_legacy_env(
     assert "deprecated" not in err
 
 
-# ── Argparse registration ────────────────────────────────────────
-
-
 def test_add_verbosity_flag_accepts_choices() -> None:
     parser = argparse.ArgumentParser()
     add_verbosity_flag(parser)
@@ -175,9 +166,6 @@ def test_add_verbosity_flag_rejects_garbage() -> None:
     add_verbosity_flag(parser)
     with pytest.raises(SystemExit):
         parser.parse_args(["--verbosity", "loud"])
-
-
-# ── Env-allowlist regression guard ───────────────────────────────
 
 
 def test_only_ux_module_reads_canonical_verbosity_env() -> None:
@@ -204,14 +192,10 @@ def test_only_ux_module_reads_canonical_verbosity_env() -> None:
     assert relative == ["cli/ux/verbosity.py"], relative
 
 
-# ── No-import-cycle guarantee ────────────────────────────────────
-
-
 def test_helper_imports_only_minimal_deps() -> None:
     import openminion.cli.ux.verbosity as v
 
     src_text = open(v.__file__).read()
-    # Forbidden imports (FTR/FTV modules — would create cycles).
     assert "from openminion.cli.tui.terminal" not in src_text
     assert "import openminion.cli.tui.terminal" not in src_text
     assert "from openminion.cli.commands" not in src_text

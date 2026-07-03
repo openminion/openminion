@@ -13,7 +13,6 @@ from openminion.modules.storage.progress import (
 def test_null_reporter_satisfies_protocol() -> None:
     reporter = NullProgressReporter()
     assert isinstance(reporter, ProgressReporter)
-    # All hooks must accept the documented kwargs without raising.
     reporter.on_start(total=10, label="test")
     reporter.on_progress(advance=1, message="step")
     reporter.on_end(success=True, message="done")
@@ -51,13 +50,11 @@ def test_select_default_reporter_returns_null_when_inactive() -> None:
 
 
 def test_tqdm_reporter_swallows_internal_failures(monkeypatch) -> None:
-
     reporter = TqdmProgressReporter(force=True)
     if not reporter._is_active():  # noqa: SLF001 — guard for environments lacking tqdm
         pytest.skip("tqdm not available")
     reporter.on_start(total=1, label="resilient")
 
-    # Replace the internal bar with one that raises on every method.
     class _Broken:
         def set_postfix_str(self, *a, **kw):
             raise RuntimeError("boom")
@@ -69,6 +66,5 @@ def test_tqdm_reporter_swallows_internal_failures(monkeypatch) -> None:
             raise RuntimeError("boom")
 
     reporter._bar = _Broken()  # noqa: SLF001
-    # None of these may raise.
     reporter.on_progress(advance=1, message="x")
     reporter.on_end(success=False, message="y")

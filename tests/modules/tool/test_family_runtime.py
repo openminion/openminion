@@ -51,9 +51,6 @@ def _simple_fallback(chain: list, failures: list) -> dict:
     return {"ok": False, "error": str(last_exc)}
 
 
-# --- basic chain execution ---
-
-
 def test_run_provider_chain_succeeds_on_first_provider(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
     calls: list[str] = []
@@ -142,9 +139,6 @@ def test_run_provider_chain_empty_chain_returns_fallback(tmp_path: Path) -> None
     assert invocations == []
 
 
-# --- StopChain ---
-
-
 def test_run_provider_chain_stop_chain_halts_immediately(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
     calls: list[str] = []
@@ -165,10 +159,7 @@ def test_run_provider_chain_stop_chain_halts_immediately(tmp_path: Path) -> None
     )
 
     assert result["error"] == "POLICY_DENIED"
-    assert calls == ["brave"]  # second provider never tried
-
-
-# --- attempt event emission ---
+    assert calls == ["brave"]
 
 
 def test_run_provider_chain_emits_attempt_event_per_provider(tmp_path: Path) -> None:
@@ -216,7 +207,7 @@ def test_run_provider_chain_attempt_payload_receives_correct_total(
         fallback_result_fn=_simple_fallback,
     )
 
-    assert totals_seen == [3]  # only first provider called (success stops loop)
+    assert totals_seen == [3]
 
 
 def test_run_provider_chain_attempt_index_increments_per_attempt(
@@ -241,9 +232,6 @@ def test_run_provider_chain_attempt_index_increments_per_attempt(
     )
 
     assert indices_seen == [1, 2, 3]
-
-
-# --- failure list passed to fallback ---
 
 
 def test_run_provider_chain_fallback_receives_all_failures(tmp_path: Path) -> None:

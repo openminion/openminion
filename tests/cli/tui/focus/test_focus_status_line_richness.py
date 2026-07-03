@@ -9,9 +9,6 @@ from openminion.cli.tui.focus.widgets.status_line import FocusStatusLine
 from openminion.cli.tui.presentation.git.branch import detect_branch
 
 
-# ── git branch helper ────────────────────────────────────────────────────────
-
-
 def test_detect_branch_returns_none_for_missing_directory() -> None:
     assert detect_branch("/this/path/does/not/exist-xyz") is None
 
@@ -28,13 +25,8 @@ def test_detect_branch_handles_empty_input() -> None:
 def test_detect_branch_returns_branch_for_real_git_repo() -> None:
     repo_root = Path(__file__).resolve().parents[4]
     branch = detect_branch(repo_root)
-    # In CI the branch can be anything, but it must be a non-empty
-    # string when run inside a checkout.
     assert isinstance(branch, str)
     assert len(branch) > 0
-
-
-# ── FocusStatusLine segment composition ──────────────────────────────────────
 
 
 def _idle_text(line: FocusStatusLine) -> str:
@@ -57,10 +49,8 @@ def test_idle_text_includes_all_segments_when_set() -> None:
     assert "git: main" in text
     assert "tokens: 1234/200000" in text
     assert "cost: $0.05" in text
-    # No empty segment artifacts.
     assert " |  " not in text
     assert "||" not in text
-    # Richness comes BEFORE the keyboard-hint suffix.
     assert text.index("model:") < text.index("^P palette")
 
 
@@ -84,7 +74,7 @@ def test_idle_text_omits_empty_segments_cleanly() -> None:
         cwd="~/here",
         branch="",  # not a git dir → omitted
         tokens="100",
-        cost="",  # no cost source → omitted
+        cost="",
     )
     text = _idle_text(line)
     assert "model: anthropic/claude" in text
@@ -92,7 +82,6 @@ def test_idle_text_omits_empty_segments_cleanly() -> None:
     assert "tokens: 100" in text
     assert "git:" not in text
     assert "cost:" not in text
-    # No double separator where `git:` would have been.
     assert " |  | " not in text
 
 
@@ -161,7 +150,6 @@ def test_set_state_partial_update_preserves_other_segments() -> None:
         branch="b1",
         tokens="t1",
     )
-    # Only update tokens.
     line.set_state(tokens="t2")
     text = _idle_text(line)
     assert "model: m1" in text

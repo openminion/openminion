@@ -30,6 +30,7 @@ ALLOWED_ROOT_FILES = {
     "time.py",
     "types.py",
     "user_io.py",
+    "version.py",
 }
 ALLOWED_TOP_LEVEL_DIRS = {"channel", "config", "errors", "runtime"}
 

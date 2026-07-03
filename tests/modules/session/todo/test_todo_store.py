@@ -56,7 +56,7 @@ class RoundTripTests(unittest.TestCase):
 
     def test_clear_unknown_session_is_noop(self) -> None:
         store = InMemoryTodoStore()
-        store.clear_plan("sess-never-existed")  # should not raise
+        store.clear_plan("sess-never-existed")
         self.assertEqual(store.session_count(), 0)
 
     def test_summary_string(self) -> None:
@@ -163,7 +163,6 @@ class CapacityTests(unittest.TestCase):
         store = InMemoryTodoStore(max_sessions=2)
         store.set_plan("sess-a", ["a"])
         store.set_plan("sess-b", ["b"])
-        # Touch a to make b the least-recently-used.
         store.get_plan("sess-a")
         store.set_plan("sess-c", ["c"])
         self.assertEqual(store.session_count(), 2)
@@ -227,5 +226,5 @@ class EvictionLifecycleTests(unittest.TestCase):
 
     def test_evict_unknown_session_is_noop(self) -> None:
         store = InMemoryTodoStore()
-        store.evict("sess-never-existed")  # must not raise
+        store.evict("sess-never-existed")
         self.assertEqual(store.session_count(), 0)

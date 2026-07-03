@@ -1,0 +1,161 @@
+{
+  "artifact_locations": {
+    "package_root_allowlist": [
+      ".coverage",
+      ".gitignore",
+      ".pre-commit-config.yaml",
+      ".pypirc.local",
+      "API_COMPATIBILITY.md",
+      "CHANGELOG.md",
+      "CODE_OF_CONDUCT.md",
+      "CODE_QUALITY.md",
+      "CONTRIBUTING.md",
+      "LICENSE",
+      "MANIFEST.in",
+      "Makefile",
+      "NOTICE",
+      "README.md",
+      "RELEASING.md",
+      "SECURITY.md",
+      "SUPPORT.md",
+      "conftest.py",
+      "pyproject.toml"
+    ],
+    "package_roots": [
+      "openminion",
+      "openminion-eval",
+      "sophiagraph",
+      "sophiagraph-server",
+      "pragmagraph"
+    ],
+    "scratch_name_tokens": [
+      "-affected-files",
+      "-candidates",
+      "-current-file-list",
+      "-disposition",
+      "-file-list",
+      "-ledger",
+      "-reviewed-files",
+      "-scan",
+      "-source-file-list",
+      "-test-file-list",
+      "-workspace-file-list"
+    ],
+    "scratch_suffixes": [
+      ".json",
+      ".jsonl",
+      ".tsv",
+      ".txt"
+    ],
+    "workspace_root_allowlist": [
+      ".DS_Store",
+      ".gitignore",
+      ".python-version",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "README.md",
+      "claude-glm5.sh",
+      "claude-kimi.sh",
+      "claude-minimax.sh",
+      "claude-qwen3.5.sh",
+      "env-claude-glm5.sh",
+      "env-claude-kimi.sh",
+      "env-claude-minimax.sh",
+      "env-claude-qwen3.5.sh",
+      "pytest.ini",
+      "requirements-dev.txt",
+      "requirements.txt"
+    ]
+  },
+  "contract_literals": {
+    "allowlist_dir_parts": [
+      "contracts",
+      "interfaces"
+    ],
+    "allowlist_files": [
+      "src/openminion/modules/a2a/wire/google_a2a_v1/agent_card.py",
+      "src/openminion/modules/brain/runtime/safety.py",
+      "src/openminion/modules/memory/contracts/types.py",
+      "src/openminion/modules/tool/_interfaces_impl.py"
+    ],
+    "version_constant_suffix_pattern": "(?:CONTRACT|INTERFACE|RENDER|SCHEMA|PROTOCOL)_VERSION$"
+  },
+  "control_value_constants": {
+    "excluded_literals": [
+      "0",
+      "1",
+      "DELETE",
+      "GET",
+      "HEAD",
+      "OPTIONS",
+      "PATCH",
+      "POST",
+      "PUT",
+      "assistant",
+      "auto",
+      "code",
+      "content",
+      "data",
+      "default",
+      "error",
+      "fail",
+      "failure",
+      "false",
+      "function",
+      "id",
+      "info",
+      "input",
+      "message",
+      "name",
+      "no",
+      "none",
+      "null",
+      "off",
+      "ok",
+      "on",
+      "output",
+      "result",
+      "source",
+      "status",
+      "success",
+      "system",
+      "target",
+      "text",
+      "tool",
+      "true",
+      "type",
+      "unknown",
+      "user",
+      "utf-8",
+      "utf8",
+      "value",
+      "warning",
+      "yes"
+    ],
+    "min_occurrences": 3,
+    "min_string_len": 3
+  },
+  "pass_through_advisory": {
+    "excluded_files": [],
+    "max_forwarding_functions_per_file": 5
+  },
+  "raw_control_values": {
+    "excluded_files": [
+      "modules/session/storage/migrations/versions/0001_baseline.py",
+      "modules/tool/contracts/schemas.py",
+      "services/health/observability.py"
+    ],
+    "owned_literals": {
+      "CONFIRM_REQUIRED": "TOOL_ERROR_CONFIRM_REQUIRED",
+      "active_state": "STATE_KEY_ACTIVE",
+      "emit_adaptive_status": "EVENT_NAME_ADAPTIVE_STATUS",
+      "finalization_status": "STATE_KEY_FINALIZATION_STATUS",
+      "module_state": "STATE_KEY_MODULE_STATE",
+      "next_attempt_state": "STATE_KEY_NEXT_ATTEMPT",
+      "source_outcome_status": "STATE_KEY_SOURCE_OUTCOME",
+      "task_backed_resume_state": "STATE_KEY_TASK_BACKED_RESUME",
+      "working_state": "STATE_KEY_WORKING"
+    },
+    "runtime_mode_hot_owner": "RUNTIME_MODE_HOT"
+  }
+}

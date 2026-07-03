@@ -397,6 +397,54 @@ class TestCategoryRouting:
             f"read_only:unresolved_categories:{expected_count}" in result.reason_codes
         )
 
+    def test_identity_filter_reuses_structural_filter_result(
+        self, basic_registry: ToolRegistry
+    ) -> None:
+        service = create_tool_selection_service(
+            ToolSelectionConfig(mode="typed"), basic_registry
+        )
+
+        first = service.select_tools(
+            query="weather in sf",
+            intent_categories=None,
+            identity_tool_filter={"tool_use": "read_only"},
+        )
+        second = service.select_tools(
+            query="weather in sf",
+            intent_categories=None,
+            identity_tool_filter={"tool_use": "read_only"},
+        )
+
+        assert "identity_filter_cache_miss" in first.reason_codes
+        assert "identity_filter_cache_hit" in second.reason_codes
+        assert first.shortlist == second.shortlist
+
+    def test_identity_filter_cache_key_includes_filter_payload(
+        self, basic_registry: ToolRegistry
+    ) -> None:
+        service = create_tool_selection_service(
+            ToolSelectionConfig(mode="typed"), basic_registry
+        )
+
+        read_only = service.select_tools(
+            query="weather in sf",
+            intent_categories=None,
+            identity_tool_filter={"tool_use": "read_only"},
+        )
+        allowed_tool = read_only.shortlist[0]
+        restricted = service.select_tools(
+            query="weather in sf",
+            intent_categories=None,
+            identity_tool_filter={
+                "tool_use": "restricted",
+                "allowed_tools": [allowed_tool],
+            },
+        )
+
+        assert "identity_filter_cache_miss" in read_only.reason_codes
+        assert "identity_filter_cache_miss" in restricted.reason_codes
+        assert restricted.shortlist == [allowed_tool]
+
 
 class TestRegistrySpecsObservability:
     def test_registry_specs_logs_probe_failures_and_warning(

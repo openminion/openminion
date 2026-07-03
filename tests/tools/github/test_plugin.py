@@ -203,15 +203,12 @@ def test_args_schema_rejects_malformed_owner(
 ) -> None:
     from openminion.tools.github.schemas import GithubListPrsArgs
 
-    # Negative path: owner with path separator.
     with pytest.raises(Exception):
         GithubListPrsArgs.model_validate({"owner": "evil/path", "repo": "r"})
 
-    # Negative path: empty owner.
     with pytest.raises(Exception):
         GithubListPrsArgs.model_validate({"owner": "", "repo": "r"})
 
-    # Negative path: invalid state enum.
     with pytest.raises(Exception):
         GithubListPrsArgs.model_validate({"owner": "o", "repo": "r", "state": "weird"})
 
@@ -231,7 +228,6 @@ def test_fetch_checks_rejects_non_hex_sha() -> None:
             {"owner": "o", "repo": "r", "head_sha": "not-a-sha"}
         )
 
-    # Positive path: lowercase hex accepted; mixed case normalized.
     parsed = GithubFetchChecksArgs.model_validate(
         {"owner": "o", "repo": "r", "head_sha": "ABC1234"}
     )

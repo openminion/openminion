@@ -1,6 +1,4 @@
-# Intent detector tests (local to introspection module)
 class TestMemoryIntrospectionIntentDetector:
-    # Canonical introspection prompts that should return True
     CANONICAL_PROMPTS = [
         "what do you remember",
         "what do you recall",
@@ -25,7 +23,6 @@ class TestMemoryIntrospectionIntentDetector:
         "what information do you have stored",
     ]
 
-    # Adjacent non-introspection prompts that should return False
     NON_INTROSPECTION_PROMPTS = [
         "what is the weather in Tokyo",
         "remember to call mom",
@@ -40,13 +37,11 @@ class TestMemoryIntrospectionIntentDetector:
     ]
 
     def test_introspection_patterns_exist(self) -> None:
-        # These patterns are used by CLI helper intent checks and runner flow.
         patterns = self.CANONICAL_PROMPTS
         assert len(patterns) > 0
         assert "what do you remember" in patterns
 
 
-# MemoryRuntimeSnapshot tests
 class TestMemoryRuntimeSnapshot:
     def test_memory_runtime_snapshot_schema(self) -> None:
         from openminion.modules.memory.diagnostics.introspection import (
@@ -88,7 +83,6 @@ class TestMemoryRuntimeSnapshot:
         assert snapshot.memory_available is False
 
 
-# Retrieval stats tests
 class TestRetrievalStatsSnapshot:
     def test_retrieval_stats_snapshot_schema(self) -> None:
         from openminion.modules.memory.diagnostics.introspection import (
@@ -123,7 +117,6 @@ class TestRetrievalStatsSnapshot:
         assert snapshot.retrieve_available is False
 
 
-# RuntimeIntrospectionDigest tests
 class TestRuntimeIntrospectionDigest:
     def test_format_introspection_digest_with_caps(self) -> None:
         from openminion.modules.memory.diagnostics.introspection import (
@@ -138,7 +131,7 @@ class TestRuntimeIntrospectionDigest:
             global_records=200,
             total_records=350,
             memory_available=True,
-            recent_highlights=["A" * 100, "B" * 100, "C" * 100],  # Large highlights
+            recent_highlights=["A" * 100, "B" * 100, "C" * 100],
             snapshot_timestamp="2025-01-15T10:30:00Z",
         )
 
@@ -149,7 +142,6 @@ class TestRuntimeIntrospectionDigest:
             snapshot_timestamp="2025-01-15T10:30:00Z",
         )
 
-        # Request a very small token cap
         digest = format_introspection_digest(
             memory=memory,
             retrieval=retrieval,
@@ -162,7 +154,6 @@ class TestRuntimeIntrospectionDigest:
         assert "Token cap exceeded" in digest.cap_reason
 
 
-# Response formatter tests
 class TestIntrospectionResponseFormatter:
     def test_format_introspection_response_with_full_data(self) -> None:
         from openminion.modules.memory.diagnostics.introspection import (
@@ -202,7 +193,6 @@ class TestIntrospectionResponseFormatter:
             estimated_tokens=100,
         )
 
-        # Verify the digest has the expected data
         assert digest.memory is not None
         assert digest.memory.total_records == 18
         assert digest.retrieval is not None
@@ -228,7 +218,6 @@ class TestIntrospectionResponseFormatter:
             estimated_tokens=50,
         )
 
-        # Verify degraded state is captured
         assert digest.memory is not None
         assert digest.memory.degraded is True
         assert digest.memory.degraded_reason == "connection_timeout"

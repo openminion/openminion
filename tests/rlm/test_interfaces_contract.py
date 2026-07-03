@@ -9,7 +9,6 @@ from openminion.modules.brain.loop.recursive.service import RLMService
 
 class TestRlmServiceContractVersion:
     def test_rlm_service_contract_version_declared(self):
-        # Create mock clients for RLMService parameters
         mock_sessctl = Mock()
         mock_contextctl = Mock()
         mock_llmctl = Mock()
@@ -23,7 +22,6 @@ class TestRlmServiceContractVersion:
 
 class TestRlmServiceCompatibilityValidator:
     def test_rlm_service_valid_implementation_passes(self):
-        # Create mock clients for RLMService parameters
         mock_sessctl = Mock()
         mock_contextctl = Mock()
         mock_llmctl = Mock()
@@ -39,7 +37,6 @@ class TestRlmServiceCompatibilityValidator:
 
         class BrokenService:
             contract_version = RLM_INTERFACE_VERSION
-            # Missing required methods like generate, retrieve, etc.
 
         service = BrokenService()
         success, errors = ensure_rlm_compatibility(service, strict=False)
@@ -50,7 +47,7 @@ class TestRlmServiceCompatibilityValidator:
     def test_rlm_service_version_mismatch_fails(self):
 
         class WrongVersionService:
-            contract_version = "v99"  # Wrong version
+            contract_version = "v99"
 
         service = WrongVersionService()
         success, errors = ensure_rlm_compatibility(service, strict=False)
@@ -61,8 +58,8 @@ class TestRlmServiceCompatibilityValidator:
     def test_rlm_service_strict_mode_raises_error(self):
 
         class BadService:
-            contract_version = "v99"  # Wrong version
+            contract_version = "v99"
 
         service = BadService()
-        with pytest.raises(Exception):  # RlmError will be raised
+        with pytest.raises(Exception):
             ensure_rlm_compatibility(service, strict=True)

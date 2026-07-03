@@ -598,7 +598,6 @@ class APIRuntimeTests(unittest.TestCase):
                         hasattr(svc, "run_turn"),
                         f"resolve_agent_service({agent_id}) missing run_turn attribute",
                     )
-                    # Verify runtime info is tracked
                     info = runtime.get_agent_runtime_info(agent_id)
                     self.assertIn("runtime_mode", info)
                     self.assertIn("fallback_reason", info)
@@ -886,7 +885,6 @@ def _write_runtimectl_echo_config(tmp_path: Path) -> Path:
     config_path = tmp_path / "config.json"
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
-    # Set OPENMINION_DATA_ROOT to tmp for test isolation
     os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")
     config.runtime.log_level = "ERROR"
     _csc_install_default_agent(config, provider="echo")

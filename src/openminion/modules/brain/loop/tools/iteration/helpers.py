@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_BLOCKED,
     BRAIN_ACTION_STATUS_FAILED,
+    BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_ACTION_STATUS_TIMEOUT,
 )
 from openminion.modules.brain.execution.intent_state import (
@@ -26,8 +27,11 @@ from ..contracts import (
 )
 from ..budget_control import _general_profile_name
 from ..direct_tool import _direct_tool_turn_active
-from ..plan_control import PLAN_TOOL_NAME
-from ..shortlisting import TOOL_REQUEST_TOOL_NAME
+from ..evidence import (
+    _count_substantive_non_control_tool_results,
+    _loop_has_non_success_tool_result,
+    _loop_tool_result_payloads,
+)
 
 if TYPE_CHECKING:
     from typing import Callable
@@ -132,39 +136,6 @@ def _repair_stale_exact_date_search_args(
     return repaired_args
 
 
-def _loop_tool_result_payloads(
-    loop_state: AdaptiveToolLoopState,
-) -> list[dict[str, Any]]:
-    return [
-        item
-        for item in list(loop_state.scratchpad.get("adaptive.tool_results", []) or [])
-        if isinstance(item, dict)
-    ]
-
-
-def _count_substantive_non_control_tool_results(
-    loop_state: AdaptiveToolLoopState,
-) -> int:
-    count = 0
-    for item in _loop_tool_result_payloads(loop_state):
-        tool_name = str(item.get("tool_name", "") or "").strip()
-        if not tool_name or tool_name in {
-            PLAN_TOOL_NAME,
-            TOOL_REQUEST_TOOL_NAME,
-            "decompose",
-        }:
-            continue
-        count += 1
-    return count
-
-
-def _loop_has_non_success_tool_result(loop_state: AdaptiveToolLoopState) -> bool:
-    for item in _loop_tool_result_payloads(loop_state):
-        if not bool(item.get("ok")):
-            return True
-    return False
-
-
 def _requires_typed_finalization_contract(
     *,
     profile: AdaptiveToolLoopProfile,
@@ -210,7 +181,7 @@ def _tool_result_payload_from_action(
     action_result: ActionResult,
 ) -> dict[str, Any]:
     status = str(getattr(action_result, "status", "") or "").strip().lower()
-    ok = status not in {BRAIN_ACTION_STATUS_FAILED, BRAIN_ACTION_STATUS_TIMEOUT}
+    ok = status == BRAIN_ACTION_STATUS_SUCCESS
     data = dict(getattr(action_result, "outputs", {}) or {})
     error_message = ""
     error_code = ""

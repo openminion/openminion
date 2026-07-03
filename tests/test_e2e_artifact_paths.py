@@ -528,11 +528,9 @@ def test_artifact_create_read_integration():
     from openminion.modules.brain.adapters.factory import create_artifact_adapter
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create artifact adapter
         adapter = create_artifact_adapter(mode="auto", config={"root": tmpdir})
         assert adapter is not None, "Artifact adapter should not be None"
 
-        # Create an artifact using execute method
         test_content = "Hello, this is test artifact content"
         result = adapter.execute(
             command={

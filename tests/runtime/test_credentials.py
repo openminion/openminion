@@ -277,9 +277,6 @@ def test_record_credential_access_event_rejects_unknown_decision() -> None:
         )
 
 
-# Auth-failure reload contract
-
-
 def test_reload_after_auth_failure_emits_typed_rotation_event() -> None:
     log = InMemoryCredentialAuditLog()
     ref = resolve_credential_ref(
@@ -294,10 +291,8 @@ def test_reload_after_auth_failure_emits_typed_rotation_event() -> None:
     assert isinstance(event, CredentialRotationEvent)
     assert event.trigger == "auth_invalid"
     assert event.credential_id == "github_pat"
-    # Reload never widens scope.
     assert event.scope_kind == ref.scope_kind
     assert event.scope_id == ref.scope_id
-    # Rotation event schema has no secret value field.
     field_names = {f.name for f in dataclasses.fields(event)}
     assert "value" not in field_names
     assert "secret" not in field_names
@@ -318,11 +313,7 @@ def test_reload_after_auth_failure_refuses_static_credential() -> None:
     )
     with pytest.raises(ValueError, match="reload_on_auth_failure"):
         reload_credential_after_auth_failure(ref, audit_log=log)
-    # No rotation event was appended.
     assert log.rotation_events() == ()
-
-
-# Read ↔ event parity and FIFO ordering
 
 
 def test_access_event_count_matches_read_count() -> None:
@@ -331,7 +322,6 @@ def test_access_event_count_matches_read_count() -> None:
         "k", scope_kind="process", scope_id="proc", source_kind="env"
     )
 
-    # Simulate three credential reads at named seams.
     seams = (
         "base.config.env.EnvironmentConfig.get",
         "tools.config.get_tool_env",
@@ -389,9 +379,6 @@ def test_audit_log_preserves_fifo_ordering() -> None:
     ]
 
 
-# Anti-LLM field naming
-
-
 def test_credential_ref_has_no_prose_field() -> None:
     field_names = {f.name for f in dataclasses.fields(CredentialRef)}
     # Anti-LLM: no fields that imply prose-derived sensitivity verdicts or
@@ -407,7 +394,6 @@ def test_credential_ref_has_no_prose_field() -> None:
         "rationale",
     }
     assert field_names & forbidden == set()
-    # Audit-required fields exist.
     assert {
         "credential_id",
         "scope_kind",

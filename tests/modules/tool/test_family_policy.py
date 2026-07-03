@@ -36,9 +36,6 @@ def _make_ctx(tmp_path: Path, *, tools_cfg: dict | None = None) -> RuntimeContex
     )
 
 
-# --- get_family_tool_config ---
-
-
 def test_get_family_tool_config_returns_family_dict(tmp_path: Path) -> None:
     ctx = _make_ctx(
         tmp_path, tools_cfg={"fetch": {"enabled": False, "timeout_ms": 5000}}
@@ -72,9 +69,6 @@ def test_get_family_tool_config_returns_empty_for_non_runtime_context() -> None:
 def test_get_family_tool_config_returns_empty_for_none_context() -> None:
     result = get_family_tool_config(None, "fetch")
     assert result == {}
-
-
-# --- is_tool_disabled_by_policy ---
 
 
 def test_is_tool_disabled_when_enabled_false(tmp_path: Path) -> None:

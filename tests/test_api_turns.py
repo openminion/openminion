@@ -10,9 +10,6 @@ from tests._csc_fixtures import _csc_install_default_agent
 from openminion.api.server import dispatch_request
 from openminion.base.config import AgentProfileConfig, OpenMinionConfig, save_config
 
-# Set soft enforcement mode for tests
-
-
 class APITurnsTests(unittest.TestCase):
     def test_post_turns_returns_turn_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,7 +132,6 @@ def _write_echo_config(tmp_path: Path) -> Path:
     config_path = tmp_path / "config.json"
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
-    # Set OPENMINION_DATA_ROOT to tmp for test isolation
     os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")
     config.runtime.log_level = "ERROR"
     config.agents["openminion"] = AgentProfileConfig(
@@ -158,14 +154,12 @@ def _write_openai_missing_key_config(tmp_path: Path) -> Path:
     config_path = tmp_path / "config.json"
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
-    # Set OPENMINION_DATA_ROOT to tmp for test isolation
     os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")
     config.runtime.log_level = "ERROR"
     _csc_install_default_agent(config, provider="openai")
     config.providers.openai.api_key = ""
     config.providers.openai.api_key_env = "OPENMINION_TEST_OPENAI_KEY_MISSING"
     config.storage.path = str(tmp_path / "state" / "api.db")
-    # Set OPENMINION_DATA_ROOT for path validation
     old_data_root = os.environ.get("OPENMINION_DATA_ROOT")
     try:
         os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")

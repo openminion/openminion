@@ -9,11 +9,6 @@ from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_RETRY,
 )
 from openminion.modules.brain.schemas import ActionError, ActionResult, new_uuid
-from openminion.modules.llm.providers.tool_calling import (
-    detect_raw_envelope,
-    detect_raw_tool_markup,
-    detect_raw_tool_payload_json,
-)
 from openminion.modules.llm.schemas import Message
 
 from .budget import _debit_llm_usage, _profile_budget_exhausted, _token_budget_exhausted
@@ -31,6 +26,11 @@ from .contracts import (
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
 )
+from .evidence import (
+    _is_substantive_tool_name,
+    _successful_substantive_tool_results,
+)
+from .postprocess.rules import _looks_like_unexecutable_tool_payload_text
 from .status import emit_adaptive_status
 
 
@@ -118,18 +118,21 @@ def _record_duplicate_batch_execution_facts(
         return
     all_success = True
     has_retry_or_poll = False
+    has_substantive_success = False
     has_non_success = False
     has_job = False
-    for _tool_call, command_outcome in ordered_tool_results:
+    for tool_call, command_outcome in ordered_tool_results:
         action_result = getattr(
             command_outcome, "action_result", None
         ) or _build_missing_action_result(
-            str(getattr(_tool_call, "name", "") or "unknown").strip()
+            str(getattr(tool_call, "name", "") or "unknown").strip()
         )
         status = str(getattr(action_result, "status", "") or "").strip().lower()
         if status != "success":
             all_success = False
             has_non_success = True
+        elif _is_substantive_tool_name(getattr(tool_call, "name", "")):
+            has_substantive_success = True
         if getattr(command_outcome, "job", None) is not None:
             has_job = True
         if _action_result_has_retry_or_poll_signal(
@@ -142,6 +145,7 @@ def _record_duplicate_batch_execution_facts(
         "has_job": has_job,
         "has_non_success": has_non_success,
         "has_retry_or_poll": has_retry_or_poll,
+        "has_substantive_success": has_substantive_success,
         "answer_only_closure_consumed": False,
     }
 
@@ -163,6 +167,8 @@ def _eligible_duplicate_batch_execution_facts(
     if bool(facts.get("has_job")):
         return None
     if bool(facts.get("has_retry_or_poll")):
+        return None
+    if not bool(facts.get("has_substantive_success")):
         return None
     return facts
 
@@ -191,11 +197,7 @@ def _duplicate_batch_answer_only_messages(
     loop_state: AdaptiveToolLoopState,
     tool_calls: list[Any],
 ) -> list[Message]:
-    tool_results = [
-        item
-        for item in list(loop_state.scratchpad.get("adaptive.tool_results", []) or [])
-        if isinstance(item, dict) and bool(item.get("ok"))
-    ]
+    tool_results = _successful_substantive_tool_results(loop_state)
     messages = _answer_only_finalization_messages(
         loop_ctx=loop_ctx,
         loop_state=loop_state,
@@ -211,33 +213,7 @@ def _duplicate_batch_answer_only_messages(
 
 
 def _looks_like_unexecutable_tool_markup_final_text(text: str) -> bool:
-    token = str(text or "").strip()
-    if not token:
-        return False
-    lower = token.lower()
-    return (
-        detect_raw_envelope(token)
-        or detect_raw_tool_markup(token)
-        or detect_raw_tool_payload_json(token)
-        or (
-            any(tool_key in lower for tool_key in ('"tool"', '"tool_name"'))
-            and any(
-                arg_key in lower
-                for arg_key in (
-                    '"arguments"',
-                    '"args"',
-                    '"cmd"',
-                    '"command"',
-                    '"content"',
-                    '"parameters"',
-                    '"path"',
-                    '"query"',
-                )
-            )
-        )
-        or ("file.write" in lower and "path:" in lower and "content:" in lower)
-        or ("exec.run" in lower and ("cmd:" in lower or "command:" in lower))
-    )
+    return _looks_like_unexecutable_tool_payload_text(text)
 
 
 def _force_duplicate_batch_answer_only_closure(

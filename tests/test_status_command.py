@@ -29,9 +29,6 @@ from openminion.modules.identity.models import (
 from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity.storage.store import SQLiteIdentityStore
 
-# Set soft enforcement mode for tests
-
-
 class StatusCommandTests(unittest.TestCase):
     def test_status_runs_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -865,7 +862,6 @@ def _write_echo_config(tmp_path: Path) -> Path:
     config.runtime.log_level = "ERROR"
     _csc_install_default_agent(config, provider="echo")
     config.storage.path = str(tmp_path / "state" / "api.db")
-    # Set OPENMINION_DATA_ROOT for path validation
     old_data_root = os.environ.get("OPENMINION_DATA_ROOT")
     try:
         os.environ["OPENMINION_DATA_ROOT"] = str(tmp_path / ".openminion")

@@ -1,7 +1,7 @@
 # OpenMinion Standalone Claim Alignment
 
 Status: active
-Last updated: 2026-06-23
+Last updated: 2026-07-03
 
 Purpose: keep public `openminion` package claims aligned with the surfaces that
 ship today.
@@ -19,7 +19,7 @@ ship today.
 
 ## Current package line
 
-The current public package line is `0.0.1`. This document records alignment of
+The current public package line is `0.0.2`. This document records alignment of
 the public claims to the currently provable package surface and keeps the
 package contract honest while the project remains in alpha.
 

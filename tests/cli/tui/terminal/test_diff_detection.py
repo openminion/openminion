@@ -6,8 +6,6 @@ from openminion.cli.tui.terminal.streaming import (
     _looks_like_unified_diff,
 )
 
-# ── Positive cases ────────────────────────────────────────────────
-
 
 def test_real_unified_diff_detected() -> None:
     body = """--- a/foo.py
@@ -59,9 +57,6 @@ def test_diff_without_file_headers_still_detected() -> None:
 +new
 """
     assert _looks_like_unified_diff(body) is True
-
-
-# ── Negative cases ────────────────────────────────────────────────
 
 
 def test_bash_output_not_detected() -> None:
@@ -148,8 +143,6 @@ $ ls
 -old
 +new
 """
-    # First 3 lines have no `$ ` prefix; rest is a valid diff;
-    # detection succeeds.
     assert _looks_like_unified_diff(body) is True
 
 
@@ -159,9 +152,6 @@ def test_empty_body_not_detected() -> None:
 
 def test_none_body_defensive() -> None:
     assert _looks_like_unified_diff(None) is False  # type: ignore[arg-type]
-
-
-# ── Malformed hunk headers (per spec §6.3 + reviewer-pass patch) ──
 
 
 def test_malformed_hunk_non_numeric_not_detected() -> None:
@@ -191,9 +181,6 @@ def test_partial_hunk_marker_not_detected() -> None:
     assert _looks_like_unified_diff(body) is False
 
 
-# ── Constants exposed for downstream use ──────────────────────────
-
-
 def test_diff_render_tool_names_set() -> None:
     assert _DIFF_RENDER_TOOL_NAMES == frozenset({"Edit", "Write"})
 
@@ -209,9 +196,6 @@ def test_hunk_header_re_rejects_malformed() -> None:
     assert not _HUNK_HEADER_RE.match("@@ no markers @@")
     assert not _HUNK_HEADER_RE.match("@ -1 +1 @")  # single @
     assert not _HUNK_HEADER_RE.match("xx @@ -1 +1 @@")  # not at start
-
-
-# ── Tool-name set sanity ──────────────────────────────────────────
 
 
 def test_edit_in_diff_render_set() -> None:

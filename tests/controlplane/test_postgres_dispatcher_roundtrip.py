@@ -19,9 +19,6 @@ pytestmark = pytest.mark.postgres
 
 @pytest.mark.postgres
 def test_postgres_dispatcher_roundtrip() -> None:
-    # Per-test schema is created/dropped by ``open_postgres_record_store``;
-    # the postgres URL is read from OPENMINION_TEST_POSTGRES_URL and this
-    # test is skipped when it's not set (see postgres_test_utils._postgres_url).
     with open_postgres_record_store("cpe02_dispatcher_roundtrip") as (
         record_store,
         _schema_name,
@@ -53,7 +50,6 @@ def test_postgres_dispatcher_roundtrip() -> None:
                 )
             )
 
-            # Outbound capture — dispatcher invoked list.append exactly once.
             assert len(outbound) == 1
             assert outbound[0] is payload
             assert payload["type"] == "chat"
@@ -61,13 +57,11 @@ def test_postgres_dispatcher_roundtrip() -> None:
             session_id = payload["session_id"]
             assert session_id
 
-            # Session row landed in the postgres-backed store.
             sessions = store.list_sessions("telegram:cpe02-user", "telegram:cpe02-chat")
             assert any(s["session_id"] == session_id for s in sessions), (
                 f"session row not persisted to postgres: {sessions}"
             )
 
-            # Inbound was persisted (turns table).
             turns = store.list_turns(session_id)
             assert any(
                 t.get("role") == "user"
@@ -75,8 +69,6 @@ def test_postgres_dispatcher_roundtrip() -> None:
                 for t in turns
             ), f"inbound turn not persisted: {turns}"
 
-            # Audit events landed — at least the inbound.received/resolved
-            # and outbound.sent pairs the dispatcher emits.
             audit_rows = store.list_audit(session_id=session_id)
             audit_events = {row.get("event_type") for row in audit_rows}
             assert "outbound.sent" in audit_events, (

@@ -12,7 +12,7 @@ from ..plugin_api import (
 from ..runtime.policy import Policy
 from ..runtime.policy_checks import run_policy_preflight
 from ..registry.catalog import ToolSpec
-from ..contracts.schemas import Scope
+from ..contracts.schemas import Scope, TOOL_ERROR_CONFIRM_REQUIRED
 
 
 @dataclass
@@ -46,7 +46,9 @@ class LocalPolicyAdapter(PolicyAdapter):
         except (
             ToolRuntimeError
         ) as exc:  # pragma: no cover - exercised in higher-level tests
-            requires_confirm = str(exc.code or "").upper() == "CONFIRM_REQUIRED"
+            requires_confirm = (
+                str(exc.code or "").upper() == TOOL_ERROR_CONFIRM_REQUIRED
+            )
             return PolicyDecision(
                 allowed=False,
                 reason=exc.message,

@@ -42,6 +42,7 @@ from ..runtime import (
     new_run_id,
 )
 from ..contracts.schemas import (
+    TOOL_ERROR_CONFIRM_REQUIRED,
     CallRequest,
     CmdRunArgs,
     CmdWhichArgs,
@@ -345,7 +346,7 @@ def _maybe_autostart_sidecar_for_spec(spec: Any, env_owner: Any) -> None:
         )
         if not autostart.get("enabled", False):
             raise ToolRuntimeError(
-                "CONFIRM_REQUIRED",
+                TOOL_ERROR_CONFIRM_REQUIRED,
                 f"sidecar '{spec.sidecar}' not enabled",
                 {"sidecar": spec.sidecar, "autostart": autostart},
             )

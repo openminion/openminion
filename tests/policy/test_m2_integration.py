@@ -29,9 +29,6 @@ def _tool_command(
     }
 
 
-# M2: brain adapter basic integration
-
-
 def test_brain_adapter_require_confirm_for_destructive_tool(tmp_path):
     adapter = PolicyCtlBrainAdapter.with_sqlite(tmp_path / "p.db")
     try:
@@ -84,15 +81,11 @@ def test_brain_adapter_a2a_command_normalised(tmp_path):
             "risk_level": "low",
             "command_id": "cmd-a2a-1",
         }
-        # a2a is lower risk by default; should still produce a structured result
         result = adapter.check_command(a2a_cmd, _brain_ctx())
         assert result.action in {"allow", "require_confirm", "deny"}
         assert result.code
     finally:
         adapter.close()
-
-
-# M2: Multi-agent policy isolation
 
 
 def test_policy_decisions_are_per_session(tmp_path):
@@ -127,9 +120,6 @@ def test_policy_decisions_are_per_session(tmp_path):
         ctl.close()
 
 
-# M2: max_uses exhaustion
-
-
 def test_grant_max_uses_exhausts_and_falls_back_to_confirm(tmp_path):
     ctl = PolicyCtl.with_sqlite(
         tmp_path / "p.db",
@@ -157,13 +147,9 @@ def test_grant_max_uses_exhausts_and_falls_back_to_confirm(tmp_path):
 
         assert result1.decision == "ALLOW"
         assert result2.decision == "ALLOW"
-        # After 2 uses the grant is exhausted; next call must require confirm
         assert result3.decision == "REQUIRE_CONFIRM"
     finally:
         ctl.close()
-
-
-# M3: Negative-path edge cases
 
 
 def test_brain_adapter_missing_tool_defaults_gracefully(tmp_path):
@@ -219,11 +205,9 @@ def test_brain_adapter_accepts_dict_risk_override(tmp_path):
 def test_brain_adapter_confirmation_roundtrip(tmp_path):
     adapter = PolicyCtlBrainAdapter.with_sqlite(tmp_path / "p.db")
     try:
-        # Step 1: initial check → require_confirm
         result = adapter.check_command(_tool_command(), _brain_ctx())
         assert result.requires_confirmation()
 
-        # Step 2: simulate user approval — create grant via adapter's underlying ctl
         command_obj = type(
             "_Command",
             (),
@@ -249,7 +233,6 @@ def test_brain_adapter_confirmation_roundtrip(tmp_path):
             session_context={"subject_id": "local"},
         )
 
-        # Step 3: re-check — should now allow (once)
         result2 = adapter.check_command(_tool_command(), _brain_ctx())
         assert result2.is_allowed()
     finally:

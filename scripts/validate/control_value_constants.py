@@ -13,6 +13,7 @@ REPO_IMPORT_ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(REPO_IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_IMPORT_ROOT))
 
+from scripts.common.policy import load_quality_policy  # noqa: E402
 from scripts.common.terminal_output import emit_plain_findings  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -24,68 +25,18 @@ SCAN_DIRS = [
     ROOT / "src" / "openminion" / "api",
 ]
 
-MIN_STRING_LEN = 3
-MIN_OCCURRENCES = 3
 
-EXCLUDED_LITERALS: set[str] = {
-    # LLM/chat role names
-    "system",
-    "user",
-    "assistant",
-    "function",
-    "tool",
-    # HTTP methods
-    "GET",
-    "POST",
-    "PUT",
-    "DELETE",
-    "PATCH",
-    "HEAD",
-    "OPTIONS",
-    # Generic result/status
-    "ok",
-    "error",
-    "success",
-    "fail",
-    "failure",
-    "warning",
-    "info",
-    "true",
-    "false",
-    "none",
-    "null",
-    # Generic payload keys
-    "type",
-    "id",
-    "name",
-    "value",
-    "data",
-    "message",
-    "status",
-    "code",
-    "content",
-    "text",
-    "result",
-    "output",
-    "input",
-    "source",
-    "target",
-    # Boolean string values
-    "1",
-    "0",
-    "yes",
-    "no",
-    "on",
-    "off",
-    # Common JSON/protocol values
-    "auto",
-    "default",
-    "unknown",
-    "none",
-    # Python standard strings
-    "utf-8",
-    "utf8",
-}
+def _load_policy() -> dict[str, object]:
+    policy = load_quality_policy().get("control_value_constants", {})
+    if not isinstance(policy, dict):
+        raise SystemExit("control_value_constants policy must be an object")
+    return policy
+
+
+_POLICY = _load_policy()
+MIN_STRING_LEN = int(_POLICY.get("min_string_len", 3))
+MIN_OCCURRENCES = int(_POLICY.get("min_occurrences", 3))
+EXCLUDED_LITERALS: set[str] = set(_POLICY.get("excluded_literals", []))
 
 
 def _is_test_file(path: pathlib.Path) -> bool:

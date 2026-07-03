@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, NamedTuple
 
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_BLOCKED,
     BRAIN_ACTION_STATUS_FAILED,
@@ -66,7 +68,7 @@ def _is_confirm_required(action_result: Any) -> bool:
     return (
         str(getattr(action_result, "status", "") or "").strip()
         == BRAIN_ACTION_STATUS_NEEDS_USER
-        and _error_code(action_result) == "CONFIRM_REQUIRED"
+        and _error_code(action_result) == TOOL_ERROR_CONFIRM_REQUIRED
     )
 
 
