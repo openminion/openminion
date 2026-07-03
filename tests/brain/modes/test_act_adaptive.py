@@ -1753,6 +1753,57 @@ def test_act_adaptive_seeded_confirmation_replay_continue_stays_autonomous() -> 
     )
 
 
+def test_act_adaptive_seeded_confirmation_replay_preserves_autonomous_budget() -> None:
+    ctx, _ = _ctx(_FakeLLMClient(), _FakeCommandExecutor())
+    ctx.decision.reason_code = "confirmation_replay"
+    ctx.decision._seeded_commands = [
+        ToolCommand(
+            title="inspect directory",
+            tool_name="exec.run",
+            args={"command": "ls demo"},
+            inputs={"command": "ls demo"},
+        )
+    ]
+    captured: dict[str, Any] = {}
+
+    def _fake_run_adaptive_tool_loop(*args, **kwargs):
+        del args
+        captured["profile"] = kwargs.get("profile")
+        profile = captured["profile"]
+        return AdaptiveToolLoopOutcome(
+            profile_name=str(getattr(profile, "profile_name", "") or ""),
+            mode_name=str(getattr(profile, "mode_name", "") or ""),
+            termination_reason="final_text",
+            state=AdaptiveToolLoopState(),
+            allowed_tools=frozenset(getattr(profile, "allowed_tools", frozenset())),
+            mode_result=SimpleNamespace(
+                status="done",
+                working_state=ctx.state,
+                message="ok",
+            ),
+        )
+
+    with patch(
+        "openminion.modules.brain.loop.adaptive.run_adaptive_tool_loop",
+        side_effect=_fake_run_adaptive_tool_loop,
+    ):
+        result = ActLoopMode().execute(ctx)
+
+    assert result.status == "done"
+    profile = captured["profile"]
+    assert getattr(profile, "max_iterations", None) == 24
+    assert getattr(profile, "max_tool_calls_per_loop", None) == 32
+
+
+def test_act_adaptive_seeded_non_autonomous_replay_keeps_batch_budget() -> None:
+    mode = ActLoopMode()
+
+    assert mode._seeded_replay_loop_limits(
+        command_count=1,
+        autonomous_recovery=False,
+    ) == (1, 1)
+
+
 def test_act_adaptive_seeded_confirmation_replay_uses_last_user_input_as_goal() -> None:
     class _AdvanceAwareExecutor(_FakeCommandExecutor):
         def advance_after_action(
@@ -2866,10 +2917,10 @@ def test_act_adaptive_seeded_confirmation_replay_lost_reason_policy_denial_uses_
 
     result = ActLoopMode().execute(ctx)
 
-    # The fake LLM does not emit the full finalization contract; the invariant
-    # under test is that a lost reason_code still recovers to the suggested
-    # structured tool instead of surfacing the seeded policy denial to the user.
-    assert result.status == "error"
+    # The invariant under test is that a lost reason_code still recovers to the
+    # suggested structured tool instead of surfacing the seeded policy denial to
+    # the user. The final closeout shape is owned by the loop finalizer.
+    assert result.status in {"active", "done"}
     assert len(executor.calls) == 2
     assert getattr(executor.calls[1], "tool_name", "") == "file.find"
     assert llm_client.calls

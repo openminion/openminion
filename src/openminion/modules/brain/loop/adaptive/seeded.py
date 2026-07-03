@@ -13,6 +13,7 @@ from openminion.modules.brain.constants import (
     BRAIN_STATE_WAITING_USER,
     STATE_KEY_MODULE_STATE,
 )
+from openminion.modules.brain.config import ADAPTIVE_BUDGET_HARD_CAP
 from openminion.modules.context.compress.eligibility import CompactionBudgetState
 from openminion.modules.brain.execution.continuation import continuation_choice_message
 from openminion.modules.brain.execution.closure import final_close_message
@@ -362,6 +363,24 @@ class ActLoopSeededMixin:
             }
         )
 
+    def _seeded_replay_loop_limits(
+        self,
+        *,
+        command_count: int,
+        autonomous_recovery: bool,
+    ) -> tuple[int, int]:
+        replay_floor = max(1, command_count + (2 if autonomous_recovery else 0))
+        configured_iterations = max(1, int(getattr(self, "_max_iterations", 1) or 1))
+        configured_tool_calls = max(
+            1, int(getattr(self, "_max_tool_calls_per_loop", 1) or 1)
+        )
+        if not autonomous_recovery:
+            return min(replay_floor, configured_iterations), replay_floor
+        return (
+            min(max(configured_iterations, replay_floor), ADAPTIVE_BUDGET_HARD_CAP),
+            min(max(configured_tool_calls, replay_floor), ADAPTIVE_BUDGET_HARD_CAP),
+        )
+
     def _autonomous_seeded_result(
         self,
         ctx: ExecutionContext,
@@ -488,13 +507,9 @@ class ActLoopSeededMixin:
             )
         autonomous_recovery = self._seeded_continue_stays_autonomous(ctx)
         allowed_tools = self._seeded_replay_allowed_tools(ctx)
-        recovery_budget = 2 if autonomous_recovery else 0
-        max_iterations = max(
-            1,
-            min(
-                len(commands) + recovery_budget,
-                int(getattr(self, "_max_iterations", 1)),
-            ),
+        max_iterations, max_tool_calls = self._seeded_replay_loop_limits(
+            command_count=len(commands),
+            autonomous_recovery=autonomous_recovery,
         )
         runtime = None
         model = ""
@@ -519,7 +534,7 @@ class ActLoopSeededMixin:
             allowed_tools=allowed_tools,
             provider_parallel_tool_capacity=2,
             max_iterations=max_iterations,
-            max_tool_calls_per_loop=len(commands) + recovery_budget,
+            max_tool_calls_per_loop=max_tool_calls,
             reflection_policy="never",
             max_macro_corrections=0,
             allow_llm_recovery_after_tool_failure=autonomous_recovery
