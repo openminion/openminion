@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING
 
+from openminion.base.version import OPENMINION_VERSION
+
 from .plugin import GwsToolPlugin, TOOL_DESCRIPTOR, register
 from .registrar import REGISTRAR as _REGISTRAR
 
@@ -10,4 +12,4 @@ REGISTRAR: "ToolModuleRegistrar" = _REGISTRAR
 
 __all__ = ["REGISTRAR", "GwsToolPlugin", "TOOL_DESCRIPTOR", "register"]
 
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION

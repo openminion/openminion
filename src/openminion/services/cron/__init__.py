@@ -1,3 +1,5 @@
+from openminion.base.version import OPENMINION_VERSION
+
 from .delivery import HttpPost, OutboundSender, deliver_cron_result
 from .interfaces import (
     CRON_INTERFACE_VERSION,
@@ -67,4 +69,4 @@ __all__ = [
     "__version__",
 ]
 
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List
 
 try:
+    from openminion.base.version import OPENMINION_VERSION
     from openminion.modules.identity.config import (
         IdentityCtlConfig,
         load_config as load_identity_config,
@@ -101,7 +102,7 @@ class IdentityCommandModule(CommandModule):
     @property
     def version(self) -> str:
         """Module version."""
-        return "0.0.1"
+        return OPENMINION_VERSION
 
     @property
     def description(self) -> str:

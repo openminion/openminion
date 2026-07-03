@@ -1,3 +1,5 @@
+from openminion.base.version import OPENMINION_VERSION
+
 from .interfaces import (
     TASK_INTERFACE_VERSION,
     TaskCtlInterface,
@@ -55,7 +57,7 @@ from .runtime.lifecycle import (
 )
 from .runtime.persistent_service import SqlTaskCtl
 
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION
 
 __all__ = (
     "AutonomyProofPacket",
