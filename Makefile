@@ -56,7 +56,10 @@ VALIDATE_PATTERN_MODULES := \
 	validate.chat_import_boundaries \
 	validate.no_raw_control_value_strings \
 	validate.asyncio_run_boundary \
+	validate.artifact_locations \
 	validate.path_structure_hygiene \
+	validate.method_loc \
+	validate.broad_exception \
 	validate.filename_underscore_hygiene \
 	validate.type_ignore_hygiene
 
@@ -98,7 +101,10 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/chat_import_boundaries \
 	validate/no_raw_control_value_strings \
 	validate/asyncio_run_boundary \
+	validate/artifact_locations \
 	validate/path_structure_hygiene \
+	validate/method_loc \
+	validate/broad_exception \
 	validate/filename_underscore_hygiene \
 	validate/type_ignore_hygiene
 
@@ -184,6 +190,7 @@ typecheck-strict: typecheck
 
 lint-advisory: $(DEV_STAMP)
 	cd "$(REPO_ROOT)" && $(PYTHON) -m scripts.validate.control_value_constants
+	cd "$(REPO_ROOT)" && $(PYTHON) -m scripts.validate.passthrough
 	cd "$(REPO_ROOT)" && $(PYTHON) -m scripts.validate.type_ignore_hygiene --baseline
 
 # I-17 (2026-06-02): each validator runs as its own phony target so

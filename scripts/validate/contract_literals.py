@@ -7,11 +7,13 @@ import sys
 import ast
 import re
 from pathlib import Path
+from typing import Any
 
 REPO_IMPORT_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_IMPORT_ROOT))
 
+from scripts.common.policy import load_quality_policy  # noqa: E402
 from scripts.common.terminal_output import emit_plain_findings  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -23,27 +25,25 @@ SCAN_DIRS = [
     REPO_ROOT / "src" / "openminion" / "api",
 ]
 
+
+def _load_policy() -> dict[str, Any]:
+    policy = load_quality_policy().get("contract_literals", {})
+    if not isinstance(policy, dict):
+        raise SystemExit("contract_literals policy must be an object")
+    return policy
+
+
+_POLICY = _load_policy()
 VERSION_CONST_SUFFIX_RE = re.compile(
-    r"(?:CONTRACT|INTERFACE|RENDER|SCHEMA|PROTOCOL)_VERSION$"
+    str(
+        _POLICY.get(
+            "version_constant_suffix_pattern",
+            r"(?:CONTRACT|INTERFACE|RENDER|SCHEMA|PROTOCOL)_VERSION$",
+        )
+    )
 )
-
-# Files explicitly allowed to define these constants.
-# Add with a rationale comment.
-ALLOWLIST_FILES: set[str] = {
-    # tool/_interfaces_impl.py is an interface implementation file — allowed to
-    # define TOOL_INTERFACE_VERSION as its protocol version marker.
-    "src/openminion/modules/tool/_interfaces_impl.py",
-    # memory/contracts/types.py lives in a contracts/ directory — allowed.
-    "src/openminion/modules/memory/contracts/types.py",
-    # brain/runtime/safety.py intentionally consolidates the former interfaces.py
-    # and service.py owners into one runtime module while retaining the canonical
-    # SAFETY_INTERFACE_VERSION definition.
-    "src/openminion/modules/brain/runtime/safety.py",
-    "src/openminion/modules/a2a/wire/google_a2a_v1/agent_card.py",
-}
-
-# Directories whose files are always allowed (contracts/ or interfaces/ dirs).
-ALLOWLIST_DIR_PARTS: set[str] = {"contracts", "interfaces"}
+ALLOWLIST_FILES: set[str] = set(_POLICY.get("allowlist_files", []))
+ALLOWLIST_DIR_PARTS: set[str] = set(_POLICY.get("allowlist_dir_parts", []))
 
 
 def _should_scan(path: Path) -> bool:

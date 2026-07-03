@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Mapping
 
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.runtime.network import (
     is_forbidden_ip as _is_forbidden_ip,
 )
@@ -706,10 +707,13 @@ def _set_default_preflight(
         _emit_event(
             ctx,
             event_name="location.blocked",
-            payload={"method": "location.set_default", "code": "CONFIRM_REQUIRED"},
+            payload={
+                "method": "location.set_default",
+                "code": TOOL_ERROR_CONFIRM_REQUIRED,
+            },
         )
         return ctx, _error(
-            "CONFIRM_REQUIRED",
+            TOOL_ERROR_CONFIRM_REQUIRED,
             "location.set_default requires explicit confirmation",
             method="location.set_default",
             source="none",

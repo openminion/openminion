@@ -6,6 +6,7 @@ import fnmatch
 from typing import TYPE_CHECKING
 from typing import Any
 
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 
@@ -168,7 +169,7 @@ def _enforce_mcp_approval(
     ):
         return
     raise ToolRuntimeError(
-        "CONFIRM_REQUIRED",
+        TOOL_ERROR_CONFIRM_REQUIRED,
         f"MCP tool '{runtime_tool_name}' requires approval before remote execution.",
         details={
             "reason_code": "POLICY_MCP_APPROVAL_REQUIRED",

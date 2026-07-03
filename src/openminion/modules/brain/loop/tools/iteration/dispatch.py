@@ -5,6 +5,9 @@ from typing import Any, NamedTuple
 from openminion.modules.brain.execution.child_tasks import (
     DecomposeControlPayload,
 )
+from openminion.modules.brain.loop.constants import (
+    PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
+)
 from openminion.modules.llm.schemas import Message
 
 from ..budget_control import _effective_cap
@@ -29,6 +32,7 @@ from ..dispatch import (
     _handle_exact_date_requirements,
     _tool_request_result,
 )
+from ..evidence import _count_substantive_non_control_tool_results
 from ..messages import action_result_to_tool_message
 from ..plan_control import (
     PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
@@ -63,6 +67,25 @@ class LoopDispatchResult(NamedTuple):
     batch_had_progress: bool
     continue_loop: bool
     outcome: AdaptiveToolLoopOutcome | None
+
+
+def _is_plan_tool_call(tool_call: Any) -> bool:
+    return str(getattr(tool_call, "name", "") or "").strip() == PLAN_TOOL_NAME
+
+
+def _record_successful_plan_action(
+    loop_state: AdaptiveToolLoopState,
+    arguments: dict[str, Any],
+) -> None:
+    loop_state.scratchpad[PLAN_TOOL_USED_SCRATCHPAD_KEY] = True
+    recorded_actions = list(
+        loop_state.scratchpad.get(PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY, []) or []
+    )
+    recorded_actions.append(str(arguments.get("action", "") or "").strip())
+    loop_state.scratchpad[PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY] = recorded_actions
+    loop_state.scratchpad[PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY] = (
+        _count_substantive_non_control_tool_results(loop_state)
+    )
 
 
 def _handle_decompose_calls(
@@ -295,28 +318,19 @@ def _process_plan_tool_calls(
 ) -> tuple[list[Any], bool, LoopDispatchResult | None]:
     batch_had_progress = False
     plan_tool_calls = [
-        tool_call
-        for tool_call in tool_calls
-        if str(getattr(tool_call, "name", "") or "").strip() == PLAN_TOOL_NAME
+        tool_call for tool_call in tool_calls if _is_plan_tool_call(tool_call)
     ]
     if not plan_tool_calls:
         return tool_calls, batch_had_progress, None
     regular_tool_calls = [
-        tool_call
-        for tool_call in tool_calls
-        if str(getattr(tool_call, "name", "") or "").strip() != PLAN_TOOL_NAME
+        tool_call for tool_call in tool_calls if not _is_plan_tool_call(tool_call)
     ]
     for tool_call in plan_tool_calls:
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         loop_state.scratchpad[PLAN_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
         action_result = handle_plan_tool_call(loop_ctx=loop_ctx, arguments=arguments)
         if str(getattr(action_result, "status", "") or "") == "success":
-            loop_state.scratchpad[PLAN_TOOL_USED_SCRATCHPAD_KEY] = True
-            recorded_actions = list(
-                loop_state.scratchpad.get(PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY, []) or []
-            )
-            recorded_actions.append(str(arguments.get("action", "") or "").strip())
-            loop_state.scratchpad[PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY] = recorded_actions
+            _record_successful_plan_action(loop_state, arguments)
         loop_state.messages.append(
             action_result_to_tool_message(
                 getattr(tool_call, "id", None),

@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from ..errors import ToolRuntimeError
 from ..plugin_contract import (
     ArtifactSink,
@@ -216,7 +217,7 @@ class ToolRuntime:
             err_code = (
                 "POLICY_DENIED"
                 if policy.action == TOOL_POLICY_ACTION_DENY
-                else "CONFIRM_REQUIRED"
+                else TOOL_ERROR_CONFIRM_REQUIRED
             )
             details = dict(policy.details)
             result_data: Dict[str, Any] = {}
@@ -586,7 +587,7 @@ class DenyHighRiskWithoutTagPolicyHook:
             return PolicyDecision(
                 action=TOOL_POLICY_ACTION_REQUIRE_CONFIRM,
                 reason="High-risk tool requires explicit approval tag",
-                code="CONFIRM_REQUIRED",
+                code=TOOL_ERROR_CONFIRM_REQUIRED,
                 details={"required_tag": "approved=true"},
             )
         return PolicyDecision(action=TOOL_POLICY_ACTION_ALLOW, reason="policy passed")

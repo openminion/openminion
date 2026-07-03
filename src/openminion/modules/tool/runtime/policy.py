@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, cast
 try:
     import yaml
 except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+
     class _YamlFallback:
         @staticmethod
         def safe_load(raw: str) -> Any:
@@ -20,7 +21,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environme
     yaml = _YamlFallback()  # type: ignore[assignment]
 
 from ..errors import ToolRuntimeError
-from ..contracts.schemas import Scope
+from ..contracts.schemas import Scope, TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.base.config.env import resolve_environment_config
 from ..constants import (
     TOOL_AUDIT_WRITE_MODE_DUAL,
@@ -60,6 +61,10 @@ _MKDIR_SCAFFOLD_HINT = {
         "parent directories are created automatically by default."
     ),
 }
+
+
+def _invalid_argument(message: str) -> ToolRuntimeError:
+    return ToolRuntimeError("INVALID_ARGUMENT", message)
 
 
 def reorder_runtime_chain(
@@ -496,9 +501,7 @@ class Policy:
         if path.exists():
             loaded = yaml.safe_load(path.read_text()) or {}
             if not isinstance(loaded, dict):
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT", "Policy file must parse to an object"
-                )
+                raise _invalid_argument("Policy file must parse to an object")
             parsed = _normalize_policy_legacy_aliases(loaded)
         merged = _deep_merge(DEFAULT_POLICY, parsed)
         return Policy(raw=merged)
@@ -506,9 +509,7 @@ class Policy:
     def max_scope(self) -> Scope:
         raw_scope = self.raw.get("scope", "WRITE_SAFE")
         if raw_scope not in SCOPE_ORDER:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT", f"Invalid policy scope: {raw_scope}"
-            )
+            raise _invalid_argument(f"Invalid policy scope: {raw_scope}")
         return cast(Scope, raw_scope)
 
     def effective_scope(self, requested: Optional[str]) -> Scope:
@@ -516,9 +517,7 @@ class Policy:
         if not requested:
             return policy_max
         if requested not in SCOPE_ORDER:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT", f"Unknown requested scope: {requested}"
-            )
+            raise _invalid_argument(f"Unknown requested scope: {requested}")
         req = cast(Scope, requested)
         return req if SCOPE_ORDER[req] <= SCOPE_ORDER[policy_max] else policy_max
 
@@ -648,11 +647,11 @@ class Policy:
     ) -> str:
         effective_argv = effective_command_argv(argv)
         if not effective_argv:
-            raise ToolRuntimeError("INVALID_ARGUMENT", "cmd.run argv must include executable")
+            raise _invalid_argument("cmd.run argv must include executable")
         raw_exec = str(effective_argv[0])
         exec_name = self._normalize_exec_name(raw_exec)
         if not exec_name:
-            raise ToolRuntimeError("INVALID_ARGUMENT", "cmd.run executable cannot be empty")
+            raise _invalid_argument("cmd.run executable cannot be empty")
 
         security_mode = self.exec_security_mode()
         ask_mode = self.exec_ask_mode()
@@ -664,7 +663,7 @@ class Policy:
             if confirm:
                 return
             raise ToolRuntimeError(
-                "CONFIRM_REQUIRED",
+                TOOL_ERROR_CONFIRM_REQUIRED,
                 "Exec approval required",
                 {"rule": rule, "exec": exec_name, **details},
             )
@@ -727,7 +726,7 @@ class Policy:
             )
         if not confirm:
             raise ToolRuntimeError(
-                "CONFIRM_REQUIRED",
+                TOOL_ERROR_CONFIRM_REQUIRED,
                 "Approval required for dangerous command",
                 details,
             )
@@ -834,7 +833,7 @@ class Policy:
 
         if required and not confirm:
             raise ToolRuntimeError(
-                "CONFIRM_REQUIRED",
+                TOOL_ERROR_CONFIRM_REQUIRED,
                 "Denied by policy: operation requires explicit confirmation",
                 {**reason, "suggestion": "Retry with meta.confirm=true or --confirm"},
             )
@@ -905,9 +904,7 @@ class Policy:
     def ensure_command_allowed(self, argv: list[str]) -> str:
         effective_argv = effective_command_argv(argv)
         if not effective_argv:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT", "cmd.run argv must include executable"
-            )
+            raise _invalid_argument("cmd.run argv must include executable")
         raw_exec = effective_argv[0]
         exec_name = (
             os.path.basename(raw_exec)
@@ -916,9 +913,7 @@ class Policy:
         )
         exec_name = exec_name.strip()
         if not exec_name:
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT", "cmd.run executable cannot be empty"
-            )
+            raise _invalid_argument("cmd.run executable cannot be empty")
 
         commands = cast(Dict[str, Any], self.raw.get("commands", {}))
         deny_exact = set(commands.get("deny_exact", []))
@@ -980,7 +975,9 @@ class Policy:
     def filter_env(self, raw_env: Dict[str, str]) -> Dict[str, str]:
         env_cfg = cast(Dict[str, Any], self.raw.get("env", {}))
         allow_keys = set(env_cfg.get("allow_keys", []))
-        deny_regex = [re.compile(str(expr)) for expr in env_cfg.get("deny_keys_regex", [])]
+        deny_regex = [
+            re.compile(str(expr)) for expr in env_cfg.get("deny_keys_regex", [])
+        ]
         process_env = resolve_environment_config().snapshot()
 
         out: Dict[str, str] = {}

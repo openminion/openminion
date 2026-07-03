@@ -15,6 +15,7 @@ from openminion.modules.brain.runner.tick.context import (
     _store_pending_confirmation_metadata,
 )
 from openminion.modules.brain.schemas import ActionResult, new_uuid
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 
 
 class _CodingLoopContextAdapter:
@@ -134,7 +135,7 @@ class _CodingLoopContextAdapter:
             action_result is not None
             and str(getattr(action_result, "status", "") or "").strip()
             == BRAIN_ACTION_STATUS_NEEDS_USER
-            and error_code.strip().upper() == "CONFIRM_REQUIRED"
+            and error_code.strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED
             and approved_command is not None
         ):
             self.state.pending_confirmation_command = approved_command.model_copy(

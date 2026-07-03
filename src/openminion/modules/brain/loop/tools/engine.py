@@ -3,6 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+from openminion.modules.brain.loop.constants import (
+    PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
+)
 from openminion.modules.llm.schemas import Message
 from .contracts import (
     ADAPTIVE_CLOSURE_ENGINE_SINGLE_PASS,
@@ -37,7 +41,6 @@ from .postprocess.rules import _is_empty_plan_lookup_diversion
 from .plan_control import (
     PLAN_TOOL_ACTIONS,
     PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
-    PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
     PLAN_TOOL_NAME,
 )
 from .decompose import (  # noqa: F401
@@ -195,7 +198,9 @@ class _PreparedLoopResponse:
     iter_output_tokens: int
 
 
-def _plan_control_retry_message(tool_calls: list[Any], retry_count: int) -> Message | None:
+def _plan_control_retry_message(
+    tool_calls: list[Any], retry_count: int
+) -> Message | None:
     if not tool_calls:
         return None
     if any(
@@ -271,9 +276,7 @@ def _repeated_plan_only_without_substantive_work(
             return False
     current_substantive_count = _count_substantive_non_control_tool_results(loop_state)
     last_plan_substantive_count = int(
-        loop_state.scratchpad.get(
-            PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY, -1
-        )
+        loop_state.scratchpad.get(PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY, -1)
         or 0
     )
     return current_substantive_count <= last_plan_substantive_count
@@ -646,8 +649,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
 
     def _handle_plan_control_retry(self, tool_calls: list[Any]) -> bool:
         plan_retry_count = (
-            int(self.loop_state.scratchpad.get("plan_control.noop_retries", 0) or 0)
-            + 1
+            int(self.loop_state.scratchpad.get("plan_control.noop_retries", 0) or 0) + 1
         )
         repeated_plan_only = _repeated_plan_only_without_substantive_work(
             self.loop_state,

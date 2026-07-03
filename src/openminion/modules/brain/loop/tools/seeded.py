@@ -149,6 +149,15 @@ def _seeded_failure_recovery_message(action_result: Any) -> str | None:
     )
 
 
+def _seeded_command_label(command: Any, tool_name: str, command_kind: str) -> str:
+    return (
+        str(getattr(command, "title", "") or "").strip()
+        or tool_name
+        or command_kind
+        or "command"
+    )
+
+
 def _run_seeded_command_step(
     *,
     loop_ctx: "AdaptiveToolLoopContext",
@@ -193,12 +202,7 @@ def _run_seeded_command_step(
     command = seeded_queue.pop(0)
     command_kind = str(getattr(command, "kind", "") or "").strip().lower()
     tool_name = str(getattr(command, "tool_name", "") or "").strip()
-    command_label = (
-        str(getattr(command, "title", "") or "").strip()
-        or tool_name
-        or command_kind
-        or "command"
-    )
+    command_label = _seeded_command_label(command, tool_name, command_kind)
     if command_kind == "tool":
         if tool_name not in allowed_tools:
             message = (
@@ -329,6 +333,10 @@ def _run_seeded_command_step(
         recovery_message = _seeded_failure_recovery_message(action_result)
     if recovery_message:
         seeded_queue.clear()
+        loop_state.direct_tool_turn = None
+        loop_state.direct_tool_requested_batch_satisfied = False
+        loop_state.direct_tool_closure_consumed = False
+        loop_state.scratchpad["seeded_recovery_cleared_direct_tool_turn"] = True
         loop_state.messages.append(Message(role="system", content=recovery_message))
         return True, None
 

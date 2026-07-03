@@ -7,35 +7,30 @@ import ast
 import json
 import sys
 from pathlib import Path
+from typing import Any
+
+
+REPO_IMPORT_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_IMPORT_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_IMPORT_ROOT))
+
+from scripts.common.policy import load_quality_policy  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "openminion"
 
-# Map literal -> set of allowed contexts (used by AST visitor).
-OWNED_LITERALS: dict[str, str] = {
-    "module_state": "STATE_KEY_MODULE_STATE",
-    "finalization_status": "STATE_KEY_FINALIZATION_STATUS",
-    "task_backed_resume_state": "STATE_KEY_TASK_BACKED_RESUME",
-    "working_state": "STATE_KEY_WORKING",
-    "next_attempt_state": "STATE_KEY_NEXT_ATTEMPT",
-    "source_outcome_status": "STATE_KEY_SOURCE_OUTCOME",
-    "emit_adaptive_status": "EVENT_NAME_ADAPTIVE_STATUS",
-    "active_state": "STATE_KEY_ACTIVE",
-}
 
-# "hot" is too common as a standalone literal; only flag when paired with the
-# key "runtime_mode" in the same dict literal. Handled via a dedicated visitor.
-RUNTIME_MODE_HOT_OWNER = "RUNTIME_MODE_HOT"
+def _load_policy() -> dict[str, Any]:
+    policy = load_quality_policy().get("raw_control_values", {})
+    if not isinstance(policy, dict):
+        raise SystemExit("raw_control_values policy must be an object")
+    return policy
 
-# File-relative paths excluded from scanning entirely.
-EXCLUDED_FILES: frozenset[str] = frozenset(
-    {
-        # Frozen migration DDL — table name literal is permanent.
-        "modules/session/storage/migrations/versions/0001_baseline.py",
-        # SQL table-existence probe matches the frozen DDL string.
-        "services/health/observability.py",
-    }
-)
+
+_POLICY = _load_policy()
+OWNED_LITERALS: dict[str, str] = dict(_POLICY.get("owned_literals", {}))
+RUNTIME_MODE_HOT_OWNER = str(_POLICY.get("runtime_mode_hot_owner", "RUNTIME_MODE_HOT"))
+EXCLUDED_FILES: frozenset[str] = frozenset(_POLICY.get("excluded_files", []))
 
 
 class _AllowedContextTracker(ast.NodeVisitor):

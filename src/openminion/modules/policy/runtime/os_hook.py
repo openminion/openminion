@@ -1,5 +1,7 @@
 from typing import Any, Dict
 
+from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
+
 from ..constants import (
     POLICY_DECISION_ALLOW,
     POLICY_DECISION_DENY,
@@ -59,7 +61,7 @@ class PolicyToolHook:
         code = {
             POLICY_DECISION_ALLOW: "POLICY_ALLOW",
             POLICY_DECISION_DENY: "POLICY_DENIED",
-        }.get(decision.decision, "CONFIRM_REQUIRED")
+        }.get(decision.decision, TOOL_ERROR_CONFIRM_REQUIRED)
 
         if ToolPolicyDecision is not None:
             return ToolPolicyDecision(
