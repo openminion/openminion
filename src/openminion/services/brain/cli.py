@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal
+from typing import Any, Callable, Literal, cast
 
 from openminion.modules.brain.runtime.goal.long_running import (
     AutonomyRunStore,
@@ -11,9 +11,14 @@ from openminion.modules.brain.runtime.goal.long_running import (
     render_goal_summary,
     render_goal_verification,
 )
+from openminion.modules.brain.runtime.goal.loop import GoalRunOutcome, GoalRunState
+from openminion.modules.brain.runtime.goal.driver import GoalContinuationDriver
+from openminion.modules.brain.runtime.goal.evaluator import GoalTurnResult
+from openminion.modules.brain.runtime.goal.ledger import SQLiteGoalRunStepLedger
+from openminion.modules.brain.runtime.goal.verification import GoalVerificationResult
 from openminion.modules.brain.schemas.goals import Goal
 from openminion.modules.brain.schemas.state import BudgetCounters, WorkingState
-from openminion.modules.brain.storage.goals import SQLiteGoalStore
+from openminion.modules.brain.storage.goals import GoalStore, SQLiteGoalStore
 from openminion.modules.brain.storage.missions import SQLiteMissionStateStore
 
 
@@ -92,76 +97,21 @@ def execute_goal_cli_command(
     goal_store = runtime.goal_store
 
     if stripped in {"/goal", "/goal list"}:
-        goals = goal_store.list_active_for_session(session_id)
-        if not goals:
-            return ("info", "No active goals for this session.")
-        return ("info", "\n".join(render_goal_summary(goal) for goal in goals))
+        return _goal_list_response(goal_store, session_id=session_id)
 
     if stripped in {"/goal all", "/goals"}:
-        goals = goal_store.list_active()
-        if not goals:
-            return ("info", "No active workspace goals.")
-        return ("info", "\n".join(render_goal_summary(goal) for goal in goals))
+        return _goal_all_response(goal_store)
 
     if stripped.startswith("/goal show "):
-        goal_id = stripped.split(" ", 2)[2].strip()
-        goal, error = _session_goal_or_error(
-            runtime,
-            goal_id=goal_id,
-            session_id=session_id,
-        )
-        if error:
-            return ("error", error)
-        details = [
-            render_goal_summary(goal),
-            f"success_criteria={len(goal.success_criteria)}",
-            f"deliverables={len(goal.deliverables)}",
-            f"failure_conditions={len(goal.failure_conditions)}",
-        ]
-        return ("info", "\n".join(details))
+        return _goal_show_response(stripped, runtime, session_id=session_id)
 
     if stripped.startswith("/goal abort "):
-        goal_id = stripped.split(" ", 2)[2].strip()
-        goal, error = _session_goal_or_error(
-            runtime,
-            goal_id=goal_id,
-            session_id=session_id,
-        )
-        if error:
-            return ("error", error)
-        aborted = goal_store.abort(goal.goal_id, reason="goal_cli_abort")
-        return ("success", render_goal_summary(aborted))
+        return _goal_abort_response(stripped, runtime, session_id=session_id)
 
     if stripped.startswith("/goal verify "):
-        goal_id = stripped.split(" ", 2)[2].strip()
-        goal, error = _session_goal_or_error(
-            runtime,
-            goal_id=goal_id,
-            session_id=session_id,
-        )
-        if error:
-            return ("error", error)
-        result = runtime.verify_goal_for_cli(
-            goal_id=goal.goal_id,
-            run_id=f"goal-cli-{goal.goal_id}",
-            state=_state(session_id),
-            logger=_CliLogger(),
-        )
-        return ("info", render_goal_verification(goal_id, result))
+        return _goal_verify_response(stripped, runtime, session_id=session_id)
 
     controller = build_goal_run_controller(runtime, db_path=db_path)
-
-    if stripped == "/goal status":
-        return (
-            "info",
-            render_goal_run_status(controller.active_state(session_id=session_id)),
-        )
-
-    if stripped in {"/goal stop", "/goal clear"}:
-        stopped = controller.stop_session_run(session_id=session_id)
-        if stopped is None:
-            return ("info", "No active goal run for this session.")
-        return ("success", render_goal_run_status(stopped))
 
     if stripped.startswith("/goal run "):
         return _run_goal_command(
@@ -171,9 +121,184 @@ def execute_goal_cli_command(
             session_id=session_id,
         )
 
+    run_response = _goal_run_control_response(
+        stripped,
+        controller=controller,
+        session_id=session_id,
+        db_path=db_path,
+    )
+    if run_response is not None:
+        return run_response
+
     return (
         "error",
-        "usage: /goal [list|all|show <id>|abort <id>|verify <id>|run <id>|status|stop|clear]",
+        "usage: /goal [list|all|show <id>|abort <id>|verify <id>|run <id>|status|inspect|evidence|pause|resume|stop|clear]",
+    )
+
+
+def _goal_list_response(
+    goal_store: GoalStore,
+    *,
+    session_id: str,
+) -> tuple[GoalCliTone, str]:
+    goals = goal_store.list_active_for_session(session_id)
+    if not goals:
+        return ("info", "No active goals for this session.")
+    return ("info", "\n".join(render_goal_summary(goal) for goal in goals))
+
+
+def _goal_all_response(goal_store: GoalStore) -> tuple[GoalCliTone, str]:
+    goals = goal_store.list_active()
+    if not goals:
+        return ("info", "No active workspace goals.")
+    return ("info", "\n".join(render_goal_summary(goal) for goal in goals))
+
+
+def _goal_show_response(
+    line: str,
+    runtime: LongRunningGoalRuntime,
+    *,
+    session_id: str,
+) -> tuple[GoalCliTone, str]:
+    goal_id = line.split(" ", 2)[2].strip()
+    goal, error = _session_goal_or_error(
+        runtime, goal_id=goal_id, session_id=session_id
+    )
+    if error or goal is None:
+        return ("error", error)
+    details = [
+        render_goal_summary(goal),
+        f"success_criteria={len(goal.success_criteria)}",
+        f"deliverables={len(goal.deliverables)}",
+        f"failure_conditions={len(goal.failure_conditions)}",
+    ]
+    return ("info", "\n".join(details))
+
+
+def _goal_abort_response(
+    line: str,
+    runtime: LongRunningGoalRuntime,
+    *,
+    session_id: str,
+) -> tuple[GoalCliTone, str]:
+    goal_id = line.split(" ", 2)[2].strip()
+    goal, error = _session_goal_or_error(
+        runtime, goal_id=goal_id, session_id=session_id
+    )
+    if error or goal is None:
+        return ("error", error)
+    aborted = runtime.goal_store.abort(goal.goal_id, reason="goal_cli_abort")
+    return ("success", render_goal_summary(aborted))
+
+
+def _goal_verify_response(
+    line: str,
+    runtime: LongRunningGoalRuntime,
+    *,
+    session_id: str,
+) -> tuple[GoalCliTone, str]:
+    goal_id = line.split(" ", 2)[2].strip()
+    goal, error = _session_goal_or_error(
+        runtime, goal_id=goal_id, session_id=session_id
+    )
+    if error or goal is None:
+        return ("error", error)
+    result = runtime.verify_goal_for_cli(
+        goal_id=goal.goal_id,
+        run_id=f"goal-cli-{goal.goal_id}",
+        state=_state(session_id),
+        logger=_CliLogger(),
+    )
+    return ("info", render_goal_verification(goal_id, result))
+
+
+def _goal_run_control_response(
+    line: str,
+    *,
+    controller: GoalRunController,
+    session_id: str,
+    db_path: Path,
+) -> tuple[GoalCliTone, str] | None:
+    if line == "/goal status":
+        return (
+            "info",
+            render_goal_run_status(controller.active_state(session_id=session_id)),
+        )
+    if line == "/goal inspect":
+        return _goal_inspect_response(
+            controller, session_id=session_id, db_path=db_path
+        )
+    if line == "/goal evidence":
+        return _goal_evidence_response(
+            controller, session_id=session_id, db_path=db_path
+        )
+    if line == "/goal pause":
+        paused = controller.pause_session_run(session_id=session_id)
+        if paused is None:
+            return ("info", "No active goal run for this session.")
+        return ("success", render_goal_run_status(paused))
+    if line == "/goal resume":
+        resumed = controller.resume_session_run(session_id=session_id)
+        if resumed is None:
+            return ("info", "No paused goal run for this session.")
+        return ("success", render_goal_run_status(resumed))
+    if line in {"/goal stop", "/goal clear"}:
+        stopped = controller.stop_session_run(session_id=session_id)
+        if stopped is None:
+            return ("info", "No active goal run for this session.")
+        return ("success", render_goal_run_status(stopped))
+    return None
+
+
+def _latest_goal_run_state(
+    controller: GoalRunController,
+    session_id: str,
+) -> GoalRunState | None:
+    return controller.active_state(session_id=session_id) or (
+        controller.run_store.latest_for_session(session_id)
+    )
+
+
+def _goal_inspect_response(
+    controller: GoalRunController,
+    *,
+    session_id: str,
+    db_path: Path,
+) -> tuple[GoalCliTone, str]:
+    state = _latest_goal_run_state(controller, session_id)
+    if state is None:
+        return ("info", "No goal run for this session.")
+    summary = SQLiteGoalRunStepLedger(db_path).summary_for_run(state.run_id)
+    lines = [
+        render_goal_run_status(state),
+        f"ledger_steps={summary.step_count}",
+        f"latest_next_instruction={summary.latest_next_instruction or '-'}",
+    ]
+    if summary.error_refs:
+        lines.append("error_refs=" + ",".join(summary.error_refs))
+    return ("info", "\n".join(lines))
+
+
+def _goal_evidence_response(
+    controller: GoalRunController,
+    *,
+    session_id: str,
+    db_path: Path,
+) -> tuple[GoalCliTone, str]:
+    state = _latest_goal_run_state(controller, session_id)
+    if state is None:
+        return ("info", "No goal run for this session.")
+    steps = SQLiteGoalRunStepLedger(db_path).list_for_run(state.run_id)
+    if not steps:
+        return ("info", "No goal-run evidence recorded.")
+    return ("info", "\n".join(_render_goal_step(step) for step in steps))
+
+
+def _render_goal_step(step: Any) -> str:
+    evidence = ",".join(step.tool_evidence_refs) or "-"
+    return (
+        f"{step.turn_index}: {step.evaluator_outcome} "
+        f"{step.evaluator_reason} evidence={evidence}"
     )
 
 
@@ -193,7 +318,7 @@ def _run_goal_command(
         goal_id=goal_id,
         session_id=session_id,
     )
-    if error:
+    if error or goal is None:
         return ("error", error)
     replay = _option_value(parts[3:], "--replay")
     if replay:
@@ -205,6 +330,23 @@ def _run_goal_command(
                 evaluations=evaluations,
             )
         except (KeyError, ValueError) as exc:
+            return ("error", str(exc))
+        return ("success", render_goal_run_status(state))
+    live_script = _option_value(parts[3:], "--live")
+    if live_script:
+        try:
+            driver = GoalContinuationDriver(
+                controller=controller,
+                goal_store=runtime.goal_store,
+                ledger=SQLiteGoalRunStepLedger(controller.run_store.sqlite_path),
+            )
+            state = driver.run_until_stop(
+                session_id=session_id,
+                goal_id=goal.goal_id,
+                turn_runner=_scripted_goal_turn_runner(live_script),
+                verifier=_scripted_goal_verifier,
+            )
+        except (KeyError, RuntimeError, ValueError) as exc:
             return ("error", str(exc))
         return ("success", render_goal_run_status(state))
     try:
@@ -225,6 +367,52 @@ def _option_value(args: list[str], name: str) -> str:
         if item.startswith(prefix):
             return item.removeprefix(prefix).strip()
     return ""
+
+
+def _scripted_goal_turn_runner(raw: str) -> Callable[[str], GoalTurnResult]:
+    entries = [part.strip() for part in str(raw or "").split(",") if part.strip()]
+    if not entries:
+        raise ValueError("--live requires outcome:reason entries")
+    index = 0
+
+    def run_turn(_prompt: str) -> GoalTurnResult:
+        nonlocal index
+        if index >= len(entries):
+            return GoalTurnResult(
+                proposed_outcome="blocked",
+                reason="live_script_exhausted",
+            )
+        entry = entries[index]
+        index += 1
+        outcome, sep, reason = entry.partition(":")
+        if not sep:
+            raise ValueError("--live entries must use outcome:reason")
+        return GoalTurnResult(
+            proposed_outcome=cast(GoalRunOutcome, outcome.strip()),
+            reason=reason.strip() or outcome.strip(),
+            evidence_refs=(f"live-script:{index}",),
+            next_instruction="continue bounded goal work"
+            if outcome.strip() == "continue"
+            else "",
+        )
+
+    return run_turn
+
+
+def _scripted_goal_verifier(
+    _goal: Goal,
+    _state: Any,
+    result: GoalTurnResult,
+) -> GoalVerificationResult | None:
+    if result.proposed_outcome != "satisfied":
+        return None
+    return GoalVerificationResult(
+        status="passed",
+        unmet_criteria=(),
+        missing_deliverables=(),
+        triggered_failures=(),
+        verifier_results=(),
+    )
 
 
 __all__ = [

@@ -20,8 +20,9 @@ from ...storage.goals import GoalStore
 from ...storage.missions import MissionStateStore
 from .policy import authorize_goal_action
 from .verification import GoalVerificationResult, verify_goal_completion
+from openminion.modules.task.autonomy import AutonomyRunStore
+
 from .loop import (
-    AutonomyRunStore,
     GoalRunController,
     SQLiteGoalRunStore,
     parse_replay_evaluations,

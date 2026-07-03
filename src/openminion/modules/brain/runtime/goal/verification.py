@@ -1,18 +1,17 @@
 """Typed goal lifecycle verification helpers for LGMH Tier B."""
 
 from dataclasses import dataclass
-from typing import Literal, Mapping
+from typing import Any, Literal, Mapping
 
+from ...meta.schemas import VerificationMode
 from ..verification.policy import VerifierInvocation, VerifierResult, run_verifier
-from ...schemas import (
-    ActionResult,
-    Command,
+from ...schemas.commands import Command
+from ...schemas.goals import (
     FailureCondition,
     Goal,
-    VerificationMode,
-    WorkingState,
     evaluate_goal_wall_clock_budget,
 )
+from ...schemas.state import ActionResult, WorkingState
 from ...storage.goals import GoalStore
 
 
@@ -44,7 +43,7 @@ def verify_goal_completion(
     goals: GoalStore,
     run_id: str,
     state: WorkingState,
-    logger,
+    logger: Any,
     criterion_inputs: Mapping[str, GoalVerificationInput] | None = None,
     deliverable_inputs: Mapping[str, GoalVerificationInput] | None = None,
     elapsed_wall_clock_seconds: int | float | None = None,
@@ -72,7 +71,7 @@ def verify_goal(
     *,
     run_id: str,
     state: WorkingState,
-    logger,
+    logger: Any,
     criterion_inputs: Mapping[str, GoalVerificationInput] | None = None,
     deliverable_inputs: Mapping[str, GoalVerificationInput] | None = None,
     elapsed_wall_clock_seconds: int | float | None = None,
