@@ -65,9 +65,6 @@ def _make_runtime() -> OpenMinionRuntime:
     return rt
 
 
-# ── list_models ──────────────────────────────────────────────────
-
-
 def test_list_models_returns_configured_providers() -> None:
     rt = _make_runtime()
     rows = rt.list_models()
@@ -90,9 +87,6 @@ def test_list_models_marks_active_after_switch() -> None:
     rows = rt.list_models()
     actives = [name for name, _, is_active in rows if is_active]
     assert actives == ["openai"]
-
-
-# ── switch_model ─────────────────────────────────────────────────
 
 
 def test_switch_model_provider_only_uses_configured_default() -> None:
@@ -133,7 +127,6 @@ def test_switch_model_clears_override_with_default() -> None:
     rt.switch_model("default")
     assert rt._model_override_provider == ""
     assert rt._model_override_model == ""
-    # Reverts to configured profile.
     assert rt.provider_name == "anthropic"
 
 
@@ -143,9 +136,6 @@ def test_switch_model_clears_override_with_empty_string() -> None:
     rt.switch_model("")
     assert rt._model_override_provider == ""
     assert rt._model_override_model == ""
-
-
-# ── model_name / provider_name reflect override ──────────────────
 
 
 def test_provider_name_reflects_override() -> None:
@@ -164,14 +154,8 @@ def test_model_name_reflects_override() -> None:
 def test_provider_only_switch_inherits_provider_default_model() -> None:
     rt = _make_runtime()
     rt.switch_model("openai")
-    # provider_name reflects the new provider.
     assert rt.provider_name == "openai"
-    # model_name comes from override (empty) → falls back to
-    # provider_cfg.model in _provider_model_identity.
     assert rt.model_name == "gpt-4.1-mini"
-
-
-# ── Session-scoped behavior ─────────────────────────────────────
 
 
 def test_switch_model_is_session_scoped() -> None:
@@ -180,11 +164,7 @@ def test_switch_model_is_session_scoped() -> None:
     assert rt1.provider_name == "openai"
 
     rt2 = _make_runtime()
-    # New instance is back at configured profile.
     assert rt2.provider_name == "anthropic"
-
-
-# ── Terminal-flow /model bare-form rendering ─────────────────────
 
 
 def test_render_model_status_shows_current_and_table() -> None:
@@ -196,7 +176,6 @@ def test_render_model_status_shows_current_and_table() -> None:
     assert "current:" in out
     assert "anthropic" in out
     assert "openai" in out
-    # Hint about switching is present.
     assert "Switch with" in out
 
 
@@ -207,8 +186,5 @@ def test_render_model_status_marks_active_row() -> None:
     console = Console(file=buf, force_terminal=False, width=120)
     _render_model_status(runtime=rt, console=console)
     out = buf.getvalue()
-    # Active marker (◆) appears in the openai row, not the anthropic row.
-    # Stripping ANSI/spacing is brittle; just verify openai is listed
-    # with the marker character somewhere.
     assert "◆" in out
     assert "openai" in out

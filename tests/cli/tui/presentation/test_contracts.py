@@ -14,9 +14,6 @@ from openminion.cli.tui.presentation.contracts import (
 from openminion.cli.tui.presentation.models import ChatMessage, ToolEvent
 
 
-# ── Stub implementations to validate structural typing ─────────────────────
-
-
 class _StubTurnHandle:
     def append_token(self, s: str) -> None:
         pass
@@ -84,9 +81,6 @@ class _StubOverlay:
         return ""
 
 
-# ── Protocol conformance: stub instances ───────────────────────────────────
-
-
 def test_stub_turn_handle_satisfies_protocol() -> None:
     assert isinstance(_StubTurnHandle(), TurnHandleProtocol)
 
@@ -107,9 +101,6 @@ def test_stub_overlay_satisfies_protocol() -> None:
     assert isinstance(_StubOverlay(), OverlayPresenter)
 
 
-# ── Negative case: missing methods do NOT satisfy ──────────────────────────
-
-
 def test_object_does_not_satisfy_transcript_protocol() -> None:
     assert not isinstance(object(), TranscriptSink)
 
@@ -119,13 +110,7 @@ def test_partial_implementation_fails_protocol_check() -> None:
         def push_message(self, m):
             return None
 
-        # Missing begin_turn / set_messages / etc.
-
     assert not isinstance(Partial(), TranscriptSink)
-
-
-# ── Module isolation: contracts.py must NOT import Textual or
-#    prompt_toolkit ────────────────────────────────────────────────────────
 
 
 def test_contracts_module_does_not_import_textual_or_prompt_toolkit() -> None:
@@ -142,9 +127,6 @@ def test_contracts_module_does_not_import_textual_or_prompt_toolkit() -> None:
     assert "from textual" not in src
     assert "import prompt_toolkit" not in src
     assert "from prompt_toolkit" not in src
-
-
-# ── FNS Textual widgets satisfy the protocols ─────────────────────────────
 
 
 @pytest.mark.asyncio

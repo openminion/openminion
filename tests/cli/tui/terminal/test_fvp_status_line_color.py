@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from openminion.cli.presentation.styles import StyleToken, style_token
 from openminion.cli.tui.terminal.status_line import TerminalStatusLine
-
-
-# ── Color enabled: segments wrapped ──────────────────────────────
 
 
 def test_idle_segments_contain_ansi_when_color_enabled() -> None:
@@ -17,7 +15,6 @@ def test_idle_segments_contain_ansi_when_color_enabled() -> None:
     ):
         text = line.bottom_toolbar()
     assert "\033[" in text
-    # Content still present.
     assert "alpha" in text
     assert "openai/test" in text
 
@@ -33,9 +30,6 @@ def test_idle_segments_are_plain_when_color_disabled() -> None:
     assert "\033[" not in text
     assert "alpha" in text
     assert "openai/test" in text
-
-
-# ── Active turn footer stays identity-only ──────────────────────
 
 
 def test_active_turn_footer_keeps_identity_coloring_without_status_copy() -> None:
@@ -79,9 +73,6 @@ def test_active_turn_footer_is_plain_when_color_disabled() -> None:
     assert "2.0s" not in text
 
 
-# ── Live-turn footer keeps color and omits active timer/hint ────
-
-
 def test_live_turn_footer_keeps_ansi_identity_segments() -> None:
     line = TerminalStatusLine()
     line.set_state(
@@ -121,9 +112,6 @@ def test_live_turn_footer_omits_custom_status_label_even_when_set() -> None:
     assert "Analyzing request..." not in text
 
 
-# ── Token severity escalation ────────────────────────────────────
-
-
 def test_tokens_severity_normal_uses_system_token() -> None:
     line = TerminalStatusLine()
     line.set_state(
@@ -136,14 +124,11 @@ def test_tokens_severity_normal_uses_system_token() -> None:
         return_value=True,
     ):
         text = line.bottom_toolbar()
-    # Token value renders with SOME color escape.
     assert "100/8000" in text
     assert "\033[" in text
 
 
 def test_tokens_severity_warning_uses_warning_color() -> None:
-    from openminion.cli.presentation.styles import StyleToken, style_token
-
     line = TerminalStatusLine()
     line.set_state(agent="alpha", tokens="7800/8000")
     line.tokens_severity = "warning"
@@ -157,8 +142,6 @@ def test_tokens_severity_warning_uses_warning_color() -> None:
 
 
 def test_tokens_severity_error_uses_error_color() -> None:
-    from openminion.cli.presentation.styles import StyleToken, style_token
-
     line = TerminalStatusLine()
     line.set_state(agent="alpha", tokens="8100/8000")
     line.tokens_severity = "error"
@@ -169,9 +152,6 @@ def test_tokens_severity_error_uses_error_color() -> None:
         text = line.bottom_toolbar()
         err_open, _ = style_token(StyleToken.ERROR)
     assert err_open in text
-
-
-# ── Empty state ──────────────────────────────────────────────────
 
 
 def test_empty_state_returns_empty_string() -> None:

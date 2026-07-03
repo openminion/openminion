@@ -34,9 +34,6 @@ def _render_to_string(renderable) -> str:
     return buf.getvalue()
 
 
-# ── Render helpers directly ──────────────────────────────────────
-
-
 def test_failure_suffix_exit_1() -> None:
     out = _render_to_string(_render_tool_block(_event(exit_code=1)))
     assert "✗ (exit 1)" in out
@@ -63,9 +60,6 @@ def test_failure_suffix_signal_negative() -> None:
     assert "✗ (exit -9)" in out
 
 
-# ── Full-block helper (used by /expand and verbose) ──────────────
-
-
 def test_failure_suffix_in_full_render_block() -> None:
     out = _render_to_string(_render_full_tool_block(_event(exit_code=2)))
     assert "✗ (exit 2)" in out
@@ -74,9 +68,6 @@ def test_failure_suffix_in_full_render_block() -> None:
 def test_no_suffix_in_full_render_on_success() -> None:
     out = _render_to_string(_render_full_tool_block(_event(exit_code=0)))
     assert "✗" not in out
-
-
-# ── End-to-end through transcript ────────────────────────────────
 
 
 def _push_through_transcript(verbosity: str, exit_code: int) -> str:
@@ -97,7 +88,6 @@ def _push_through_transcript(verbosity: str, exit_code: int) -> str:
 def test_normal_mode_shows_suffix_on_failure() -> None:
     out = _push_through_transcript("normal", exit_code=1)
     assert "✗ (exit 1)" in out
-    # Body still renders.
     assert "line 1" in out
 
 
@@ -151,9 +141,6 @@ def test_expand_path_shows_suffix() -> None:
     assert "✗ (exit 1)" in expanded
 
 
-# ── Marker color preserved (regression guard) ─────────────────────
-
-
 def test_marker_still_red_on_failure() -> None:
     buf = io.StringIO()
     console = Console(
@@ -161,9 +148,7 @@ def test_marker_still_red_on_failure() -> None:
     )
     console.print(_render_tool_block(_event(exit_code=1)))
     out = buf.getvalue()
-    # Red ANSI escape (Rich uses 256-color or truecolor).
     assert "\x1b[" in out
-    # `●` is the marker glyph.
     assert "●" in out
 
 

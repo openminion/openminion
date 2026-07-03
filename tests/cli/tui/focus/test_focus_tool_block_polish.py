@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-
 from openminion.cli.tui.presentation.models import ToolEvent
 from openminion.cli.tui.presentation.tool.blocks import ToolBlockWidget
-
-
-# ── Collapse defaults ────────────────────────────────────────────────────────
 
 
 def test_successful_tool_block_mounts_collapsed() -> None:
@@ -42,11 +38,7 @@ def test_pending_tool_block_mounts_expanded() -> None:
     )
     widget = ToolBlockWidget(event, pending=True)
     assert widget.collapsed is False
-    # Title row carries the in-progress glyph.
     assert widget._header_text().startswith(ToolBlockWidget.EXIT_GLYPH_PENDING)
-
-
-# ── Exit glyphs in title row ─────────────────────────────────────────────────
 
 
 def test_title_row_starts_with_success_glyph() -> None:
@@ -58,8 +50,6 @@ def test_title_row_starts_with_success_glyph() -> None:
     )
     title = ToolBlockWidget(event)._header_text()
     assert title.startswith(ToolBlockWidget.EXIT_GLYPH_OK + " ")
-    # title now uses the verb form (`Ran`) + hint, not the
-    # raw `exec.run` type name.
     assert "Ran" in title
     assert "echo hi" in title
 
@@ -73,9 +63,6 @@ def test_title_row_starts_with_failure_glyph() -> None:
     )
     title = ToolBlockWidget(event)._header_text()
     assert title.startswith(ToolBlockWidget.EXIT_GLYPH_FAIL + " ")
-
-
-# ── Pending → terminal transition ────────────────────────────────────────────
 
 
 def test_pending_to_success_transition_collapses() -> None:
@@ -115,9 +102,6 @@ def test_pending_to_failure_transition_stays_expanded() -> None:
     assert widget.collapsed is False
 
 
-# ── Args summary truncation ──────────────────────────────────────────────────
-
-
 def test_long_args_summary_truncates_to_60_chars() -> None:
     long_command = "echo " + ("x" * 200)
     event = ToolEvent(
@@ -127,9 +111,7 @@ def test_long_args_summary_truncates_to_60_chars() -> None:
         exit_code=0,
     )
     title = ToolBlockWidget(event)._header_text()
-    # Title contains the truncation ellipsis.
     assert "…" in title
-    # The truncated hint is at most 60 chars (helper enforces this).
     truncated = ToolBlockWidget._truncate_hint(long_command)
     assert len(truncated) <= 60
 
