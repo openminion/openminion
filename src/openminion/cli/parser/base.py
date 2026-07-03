@@ -21,37 +21,75 @@ COMMAND_SPECS = (
     CommandSpec("api", "openminion.cli.commands.api", "HTTP API controls"),
     CommandSpec("autonomy", "openminion.cli.commands.autonomy", "Autonomy runs"),
     CommandSpec("data", "openminion.cli.commands.data", "Data root operations"),
-    CommandSpec("daemon", "openminion.cli.commands.daemon", "Daemon lifecycle controls"),
+    CommandSpec(
+        "daemon", "openminion.cli.commands.daemon", "Daemon lifecycle controls"
+    ),
     CommandSpec("run", "openminion.cli.commands.run", "Run a prompt"),
-    CommandSpec("room", "openminion.cli.commands.room", "Create and manage room sessions"),
-    CommandSpec("channel", "openminion.cli.commands.channel", "Channel setup and operations"),
+    CommandSpec(
+        "room", "openminion.cli.commands.room", "Create and manage room sessions"
+    ),
+    CommandSpec(
+        "channel", "openminion.cli.commands.channel", "Channel setup and operations"
+    ),
     CommandSpec("chat", "openminion.cli.commands.chat", "Interactive chat client"),
-    CommandSpec("dashboard", "openminion.cli.commands.tui", "Launch the monitoring dashboard"),
+    CommandSpec(
+        "dashboard", "openminion.cli.commands.tui", "Launch the monitoring dashboard"
+    ),
     CommandSpec("tui", "openminion.cli.commands.tui", "Launch focus mode"),
     CommandSpec("sessions", "openminion.cli.commands.sessions", "Session operations"),
-    CommandSpec("sidecar", "openminion.cli.commands.sidecar", "Sidecar lifecycle controls"),
-    CommandSpec("tools", "openminion.cli.commands.tools", "Tool catalog and invocation"),
-    CommandSpec("toolctl", "openminion.cli.commands.toolctl", "Operator controls for authored tools"),
+    CommandSpec(
+        "sidecar", "openminion.cli.commands.sidecar", "Sidecar lifecycle controls"
+    ),
+    CommandSpec(
+        "tools", "openminion.cli.commands.tools", "Tool catalog and invocation"
+    ),
+    CommandSpec(
+        "toolctl",
+        "openminion.cli.commands.toolctl",
+        "Operator controls for authored tools",
+    ),
     CommandSpec("time", "openminion.cli.commands.time", "Trusted time helpers"),
-    CommandSpec("gateway", "openminion.cli.commands.gateway", "Gateway runtime controls"),
-    CommandSpec("agent", "openminion.cli.commands.agent", "Run an agent turn or manage agent runtimes"),
-    CommandSpec("agent-check", "openminion.cli.commands.agent_check", "Run an agent check"),
+    CommandSpec(
+        "gateway", "openminion.cli.commands.gateway", "Gateway runtime controls"
+    ),
+    CommandSpec(
+        "agent",
+        "openminion.cli.commands.agent",
+        "Run an agent turn or manage agent runtimes",
+    ),
+    CommandSpec(
+        "agent-check", "openminion.cli.commands.agent_check", "Run an agent check"
+    ),
     CommandSpec("agent-ctl", "openminion.cli.commands.agents", argparse.SUPPRESS),
     CommandSpec("message", "openminion.cli.commands.message", "Message operations"),
     CommandSpec("plugins", "openminion.cli.commands.plugins", "Plugin operations"),
     CommandSpec("doctor", "openminion.cli.commands.doctor", "Run diagnostics"),
-    CommandSpec("status", "openminion.cli.commands.status", "Inspect run/task lifecycle status"),
+    CommandSpec(
+        "status", "openminion.cli.commands.status", "Inspect run/task lifecycle status"
+    ),
     CommandSpec("export", "openminion.cli.commands.export", "Export commands"),
     CommandSpec("focus", "openminion.cli.commands.focus", "Launch the focus shell"),
     CommandSpec("setup", "openminion.cli.commands.setup", "Configure OpenMinion"),
-    CommandSpec("storage", "openminion.cli.commands.storage", "Shared storage-core operations"),
-    CommandSpec("verify", "openminion.cli.commands.verify", "Verify runtime configuration"),
+    CommandSpec(
+        "storage", "openminion.cli.commands.storage", "Shared storage-core operations"
+    ),
+    CommandSpec(
+        "verify", "openminion.cli.commands.verify", "Verify runtime configuration"
+    ),
     CommandSpec("version", "openminion.cli.commands.version", "Show package version"),
-    CommandSpec("scaffold", "openminion.cli.commands.scaffold", "Scaffold package assets"),
+    CommandSpec(
+        "scaffold", "openminion.cli.commands.scaffold", "Scaffold package assets"
+    ),
     CommandSpec("cron", "openminion.cli.commands.cron", "Cron operations"),
-    CommandSpec("debug", "openminion.cli.commands.debug.cli", "Debug module diagnostics"),
-    CommandSpec("skill", "openminion.cli.commands.skill", "Skill management operations"),
-    CommandSpec("identity", "openminion.cli.commands.identity", "Identity profile management"),
+    CommandSpec(
+        "debug", "openminion.cli.commands.debug.cli", "Debug module diagnostics"
+    ),
+    CommandSpec(
+        "skill", "openminion.cli.commands.skill", "Skill management operations"
+    ),
+    CommandSpec(
+        "identity", "openminion.cli.commands.identity", "Identity profile management"
+    ),
     CommandSpec("memory", "openminion.cli.commands.memory", "Memory operations"),
     CommandSpec("mcp", "openminion.cli.commands.mcp", "Manage MCP servers"),
 )
@@ -125,9 +163,7 @@ def _register_command_modules(
             subparsers.add_parser(spec.name, help=spec.help)
         return
 
-    modules = [
-        spec.module for spec in COMMAND_SPECS if spec.name == selected_command
-    ]
+    modules = [spec.module for spec in COMMAND_SPECS if spec.name == selected_command]
     for module_name in dict.fromkeys(modules):
         module = importlib.import_module(module_name)
         module.register(subparsers)
@@ -153,10 +189,10 @@ def _hide_suppressed_subcommands(parser: argparse.ArgumentParser) -> None:
             _hide_suppressed_subcommands(child_parser)
 
 
-def build_parser(
-    *, selected_command: str | None = None
-) -> argparse.ArgumentParser:
-    parser_class = argparse.ArgumentParser if selected_command else LazyCommandArgumentParser
+def build_parser(*, selected_command: str | None = None) -> argparse.ArgumentParser:
+    parser_class = (
+        argparse.ArgumentParser if selected_command else LazyCommandArgumentParser
+    )
     parser = parser_class(
         prog="openminion",
         description=(

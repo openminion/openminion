@@ -59,7 +59,9 @@ async def test_dashboard_mounts_with_theme_preamble_injected() -> None:
 @pytest.mark.asyncio
 async def test_focus_mounts_with_theme_preamble_injected(tmp_path) -> None:
     working_dir = str(tmp_path)
-    app = FocusApp(runtime=_DemoFocusRuntime(working_dir=working_dir), working_dir=working_dir)
+    app = FocusApp(
+        runtime=_DemoFocusRuntime(working_dir=working_dir), working_dir=working_dir
+    )
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.active_theme.name == "dark"
@@ -87,7 +89,9 @@ async def test_dashboard_apply_theme_updates_active_theme() -> None:
 @pytest.mark.asyncio
 async def test_focus_apply_theme_updates_active_theme(tmp_path) -> None:
     working_dir = str(tmp_path)
-    app = FocusApp(runtime=_DemoFocusRuntime(working_dir=working_dir), working_dir=working_dir)
+    app = FocusApp(
+        runtime=_DemoFocusRuntime(working_dir=working_dir), working_dir=working_dir
+    )
     async with app.run_test() as pilot:
         await pilot.pause()
         ok = app.apply_theme(LIGHT)

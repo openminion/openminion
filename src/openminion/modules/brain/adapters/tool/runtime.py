@@ -63,6 +63,7 @@ _log = get_logger("brain.adapters.tool.runtime")
 def _is_confirm_required_code(code: Any) -> bool:
     return str(code or "").strip().upper() == TOOL_ERROR_CONFIRM_REQUIRED
 
+
 try:
     import openminion_tool_os.plugin
 

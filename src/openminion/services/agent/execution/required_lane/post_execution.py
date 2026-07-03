@@ -943,7 +943,9 @@ async def phase_post_execution(
     response = state.response
     batch = state.batch
     if response is None or batch is None:
-        return _PhaseResult(action="break", state_updates={"termination_reason": "tool_no_success"})
+        return _PhaseResult(
+            action="break", state_updates={"termination_reason": "tool_no_success"}
+        )
 
     tool_to_try = str(state.tool_to_try or "")
     all_attempts = list(state.all_attempts or [])
@@ -985,7 +987,9 @@ async def phase_post_execution(
     if argument_retry_result is not None:
         return argument_retry_result
 
-    return post_execution_terminal_failure_result(runner, batch=batch, all_attempts=all_attempts)
+    return post_execution_terminal_failure_result(
+        runner, batch=batch, all_attempts=all_attempts
+    )
 
 
 __all__ = [

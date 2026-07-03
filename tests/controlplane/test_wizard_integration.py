@@ -11,6 +11,8 @@ from openminion.modules.controlplane.wizard.terminal import (
 from openminion.modules.controlplane.wizard.telegram import (
     TelegramInteractionChannel,
 )
+
+
 @pytest.mark.asyncio
 async def test_wizard_session_lifecycle():
     store = InMemoryWizardStore()

@@ -72,7 +72,9 @@ def test_record_store_postgres_pool_size_and_overflow_forwarded(tmp_path: Path) 
         store.close()
 
 
-def test_record_store_postgres_pool_recycle_evicts_old_connection(tmp_path: Path) -> None:
+def test_record_store_postgres_pool_recycle_evicts_old_connection(
+    tmp_path: Path,
+) -> None:
     from sqlalchemy import event as sa_event
 
     from openminion.modules.storage.backends.postgres import (

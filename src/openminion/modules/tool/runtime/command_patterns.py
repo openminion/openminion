@@ -9,6 +9,7 @@ def effective_command_argv(argv: Sequence[str]) -> tuple[str, ...]:
         effective = effective[1:]
     return effective
 
+
 DISCOVERY_KNOWN_TOOLS = (
     "as",
     "clang",
