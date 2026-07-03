@@ -1,3 +1,5 @@
+from openminion.base.version import OPENMINION_REASONING_VERSION
+
 from .interfaces import (
     THINKING_INTERFACE_VERSION,
     ThinkingCtlInterface,
@@ -18,7 +20,7 @@ from .schemas import (
 )
 from .service import ThinkingCtl
 
-__version__ = "0.2.0"
+__version__ = OPENMINION_REASONING_VERSION
 
 __all__ = [
     "THINKING_INTERFACE_VERSION",

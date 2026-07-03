@@ -19,8 +19,9 @@ ship today.
 
 ## Current package line
 
-The current public package line is `0.0.2`. This document records alignment of
-the public claims to the currently provable package surface and keeps the
+The current public package line is the value of
+`openminion.base.version.OPENMINION_VERSION`. This document records alignment
+of the public claims to the currently provable package surface and keeps the
 package contract honest while the project remains in alpha.
 
 ## Claims intentionally not made

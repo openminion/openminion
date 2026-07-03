@@ -87,7 +87,8 @@ surface instead of assumed from importability.
 
 Current project stage: alpha.
 
-Current public package line: `0.0.2`.
+Current public package line: the value of
+`openminion.base.version.OPENMINION_VERSION`.
 
 Compatibility expectations for the documented public surface:
 
