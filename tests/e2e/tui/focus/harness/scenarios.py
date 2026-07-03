@@ -11,6 +11,7 @@ class FocusScenario:
     timeout: int = 240
     requires_approval: bool = False
     max_auto_approvals: int = 5
+    approval_reply: str = "yes"
 
 
 BASE_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
@@ -89,6 +90,8 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         expected_markers=("result",),
         timeout=900,
         requires_approval=True,
+        max_auto_approvals=8,
+        approval_reply="session",
     ),
     FocusScenario(
         scenario_id="coding_complex_debug_loop",
@@ -100,6 +103,8 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         expected_markers=("result",),
         timeout=1200,
         requires_approval=True,
+        max_auto_approvals=8,
+        approval_reply="session",
     ),
     FocusScenario(
         scenario_id="coding_long_project_slice",
@@ -111,6 +116,8 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         expected_markers=("result",),
         timeout=1500,
         requires_approval=True,
+        max_auto_approvals=10,
+        approval_reply="session",
     ),
 )
 
@@ -136,6 +143,7 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         timeout=2400,
         requires_approval=True,
         max_auto_approvals=12,
+        approval_reply="session",
     ),
     FocusScenario(
         scenario_id="goal_research_then_code_loop",
@@ -157,6 +165,30 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         timeout=3000,
         requires_approval=True,
         max_auto_approvals=12,
+        approval_reply="session",
+    ),
+    FocusScenario(
+        scenario_id="goal_deep_research_analysis_code_loop",
+        prompt=(
+            "Treat this as a long-running mixed research, analysis, and coding "
+            "goal. Under {scratch_dir}, first compare two or three minimal "
+            "design options for a Python CLI that reads a Markdown file and "
+            "prints a compact section summary report. Pick the simplest useful "
+            "design, explain the tradeoff briefly, then implement it as a tiny "
+            "package with module code, a CLI entry file, tests, and a short "
+            "README using native tool calls such as `file.write` and `exec.run`. "
+            "Do not install packages; validate only with commands scoped to "
+            "{scratch_dir}, such as `PYTHONPATH=. {python_bin} -m pytest` and "
+            "direct module execution. If you find a failing edge case, fix it, "
+            "rerun validation, and finish with design choice, files changed, "
+            "validation result, and remaining follow-ups. Keep every file and "
+            "command scoped to {scratch_dir}."
+        ),
+        expected_markers=("design", "validation", "files"),
+        timeout=3000,
+        requires_approval=True,
+        max_auto_approvals=12,
+        approval_reply="session",
     ),
 )
 

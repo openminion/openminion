@@ -742,9 +742,11 @@ class FocusScreen(
     def on_tool_approval_widget_approved(
         self, event: ToolApprovalWidget.Approved
     ) -> None:
-        del event
         if self._approval_future is not None and not self._approval_future.done():
-            self._approval_future.set_result("approve")
+            if event.scope == ToolApprovalWidget.SCOPE_SESSION:
+                self._approval_future.set_result("allow_all")
+            else:
+                self._approval_future.set_result("approve")
 
     def on_tool_approval_widget_denied(self, event: ToolApprovalWidget.Denied) -> None:
         del event

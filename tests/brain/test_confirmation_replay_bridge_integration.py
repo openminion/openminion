@@ -212,6 +212,50 @@ def test_bridge_reset_yes_preserves_state_then_runner_replays_seeded_command() -
     assert confirm_events[0][1]["kind"] == "tool"
 
 
+def test_confirmation_replay_session_reply_grants_pending_tool_for_session() -> None:
+    inline_state, _ = _build_inline_state_with_pending_file_write()
+    state = WorkingState.model_validate(inline_state)
+    runner = _DummyRunner(inline_state)
+    logger = _CapturingLogger()
+    tick_ctx = TickRunContext(session_id="sess-bbpc-session", user_input="session")
+
+    confirmation_process(
+        runner=runner,
+        state=state,
+        logger=logger,
+        tick_ctx=tick_ctx,
+    )
+
+    assert state.pending_confirmation_command is None
+    assert state.permission_overrides["file.write"] == "bypass"
+    assert tick_ctx.skip_decide is True
+    assert tick_ctx.consume_user_input_for_command is True
+    assert tick_ctx.decision is not None
+    seeded_commands = list(getattr(tick_ctx.decision, "_seeded_commands", []) or [])
+    assert len(seeded_commands) == 1
+    assert seeded_commands[0].tool_name == "file.write"
+
+
+def test_bridge_reset_session_reply_preserves_pending_confirmation() -> None:
+    inline_state, original_pending = _build_inline_state_with_pending_file_write()
+    bridge_runner = _DummyRunner(inline_state)
+    bridge = _DummyBridge()
+
+    bridge._reset_state_for_new_input(
+        runner=bridge_runner,
+        session_id="sess-bbpc-int",
+        user_input="session",
+    )
+
+    written = bridge_runner.session_api.written
+    assert written is not None
+    assert written["pending_confirmation_command"] is not None
+    state = WorkingState.model_validate(written)
+    assert state.pending_confirmation_command is not None
+    assert state.pending_confirmation_command.command_id == original_pending.command_id
+    assert state.last_user_input == "write a small README"
+
+
 def test_confirmation_replay_preserves_explicit_tool_reason_for_seeded_replay() -> None:
     inline_state, _ = _build_inline_state_with_pending_file_write()
     inline_state["decision_reason_code"] = "explicit_tool_command"

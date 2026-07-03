@@ -17,6 +17,9 @@ from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.brain.runner.tick.context import (
     _parse_confirmation_response,
 )
+from openminion.modules.brain.loop.tools.confirmation import (
+    is_session_confirmation_response,
+)
 from openminion.modules.brain.schemas import WorkingState
 
 from .contracts import _MissionResetPreview, _TurnResetPreservation
@@ -40,8 +43,11 @@ _RESUME_LIKE_INPUTS = frozenset(
 _FOLLOWUP_CONTROL_INPUTS = _RESUME_LIKE_INPUTS.union(
     {"retry", "retry plan", "skip", "cancel"}
 )
+_CONFIRMATION_SESSION_REPLY = "session"
 # BBPC: parser verdicts that should preserve a pending confirmation
-_CONFIRMATION_PRESERVING_REPLIES = frozenset({"affirm", "deny"})
+_CONFIRMATION_PRESERVING_REPLIES = frozenset(
+    {"affirm", "deny", _CONFIRMATION_SESSION_REPLY}
+)
 _CONTINUATION_PROGRESS_CONSTRAINT_PREFIX = "CLOSURE_CONTINUE_PROGRESS:"
 _EXECUTABLE_CURRENT_STEP_KINDS = frozenset({"tool", "agent", "think", "finish"})
 _RESUMABLE_WAITING_PHASES = frozenset(
@@ -299,7 +305,7 @@ def _base_turn_reset_state(
     updated["phase"] = None
     if (
         preservation.preserve_pending_confirmation
-        and preservation.parsed_confirmation_reply in {"affirm", "deny"}
+        and preservation.parsed_confirmation_reply in _CONFIRMATION_PRESERVING_REPLIES
     ):
         updated["last_user_input"] = str(
             state_inline.get("last_user_input", "") or ""
@@ -704,6 +710,8 @@ def _reset_state_for_new_input(
             )
         except Exception:  # noqa: BLE001
             parsed_confirmation_reply = ""
+        if is_session_confirmation_response(str(user_input)):
+            parsed_confirmation_reply = _CONFIRMATION_SESSION_REPLY
     preservation = self._turn_reset_preservation(
         state_inline=state_inline,
         user_input=user_input,
@@ -722,7 +730,7 @@ def _reset_state_for_new_input(
     # BBPC: emit telemetry when the new parser-driven path is what
     if (
         preservation.preserve_pending_confirmation
-        and preservation.parsed_confirmation_reply in {"affirm", "deny"}
+        and preservation.parsed_confirmation_reply in _CONFIRMATION_PRESERVING_REPLIES
     ):
         _emit_confirmation_reset_preserved(
             runner=runner,

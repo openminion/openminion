@@ -269,3 +269,7 @@ def main() -> int:
 
     print(f"CLI chat E2E gate passed. Transcript: {output_path}")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

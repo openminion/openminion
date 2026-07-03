@@ -11,6 +11,7 @@ import struct
 import subprocess
 import termios
 import time
+from typing import Callable
 
 
 @dataclass(slots=True)
@@ -20,6 +21,7 @@ class PtySession:
     env: dict[str, str] = field(default_factory=dict)
     rows: int = 42
     cols: int = 140
+    on_transcript_update: Callable[[str], None] | None = None
 
     _master_fd: int | None = field(default=None, init=False)
     _process: subprocess.Popen[bytes] | None = field(default=None, init=False)
@@ -61,7 +63,16 @@ class PtySession:
     def send(self, text: str) -> None:
         if self._master_fd is None:
             raise RuntimeError("PTY session is not running")
-        os.write(self._master_fd, text.encode("utf-8"))
+        data = memoryview(text.encode("utf-8"))
+        while data:
+            try:
+                written = os.write(self._master_fd, data)
+            except BlockingIOError:
+                select.select([], [self._master_fd], [], 0.05)
+                continue
+            if written <= 0:
+                raise RuntimeError("PTY write failed")
+            data = data[written:]
 
     def type_line(self, text: str) -> None:
         self.send(f"{text}\n")
@@ -148,6 +159,8 @@ class PtySession:
             if not chunk:
                 return
             self._transcript += chunk.decode("utf-8", errors="replace")
+            if self.on_transcript_update is not None:
+                self.on_transcript_update(self._transcript)
             if time.monotonic() >= end:
                 return
 
