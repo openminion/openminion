@@ -48,7 +48,23 @@ from .contracts import (
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
 )
+from .evidence import (
+    _is_substantive_tool_name,
+    _loop_tool_result_payloads,
+    _substantive_tool_results,
+    _successful_substantive_tool_results,
+)
 from .status import emit_adaptive_status
+
+
+_INTERNAL_FAILURE_FINAL_TEXT = (
+    "i hit an internal decision error before i could continue safely"
+)
+
+
+def _is_internal_failure_final_text(text: str) -> bool:
+    """Do not surface our own failure sentinel as a user-facing answer."""
+    return _INTERNAL_FAILURE_FINAL_TEXT in str(text or "").strip().lower()
 
 
 def _effective_cap(
@@ -405,10 +421,22 @@ def _has_tool_evidence_for_answer_only(
     loop_ctx: AdaptiveToolLoopContext,
     loop_state: AdaptiveToolLoopState,
 ) -> bool:
+    tool_results = _loop_tool_result_payloads(loop_state)
+    if _substantive_tool_results(loop_state):
+        return True
+    if tool_results:
+        return False
     if int(getattr(loop_state, "total_tool_calls", 0) or 0) > 0:
         return True
     for message in list(getattr(loop_state, "messages", []) or []):
         if str(getattr(message, "role", "") or "").strip().lower() == "tool":
+            meta = getattr(message, "meta", {}) or {}
+            if (
+                isinstance(meta, dict)
+                and "tool_name" in meta
+                and not _is_substantive_tool_name(meta.get("tool_name"))
+            ):
+                continue
             if str(getattr(message, "content", "") or "").strip():
                 return True
     state = getattr(loop_ctx, "state", None)
@@ -438,9 +466,8 @@ def _force_budget_answer_only_finalization(
     allowed_tools: frozenset[str],
     public_mode_tag: str,
 ) -> AdaptiveToolLoopOutcome | None:
-    if not _general_profile_name(profile) and not _has_tool_evidence_for_answer_only(
-        loop_ctx, loop_state
-    ):
+    has_tool_evidence = _has_tool_evidence_for_answer_only(loop_ctx, loop_state)
+    if not _general_profile_name(profile) and not has_tool_evidence:
         return None
     if not _llm_budget_available_for_answer_only(
         loop_ctx=loop_ctx,
@@ -500,6 +527,16 @@ def _force_budget_answer_only_finalization(
             metadata=metadata,
         )
     except Exception as exc:  # noqa: BLE001
+        if not has_tool_evidence:
+            loop_state.scratchpad["budget_answer_only_finalization_error"] = str(exc)
+            return _budget_stop_outcome(
+                loop_ctx=loop_ctx,
+                profile=profile,
+                loop_state=loop_state,
+                allowed_tools=allowed_tools,
+                public_mode_tag=public_mode_tag,
+                reason="answer_only_finalization_failed",
+            )
         loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
         emit_adaptive_status(
             loop_ctx,
@@ -524,6 +561,18 @@ def _force_budget_answer_only_finalization(
     if not bool(getattr(response, "ok", False)):
         error = getattr(response, "error", None)
         error_message = str(getattr(error, "message", "") or "LLM returned not-ok")
+        if not has_tool_evidence:
+            loop_state.scratchpad["budget_answer_only_finalization_error"] = (
+                error_message
+            )
+            return _budget_stop_outcome(
+                loop_ctx=loop_ctx,
+                profile=profile,
+                loop_state=loop_state,
+                allowed_tools=allowed_tools,
+                public_mode_tag=public_mode_tag,
+                reason="answer_only_finalization_not_ok",
+            )
         loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
         emit_adaptive_status(
             loop_ctx,
@@ -542,6 +591,18 @@ def _force_budget_answer_only_finalization(
             error_message=error_message,
         )
     final_text = str(getattr(response, "output_text", "") or "").strip()
+    if _is_internal_failure_final_text(final_text):
+        loop_state.scratchpad["budget_answer_only_finalization_error"] = (
+            "internal_failure_final_text"
+        )
+        return _budget_stop_outcome(
+            loop_ctx=loop_ctx,
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
+            reason="answer_only_finalization_internal_failure_text",
+        )
     finalization_status = _finalization_status_from_response(response)
     has_finalization_contract = finalization_status is not None or (
         f"<{STATE_KEY_FINALIZATION_STATUS}>" in final_text
@@ -849,11 +910,7 @@ def _force_circular_pattern_answer_only_finalization(
         reserve_final_answer=True,
     ):
         return None
-    tool_results = [
-        item
-        for item in list(loop_state.scratchpad.get("adaptive.tool_results", []) or [])
-        if isinstance(item, dict) and bool(item.get("ok"))
-    ]
+    tool_results = _successful_substantive_tool_results(loop_state)
     if not tool_results:
         return None
     loop_state.scratchpad["circular_pattern_answer_only_finalization_forced"] = True
@@ -889,7 +946,7 @@ def _force_circular_pattern_answer_only_finalization(
     if list(getattr(response, "tool_calls", []) or []):
         return None
     final_text = str(getattr(response, "output_text", "") or "").strip()
-    if not final_text:
+    if not final_text or _is_internal_failure_final_text(final_text):
         return None
     loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
     return AdaptiveToolLoopOutcome(

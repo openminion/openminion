@@ -91,6 +91,7 @@ from openminion.modules.brain.loop.tools.iteration.termination import (
 )
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+    ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_DECOMPOSE_INVALID,
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
@@ -1072,6 +1073,21 @@ class TestRecordAndEligibleDuplicateBatchExecutionFacts:
         eligible = _eligible_duplicate_batch_execution_facts(st, signature=sig)
         assert isinstance(eligible, dict)
         assert eligible["all_success"] is True
+        assert eligible["has_substantive_success"] is True
+
+    def test_plan_only_success_is_not_eligible(self) -> None:
+        st = AdaptiveToolLoopState(messages=[])
+        call = ToolCall(id="1", name="plan", arguments={"action": "list"})
+        sig = semantic_batch_signature([call])
+        ar = ActionResult(command_id=new_uuid(), status="success", summary="listed")
+        outcome = SimpleNamespace(action_result=ar, job=None)
+        _record_duplicate_batch_execution_facts(
+            st,
+            signature=sig,
+            ordered_tool_results=[(call, outcome)],
+        )
+
+        assert _eligible_duplicate_batch_execution_facts(st, signature=sig) is None
 
     def test_record_failed_marks_has_non_success(self) -> None:
         st = AdaptiveToolLoopState(messages=[])
@@ -1159,6 +1175,18 @@ class TestToolResultPayloadFromAction:
         assert payload["error_code"] == "E1"
         assert payload["data"]["error_code"] == "E1"
         assert payload["data"]["error_details"] == {"d": 1}
+
+    def test_blocked_is_not_successful_evidence(self) -> None:
+        ar = ActionResult(
+            command_id="cmd-2b",
+            status="blocked",
+            summary="Denied by policy",
+        )
+        payload = _tool_result_payload_from_action(
+            tool_name="exec.run", action_result=ar
+        )
+        assert payload["ok"] is False
+        assert payload["verified"] is False
 
     def test_failed_with_error_dict_in_outputs(self) -> None:
         ar = ActionResult(
@@ -1330,6 +1358,41 @@ class TestLooksLikeUnexecutableToolPayloadText:
             "</tool_response>"
         )
         assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_detects_plaintext_file_write_tool_instruction(self) -> None:
+        text = (
+            "file.write\n"
+            "path: /tmp/project/README.md\n"
+            "content: |\n"
+            "# Project\n"
+            "Generated content"
+        )
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_detects_plaintext_exec_run_tool_instruction(self) -> None:
+        text = (
+            "exec.run command: cd /tmp/project && /usr/bin/python3 -m pytest tests/ -v"
+        )
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_detects_plaintext_tool_function_call_instruction(self) -> None:
+        text = (
+            "file.list_dir(\n"
+            '  path="/tmp/project/loopcalc"\n'
+            ")\n"
+            'file.read(path="/tmp/project/loopcalc/__init__.py")'
+        )
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_allows_prose_that_mentions_exec_run_without_invocation_shape(self) -> None:
+        text = "A future agent can use exec.run after selecting a safe command."
+        assert _looks_like_unexecutable_tool_payload_text(text) is False
+
+    def test_allows_prose_that_mentions_file_read_without_invocation_shape(
+        self,
+    ) -> None:
+        text = "Use the file.read tool when you need to inspect a known file."
+        assert _looks_like_unexecutable_tool_payload_text(text) is False
 
 
 # Set turn progress
@@ -3018,6 +3081,44 @@ class TestForceBudgetAnswerOnlyFinalization:
 
         assert _has_tool_evidence_for_answer_only(loop_ctx, st_loop) is True
 
+    def test_has_tool_evidence_ignores_plan_only_tool_results(self) -> None:
+        st_loop = AdaptiveToolLoopState(
+            messages=[],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "plan",
+                        "ok": True,
+                        "content": "listed",
+                        "data": {"items": []},
+                    }
+                ]
+            },
+        )
+        st_loop.total_tool_calls = 1
+        loop_ctx = _LoopContext(state=_state())
+
+        assert _has_tool_evidence_for_answer_only(loop_ctx, st_loop) is False
+
+    def test_has_tool_evidence_keeps_substantive_tool_results(self) -> None:
+        st_loop = AdaptiveToolLoopState(
+            messages=[],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "file.read",
+                        "ok": True,
+                        "content": "read",
+                        "data": {"path": "a.txt"},
+                    }
+                ]
+            },
+        )
+        st_loop.total_tool_calls = 1
+        loop_ctx = _LoopContext(state=_state())
+
+        assert _has_tool_evidence_for_answer_only(loop_ctx, st_loop) is True
+
     def test_budget_exhaustion_forces_answer_only_from_prior_tool_evidence(
         self,
     ) -> None:
@@ -3480,7 +3581,10 @@ class TestFinalizeIterationCapExit:
         prof = _profile(
             allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
         )
-        st_loop = AdaptiveToolLoopState(messages=[])
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="tool", content='{"status":"success"}')],
+            total_tool_calls=1,
+        )
         loop_ctx = _LoopContext(state=_state())
         runtime = _FakeRuntime(responses=[], raise_error=True)
         result = _force_budget_answer_only_finalization(
@@ -3497,7 +3601,73 @@ class TestFinalizeIterationCapExit:
         assert result is not None
         assert result.termination_reason == ADAPTIVE_TERM_LLM_ERROR
 
+    def test_force_finalization_llm_exception_without_tool_evidence_is_budget_exhausted(
+        self,
+    ) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
+        )
+        st_loop = AdaptiveToolLoopState(messages=[])
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(responses=[], raise_error=True)
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"x"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+        assert "runtime" in st_loop.scratchpad[
+            "budget_answer_only_finalization_error"
+        ]
+
     def test_force_finalization_not_ok_response_returns_llm_error(self) -> None:
+        from openminion.modules.llm.schemas import ResponseError
+
+        prof = _profile(
+            allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
+        )
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="tool", content='{"status":"success"}')],
+            total_tool_calls=1,
+        )
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=False,
+                    provider="fake",
+                    model="m",
+                    output_text="",
+                    error=ResponseError(code="PROVIDER_ERROR", message="bad"),
+                    finish_reason="error",
+                )
+            ]
+        )
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"x"}),
+            public_mode_tag="act",
+        )
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_LLM_ERROR
+
+    def test_force_finalization_not_ok_without_tool_evidence_is_budget_exhausted(
+        self,
+    ) -> None:
         from openminion.modules.llm.schemas import ResponseError
 
         prof = _profile(
@@ -3528,8 +3698,10 @@ class TestFinalizeIterationCapExit:
             allowed_tools=frozenset({"x"}),
             public_mode_tag="act",
         )
+
         assert result is not None
-        assert result.termination_reason == ADAPTIVE_TERM_LLM_ERROR
+        assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+        assert st_loop.scratchpad["budget_answer_only_finalization_error"] == "bad"
 
     def test_force_finalization_empty_text_returns_budget_exhausted(self) -> None:
         prof = _profile(
@@ -3561,6 +3733,47 @@ class TestFinalizeIterationCapExit:
         )
         assert result is not None
         assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+
+    def test_force_finalization_internal_failure_text_returns_budget_exhausted(
+        self,
+    ) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
+        )
+        st_loop = AdaptiveToolLoopState(messages=[])
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=(
+                        "I hit an internal decision error before I could continue "
+                        "safely on this turn."
+                    ),
+                    finish_reason="stop",
+                ),
+            ]
+        )
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"x"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+        assert (
+            st_loop.scratchpad["budget_answer_only_finalization_error"]
+            == "internal_failure_final_text"
+        )
 
     def test_force_finalization_recovers_status_after_answer_missing_trailer(
         self,
@@ -3788,6 +4001,62 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
             signature="sig-none",
         )
         assert out is None
+
+    def test_returns_none_for_plan_only_duplicate_batch(self) -> None:
+        signature = "sig-plan"
+        st_loop = AdaptiveToolLoopState(
+            messages=[],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "plan",
+                        "ok": True,
+                        "content": "listed",
+                        "data": {"items": []},
+                    }
+                ]
+            },
+        )
+        call = ToolCall(id="c", name="plan", arguments={"action": "list"})
+        ar = ActionResult(command_id=new_uuid(), status="success", summary="listed")
+        _record_duplicate_batch_execution_facts(
+            st_loop,
+            signature=signature,
+            ordered_tool_results=[
+                (call, SimpleNamespace(action_result=ar, job=None))
+            ],
+        )
+        prof = _profile(allowed_tools=frozenset({"plan"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="should not be called",
+                    finish_reason="stop",
+                )
+            ]
+        )
+
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[call],
+            tool_specs=_tool_specs("plan"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"plan"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is None
+        assert runtime.calls == []
 
     def test_returns_final_text_outcome(self) -> None:
         signature = "sig-2"
@@ -4134,9 +4403,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
                     provider="fake",
                     model="m",
                     output_text=(
-                        "file.write\n"
-                        "path: /tmp/project/README.md\n"
-                        "content: # Project"
+                        "file.write\npath: /tmp/project/README.md\ncontent: # Project"
                     ),
                     finish_reason="stop",
                 ),
@@ -4177,8 +4444,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
                     provider="fake",
                     model="m",
                     output_text=(
-                        "exec.run cmd: cd /tmp/project && PYTHONPATH=. "
-                        "python -m pytest"
+                        "exec.run cmd: cd /tmp/project && PYTHONPATH=. python -m pytest"
                     ),
                     finish_reason="stop",
                 ),
@@ -4512,6 +4778,67 @@ def test_loop_circular_pattern_terminates() -> None:
         ADAPTIVE_TERM_FINAL_TEXT,
         ADAPTIVE_TERM_ITERATION_CAP,
     }
+
+
+def test_loop_circular_pattern_rejects_internal_failure_answer_text() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="file.read", arguments={"path": "a"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c2", name="file.read", arguments={"path": "b"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c3", name="file.read", arguments={"path": "c"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "I hit an internal decision error before I could continue safely "
+                    "on this turn."
+                ),
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(),
+        outcomes=[_success_outcome() for _ in range(3)],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read"}), max_iterations=10),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="circular")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN
 
 
 def test_loop_iteration_cap_exit_path() -> None:
@@ -4926,6 +5253,9 @@ def test_execution_preface_draft_detects_progress_note_after_tool_results() -> N
     assert _looks_like_execution_preface_draft(
         "Based on the existing tool results, I can see the project is mostly "
         "complete. Let me verify the tests."
+    )
+    assert _looks_like_execution_preface_draft(
+        "Let me check the current state of the project by reading the existing files."
     )
     assert _looks_like_execution_preface_draft(
         "Proceeding to add `tests/` and `pyproject.toml`, then run validation."

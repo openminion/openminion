@@ -21,7 +21,7 @@ from ..iteration.helpers import _count_substantive_non_control_tool_results
 
 _HTTP_URL_RE = re.compile(r"https?://[^\s<>()\"']+")
 _EXECUTION_PREFACE_RE = re.compile(
-    r"\b(?:i['’]?ll|i will|we['’]?ll|we will|now|next|proceeding to)\b.*\b"
+    r"\b(?:i['’]?ll|i will|we['’]?ll|we will|let me|now|next|proceeding to)\b.*\b"
     r"(?:add|execute|run|call|fetch|write|read|verify|check|inspect|review|"
     r"continue|finish|complete|understand)\b",
     re.IGNORECASE | re.DOTALL,
@@ -30,6 +30,26 @@ _PROGRESS_GERUND_RE = re.compile(
     r"^(?:reading|writing|running|checking|verifying|fetching|updating|rewriting|"
     r"inspecting|looking)\b",
     re.IGNORECASE,
+)
+_PLAINTEXT_FILE_WRITE_TOOL_RE = re.compile(
+    r"(?ims)^\s*file\.write\s*$.*^\s*path\s*:\s*\S+.*^\s*content\s*:",
+)
+_PLAINTEXT_EXEC_RUN_TOOL_RE = re.compile(
+    r"(?im)^\s*exec\.run\s+(?:cmd|command)\s*:",
+)
+_PLAINTEXT_TOOL_FUNCTION_CALL_RE = re.compile(
+    r"(?im)^\s*(?:file|exec|web|search|fetch|host|process|task|plan|code)"
+    r"\.[A-Za-z0-9_]+\s*\(",
+)
+_TOOL_ARGUMENT_KEYS = (
+    '"arguments"',
+    '"args"',
+    '"cmd"',
+    '"command"',
+    '"content"',
+    '"parameters"',
+    '"path"',
+    '"query"',
 )
 
 
@@ -98,6 +118,13 @@ def _looks_like_unexecutable_tool_payload_text(text: str) -> bool:
         or lower_token.startswith("<invoke")
         or "minimax:tool_call" in lower_token
         or _looks_like_embedded_tool_payload_json(token)
+        or (
+            any(tool_key in lower_token for tool_key in ('"tool"', '"tool_name"'))
+            and any(arg_key in lower_token for arg_key in _TOOL_ARGUMENT_KEYS)
+        )
+        or _PLAINTEXT_FILE_WRITE_TOOL_RE.search(token) is not None
+        or _PLAINTEXT_EXEC_RUN_TOOL_RE.search(token) is not None
+        or _PLAINTEXT_TOOL_FUNCTION_CALL_RE.search(token) is not None
         or (
             token.startswith("```")
             and '"tool"' in lower_token
