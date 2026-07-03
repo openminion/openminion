@@ -1,5 +1,7 @@
+from openminion.base.version import OPENMINION_VERSION
+
 MCP_CLIENT_NAME = "openminion"
-MCP_CLIENT_VERSION = "0.0.1"
+MCP_CLIENT_VERSION = OPENMINION_VERSION
 MCP_COMPLETION_COMPLETE_METHOD = "completion/complete"
 MCP_INITIALIZE_METHOD = "initialize"
 MCP_INITIALIZED_NOTIFICATION = "notifications/initialized"

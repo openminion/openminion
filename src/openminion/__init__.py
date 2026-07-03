@@ -2,8 +2,10 @@
 
 from typing import Any
 
+from openminion.base.version import OPENMINION_VERSION
+
 # Bind __version__ before public re-exports to avoid circular import reads.
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION
 
 __all__ = [
     "APIRuntime",
@@ -42,6 +44,7 @@ def __getattr__(name: str) -> Any:
     value = getattr(import_module(module_name), attribute_name)
     globals()[name] = value
     return value
+
 
 # Per-symbol public-surface version metadata.
 __since__: dict[str, str] = {

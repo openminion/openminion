@@ -18,13 +18,13 @@
 </p>
 
 <p align="center">
-  <img alt="Package version" src="https://img.shields.io/badge/package-0.0.1-3775A9">
+  <img alt="Package version" src="https://img.shields.io/badge/package-0.0.2-3775A9">
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-3775A9">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-6B7280">
 </p>
 
-`openminion` is the `v0.0.1` initial public alpha release of a Python-first, local-first
+`openminion` is the `v0.0.2` public alpha release of a Python-first, local-first
 runtime for tool-using agents.
 
 One shared runtime spans CLI work, Python embedding, HTTP API turns,
@@ -43,7 +43,7 @@ and should be treated as a scam.
 
 ## At a glance
 
-- Current public package line: `v0.0.1` alpha
+- Current public package line: `v0.0.2` alpha
 - Best fit today: bounded local workflows, operator-driven runs, tool use on
   your own machine, and contributors who want a runtime they can inspect
 - Main surfaces: CLI, Python API, HTTP API, daemon-backed workflows, tools,
@@ -174,7 +174,7 @@ Tool package note:
 
 - [`docs/README.md`](docs/README.md) is the package-local docs entrypoint.
 - [`docs/certification-readiness-matrix.md`](docs/certification-readiness-matrix.md)
-  is the current package-local proof snapshot for the `0.0.1` alpha line.
+  is the current package-local proof snapshot for the `0.0.2` alpha line.
 - [`docs/runtime-surfaces.md`](docs/runtime-surfaces.md) maps the supported
   CLI, runtime, and Python-library surfaces.
 - [`API_COMPATIBILITY.md`](API_COMPATIBILITY.md) records the supported public

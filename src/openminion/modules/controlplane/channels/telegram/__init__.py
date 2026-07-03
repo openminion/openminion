@@ -1,3 +1,5 @@
+from openminion.base.version import OPENMINION_VERSION
+
 from .config import ControlplaneTelegramConfig, TelegramChannelConfig, load_config
 from .interfaces import (
     TELEGRAM_INTERFACE_VERSION,
@@ -15,4 +17,4 @@ __all__ = [
     "__version__",
 ]
 
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from openminion.api.runtime import APIRuntime
+from openminion.base.version import OPENMINION_VERSION
 from openminion.cli.bootstrap.loader import load_config
 from openminion.services.diagnostics.debug import (
     DebugProvider,
@@ -125,7 +126,7 @@ class OpenMinionDebugProvider(_CoreDebugProvider):
                 wiring_source=WiringSource.REAL,
                 dependency_failures=dependency_failures,
                 details={
-                    "version": "0.0.1",
+                    "version": OPENMINION_VERSION,
                     "agent_runtime_mode": getattr(runtime, "_runtime_mode", "unknown"),
                     "brain_bridge_active": getattr(
                         runtime, "_brain_bridge_active", False

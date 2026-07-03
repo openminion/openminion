@@ -1,3 +1,5 @@
+from openminion.base.version import OPENMINION_VERSION
+
 from .interfaces import (
     IDENTITY_INTERFACE_VERSION,
     IdentityCtlInterface,
@@ -18,4 +20,4 @@ __all__ = [
     "ensure_identity_compatibility",
 ]
 
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION

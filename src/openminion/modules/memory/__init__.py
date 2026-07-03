@@ -1,3 +1,5 @@
+from openminion.base.version import OPENMINION_VERSION
+
 from .interfaces import (
     MEMORY_INTERFACE_VERSION,
     MemoryServiceInterface,
@@ -23,4 +25,4 @@ __all__ = [
     "__version__",
 ]
 
-__version__ = "0.0.1"
+__version__ = OPENMINION_VERSION
