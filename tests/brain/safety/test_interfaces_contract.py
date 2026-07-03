@@ -15,7 +15,6 @@ class TestSafetyInterfaceContract:
         assert isinstance(SAFETY_INTERFACE_VERSION, str)
 
     def test_safety_version_compatibility_check_positive(self):
-        # Should not raise an exception
         result = ensure_safety_interface_compatibility("v1")
         assert result is True
 
@@ -28,7 +27,6 @@ class TestSafetyInterfaceContract:
 
     def test_safety_runtime_implements_contract(self):
         service = SafetyService()
-        # Verify it has the required contract attribute
         assert hasattr(service, "contract_version")
         assert service.contract_version == "v1"
 
@@ -40,7 +38,6 @@ class TestSafetyInterfaceContract:
             reason="test reason",
         )
 
-        # Check that all required fields are present
         assert hasattr(event, "action")
         assert hasattr(event, "state_before")
         assert hasattr(event, "state_after")
@@ -48,7 +45,6 @@ class TestSafetyInterfaceContract:
         assert hasattr(event, "session_id")
         assert hasattr(event, "metadata")
 
-        # Check that these field types are correct
         assert isinstance(event.action, SafetyAction)
         assert isinstance(event.state_before, SafetyState)
         assert isinstance(event.state_after, SafetyState)
@@ -56,20 +52,16 @@ class TestSafetyInterfaceContract:
     def test_safety_service_basic_functionality(self):
         service = SafetyService()
 
-        # Initial state should be normal
         assert service.state == SafetyState.NORMAL
 
-        # Stop operation should work when in normal state
         result = service.stop(reason="test stop")
         assert result is True
         assert service.state == SafetyState.STOPPED
 
-        # After stop, should not be normal
         assert not service.is_normal()
 
     def test_safety_compatibility_with_current_implementation(self):
         service = SafetyService()
-        # Verify the contract version is compatible
         result = ensure_safety_interface_compatibility(service.contract_version)
         assert result is True
 

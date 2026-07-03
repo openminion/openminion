@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 
@@ -20,34 +19,34 @@ def _ctx(session_id: str = "sess-render-test") -> object:
     return SimpleNamespace(session_id=session_id)
 
 
-class StatusMarkTests(unittest.TestCase):
+class TestStatusMark:
     def test_todo_mark_is_blank(self) -> None:
-        self.assertEqual(STATUS_MARK["todo"], " ")
+        assert STATUS_MARK["todo"] == " "
 
     def test_in_progress_mark_is_arrow(self) -> None:
-        self.assertEqual(STATUS_MARK["in_progress"], "→")
+        assert STATUS_MARK["in_progress"] == "→"
 
     def test_done_mark_is_x(self) -> None:
-        self.assertEqual(STATUS_MARK["done"], "x")
+        assert STATUS_MARK["done"] == "x"
 
     def test_blocked_mark_is_bang(self) -> None:
-        self.assertEqual(STATUS_MARK["blocked"], "!")
+        assert STATUS_MARK["blocked"] == "!"
 
     def test_all_four_marks_are_distinct(self) -> None:
         marks = {
             STATUS_MARK[status] for status in ("todo", "in_progress", "done", "blocked")
         }
-        self.assertEqual(len(marks), 4)
+        assert len(marks) == 4
 
 
-class RenderPlanTests(unittest.TestCase):
+class TestRenderPlan:
     def test_none_plan_returns_empty_text(self) -> None:
-        self.assertEqual(render_plan(None), EMPTY_PLAN_TEXT)
+        assert render_plan(None) == EMPTY_PLAN_TEXT
 
     def test_plan_with_no_items_returns_empty_text(self) -> None:
-        self.assertEqual(
-            render_plan({"items": [], "summary": "0/0 done, 0 in progress"}),
-            EMPTY_PLAN_TEXT,
+        assert (
+            render_plan({"items": [], "summary": "0/0 done, 0 in progress"})
+            == EMPTY_PLAN_TEXT
         )
 
     def test_single_todo_item(self) -> None:
@@ -56,8 +55,8 @@ class RenderPlanTests(unittest.TestCase):
             "summary": "0/1 done, 0 in progress",
         }
         output = render_plan(plan)
-        self.assertIn("Plan (0/1 done, 0 in progress):", output)
-        self.assertIn("[ ] Read config", output)
+        assert "Plan (0/1 done, 0 in progress):" in output
+        assert "[ ] Read config" in output
 
     def test_mixed_statuses_render_with_distinct_marks(self) -> None:
         plan = {
@@ -70,12 +69,12 @@ class RenderPlanTests(unittest.TestCase):
             "summary": "1/4 done, 1 in progress",
         }
         output = render_plan(plan)
-        self.assertIn("[x] alpha", output)
-        self.assertIn("[→] beta", output)
-        self.assertIn("[!] gamma", output)
-        self.assertIn("[ ] delta", output)
-        self.assertNotIn("[→] gamma", output)
-        self.assertNotIn("[!] beta", output)
+        assert "[x] alpha" in output
+        assert "[→] beta" in output
+        assert "[!] gamma" in output
+        assert "[ ] delta" in output
+        assert "[→] gamma" not in output
+        assert "[!] beta" not in output
 
     def test_summary_is_used_verbatim_not_recomputed(self) -> None:
         plan = {
@@ -85,7 +84,7 @@ class RenderPlanTests(unittest.TestCase):
             "summary": "WHATEVER THE ENVELOPE SAID",
         }
         output = render_plan(plan)
-        self.assertIn("Plan (WHATEVER THE ENVELOPE SAID):", output)
+        assert "Plan (WHATEVER THE ENVELOPE SAID):" in output
 
     def test_empty_summary_falls_back_to_plain_header(self) -> None:
         plan = {
@@ -93,7 +92,7 @@ class RenderPlanTests(unittest.TestCase):
             "summary": "",
         }
         output = render_plan(plan)
-        self.assertTrue(output.startswith("Plan:"))
+        assert output.startswith("Plan:")
 
     def test_unknown_status_gets_fallback_mark(self) -> None:
         plan = {
@@ -103,7 +102,7 @@ class RenderPlanTests(unittest.TestCase):
             "summary": "0/1 done, 0 in progress",
         }
         output = render_plan(plan)
-        self.assertIn(f"[{UNKNOWN_STATUS_MARK}] future", output)
+        assert f"[{UNKNOWN_STATUS_MARK}] future" in output
 
     def test_items_render_in_envelope_order(self) -> None:
         plan = {
@@ -118,16 +117,15 @@ class RenderPlanTests(unittest.TestCase):
         first_idx = output.find("first")
         second_idx = output.find("second")
         third_idx = output.find("third")
-        self.assertLess(first_idx, second_idx)
-        self.assertLess(second_idx, third_idx)
+        assert first_idx < second_idx < third_idx
 
 
-class RenderEnvelopeTests(unittest.TestCase):
+class TestRenderEnvelope:
     def test_none_envelope_returns_empty_text(self) -> None:
-        self.assertEqual(render_plan_envelope(None), EMPTY_PLAN_TEXT)
+        assert render_plan_envelope(None) == EMPTY_PLAN_TEXT
 
     def test_envelope_missing_plan_key_returns_empty_text(self) -> None:
-        self.assertEqual(render_plan_envelope({"message": "no plan"}), EMPTY_PLAN_TEXT)
+        assert render_plan_envelope({"message": "no plan"}) == EMPTY_PLAN_TEXT
 
     def test_envelope_with_plan_renders_items(self) -> None:
         envelope = {
@@ -139,11 +137,11 @@ class RenderEnvelopeTests(unittest.TestCase):
             "message": "anything",
         }
         output = render_plan_envelope(envelope)
-        self.assertIn("[x] task", output)
+        assert "[x] task" in output
 
 
-class HandlePlanCommandTests(unittest.TestCase):
-    def setUp(self) -> None:
+class TestHandlePlanCommand:
+    def setup_method(self) -> None:
         _reset_store_for_tests()
 
     def _capture(
@@ -157,39 +155,39 @@ class HandlePlanCommandTests(unittest.TestCase):
     def test_plan_bare_renders_current_plan(self) -> None:
         _h_set({"items": ["read", "edit", "run"]}, _ctx("sess-plan-cmd"))
         handled, output = self._capture("/plan")
-        self.assertTrue(handled)
-        self.assertIn("Plan", output)
-        self.assertIn("[ ] read", output)
+        assert handled is True
+        assert "Plan" in output
+        assert "[ ] read" in output
 
     def test_plan_show_renders_current_plan(self) -> None:
         _h_set({"items": ["a"]}, _ctx("sess-plan-cmd"))
         handled, output = self._capture("/plan show")
-        self.assertTrue(handled)
-        self.assertIn("[ ] a", output)
+        assert handled is True
+        assert "[ ] a" in output
 
     def test_plan_show_with_no_plan_renders_empty_text(self) -> None:
         handled, output = self._capture("/plan show", session_id="sess-virgin")
-        self.assertTrue(handled)
-        self.assertIn(EMPTY_PLAN_TEXT, output)
+        assert handled is True
+        assert EMPTY_PLAN_TEXT in output
 
     def test_plan_clear_drops_plan_and_prints_confirmation(self) -> None:
         _h_set({"items": ["x"]}, _ctx("sess-plan-cmd"))
         handled, output = self._capture("/plan clear")
-        self.assertTrue(handled)
-        self.assertIn("Plan cleared.", output)
-        self.assertIn(EMPTY_PLAN_TEXT, output)
+        assert handled is True
+        assert "Plan cleared." in output
+        assert EMPTY_PLAN_TEXT in output
 
         _, post = self._capture("/plan show")
-        self.assertIn(EMPTY_PLAN_TEXT, post)
+        assert EMPTY_PLAN_TEXT in post
 
     def test_unknown_subaction_returns_usage_error(self) -> None:
         handled, output = self._capture("/plan frobnicate")
-        self.assertTrue(handled)
-        self.assertIn("usage:", output)
-        self.assertIn("show", output)
-        self.assertIn("clear", output)
+        assert handled is True
+        assert "usage:" in output
+        assert "show" in output
+        assert "clear" in output
 
     def test_handler_always_returns_true(self) -> None:
         for line in ("/plan", "/plan show", "/plan clear", "/plan xyz", "/plan   "):
             handled, _ = self._capture(line)
-            self.assertTrue(handled, f"line={line!r} not handled")
+            assert handled is True, f"line={line!r} not handled"

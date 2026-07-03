@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import unittest
+import pytest
 
 from openminion.modules.brain.meta.schemas import (
     BudgetAdjust,
@@ -13,72 +13,67 @@ from openminion.modules.brain.meta.schemas import (
 )
 
 
-class TestMetaStateEnum(unittest.TestCase):
+class TestMetaStateEnum:
     def test_all_states_present(self) -> None:
         states = {s.value for s in MetaState}
-        self.assertSetEqual(
-            states,
-            {"NORMAL", "CAUTIOUS", "HIGH_ASSURANCE", "RECOVERY", "PANIC"},
-        )
+        assert states == {"NORMAL", "CAUTIOUS", "HIGH_ASSURANCE", "RECOVERY", "PANIC"}
 
 
-class TestVerificationModeEnum(unittest.TestCase):
+class TestVerificationModeEnum:
     def test_all_modes_present(self) -> None:
         modes = {m.value for m in VerificationMode}
-        self.assertSetEqual(
-            modes, {"none", "rule_based", "second_opinion", "panel_judge"}
-        )
+        assert modes == {"none", "rule_based", "second_opinion", "panel_judge"}
 
 
-class TestMetaMetrics(unittest.TestCase):
+class TestMetaMetrics:
     def test_defaults(self) -> None:
         m = MetaMetrics()
-        self.assertEqual(m.risk_class, "low")
-        self.assertEqual(m.risk_score, 0)
-        self.assertAlmostEqual(m.intent_confidence, 0.7)
-        self.assertAlmostEqual(m.grounding_confidence, 1.0)
-        self.assertAlmostEqual(m.budget_remaining, 1.0)
-        self.assertEqual(m.unknown_fields_count, 0)
-        self.assertEqual(m.steps_completed_recent, 0)
-        self.assertEqual(m.contradiction_flags, [])
-        self.assertAlmostEqual(m.candidate_disagreement_score, 0.0)
-        self.assertFalse(m.requires_evidence_only)
-        self.assertEqual(m.tool_timeout_count_recent, 0)
-        self.assertEqual(m.tool_auth_error_count_recent, 0)
-        self.assertEqual(m.llm_calls_used, 0)
-        self.assertEqual(m.llm_calls_max, 8)
-        self.assertEqual(m.tool_calls_used, 0)
-        self.assertEqual(m.tool_calls_max, 8)
-        self.assertAlmostEqual(m.budget_pressure, 0.0)
-        self.assertFalse(m.user_corrected_me_recently)
-        self.assertFalse(m.user_requested_thoroughness)
-        self.assertFalse(m.user_requested_brevity)
-        self.assertFalse(m.user_kill_requested)
-        self.assertFalse(m.needs_clarification)
-        self.assertFalse(m.irreversible)
+        assert m.risk_class == "low"
+        assert m.risk_score == 0
+        assert m.intent_confidence == pytest.approx(0.7)
+        assert m.grounding_confidence == pytest.approx(1.0)
+        assert m.budget_remaining == pytest.approx(1.0)
+        assert m.unknown_fields_count == 0
+        assert m.steps_completed_recent == 0
+        assert m.contradiction_flags == []
+        assert m.candidate_disagreement_score == pytest.approx(0.0)
+        assert not m.requires_evidence_only
+        assert m.tool_timeout_count_recent == 0
+        assert m.tool_auth_error_count_recent == 0
+        assert m.llm_calls_used == 0
+        assert m.llm_calls_max == 8
+        assert m.tool_calls_used == 0
+        assert m.tool_calls_max == 8
+        assert m.budget_pressure == pytest.approx(0.0)
+        assert not m.user_corrected_me_recently
+        assert not m.user_requested_thoroughness
+        assert not m.user_requested_brevity
+        assert not m.user_kill_requested
+        assert not m.needs_clarification
+        assert not m.irreversible
 
     def test_clamp_float_over(self) -> None:
         m = MetaMetrics(intent_confidence=9.0)
-        self.assertAlmostEqual(m.intent_confidence, 1.0)
+        assert m.intent_confidence == pytest.approx(1.0)
 
     def test_clamp_float_under(self) -> None:
         m = MetaMetrics(grounding_confidence=-5.0)
-        self.assertAlmostEqual(m.grounding_confidence, 0.0)
+        assert m.grounding_confidence == pytest.approx(0.0)
 
     def test_clamp_risk_score_over(self) -> None:
         m = MetaMetrics(risk_score=999)
-        self.assertEqual(m.risk_score, 100)
+        assert m.risk_score == 100
 
     def test_clamp_risk_score_under(self) -> None:
         m = MetaMetrics(risk_score=-10)
-        self.assertEqual(m.risk_score, 0)
+        assert m.risk_score == 0
 
     def test_clamp_non_negative_int(self) -> None:
         m = MetaMetrics(recent_failures=-3)
-        self.assertEqual(m.recent_failures, 0)
+        assert m.recent_failures == 0
         m2 = MetaMetrics(unknown_fields_count=-2, llm_calls_used=-1)
-        self.assertEqual(m2.unknown_fields_count, 0)
-        self.assertEqual(m2.llm_calls_used, 0)
+        assert m2.unknown_fields_count == 0
+        assert m2.llm_calls_used == 0
 
     def test_extended_fields_round_trip(self) -> None:
         metrics = MetaMetrics(
@@ -99,66 +94,66 @@ class TestMetaMetrics(unittest.TestCase):
             user_requested_brevity=False,
         )
         restored = MetaMetrics.model_validate(metrics.model_dump())
-        self.assertEqual(restored.unknown_fields_count, 2)
-        self.assertEqual(restored.steps_completed_recent, 4)
-        self.assertEqual(restored.contradiction_flags, ["a", "b"])
-        self.assertAlmostEqual(restored.candidate_disagreement_score, 0.61)
-        self.assertTrue(restored.requires_evidence_only)
-        self.assertEqual(restored.tool_timeout_count_recent, 1)
-        self.assertEqual(restored.tool_auth_error_count_recent, 1)
-        self.assertEqual(restored.llm_calls_used, 3)
-        self.assertEqual(restored.llm_calls_max, 9)
-        self.assertEqual(restored.tool_calls_used, 2)
-        self.assertEqual(restored.tool_calls_max, 7)
-        self.assertAlmostEqual(restored.budget_pressure, 0.45)
-        self.assertTrue(restored.user_corrected_me_recently)
-        self.assertTrue(restored.user_requested_thoroughness)
-        self.assertFalse(restored.user_requested_brevity)
+        assert restored.unknown_fields_count == 2
+        assert restored.steps_completed_recent == 4
+        assert restored.contradiction_flags == ["a", "b"]
+        assert restored.candidate_disagreement_score == pytest.approx(0.61)
+        assert restored.requires_evidence_only
+        assert restored.tool_timeout_count_recent == 1
+        assert restored.tool_auth_error_count_recent == 1
+        assert restored.llm_calls_used == 3
+        assert restored.llm_calls_max == 9
+        assert restored.tool_calls_used == 2
+        assert restored.tool_calls_max == 7
+        assert restored.budget_pressure == pytest.approx(0.45)
+        assert restored.user_corrected_me_recently
+        assert restored.user_requested_thoroughness
+        assert not restored.user_requested_brevity
 
     def test_extra_field_forbidden(self) -> None:
-        with self.assertRaises(Exception):
+        with pytest.raises(Exception):
             MetaMetrics(unknown_extra_field="bad")  # type: ignore[call-arg]
 
     def test_risk_class_literal(self) -> None:
-        with self.assertRaises(Exception):
+        with pytest.raises(Exception):
             MetaMetrics(risk_class="catastrophic")  # type: ignore[arg-type]
 
 
-class TestMetaDirective(unittest.TestCase):
+class TestMetaDirective:
     def test_defaults(self) -> None:
         d = MetaDirective()
-        self.assertIsNone(d.override_next_state)
-        self.assertIsNone(d.tier_override)
-        self.assertFalse(d.require_confirmation)
-        self.assertFalse(d.require_verification)
-        self.assertEqual(d.verification_mode, VerificationMode.none)
-        self.assertEqual(d.tool_temp_denylist, [])
-        self.assertEqual(d.prompt_constraints, [])
+        assert d.override_next_state is None
+        assert d.tier_override is None
+        assert not d.require_confirmation
+        assert not d.require_verification
+        assert d.verification_mode is VerificationMode.none
+        assert d.tool_temp_denylist == []
+        assert d.prompt_constraints == []
 
     def test_extra_field_forbidden(self) -> None:
-        with self.assertRaises(Exception):
+        with pytest.raises(Exception):
             MetaDirective(not_a_field=True)  # type: ignore[call-arg]
 
     def test_override_next_state_literal(self) -> None:
         d = MetaDirective(override_next_state="STOPPED")
-        self.assertEqual(d.override_next_state, "STOPPED")
-        with self.assertRaises(Exception):
+        assert d.override_next_state == "STOPPED"
+        with pytest.raises(Exception):
             MetaDirective(override_next_state="INVALID")  # type: ignore[arg-type]
 
 
-class TestBudgetAdjust(unittest.TestCase):
+class TestBudgetAdjust:
     def test_defaults(self) -> None:
         b = BudgetAdjust()
-        self.assertFalse(b.lower_context_limits)
-        self.assertFalse(b.raise_context_limits)
-        self.assertIsNone(b.lower_llm_calls_max)
+        assert not b.lower_context_limits
+        assert not b.raise_context_limits
+        assert b.lower_llm_calls_max is None
 
     def test_extra_forbidden(self) -> None:
-        with self.assertRaises(Exception):
+        with pytest.raises(Exception):
             BudgetAdjust(unknown=True)  # type: ignore[call-arg]
 
 
-class TestMetaResult(unittest.TestCase):
+class TestMetaResult:
     def test_round_trip_serialization(self) -> None:
         metrics = MetaMetrics(risk_class="high", risk_score=80)
         directive = MetaDirective(
@@ -173,10 +168,10 @@ class TestMetaResult(unittest.TestCase):
         )
         data = result.model_dump()
         restored = MetaResult.model_validate(data)
-        self.assertEqual(restored.meta_state, MetaState.HIGH_ASSURANCE)
-        self.assertTrue(restored.directive.require_verification)
-        self.assertEqual(restored.metrics.risk_score, 80)
-        self.assertIn("HIGH_ASSURANCE_RISK_CLASS", restored.reasons)
+        assert restored.meta_state is MetaState.HIGH_ASSURANCE
+        assert restored.directive.require_verification
+        assert restored.metrics.risk_score == 80
+        assert "HIGH_ASSURANCE_RISK_CLASS" in restored.reasons
 
     def test_ruleset_version_default(self) -> None:
         result = MetaResult(
@@ -184,17 +179,17 @@ class TestMetaResult(unittest.TestCase):
             directive=MetaDirective(),
             metrics=MetaMetrics(),
         )
-        self.assertEqual(result.ruleset_version, "metactl.v1")
+        assert result.ruleset_version == "metactl.v1"
 
 
-class TestMetaConfig(unittest.TestCase):
+class TestMetaConfig:
     def test_defaults(self) -> None:
         cfg = MetaConfig()
-        self.assertEqual(cfg.ruleset_version, "metactl.v1")
-        self.assertEqual(cfg.high_risk_score_threshold, 70)
-        self.assertAlmostEqual(cfg.low_grounding_threshold, 0.5)
-        self.assertEqual(cfg.repeat_failure_threshold, 2)
+        assert cfg.ruleset_version == "metactl.v1"
+        assert cfg.high_risk_score_threshold == 70
+        assert cfg.low_grounding_threshold == pytest.approx(0.5)
+        assert cfg.repeat_failure_threshold == 2
 
     def test_extra_forbidden(self) -> None:
-        with self.assertRaises(Exception):
+        with pytest.raises(Exception):
             MetaConfig(bad_field=True)  # type: ignore[call-arg]

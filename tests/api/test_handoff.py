@@ -80,8 +80,6 @@ def test_agent_handoffs_param_registers_handoff_tool_names() -> None:
         handoffs=[Handoff(target=agent_b)],
     )
     assert agent_a.handoff_tool_names == ["transfer_to_agent_b"]
-    # The handoff tool name is appended to the allowed-tools list passed to
-    # the runtime payload.
     agent_a.run("hi")
     assert "transfer_to_agent_b" in runtime_a.last_payload["allowed_tools"]
 
@@ -124,7 +122,6 @@ def test_subagent_propagates_name_and_model() -> None:
 
 
 def test_subagent_lazy_runtime_construction_only_happens_once() -> None:
-
     with patch(
         "openminion.api.agent.APIRuntime.from_config_path",
     ) as factory:
@@ -132,10 +129,6 @@ def test_subagent_lazy_runtime_construction_only_happens_once() -> None:
         factory.return_value = fake
         parent = Agent()  # no runtime
         child = subagent(parent, name="child")
-        # The factory is invoked once, when the subagent helper called
-        # parent._ensure_runtime().
         assert factory.call_count == 1
-        # Now the child shares the parent's runtime; running the child does
-        # NOT call the factory again.
         child.run("hello")
         assert factory.call_count == 1

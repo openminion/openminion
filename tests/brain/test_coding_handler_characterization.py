@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import inspect
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 from openminion.modules.brain.loop.strategies.coding import handler
 from openminion.modules.brain.loop.strategies.coding import runtime as coding_runtime
@@ -38,33 +39,25 @@ EXPECTED_HANDLER_SYMBOLS: tuple[str, ...] = (
 )
 
 
-class CodingHandlerSurfaceTests(unittest.TestCase):
-    def test_every_expected_symbol_resolves(self) -> None:
-        for name in EXPECTED_HANDLER_SYMBOLS:
-            with self.subTest(symbol=name):
-                self.assertTrue(
-                    hasattr(handler, name),
-                    f"handler.py lost symbol `{name}` — split regression.",
-                )
+class TestCodingHandlerSurface:
+    @pytest.mark.parametrize("name", EXPECTED_HANDLER_SYMBOLS)
+    def test_every_expected_symbol_resolves(self, name: str) -> None:
+        assert hasattr(handler, name), f"handler.py lost symbol `{name}`."
 
     def test_coding_mode_inherits_from_coding_profile_runner(self) -> None:
-        self.assertTrue(issubclass(CodingMode, CodingProfileRunner))
+        assert issubclass(CodingMode, CodingProfileRunner)
 
     def test_coding_profile_runner_is_a_class(self) -> None:
-        self.assertTrue(inspect.isclass(CodingProfileRunner))
+        assert inspect.isclass(CodingProfileRunner)
 
-    def test_entry_points_callable_with_single_ctx_arg(self) -> None:
+    @pytest.mark.parametrize("fn", [execute_coding_profile, prepare_coding_profile])
+    def test_entry_points_callable_with_single_ctx_arg(self, fn) -> None:
         # Both `execute_coding_profile(ctx)` and `prepare_coding_profile(ctx)`
         # take ctx as the first positional argument. Lock the shape.
-        for fn in (execute_coding_profile, prepare_coding_profile):
-            with self.subTest(fn=fn.__name__):
-                sig = inspect.signature(fn)
-                params = list(sig.parameters.values())
-                self.assertGreaterEqual(len(params), 1)
-                self.assertEqual(params[0].name, "ctx")
-
-
-# Section 2 — CodingProfileRunner method-surface pinning
+        sig = inspect.signature(fn)
+        params = list(sig.parameters.values())
+        assert len(params) >= 1
+        assert params[0].name == "ctx"
 
 
 EXPECTED_RUNNER_METHODS: tuple[str, ...] = (
@@ -73,50 +66,42 @@ EXPECTED_RUNNER_METHODS: tuple[str, ...] = (
 )
 
 
-class CodingProfileRunnerMethodTests(unittest.TestCase):
-    def test_runner_exposes_prepare_and_execute(self) -> None:
-        for name in EXPECTED_RUNNER_METHODS:
-            with self.subTest(method=name):
-                self.assertTrue(
-                    hasattr(CodingProfileRunner, name),
-                    f"CodingProfileRunner lost method `{name}`.",
-                )
-                self.assertTrue(callable(getattr(CodingProfileRunner, name)))
+class TestCodingProfileRunnerMethods:
+    @pytest.mark.parametrize("name", EXPECTED_RUNNER_METHODS)
+    def test_runner_exposes_prepare_and_execute(self, name: str) -> None:
+        assert hasattr(CodingProfileRunner, name), (
+            f"CodingProfileRunner lost method `{name}`."
+        )
+        assert callable(getattr(CodingProfileRunner, name))
 
 
-# Section 3 — Pure-helper behavior pins (no ExecutionContext required)
-
-
-class CodingHandlerPureHelperBehaviorTests(unittest.TestCase):
+class TestCodingHandlerPureHelperBehavior:
     def test_build_error_result_shape(self) -> None:
         result = handler._build_error_result("oops", "TEST_CODE")
-        self.assertEqual(result.summary, "oops")
-        self.assertIsNotNone(result.error)
+        assert result.summary == "oops"
         assert result.error is not None
-        self.assertEqual(result.error.code, "TEST_CODE")
+        assert result.error.code == "TEST_CODE"
 
     def test_build_blocked_result_shape(self) -> None:
         result = handler._build_blocked_result("blocked", "TEST_CODE")
-        self.assertEqual(result.summary, "blocked")
+        assert result.summary == "blocked"
         # Blocked vs error is signaled by status, not by presence of error.
         from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_BLOCKED
 
-        self.assertEqual(result.status, BRAIN_ACTION_STATUS_BLOCKED)
+        assert result.status == BRAIN_ACTION_STATUS_BLOCKED
 
     def test_build_tool_specs_returns_a_list(self) -> None:
-        # frozenset() input → empty list; ensures the function is callable
-        # and returns a sequence shape.
         specs = handler._build_tool_specs(frozenset())
-        self.assertIsInstance(specs, list)
+        assert isinstance(specs, list)
 
     def test_build_tool_specs_encodes_file_vs_shell_scaffolding_boundary(self) -> None:
         specs = handler._build_tool_specs(frozenset({"file.write", "exec.run"}))
         by_name = {spec.name: spec for spec in specs}
 
-        self.assertIn("parent directories", by_name["file.write"].description)
-        self.assertIn("scaffold", by_name["file.write"].description.lower())
-        self.assertIn("structured file tools", by_name["exec.run"].description)
-        self.assertIn("directories", by_name["exec.run"].description)
+        assert "parent directories" in by_name["file.write"].description
+        assert "scaffold" in by_name["file.write"].description.lower()
+        assert "structured file tools" in by_name["exec.run"].description
+        assert "directories" in by_name["exec.run"].description
 
     def test_build_tool_specs_uses_runtime_schema_when_available(self) -> None:
         schema = {
@@ -148,5 +133,5 @@ class CodingHandlerPureHelperBehaviorTests(unittest.TestCase):
             specs = handler._build_tool_specs(frozenset({"exec.run"}), ctx=object())
 
         [spec] = specs
-        self.assertEqual(spec.input_schema, schema)
-        self.assertIn("path/cwd/working_directory", spec.description)
+        assert spec.input_schema == schema
+        assert "path/cwd/working_directory" in spec.description
