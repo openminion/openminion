@@ -49,7 +49,6 @@ class SMD005RestartDurabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "smd005_single.db"
 
-            # Phase 1: write via first store instance.
             store_a = SQLiteMemoryStore(db_path)
             rec = _make_record(
                 record_id="smd005-single-1",
@@ -61,13 +60,8 @@ class SMD005RestartDurabilityTests(unittest.TestCase):
             store_a.put(rec)
             self.assertTrue(db_path.exists(), "SQLite file should exist after put()")
 
-            # Drop the store reference (simulating process exit). SQLite
-            # connections are per-call (`_connect()` context-managed) so no
-            # explicit close needed.
             del store_a
 
-            # Phase 2: open a fresh store instance against the same file
-            # (simulating runtime restart with the existing memory file).
             store_b = SQLiteMemoryStore(db_path)
             recovered = store_b.get("smd005-single-1")
 
@@ -76,7 +70,6 @@ class SMD005RestartDurabilityTests(unittest.TestCase):
             self.assertEqual(recovered.id, "smd005-single-1")
             self.assertEqual(recovered.scope, "session:smd005-session")
             self.assertEqual(recovered.type, "fact")
-            # Content can be dict or str; codec preserves either shape.
             content = recovered.content
             if isinstance(content, dict):
                 self.assertEqual(
@@ -116,7 +109,6 @@ class SMD005RestartDurabilityTests(unittest.TestCase):
                 self.assertEqual(recovered.scope, scope, f"scope mismatch for {rid}")
                 self.assertIn(scope, str(recovered.content))
 
-            # And list_scopes() should report all three after restart.
             scopes_after = set(store_b.list_scopes())
             self.assertIn("session:smd005-multi", scopes_after)
             self.assertIn("agent:smd005-agent", scopes_after)
@@ -145,7 +137,6 @@ class SMD005RestartDurabilityTests(unittest.TestCase):
             del store_a
 
             store_b = SQLiteMemoryStore(db_path)
-            # Live-listing must hide the soft-deleted record after restart.
             results = store_b.list(ListQueryOptions(scopes=["session:smd005-delete"]))
             visible_ids = {rec.id for rec in results}
             self.assertIn(
@@ -239,13 +230,11 @@ class SMD006RetentionAdvisoryConfigTests(unittest.TestCase):
 
         runtime = RuntimeConfig()
         runtime.memory_patch_retention_count = 50
-        # The config value is honored at the data layer.
         self.assertEqual(runtime.memory_patch_retention_count, 50)
 
     def test_summary_compression_age_days_is_actual_enforcement_path(self):
         from openminion.modules.memory.runtime import gc as gc_module
 
-        # Verify the canonical enforcement function exists and is callable.
         self.assertTrue(
             hasattr(gc_module, "compress_old_summaries"),
             "compress_old_summaries must remain the canonical retention "

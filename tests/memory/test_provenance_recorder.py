@@ -70,7 +70,6 @@ class TestFindTracesCitingMemory:
         recorder.record_turn_trace(t3)
         traces = recorder.find_traces_citing_memory("m1")
         assert len(traces) == 3
-        # Newest first.
         assert [t.recorded_at for t in traces] == [
             "2026-05-18T00:10:00Z",
             "2026-05-18T00:05:00Z",
@@ -95,10 +94,8 @@ class TestFindTracesCitingMemory:
         second = _trace("s1", "t1", "2026-05-18T00:01:00Z", ["m3"])
         recorder.record_turn_trace(first)
         recorder.record_turn_trace(second)
-        # m1 / m2 should no longer index to this turn.
         assert recorder.find_traces_citing_memory("m1") == []
         assert recorder.find_traces_citing_memory("m2") == []
-        # m3 should index correctly.
         m3 = recorder.find_traces_citing_memory("m3")
         assert len(m3) == 1
         assert m3[0].turn_id == "t1"

@@ -40,9 +40,6 @@ def _service(tmp_path: Path, **overrides) -> RetrieveCtl:
     return RetrieveCtl(_config(tmp_path, **overrides))
 
 
-# Negative-path tests
-
-
 def test_retrieve_returns_empty_for_no_indexed_content(tmp_path: Path) -> None:
     service = _service(tmp_path)
     try:
@@ -77,7 +74,6 @@ def test_retrieve_with_zero_k_clamps_to_minimum(tmp_path: Path) -> None:
             k=0,
             strategy="contextual",
         )
-        # Service clamps k to max(1, k), so at most 1 result comes back
         assert isinstance(rows, list)
         assert len(rows) <= 1
     finally:
@@ -116,8 +112,6 @@ def test_retrieve_unknown_strategy_falls_back_gracefully(tmp_path: Path) -> None
             title="Fallback doc",
             unit_kind="chunk",
         )
-        # If the service doesn't recognise the strategy, it should not raise -
-        # it should either fall back to contextual or return []
         try:
             rows = service.retrieve(
                 query="fallback",
@@ -195,9 +189,6 @@ def test_retrieve_returns_correct_provenance_fields_for_rlm(tmp_path: Path) -> N
         service.close()
 
 
-# FTS fallback parity
-
-
 def test_fts_fallback_returns_same_structure_as_contextual(tmp_path: Path) -> None:
     service = _service(tmp_path)
     try:
@@ -214,7 +205,6 @@ def test_fts_fallback_returns_same_structure_as_contextual(tmp_path: Path) -> No
             title="Deploy window doc",
             unit_kind="chunk",
         )
-        # Both strategies should return rows with the same required keys
         ctx_rows = service.retrieve(
             query="aurora deployment window",
             purpose="act",
@@ -222,12 +212,10 @@ def test_fts_fallback_returns_same_structure_as_contextual(tmp_path: Path) -> No
             k=3,
             strategy="contextual",
         )
-        # We can only compare structures, not results
         required_keys = {"ref_id", "text", "score", "source"}
         for row in ctx_rows:
             present_keys = set(row.keys())
             missing = required_keys - present_keys
-            # Accept either "ref_id" or "ref" as the identifier key
             if "ref_id" not in row and "ref" in row:
                 missing.discard("ref_id")
             assert not missing, (

@@ -45,9 +45,6 @@ def _read_audit(ctx: RuntimeContext) -> list[dict]:
     ]
 
 
-# --- emit_family_event ---
-
-
 def test_emit_family_event_writes_event_to_audit_log(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
     emit_family_event(ctx, event="test.event", payload={"key": "val"})
@@ -66,13 +63,10 @@ def test_emit_family_event_no_payload_writes_event_only(tmp_path: Path) -> None:
 
 
 def test_emit_family_event_ignores_non_runtime_context() -> None:
-    # Must not raise; should silently return
     from types import SimpleNamespace
 
     ctx = SimpleNamespace(some_field="not_a_runtime_context")
-    emit_family_event(
-        ctx, event="test.event", payload={"x": 1}
-    )  # no assertion needed — just no exception
+    emit_family_event(ctx, event="test.event", payload={"x": 1})
 
 
 def test_emit_family_event_ignores_none_context() -> None:
@@ -87,7 +81,6 @@ def test_emit_family_event_tolerates_write_failure(tmp_path: Path) -> None:
         raise RuntimeError("simulated audit write failure")
 
     ctx.write_audit_event = _bad_write
-    # Must not raise
     emit_family_event(ctx, event="test.event", payload={"x": 1})
     ctx.write_audit_event = original
 
@@ -108,9 +101,6 @@ def test_emit_family_event_merges_payload_fields(tmp_path: Path) -> None:
     assert records[0]["requested_provider"] == "auto"
     assert records[0]["selected_provider"] == "brave"
     assert records[0]["attempt_index"] == 1
-
-
-# --- emit_provider_attempt ---
 
 
 def test_emit_provider_attempt_adds_attempt_index(tmp_path: Path) -> None:

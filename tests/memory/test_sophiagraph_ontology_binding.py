@@ -64,9 +64,6 @@ def _prov() -> SubmissionProvenance:
     return SubmissionProvenance(source_owner="task-runner", turn_id="t-1")
 
 
-# OntologyBinding validation
-
-
 def test_ontology_binding_requires_id_and_version() -> None:
     OntologyBinding(ontology_id="coding", version="1.0.0")
     with pytest.raises(SubmissionEnvelopeError):
@@ -102,9 +99,6 @@ def test_envelope_without_binding_carries_null_binding() -> None:
     assert envelope.as_dict()["ontology_binding"] is None
 
 
-# SOCC-04 — binding propagates to record.meta
-
-
 def test_binding_propagates_to_record_meta(store) -> None:
     result = submit_envelope(
         store,
@@ -131,7 +125,6 @@ def test_binding_propagates_to_record_meta(store) -> None:
     assert record is not None
     assert record.meta["ontology_id"] == "coding"
     assert record.meta["ontology_version"] == "1.0.0"
-    # And it validates against the stored ontology.
     validate_record_for_ontology(store, record, ontology_id="coding", version="1.0.0")
 
 
@@ -155,12 +148,8 @@ def test_envelope_payload_meta_overrides_binding_when_explicit(store) -> None:
     )
     record = store.get_record("rec-fn-2")
     assert record is not None
-    # Explicit meta wins over the envelope binding.
     assert record.meta["ontology_id"] == "research"
     assert record.meta["ontology_version"] == "9"
-
-
-# Anti-LLM boundary
 
 
 def test_no_prose_inference_helpers_for_ontology_binding() -> None:

@@ -9,7 +9,6 @@ from openminion.modules.policy.runtime.service import PolicyCtl
 
 class TestPolicyCtlContractVersion:
     def test_policy_ctl_contract_version_declared(self):
-        # Create a mock store for PolicyCtl
         mock_store = Mock()
         mock_store.close = Mock()
         mock_store.get_setting = Mock(return_value=None)
@@ -29,7 +28,6 @@ class TestPolicyCtlContractVersion:
 
 class TestPolicyCtlCompatibilityValidator:
     def test_policy_ctl_valid_implementation_passes(self):
-        # Create a mock store for PolicyCtl
         mock_store = Mock()
         mock_store.close = Mock()
         mock_store.get_setting = Mock(return_value=None)
@@ -51,7 +49,6 @@ class TestPolicyCtlCompatibilityValidator:
 
         class BrokenCtl:
             contract_version = POLICY_INTERFACE_VERSION
-            # Missing required methods like check, create_grant, etc.
 
         ctl = BrokenCtl()
         success, errors = ensure_policy_compatibility(ctl, strict=False)
@@ -62,7 +59,7 @@ class TestPolicyCtlCompatibilityValidator:
     def test_policy_ctl_version_mismatch_fails(self):
 
         class WrongVersionCtl:
-            contract_version = "v99"  # Wrong version
+            contract_version = "v99"
 
         ctl = WrongVersionCtl()
         success, errors = ensure_policy_compatibility(ctl, strict=False)
@@ -73,8 +70,8 @@ class TestPolicyCtlCompatibilityValidator:
     def test_policy_ctl_strict_mode_raises_error(self):
 
         class BadCtl:
-            contract_version = "v99"  # Wrong version
+            contract_version = "v99"
 
         ctl = BadCtl()
-        with pytest.raises(Exception):  # PolicyError will be raised
+        with pytest.raises(Exception):
             ensure_policy_compatibility(ctl, strict=True)

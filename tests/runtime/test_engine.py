@@ -15,9 +15,6 @@ from openminion.base.runtime.sandbox import (
 )
 
 
-# Helpers / fakes
-
-
 def _ctx(workspace="/ws") -> RuntimeContext:
     return RuntimeContext(
         trace_id="tr-1",
@@ -106,9 +103,6 @@ def _make_fswrite_call() -> ToolCall:
     )
 
 
-# Policy handshake event tests
-
-
 def test_allow_emits_required_events():
     events: list[tuple] = []
     engine = RuntimeEngine(
@@ -150,7 +144,7 @@ def test_confirm_approved_executes():
         runner=_StubRunner(),
         policy=_AlwaysConfirm(),
         on_event=lambda name, payload: events.append((name, payload)),
-        on_confirm=lambda tc, ctx, dec: True,  # approve
+        on_confirm=lambda tc, ctx, dec: True,
     )
     result = engine.execute_tool_call(_make_exec_call(), _ctx())
 
@@ -166,7 +160,7 @@ def test_confirm_denied_blocks():
         runner=_StubRunner(),
         policy=_AlwaysConfirm(),
         on_event=lambda name, payload: events.append((name, payload)),
-        on_confirm=lambda tc, ctx, dec: False,  # deny
+        on_confirm=lambda tc, ctx, dec: False,
     )
     result = engine.execute_tool_call(_make_exec_call(), _ctx())
 
@@ -265,12 +259,8 @@ def test_allow_with_constraints_passes_constraints_to_sandbox():
 
     assert len(captured_sandbox) == 1
     sb = captured_sandbox[0]
-    # policy narrowed ["echo", "ls"] → ["echo"]
     assert sb.cmd_allowlist == ["echo"]
     assert "ls" not in sb.cmd_allowlist
-
-
-# Idempotency tests (SPEC-I01)
 
 
 def test_idempotency_key_prevents_second_execution():
@@ -300,7 +290,7 @@ def test_idempotency_key_prevents_second_execution():
     r1 = engine.execute_tool_call(call, ctx)
     r2 = engine.execute_tool_call(call, ctx)
 
-    assert call_count[0] == 1  # executed only once
+    assert call_count[0] == 1
     assert r1.outcome == "completed"
     assert r2.outcome == "cached"
     assert r2.from_cache is True
@@ -313,7 +303,6 @@ def test_idempotency_cache_not_populated_on_block():
     r1 = engine.execute_tool_call(call, _ctx())
     r2 = engine.execute_tool_call(call, _ctx())
 
-    # Both should be blocked (not cached)
     assert r1.outcome == "blocked"
     assert r2.outcome == "blocked"
     assert not r2.from_cache
@@ -346,9 +335,6 @@ def test_no_idempotency_key_executes_every_time():
     assert call_count[0] == 2
 
 
-# Audit event content tests
-
-
 def test_all_events_have_ts_field():
     events: list[dict] = []
     engine = RuntimeEngine(
@@ -371,7 +357,6 @@ def test_all_events_have_correlation_fields():
     )
     engine.execute_tool_call(_make_exec_call(), _ctx())
 
-    # Events that carry correlation fields
     correlated_events = {
         "tool.call.requested",
         "policy.requested",

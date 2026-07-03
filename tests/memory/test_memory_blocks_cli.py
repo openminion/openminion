@@ -22,9 +22,6 @@ def parser():
     return build_parser()
 
 
-# CLI surface presence + parser wiring
-
-
 def test_all_four_subcommands_exist(parser) -> None:
     for argv in (
         ["memory", "blocks", "list", "--agent-id", "alpha"],
@@ -52,9 +49,6 @@ def test_all_four_subcommands_exist(parser) -> None:
         assert args.command == "memory"
         assert args.memory_command == "blocks"
         assert args.blocks_command == argv[2]
-
-
-# pin
 
 
 def test_pin_identity_creates_read_only_block(store, parser, capsys) -> None:
@@ -106,7 +100,7 @@ def test_pin_rejects_non_eligible_class(store, parser, capsys) -> None:
             "memory",
             "blocks",
             "pin",
-            "project_config",  # NOT on the v1 allowlist
+            "project_config",
             "anything",
             "--agent-id",
             "alpha",
@@ -118,7 +112,6 @@ def test_pin_rejects_non_eligible_class(store, parser, capsys) -> None:
     payload = json.loads(err)
     assert payload["ok"] is False
     assert payload["code"] == "MEMORY_BLOCK_CLASS_NOT_ELIGIBLE"
-    # No mutation of durable storage.
     assert store.list_memory_blocks() == []
 
 
@@ -142,7 +135,6 @@ def test_pin_rejects_deferred_mode(store, parser, capsys) -> None:
     payload = json.loads(err)
     assert payload["ok"] is False
     assert payload["code"] == "MEMORY_BLOCK_MODE_NOT_YET_SUPPORTED"
-    # No mutation of durable storage.
     assert store.list_memory_blocks() == []
 
 
@@ -154,14 +146,10 @@ def test_pin_requires_namespace(store, parser) -> None:
             "pin",
             "agent_identity",
             "Some text",
-            # no namespace flags
         ]
     )
     with pytest.raises(SystemExit):
         memory_cmd.run_memory_cli_bridge(args)
-
-
-# list
 
 
 def test_list_returns_existing_blocks(store, parser, capsys) -> None:
@@ -222,9 +210,6 @@ def test_list_namespace_isolation(store, parser, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["count"] == 1
     assert payload["blocks"][0]["owner_namespace"] == {"agent_id": "alpha"}
-
-
-# update
 
 
 def test_update_pinned_succeeds(store, parser, capsys) -> None:
@@ -314,13 +299,9 @@ def test_update_read_only_is_denied(store, parser, capsys) -> None:
     assert rc == 2
     payload = json.loads(err)
     assert payload["code"] == "MEMORY_BLOCK_EDIT_DENIED"
-    # Durable content unchanged after denied edit.
     block = store.get_memory_block("blk-id")
     assert block is not None
     assert block.content == "You are an assistant."
-
-
-# unpin
 
 
 def test_unpin_removes_pinned_block(store, parser, capsys) -> None:
@@ -382,5 +363,4 @@ def test_unpin_read_only_is_denied(store, parser, capsys) -> None:
     assert rc == 2
     payload = json.loads(err)
     assert payload["code"] == "MEMORY_BLOCK_EDIT_DENIED"
-    # Durable record still present.
     assert store.get_memory_block("blk-id") is not None

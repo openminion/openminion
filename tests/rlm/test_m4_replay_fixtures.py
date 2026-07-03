@@ -97,9 +97,6 @@ class _DetLLM:
         return {"status": "success", "text": json.dumps(pl), "json_output": pl}
 
 
-# Fixture definitions (inline — no external JSON files needed)
-
-
 REPLAY_FIXTURES: list[dict[str, Any]] = [
     {
         "id": "replay-001",
@@ -233,9 +230,6 @@ REPLAY_FIXTURES: list[dict[str, Any]] = [
 ]
 
 
-# Fixture runner
-
-
 def _run_fixture(fixture: dict[str, Any]) -> tuple[Any, _DetSess]:
     inp = fixture["input"]
     session = _DetSess()
@@ -257,9 +251,6 @@ def _run_fixture(fixture: dict[str, Any]) -> tuple[Any, _DetSess]:
     return resp, session
 
 
-# Parametrised replay tests
-
-
 @pytest.mark.parametrize(
     "fixture", REPLAY_FIXTURES, ids=[f["id"] for f in REPLAY_FIXTURES]
 )
@@ -267,30 +258,25 @@ def test_replay_fixture(fixture: dict[str, Any]) -> None:
     resp, session = _run_fixture(fixture)
     expect = fixture["expect"]
 
-    # Stop reason
     assert resp.telemetry.stop_reason == expect["stop_reason"], (
         f"[{fixture['id']}] stop_reason mismatch: "
         f"got {resp.telemetry.stop_reason!r}, expected {expect['stop_reason']!r}"
     )
 
-    # Ticks used (if specified)
     if "ticks_used" in expect:
         assert resp.telemetry.ticks_used == expect["ticks_used"], (
             f"[{fixture['id']}] ticks_used: got {resp.telemetry.ticks_used}, expected {expect['ticks_used']}"
         )
 
-    # Final text substring (if specified)
     if "final_text_contains" in expect:
         assert expect["final_text_contains"] in resp.final_text, (
             f"[{fixture['id']}] final_text missing '{expect['final_text_contains']}': got {resp.final_text!r}"
         )
 
-    # Continuation flag (if specified)
     if "needs_more_ticks" in expect:
         assert resp.continuation is not None
         assert resp.continuation.needs_more_ticks is expect["needs_more_ticks"]
 
-    # Required event types emitted
     emitted_types = {e["type"] for e in session.events}
     for event_type in expect.get("event_types", []):
         assert event_type in emitted_types, (

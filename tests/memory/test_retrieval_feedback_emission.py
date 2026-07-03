@@ -37,7 +37,6 @@ def test_retrieval_feedback_with_selected_and_rejected_ids() -> None:
         idempotency_key="idem-fb-1",
     )
     assert result.ok
-    # The record is durable in SophiaGraph for evaluation tuning.
     record = store.get_record(result.object_id)
     assert record is not None
     assert record.content == "feedback for turn t-1"
@@ -65,7 +64,6 @@ def test_retrieval_feedback_carries_structural_provenance() -> None:
         idempotency_key="idem-fb-2",
     )
     assert result.ok
-    # The record namespace round-trips with caller-supplied dimensions only.
     record = store.get_record(result.object_id)
     assert record is not None
     assert record.namespace.agent_id == "alpha"

@@ -70,9 +70,7 @@ class TestHomeRootPathResolution:
 
         cfg = load_config(config_file, env=env)
 
-        # Assert path mode is standalone
         assert cfg.path_mode == "module_standalone"
-        # When explicit config path is provided, source is explicit_config
         assert cfg.path_source == "explicit_config"
 
     def test_explicit_config_path(self, tmp_path: Path):
@@ -98,12 +96,10 @@ class TestHomeRootPathResolution:
         absolute_db_path = "/var/lib/openminion/memory.db"
         create_config_file(config_file, absolute_db_path)
 
-        # Even with OpenMinion Home, absolute paths should be unchanged
         cfg = load_config(
             config_file, home_root=tmp_path, env=_without_openminion_env()
         )
 
-        # On macOS, paths may get /private prefix - check ends with expected path
         assert str(cfg.store.sqlite_path).endswith(absolute_db_path)
 
 
@@ -151,7 +147,6 @@ class TestStorePathResolution:
 
         result = _parse_store(store_config, env, home_root=Path("/other"))
 
-        # Absolute path should be unchanged (macOS may add /private prefix)
         assert str(result.sqlite_path).endswith("/var/db/memory.sqlite")
 
 
