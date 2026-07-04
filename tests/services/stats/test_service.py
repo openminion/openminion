@@ -11,7 +11,11 @@ from openminion.modules.storage.runtime.session_store import (
 )
 from openminion.modules.storage.runtime.migrations import migrate_database
 from openminion.modules.storage.runtime.sqlite import connect_database
-from openminion.services.stats import StatsService
+from openminion.services.stats import (
+    StatsService,
+    TokenUsageRecord,
+    summary_to_json_payload,
+)
 
 
 @pytest.fixture()
@@ -47,6 +51,104 @@ def test_llm_call_completed_backfills_run_record_tokens(
     assert record is not None
     assert int(record["input_tokens"]) == 12
     assert int(record["output_tokens"]) == 5
+
+
+def test_token_usage_record_coerces_malformed_values() -> None:
+    record = TokenUsageRecord(
+        session_id="session-1",
+        surface="llm_prompt",
+        input_tokens="bad",
+        output_tokens=-2,
+        cache_read_tokens="4",
+        cache_write_tokens=None,
+        estimated_tokens="7",
+    )
+
+    assert record.input_tokens == 0
+    assert record.output_tokens == 0
+    assert record.cache_read_tokens == 4
+    assert record.cache_write_tokens == 0
+    assert record.estimated_tokens == 7
+
+
+def test_run_token_usage_normalizes_llm_surfaces_from_events(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    run_id = store.create_run_record(session_id, run_type="llm", run_id="run-usage")
+    store.finish_run_record(run_id, status="completed")
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.completed",
+        payload={
+            "run_id": run_id,
+            "llm_call_id": "call-1",
+            "provider": "anthropic",
+            "model": "claude-test",
+            "prompt": "ignore this text 9999; usage fields are authoritative",
+            "usage": {
+                "prompt_tokens": "12",
+                "completion_tokens": 5,
+                "cached_tokens": "3",
+                "cache_creation_tokens": 2,
+            },
+        },
+    )
+
+    summary = StatsService(store).get_run_token_usage(run_id)
+
+    assert summary is not None
+    assert summary.total_input_tokens == 12
+    assert summary.total_output_tokens == 5
+    assert summary.total_cache_read_tokens == 3
+    assert summary.total_cache_write_tokens == 2
+    assert summary.totals_by_surface == {
+        "llm_prompt": 12,
+        "llm_output": 5,
+        "llm_cache_read": 3,
+        "llm_cache_write": 2,
+    }
+    assert {record.surface for record in summary.records} == {
+        "llm_prompt",
+        "llm_output",
+        "llm_cache_read",
+        "llm_cache_write",
+    }
+    assert all(record.llm_call_id == "call-1" for record in summary.records)
+
+
+def test_run_token_usage_malformed_usage_values_become_zero(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    run_id = store.create_run_record(session_id, run_type="llm", run_id="run-bad")
+    store.finish_run_record(run_id, status="completed")
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.completed",
+        payload={
+            "run_id": run_id,
+            "usage": {
+                "prompt_tokens": "not-an-int",
+                "completion_tokens": -9,
+                "cached_tokens": None,
+                "cache_creation_tokens": "also-bad",
+            },
+        },
+    )
+
+    summary = StatsService(store).get_run_token_usage(run_id)
+
+    assert summary is not None
+    assert summary.records == ()
+    assert summary.total_input_tokens == 0
+    assert summary.total_output_tokens == 0
+    assert summary.total_cache_read_tokens == 0
+    assert summary.total_cache_write_tokens == 0
 
 
 def test_run_stats_can_fall_back_to_request_trace_when_events_lack_run_id(
@@ -94,6 +196,33 @@ def test_run_stats_can_fall_back_to_request_trace_when_events_lack_run_id(
     assert summary.stats.llm_calls == 1
     assert summary.stats.tool_calls == 1
     assert summary.stats.tool_errors == 0
+
+
+def test_run_token_usage_can_fall_back_to_request_trace(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    run_id = store.create_run_record(
+        session_id,
+        run_type="llm",
+        run_id="run-token-trace",
+        meta={"request_id": "req-token-trace"},
+    )
+    store.finish_run_record(run_id, status="completed")
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.completed",
+        payload={"usage": {"prompt_tokens": 6, "completion_tokens": 4}},
+        trace_id="req-token-trace",
+    )
+
+    summary = StatsService(store).get_run_token_usage(run_id)
+
+    assert summary is not None
+    assert summary.total_input_tokens == 6
+    assert summary.total_output_tokens == 4
 
 
 def test_session_stats_summary_uses_always_on_session_events(
@@ -157,6 +286,79 @@ def test_session_stats_summary_uses_always_on_session_events(
     assert summary.stats.tool_errors == 1
     assert summary.top_tools[0].name == "web.search"
     assert summary.top_tools[0].calls == 1
+
+
+def test_session_token_usage_includes_context_pack_and_bucket_records(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    store.append_event(
+        session_id=session_id,
+        event_type="context.manifest.created",
+        payload={
+            "llm_call_id": "call-context",
+            "prompt_context_id": "prompt-context-1",
+            "total_used_tokens": 100,
+            "total_cap_tokens": 200,
+            "pack_policy_used": "position_aware_v1",
+            "token_budget_buckets": {
+                "recent_window": {"used_tokens": 40, "cap_tokens": 60},
+                "retrieval": {"used_tokens": 25, "cap_tokens": 80},
+            },
+        },
+    )
+    store.append_event(
+        session_id=session_id,
+        event_type="context.manifest.created",
+        payload={"total_used_tokens": 10},
+    )
+
+    summary = StatsService(store).get_session_token_usage(session_id)
+
+    assert summary.total_estimated_tokens == 175
+    assert summary.totals_by_surface == {
+        "context_pack": 110,
+        "context_bucket": 65,
+    }
+    assert summary.totals_by_context_bucket == {
+        "recent_window": 40,
+        "retrieval": 25,
+    }
+    bucket_records = [
+        record for record in summary.records if record.surface == "context_bucket"
+    ]
+    assert all(record.estimated for record in bucket_records)
+    assert all(record.policy == "position_aware_v1" for record in bucket_records)
+
+
+def test_token_usage_export_has_stable_prompt_free_shape(
+    store: SQLiteSessionStore,
+) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.completed",
+        payload={
+            "run_id": "run-export",
+            "prompt": "do not export this raw prompt",
+            "usage": {"prompt_tokens": 3, "completion_tokens": 2},
+        },
+    )
+
+    payload = summary_to_json_payload(
+        StatsService(store).get_session_token_usage(session_id)
+    )
+
+    assert payload["session_id"] == session_id
+    assert payload["totals"]["input_tokens"] == 3
+    assert payload["totals"]["output_tokens"] == 2
+    assert payload["records"][0]["source_event_type"] == "llm.call.completed"
+    assert "prompt" not in payload["records"][0]
+    assert "do not export" not in str(payload)
 
 
 def test_session_stats_can_fall_back_to_persisted_outbound_message_stats(

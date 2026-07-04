@@ -100,6 +100,11 @@ def _usage_payload_from_response_usage(raw_usage: Any) -> dict[str, int]:
             "input_tokens": getattr(raw_usage, "input_tokens", None),
             "output_tokens": getattr(raw_usage, "output_tokens", None),
             "cached_tokens": getattr(raw_usage, "cached_tokens", None),
+            "cache_creation_tokens": getattr(
+                raw_usage,
+                "cache_creation_tokens",
+                None,
+            ),
         }
 
     usage: dict[str, int] = {}
@@ -108,6 +113,10 @@ def _usage_payload_from_response_usage(raw_usage: Any) -> dict[str, int]:
         ("completion_tokens", ("completion_tokens", "output_tokens")),
         ("total_tokens", ("total_tokens",)),
         ("cached_tokens", ("cached_tokens", "cache_read_input_tokens")),
+        (
+            "cache_creation_tokens",
+            ("cache_creation_tokens", "cache_creation_input_tokens"),
+        ),
     )
     for output_key, candidate_keys in key_pairs:
         for key in candidate_keys:
@@ -124,6 +133,10 @@ def _usage_payload_from_response_usage(raw_usage: Any) -> dict[str, int]:
             usage.get("completion_tokens", 0)
         )
     return usage
+
+
+def _optional_int(value: Any) -> int | None:
+    return int(value) if isinstance(value, (int, float)) else None
 
 
 def _metadata_user_prompt(metadata: dict[str, str]) -> str:
@@ -475,7 +488,7 @@ class OpenMinionLLMClient:
         output_tokens = (
             int(completion_tokens) if isinstance(completion_tokens, (int, float)) else 0
         )
-        cached_tokens = 0
+        cached_tokens = int(usage_payload.get("cached_tokens", 0) or 0)
 
         if self._telemetryctl and self._turn_id and self._session_id:
             try:
@@ -529,15 +542,11 @@ class OpenMinionLLMClient:
             "tool_calls": tool_calls,
             "thinking": _serialize_thinking_blocks(list(resp.thinking or [])),
             "usage": UsageInfo(
-                input_tokens=int(prompt_tokens)
-                if isinstance(prompt_tokens, (int, float))
-                else None,
-                output_tokens=int(completion_tokens)
-                if isinstance(completion_tokens, (int, float))
-                else None,
-                total_tokens=int(total_tokens)
-                if isinstance(total_tokens, (int, float))
-                else None,
+                input_tokens=_optional_int(prompt_tokens),
+                output_tokens=_optional_int(completion_tokens),
+                total_tokens=_optional_int(total_tokens),
+                cached_tokens=cached_tokens,
+                cache_creation_tokens=usage_payload.get("cache_creation_tokens"),
             ),
             "latency_ms": 0,
             "finish_reason": str(resp.finish_reason or ""),

@@ -4,6 +4,10 @@ import json
 from typing import Any
 
 from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.services.stats.token_usage import (
+    TokenUsageSummary,
+    records_from_session_event,
+)
 from openminion.services.stats.types import (
     RunStats,
     RunStatsSummary,
@@ -100,6 +104,39 @@ def _is_tool_result_event(event_type: str) -> bool:
 class StatsService:
     def __init__(self, store: SessionStore) -> None:
         self._store = store
+
+    def get_run_token_usage(self, run_id: str) -> TokenUsageSummary | None:
+        if not hasattr(self._store, "get_run_record"):
+            return None
+        record = self._store.get_run_record(run_id)
+        if record is None:
+            return None
+        session_id = str(record.get("session_id", "") or "").strip()
+        if not session_id:
+            return None
+        meta = record.get("meta")
+        meta_map = dict(meta) if isinstance(meta, dict) else {}
+        request_id = str(meta_map.get("request_id", "") or "").strip()
+        records = []
+        for event in self._iter_session_events(session_id):
+            if not _event_belongs_to_run(
+                event=event,
+                run_id=run_id,
+                request_id=request_id,
+            ):
+                continue
+            records.extend(records_from_session_event(event, session_id=session_id))
+        return TokenUsageSummary(
+            session_id=session_id,
+            run_id=str(run_id),
+            records=tuple(records),
+        )
+
+    def get_session_token_usage(self, session_id: str) -> TokenUsageSummary:
+        records = []
+        for event in self._iter_session_events(session_id):
+            records.extend(records_from_session_event(event, session_id=session_id))
+        return TokenUsageSummary(session_id=session_id, records=tuple(records))
 
     def get_run_stats(self, run_id: str) -> RunStatsSummary | None:
         if not hasattr(self._store, "get_run_record"):
@@ -216,6 +253,7 @@ class StatsService:
                 continue
             normalized.append(
                 {
+                    "event_id": str(getattr(event, "event_id", "") or ""),
                     "event_type": str(getattr(event, "event_type", "") or ""),
                     "payload": getattr(event, "payload", {}) or {},
                     "trace_id": str(getattr(event, "trace_id", "") or ""),

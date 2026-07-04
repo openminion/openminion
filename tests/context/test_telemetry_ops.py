@@ -2,13 +2,20 @@ import unittest
 
 from openminion.modules.context.schemas import (
     ArtifactDigest,
+    BucketAllocation,
     BuildPackRequest,
+    ContextManifest,
+    ContextPack,
     ContextBudgets,
     IdentitySnippet,
+    IdentityManifest,
+    SessionManifest,
     SessionSlice,
     SessionTurn,
+    TokenBudgetReport,
 )
 from openminion.modules.context.service import ContextCtlService
+from openminion.modules.context.telemetry import emit_pack_manifest_event
 
 
 class _TelemetryStub:
@@ -71,6 +78,30 @@ class _ExplodingTelemetry:
 
     async def emit_module_counter(self, *args, **kwargs) -> None:
         raise ValueError("invalid counter payload")
+
+
+class _CanonicalEventSessionStub:
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+
+    def emit_canonical_event(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: dict,
+        actor_type: str,
+        actor_id: str,
+    ) -> None:
+        self.events.append(
+            {
+                "session_id": session_id,
+                "event_type": event_type,
+                "payload": payload,
+                "actor_type": actor_type,
+                "actor_id": actor_id,
+            }
+        )
 
 
 class _IdentityClient:
@@ -217,3 +248,76 @@ class ContextTelemetryOpsTests(unittest.TestCase):
             )
         )
         self.assertTrue(pack.context_manifest)
+
+    def test_pack_manifest_event_includes_token_budget_buckets(self) -> None:
+        sessctl = _CanonicalEventSessionStub()
+        pack = ContextPack(
+            session_id="sess-context-buckets",
+            agent_id="agent-context",
+            purpose="act",
+            profile_version="prof:v1",
+            render_version="rend:v1",
+            slice_version="slice:v1",
+            pack_version="pack:v1",
+            pack_hash="hash:v1",
+            context_manifest=ContextManifest(
+                identity=IdentityManifest(
+                    agent_id="agent-context",
+                    profile_version="prof:v1",
+                    render_version="rend:v1",
+                ),
+                session=SessionManifest(
+                    session_id="sess-context-buckets",
+                    slice_version="slice:v1",
+                ),
+                llm_call_id="call-context",
+                pack_policy_used="position_aware_v1",
+            ),
+            token_budget_report=TokenBudgetReport(
+                total_cap_tokens=200,
+                total_used_tokens=100,
+                buckets={
+                    "recent_window": BucketAllocation(
+                        bucket="recent_window",
+                        cap_tokens=80,
+                        used_tokens=40,
+                        selected_count=2,
+                        total_available=3,
+                        dropped_count=1,
+                        trim_applied=True,
+                    ),
+                    "retrieval": BucketAllocation(
+                        bucket="retrieval",
+                        cap_tokens=120,
+                        used_tokens=60,
+                        selected_count=1,
+                        total_available=1,
+                        dropped_count=0,
+                    ),
+                },
+            ),
+        )
+
+        emit_pack_manifest_event(
+            sessctl=sessctl,
+            session_id="sess-context-buckets",
+            agent_id="agent-context",
+            pack=pack,
+            cache_hit=False,
+        )
+
+        payload = sessctl.events[0]["payload"]
+        self.assertEqual(payload["total_used_tokens"], 100)
+        self.assertEqual(
+            payload["token_budget_buckets"]["recent_window"],
+            {
+                "bucket": "recent_window",
+                "cap_tokens": 80,
+                "used_tokens": 40,
+                "selected_count": 2,
+                "total_available": 3,
+                "dropped_count": 1,
+                "trim_applied": True,
+            },
+        )
+        self.assertEqual(payload["token_budget_buckets"]["retrieval"]["used_tokens"], 60)

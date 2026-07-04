@@ -298,6 +298,22 @@ def _usage_payload_from_provider_response(raw_follow_up: Any) -> dict[str, Any]:
     raw_usage = getattr(raw_follow_up, "usage", None)
     if isinstance(raw_usage, dict):
         return dict(raw_usage)
+    if hasattr(raw_usage, "model_dump"):
+        dumped = raw_usage.model_dump(mode="json", exclude_none=True)
+        return dict(dumped) if isinstance(dumped, dict) else {}
+    if raw_usage is not None:
+        payload: dict[str, Any] = {}
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cached_tokens",
+            "cache_creation_tokens",
+        ):
+            value = getattr(raw_usage, key, None)
+            if value is not None:
+                payload[key] = value
+        return payload
     return {}
 
 

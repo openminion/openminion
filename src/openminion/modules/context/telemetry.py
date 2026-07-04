@@ -106,6 +106,36 @@ def emit_identity_audit_events(
             pass
 
 
+def _token_budget_buckets_payload(report: Any) -> dict[str, dict[str, Any]]:
+    buckets = getattr(report, "buckets", None)
+    if not isinstance(buckets, dict):
+        return {}
+    payload: dict[str, dict[str, Any]] = {}
+    for name, allocation in buckets.items():
+        bucket_name = str(name or getattr(allocation, "bucket", "") or "").strip()
+        if not bucket_name:
+            continue
+        payload[bucket_name] = {
+            "bucket": str(getattr(allocation, "bucket", bucket_name) or bucket_name),
+            "cap_tokens": max(0, int(getattr(allocation, "cap_tokens", 0) or 0)),
+            "used_tokens": max(0, int(getattr(allocation, "used_tokens", 0) or 0)),
+            "selected_count": max(
+                0,
+                int(getattr(allocation, "selected_count", 0) or 0),
+            ),
+            "total_available": max(
+                0,
+                int(getattr(allocation, "total_available", 0) or 0),
+            ),
+            "dropped_count": max(
+                0,
+                int(getattr(allocation, "dropped_count", 0) or 0),
+            ),
+            "trim_applied": bool(getattr(allocation, "trim_applied", False)),
+        }
+    return payload
+
+
 def emit_pack_manifest_event(
     *,
     sessctl: Any,
@@ -138,6 +168,9 @@ def emit_pack_manifest_event(
         "compressors_used": manifest.compressors_used if manifest else [],
         "identity_budget": {},
     }
+    token_budget_buckets = _token_budget_buckets_payload(report)
+    if token_budget_buckets:
+        payload["token_budget_buckets"] = token_budget_buckets
     if manifest and manifest.context_budget_tier is not None:
         payload["context_budget_tier"] = manifest.context_budget_tier
 

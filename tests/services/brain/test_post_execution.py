@@ -12,6 +12,7 @@ from openminion.modules.brain.loop.context.pending_turn import (
     PENDING_TURN_CONTEXT_MAX_STALE_TURNS,
 )
 from openminion.modules.llm.providers.base import ProviderResponse
+from openminion.modules.llm.schemas import UsageInfo
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.brain.post_execution import BrainBridgeTurnMixin
 from openminion.services.brain.post_execution.postprocess import (
@@ -1948,6 +1949,71 @@ def test_follow_up_after_tool_uses_fallback_for_embedded_tool_call_text() -> Non
     assert final_model == "follow-model"
     event_types = [item["type"] for item in bridge._runner.session_api.events]
     assert event_types == ["llm.call.started", "llm.call.completed"]
+
+
+def test_follow_up_after_tool_preserves_typed_cache_usage_in_completed_event() -> None:
+    bridge = DummyBridge()
+    bridge._config = OpenMinionConfig()
+    _csc_install_default_agent(bridge._config)
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    bridge._llm_runtime = None
+    bridge._tools = None
+    bridge._runner = SimpleNamespace(session_api=_DummySessionAPI({}))
+
+    async def _invoke_provider_request(_request):
+        return SimpleNamespace(
+            text="done",
+            model="follow-model",
+            tool_calls=[],
+            finish_reason="stop",
+            usage=UsageInfo(
+                input_tokens=12,
+                output_tokens=4,
+                total_tokens=16,
+                cached_tokens=5,
+                cache_creation_tokens=3,
+            ),
+        )
+
+    bridge._invoke_provider_request = _invoke_provider_request  # type: ignore[attr-defined]
+
+    final_text, final_model = asyncio.run(
+        bridge._follow_up_after_tool(
+            message=Message(
+                channel="console",
+                target="user",
+                body="continue",
+                metadata={"run_id": "run-cache"},
+            ),
+            history=[],
+            prior_assistant_text="",
+            tool_results=[
+                {
+                    "tool_name": "weather",
+                    "ok": True,
+                    "verified": True,
+                    "content": "Kyoto is 10C.",
+                    "error": "",
+                    "data": {},
+                    "call_id": "call-1",
+                    "source": "native",
+                }
+            ],
+            session_id="s-follow-cache",
+            trace_id="trace-follow-cache",
+        )
+    )
+
+    assert final_text == "done"
+    assert final_model == "follow-model"
+    completed = bridge._runner.session_api.events[1]
+    assert completed["payload"]["usage"] == {
+        "input_tokens": 12,
+        "output_tokens": 4,
+        "total_tokens": 16,
+        "cached_tokens": 5,
+        "cache_creation_tokens": 3,
+    }
 
 
 def test_postprocess_turn_attaches_clarify_request_metadata() -> None:

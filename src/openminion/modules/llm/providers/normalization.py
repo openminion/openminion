@@ -282,6 +282,11 @@ def _normalize_usage(raw_usage: Any) -> dict[str, int]:
         "prompt_tokens": ("prompt_tokens", "input_tokens"),
         "completion_tokens": ("completion_tokens", "output_tokens"),
         "total_tokens": ("total_tokens",),
+        "cached_tokens": ("cached_tokens", "cache_read_input_tokens"),
+        "cache_creation_tokens": (
+            "cache_creation_tokens",
+            "cache_creation_input_tokens",
+        ),
     }
     for key, aliases in usage_keys.items():
         value = _extract_usage_value(raw_usage, aliases)

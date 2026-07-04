@@ -103,6 +103,25 @@ class StructuredFieldProvider(FakeProvider):
         )
 
 
+class CacheUsageProvider(FakeProvider):
+    async def generate(self, req):
+        self.last_request = req
+        return LLMResponse(
+            ok=True,
+            provider=self.name,
+            model="fake-model",
+            output_text="cached",
+            finish_reason="stop",
+            usage=UsageInfo(
+                input_tokens=10,
+                output_tokens=4,
+                total_tokens=14,
+                cached_tokens=6,
+                cache_creation_tokens=3,
+            ),
+        )
+
+
 def _request(*, purpose: str = "decide") -> SimpleNamespace:
     return SimpleNamespace(
         messages=[
@@ -538,5 +557,29 @@ def test_llm_wrapper_emits_telemetry_from_typed_usage_info() -> None:
             "output_tokens": 1,
             "cached_tokens": 0,
             "mode": "act",
+        }
+    ]
+
+
+def test_llm_wrapper_preserves_cache_usage_and_telemetry() -> None:
+    provider = CacheUsageProvider()
+    telemetry = FakeTelemetry()
+    wrapper = OpenMinionLLMClient(provider, telemetryctl=telemetry)
+    wrapper._set_context("sess-cache", "turn-cache")
+
+    response = wrapper.call(_request(purpose="act"))
+
+    assert response.usage.input_tokens == 10
+    assert response.usage.output_tokens == 4
+    assert response.usage.cached_tokens == 6
+    assert response.usage.cache_creation_tokens == 3
+    assert telemetry.llm_calls == [
+        {
+            "session_id": "sess-cache",
+            "turn_id": "turn-cache",
+            "input_tokens": 10,
+            "output_tokens": 4,
+            "cached_tokens": 6,
+            "mode": None,
         }
     ]
