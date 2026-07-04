@@ -101,3 +101,32 @@ If the public package surface changes, update:
 6. `API_COMPATIBILITY.md`
 
 Do not rely on workspace-root repo docs alone for package-public claims.
+
+## Publish Sequence
+
+`openminion` follows the same repo-family release path as the sibling package
+repos:
+
+1. prepare and validate an RC branch,
+2. push an RC tag such as `v0.0.2rc1` to publish to TestPyPI,
+3. install and smoke-test the RC artifact from TestPyPI,
+4. prepare and validate the final non-RC branch,
+5. dispatch the `Release` workflow from that final branch with
+   `target=testpypi`,
+6. install and smoke-test the final TestPyPI artifact,
+7. push the final non-RC tag such as `v0.0.2` to publish to PyPI,
+8. create the GitHub Release using the bare version title, such as `0.0.2`.
+
+The repo may keep extra hosted validation around build/install/bootstrap smoke,
+but the release routing contract should not diverge from the shared family
+pattern above.
+
+## GitHub Actions Trusted Publishing
+
+The canonical release workflow for this package is
+`.github/workflows/release.yml`.
+
+Trusted publishing must be configured for:
+
+1. TestPyPI environment: `testpypi`
+2. PyPI environment: `pypi`
