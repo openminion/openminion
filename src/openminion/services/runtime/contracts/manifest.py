@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.services.runtime.constants import (
     PLUGIN_PROVENANCE_SOURCES,
     PLUGIN_PROVENANCE_SOURCE_LOCAL_PATH,
@@ -42,7 +43,7 @@ def validate_plugin_manifest(payload: Mapping[str, Any]) -> HookManifest:
     name = _optional_string(payload.get("name"))
     if not name:
         name = plugin_id or "plugin"
-    version = _optional_string(payload.get("version")) or "0.0.0"
+    version = _optional_string(payload.get("version")) or OPENMINION_VERSION
     description = _optional_string(payload.get("description"))
 
     config_schema = payload.get("config_schema")

@@ -4,6 +4,7 @@ from typing import Callable, Iterable, List
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime.capability import resolve_plugin_runtime_policy
 from openminion.base.types import AgentResponse, Message
+from openminion.base.version import OPENMINION_VERSION
 from openminion.services.config import resolve_services_plugin_paths
 from openminion.services.runtime.plugins.metadata import plugin_label
 from openminion.services.runtime.plugins.hooks import Plugin, PluginContext
@@ -172,7 +173,7 @@ def _built_in_validate_manifest() -> PluginManifest:
             {
                 "id": "builtin.validate",
                 "name": "Validate Plugin",
-                "version": "1.0.0",
+                "version": OPENMINION_VERSION,
                 "description": "Built-in plugin for lightweight inbound/outbound sanity logging.",
                 "config_schema": {
                     "type": "object",

@@ -9,6 +9,7 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime.context import RuntimeContext
@@ -43,7 +44,7 @@ TOOL_DESCRIPTOR: Dict[str, Any] = {
     "name": WEATHER_OPENMETEO_CANONICAL_TOOL,
     "title": "Open-Meteo Current Weather",
     "description": "Resolve a location query via Open-Meteo geocoding and fetch current conditions.",
-    "version": "1.0.0",
+    "version": OPENMINION_VERSION,
     "capabilities": ["read_only", "network"],
     "risk_spec": {
         "risk_level": "low",

@@ -1,13 +1,15 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from openminion.base.version import OPENMINION_VERSION
+
 
 @dataclass(frozen=True)
 class ModuleDescriptor:
     """Module metadata."""
 
     name: str
-    version: str = "1.0.0"
+    version: str = OPENMINION_VERSION
     contract_version: str = "v1"
     provider_id: str | None = None
     config: dict[str, Any] = field(default_factory=dict)

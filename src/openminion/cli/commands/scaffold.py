@@ -4,7 +4,7 @@ import argparse
 import re
 from pathlib import Path
 
-from openminion.base.version import OPENMINION_SCAFFOLD_DEFAULT_VERSION
+from openminion.base.version import OPENMINION_VERSION
 from openminion.cli.config import resolve_cli_roots
 
 VALID_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}$")
@@ -215,7 +215,7 @@ def _plugin_files(name: str) -> dict[str, str]:
             "{\n"
             f'  "id": "example.{module}",\n'
             f'  "name": "{class_base} Plugin",\n'
-            f'  "version": "{OPENMINION_SCAFFOLD_DEFAULT_VERSION}",\n'
+            f'  "version": "{OPENMINION_VERSION}",\n'
             '  "description": "Scaffolded plugin manifest.",\n'
             '  "config_schema": {\n'
             '    "type": "object",\n'
@@ -462,7 +462,7 @@ def _pack_memory_files(name: str) -> dict[str, str]:
         f"{base}/manifest.json": (
             "{\n"
             f'  "pack_id": "openminion-memory.{module}",\n'
-            f'  "version": "{OPENMINION_SCAFFOLD_DEFAULT_VERSION}",\n'
+            f'  "version": "{OPENMINION_VERSION}",\n'
             '  "entrypoint": "plugin.py",\n'
             '  "requires_api_tier": "stable",\n'
             '  "description": "Scaffolded memory pack."\n'
@@ -528,7 +528,7 @@ def _pack_automation_files(name: str) -> dict[str, str]:
         f"{base}/manifest.json": (
             "{\n"
             f'  "pack_id": "openminion-automation.{module}",\n'
-            f'  "version": "{OPENMINION_SCAFFOLD_DEFAULT_VERSION}",\n'
+            f'  "version": "{OPENMINION_VERSION}",\n'
             '  "entrypoint": "plugin.py",\n'
             '  "requires_api_tier": "stable",\n'
             '  "description": "Scaffolded automation pack."\n'
@@ -562,7 +562,7 @@ def _pack_channels_chat_files(name: str) -> dict[str, str]:
         f"{base}/manifest.json": (
             "{\n"
             f'  "pack_id": "openminion-channels-chat.{module}",\n'
-            f'  "version": "{OPENMINION_SCAFFOLD_DEFAULT_VERSION}",\n'
+            f'  "version": "{OPENMINION_VERSION}",\n'
             '  "entrypoint": "factory.py",\n'
             '  "requires_api_tier": "stable",\n'
             '  "description": "Scaffolded chat-channel pack (Slack/Discord/Telegram/WhatsApp)."\n'

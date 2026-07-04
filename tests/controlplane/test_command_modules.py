@@ -1,3 +1,4 @@
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.controlplane.commands.registry import CommandRegistry
 from openminion.modules.controlplane.commands.module import (
     CommandSpec,
@@ -36,6 +37,7 @@ def test_command_spec_creation():
     assert spec.name == "test.command"
     assert spec.auth_requirement == AuthRequirement.USER
     assert spec.module_name == "test_module"
+    assert spec.version == OPENMINION_VERSION
 
 
 def test_command_registry_creation():
@@ -201,7 +203,7 @@ def test_module_diagnostics_command():
         handler=dummy_handler_success,
         auth_requirement=AuthRequirement.USER,
         module_name="diagnostics_test_module",
-        version="1.0.0",
+        version=OPENMINION_VERSION,
     )
     registry.register_command_spec(custom_spec)
 

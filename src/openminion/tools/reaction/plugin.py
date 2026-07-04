@@ -4,6 +4,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any, Dict
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.tool.runtime import RuntimeContext
@@ -38,7 +39,7 @@ TOOL_DESCRIPTOR: Dict[str, Any] = {
     "name": "reactions",
     "title": "Channel Reactions",
     "description": "Lightweight cross-channel reaction add/remove/list operations.",
-    "version": "1.0.0",
+    "version": OPENMINION_VERSION,
     "capabilities": ["write", "read", "channel-actions", "reactions"],
     "risk_spec": {
         "risk_level": "low",

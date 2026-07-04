@@ -1,6 +1,6 @@
 from typing import Any
 
-from openminion.base.version import OPENMINION_REASONING_VERSION
+from openminion.base.version import OPENMINION_VERSION
 
 from .constants import (
     THINKING_HINT_DEGRADED_REASON,
@@ -41,7 +41,7 @@ class ThinkingCtl:
         return True
 
     def get_version(self) -> str:
-        return OPENMINION_REASONING_VERSION
+        return OPENMINION_VERSION
 
     def normalize_profile(self, raw_value: Any) -> str | None:
         return normalize_optional_reasoning_profile(raw_value)

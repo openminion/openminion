@@ -3,6 +3,7 @@ import json
 import pytest
 
 from openminion.base.config import OpenMinionConfig
+from openminion.base.version import OPENMINION_VERSION
 from openminion.services.runtime.plugins import (
     build_default_plugin_registry,
     load_plugin_manifest,
@@ -49,7 +50,7 @@ def test_validate_plugin_manifest_accepts_minimal_required_fields() -> None:
     )
     assert manifest.id == "example.minimal"
     assert manifest.name == "example.minimal"
-    assert manifest.version == "0.0.0"
+    assert manifest.version == OPENMINION_VERSION
     assert manifest.provenance_source == "local-path"
     assert manifest.provenance_publisher == ""
 

@@ -6,7 +6,7 @@ from argparse import Namespace
 from contextlib import redirect_stdout
 from pathlib import Path
 
-from openminion.base.version import OPENMINION_SCAFFOLD_DEFAULT_VERSION
+from openminion.base.version import OPENMINION_VERSION
 from openminion.cli.commands.scaffold import scaffold_component
 
 
@@ -95,7 +95,7 @@ class ScaffoldCommandTests(unittest.TestCase):
 
             payload = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(payload["id"], "example.sanitizer")
-            self.assertEqual(payload["version"], OPENMINION_SCAFFOLD_DEFAULT_VERSION)
+            self.assertEqual(payload["version"], OPENMINION_VERSION)
             self.assertEqual(payload["trust_tier"], "local-dev")
             self.assertIn("provenance", payload)
             self.assertEqual(payload["provenance"]["source"], "local-path")
@@ -147,7 +147,7 @@ class ScaffoldCommandTests(unittest.TestCase):
             self.assertTrue((pack_root / "plugin.py").exists())
             self.assertTrue((pack_root / "manifest.json").exists())
             payload = json.loads((pack_root / "manifest.json").read_text())
-            self.assertEqual(payload["version"], OPENMINION_SCAFFOLD_DEFAULT_VERSION)
+            self.assertEqual(payload["version"], OPENMINION_VERSION)
             plugin_content = (pack_root / "plugin.py").read_text(encoding="utf-8")
             self.assertIn("openminion.services.runtime.plugins", plugin_content)
             self.assertIn("openminion.modules.tool", plugin_content)
@@ -171,7 +171,7 @@ class ScaffoldCommandTests(unittest.TestCase):
             self.assertTrue((pack_root / "plugin.py").exists())
             self.assertTrue((pack_root / "manifest.json").exists())
             payload = json.loads((pack_root / "manifest.json").read_text())
-            self.assertEqual(payload["version"], OPENMINION_SCAFFOLD_DEFAULT_VERSION)
+            self.assertEqual(payload["version"], OPENMINION_VERSION)
             plugin_content = (pack_root / "plugin.py").read_text(encoding="utf-8")
             self.assertIn("class AutomationTrigger", plugin_content)
             self.assertIn("class AutomationResult", plugin_content)
@@ -193,7 +193,7 @@ class ScaffoldCommandTests(unittest.TestCase):
             self.assertTrue((pack_root / "README.md").exists())
             self.assertTrue((pack_root / "manifest.json").exists())
             payload = json.loads((pack_root / "manifest.json").read_text())
-            self.assertEqual(payload["version"], OPENMINION_SCAFFOLD_DEFAULT_VERSION)
+            self.assertEqual(payload["version"], OPENMINION_VERSION)
             self.assertTrue((pack_root / "factory.py").exists())
             self.assertTrue((pack_root / "adapters/slack.py").exists())
             self.assertTrue((pack_root / "adapters/discord.py").exists())

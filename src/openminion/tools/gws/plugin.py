@@ -14,6 +14,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from pydantic import ValidationError
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_GWS_AUTH_EXPORT,
     MODEL_GWS_AUTH_LOGIN,
@@ -63,7 +64,7 @@ TOOL_DESCRIPTOR: Dict[str, Any] = {
     "name": "gws",
     "title": "Google Workspace CLI Wrapper",
     "description": "Dynamic invoker around the gws CLI with policy-gated write/admin operations.",
-    "version": "1.0.0",
+    "version": OPENMINION_VERSION,
     "capabilities": ["read", "write", "admin", "google-workspace", "cli"],
     "risk_spec": {
         "risk_level": "medium",

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.controlplane.contracts.models import (
     CommandResult,
     ParsedCommand,
@@ -40,7 +41,7 @@ class CommandSpec:
     handler: Callable[[ParsedCommand, ResolvedContext], CommandResult]
     auth_requirement: AuthRequirement
     module_name: str
-    version: str = "1.0.0"
+    version: str = OPENMINION_VERSION
     category: str | None = None
     tags: list[str] | None = None
     deprecated: bool = False

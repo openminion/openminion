@@ -2,6 +2,7 @@ import os
 import pytest
 import sys
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.storage import (
     BackendRegistry,
     StorageEngine,
@@ -55,7 +56,7 @@ class MarkerVectorStore:
     def describe_backend(self):
         return {
             "backend_id": "vector.marker",
-            "version": "1.0.0",
+            "version": OPENMINION_VERSION,
             "planes_supported": {"vector"},
             "capabilities": {},
             "limits": {},

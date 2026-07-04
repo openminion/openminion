@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.storage.interfaces import (
     STORAGE_INTERFACE_VERSION,
     BackendDescriptor,
@@ -120,7 +121,7 @@ class NoopVectorStore:
     def describe_backend(self) -> BackendDescriptor:
         return BackendDescriptor(
             backend_id="vector.noop",
-            version="1.0.0",
+            version=OPENMINION_VERSION,
             planes_supported={"vector"},
             capabilities={"vector_search": False, "noop": True},
             limits={"max_vectors": 0},

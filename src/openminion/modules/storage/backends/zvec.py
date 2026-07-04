@@ -6,13 +6,13 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
+from openminion.base.time import utc_now_iso as _utc_now_iso
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.storage.interfaces import (
     STORAGE_INTERFACE_VERSION,
     BackendDescriptor,
 )
 from openminion.modules.storage.record_store import RecordStoreSQLite
-
-from openminion.base.time import utc_now_iso as _utc_now_iso
 
 
 def _normalize_namespace(namespace: str | None) -> str:
@@ -254,7 +254,7 @@ class ZvecVectorStore:
     def describe_backend(self) -> BackendDescriptor:
         return BackendDescriptor(
             backend_id="vector.zvec",
-            version="1.0.0",
+            version=OPENMINION_VERSION,
             planes_supported={"vector"},
             capabilities={
                 "metric": self._metric,

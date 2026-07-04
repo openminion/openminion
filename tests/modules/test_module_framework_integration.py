@@ -6,6 +6,7 @@ import pytest
 from typing import Any
 from pathlib import Path
 
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.base import ModuleBase, ModuleDescriptor
 from openminion.modules.providers import (
     ModuleRegistry,
@@ -49,7 +50,7 @@ class TestModuleBaseIntegration:
         descriptor = ModuleDescriptor(name="minimal")
 
         assert descriptor.name == "minimal"
-        assert descriptor.version == "1.0.0"
+        assert descriptor.version == OPENMINION_VERSION
         assert descriptor.contract_version == "v1"
         assert descriptor.provider_id is None
         assert descriptor.config == {}
@@ -83,7 +84,9 @@ class TestModuleBaseIntegration:
                 health["extended"] = True
                 return health
 
-        descriptor = ModuleDescriptor(name="extended", version="1.0.0")
+        descriptor = ModuleDescriptor(
+            name="extended", version=OPENMINION_VERSION
+        )
         module = ExtendedModule(descriptor=descriptor)
         health = module.healthcheck()
 

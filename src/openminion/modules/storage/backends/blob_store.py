@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from openminion.base.time import utc_now_iso as iso_now
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.storage.interfaces import (
     STORAGE_INTERFACE_VERSION,
     BackendDescriptor,
@@ -345,7 +346,7 @@ class BlobStoreFS(BlobStore):
     def describe_backend(self) -> BackendDescriptor:
         return BackendDescriptor(
             backend_id="fs-blob-store",
-            version="1.0.0",
+            version=OPENMINION_VERSION,
             planes_supported={"blob"},
             capabilities={
                 "atomic_write": True,

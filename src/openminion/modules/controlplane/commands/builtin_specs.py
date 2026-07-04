@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from openminion.base.version import OPENMINION_VERSION
+
 from .module import AuthRequirement, CommandSchema, CommandSpec, Handler
 
 COMMAND_HELP: dict[str, str] = {
@@ -134,5 +136,5 @@ def _command_spec(command_name: str, handler: Handler) -> CommandSpec:
         handler=handler,
         auth_requirement=auth_requirement,
         module_name="builtin",
-        version="1.0.0",
+        version=OPENMINION_VERSION,
     )

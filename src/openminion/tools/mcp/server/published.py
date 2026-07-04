@@ -7,6 +7,7 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from openminion.base.config.mcp import MCPPublishConfig, coerce_mcp_publish_config
+from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.contracts import ProviderToolCall
 
@@ -93,7 +94,7 @@ def handle_published_mcp_request(
             request_id,
             {
                 "protocolVersion": "2025-03-26",
-                "serverInfo": {"name": "openminion", "version": "0"},
+                "serverInfo": {"name": "openminion", "version": OPENMINION_VERSION},
                 "capabilities": {"tools": {}},
             },
         )
