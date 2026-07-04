@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+import time
+from typing import Callable
 
 import pytest
 
@@ -10,6 +13,20 @@ from tests.e2e.tui.focus.harness.artifacts import artifact_root, write_transcrip
 from tests.e2e.tui.focus.harness.scenarios import SOAK_LIVE_SCENARIOS
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(3600)]
+
+
+def _snapshot_writer(path: Path, *, min_interval: float = 5.0) -> Callable[[str], None]:
+    last_write = 0.0
+
+    def write_snapshot(transcript: str) -> None:
+        nonlocal last_write
+        now = time.monotonic()
+        if now - last_write < min_interval:
+            return
+        path.write_text(transcript, encoding="utf-8")
+        last_write = now
+
+    return write_snapshot
 
 
 @pytest.mark.parametrize(
@@ -25,7 +42,7 @@ def test_live_focus_soak_scenarios(
     require_complex_focus()
     root = artifact_root(tmp_path)
     scratch_dir = root / "scratch" / scenario.scenario_id
-    scratch_dir.mkdir(parents=True)
+    scratch_dir.mkdir(parents=True, exist_ok=True)
     scenario = replace(
         scenario,
         prompt=scenario.prompt.format(
@@ -33,11 +50,17 @@ def test_live_focus_soak_scenarios(
             python_bin=focus_probe.python_bin,
         ),
     )
-    with focus_probe.session(rows=50, cols=160) as session:
+    with focus_probe.session(
+        rows=50,
+        cols=160,
+        on_transcript_update=_snapshot_writer(
+            root / f"{scenario.scenario_id}.live.ansi.txt"
+        ),
+    ) as session:
         focus_probe.wait_ready(session)
         try:
             transcript = focus_probe.run_turn(session, scenario)
-        except Exception:
+        except BaseException:
             write_transcript(root, scenario.scenario_id, session.transcript)
             raise
         write_transcript(root, scenario.scenario_id, transcript)

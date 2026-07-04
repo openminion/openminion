@@ -9,19 +9,15 @@ from openminion.modules.brain.loop.tools.confirmation import (
 
 
 def test_is_session_confirmation_response_matches_session_scope_phrases() -> None:
-    assert is_session_confirmation_response("yes for session") is True
-    assert is_session_confirmation_response(" yes   this   session ") is True
+    assert is_session_confirmation_response("session") is True
+    assert is_session_confirmation_response(" allow   this   session ") is True
     assert is_session_confirmation_response("yes") is False
 
 
-def test_apply_session_confirmation_grant_adds_session_scope_metadata() -> None:
-    state = SimpleNamespace(session_id="sess-123")
-    command = SimpleNamespace(inputs={"path": "notes.txt"})
+def test_apply_session_confirmation_grant_adds_session_tool_override() -> None:
+    state = SimpleNamespace(permission_overrides={})
+    command = SimpleNamespace(tool_name="file.write")
 
-    apply_session_confirmation_grant(state, command)
+    assert apply_session_confirmation_grant(state, command) is True
 
-    assert command.inputs == {
-        "path": "notes.txt",
-        "confirmation_scope": "session",
-        "confirmation_scope_session_id": "sess-123",
-    }
+    assert state.permission_overrides == {"file.write": "bypass"}

@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+import subprocess
 import tomllib
 from pathlib import Path
 
 from openminion import __version__ as package_version
-from openminion.base.version import OPENMINION_VERSION
+from openminion.base.version import (
+    OPENMINION_INITIAL_PUBLIC_VERSION,
+    OPENMINION_REASONING_VERSION,
+    OPENMINION_SCAFFOLD_DEFAULT_VERSION,
+    OPENMINION_VERSION,
+)
+from openminion.modules.llm.reasoning import ThinkingCtl
+from openminion.modules.llm.reasoning import __version__ as reasoning_version
+
+VERSION_LITERAL_ALLOWLIST = {
+    Path("src/openminion/base/version.py"),
+}
+
+VERSION_LITERAL_OWNERS = {
+    OPENMINION_VERSION: "OPENMINION_VERSION",
+    OPENMINION_REASONING_VERSION: "OPENMINION_REASONING_VERSION",
+}
 
 SHARED_VERSION_OWNER_FILES = (
     Path("src/openminion/modules/controlplane/channels/telegram/__init__.py"),
@@ -76,7 +93,11 @@ def test_package_version_owner_matches_public_metadata() -> None:
     pyproject = tomllib.loads(
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     )
-    assert OPENMINION_VERSION == pyproject["project"]["version"]
+    assert pyproject["project"]["dynamic"] == ["version"]
+    assert "version" not in pyproject["project"]
+    assert pyproject["tool"]["setuptools"]["dynamic"]["version"] == {
+        "attr": "openminion.base.version.OPENMINION_VERSION"
+    }
     assert package_version == OPENMINION_VERSION
 
 
@@ -91,3 +112,48 @@ def test_current_package_version_is_centralized_across_runtime_surfaces() -> Non
         text = (root / relative_path).read_text()
         assert "OPENMINION_VERSION" in text
         assert quoted_version not in text
+
+
+def test_current_package_version_literal_stays_in_version_owner() -> None:
+    root = Path(__file__).resolve().parents[1]
+    findings: list[str] = []
+    tracked_files = subprocess.check_output(
+        ["git", "ls-files", "src/openminion"],
+        cwd=root,
+        text=True,
+    ).splitlines()
+    for raw_path in tracked_files:
+        path = root / raw_path
+        if not path.is_file():
+            continue
+        relative_path = Path(raw_path)
+        if relative_path in VERSION_LITERAL_ALLOWLIST:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for version_literal, owner_name in VERSION_LITERAL_OWNERS.items():
+            if version_literal in text:
+                findings.append(f"{relative_path}: {owner_name}")
+
+    assert findings == []
+
+
+def test_reasoning_package_version_uses_canonical_owner() -> None:
+    assert reasoning_version == OPENMINION_REASONING_VERSION
+    assert ThinkingCtl().get_version() == OPENMINION_REASONING_VERSION
+
+
+def test_scaffold_version_uses_canonical_owner() -> None:
+    root = Path(__file__).resolve().parents[1]
+    scaffold_text = (root / "src" / "openminion" / "cli" / "commands" / "scaffold.py").read_text()
+    assert "OPENMINION_SCAFFOLD_DEFAULT_VERSION" in scaffold_text
+    assert f'"{OPENMINION_SCAFFOLD_DEFAULT_VERSION}"' not in scaffold_text
+
+
+def test_public_surface_since_map_uses_initial_public_version_owner() -> None:
+    root = Path(__file__).resolve().parents[1]
+    init_text = (root / "src" / "openminion" / "__init__.py").read_text()
+    assert "OPENMINION_INITIAL_PUBLIC_VERSION" in init_text
+    assert f'"{OPENMINION_INITIAL_PUBLIC_VERSION}"' not in init_text

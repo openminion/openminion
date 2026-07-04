@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from typing import Callable
 
 from .assertions import (
     assert_expected_markers,
@@ -17,6 +18,8 @@ _APPROVAL_RE = re.compile(r"Reply exactly yes to confirm|Policy confirmation req
 _TURN_EVENT_RE = re.compile(
     r"Reply exactly yes to confirm|Policy confirmation required|\bDone in \d+(?:m\d{2}s|s)\b"
 )
+
+
 class FocusProbe:
     def __init__(
         self,
@@ -65,13 +68,20 @@ class FocusProbe:
             "PYTHONDONTWRITEBYTECODE": "1",
         }
 
-    def session(self, *, rows: int = 42, cols: int = 140) -> PtySession:
+    def session(
+        self,
+        *,
+        rows: int = 42,
+        cols: int = 140,
+        on_transcript_update: Callable[[str], None] | None = None,
+    ) -> PtySession:
         return PtySession(
             argv=self.command(),
             cwd=self.openminion_root,
             env=self.environment(),
             rows=rows,
             cols=cols,
+            on_transcript_update=on_transcript_update,
         )
 
     def wait_ready(self, session: PtySession) -> str:
@@ -109,7 +119,10 @@ class FocusProbe:
             approvals += 1
             assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
             wait_offset = len(transcript)
-            session.type_line("yes")
+            session.type_line(scenario.approval_reply)
+        final_turn_slice = session.transcript[turn_offset:]
         assert_focus_turn_completed(turn_slice)
-        assert_expected_markers(turn_slice, scenario.prompt, scenario.expected_markers)
+        assert_expected_markers(
+            final_turn_slice, scenario.prompt, scenario.expected_markers
+        )
         return transcript

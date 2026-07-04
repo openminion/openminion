@@ -9,6 +9,7 @@ from ...constants import BRAIN_STATE_WAITING_USER
 from ...execution.entry import build_execution_entry_request, dispatch as dispatch_entry
 from ...diagnostics.events import CanonicalEventLogger
 from ...execution.mission import mission_enabled, resolve_mission_input_route
+from ...loop.tools.confirmation import is_session_confirmation_response
 from ...runner.transitions import guard_waiting_state
 from ...runtime.mrdd.hook import maybe_run_mrdd_pre_dispatch_hook
 from ...schemas import new_uuid
@@ -61,7 +62,9 @@ def _capture_new_user_input(
     state.trace_id = trace_id or new_uuid()
     if getattr(state, "pending_confirmation_command", None) is not None:
         reply = confirmation._parse_confirmation_response(runner, user_input)  # noqa: SLF001
-        if reply in {"affirm", "deny"}:
+        if reply in {"affirm", "deny"} or is_session_confirmation_response(
+            str(user_input or "")
+        ):
             return
     state.last_user_input = str(user_input or "").strip()
 

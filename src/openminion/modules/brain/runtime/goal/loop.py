@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import time
 from pathlib import Path
 from typing import Literal, cast
 from uuid import uuid4
@@ -12,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from openminion.modules.brain.constants import MissionStatus
 from openminion.modules.brain.storage.goals import GoalStore
+from .clock import goal_now_ms
 from openminion.modules.task.autonomy import (
     AutonomyProofPacket,
     AutonomyRun,
@@ -200,6 +200,21 @@ class SQLiteGoalRunStore:
             return None
         return GoalRunState.model_validate_json(str(row[0]))
 
+    def latest_for_session(self, session_id: str) -> GoalRunState | None:
+        row = self._one(
+            """
+            SELECT payload_json
+              FROM goal_run_states
+             WHERE session_id = ?
+             ORDER BY updated_at_ms DESC
+             LIMIT 1
+            """,
+            (str(session_id or "").strip(),),
+        )
+        if row is None:
+            return None
+        return GoalRunState.model_validate_json(str(row[0]))
+
     def deactivate_session(self, session_id: str, *, except_run_id: str = "") -> None:
         normalized_session = str(session_id or "").strip()
         if not normalized_session:
@@ -209,7 +224,7 @@ class SQLiteGoalRunStore:
             return
         self.save(
             active.model_copy(
-                update={"active": False, "updated_at_ms": _now_ms()},
+                update={"active": False, "updated_at_ms": goal_now_ms()},
             )
         )
 
@@ -238,7 +253,7 @@ class SQLiteGoalRunStore:
     def _one(self, sql: str, params: tuple[object, ...]) -> sqlite3.Row | None:
         self._ensure_schema()
         with self._connect() as conn:
-            return conn.execute(sql, params).fetchone()
+            return cast(sqlite3.Row | None, conn.execute(sql, params).fetchone())
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.sqlite_path)
@@ -277,7 +292,7 @@ class GoalRunController:
             normalized_session,
         ):
             raise ValueError(f"Goal is not active for this session: {normalized_goal}")
-        timestamp = _now_ms()
+        timestamp = goal_now_ms()
         state = GoalRunState(
             run_id=f"grud_{uuid4().hex[:12]}",
             session_id=normalized_session,
@@ -306,10 +321,51 @@ class GoalRunController:
                 "active": False,
                 "status": MissionStatus.CANCELLED,
                 "last_evaluator_reason": str(reason or "operator_stop").strip(),
-                "updated_at_ms": _now_ms(),
+                "updated_at_ms": goal_now_ms(),
             }
         )
         return self.run_store.save(stopped)
+
+    def pause_session_run(
+        self,
+        *,
+        session_id: str,
+        reason: str = "operator_pause",
+    ) -> GoalRunState | None:
+        state = self.run_store.active_for_session(session_id)
+        if state is None:
+            return None
+        paused = state.model_copy(
+            update={
+                "active": False,
+                "status": MissionStatus.PAUSED,
+                "last_evaluator_reason": str(reason or "operator_pause").strip(),
+                "updated_at_ms": goal_now_ms(),
+            }
+        )
+        return self.run_store.save(paused)
+
+    def resume_session_run(
+        self,
+        *,
+        session_id: str,
+        reason: str = "operator_resume",
+    ) -> GoalRunState | None:
+        state = self.run_store.latest_for_session(session_id)
+        if state is None or state.active:
+            return state
+        if state.status not in {MissionStatus.PAUSED, MissionStatus.AWAITING_ASYNC}:
+            return None
+        resumed = state.model_copy(
+            update={
+                "active": True,
+                "status": MissionStatus.ACTIVE,
+                "last_evaluator_reason": str(reason or "operator_resume").strip(),
+                "updated_at_ms": goal_now_ms(),
+            }
+        )
+        self.run_store.deactivate_session(session_id, except_run_id=resumed.run_id)
+        return self.run_store.save(resumed)
 
     def record_evaluation(
         self,
@@ -327,7 +383,7 @@ class GoalRunController:
                 "latest_evidence_refs": evaluation.evidence_refs,
                 "latest_next_instruction": evaluation.next_instruction,
                 "repeated_no_progress_count": repeated_count,
-                "updated_at_ms": _now_ms(),
+                "updated_at_ms": goal_now_ms(),
             }
         )
         decision = self.should_continue(updated, evaluation)
@@ -384,7 +440,7 @@ class GoalRunController:
         )
 
     def cap_state(self, state: GoalRunState) -> GoalRunCapState:
-        elapsed = max(0, (_now_ms() - state.started_at_ms) // 1000)
+        elapsed = max(0, (goal_now_ms() - state.started_at_ms) // 1000)
         return GoalRunCapState(
             max_auto_turns=state.caps.max_auto_turns,
             turns_used=state.turn_count,
@@ -415,7 +471,7 @@ class GoalRunController:
                     "active": False,
                     "status": MissionStatus.PAUSED,
                     "last_evaluator_reason": "replay_evaluations_exhausted",
-                    "updated_at_ms": _now_ms(),
+                    "updated_at_ms": goal_now_ms(),
                 }
             )
             return self.run_store.save(paused)
@@ -583,7 +639,7 @@ def _cap_state_for_render(state: GoalRunState) -> GoalRunCapState:
         max_auto_turns=state.caps.max_auto_turns,
         turns_used=state.turn_count,
         max_wall_clock_seconds=state.caps.max_wall_clock_seconds,
-        elapsed_seconds=max(0, (_now_ms() - state.started_at_ms) // 1000),
+        elapsed_seconds=max(0, (goal_now_ms() - state.started_at_ms) // 1000),
         token_cost_cap=state.caps.token_cost_cap,
         user_interrupt_enabled=state.caps.user_interrupt_enabled,
         repeated_no_progress_limit=state.caps.repeated_no_progress_limit,
@@ -673,10 +729,6 @@ def _required(value: str, label: str) -> str:
     if not text:
         raise ValueError(f"{label} is required")
     return text
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
 
 
 __all__ = [

@@ -119,7 +119,9 @@ class ToolSelectionService:
         filter_cache_hit = False
         if filter_payload:
             source_specs = (
-                list(specs) if specs is not None else self._registry_specs(self._registry)
+                list(specs)
+                if specs is not None
+                else self._registry_specs(self._registry)
             )
             cache_key = self._identity_filter_cache_key(source_specs, filter_payload)
             filter_outcome = self._identity_filter_cache.get(cache_key)

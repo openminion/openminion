@@ -95,7 +95,9 @@ class TestMetaIntegration:
         runner.step(session_id="s_meta")
 
         events = session.list_events("s_meta")
-        meta_directives = [event for event in events if event["type"] == "meta.directive"]
+        meta_directives = [
+            event for event in events if event["type"] == "meta.directive"
+        ]
         assert meta_directives
 
         directive_event = next(

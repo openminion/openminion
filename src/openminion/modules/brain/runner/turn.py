@@ -36,6 +36,7 @@ from ..execution.mission import (
     llm_calls_max_from_runner,
     reset_policy_for,
 )
+from ..loop.tools.confirmation import is_session_confirmation_response
 from ..schemas import BrainMode, ClarifyPolicy, Command, Decision, WorkingState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -77,7 +78,7 @@ def interpret(
         is_confirmation_turn = parsed in {
             BRAIN_CONFIRM_RESPONSE_AFFIRM,
             BRAIN_CONFIRM_RESPONSE_DENY,
-        }
+        } or is_session_confirmation_response(stripped)
 
     if not is_confirmation_turn:
         state.last_user_input = stripped

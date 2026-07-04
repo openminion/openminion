@@ -45,9 +45,7 @@ def _successful_substantive_tool_results(
     loop_state: AdaptiveToolLoopState,
 ) -> list[dict[str, Any]]:
     return [
-        item
-        for item in _substantive_tool_results(loop_state)
-        if bool(item.get("ok"))
+        item for item in _substantive_tool_results(loop_state) if bool(item.get("ok"))
     ]
 
 

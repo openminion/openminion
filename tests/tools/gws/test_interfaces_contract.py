@@ -70,9 +70,7 @@ def test_response_schema_with_minimal_payload() -> None:
 
 
 def test_response_schema_negative_invalid_missing_fields() -> None:
-    invalid_response = {
-        "data": {"files": []}
-    }
+    invalid_response = {"data": {"files": []}}
     assert validate_response_schema(invalid_response) is False
 
 

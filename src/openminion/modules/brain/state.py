@@ -201,9 +201,10 @@ def _apply_pending_permission_overrides(
         state.permission_mode = "default"
     else:
         state.permission_mode = permission_mode
-    state.permission_overrides = canonical_permission_overrides(
-        getattr(runner, "_pending_permission_overrides", {})
-    )
+    if bool(getattr(runner, "_pending_permission_overrides_supplied", True)):
+        state.permission_overrides = canonical_permission_overrides(
+            getattr(runner, "_pending_permission_overrides", {})
+        )
     return before_mode != str(
         getattr(state, "permission_mode", "") or ""
     ) or before_overrides != dict(getattr(state, "permission_overrides", {}) or {})

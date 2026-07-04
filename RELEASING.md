@@ -4,7 +4,8 @@ Status: active
 Last updated: 2026-07-03
 
 Purpose: give maintainers a compact package-local release smoke checklist for
-the public `openminion` package surface on the current `0.0.2` alpha line.
+the public `openminion` package surface on the active alpha line defined by
+`openminion.base.version.OPENMINION_VERSION`.
 
 ## Release floor
 

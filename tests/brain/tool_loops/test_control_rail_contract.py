@@ -119,9 +119,10 @@ class TestFailureRecoveryContract:
         assert state.scratchpad["direct_tool_shortlist_restored_tools"] == [
             "mcp.fixture.echo_text"
         ]
-        assert [spec.name for spec in _visible_tool_specs_for_direct_tool_turn(state, restored)] == [
-            "mcp.fixture.echo_text"
-        ]
+        assert [
+            spec.name
+            for spec in _visible_tool_specs_for_direct_tool_turn(state, restored)
+        ] == ["mcp.fixture.echo_text"]
 
     def test_retains_fact_and_hard_constraint(self) -> None:
         action = _FakeActionResult(

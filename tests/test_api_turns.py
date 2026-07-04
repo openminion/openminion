@@ -10,6 +10,7 @@ from tests._csc_fixtures import _csc_install_default_agent
 from openminion.api.server import dispatch_request
 from openminion.base.config import AgentProfileConfig, OpenMinionConfig, save_config
 
+
 class APITurnsTests(unittest.TestCase):
     def test_post_turns_returns_turn_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

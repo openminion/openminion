@@ -9,6 +9,7 @@ from sophiagraph import (
     export_vault_files,
     import_vault_files,
 )
+from sophiagraph.vault import import_vault_files as facade_import_vault_files
 
 
 def test_openminion_can_submit_explicit_vault_note_payload_to_sophiagraph() -> None:
@@ -49,4 +50,4 @@ Model-authored note with [[Next Step]].
     assert result.created_count == 1
     assert result.manifest.files[0].path == "Notes/Run Note.md"
     assert exported.files[0].content == note
-    assert import_vault_files.__module__ == "sophiagraph.vault"
+    assert import_vault_files is facade_import_vault_files

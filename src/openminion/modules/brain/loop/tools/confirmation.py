@@ -13,13 +13,17 @@ from openminion.modules.brain.schemas import Command
 
 _COMMAND_ADAPTER = TypeAdapter(Command)
 _CONFIRMATION_REPLAY_QUEUE_KEY = "_confirmation_replay_queue"
-_SESSION_CONFIRMATION_RESPONSES = {
-    "yes for session",
-    "yes this session",
-    "yes for the session",
-}
 
 _CONFIRMATION_MESSAGE_ARG_KEYS = ("path", "file_path", "command", "cwd", "url")
+_SESSION_CONFIRMATION_TOKENS = frozenset(
+    {
+        "s",
+        "session",
+        "allow session",
+        "allow this session",
+        "session allow",
+    }
+)
 
 
 def _bounded_confirmation_arg_value(value: Any) -> str:
@@ -116,21 +120,24 @@ def confirmation_replay_batch_size(command: Any) -> int:
 
 
 def is_session_confirmation_response(text: str) -> bool:
-    normalized = " ".join(str(text or "").strip().lower().split())
-    return normalized in _SESSION_CONFIRMATION_RESPONSES
+    token = " ".join(str(text or "").strip().lower().rstrip(".,!?").split())
+    return token in _SESSION_CONFIRMATION_TOKENS
 
 
-def apply_session_confirmation_grant(state: Any, command: Any) -> None:
-    inputs = (
-        dict(getattr(command, "inputs", None))
-        if isinstance(getattr(command, "inputs", None), dict)
+def apply_session_confirmation_grant(state: Any, command: Any) -> bool:
+    tool_name = str(getattr(command, "tool_name", "") or "").strip().lower()
+    if not tool_name:
+        return False
+    overrides = (
+        dict(getattr(state, "permission_overrides", {}) or {})
+        if isinstance(getattr(state, "permission_overrides", None), dict)
         else {}
     )
-    inputs["confirmation_scope"] = "session"
-    session_id = str(getattr(state, "session_id", "") or "").strip()
-    if session_id:
-        inputs["confirmation_scope_session_id"] = session_id
-    command.inputs = inputs
+    # "session" means future calls for this tool should stop re-prompting within
+    # the current session, not merely widen to the narrower "auto" allowlist.
+    overrides[tool_name] = "bypass"
+    state.permission_overrides = overrides
+    return True
 
 
 def confirmation_required_user_message(command: Any) -> str:
@@ -149,5 +156,8 @@ def confirmation_required_user_message(command: Any) -> str:
         lines.append(
             f"This approval also covers {additional_count} queued {noun} from the same batch."
         )
-    lines.append("Reply exactly yes to confirm or exactly no to cancel.")
+    lines.append(
+        "Reply exactly yes to allow once, session to allow this tool for the "
+        "session, or no to cancel."
+    )
     return "\n".join(lines)

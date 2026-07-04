@@ -2,7 +2,10 @@
 
 from typing import Any
 
-from openminion.base.version import OPENMINION_VERSION
+from openminion.base.version import (
+    OPENMINION_INITIAL_PUBLIC_VERSION,
+    OPENMINION_VERSION,
+)
 
 # Bind __version__ before public re-exports to avoid circular import reads.
 __version__ = OPENMINION_VERSION
@@ -45,16 +48,17 @@ def __getattr__(name: str) -> Any:
     globals()[name] = value
     return value
 
+
 # Per-symbol public-surface version metadata.
 __since__: dict[str, str] = {
-    "APIRuntime": "0.0.1",
-    "Agent": "0.0.1",
-    "AgentOutputValidationError": "0.0.1",
-    "AgentRunResult": "0.0.1",
-    "Handoff": "0.0.1",
-    "MemoryBundle": "0.0.1",
-    "OpenMinionConfig": "0.0.1",
-    "__version__": "0.0.1",
-    "subagent": "0.0.1",
-    "tool": "0.0.1",
+    "APIRuntime": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "Agent": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "AgentOutputValidationError": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "AgentRunResult": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "Handoff": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "MemoryBundle": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "OpenMinionConfig": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "__version__": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "subagent": OPENMINION_INITIAL_PUBLIC_VERSION,
+    "tool": OPENMINION_INITIAL_PUBLIC_VERSION,
 }

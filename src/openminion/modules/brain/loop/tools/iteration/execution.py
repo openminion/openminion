@@ -8,7 +8,11 @@ from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_BLOCKED,
     BRAIN_ACTION_STATUS_FAILED,
     BRAIN_ACTION_STATUS_NEEDS_USER,
+    BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_ACTION_STATUS_TIMEOUT,
+)
+from openminion.modules.brain.loop.constants import (
+    PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY,
 )
 
 from ..contracts import (
@@ -23,12 +27,14 @@ from ..contracts import (
     AdaptiveToolLoopState,
     canonical_tool_call_signature,
 )
+from ..evidence import _count_substantive_non_control_tool_results
 from ..confirmation import (
     attach_confirmation_replay_queue,
     confirmation_required_user_message,
 )
 from ..events import IterationToolCallRecord
 from ..messages import action_result_to_tool_message
+from ..plan_control import is_plan_family_tool_name
 from ..reflection import detect_anomaly
 from ..status import emit_adaptive_status
 
@@ -69,6 +75,24 @@ def _is_confirm_required(action_result: Any) -> bool:
         str(getattr(action_result, "status", "") or "").strip()
         == BRAIN_ACTION_STATUS_NEEDS_USER
         and _error_code(action_result) == TOOL_ERROR_CONFIRM_REQUIRED
+    )
+
+
+def _record_plan_family_call(
+    loop_state: AdaptiveToolLoopState,
+    *,
+    tool_name: str,
+    action_result: Any,
+) -> None:
+    if not is_plan_family_tool_name(tool_name):
+        return
+    if (
+        str(getattr(action_result, "status", "") or "").strip()
+        != BRAIN_ACTION_STATUS_SUCCESS
+    ):
+        return
+    loop_state.scratchpad[PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY] = (
+        _count_substantive_non_control_tool_results(loop_state)
     )
 
 
@@ -131,7 +155,6 @@ def execute_iteration_results(
         )
         loop_state.tool_calls_made.append(tool_name)
         loop_state.total_tool_calls += 1
-
         if not (dispatch_budget_managed and not iter_tc_cache_hit):
             debit_tool_budget(loop_ctx)
 
@@ -143,6 +166,7 @@ def execute_iteration_results(
             tool_name=tool_name,
             action_result=action_result,
         )
+        _record_plan_family_call(loop_state, tool_name=tool_name, action_result=action_result)
 
         tc_args_for_cache = dict(getattr(tool_call, "arguments", {}) or {})
         loop_cache.invalidate_for_write(tool_name, tc_args_for_cache)

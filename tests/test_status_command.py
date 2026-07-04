@@ -29,6 +29,7 @@ from openminion.modules.identity.models import (
 from openminion.modules.identity.runtime.service import IdentityCtl
 from openminion.modules.identity.storage.store import SQLiteIdentityStore
 
+
 class StatusCommandTests(unittest.TestCase):
     def test_status_runs_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

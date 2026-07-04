@@ -74,6 +74,13 @@ PLAN_STEP_STATUSES = ("pending", "in_progress", "completed", "blocked")
 PLAN_STEP_DIFFICULTIES = ("low", "medium", "high")
 
 
+def is_plan_family_tool_name(tool_name: Any) -> bool:
+    name = str(tool_name or "").strip()
+    if not name:
+        return False
+    return name == PLAN_TOOL_NAME or name.split(".", 1)[0] == PLAN_TOOL_NAME
+
+
 def _plan_step_input_schema() -> dict[str, Any]:
     return {
         "type": "object",

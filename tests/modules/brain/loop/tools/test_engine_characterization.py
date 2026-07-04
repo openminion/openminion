@@ -1844,6 +1844,180 @@ def test_loop_retries_status_payload_after_substantive_tool_work() -> None:
     )
 
 
+def test_loop_retries_continuing_preface_after_substantive_tool_work() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="file.read", arguments={"path": "a"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "The directory is confirmed empty. Continuing — write design "
+                    "doc, all package files, and tests in parallel now."
+                ),
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="Files changed and validation result: passed.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(),
+        outcomes=[_success_outcome("file.read", "read ok")],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="write project and validate")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Files changed and validation result: passed."
+    assert len(runtime.calls) == 3
+    retry_messages = runtime.calls[2]["messages"]
+    assert any(
+        msg.role == "system" and "pre-tool draft" in msg.content
+        for msg in retry_messages
+    )
+
+
+def test_loop_retries_fix_and_rerun_preface_after_validation_failure() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="file.read", arguments={"path": "a"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "Validation produced exit code 2. Let me read the source files "
+                    "to find and fix the bug, then rerun."
+                ),
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="Design, implementation, and validation result: passed.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(),
+        outcomes=[_success_outcome("file.read", "read ok")],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="fix and validate")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Design, implementation, and validation result: passed."
+    assert len(runtime.calls) == 3
+    retry_messages = runtime.calls[2]["messages"]
+    assert any(
+        msg.role == "system" and "pre-tool draft" in msg.content
+        for msg in retry_messages
+    )
+
+
+def test_loop_retries_long_file_plan_without_file_creation() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="file.list_dir", arguments={"path": "a"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "Goal: Build a minimal Python CLI.\n\n"
+                    "Step 1 -- Explore workspace\n\n"
+                    "No existing files in the target directory.\n\n"
+                    "Files to create:\n"
+                    "- md_summary/__init__.py\n"
+                    "- md_summary/cli.py\n"
+                    "- tests/test_core.py\n\n"
+                    "I'll write all files now in a focused batch."
+                ),
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="Files changed and validation result: passed.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(),
+        outcomes=[_success_outcome("file.list_dir", "empty")],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.list_dir"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="build project")],
+        tool_specs=_tool_specs("file.list_dir"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Files changed and validation result: passed."
+    assert len(runtime.calls) == 3
+    retry_messages = runtime.calls[2]["messages"]
+    assert any(
+        msg.role == "system" and "pre-tool draft" in msg.content
+        for msg in retry_messages
+    )
+
+
 def test_loop_iteration_cap_terminates_with_cap_reason() -> None:
     # Provide enough tool-call responses to drive past max_iterations
     tool_response = LLMResponse(
@@ -3624,9 +3798,7 @@ class TestFinalizeIterationCapExit:
 
         assert result is not None
         assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
-        assert "runtime" in st_loop.scratchpad[
-            "budget_answer_only_finalization_error"
-        ]
+        assert "runtime" in st_loop.scratchpad["budget_answer_only_finalization_error"]
 
     def test_force_finalization_not_ok_response_returns_llm_error(self) -> None:
         from openminion.modules.llm.schemas import ResponseError
@@ -4022,9 +4194,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         _record_duplicate_batch_execution_facts(
             st_loop,
             signature=signature,
-            ordered_tool_results=[
-                (call, SimpleNamespace(action_result=ar, job=None))
-            ],
+            ordered_tool_results=[(call, SimpleNamespace(action_result=ar, job=None))],
         )
         prof = _profile(allowed_tools=frozenset({"plan"}))
         loop_ctx = _LoopContext(state=_state())

@@ -47,7 +47,7 @@ src/openminion/modules/brain/loop/adaptive/context.py	_direct_tool_turn_context	
 src/openminion/modules/brain/loop/adaptive/finalization.py	ActLoopFinalizationMixin._finalize_success	317	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/finalization.py	ActLoopFinalizationMixin._result_from_outcome	357	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/modes.py	ActLoopMode.execute	255	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._execute_seeded_commands	113	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._execute_seeded_commands	109	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._finalize_seeded_success	169	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/orchestration.py	decide	627	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/proactive_entrypoint.py	maybe_schedule_idle_tick	116	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -200,7 +200,6 @@ src/openminion/services/agent/execution/unforced_lane/loop.py	handle_unforced_to
 src/openminion/services/agent/memory/retrieval.py	RetrievalPipeline.rank_and_format	110	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/agent/memory/session_lifecycle.py	SessionLifecycleMixin._format_session_summaries	248	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/brain/client.py	OpenMinionLLMClient.call	322	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/services/brain/post_execution/mixin.py	BrainBridgeTurnMixin._execute_turn	118	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/channel/authenticity.py	evaluate_inbound_authenticity	131	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/gateway/memory.py	record_memory_turn	148	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/gateway/service.py	GatewayService.handle_message_streaming	116	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

@@ -40,8 +40,8 @@ from .postprocess.engine import (
 from .postprocess.rules import _is_empty_plan_lookup_diversion
 from .plan_control import (
     PLAN_TOOL_ACTIONS,
-    PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY,
     PLAN_TOOL_NAME,
+    is_plan_family_tool_name,
 )
 from .decompose import (  # noqa: F401
     _DECOMPOSE_TOOL_NAME,
@@ -241,7 +241,7 @@ def _repeated_plan_only_message(
         return None
     guidance = (
         "You have already recorded a plan update without doing task-relevant "
-        "work after it. Do not call the plan tool again now. Continue the "
+        "work after it. Do not call the plan tool family again now. Continue the "
         "original user request with substantive tools such as file or command "
         "tools, or provide the final answer if no more tools are needed."
     )
@@ -260,26 +260,32 @@ def _repeated_plan_only_without_substantive_work(
     if not tool_calls:
         return False
     if any(
-        str(getattr(call, "name", "") or "").strip() != PLAN_TOOL_NAME
-        for call in tool_calls
+        not is_plan_family_tool_name(getattr(call, "name", "")) for call in tool_calls
     ):
         return False
-    prior_actions = list(
-        loop_state.scratchpad.get(PLAN_TOOL_ACTIONS_SCRATCHPAD_KEY, []) or []
-    )
-    if not prior_actions:
+    scratchpad = dict(loop_state.scratchpad or {})
+    if PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY not in scratchpad:
         return False
-    for call in tool_calls:
-        arguments = dict(getattr(call, "arguments", {}) or {})
-        action = str(arguments.get("action", "") or "").strip()
-        if action not in PLAN_TOOL_ACTIONS:
-            return False
     current_substantive_count = _count_substantive_non_control_tool_results(loop_state)
     last_plan_substantive_count = int(
-        loop_state.scratchpad.get(PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY, -1)
-        or 0
+        scratchpad.get(PLAN_TOOL_LAST_SUBSTANTIVE_COUNT_SCRATCHPAD_KEY, -1) or 0
     )
     return current_substantive_count <= last_plan_substantive_count
+
+
+def _suppress_plan_family_tools(
+    active_tool_specs: list[Any],
+    allowed_tools: frozenset[str],
+) -> tuple[list[Any], frozenset[str]]:
+    filtered_specs = [
+        spec
+        for spec in active_tool_specs
+        if not is_plan_family_tool_name(getattr(spec, "name", ""))
+    ]
+    filtered_allowed = frozenset(
+        name for name in allowed_tools if not is_plan_family_tool_name(name)
+    )
+    return filtered_specs, filtered_allowed
 
 
 @dataclass
@@ -668,13 +674,9 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
             return False
         self.loop_state.scratchpad["plan_control.noop_retries"] = plan_retry_count
         if repeated_plan_only and plan_retry_count >= 2:
-            self.active_tool_specs = [
-                spec
-                for spec in self.active_tool_specs
-                if str(getattr(spec, "name", "") or "").strip() != PLAN_TOOL_NAME
-            ]
-            self.allowed_tools = frozenset(
-                name for name in self.allowed_tools if name != PLAN_TOOL_NAME
+            self.active_tool_specs, self.allowed_tools = _suppress_plan_family_tools(
+                self.active_tool_specs,
+                self.allowed_tools,
             )
             self.loop_state.scratchpad["plan_control.tool_suppressed"] = True
         self.loop_state.messages.append(plan_retry_message)

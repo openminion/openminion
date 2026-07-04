@@ -8,6 +8,7 @@ from tests._csc_fixtures import _csc_install_default_agent
 from openminion.api.server import dispatch_request
 from openminion.base.config import OpenMinionConfig, save_config
 
+
 class APIV1RuntimeTests(unittest.TestCase):
     def test_v1_health_and_agents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

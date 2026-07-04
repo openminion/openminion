@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openminion"
-version = "0.0.2"
+dynamic = ["version"]
 description = "Local-first agent framework with brain, memory, A2A, MCP, and skills"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -137,6 +137,9 @@ policyctl = "openminion.modules.policy.cli:main"
 
 [project.entry-points."openminion.modules.controlplane.commands"]
 identity = "openminion.modules.identity.controlplane.main:command_module"
+
+[tool.setuptools.dynamic]
+version = { attr = "openminion.base.version.OPENMINION_VERSION" }
 
 [project.entry-points."openminion.controlplane.commands"]
 identity = "openminion.modules.identity.controlplane.main:command_module"

@@ -96,7 +96,7 @@ def test_status_self_human_output_lists_operator_sections(monkeypatch) -> None:
 
 
 def test_status_self_registered_through_run_status(monkeypatch) -> None:
-    monkeypatch.setattr(status_commands, "load_cli_config", lambda _path: object())
+    monkeypatch.setattr(status_commands, "_load_status_config", lambda _path: object())
     monkeypatch.setattr(
         status_self,
         "_load_runtime_surface_payload",

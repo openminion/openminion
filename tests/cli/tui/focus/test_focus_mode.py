@@ -987,8 +987,7 @@ def test_run_focus_live_wires_shared_runtime_and_closes(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr(
-        focus_command,
-        "_inspect_tui_onboarding",
+        "openminion.cli.commands.tui._inspect_tui_onboarding",
         lambda args: _ready_onboarding_status(),
     )
     monkeypatch.setattr(
@@ -1054,8 +1053,7 @@ def test_run_terminal_wires_shared_runtime_and_closes(monkeypatch) -> None:
         return 0
 
     monkeypatch.setattr(
-        focus_command,
-        "_inspect_tui_onboarding",
+        "openminion.cli.commands.tui._inspect_tui_onboarding",
         lambda args: _ready_onboarding_status(),
     )
     monkeypatch.setattr(
@@ -1129,8 +1127,7 @@ def test_run_terminal_defers_update_notice_until_shell_owner(monkeypatch) -> Non
         return 0
 
     monkeypatch.setattr(
-        focus_command,
-        "_inspect_tui_onboarding",
+        "openminion.cli.commands.tui._inspect_tui_onboarding",
         lambda args: _ready_onboarding_status(),
     )
     monkeypatch.setattr(
@@ -1204,8 +1201,7 @@ def test_run_terminal_uses_runtime_data_root_for_history_path(
         return 0
 
     monkeypatch.setattr(
-        focus_command,
-        "_inspect_tui_onboarding",
+        "openminion.cli.commands.tui._inspect_tui_onboarding",
         lambda args: _ready_onboarding_status(),
     )
     monkeypatch.setattr(
@@ -1246,8 +1242,7 @@ def test_run_focus_missing_config_launches_inline_setup(monkeypatch) -> None:
     captured: dict[str, Any] = {}
 
     monkeypatch.setattr(
-        focus_command,
-        "_inspect_tui_onboarding",
+        "openminion.cli.commands.tui._inspect_tui_onboarding",
         lambda args: OnboardingStatus(
             state=OnboardingState.MISSING_CONFIG,
             action=OnboardingAction.LAUNCH_SETUP,
@@ -1258,7 +1253,10 @@ def test_run_focus_missing_config_launches_inline_setup(monkeypatch) -> None:
             data_root=_repo_root() / ".openminion",
         ),
     )
-    monkeypatch.setattr(focus_command, "_run_inline_setup_for_tui", lambda args: 0)
+    monkeypatch.setattr(
+        "openminion.cli.commands.tui._run_inline_setup_for_tui",
+        lambda args: 0,
+    )
 
     class _FakeRuntime(SimpleNamespace):
         def close(self) -> None:
@@ -1313,8 +1311,7 @@ def test_run_focus_missing_config_interactive_uses_inline_setup(monkeypatch) -> 
     focus_command = importlib.import_module("openminion.cli.commands.focus")
 
     monkeypatch.setattr(
-        focus_command,
-        "_inspect_tui_onboarding",
+        "openminion.cli.commands.tui._inspect_tui_onboarding",
         lambda args: OnboardingStatus(
             state=OnboardingState.MISSING_CONFIG,
             action=OnboardingAction.LAUNCH_SETUP,
@@ -1327,11 +1324,13 @@ def test_run_focus_missing_config_interactive_uses_inline_setup(monkeypatch) -> 
     )
     setup_calls: list[object] = []
     monkeypatch.setattr(
-        focus_command,
-        "_run_inline_setup_for_tui",
+        "openminion.cli.commands.tui._run_inline_setup_for_tui",
         lambda args: setup_calls.append(args) or 0,
     )
-    monkeypatch.setattr(focus_command, "_silence_logging_for_tui", lambda args: None)
+    monkeypatch.setattr(
+        "openminion.cli.commands.tui._silence_logging_for_tui",
+        lambda args: None,
+    )
 
     class _FakeRuntime(SimpleNamespace):
         def close(self) -> None:

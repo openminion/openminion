@@ -46,6 +46,23 @@ def _emit_prep_status(
         return
 
 
+def _parse_permission_overrides(metadata_source: dict[str, Any]) -> dict[str, str]:
+    raw = str(metadata_source.get("permission_overrides", "") or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {
+        str(tool or "").strip().lower(): str(mode or "").strip().lower()
+        for tool, mode in parsed.items()
+        if str(tool or "").strip()
+    }
+
+
 class BrainBridgeTurnMixin:
     async def _prepare_turn(
         self,
@@ -249,6 +266,31 @@ class BrainBridgeTurnMixin:
         if tool_api is not None and hasattr(tool_api, "policy_adapter"):
             tool_api.policy_adapter = tool_policy_adapter
 
+    def _bind_inbound_permission_metadata(
+        self,
+        *,
+        runner: BrainRunner,
+        metadata_source: dict[str, Any],
+    ) -> None:
+        permission_mode = str(metadata_source.get("permission_mode", "") or "").strip()
+        action_policy_mode = normalize_action_policy_mode_override(
+            metadata_source.get(ACTION_POLICY_SESSION_OVERRIDE_KEY)
+        )
+        has_permission_overrides = "permission_overrides" in metadata_source
+        permission_overrides = _parse_permission_overrides(metadata_source)
+        setattr(runner, "_pending_permission_mode", permission_mode or "default")
+        setattr(
+            runner,
+            "_pending_permission_overrides_supplied",
+            has_permission_overrides,
+        )
+        setattr(runner, "_pending_permission_overrides", permission_overrides)
+        setattr(
+            runner,
+            "_pending_session_action_policy_mode_override",
+            action_policy_mode,
+        )
+
     def _execute_turn(
         self,
         *,
@@ -263,31 +305,9 @@ class BrainBridgeTurnMixin:
     ) -> Any:
         # cron-scheduled idle ticks arrive with a `pae_idle_tick`
         metadata_source = getattr(message, "metadata", {}) or {}
-        permission_mode = str(metadata_source.get("permission_mode", "") or "").strip()
-        action_policy_mode = normalize_action_policy_mode_override(
-            metadata_source.get(ACTION_POLICY_SESSION_OVERRIDE_KEY)
-        )
-        permission_overrides_raw = str(
-            metadata_source.get("permission_overrides", "") or ""
-        ).strip()
-        permission_overrides: dict[str, str] = {}
-        if permission_overrides_raw:
-            try:
-                parsed = json.loads(permission_overrides_raw)
-            except json.JSONDecodeError:
-                parsed = {}
-            if isinstance(parsed, dict):
-                permission_overrides = {
-                    str(tool or "").strip().lower(): str(mode or "").strip().lower()
-                    for tool, mode in parsed.items()
-                    if str(tool or "").strip()
-                }
-        setattr(runner, "_pending_permission_mode", permission_mode or "default")
-        setattr(runner, "_pending_permission_overrides", permission_overrides)
-        setattr(
-            runner,
-            "_pending_session_action_policy_mode_override",
-            action_policy_mode,
+        self._bind_inbound_permission_metadata(
+            runner=runner,
+            metadata_source=metadata_source,
         )
         is_pae_idle_tick = (
             str(metadata_source.get("pae_idle_tick", "")).strip().lower() == "true"

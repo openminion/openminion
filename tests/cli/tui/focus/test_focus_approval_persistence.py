@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 
 import pytest
@@ -175,3 +176,25 @@ async def test_session_grant_skips_widget_on_second_call() -> None:
             )
             assert result is True
             assert screen._approval_widget is None
+
+
+@pytest.mark.asyncio
+async def test_focus_session_approval_key_adds_session_grant() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _DemoFocusRuntime(working_dir=tmp, session="grant-key-test")
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            task = asyncio.create_task(
+                screen._approval_callback(
+                    "file.write", {"path": "/tmp/x"}, call_id="test-session"
+                )
+            )
+            await pilot.pause()
+            assert screen._approval_widget is not None
+            screen._approval_widget.focus()
+            await pilot.press("s")
+            result = await task
+            assert result is True
+            assert "file.write" in screen._session_grants
