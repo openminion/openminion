@@ -751,6 +751,7 @@ def _h_search_files(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]
         "matches": [_search_match_to_payload(match) for match in result.matches],
         "count": result.count,
         "scanned_files": result.scanned_files,
+        "truncated": result.truncated,
         "source": _FILE_TOOL_SOURCE,
     }
 

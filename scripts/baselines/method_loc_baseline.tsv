@@ -16,7 +16,6 @@ src/openminion/cli/chat/runtime.py	execute_turn	165	current over-threshold metho
 src/openminion/cli/chat/session.py	load_session_debug_snapshot	188	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/chat/theme.py	handle_theme	124	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/commands/autonomy.py	_execute_or_fail	147	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/cli/commands/autonomy.py	register	127	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/commands/daemon.py	_start_daemon	101	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/commands/status/__init__.py	run_status	101	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/status/activity_ledger.py	activity_from_progress_payload	111	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

@@ -121,6 +121,39 @@ def test_local_backend_search_skips_binary_file(tmp_path: Path):
     assert result.scanned_files == 1
 
 
+def test_local_backend_search_prunes_hidden_and_generated_dirs(tmp_path: Path):
+    backend, workspace = _backend(tmp_path)
+    hidden = workspace / ".venv"
+    generated = workspace / "__pycache__"
+    hidden.mkdir()
+    generated.mkdir()
+    (hidden / "hidden.txt").write_text("needle", encoding="utf-8")
+    (generated / "generated.pyc").write_text("needle", encoding="utf-8")
+    (workspace / "visible.txt").write_text("needle", encoding="utf-8")
+
+    result = backend.search(str(workspace), query="needle")
+
+    assert result.truncated is False
+    assert result.scanned_files == 1
+    assert [Path(match.path).name for match in result.matches] == ["visible.txt"]
+
+
+def test_local_backend_search_caps_broad_scans(tmp_path: Path, monkeypatch):
+    backend, workspace = _backend(tmp_path)
+    for index in range(4):
+        (workspace / f"file_{index}.txt").write_text("miss", encoding="utf-8")
+    monkeypatch.setattr(
+        "openminion.tools.file.backends.local.FILE_SEARCH_MAX_SCANNED_FILES",
+        2,
+    )
+
+    result = backend.search(str(workspace), query="needle")
+
+    assert result.truncated is True
+    assert result.scanned_files == 2
+    assert result.matches == []
+
+
 def test_local_backend_search_invalid_regex(tmp_path: Path):
     backend, workspace = _backend(tmp_path)
 

@@ -29,6 +29,16 @@ from openminion.modules.task.autonomy import (
     build_terminal_proof_packet,
     now_ms,
 )
+from openminion.modules.task.project import (
+    ProjectControlAction,
+    apply_project_control,
+    render_project_control_result,
+)
+from openminion.modules.task.project_reports import (
+    build_project_report_from_task,
+    render_project_report,
+)
+from openminion.modules.task.runtime.lifecycle import TaskManager
 from openminion.services.context.budget import (
     ContextBudgetConfig,
     assemble_budgeted_context,
@@ -48,6 +58,8 @@ def run_autonomy(args: argparse.Namespace) -> int:
         return _resume(args, store)
     if action == "cancel":
         return _cancel(args, store)
+    if action == "project":
+        return _project(args)
     raise RuntimeError(f"Unknown autonomy command: {action}")
 
 
@@ -651,6 +663,42 @@ def _print_run(args: argparse.Namespace, run: AutonomyRun) -> int:
     return 0
 
 
+def _project(args: argparse.Namespace) -> int:
+    task_db = _clean(getattr(args, "task_db", None))
+    if not task_db:
+        raise RuntimeError("autonomy project requires --task-db")
+    task_id = _clean(getattr(args, "task_id", None))
+    if not task_id:
+        raise RuntimeError("autonomy project requires a task id")
+    action = ProjectControlAction(str(args.project_command))
+    manager = TaskManager.for_lifecycle_db(db_path=Path(task_db))
+    if action == ProjectControlAction.REPORT:
+        report = build_project_report_from_task(manager, task_id=task_id)
+        if bool(getattr(args, "json", False)):
+            print_json_payload(
+                {"ok": True, "project_report": report.model_dump(mode="json")}
+            )
+            return 0
+        print(render_project_report(report))
+        return 0
+    result = apply_project_control(
+        manager,
+        task_id=task_id,
+        action=action,
+        priority=_clean(getattr(args, "priority", None)) or None,
+        input_request_id=_clean(getattr(args, "input_request_id", None)) or None,
+        answer=_clean(getattr(args, "answer", None)) or None,
+        extra_iterations=int(getattr(args, "extra_iterations", 0) or 0),
+        extra_wall_clock_ms=int(getattr(args, "extra_wall_clock_ms", 0) or 0),
+        extra_tool_calls=int(getattr(args, "extra_tool_calls", 0) or 0),
+    )
+    if bool(getattr(args, "json", False)):
+        print_json_payload({"ok": True, "project": result.model_dump(mode="json")})
+        return 0
+    print(render_project_control_result(result))
+    return 0
+
+
 def _command_evidence(
     args: argparse.Namespace,
     *,
@@ -733,6 +781,96 @@ def _clean(value: object) -> str:
     return str(value or "").strip()
 
 
+def _add_execution_proof_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--replay-response",
+        default="",
+        help="Deterministic response used for replay-backed autonomy proof",
+    )
+    parser.add_argument(
+        "--verify-command",
+        action="append",
+        default=[],
+        help="Run this command after execution; failing commands block closeout",
+    )
+    parser.add_argument(
+        "--require-verification",
+        action="store_true",
+        help="Block closeout unless a verification command runs or a waiver is recorded",
+    )
+    parser.add_argument(
+        "--verification-waiver",
+        default="",
+        help="Explicit waiver reason when configured verification cannot pass",
+    )
+    parser.add_argument(
+        "--delegate-result",
+        action="append",
+        default=[],
+        help="Replay-backed delegated role evidence as role:status:summary",
+    )
+    parser.add_argument(
+        "--context-budget-tokens",
+        type=int,
+        default=0,
+        help="Emit context-budget proof for this autonomy run",
+    )
+    parser.add_argument(
+        "--context-required-fact",
+        action="append",
+        default=[],
+        help="Required fact expected to remain visible in context-budget proof",
+    )
+
+
+def _register_project_commands(
+    autonomy_sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    project = autonomy_sub.add_parser("project", help="Control a project task run")
+    project.add_argument(
+        "--task-db",
+        required=True,
+        help="Task lifecycle SQLite database path",
+    )
+    project_sub = project.add_subparsers(dest="project_command", required=True)
+
+    for action_name in ("status", "show", "pause", "resume", "cancel", "report"):
+        command = project_sub.add_parser(action_name, help=f"{action_name} a project")
+        command.add_argument("task_id")
+        add_json_output_flag(command)
+        command.set_defaults(handler=run_autonomy, needs_app=False)
+
+    reprioritize = project_sub.add_parser(
+        "reprioritize",
+        help="Update project priority metadata",
+    )
+    reprioritize.add_argument("task_id")
+    reprioritize.add_argument("--priority", required=True)
+    add_json_output_flag(reprioritize)
+    reprioritize.set_defaults(handler=run_autonomy, needs_app=False)
+
+    answer_input = project_sub.add_parser(
+        "answer-input-request",
+        help="Record an operator answer for a blocked project input request",
+    )
+    answer_input.add_argument("task_id")
+    answer_input.add_argument("--input-request-id", required=True)
+    answer_input.add_argument("--answer", required=True)
+    add_json_output_flag(answer_input)
+    answer_input.set_defaults(handler=run_autonomy, needs_app=False)
+
+    extend_budget = project_sub.add_parser(
+        "extend-budget",
+        help="Extend project budget metadata",
+    )
+    extend_budget.add_argument("task_id")
+    extend_budget.add_argument("--extra-iterations", type=int, default=0)
+    extend_budget.add_argument("--extra-wall-clock-ms", type=int, default=0)
+    extend_budget.add_argument("--extra-tool-calls", type=int, default=0)
+    add_json_output_flag(extend_budget)
+    extend_budget.set_defaults(handler=run_autonomy, needs_app=False)
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     autonomy = subparsers.add_parser(
         "autonomy",
@@ -749,45 +887,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     start.add_argument("--workspace", default="", help="Local workspace root")
     start.add_argument("--max-iterations", type=int, default=1)
     start.add_argument("--permission-profile", default="local-safe")
-    start.add_argument(
-        "--replay-response",
-        default="",
-        help="Deterministic response used for replay-backed autonomy proof",
-    )
-    start.add_argument(
-        "--verify-command",
-        action="append",
-        default=[],
-        help="Run this command after execution; failing commands block closeout",
-    )
-    start.add_argument(
-        "--require-verification",
-        action="store_true",
-        help="Block closeout unless a verification command runs or a waiver is recorded",
-    )
-    start.add_argument(
-        "--verification-waiver",
-        default="",
-        help="Explicit waiver reason when configured verification cannot pass",
-    )
-    start.add_argument(
-        "--delegate-result",
-        action="append",
-        default=[],
-        help="Replay-backed delegated role evidence as role:status:summary",
-    )
-    start.add_argument(
-        "--context-budget-tokens",
-        type=int,
-        default=0,
-        help="Emit context-budget proof for this autonomy run",
-    )
-    start.add_argument(
-        "--context-required-fact",
-        action="append",
-        default=[],
-        help="Required fact expected to remain visible in context-budget proof",
-    )
+    _add_execution_proof_args(start)
     add_json_output_flag(start)
     start.set_defaults(handler=run_autonomy, needs_app=False)
 
@@ -814,45 +914,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     resume = autonomy_sub.add_parser("resume", help="Resume an autonomy run")
     resume.add_argument("run_id")
     resume.add_argument("--agent", default=None, help="Agent id for runtime execution")
-    resume.add_argument(
-        "--replay-response",
-        default="",
-        help="Deterministic response used for replay-backed autonomy proof",
-    )
-    resume.add_argument(
-        "--verify-command",
-        action="append",
-        default=[],
-        help="Run this command after execution; failing commands block closeout",
-    )
-    resume.add_argument(
-        "--require-verification",
-        action="store_true",
-        help="Block closeout unless a verification command runs or a waiver is recorded",
-    )
-    resume.add_argument(
-        "--verification-waiver",
-        default="",
-        help="Explicit waiver reason when configured verification cannot pass",
-    )
-    resume.add_argument(
-        "--delegate-result",
-        action="append",
-        default=[],
-        help="Replay-backed delegated role evidence as role:status:summary",
-    )
-    resume.add_argument(
-        "--context-budget-tokens",
-        type=int,
-        default=0,
-        help="Emit context-budget proof for this autonomy run",
-    )
-    resume.add_argument(
-        "--context-required-fact",
-        action="append",
-        default=[],
-        help="Required fact expected to remain visible in context-budget proof",
-    )
+    _add_execution_proof_args(resume)
     add_json_output_flag(resume)
     resume.set_defaults(handler=run_autonomy, needs_app=False)
 
@@ -860,3 +922,4 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     cancel.add_argument("run_id")
     add_json_output_flag(cancel)
     cancel.set_defaults(handler=run_autonomy, needs_app=False)
+    _register_project_commands(autonomy_sub)

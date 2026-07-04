@@ -24,6 +24,13 @@ def test_expected_markers_accept_assistant_output_only() -> None:
     assert_expected_markers(transcript, prompt, ("next steps",))
 
 
+def test_expected_markers_accept_bounded_alternatives() -> None:
+    prompt = "Please recommend one path."
+    transcript = f"❯ {prompt}\n● Recommended direction: keep it small.\nDone in 4s\n"
+
+    assert_expected_markers(transcript, prompt, ("recommendation|recommended",))
+
+
 def test_turn_completion_rejects_unresolved_approval_prompt() -> None:
     transcript = (
         "● Policy confirmation required.\n"

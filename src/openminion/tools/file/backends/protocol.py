@@ -56,6 +56,7 @@ class SearchResult:
     matches: list[SearchMatch]
     count: int
     scanned_files: int
+    truncated: bool = False
 
 
 @dataclass(frozen=True)

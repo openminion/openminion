@@ -205,6 +205,14 @@ class _TaskDetail(ScrollableContainer):
         for action in pending:
             yield _PendingAction(action)
 
+        project = task.get("project")
+        if isinstance(project, dict):
+            yield Label("Project:", classes="sidebar-heading")
+            yield Static(
+                _project_summary(project),
+                classes="task-detail-meta",
+            )
+
 
 class TasksTab(Widget):
     can_focus = True
@@ -375,3 +383,14 @@ def _task_matches_filter(task: dict | None, status_filter: str) -> bool:
     if normalized == "done":
         return status in {"DONE", "CANCELED"}
     return True
+
+
+def _project_summary(project: dict) -> str:
+    fields = (
+        ("run", "project_run_id"),
+        ("phase", "phase"),
+        ("checkpoint", "checkpoint"),
+    )
+    return "  " + "  ".join(
+        f"{label}={project.get(key) or '-'}" for label, key in fields
+    )

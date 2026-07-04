@@ -310,6 +310,33 @@ class TaskLifecycleRepository:
             return None
         return str(row["checkpoint_id"]), _load_state_blob(row["state_json"])
 
+    def get_checkpoint(
+        self,
+        *,
+        task_id: str,
+        checkpoint_id: str,
+    ) -> dict[str, Any] | None:
+        normalized_task_id = str(task_id or "").strip()
+        normalized_checkpoint_id = str(checkpoint_id or "").strip()
+        if not normalized_task_id:
+            raise ValueError("task_id is required")
+        if not normalized_checkpoint_id:
+            raise ValueError("checkpoint_id is required")
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT state_json
+                FROM task_checkpoints
+                WHERE task_id = ?
+                  AND checkpoint_id = ?
+                LIMIT 1
+                """,
+                (normalized_task_id, normalized_checkpoint_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return _load_state_blob(row["state_json"])
+
     def list_checkpoints(self, *, task_id: str) -> list[str]:
         normalized = str(task_id or "").strip()
         if not normalized:
@@ -792,6 +819,12 @@ class TaskManager:
 
     def get_latest_checkpoint(self, task_id: str) -> tuple[str, dict[str, Any]] | None:
         return self._lifecycle_repository.get_latest_checkpoint(task_id=task_id)
+
+    def get_checkpoint(self, task_id: str, checkpoint_id: str) -> dict[str, Any] | None:
+        return self._lifecycle_repository.get_checkpoint(
+            task_id=task_id,
+            checkpoint_id=checkpoint_id,
+        )
 
     def list_checkpoints(self, task_id: str) -> list[str]:
         return self._lifecycle_repository.list_checkpoints(task_id=task_id)

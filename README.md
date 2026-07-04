@@ -178,6 +178,9 @@ Tool package note:
   is the current package-local proof snapshot for the active alpha line.
 - [`docs/runtime-surfaces.md`](docs/runtime-surfaces.md) maps the supported
   CLI, runtime, and Python-library surfaces.
+- [`docs/long-horizon-project-worker.md`](docs/long-horizon-project-worker.md)
+  records the alpha project-worker substrate, proof shape, and current claim
+  boundary for longer objectives.
 - [`API_COMPATIBILITY.md`](API_COMPATIBILITY.md) records the supported public
   import roots and compatibility posture.
 - [`RELEASING.md`](RELEASING.md) records the package-local release checks and
@@ -337,6 +340,8 @@ Use these docs when you want to go deeper:
   checks and release-facing validation commands
 - [`docs/runtime-surfaces.md`](docs/runtime-surfaces.md) — CLI, runtime, and
   library surface map
+- [`docs/long-horizon-project-worker.md`](docs/long-horizon-project-worker.md)
+  — alpha project-worker proof shape and current claim boundary
 - [`docs/source-tree-owner-map.md`](docs/source-tree-owner-map.md) — source
   layout guide for contributors
 - [`examples/README.md`](examples/README.md) — runnable examples and starter

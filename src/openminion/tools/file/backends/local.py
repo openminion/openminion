@@ -8,7 +8,10 @@ from typing import Callable, cast
 
 from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.tools.file.constants import FILE_SEARCH_MAX_READ_BYTES
+from openminion.tools.file.constants import (
+    FILE_SEARCH_MAX_READ_BYTES,
+    FILE_SEARCH_MAX_SCANNED_FILES,
+)
 
 from .protocol import (
     EditOperation,
@@ -26,6 +29,17 @@ from .searching import compile_line_matcher, search_snippet
 
 _LEGACY_AMBIGUOUS_CODE = cast(ErrorCode, "AMBIGUOUS")
 _LEGACY_ERROR_CODE = cast(ErrorCode, "ERROR")
+_SEARCH_PRUNED_DIRS = frozenset(
+    {
+        "__pycache__",
+        "node_modules",
+        "dist",
+        "build",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+    }
+)
 
 
 class LocalStorageBackend:
@@ -285,49 +299,66 @@ class LocalStorageBackend:
 
         matches: list[SearchMatch] = []
         scanned_files = 0
+        truncated = False
         try:
-            for candidate in target.rglob(file_glob):
-                if len(matches) >= max_matches:
-                    break
-                if not candidate.is_file() or candidate.is_symlink():
-                    continue
-                if not include_hidden and any(
-                    part.startswith(".") for part in candidate.parts
-                ):
-                    continue
-                if path_filter is not None and not path_filter(str(candidate)):
-                    continue
-                try:
-                    raw = candidate.read_bytes()
-                except OSError:
-                    continue
-                if len(raw) > FILE_SEARCH_MAX_READ_BYTES:
-                    continue
-                if b"\x00" in raw:
-                    continue
-                scanned_files += 1
-                try:
-                    text = raw.decode("utf-8", errors="replace")
-                except Exception:
-                    continue
-                lines = text.splitlines()
-                for line_no, line in enumerate(lines, start=1):
-                    if not _matches(line):
-                        continue
-                    matches.append(
-                        SearchMatch(
-                            path=str(candidate),
-                            line=line_no,
-                            snippet=search_snippet(
-                                lines,
-                                line_no=line_no,
-                                line=line,
-                                context_lines=context_lines,
-                            ),
-                        )
-                    )
+            for root, dirs, files in os.walk(target):
+                if not include_hidden:
+                    dirs[:] = [
+                        name
+                        for name in dirs
+                        if not name.startswith(".") and name not in _SEARCH_PRUNED_DIRS
+                    ]
+                    files = [name for name in files if not name.startswith(".")]
+                else:
+                    dirs[:] = [name for name in dirs if name not in _SEARCH_PRUNED_DIRS]
+                for name in files:
                     if len(matches) >= max_matches:
                         break
+                    if scanned_files >= FILE_SEARCH_MAX_SCANNED_FILES:
+                        truncated = True
+                        break
+                    candidate = Path(root) / name
+                    if not fnmatch.fnmatch(name, file_glob) and not fnmatch.fnmatch(
+                        str(candidate), file_glob
+                    ):
+                        continue
+                    if not candidate.is_file() or candidate.is_symlink():
+                        continue
+                    if path_filter is not None and not path_filter(str(candidate)):
+                        continue
+                    try:
+                        raw = candidate.read_bytes()
+                    except OSError:
+                        continue
+                    if len(raw) > FILE_SEARCH_MAX_READ_BYTES:
+                        continue
+                    if b"\x00" in raw:
+                        continue
+                    scanned_files += 1
+                    try:
+                        text = raw.decode("utf-8", errors="replace")
+                    except Exception:
+                        continue
+                    lines = text.splitlines()
+                    for line_no, line in enumerate(lines, start=1):
+                        if not _matches(line):
+                            continue
+                        matches.append(
+                            SearchMatch(
+                                path=str(candidate),
+                                line=line_no,
+                                snippet=search_snippet(
+                                    lines,
+                                    line_no=line_no,
+                                    line=line,
+                                    context_lines=context_lines,
+                                ),
+                            )
+                        )
+                        if len(matches) >= max_matches:
+                            break
+                if len(matches) >= max_matches or truncated:
+                    break
         except PermissionError as exc:
             raise ToolRuntimeError("POLICY_DENIED", "permission denied") from exc
         except ToolRuntimeError:
@@ -338,6 +369,7 @@ class LocalStorageBackend:
             matches=matches,
             count=len(matches),
             scanned_files=scanned_files,
+            truncated=truncated,
         )
 
     def edit(

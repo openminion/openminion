@@ -11,6 +11,13 @@ import pytest
 
 from openminion.cli.main import main
 from openminion.cli.parser.base import build_parser
+from openminion.modules.task import (
+    TaskManager,
+    build_project_run_projection,
+    build_autonomy_run,
+    record_project_cycle,
+    ProjectCycleDecision,
+)
 
 
 def _run_cli(args: list[str]) -> tuple[int, str]:
@@ -29,6 +36,28 @@ def _root_args(tmp_path: Path) -> list[str]:
     return ["--home-root", str(home), "--data-root", str(data), "--no-interactive"]
 
 
+def _run_project_cli(
+    tmp_path: Path,
+    db_path: Path,
+    command: str,
+    *args: str,
+    task_id: str = "task-1",
+) -> tuple[int, str]:
+    return _run_cli(
+        [
+            *_root_args(tmp_path),
+            "autonomy",
+            "project",
+            "--task-db",
+            str(db_path),
+            command,
+            task_id,
+            *args,
+            "--json",
+        ]
+    )
+
+
 def test_autonomy_parser_registers_list_show_start_resume_cancel() -> None:
     parser = build_parser()
 
@@ -37,13 +66,122 @@ def test_autonomy_parser_registers_list_show_start_resume_cancel() -> None:
     start_args = parser.parse_args(["autonomy", "start", "--goal", "ship"])
     resume_args = parser.parse_args(["autonomy", "resume", "awrk_1"])
     cancel_args = parser.parse_args(["autonomy", "cancel", "awrk_1"])
+    project_args = parser.parse_args(
+        [
+            "autonomy",
+            "project",
+            "--task-db",
+            "/tmp/tasks.db",
+            "reprioritize",
+            "task-1",
+            "--priority",
+            "high",
+        ]
+    )
 
     assert list_args.autonomy_command == "list"
     assert show_args.autonomy_command == "show"
     assert start_args.autonomy_command == "start"
     assert resume_args.autonomy_command == "resume"
     assert cancel_args.autonomy_command == "cancel"
+    assert project_args.autonomy_command == "project"
+    assert project_args.project_command == "reprioritize"
     assert callable(list_args.handler)
+
+
+def _seed_project_task(db_path: Path) -> None:
+    manager = TaskManager.for_lifecycle_db(db_path=db_path)
+    manager.create_task(
+        session_id="session-1",
+        mode_name="project",
+        goal="ship project controls",
+        agent_id="agent-1",
+        task_id="task-1",
+    )
+    autonomy_run = build_autonomy_run(
+        goal_text="ship project controls",
+        goal_id="goal-1",
+        session_id="session-1",
+        workspace_ref="local:/workspace#commit=abc;dirty=clean",
+        max_iterations=3,
+    ).model_copy(update={"task_id": "task-1"})
+    project_run = build_project_run_projection(
+        autonomy_run,
+        objective_ledger_ref="artifact:objective.json",
+        evidence_ledger_ref="artifact:evidence.jsonl",
+        resume_packet_ref="artifact:resume.json",
+        operator_decision_log_ref="artifact:operator-decisions.jsonl",
+        capability_plan_ref="artifact:capabilities.json",
+        metrics_summary_ref="artifact:metrics.json",
+    )
+    record_project_cycle(
+        manager,
+        project_run,
+        cycle_id="cycle-1",
+        milestone="control proof",
+        intended_action="exercise operator controls",
+        evidence_refs=("artifact:evidence.jsonl#cycle-1",),
+        validation_refs=("pytest:tests/cli/test_autonomy_command.py",),
+        decision=ProjectCycleDecision.CONTINUE,
+    )
+
+
+def test_autonomy_project_operator_controls_use_task_lifecycle_db(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "tasks.db"
+    _seed_project_task(db_path)
+
+    pause_code, pause_output = _run_project_cli(tmp_path, db_path, "pause")
+    resume_code, _resume_output = _run_project_cli(tmp_path, db_path, "resume")
+    priority_code, _priority_output = _run_project_cli(
+        tmp_path,
+        db_path,
+        "reprioritize",
+        "--priority",
+        "high",
+    )
+    answer_code, _answer_output = _run_project_cli(
+        tmp_path,
+        db_path,
+        "answer-input-request",
+        "--input-request-id",
+        "input-1",
+        "--answer",
+        "continue",
+    )
+    budget_code, budget_output = _run_project_cli(
+        tmp_path,
+        db_path,
+        "extend-budget",
+        "--extra-iterations",
+        "2",
+        "--extra-tool-calls",
+        "5",
+    )
+    report_code, report_output = _run_project_cli(tmp_path, db_path, "report")
+
+    paused = json.loads(pause_output)["project"]
+    budget = json.loads(budget_output)["project"]
+    report = json.loads(report_output)["project_report"]
+
+    assert pause_code == 0
+    assert resume_code == 0
+    assert priority_code == 0
+    assert answer_code == 0
+    assert budget_code == 0
+    assert report_code == 0
+    assert paused["state"] == "paused"
+    assert budget["state"] == "active"
+    assert budget["priority"] == "high"
+    assert budget["operator_answer_count"] == 1
+    assert budget["budget_extensions"]["extra_iterations"] == 2
+    assert budget["budget_extensions"]["extra_tool_calls"] == 5
+    assert budget["cycle_count"] == 1
+    assert report["project_run"]["task_id"] == "task-1"
+    assert report["outcome"] == "in_progress"
+    assert report["metrics"]["operator_intervention_count"] == 3
+    assert report["metrics"]["proof_packet_completeness_percent"] == 100.0
 
 
 def test_autonomy_start_replay_writes_terminal_proof(tmp_path: Path) -> None:

@@ -47,6 +47,14 @@ class _FakeTaskCtl:
                     status=TaskStatus.ACTIVE,
                     next_step_id="stp-1",
                     next_step_title="Do work",
+                    metadata={
+                        "project_run_id": "prun_1",
+                        "autonomy_run_id": "awrk_1",
+                        "goal_id": "goal-1",
+                        "project_phase": "execute",
+                        "verification_state": "in_progress",
+                        "last_checkpoint_id": "checkpoint-1",
+                    },
                 )
             ],
             current_task=None,
@@ -306,7 +314,10 @@ def test_runtime_tasks_provider_contract_and_mapping() -> None:
     tasks = provider.list_tasks()
     assert {task["id"] for task in tasks} == {"task-001", "task-002"}
     task_2 = next(task for task in tasks if task["id"] == "task-002")
+    task_1 = next(task for task in tasks if task["id"] == "task-001")
     assert task_2["pending_actions"]
+    assert task_1["project"]["project_run_id"] == "prun_1"
+    assert task_1["project"]["checkpoint"] == "checkpoint-1"
 
     pending = provider.list_pending_actions()
     assert len(pending) == 1

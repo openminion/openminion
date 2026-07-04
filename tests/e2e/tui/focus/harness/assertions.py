@@ -63,4 +63,7 @@ def assert_expected_markers(
 ) -> None:
     output = turn_output_text(transcript, prompt).lower()
     for marker in markers:
-        assert marker.lower() in output, marker
+        alternatives = tuple(
+            part.strip().lower() for part in marker.split("|") if part.strip()
+        )
+        assert any(alternative in output for alternative in alternatives), marker

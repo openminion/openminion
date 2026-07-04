@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -157,6 +157,7 @@ class TaskDigestTask(_StrictTaskModel):
     next_step_id: str | None = None
     next_step_title: str | None = None
     due_at: datetime | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskDigest(_StrictTaskModel):

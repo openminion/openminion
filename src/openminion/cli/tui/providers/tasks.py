@@ -50,6 +50,7 @@ class RuntimeTasksProvider:
             next_step_title = str(
                 self._value(digest_task, "next_step_title") or ""
             ).strip()
+            project = self._project_payload(self._value(digest_task, "metadata", {}))
             steps: list[dict[str, Any]] = []
             if next_step_id or next_step_title:
                 steps.append(
@@ -60,7 +61,7 @@ class RuntimeTasksProvider:
                     }
                 )
 
-            tasks_by_id[task_id] = {
+            task_payload = {
                 "id": task_id,
                 "title": str(self._value(digest_task, "title") or task_id),
                 "status": status,
@@ -68,6 +69,9 @@ class RuntimeTasksProvider:
                 "steps": steps,
                 "pending_actions": list(pending_by_task.get(task_id, [])),
             }
+            if project:
+                task_payload["project"] = project
+            tasks_by_id[task_id] = task_payload
 
         for task_id, pending_actions in pending_by_task.items():
             if task_id in tasks_by_id:
@@ -252,3 +256,19 @@ class RuntimeTasksProvider:
             text = text.rsplit(".", 1)[-1]
         text = text.upper()
         return text if text in _STATUS_ORDER else "PENDING"
+
+    @staticmethod
+    def _project_payload(metadata: Any) -> dict[str, str] | None:
+        if not isinstance(metadata, dict):
+            return None
+        project_run_id = str(metadata.get("project_run_id") or "").strip()
+        if not project_run_id:
+            return None
+        return {
+            "project_run_id": project_run_id,
+            "autonomy_run_id": str(metadata.get("autonomy_run_id") or "").strip(),
+            "goal_id": str(metadata.get("goal_id") or "").strip(),
+            "phase": str(metadata.get("project_phase") or "").strip(),
+            "verification": str(metadata.get("verification_state") or "").strip(),
+            "checkpoint": str(metadata.get("last_checkpoint_id") or "").strip(),
+        }

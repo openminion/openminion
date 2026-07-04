@@ -118,6 +118,10 @@ repos:
 8. create the GitHub Release using the bare version title, such as
    `<OPENMINION_VERSION>`.
 
+For `openminion`, step 7 should tag the already-reviewed remote `main` commit.
+Do not publish from a dirty local checkout just because the worktree happens to
+be sitting on `main`.
+
 The repo may keep extra hosted validation around build/install/bootstrap smoke,
 but the release routing contract should not diverge from the shared family
 pattern above.
@@ -131,3 +135,9 @@ Trusted publishing must be configured for:
 
 1. TestPyPI environment: `testpypi`
 2. PyPI environment: `pypi`
+3. workflow file name: exactly `release.yml`
+4. repo: `openminion/openminion`
+
+If TestPyPI or PyPI trusted publishing points at a different workflow file such
+as `publish.yml`, the hosted publish will fail even if the job contents are
+otherwise correct.

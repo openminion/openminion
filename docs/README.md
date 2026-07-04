@@ -30,6 +30,9 @@ This directory holds the public package documentation for standalone
 - [`testing-and-validation.md`](testing-and-validation.md)
   records the package-local smoke flow, validation gates, and public
   first-user checks.
+- [`long-horizon-project-worker.md`](long-horizon-project-worker.md)
+  records the alpha project-worker substrate, current proof shape, and the
+  boundary between compressed pilot evidence and real elapsed multi-day claims.
 
 ## Package-local code/docs boundaries
 
@@ -62,3 +65,5 @@ The current alpha contract is a local-first agent runtime with:
 4. package-owned config and portability helpers,
 5. explicit runtime entrypoints for agent turns, API runtime composition, and
    local operator workflows.
+6. alpha project-worker primitives for checkpointed, operator-visible
+   long-horizon objectives with explicit proof and claim boundaries.

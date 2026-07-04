@@ -48,10 +48,11 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="research_deep_brief",
         prompt=(
             "Do a compact deep-research style pass on current Python packaging "
-            "metadata best practices. Use available search/fetch tools when useful, "
-            "compare at least three points, and end with a short recommendation."
+            "metadata best practices. Use at most three search/fetch calls total, "
+            "compare at least three points from available evidence, and end with "
+            "a short recommended direction."
         ),
-        expected_markers=("recommendation",),
+        expected_markers=("recommendation|recommended|recommend",),
         timeout=900,
     ),
     FocusScenario(
@@ -59,10 +60,11 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         prompt=(
             "Research terminal-agent UX patterns for long running tasks. Compare "
             "Codex-style, Claude-style, and OpenCode-style interaction patterns "
-            "when evidence is available, then produce a concise tradeoff matrix "
-            "and a practical recommendation for OpenMinion."
+            "when evidence is available. Use at most four search/fetch calls total, "
+            "then stop searching and produce a concise tradeoff matrix plus a "
+            "practical recommended direction for OpenMinion."
         ),
-        expected_markers=("recommendation",),
+        expected_markers=("tradeoff", "recommendation|recommended|recommend"),
         timeout=1200,
     ),
     FocusScenario(
