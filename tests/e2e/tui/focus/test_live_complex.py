@@ -30,10 +30,15 @@ def test_live_focus_complex_scenarios(
         scenario,
         prompt=scenario.prompt.format(scratch_dir=scratch_dir),
     )
-    with focus_probe.session(rows=50, cols=160) as session:
-        focus_probe.wait_ready(session)
+    active_probe = (
+        focus_probe.for_workdir(scratch_dir)
+        if scenario.use_scratch_workspace
+        else focus_probe
+    )
+    with active_probe.session(rows=50, cols=160) as session:
+        active_probe.wait_ready(session)
         try:
-            transcript = focus_probe.run_turn(session, scenario)
+            transcript = active_probe.run_turn(session, scenario)
         except Exception:
             write_transcript(root, scenario.scenario_id, session.transcript)
             raise

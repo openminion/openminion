@@ -40,6 +40,17 @@ class FocusProbe:
         self.agent_id = agent_id
         self.workdir = workdir
 
+    def for_workdir(self, workdir: Path) -> "FocusProbe":
+        return FocusProbe(
+            python_bin=self.python_bin,
+            openminion_root=self.openminion_root,
+            framework_root=self.framework_root,
+            data_root=self.data_root,
+            config_path=self.config_path,
+            agent_id=self.agent_id,
+            workdir=workdir,
+        )
+
     def command(self) -> tuple[str, ...]:
         return (
             str(self.python_bin),

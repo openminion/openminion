@@ -50,16 +50,21 @@ def test_live_focus_soak_scenarios(
             python_bin=focus_probe.python_bin,
         ),
     )
-    with focus_probe.session(
+    active_probe = (
+        focus_probe.for_workdir(scratch_dir)
+        if scenario.use_scratch_workspace
+        else focus_probe
+    )
+    with active_probe.session(
         rows=50,
         cols=160,
         on_transcript_update=_snapshot_writer(
             root / f"{scenario.scenario_id}.live.ansi.txt"
         ),
     ) as session:
-        focus_probe.wait_ready(session)
+        active_probe.wait_ready(session)
         try:
-            transcript = focus_probe.run_turn(session, scenario)
+            transcript = active_probe.run_turn(session, scenario)
         except BaseException:
             write_transcript(root, scenario.scenario_id, session.transcript)
             raise

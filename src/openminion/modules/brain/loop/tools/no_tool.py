@@ -34,6 +34,7 @@ from .iteration.helpers import (
     _requires_typed_finalization_contract,
 )
 from .iteration.termination import build_no_tool_outcome
+from .evidence import _successful_substantive_tool_results
 from .response_payloads import (
     _FINALIZATION_STATUS_SALVAGE_GUIDANCE,
     _confident_complete_payload,
@@ -57,6 +58,157 @@ from .response_payloads import (
 )
 from .runtime import _extract_visible_response_text
 from .status import emit_adaptive_status
+
+
+def _truncate_tool_evidence_text(value: Any, *, limit: int = 400) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}..."
+
+
+def _final_text_from_successful_tool_evidence(loop_state: Any) -> str:
+    tool_results = _successful_substantive_tool_results(loop_state)
+    if not tool_results:
+        return ""
+    lines = [
+        "Result: the tool-backed work reached a finalization guard.",
+        (
+            "Validation: successful tool evidence was gathered, but the model "
+            "kept returning next-step text instead of the final answer."
+        ),
+        "",
+        "Files/tool evidence:",
+    ]
+    for item in tool_results[-5:]:
+        tool_name = str(item.get("tool_name") or "tool").strip() or "tool"
+        summary = str(item.get("content") or "").strip()
+        if not summary:
+            data = item.get("data")
+            if isinstance(data, dict):
+                summary = str(data.get("summary") or data.get("stdout") or "").strip()
+        lines.append(
+            f"- {tool_name}: {_truncate_tool_evidence_text(summary) or 'success'}"
+        )
+    return "\n".join(lines)
+
+
+def _evidence_fallback_for_draft_final_text(loop_state: Any) -> str:
+    fallback_final_text = _final_text_from_successful_tool_evidence(loop_state)
+    if not fallback_final_text:
+        return ""
+    loop_state.scratchpad["pre_tool_draft_echo_used_evidence_fallback"] = True
+    return fallback_final_text
+
+
+def _retry_empty_final_after_tool_results(
+    runner: Any,
+    *,
+    finalization_status: Any,
+    final_text: Any,
+    normalized_final_text: str,
+) -> tuple[bool, None] | None:
+    if finalization_status is not None or str(final_text or "").strip():
+        return None
+    if _count_substantive_non_control_tool_results(runner.loop_state) <= 0:
+        return None
+    scratchpad = runner.loop_state.scratchpad
+    if not bool(scratchpad.get("empty_final_after_tool_results_retry_used", False)):
+        scratchpad["empty_final_after_tool_results_retry_used"] = True
+        return runner._retry_with_system_message(
+            "The previous reply ended without a user-facing answer after "
+            "successful tool results. Do not call more tools unless the evidence "
+            "is genuinely insufficient. Use the completed tool results already "
+            "in context and return the final answer now. If the turn requires "
+            "typed finalization, append finalization_status status=final_answer, "
+            "status=incomplete, or status=blocked after the answer.",
+            discard_assistant_text=normalized_final_text,
+        )
+    if not bool(
+        scratchpad.get("empty_final_after_tool_results_final_retry_used", False)
+    ):
+        scratchpad["empty_final_after_tool_results_final_retry_used"] = True
+        return runner._retry_with_system_message(
+            "The previous reply was still empty after successful tool results. "
+            "Do not call more tools. Return the final user-facing answer now "
+            "from the successful tool results already in context. If the "
+            "evidence is insufficient, say what is incomplete or blocked "
+            "instead of returning an empty answer.",
+            discard_assistant_text=normalized_final_text,
+        )
+    return None
+
+
+def _retry_empty_typed_finalization_after_tool_results(
+    runner: Any,
+    *,
+    requires_finalization_status: bool,
+    finalization_status: Any,
+    final_text: Any,
+    normalized_final_text: str,
+) -> tuple[bool, None] | None:
+    if not requires_finalization_status or finalization_status is not None:
+        return None
+    if str(final_text or "").strip():
+        return None
+    if _count_substantive_non_control_tool_results(runner.loop_state) <= 0:
+        return None
+    scratchpad = runner.loop_state.scratchpad
+    if not bool(scratchpad.get("typed_finalization_status_retry_used", False)):
+        return None
+    if bool(scratchpad.get("typed_finalization_answer_only_retry_used", False)):
+        return None
+    scratchpad["typed_finalization_answer_only_retry_used"] = True
+    return runner._retry_with_system_message(
+        "The previous reply still ended without user-facing answer text "
+        "or finalization_status. Do not call more tools. Use the successful "
+        "tool results already in context and return the final user-facing "
+        "answer now, then append finalization_status status=final_answer, "
+        "status=incomplete, or status=blocked. Preserve any exact final-answer "
+        "format, headings, section titles, and ordering the user requested.",
+        discard_assistant_text=normalized_final_text,
+    )
+
+
+def _requested_direct_tool_not_executed_outcome(
+    runner: Any,
+) -> tuple[bool, AdaptiveToolLoopOutcome | None]:
+    runner.loop_state.termination_reason = ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED
+    emit_adaptive_status(
+        runner.loop_ctx,
+        profile=runner.profile,
+        loop_state=runner.loop_state,
+        detail_text=f"{runner.public_mode_tag} requested tool not executed",
+        mode_state="requested_tool_not_executed",
+        termination_reason=ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
+    )
+    return False, AdaptiveToolLoopOutcome(
+        profile_name=runner.profile.profile_name,
+        mode_name=runner.profile.mode_name,
+        termination_reason=ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
+        state=runner.loop_state,
+        allowed_tools=runner.allowed_tools,
+        error_message=(
+            "The requested tool was not executed, so I cannot truthfully claim "
+            "it succeeded."
+        ),
+    )
+
+
+def _retry_confident_complete_without_answer(
+    runner: Any,
+    *,
+    confident_complete: Any,
+    final_text: Any,
+) -> tuple[bool, None] | None:
+    if confident_complete is None or not confident_complete.complete:
+        return None
+    if str(final_text or "").strip():
+        return None
+    return runner._retry_with_system_message(
+        "You emitted confident_complete without a final answer. Provide "
+        "the user-visible final answer text before the trailer."
+    )
 
 
 class AdaptiveLoopRunnerNoToolMixin:
@@ -206,7 +358,7 @@ class AdaptiveLoopRunnerNoToolMixin:
                 "titles, and ordering the user requested.",
                 discard_assistant_text=normalized_final_text,
             )
-        if (
+        draft_like_final_text = bool(
             normalized_final_text
             and (
                 _looks_like_pre_tool_draft_echo(
@@ -216,9 +368,9 @@ class AdaptiveLoopRunnerNoToolMixin:
                 or _looks_like_execution_preface_draft(normalized_final_text)
             )
             and _count_substantive_non_control_tool_results(self.loop_state) > 0
-            and not bool(
-                self.loop_state.scratchpad.get("pre_tool_draft_echo_retry_used", False)
-            )
+        )
+        if draft_like_final_text and not bool(
+            self.loop_state.scratchpad.get("pre_tool_draft_echo_retry_used", False)
         ):
             self.loop_state.scratchpad["pre_tool_draft_echo_retry_used"] = True
             return self._retry_with_system_message(
@@ -230,6 +382,13 @@ class AdaptiveLoopRunnerNoToolMixin:
                 "finalization_status trailer after the answer.",
                 discard_assistant_text=normalized_final_text,
             )
+        if draft_like_final_text:
+            fallback_final_text = _evidence_fallback_for_draft_final_text(
+                self.loop_state
+            )
+            if fallback_final_text:
+                final_text = fallback_final_text
+                normalized_final_text = fallback_final_text
         if (
             normalized_final_text
             and _count_substantive_non_control_tool_results(self.loop_state) > 0
@@ -313,28 +472,15 @@ class AdaptiveLoopRunnerNoToolMixin:
         if _direct_tool_turn_active(self.loop_state) and not bool(
             getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
         ):
-            self.loop_state.termination_reason = (
-                ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED
-            )
-            emit_adaptive_status(
-                self.loop_ctx,
-                profile=self.profile,
-                loop_state=self.loop_state,
-                detail_text=f"{self.public_mode_tag} requested tool not executed",
-                mode_state="requested_tool_not_executed",
-                termination_reason=ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
-            )
-            return False, AdaptiveToolLoopOutcome(
-                profile_name=self.profile.profile_name,
-                mode_name=self.profile.mode_name,
-                termination_reason=ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
-                state=self.loop_state,
-                allowed_tools=self.allowed_tools,
-                error_message=(
-                    "The requested tool was not executed, so I cannot truthfully "
-                    "claim it succeeded."
-                ),
-            )
+            return _requested_direct_tool_not_executed_outcome(self)
+        empty_final_retry = _retry_empty_final_after_tool_results(
+            self,
+            finalization_status=finalization_status,
+            final_text=final_text,
+            normalized_final_text=normalized_final_text,
+        )
+        if empty_final_retry is not None:
+            return empty_final_retry
         if (
             requires_finalization_status
             and finalization_status is None
@@ -395,28 +541,22 @@ class AdaptiveLoopRunnerNoToolMixin:
                 "Provide the answer text before the finalization_status signal.",
                 discard_assistant_text=normalized_final_text,
             )
-        if (
-            requires_finalization_status
-            and finalization_status is None
-            and _looks_like_structured_final_answer(str(final_text or ""))
-            and _count_substantive_non_control_tool_results(self.loop_state) > 0
-        ):
-            finalization_status = FinalizationStatus(
-                status="final_answer",
-                reasoning=(
-                    "Accepted structured final answer after typed finalization "
-                    "retry failed to emit the trailer."
-                ),
-            )
-        if (
-            confident_complete is not None
-            and confident_complete.complete
-            and not str(final_text or "").strip()
-        ):
-            return self._retry_with_system_message(
-                "You emitted confident_complete without a final answer. Provide "
-                "the user-visible final answer text before the trailer."
-            )
+        confident_retry = _retry_confident_complete_without_answer(
+            self,
+            confident_complete=confident_complete,
+            final_text=final_text,
+        )
+        if confident_retry is not None:
+            return confident_retry
+        empty_typed_retry = _retry_empty_typed_finalization_after_tool_results(
+            self,
+            requires_finalization_status=requires_finalization_status,
+            finalization_status=finalization_status,
+            final_text=final_text,
+            normalized_final_text=normalized_final_text,
+        )
+        if empty_typed_retry is not None:
+            return empty_typed_retry
         if requires_finalization_status and finalization_status is None:
             self.loop_state.termination_reason = (
                 ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING

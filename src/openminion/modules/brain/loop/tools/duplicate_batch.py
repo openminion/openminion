@@ -227,6 +227,98 @@ def _looks_like_unexecutable_tool_markup_final_text(text: str) -> bool:
     return _looks_like_unexecutable_tool_payload_text(text)
 
 
+def _truncate_duplicate_batch_fallback_text(value: Any, *, limit: int = 400) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 1].rstrip()}..."
+
+
+def _duplicate_batch_fallback_final_text(loop_state: AdaptiveToolLoopState) -> str:
+    tool_results = _successful_substantive_tool_results(loop_state)
+    if not tool_results:
+        return ""
+    lines = [
+        (
+            "Result: tool work completed, but the model repeated an identical "
+            "tool batch before writing a final answer."
+        ),
+        "",
+        "Successful tool evidence:",
+    ]
+    for item in tool_results[-5:]:
+        tool_name = str(item.get("tool_name") or "tool").strip() or "tool"
+        summary = str(item.get("content") or "").strip()
+        if not summary:
+            data = item.get("data")
+            if isinstance(data, dict):
+                summary = str(data.get("summary") or data.get("stdout") or "").strip()
+        lines.append(
+            f"- {tool_name}: "
+            f"{_truncate_duplicate_batch_fallback_text(summary) or 'success'}"
+        )
+    return "\n".join(lines)
+
+
+def _duplicate_batch_evidence_fallback_outcome(
+    *,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    duration_ms: int,
+    tokens_used: int,
+) -> tuple[AdaptiveToolLoopOutcome, int, int] | None:
+    fallback_final_text = _duplicate_batch_fallback_final_text(loop_state)
+    if not fallback_final_text:
+        return None
+    loop_state.scratchpad[
+        "duplicate_batch_answer_only_closure_used_evidence_fallback"
+    ] = True
+    loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
+    return (
+        AdaptiveToolLoopOutcome(
+            profile_name=profile.profile_name,
+            mode_name=profile.mode_name,
+            termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+            state=loop_state,
+            allowed_tools=allowed_tools,
+            final_text=fallback_final_text,
+        ),
+        duration_ms,
+        tokens_used,
+    )
+
+
+def _duplicate_batch_budget_exhausted_outcome(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+) -> tuple[AdaptiveToolLoopOutcome, int, int]:
+    loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} budget exhausted",
+        mode_state="budget_exhausted",
+        termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+    )
+    return (
+        AdaptiveToolLoopOutcome(
+            profile_name=profile.profile_name,
+            mode_name=profile.mode_name,
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=loop_state,
+            allowed_tools=allowed_tools,
+        ),
+        0,
+        0,
+    )
+
+
 def _force_duplicate_batch_answer_only_closure(
     *,
     loop_ctx: AdaptiveToolLoopContext,
@@ -249,25 +341,12 @@ def _force_duplicate_batch_answer_only_closure(
         profile=profile,
         state=loop_state,
     ):
-        loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
-        emit_adaptive_status(
-            loop_ctx,
+        return _duplicate_batch_budget_exhausted_outcome(
+            loop_ctx=loop_ctx,
             profile=profile,
             loop_state=loop_state,
-            detail_text=f"{public_mode_tag} budget exhausted",
-            mode_state="budget_exhausted",
-            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
-        )
-        return (
-            AdaptiveToolLoopOutcome(
-                profile_name=profile.profile_name,
-                mode_name=profile.mode_name,
-                termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
-                state=loop_state,
-                allowed_tools=allowed_tools,
-            ),
-            0,
-            0,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
         )
     if not _llm_budget_available_for_answer_only(
         loop_ctx=loop_ctx,
@@ -359,6 +438,15 @@ def _force_duplicate_batch_answer_only_closure(
         loop_state.scratchpad[
             "duplicate_batch_answer_only_closure_returned_tool_calls"
         ] = True
+        fallback_outcome = _duplicate_batch_evidence_fallback_outcome(
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            duration_ms=duration_ms,
+            tokens_used=tokens_used,
+        )
+        if fallback_outcome is not None:
+            return fallback_outcome
         loop_state.termination_reason = ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
         emit_adaptive_status(
             loop_ctx,

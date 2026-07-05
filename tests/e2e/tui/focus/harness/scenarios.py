@@ -12,6 +12,7 @@ class FocusScenario:
     requires_approval: bool = False
     max_auto_approvals: int = 5
     approval_reply: str = "yes"
+    use_scratch_workspace: bool = False
 
 
 BASE_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
@@ -96,6 +97,7 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         requires_approval=True,
         max_auto_approvals=8,
         approval_reply="session",
+        use_scratch_workspace=True,
     ),
     FocusScenario(
         scenario_id="coding_complex_debug_loop",
@@ -111,6 +113,7 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         requires_approval=True,
         max_auto_approvals=8,
         approval_reply="session",
+        use_scratch_workspace=True,
     ),
     FocusScenario(
         scenario_id="coding_long_project_slice",
@@ -126,6 +129,7 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         requires_approval=True,
         max_auto_approvals=10,
         approval_reply="session",
+        use_scratch_workspace=True,
     ),
 )
 
@@ -157,6 +161,7 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         requires_approval=True,
         max_auto_approvals=12,
         approval_reply="session",
+        use_scratch_workspace=True,
     ),
     FocusScenario(
         scenario_id="goal_research_then_code_loop",
@@ -182,6 +187,7 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         requires_approval=True,
         max_auto_approvals=12,
         approval_reply="session",
+        use_scratch_workspace=True,
     ),
     FocusScenario(
         scenario_id="goal_deep_research_analysis_code_loop",
@@ -210,6 +216,7 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         requires_approval=True,
         max_auto_approvals=12,
         approval_reply="session",
+        use_scratch_workspace=True,
     ),
 )
 

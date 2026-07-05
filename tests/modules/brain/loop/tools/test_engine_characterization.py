@@ -6138,6 +6138,152 @@ def test_loop_retries_when_final_answer_is_execution_preface_draft() -> None:
     assert "SOURCES" in str(outcome.final_text or "")
 
 
+def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="file.read",
+                        arguments={"path": "/tmp/report.py"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "I'll read back the core module file to verify the expected "
+                    "content is present."
+                ),
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "I'll read back the core module file to verify the expected "
+                    "content is present."
+                ),
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(),
+        outcomes=[_success_outcome("file.read", "core module content present")],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.read"}),
+            max_iterations=5,
+        ),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="verify and summarize")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert "Validation:" in str(outcome.final_text or "")
+    assert "file.read" in str(outcome.final_text or "")
+    assert "core module content present" in str(outcome.final_text or "")
+    assert bool(
+        outcome.state.scratchpad.get("pre_tool_draft_echo_used_evidence_fallback")
+    )
+
+
+def test_loop_retries_empty_finalization_after_successful_tool_evidence() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="web.search",
+                        arguments={"query": "terminal agent ux"},
+                    ),
+                    ToolCall(
+                        id="c2",
+                        name="web.fetch",
+                        arguments={"url": "https://example.com/agent-ux"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "Tradeoffs\n"
+                    "- Streaming improves perceived responsiveness.\n\n"
+                    "Recommendation\n"
+                    "- Prefer visible progress with bounded tool output."
+                ),
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4),
+        outcomes=[
+            _success_outcome("web.search", "terminal agent UX evidence"),
+            _success_outcome("web.fetch", "terminal agent UX article"),
+        ],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"web.search", "web.fetch"}),
+            profile_name="general_adaptive_v1",
+            max_iterations=6,
+        ),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="compare terminal agent ux")],
+        tool_specs=_tool_specs("web.search", "web.fetch"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert "Tradeoffs" in str(outcome.final_text or "")
+    assert "Recommendation" in str(outcome.final_text or "")
+    assert bool(
+        outcome.state.scratchpad.get("empty_final_after_tool_results_retry_used")
+    )
+    assert bool(
+        outcome.state.scratchpad.get("empty_final_after_tool_results_final_retry_used")
+    )
+
+
 def test_execution_preface_draft_detects_future_tense_tool_batch() -> None:
     assert _looks_like_execution_preface_draft(
         "I'll execute the required tool batch: web.fetch for the PyPA URL, "

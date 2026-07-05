@@ -26,7 +26,6 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_DECOMPOSE_INVALID,
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
-    ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
     ADAPTIVE_TERM_FINALIZATION_BLOCKED,
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_FINAL_TEXT,
@@ -5942,7 +5941,7 @@ def test_engine_keeps_pending_duplicate_batch_on_normal_tool_path() -> None:
     assert duplicate_runtime.calls[2]["tool_choice"] == "auto"
 
 
-def test_engine_stops_after_duplicate_tool_batch_repeats_again() -> None:
+def test_engine_finalizes_from_evidence_when_duplicate_closure_returns_tools() -> None:
     duplicate_runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -5995,13 +5994,19 @@ def test_engine_stops_after_duplicate_tool_batch_repeats_again() -> None:
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert duplicate_outcome.termination_reason == ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
+    assert duplicate_outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert duplicate_outcome.final_text
+    assert "Result:" in duplicate_outcome.final_text
+    assert "file.read" in duplicate_outcome.final_text
+    assert "read a" in duplicate_outcome.final_text
     assert len(duplicate_ctx.commands) == 1
     assert len(duplicate_runtime.calls) == 3
     assert duplicate_runtime.calls[2]["tools"] == []
     assert duplicate_runtime.calls[2]["tool_choice"] == "none"
-    assert "Answer-only closure returned more tool calls" in str(
-        duplicate_outcome.error_message or ""
+    assert bool(
+        duplicate_outcome.state.scratchpad.get(
+            "duplicate_batch_answer_only_closure_used_evidence_fallback"
+        )
     )
 
     distinct_runtime = _FakeRuntime(
