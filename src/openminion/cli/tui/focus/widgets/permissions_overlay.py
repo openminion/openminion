@@ -41,10 +41,7 @@ class PermissionsOverlay(ModalScreen[tuple[str, bool] | None]):
     def action_select_permission(self) -> None:
         option_list = self.query_one("#focus-permissions-overlay-list", OptionList)
         highlighted = option_list.highlighted
-        if highlighted is None or highlighted < 0:
-            self.dismiss(None)
-            return
-        if highlighted >= len(PERMISSION_MENU_CHOICES):
+        if highlighted is None or not 0 <= highlighted < len(PERMISSION_MENU_CHOICES):
             self.dismiss(None)
             return
         choice = PERMISSION_MENU_CHOICES[highlighted]

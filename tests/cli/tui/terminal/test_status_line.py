@@ -71,12 +71,14 @@ def test_live_turn_footer_keeps_identity_without_active_timer_or_hint() -> None:
         state="responding",
         elapsed_seconds=6.8,
         custom="Loading session history...",
+        queued_count=2,
     )
     text = line.live_turn_footer()
     assert "minimax-m2-7" in text
     assert "openai/MiniMax-M2.7" in text
     assert "/repo/openminion" in text
     assert "1200/8000" in text
+    assert "queued: 2" in text
     assert "6.8s" not in text
     assert "Esc cancel" not in text
     assert "responding" not in text
@@ -114,3 +116,13 @@ def test_unknown_input_state_falls_back_to_empty() -> None:
     line.set_state(input_state="weird")
     # Falls back gracefully — toolbar still renders.
     assert isinstance(line.bottom_toolbar(), str)
+
+
+def test_idle_toolbar_shows_queued_count_when_present() -> None:
+    line = TerminalStatusLine()
+    line.set_state(agent="alpha", queued_count=1)
+
+    text = line.bottom_toolbar()
+
+    assert "alpha" in text
+    assert "queued: 1" in text

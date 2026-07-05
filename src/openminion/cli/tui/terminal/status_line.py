@@ -61,6 +61,7 @@ class TerminalStatusLine:
         self.custom_label: str = ""
         self.input_state: str = "empty"
         self.tokens_severity: str = "normal"
+        self.queued_count: int = 0
 
     def set_state(self, **segments: Any) -> None:
         for key, value in segments.items():
@@ -68,6 +69,12 @@ class TerminalStatusLine:
                 continue
             if key == "elapsed_seconds":
                 self.elapsed_seconds = float(value)
+                continue
+            if key == "queued_count":
+                try:
+                    self.queued_count = max(0, int(value))
+                except (TypeError, ValueError):
+                    self.queued_count = 0
                 continue
             attr_name = _SEGMENT_ATTRS.get(key, key)
             if hasattr(self, attr_name):
@@ -104,6 +111,8 @@ class TerminalStatusLine:
             segments.append(
                 _labeled_segment("permissions: ", self.permission_mode, mode_kind)
             )
+        if self.queued_count:
+            segments.append(_wrap(StyleToken.MUTED, f"queued: {self.queued_count}"))
         if self.custom_label and self.state == "idle":
             segments.append(
                 _labeled_segment("status: ", self.custom_label, StyleToken.SYSTEM)
@@ -148,5 +157,7 @@ class TerminalStatusLine:
             segments.append(
                 _labeled_segment("permissions: ", self.permission_mode, mode_kind)
             )
+        if self.queued_count:
+            segments.append(_wrap(StyleToken.MUTED, f"queued: {self.queued_count}"))
         sep = _wrap(StyleToken.MUTED, _SEGMENT_SEP)
         return sep.join(segment for segment in segments if segment)

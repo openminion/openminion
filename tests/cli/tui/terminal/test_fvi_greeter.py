@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import io
-import sys
-import types
 from pathlib import Path
 
 from rich.console import Console
@@ -35,31 +33,12 @@ def _capture_greeter(*, working_dir: str = "/test/cwd") -> str:
 
 def test_greeter_contains_openminion_identity() -> None:
     out = _capture_greeter()
-    assert "OpenMinion" in out or "openminion" in out
-
-
-def test_greeter_uses_pyfiglet_banner_when_available(monkeypatch) -> None:
-    class _Figlet:
-        def __init__(self, *, font: str, width: int) -> None:
-            self.font = font
-            self.width = width
-
-        def renderText(self, text: str) -> str:
-            assert self.font == "small"
-            assert self.width == 72
-            assert text == "OpenMinion"
-            return "OM FIGLET\n"
-
-    monkeypatch.setitem(sys.modules, "pyfiglet", types.SimpleNamespace(Figlet=_Figlet))
-
-    out = _capture_greeter()
-
-    assert "OM FIGLET" in out
+    assert "OpenMinion Focus" in out
 
 
 def test_greeter_contains_focus_shell_label() -> None:
     out = _capture_greeter()
-    assert "focus shell" in out
+    assert "terminal flow" in out
 
 
 def test_greeter_contains_agent_label_and_value() -> None:
@@ -76,7 +55,7 @@ def test_greeter_contains_model_label_and_value() -> None:
 
 def test_greeter_contains_cwd() -> None:
     out = _capture_greeter(working_dir="/my/special/dir")
-    assert "cwd:" in out
+    assert "directory:" in out
     assert "/my/special/dir" in out
 
 
@@ -124,8 +103,10 @@ def test_greeter_renders_panel_border() -> None:
 
 def test_greeter_contains_inline_shortcut_hint() -> None:
     out = _capture_greeter()
+    assert "Tip:" in out
     assert "/ for commands" in out
     assert "@ to mention a file" in out
+    assert "keep typing while a turn runs" in out
 
 
 def test_greeter_hint_does_not_contain_keybinding_reminders() -> None:
@@ -157,7 +138,7 @@ def test_greeter_handles_missing_provider_gracefully() -> None:
     console = Console(file=buf, force_terminal=False, width=120)
     _push_greeter(console, runtime=_Bare(), working_dir="/tmp")
     out = buf.getvalue()
-    assert "openminion" in out
+    assert "openminion" in out.lower()
     assert "bare" in out
     assert "minimax-m2" in out
 
@@ -181,6 +162,11 @@ def test_greeter_uses_rich_panel() -> None:
 
     src = inspect.getsource(shell._push_greeter)
     assert "Panel" in src
+
+
+def test_greeter_includes_version_label() -> None:
+    out = _capture_greeter()
+    assert "(v" in out
 
 
 def test_greeter_panel_uses_dim_border() -> None:

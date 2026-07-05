@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
@@ -16,6 +17,15 @@ _PROMPT_FRESH = "❯ "
 _PROMPT_RESUMED = "↳ "
 _PROMPT_DISABLED = "… "
 _COMPLETION_MENU_ROWS = 10
+
+
+def _call_safely(callback: object) -> None:
+    if not callable(callback):
+        return
+    try:
+        callback()
+    except Exception:
+        pass
 
 
 class _SlashAndAtCompleter(Completer):
@@ -79,8 +89,10 @@ class TerminalComposer:
         on_ctrl_l: object = None,
         on_ctrl_o: object = None,
         on_shift_tab: object = None,
+        on_escape: Callable[[], None] | None = None,
         working_dir: str | None = None,
     ) -> None:
+        self._on_escape = on_escape
         try:
             from prompt_toolkit.completion import PathCompleter
 
@@ -116,28 +128,26 @@ class TerminalComposer:
 
             @kb.add("c-l")
             def _ctrl_l(event) -> None:
-                try:
-                    on_ctrl_l()
-                except Exception:
-                    pass
+                _call_safely(on_ctrl_l)
 
         if callable(on_ctrl_o):
 
             @kb.add("c-o")
             def _ctrl_o(event) -> None:
-                try:
-                    on_ctrl_o()
-                except Exception:
-                    pass
+                _call_safely(on_ctrl_o)
 
         if callable(on_shift_tab):
 
             @kb.add("s-tab")
             def _shift_tab(event) -> None:
-                try:
-                    on_shift_tab()
-                except Exception:
-                    pass
+                _call_safely(on_shift_tab)
+
+        if callable(on_escape):
+
+            @kb.add("escape")
+            def _escape(event: Any) -> None:
+                _call_safely(self._on_escape)
+                event.app.invalidate()
 
         self._key_bindings = kb
         history = FileHistory(history_file) if history_file else None

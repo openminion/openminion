@@ -829,34 +829,44 @@ async def _run_shell_escape(
 
 def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     """Print the terminal-focus greeter panel."""
+    from openminion import __version__
+    from openminion.cli.tui.presentation.header import shorten_working_dir
     from rich.panel import Panel
 
     agent = str(getattr(runtime, "agent_id", "openminion") or "openminion")
     model = _runtime_label(runtime)
+    cwd_label = shorten_working_dir(working_dir) or working_dir or "."
     body_lines = [
-        _render_openminion_figlet(),
         Text.assemble(
-            ("openminion", token_rich_style(StyleToken.ASSISTANT, bold=True)),
+            ("OpenMinion Focus", token_rich_style(StyleToken.INFO, bold=True)),
+            ("  ", ""),
+            (f"(v{__version__})", _MUTED_STYLE),
+        ),
+        Text.assemble(
+            ("terminal flow", _SYSTEM_STYLE),
             ("  ·  ", _MUTED_STYLE),
-            ("focus shell (terminal flow)", _SYSTEM_STYLE),
+            ("type-ahead queue enabled", _MUTED_STYLE),
         ),
         Text.assemble(
-            ("agent:    ", _MUTED_STYLE),
-            (agent, _SYSTEM_STYLE),
+            ("", ""),
         ),
         Text.assemble(
-            ("model:    ", _MUTED_STYLE),
+            ("model:      ", _MUTED_STYLE),
             (model, _SYSTEM_STYLE),
         ),
         Text.assemble(
-            ("cwd:      ", _MUTED_STYLE),
-            (working_dir, _SYSTEM_STYLE),
+            ("directory:  ", _MUTED_STYLE),
+            (cwd_label, _SYSTEM_STYLE),
+        ),
+        Text.assemble(
+            ("agent:      ", _MUTED_STYLE),
+            (agent, _SYSTEM_STYLE),
         ),
     ]
     project_context = getattr(runtime, "project_context", None)
     if project_context is not None:
         context_bits = [
-            ("context:  ", _MUTED_STYLE),
+            ("context:    ", _MUTED_STYLE),
             (f"{project_context.display_name}", _SYSTEM_STYLE),
             ("  ", ""),
             (f"({project_context.size_bytes} bytes)", _MUTED_STYLE),
@@ -874,7 +884,7 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     )
     console.print(
         Text(
-            "/ for commands · @ to mention a file",
+            "Tip: / for commands · @ to mention a file · keep typing while a turn runs",
             style=_MUTED_ITALIC_STYLE,
         )
     )

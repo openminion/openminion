@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 import os
@@ -364,6 +365,256 @@ async def _handle_slash_input(
     )
 
 
+class _TerminalFocusLoop:
+    def __init__(
+        self,
+        *,
+        runtime: Any,
+        console: Console,
+        transcript: TerminalTranscript,
+        status_line: TerminalStatusLine,
+        composer: TerminalComposer,
+        overlay: TerminalOverlayPresenter,
+        working_dir: str,
+        custom_commands: dict[str, Any],
+        approval_grants: set[str],
+    ) -> None:
+        self.runtime = runtime
+        self.console = console
+        self.transcript = transcript
+        self.status_line = status_line
+        self.composer = composer
+        self.overlay = overlay
+        self.working_dir = working_dir
+        self.custom_commands = custom_commands
+        self.approval_grants = approval_grants
+        self.pending_turns: deque[str] = deque()
+        self.active_turn_task: asyncio.Task[None] | None = None
+        self.read_task: asyncio.Task[str] | None = None
+        self.exit_after_turn = False
+        self.turn_cancel_requested = False
+
+    def refresh_status_line(self, *, state: str = "idle") -> None:
+        self.status_line.set_state(
+            agent=str(getattr(self.runtime, "agent_id", "") or ""),
+            cwd=self.working_dir,
+            model=_runtime_label(self.runtime),
+            permission_mode=_runtime_permission_mode(self.runtime),
+            custom=statusline_label(self.runtime),
+            queued_count=len(self.pending_turns),
+            state=state,
+        )
+
+    def start_read_task(self) -> None:
+        if self.read_task is not None and not self.read_task.done():
+            return
+        self.read_task = asyncio.create_task(self.composer.read_line())
+
+    async def cancel_read_task(self) -> None:
+        task = self.read_task
+        self.read_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, EOFError, KeyboardInterrupt):
+            pass
+
+    def request_turn_interrupt(self) -> None:
+        if self.active_turn_task is None or self.active_turn_task.done():
+            return
+        self.turn_cancel_requested = True
+        self.active_turn_task.cancel()
+
+    async def start_turn(self, text: str) -> None:
+        self.active_turn_task = asyncio.create_task(
+            _run_agent_turn(
+                text=text,
+                runtime=self.runtime,
+                transcript=self.transcript,
+                status_line=self.status_line,
+                approval_callback=_build_terminal_approval_callback(
+                    overlay=self.overlay,
+                    session_grants=self.approval_grants,
+                    pause_prompt=self.cancel_read_task,
+                    resume_prompt=self.start_read_task,
+                ),
+            )
+        )
+        self.refresh_status_line(state="responding")
+        self.start_read_task()
+
+    async def handle_busy_input(self, text: str) -> None:
+        if text in ("/exit", "/quit"):
+            self.exit_after_turn = True
+            self.transcript.push_message(
+                ChatMessage(
+                    kind=MessageKind.SYSTEM,
+                    sender="system",
+                    body="Exit requested after the current turn finishes.",
+                )
+            )
+            return
+        if text.startswith("/") or text.startswith("!"):
+            self.transcript.push_message(
+                ChatMessage(
+                    kind=MessageKind.SYSTEM,
+                    sender="system",
+                    body=(
+                        "Commands are unavailable while a turn is running. "
+                        "Wait for the reply, or press Esc to interrupt."
+                    ),
+                )
+            )
+            return
+        self.pending_turns.append(text)
+        self.transcript.push_message(
+            ChatMessage(kind=MessageKind.USER, sender="you", body=text),
+            render=False,
+        )
+        self.transcript.push_message(
+            ChatMessage(
+                kind=MessageKind.SYSTEM,
+                sender="system",
+                body=f"Queued message ({len(self.pending_turns)} pending).",
+            )
+        )
+        self.refresh_status_line(state="responding")
+
+    async def handle_turn_completion(self) -> int | None:
+        finished_turn = self.active_turn_task
+        self.active_turn_task = None
+        if finished_turn is None:
+            return None
+        try:
+            await finished_turn
+        except asyncio.CancelledError:
+            if self.turn_cancel_requested:
+                self.transcript.push_message(
+                    ChatMessage(
+                        kind=MessageKind.SYSTEM,
+                        sender="system",
+                        body="Interrupted current turn.",
+                    )
+                )
+            else:
+                raise
+        finally:
+            self.turn_cancel_requested = False
+            self.refresh_status_line()
+        if self.exit_after_turn:
+            self.console.print(Text("(exit)", style=_MUTED_STYLE))
+            return 0
+        if self.pending_turns:
+            next_text = self.pending_turns.popleft()
+            self.refresh_status_line()
+            await self.start_turn(next_text)
+        return None
+
+    async def handle_idle_input(self, text: str) -> int | None:
+        if text in ("/exit", "/quit"):
+            return 0
+        try:
+            if text.startswith("/"):
+                should_exit = await _handle_slash_input(
+                    text,
+                    runtime=self.runtime,
+                    console=self.console,
+                    transcript=self.transcript,
+                    overlay=self.overlay,
+                    status_line=self.status_line,
+                    working_dir=self.working_dir,
+                    custom_commands=self.custom_commands,
+                    approval_grants=self.approval_grants,
+                )
+                if should_exit:
+                    return 0
+                self.start_read_task()
+                return None
+            if text.startswith("!"):
+                await _run_shell_escape(
+                    command=text[1:].strip(),
+                    console=self.console,
+                    transcript=self.transcript,
+                    working_dir=self.working_dir,
+                )
+                self.start_read_task()
+                return None
+            self.transcript.push_message(
+                ChatMessage(kind=MessageKind.USER, sender="you", body=text),
+                render=False,
+            )
+            await self.start_turn(text)
+        except KeyboardInterrupt:
+            if await _confirm_terminal_exit(console=self.console, overlay=self.overlay):
+                self.console.print(Text("(exit)", style=_MUTED_STYLE))
+                return 0
+            self.start_read_task()
+        return None
+
+    async def handle_read_completion(self) -> int | None:
+        finished_read = self.read_task
+        self.read_task = None
+        if finished_read is None:
+            return None
+        try:
+            text = await finished_read
+        except EOFError:
+            if self.active_turn_task is not None:
+                self.exit_after_turn = True
+                self.transcript.push_message(
+                    ChatMessage(
+                        kind=MessageKind.SYSTEM,
+                        sender="system",
+                        body="Exit requested after the current turn finishes.",
+                    )
+                )
+                return None
+            self.console.print(Text("(exit)", style=_MUTED_STYLE))
+            return 0
+        except KeyboardInterrupt:
+            if await _confirm_terminal_exit(console=self.console, overlay=self.overlay):
+                self.console.print(Text("(exit)", style=_MUTED_STYLE))
+                return 0
+            self.start_read_task()
+            return None
+        text = (text or "").strip()
+        if not text:
+            self.start_read_task()
+            return None
+        if self.active_turn_task is not None:
+            await self.handle_busy_input(text)
+            self.start_read_task()
+            return None
+        return await self.handle_idle_input(text)
+
+    async def run(self) -> int:
+        self.refresh_status_line()
+        self.start_read_task()
+        while True:
+            wait_set = {
+                task
+                for task in (self.read_task, self.active_turn_task)
+                if task is not None
+            }
+            if not wait_set:
+                return 0
+            done, _ = await asyncio.wait(wait_set, return_when=asyncio.FIRST_COMPLETED)
+            turn_done = (
+                self.active_turn_task is not None and self.active_turn_task in done
+            )
+            read_done = self.read_task is not None and self.read_task in done
+            if turn_done:
+                result = await self.handle_turn_completion()
+                if result is not None:
+                    return result
+            if read_done:
+                result = await self.handle_read_completion()
+                if result is not None:
+                    return result
+
+
 async def _run_terminal_focus_async(
     runtime: Any,
     *,
@@ -420,6 +671,7 @@ async def _run_terminal_focus_async(
         on_ctrl_l=handle_ctrl_l,
         on_ctrl_o=handle_ctrl_o,
         on_shift_tab=handle_shift_tab,
+        on_escape=lambda: None,
         working_dir=working_dir,
     )
     overlay = TerminalOverlayPresenter(
@@ -433,75 +685,22 @@ async def _run_terminal_focus_async(
         startup_notice,
         transcript=transcript,
     )
-    status_line.set_state(
-        agent=str(getattr(runtime, "agent_id", "") or ""),
-        cwd=working_dir,
-        model=_runtime_label(runtime),
-        permission_mode=_runtime_permission_mode(runtime),
-        custom=statusline_label(runtime),
-        state="idle",
+    loop = _TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=status_line,
+        composer=composer,
+        overlay=overlay,
+        working_dir=working_dir,
+        custom_commands=custom_commands,
+        approval_grants=approval_grants,
     )
-
+    composer._on_escape = loop.request_turn_interrupt
     try:
-        while True:
-            try:
-                text = await composer.read_line()
-            except EOFError:
-                console.print(Text("(exit)", style=_MUTED_STYLE))
-                return 0
-            except KeyboardInterrupt:
-                if await _confirm_terminal_exit(console=console, overlay=overlay):
-                    console.print(Text("(exit)", style=_MUTED_STYLE))
-                    return 0
-                continue
-            text = (text or "").strip()
-            if not text:
-                continue
-            if text in ("/exit", "/quit"):
-                return 0
-            try:
-                if text.startswith("/"):
-                    should_exit = await _handle_slash_input(
-                        text,
-                        runtime=runtime,
-                        console=console,
-                        transcript=transcript,
-                        overlay=overlay,
-                        status_line=status_line,
-                        working_dir=working_dir,
-                        custom_commands=custom_commands,
-                        approval_grants=approval_grants,
-                    )
-                    if should_exit:
-                        return 0
-                    continue
-                if text.startswith("!"):
-                    await _run_shell_escape(
-                        command=text[1:].strip(),
-                        console=console,
-                        transcript=transcript,
-                        working_dir=working_dir,
-                    )
-                    continue
-                transcript.push_message(
-                    ChatMessage(kind=MessageKind.USER, sender="you", body=text),
-                    render=False,
-                )
-                await _run_interruptible_agent_turn(
-                    text=text,
-                    runtime=runtime,
-                    transcript=transcript,
-                    status_line=status_line,
-                    approval_callback=_build_terminal_approval_callback(
-                        overlay=overlay,
-                        session_grants=approval_grants,
-                    ),
-                )
-            except KeyboardInterrupt:
-                if await _confirm_terminal_exit(console=console, overlay=overlay):
-                    console.print(Text("(exit)", style=_MUTED_STYLE))
-                    return 0
+        return await loop.run()
     finally:
+        await loop.cancel_read_task()
         _cancel_startup_notice(startup_notice_task)
 
 
@@ -637,6 +836,8 @@ def _build_terminal_approval_callback(
     *,
     overlay: TerminalOverlayPresenter,
     session_grants: set[str],
+    pause_prompt: Callable[[], Any] | None = None,
+    resume_prompt: Callable[[], None] | None = None,
 ) -> Callable[[str, dict[str, Any], Any], Any]:
     async def _approval_callback(
         tool_name: str,
@@ -648,7 +849,13 @@ def _build_terminal_approval_callback(
         if normalized and normalized in session_grants:
             return True
         prompt = _format_terminal_approval_prompt(normalized, dict(args or {}))
-        decision = await overlay.present_approval_async(prompt)
+        if callable(pause_prompt):
+            await pause_prompt()
+        try:
+            decision = await overlay.present_approval_async(prompt)
+        finally:
+            if callable(resume_prompt):
+                resume_prompt()
         if decision == "always" and normalized:
             session_grants.add(normalized)
             return True

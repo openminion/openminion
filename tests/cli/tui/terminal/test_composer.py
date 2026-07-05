@@ -56,6 +56,15 @@ def test_focus_input_is_no_op() -> None:
     c.focus_input()  # must not raise
 
 
+def test_escape_callback_binding_is_accepted() -> None:
+    fired: list[str] = []
+
+    composer = TerminalComposer(on_escape=lambda: fired.append("escape"))
+
+    assert composer is not None
+    assert fired == []
+
+
 def test_history_file_enables_file_history(tmp_path: Path) -> None:
     history_file = tmp_path / "terminal_history"
     c = TerminalComposer(history_file=str(history_file))
