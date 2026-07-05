@@ -16,6 +16,13 @@ that area:
 - `identity/`
 - `tool/`
 
+When a paired subsystem changes shape, update the module owner and the matching
+service owner together. Module packages own domain contracts, schemas,
+adapters, and storage-facing engines; service packages own runtime composition,
+policy wiring, lifecycle hooks, and cross-module orchestration. Do not move code
+between the two layers unless the owning tracker names the paired owner,
+validator effect, and behavior tests.
+
 Fourteen subsystems are standalone domain owners with no `services/` peer:
 
 - `a2a/`
@@ -93,3 +100,5 @@ Not in `modules/`:
 - runtime wiring for paired subsystem areas (that belongs in `services/X/`)
 - CLI or HTTP transport surfaces (that belongs in `cli/` and `api/`)
 - cross-cutting primitives that belong in `base/`
+- thin pass-through facades whose only purpose is to mirror a `services/`
+  package; collapse or route those through the paired owner instead

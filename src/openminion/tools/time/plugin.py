@@ -1,6 +1,6 @@
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openminion.services.cron.scheduling import compute_next_due
@@ -63,6 +63,37 @@ def _load_timezone(name: str) -> ZoneInfo:
 
 # TGFC: stable provider id for the time tool family. Single canonical owner.
 _TIME_TOOL_SOURCE = "time_module"
+
+
+class _WeatherTimezoneResolver(Protocol):
+    def resolve_openmeteo_config(self, ctx: RuntimeContext) -> Any: ...
+
+    def geocode_openmeteo_location(
+        self,
+        query: str,
+        *,
+        config: Any,
+        language: str,
+        timeout_s: float,
+    ) -> tuple[Mapping[str, Any], str, Mapping[str, Any]]: ...
+
+    def secondary_geocode_openmeteo_location(
+        self,
+        query: str,
+        *,
+        config: Any,
+        language: str,
+        timeout_s: float,
+    ) -> tuple[Mapping[str, Any], str, list[Mapping[str, Any]]]: ...
+
+    def forecast_openmeteo_current(
+        self,
+        *,
+        latitude: float,
+        longitude: float,
+        config: Any,
+        timeout_s: float,
+    ) -> tuple[Mapping[str, Any], str, Mapping[str, Any]]: ...
 
 
 def _build_instant(*, dt_utc: datetime, timezone_name: str) -> dict[str, Any]:
@@ -185,12 +216,12 @@ def _timezone_from_context_metadata(ctx: RuntimeContext) -> str | None:
 
 def _timezone_from_location_fallback(ctx: RuntimeContext) -> str | None:
     try:
-        from openminion.tools.location import plugin as location_plugin
+        from openminion.tools.location.plugin import resolve_location_for_tool
     except Exception:
         return None
 
     try:
-        resolved = location_plugin._resolve_location(  # type: ignore[attr-defined]
+        resolved = resolve_location_for_tool(
             prefer="auto",
             max_privacy="city",
             ctx=ctx,
@@ -247,7 +278,9 @@ def _timezone_from_forecast_payload(payload: Mapping[str, Any]) -> str | None:
     return token
 
 
-def _weather_plugin_and_config(query: str, ctx: RuntimeContext) -> tuple[Any, Any]:
+def _weather_plugin_and_config(
+    query: str, ctx: RuntimeContext
+) -> tuple[_WeatherTimezoneResolver, Any]:
     try:
         from openminion.tools.weather.providers.openmeteo import (
             plugin as weather_plugin,
@@ -259,7 +292,7 @@ def _weather_plugin_and_config(query: str, ctx: RuntimeContext) -> tuple[Any, An
             {"location": query},
         ) from exc
     try:
-        config = weather_plugin._resolve_config(ctx)  # type: ignore[attr-defined]
+        config = weather_plugin.resolve_openmeteo_config(ctx)
     except Exception as exc:
         raise ToolRuntimeError(
             "EXEC_ERROR",
@@ -273,7 +306,7 @@ def _timezone_from_resolved_location(
     *,
     resolved: Mapping[str, Any],
     timezone_payload: Mapping[str, Any] | None = None,
-    weather_plugin: Any,
+    weather_plugin: _WeatherTimezoneResolver,
     config: Any,
     timeout_s: float,
     query: str,
@@ -289,7 +322,7 @@ def _timezone_from_resolved_location(
             {"location": query},
         )
     config_auto_timezone = config.model_copy(update={"timezone": "auto"})
-    _current, _forecast_url, forecast_payload = weather_plugin._forecast_current(  # type: ignore[attr-defined]
+    _current, _forecast_url, forecast_payload = weather_plugin.forecast_openmeteo_current(
         latitude=coordinates[0],
         longitude=coordinates[1],
         config=config_auto_timezone,
@@ -307,7 +340,7 @@ def _timezone_from_resolved_location(
 
 def _secondary_geocode_timezone(
     *,
-    weather_plugin: Any,
+    weather_plugin: _WeatherTimezoneResolver,
     config: Any,
     language: str,
     timeout_s: float,
@@ -316,7 +349,7 @@ def _secondary_geocode_timezone(
 ) -> str:
     try:
         resolved, _secondary_url, _secondary_payload = (
-            weather_plugin._secondary_geocode(  # type: ignore[attr-defined]
+            weather_plugin.secondary_geocode_openmeteo_location(
                 query,
                 config=config,
                 language=language,
@@ -352,11 +385,13 @@ def _timezone_from_explicit_location(location: str, ctx: RuntimeContext) -> str:
 
     primary_error: ToolRuntimeError | None = None
     try:
-        resolved, _geocode_url, geocode_payload = weather_plugin._geocode(  # type: ignore[attr-defined]
-            query,
-            config=config,
-            language=language,
-            timeout_s=timeout_s,
+        resolved, _geocode_url, geocode_payload = (
+            weather_plugin.geocode_openmeteo_location(
+                query,
+                config=config,
+                language=language,
+                timeout_s=timeout_s,
+            )
         )
     except ToolRuntimeError as exc:
         primary_error = exc

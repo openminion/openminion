@@ -8,8 +8,6 @@ from typing import Any
 from openminion.base.config import ConfigManager, OpenMinionConfig
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.base.config.paths import resolve_data_root, resolve_home_root
-from openminion.services.bootstrap.config import bootstrap_config_manager
-from openminion.services.tool.exposure import get_visible_tool_specs_and_dispatch_map
 
 from .bootstrap.paths import (
     CLI_IDENTITY_DB_FILENAME,
@@ -46,6 +44,8 @@ def infer_workspace_home_root(cwd: Path) -> Path | None:
 def resolve_cli_tool_provider_specs_and_dispatch_map(
     runtime_tools: Any,
 ) -> tuple[list[Any], dict[str, Any]]:
+    from openminion.services.tool.exposure import get_visible_tool_specs_and_dispatch_map
+
     return get_visible_tool_specs_and_dispatch_map(runtime_tools)
 
 
@@ -73,6 +73,8 @@ def load_cli_manager(
     home_root: str | Path | None = None,
     data_root: str | Path | None = None,
 ) -> ConfigManager:
+    from openminion.services.bootstrap.config import bootstrap_config_manager
+
     manager = ConfigManager.load(
         config_path,
         home_root=_resolve_explicit_path(home_root),

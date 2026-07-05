@@ -18,6 +18,17 @@ def _create_sample_db(db_path: Path) -> None:
         conn.commit()
 
 
+class _RaisingReporter:
+    def on_start(self, **_kwargs) -> None:
+        raise RuntimeError("reporter start failed")
+
+    def on_progress(self, **_kwargs) -> None:
+        raise RuntimeError("reporter progress failed")
+
+    def on_end(self, **_kwargs) -> None:
+        raise RuntimeError("reporter end failed")
+
+
 def test_omx_roundtrip_via_helpers(tmp_path: Path) -> None:
     db_path = tmp_path / "sample.db"
     _create_sample_db(db_path)
@@ -37,6 +48,30 @@ def test_omx_roundtrip_via_helpers(tmp_path: Path) -> None:
     report = import_omx(
         omx_dir=omx_dir, target_db_path=restored_path, verify_checksums=True
     )
+    assert report.success is True
+
+
+def test_omx_reporter_failures_are_best_effort(tmp_path: Path) -> None:
+    db_path = tmp_path / "sample.db"
+    _create_sample_db(db_path)
+
+    omx_dir = tmp_path / "omx"
+    export_omx(
+        db_path=db_path,
+        module_id="task",
+        module_application_id=get_module_application_id("task"),
+        export_dir=omx_dir,
+        reporter=_RaisingReporter(),
+    )
+
+    restored_path = tmp_path / "restored.db"
+    report = import_omx(
+        omx_dir=omx_dir,
+        target_db_path=restored_path,
+        verify_checksums=True,
+        reporter=_RaisingReporter(),
+    )
+
     assert report.success is True
 
 

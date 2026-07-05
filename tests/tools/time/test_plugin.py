@@ -324,11 +324,11 @@ def test_timezone_from_explicit_location_uses_geocode_timezone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._resolve_config",
+        "openminion.tools.weather.providers.openmeteo.plugin.resolve_openmeteo_config",
         lambda _ctx: SimpleNamespace(timeout_seconds=5.0, default_language="en"),
     )
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._geocode",
+        "openminion.tools.weather.providers.openmeteo.plugin.geocode_openmeteo_location",
         lambda query, *, config, language, timeout_s: (
             {
                 "resolved_name": query,
@@ -351,13 +351,13 @@ def test_timezone_from_explicit_location_uses_geocode_timezone(
         ),
     )
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._secondary_geocode",
+        "openminion.tools.weather.providers.openmeteo.plugin.secondary_geocode_openmeteo_location",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("secondary geocode should not run")
         ),
     )
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._forecast_current",
+        "openminion.tools.weather.providers.openmeteo.plugin.forecast_openmeteo_current",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("forecast lookup should not run")
         ),
@@ -372,7 +372,7 @@ def test_timezone_from_explicit_location_secondary_geocode_uses_forecast_timezon
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._resolve_config",
+        "openminion.tools.weather.providers.openmeteo.plugin.resolve_openmeteo_config",
         lambda _ctx: SimpleNamespace(
             timeout_seconds=5.0,
             default_language="en",
@@ -384,7 +384,7 @@ def test_timezone_from_explicit_location_secondary_geocode_uses_forecast_timezon
         ),
     )
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._geocode",
+        "openminion.tools.weather.providers.openmeteo.plugin.geocode_openmeteo_location",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             ToolRuntimeError(
                 "NOT_FOUND", "Location not found: Tokyo", {"query": "Tokyo"}
@@ -392,7 +392,7 @@ def test_timezone_from_explicit_location_secondary_geocode_uses_forecast_timezon
         ),
     )
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._secondary_geocode",
+        "openminion.tools.weather.providers.openmeteo.plugin.secondary_geocode_openmeteo_location",
         lambda query, *, config, language, timeout_s: (
             {
                 "resolved_name": query,
@@ -405,7 +405,7 @@ def test_timezone_from_explicit_location_secondary_geocode_uses_forecast_timezon
         ),
     )
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._forecast_current",
+        "openminion.tools.weather.providers.openmeteo.plugin.forecast_openmeteo_current",
         lambda *, latitude, longitude, config, timeout_s: (
             {"time": "2026-04-09T12:00", "temperature_2m": 17.0},
             "https://forecast.example",
@@ -428,11 +428,11 @@ def test_timezone_from_explicit_location_not_found_fails_closed(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._resolve_config",
+        "openminion.tools.weather.providers.openmeteo.plugin.resolve_openmeteo_config",
         lambda _ctx: SimpleNamespace(timeout_seconds=5.0, default_language="en"),
     )
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._geocode",
+        "openminion.tools.weather.providers.openmeteo.plugin.geocode_openmeteo_location",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             ToolRuntimeError(
                 "NOT_FOUND",
@@ -442,7 +442,7 @@ def test_timezone_from_explicit_location_not_found_fails_closed(
         ),
     )
     monkeypatch.setattr(
-        "openminion.tools.weather.providers.openmeteo.plugin._secondary_geocode",
+        "openminion.tools.weather.providers.openmeteo.plugin.secondary_geocode_openmeteo_location",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             ToolRuntimeError(
                 "NOT_FOUND",

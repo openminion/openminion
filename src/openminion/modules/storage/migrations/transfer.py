@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import json
 import sqlite3
@@ -22,6 +23,24 @@ from openminion.modules.storage.record_store import RecordStore, RecordStoreSQLi
 
 if TYPE_CHECKING:
     from openminion.modules.storage.progress import ProgressReporter
+
+
+def _call_reporter(method: Callable[..., Any], **kwargs: Any) -> bool:
+    """Invoke an optional progress reporter without making it part of transfer fate."""
+
+    try:
+        method(**kwargs)
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
+def _close_record_store(record_store: RecordStore) -> bool:
+    try:
+        record_store.close()
+    except Exception:  # noqa: BLE001
+        return False
+    return True
 
 
 def _utc_now_iso() -> str:
@@ -195,11 +214,9 @@ def _export_via_record_store(
 
     _reporter_started = False
     if reporter is not None:
-        try:
-            reporter.on_start(total=None, label=f"export_omx[{module_id}]")
-            _reporter_started = True
-        except Exception:  # noqa: BLE001
-            _reporter_started = False
+        _reporter_started = _call_reporter(
+            reporter.on_start, total=None, label=f"export_omx[{module_id}]"
+        )
 
     user_version = _read_user_version_via_record_store(record_store)
     om_meta = _read_om_meta_via_record_store(record_store)
@@ -244,10 +261,7 @@ def _export_via_record_store(
                 handle.write(json.dumps(row, ensure_ascii=True, default=str) + "\n")
                 row_count += 1
                 if reporter is not None:
-                    try:
-                        reporter.on_progress(advance=1, message=table)
-                    except Exception:  # noqa: BLE001
-                        pass
+                    _call_reporter(reporter.on_progress, advance=1, message=table)
 
         sha256 = _sha256_file(data_path)
         chunks: list[OmxResumeChunk] = []
@@ -298,10 +312,9 @@ def _export_via_record_store(
     )
     dump_manifest(manifest, export_dir / "manifest.json")
     if _reporter_started and reporter is not None:
-        try:
-            reporter.on_end(success=True, message=f"{len(table_entries)} tables")
-        except Exception:  # noqa: BLE001
-            pass
+        _call_reporter(
+            reporter.on_end, success=True, message=f"{len(table_entries)} tables"
+        )
     return manifest
 
 
@@ -360,10 +373,7 @@ def export_omx(
             reporter=reporter,
         )
     finally:
-        try:
-            sqlite_store.close()
-        except Exception:  # noqa: BLE001
-            pass
+        _close_record_store(sqlite_store)
 
 
 def _read_omx_bundle_rows(
@@ -416,13 +426,11 @@ def _import_via_record_store(
 
     _reporter_started = False
     if reporter is not None:
-        try:
-            reporter.on_start(
-                total=exported_rows, label=f"import_omx[{manifest.module_id}]"
-            )
-            _reporter_started = True
-        except Exception:  # noqa: BLE001
-            _reporter_started = False
+        _reporter_started = _call_reporter(
+            reporter.on_start,
+            total=exported_rows,
+            label=f"import_omx[{manifest.module_id}]",
+        )
 
     try:
         for table in manifest.tables:
@@ -440,19 +448,15 @@ def _import_via_record_store(
             inserted = record_store.insert_many(table.name, rows)
             imported_rows += inserted
             if reporter is not None:
-                try:
-                    reporter.on_progress(advance=inserted, message=table.name)
-                except Exception:  # noqa: BLE001
-                    pass
+                _call_reporter(
+                    reporter.on_progress, advance=inserted, message=table.name
+                )
         success = True
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
 
     if _reporter_started and reporter is not None:
-        try:
-            reporter.on_end(success=success, message=error)
-        except Exception:  # noqa: BLE001
-            pass
+        _call_reporter(reporter.on_end, success=success, message=error)
 
     return RehydrateReport(
         module_id=manifest.module_id,
@@ -510,13 +514,11 @@ def import_omx(
 
     _reporter_started = False
     if reporter is not None:
-        try:
-            reporter.on_start(
-                total=exported_rows, label=f"import_omx[{manifest.module_id}]"
-            )
-            _reporter_started = True
-        except Exception:  # noqa: BLE001
-            _reporter_started = False
+        _reporter_started = _call_reporter(
+            reporter.on_start,
+            total=exported_rows,
+            label=f"import_omx[{manifest.module_id}]",
+        )
 
     try:
         resolved_target.parent.mkdir(parents=True, exist_ok=True)
@@ -549,10 +551,9 @@ def import_omx(
                 )
                 imported_rows += len(rows)
                 if reporter is not None:
-                    try:
-                        reporter.on_progress(advance=len(rows), message=table.name)
-                    except Exception:  # noqa: BLE001
-                        pass
+                    _call_reporter(
+                        reporter.on_progress, advance=len(rows), message=table.name
+                    )
             conn.commit()
 
         verification = run_verification(
@@ -566,10 +567,7 @@ def import_omx(
         error = str(exc)
 
     if _reporter_started and reporter is not None:
-        try:
-            reporter.on_end(success=success, message=error)
-        except Exception:  # noqa: BLE001
-            pass
+        _call_reporter(reporter.on_end, success=success, message=error)
 
     return RehydrateReport(
         module_id=manifest.module_id,

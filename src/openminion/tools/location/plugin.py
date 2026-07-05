@@ -549,6 +549,27 @@ def _resolve_location(
     return None
 
 
+def resolve_location_for_tool(
+    *,
+    prefer: str,
+    max_privacy: str,
+    ctx: RuntimeContext,
+    force_ip_only: bool = False,
+    allow_ip_lookup: bool = True,
+    refresh_ip_lookup: bool = False,
+) -> dict[str, Any] | None:
+    """Resolve a policy-filtered location record for sibling tool providers."""
+
+    return _resolve_location(
+        prefer=prefer,
+        max_privacy=max_privacy,
+        ctx=ctx,
+        force_ip_only=force_ip_only,
+        allow_ip_lookup=allow_ip_lookup,
+        refresh_ip_lookup=refresh_ip_lookup,
+    )
+
+
 def _h_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     if not isinstance(ctx, RuntimeContext):
         return _error(
@@ -975,4 +996,4 @@ def register(registry: ToolRegistry) -> None:
     )
 
 
-__all__ = ["register"]
+__all__ = ["register", "resolve_location_for_tool"]

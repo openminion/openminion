@@ -98,6 +98,12 @@ def _resolve_config(ctx: RuntimeContext) -> WeatherOpenMeteoConfig:
     return WeatherOpenMeteoConfig.model_validate(config_payload)
 
 
+def resolve_openmeteo_config(ctx: RuntimeContext) -> WeatherOpenMeteoConfig:
+    """Resolve Open-Meteo config for sibling tools that reuse this provider."""
+
+    return _resolve_config(ctx)
+
+
 def _resolve_location_argument(arguments: Mapping[str, Any]) -> str:
     for key in ("location", "city", "query", "place"):
         value = _normalize_location_text(arguments.get(key))
@@ -353,6 +359,18 @@ def _geocode(
     )
 
 
+def geocode_openmeteo_location(
+    query: str,
+    *,
+    config: WeatherOpenMeteoConfig,
+    language: str,
+    timeout_s: float,
+) -> tuple[Dict[str, Any], str, Dict[str, Any]]:
+    """Resolve a location through the primary Open-Meteo geocoder."""
+
+    return _geocode(query, config=config, language=language, timeout_s=timeout_s)
+
+
 def _secondary_geocode(
     query: str,
     *,
@@ -422,6 +440,20 @@ def _secondary_geocode(
     )
 
 
+def secondary_geocode_openmeteo_location(
+    query: str,
+    *,
+    config: WeatherOpenMeteoConfig,
+    language: str,
+    timeout_s: float,
+) -> tuple[Dict[str, Any], str, list[Dict[str, Any]]]:
+    """Resolve a location through the fallback Open-Meteo geocoder."""
+
+    return _secondary_geocode(
+        query, config=config, language=language, timeout_s=timeout_s
+    )
+
+
 def _forecast_current(
     *,
     latitude: float,
@@ -453,6 +485,23 @@ def _forecast_current(
         )
 
     return current, request_url, payload
+
+
+def forecast_openmeteo_current(
+    *,
+    latitude: float,
+    longitude: float,
+    config: WeatherOpenMeteoConfig,
+    timeout_s: float,
+) -> tuple[Dict[str, Any], str, Dict[str, Any]]:
+    """Fetch current Open-Meteo conditions for sibling provider reuse."""
+
+    return _forecast_current(
+        latitude=latitude,
+        longitude=longitude,
+        config=config,
+        timeout_s=timeout_s,
+    )
 
 
 def _normalize_metrics(
@@ -779,6 +828,10 @@ def register(registry: ToolRegistry) -> None:
 __all__ = [
     "OpenMeteoWeatherProvider",
     "register",
+    "forecast_openmeteo_current",
+    "geocode_openmeteo_location",
+    "resolve_openmeteo_config",
+    "secondary_geocode_openmeteo_location",
     "_h_weather_openmeteo_current",
     "_normalize_query_key",
     "_resolve_location_argument",

@@ -28,8 +28,9 @@ FORBIDDEN = [
 ]
 
 # Approved cross-layer service imports. These files deliberately bridge modules
-# and services as part of their defined architectural role. Each entry must have
-# a rationale comment.
+# and services as part of their defined architectural role. Additions must cite
+# the paired module/service owner and the tracker row that proved the boundary is
+# integration wiring, not a thin facade or feature-owner move.
 EXCLUDED_MODULE_FILES: set[str] = {
     "src/openminion/modules/tool/executor.py",
     "src/openminion/modules/tool/cli/runtime.py",

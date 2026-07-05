@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
+from typing import Any
 
 
-def run_api(args) -> int:
+def _resolve_run_api_dependencies() -> tuple[Callable[..., Any], Callable[..., Any]]:
+    patched_load_config = globals().get("load_config")
+    patched_build_api_server = globals().get("build_api_server")
+    if patched_load_config is not None and patched_build_api_server is not None:
+        return patched_load_config, patched_build_api_server
+
     from openminion.api.server import build_api_server
     from openminion.cli.bootstrap.loader import load_config
 
+    return load_config, build_api_server
+
+
+def run_api(args) -> int:
+    load_config, build_api_server = _resolve_run_api_dependencies()
     config = load_config(args.config)
     host = str(args.host or config.gateway.host)
     port = int(args.port or config.gateway.port)

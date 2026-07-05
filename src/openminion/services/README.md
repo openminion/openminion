@@ -20,6 +20,13 @@ Four service subpackages pair with a same-named feature area in
 - `identity/`
 - `tool/`
 
+Changes in these paired owners must keep the module/service split explicit:
+`modules/<name>/` owns domain contracts, schemas, storage-facing engines, and
+provider adapters; `services/<name>/` owns runtime assembly, lifecycle, policy
+composition, and cross-module wiring. A source move across the boundary needs an
+owner tracker row, focused behavior tests, and an import-boundary validator note
+before it lands.
+
 ### Runtime concern packages
 
 Eight service subpackages are standalone runtime concerns with no
@@ -70,3 +77,5 @@ Only `config.py` and `constants.py` remain as root-level `.py` files.
   specific module owner
 - New ad hoc flat files at `services/` root
 - Direct feature ownership that should live in `openminion.modules.*`
+- facade packages that simply mirror `modules/` without adding runtime
+  composition or integration ownership

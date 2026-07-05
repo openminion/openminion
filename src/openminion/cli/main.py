@@ -14,14 +14,6 @@ from openminion.base.config import (
     resolve_config_path,
     run_profile_overrides_from_mapping,
 )
-from openminion.tools.exec.constants import EXEC_ENABLE_HOST_EXEC_ENV
-from openminion.services.runtime.env import apply_runtime_environment
-from openminion.services.bootstrap.onboarding import (
-    OnboardingRequestedMode,
-    build_inline_setup_args,
-    format_fail_fast_message,
-    resolve_surface_onboarding_route,
-)
 
 
 def _prepare_runtime_roots(
@@ -63,6 +55,7 @@ def _prepare_runtime_roots(
 
 def _run_setup_from_default_route(args: object, home_root: str, data_root: str) -> int:
     from openminion.cli.commands.setup import run_setup
+    from openminion.services.bootstrap.onboarding import build_inline_setup_args
 
     return int(
         run_setup(
@@ -130,6 +123,12 @@ def _run_no_handler(
     has_tty = bool(getattr(sys.stdin, "isatty", lambda: False)()) and bool(
         getattr(sys.stdout, "isatty", lambda: False)()
     )
+    from openminion.services.bootstrap.onboarding import (
+        OnboardingRequestedMode,
+        format_fail_fast_message,
+        resolve_surface_onboarding_route,
+    )
+
     config_path = resolve_config_path(
         getattr(args, "config", None),
         home_root=_default_route_home_root(effective_home_root)
@@ -192,6 +191,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if bool(getattr(args, "allow_unsandboxed_exec", False)):
+        from openminion.services.runtime.env import apply_runtime_environment
+        from openminion.tools.exec.constants import EXEC_ENABLE_HOST_EXEC_ENV
+
         apply_runtime_environment(
             {EXEC_ENABLE_HOST_EXEC_ENV: "1"},
             overwrite=True,
