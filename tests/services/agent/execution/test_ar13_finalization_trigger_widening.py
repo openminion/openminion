@@ -11,6 +11,7 @@ from openminion.services.agent.execution.finalization import (
 class _FakeResult:
     tool_name: str
     ok: bool = True
+    data: dict[str, str] | None = None
 
 
 def test_three_plus_results_still_triggers() -> None:
@@ -63,6 +64,18 @@ def test_single_ok_browser_click_triggers() -> None:
 def test_case_insensitive_matching() -> None:
     results = [_FakeResult("FILE.WRITE", ok=True)]
     assert requires_typed_finalization_contract_for_results(results) is True
+
+
+def test_structured_tool_min_scope_marks_mutation_without_name_guessing() -> None:
+    results = [
+        _FakeResult("custom.tool", ok=True, data={"tool_min_scope": "WRITE_SAFE"})
+    ]
+    assert requires_typed_finalization_contract_for_results(results) is True
+
+
+def test_structured_read_only_tool_min_scope_skips_mutation_trigger() -> None:
+    results = [_FakeResult("file.write", ok=True, data={"tool_min_scope": "READ_ONLY"})]
+    assert requires_typed_finalization_contract_for_results(results) is False
 
 
 def test_empty_results_list_returns_false() -> None:

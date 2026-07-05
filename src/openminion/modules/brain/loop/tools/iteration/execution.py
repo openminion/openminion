@@ -166,7 +166,9 @@ def execute_iteration_results(
             tool_name=tool_name,
             action_result=action_result,
         )
-        _record_plan_family_call(loop_state, tool_name=tool_name, action_result=action_result)
+        _record_plan_family_call(
+            loop_state, tool_name=tool_name, action_result=action_result
+        )
 
         tc_args_for_cache = dict(getattr(tool_call, "arguments", {}) or {})
         loop_cache.invalidate_for_write(tool_name, tc_args_for_cache)

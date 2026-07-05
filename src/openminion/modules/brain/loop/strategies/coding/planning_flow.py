@@ -275,14 +275,25 @@ class CodingPlanningMixin:
         if self._coding_plan is None:
             return
         phase = self._coding_plan.current_phase_entry()
+        if phase.name == "verify":
+            instruction = (
+                f"Continue the coding task in phase '{phase.name}'. "
+                f"Goal: {self._coding_plan.goal}. "
+                "Verification is read-only: do not modify files or apply patches. "
+                "Use `file.read` or `file.read_range` first for readback proof and "
+                "use `exec.run` only when shell verification is actually required. "
+                f"Open issues: {', '.join(self._coding_plan.open_issues) if self._coding_plan.open_issues else 'none'}."
+            )
+        else:
+            instruction = (
+                f"Continue the coding task in phase '{phase.name}'. "
+                f"Goal: {self._coding_plan.goal}. "
+                f"Steps: {', '.join(phase.steps) if phase.steps else 'advance this phase'}. "
+                f"Open issues: {', '.join(self._coding_plan.open_issues) if self._coding_plan.open_issues else 'none'}."
+            )
         self._loop_state.messages.append(
             Message(
                 role="user",
-                content=(
-                    f"Continue the coding task in phase '{phase.name}'. "
-                    f"Goal: {self._coding_plan.goal}. "
-                    f"Steps: {', '.join(phase.steps) if phase.steps else 'advance this phase'}. "
-                    f"Open issues: {', '.join(self._coding_plan.open_issues) if self._coding_plan.open_issues else 'none'}."
-                ),
+                content=instruction,
             )
         )

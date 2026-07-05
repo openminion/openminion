@@ -49,7 +49,13 @@ _ANSWER_ONLY_FINALIZATION_KEYS = frozenset(
     }
 )
 _MUTATING_FILE_TOOLS = frozenset(
-    {"file.write", "file.edit", "model.file_write", "model.file_edit"}
+    {
+        "file.write",
+        "file.edit",
+        "code.patch",
+        "model.file_write",
+        "model.file_edit",
+    }
 )
 _SYNTHESIS_TOOL_PREFIXES = ("web.", "browser.", "research.")
 

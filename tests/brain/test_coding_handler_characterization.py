@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import inspect
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
 from openminion.modules.brain.loop.strategies.coding import handler
 from openminion.modules.brain.loop.strategies.coding import runtime as coding_runtime
 from openminion.modules.brain.loop.strategies.coding.handler import (
@@ -13,6 +16,19 @@ from openminion.modules.brain.loop.strategies.coding.handler import (
     execute_coding_profile,
     prepare_coding_profile,
 )
+from openminion.modules.brain.loop.strategies.coding.plan import CodingPlan
+from openminion.modules.brain.loop.tools import (
+    ADAPTIVE_TERM_CIRCULAR_PATTERN,
+    ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+    ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    AdaptiveToolLoopOutcome,
+)
+from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_TERM_DISALLOWED_TOOL,
+    CODING_TERM_TOOL_FAILURE,
+)
+from openminion.modules.brain.schemas import ActionResult, BudgetCounters, ToolCommand
+from openminion.modules.llm.schemas import Message
 
 
 # Public symbols downstream imports rely on. Anything in this list MUST
@@ -135,3 +151,596 @@ class TestCodingHandlerPureHelperBehavior:
         [spec] = specs
         assert spec.input_schema == schema
         assert "path/cwd/working_directory" in spec.description
+
+    def test_verify_phase_allowed_tools_drop_mutating_writers(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Ship a tiny CLI.")
+        runner._coding_plan.current_phase = "verify"
+
+        allowed = runner._allowed_tools_for_current_phase(
+            default_allowed_tools=frozenset(
+                {
+                    "file.write",
+                    "code.patch",
+                    "file.read",
+                    "file.read_range",
+                    "exec.run",
+                    "exec.list",
+                }
+            )
+        )
+
+        assert "file.write" not in allowed
+        assert "code.patch" not in allowed
+        assert "file.read" in allowed
+        assert "file.read_range" in allowed
+        assert "exec.run" in allowed
+        assert "exec.list" in allowed
+
+    def test_verify_phase_instruction_is_read_only(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Ship a tiny CLI.")
+        runner._coding_plan.current_phase = "verify"
+
+        runner._append_phase_instruction()
+
+        prompt = runner._loop_state.messages[-1].content
+        assert "Verification is read-only" in prompt
+        assert "do not modify files or apply patches" in prompt
+        assert "`file.read` or `file.read_range` first" in prompt
+
+
+class TestCodingVerificationReserve:
+    def test_file_read_counts_as_verification_candidate(self) -> None:
+        runner = CodingProfileRunner()
+        command = ToolCommand(
+            title="read file",
+            tool_name="file.read",
+            args={"path": "/tmp/project.py"},
+        )
+        action_result = ActionResult(
+            command_id="cmd-1",
+            status=BRAIN_ACTION_STATUS_SUCCESS,
+            summary="read ok",
+        )
+
+        runner._record_verifier_candidate(command, action_result)
+
+        payload = runner._loop_state.scratchpad["coding.last_verifier_candidate"]
+        assert payload["command"]["tool_name"] == "file.read"
+        assert runner._has_verifier_candidate() is True
+
+    @pytest.mark.parametrize(
+        "termination_reason",
+        (
+            ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            ADAPTIVE_TERM_CIRCULAR_PATTERN,
+            ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+        ),
+    )
+    def test_reserved_verification_step_continues_after_retryable_terminal_stop(
+        self,
+        termination_reason: str,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = SimpleNamespace(
+            current_phase="implement",
+            next_phase_name=lambda: "verify",
+        )
+        runner._loop_state.messages = [
+            Message(role="assistant", content="old context"),
+            Message(role="system", content="budget finalization system"),
+            Message(role="assistant", content="<step1>Create files</step1>"),
+        ]
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "code.patch", "ok": True},
+            ],
+            "budget_answer_only_restore_index": 1,
+            "budget_answer_only_finalization_rejected_text": "<step1>Create files</step1>",
+            "budget_answer_only_finalization_forced": True,
+            "coding.pending_continue": True,
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(
+                budgets_remaining=BudgetCounters(
+                    ticks=10,
+                    tool_calls=0,
+                    a2a_calls=0,
+                    tokens=1000,
+                    time_ms=10000,
+                )
+            ),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=termination_reason,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+        )
+
+        assert (
+            runner._maybe_continue_with_verification_reserve(ctx, outcome=outcome)
+            is True
+        )
+        assert ctx.state.budgets_remaining.tool_calls == 1
+        assert runner._loop_state.scratchpad["coding.verification_reserve_used"] is True
+        assert "budget_answer_only_restore_index" not in runner._loop_state.scratchpad
+        assert "coding.pending_continue" not in runner._loop_state.scratchpad
+        assert len(runner._loop_state.messages) == 2
+        assert runner._loop_state.messages[0].content == "old context"
+        assert (
+            "reserved final tool step for verification only"
+            in runner._loop_state.messages[-1].content
+        )
+        assert "preferring" in runner._loop_state.messages[-1].content.lower()
+        assert "`file.read`" in runner._loop_state.messages[-1].content
+
+    def test_final_answer_reserve_retries_after_verification_stub(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = SimpleNamespace(
+            current_phase="verify",
+            next_phase_name=lambda: None,
+        )
+        runner._last_verifier_candidate_payload = {
+            "command": {"tool_name": "file.read"},
+            "action_result": {"summary": "read ok"},
+        }
+        runner._loop_state.messages = [
+            Message(role="user", content="Use the exact label `result:`."),
+            Message(role="assistant", content="verification prompt"),
+        ]
+        runner._loop_state.scratchpad = {
+            "budget_answer_only_restore_index": 1,
+            "coding.last_verifier_candidate": dict(
+                runner._last_verifier_candidate_payload
+            ),
+            "coding.pending_continue": True,
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason="final_text",
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.read"}),
+            final_text="Verification step: read back loopcalc.py.",
+        )
+
+        assert runner._maybe_continue_with_final_answer_reserve(ctx, outcome=outcome)
+        assert runner._loop_state.scratchpad["coding.final_answer_reserve_used"] is True
+        assert "coding.pending_continue" not in runner._loop_state.scratchpad
+        assert len(runner._loop_state.messages) == 2
+        assert (
+            runner._loop_state.messages[0].content == "Use the exact label `result:`."
+        )
+        assert "Do not call any tools" in runner._loop_state.messages[-1].content
+
+    def test_final_answer_reserve_retries_after_verifier_incomplete_failure(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = SimpleNamespace(
+            current_phase="verify",
+            next_phase_name=lambda: None,
+        )
+        runner._last_verifier_candidate_payload = {
+            "command": {"tool_name": "file.read"},
+            "action_result": {"summary": "read ok"},
+        }
+        runner._loop_state.messages = [
+            Message(role="user", content="Use the exact label `result:`."),
+            Message(role="assistant", content="verifier answer"),
+        ]
+        runner._loop_state.scratchpad = {
+            "budget_answer_only_restore_index": 1,
+            "coding.last_verifier_candidate": dict(
+                runner._last_verifier_candidate_payload
+            ),
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_TOOL_FAILURE,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.read"}),
+            final_text="Readback complete.",
+            action_result=handler._build_error_result(
+                "Typed verifier did not confirm coding completion.",
+                "coding_verifier_incomplete",
+            ),
+            error_message="Typed verifier did not confirm coding completion.",
+        )
+
+        assert runner._maybe_continue_with_final_answer_reserve(ctx, outcome=outcome)
+        assert runner._loop_state.scratchpad["coding.final_answer_reserve_used"] is True
+        assert "Do not call any tools" in runner._loop_state.messages[-1].content
+
+    def test_verify_closeout_reserve_promotes_verify_with_existing_readback(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._last_verifier_candidate_payload = {
+            "command": {"tool_name": "file.read"},
+            "action_result": {"summary": "read ok"},
+        }
+        runner._loop_state.messages = [
+            Message(
+                role="user", content="Use exact labels `design:` and `validation:`."
+            ),
+            Message(role="assistant", content="budget finalization draft"),
+        ]
+        runner._loop_state.scratchpad = {
+            "coding.last_verifier_candidate": dict(
+                runner._last_verifier_candidate_payload
+            ),
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True},
+            ],
+            "budget_answer_only_restore_index": 1,
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "file.read"}),
+            final_text="Implementation mostly complete.",
+        )
+
+        assert runner._maybe_continue_with_verify_closeout_reserve(ctx, outcome=outcome)
+        assert runner._coding_plan.current_phase == "verify"
+        assert runner._loop_state.scratchpad["coding.final_answer_reserve_used"] is True
+        assert "Do not call any tools" in runner._loop_state.messages[-1].content
+
+    def test_reserved_verification_step_also_works_inside_verify_phase(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan.current_phase = "verify"
+        runner._loop_state.messages = [
+            Message(role="assistant", content="old context"),
+            Message(role="system", content="budget finalization system"),
+            Message(role="assistant", content="<step1>Read files</step1>"),
+        ]
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True},
+            ],
+            "budget_answer_only_restore_index": 1,
+            "budget_answer_only_finalization_rejected_text": "<step1>Read files</step1>",
+            "budget_answer_only_finalization_forced": True,
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(
+                budgets_remaining=BudgetCounters(
+                    ticks=10,
+                    tool_calls=0,
+                    a2a_calls=0,
+                    tokens=1000,
+                    time_ms=10000,
+                )
+            ),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "file.read", "exec.run"}),
+        )
+
+        assert (
+            runner._maybe_continue_with_verification_reserve(ctx, outcome=outcome)
+            is True
+        )
+        assert runner._loop_state.scratchpad["coding.verification_reserve_used"] is True
+        assert len(runner._loop_state.messages) == 2
+        assert runner._loop_state.messages[0].content == "old context"
+        assert (
+            "reserved final tool step for verification only"
+            in runner._loop_state.messages[-1].content
+        )
+        assert "`file.read`" in runner._loop_state.messages[-1].content
+
+    def test_verify_disallowed_writer_becomes_read_only_verification_retry(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan.current_phase = "verify"
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True},
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_DISALLOWED_TOOL,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.read", "file.read_range", "exec.run"}),
+            error_message="act_profile_coding does not allow tool 'file.write'.",
+            tool_name="file.write",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        assert runner._loop_state.scratchpad["coding.verification_reserve_used"] is True
+        assert "Verification is read-only" in runner._loop_state.messages[-1].content
+
+    def test_verify_disallowed_writer_does_not_requeue_final_answer_reserve(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan.current_phase = "verify"
+        runner._loop_state.scratchpad = {
+            "coding.final_answer_reserve_used": True,
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True},
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_DISALLOWED_TOOL,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.read", "file.read_range", "exec.run"}),
+            error_message="act_profile_coding does not allow tool 'file.write'.",
+            tool_name="file.write",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "done"
+        assert runner._loop_state.scratchpad["coding.final_answer_reserve_used"] is True
+        assert "coding.verification_reserve_used" not in runner._loop_state.scratchpad
+        assert "result: reserved final closeout was interrupted" in result.message
+
+    def test_final_answer_reserve_disallowed_writer_salvages_final_summary(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan.current_phase = "verify"
+        runner._loop_state.messages = [
+            Message(
+                role="user",
+                content="Finish with `files changed:` and the exact label `result:`.",
+            )
+        ]
+        runner._loop_state.scratchpad = {
+            "coding.final_answer_reserve_used": True,
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "pkg/main.py"},
+                }
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: None,
+            apply_closure_judgment=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_DISALLOWED_TOOL,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+            error_message="act_profile_coding does not allow tool 'file.write'.",
+            tool_name="file.write",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "done"
+        assert "files changed: pkg/main.py" in result.message
+        assert "result: reserved final closeout was interrupted" in result.message
+
+    def test_final_answer_reserve_budget_exhausted_salvages_final_summary(self) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan.current_phase = "verify"
+        runner._loop_state.messages = [
+            Message(
+                role="user",
+                content="Finish with `files changed:` and the exact label `result:`.",
+            )
+        ]
+        runner._loop_state.scratchpad = {
+            "coding.final_answer_reserve_used": True,
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "pkg/main.py"},
+                }
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: None,
+            apply_closure_judgment=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "done"
+        assert "files changed: pkg/main.py" in result.message
+        assert "result: reserved final closeout was interrupted" in result.message
+
+    def test_final_answer_reserve_blocked_cap_salvages_final_summary(self) -> None:
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 1
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan.current_phase = "verify"
+        runner._loop_state.termination_reason = "blocked_cap"
+        runner._loop_state.messages = [
+            Message(
+                role="user",
+                content="Finish with `files changed:` and the exact label `result:`.",
+            )
+        ]
+        runner._loop_state.scratchpad = {
+            "coding.final_answer_reserve_used": True,
+            "coding.self_corrections": 1,
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "pkg/main.py"},
+                }
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: None,
+            apply_closure_judgment=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_TOOL_FAILURE,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset(),
+            error_message="act_profile_coding does not allow tool 'file.write'.",
+            action_result=handler._build_error_result(
+                "act_profile_coding does not allow tool 'file.write'.",
+                "coding_disallowed_tool",
+            ),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "done"
+        assert "files changed: pkg/main.py" in result.message
+        assert "result: reserved final closeout was interrupted" in result.message
+
+    def test_advance_plan_after_phase_blocks_at_self_correction_cap(self) -> None:
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._loop_state.messages = [
+            Message(
+                role="tool",
+                content=json.dumps({"status": "failed", "summary": "pytest failed"}),
+            )
+        ]
+        runner._loop_state.scratchpad = {"coding.self_corrections": 2}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+        )
+
+        assert runner._advance_plan_after_phase(ctx, outcome=outcome) is False
+        assert runner._loop_state.termination_reason == "blocked_cap"
+        assert "coding.pending_continue" not in runner._loop_state.scratchpad
+
+    def test_final_answer_reserve_detects_missing_requested_markers(self) -> None:
+        runner = CodingProfileRunner()
+        runner._loop_state.messages = [
+            Message(
+                role="user",
+                content=(
+                    "Close with the exact labels `design:`, `validation:`, and "
+                    "`next steps:`."
+                ),
+            )
+        ]
+
+        assert runner._missing_requested_final_markers("design: done") is True
+        assert (
+            runner._missing_requested_final_markers(
+                "design: done\nvalidation: passed\nnext steps: none"
+            )
+            is False
+        )

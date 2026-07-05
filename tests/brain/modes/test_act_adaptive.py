@@ -986,6 +986,50 @@ def test_act_adaptive_finalization_contract_missing_surfaces_single_failed_tool_
     assert result.action_result.error.details["tool_name"] == "file.read"
 
 
+def test_act_adaptive_finalization_contract_missing_closes_from_successful_tool_evidence() -> (
+    None
+):
+    llm_client = _FakeLLMClient(responses=[])
+    executor = _FakeCommandExecutor()
+    services = _FakeServices(
+        closure_judgment=ClosureJudgment(
+            satisfied=True,
+            next_action="close",
+            final_answer="Here is the comparison summary built from the gathered sources.",
+        ),
+        closure_disposition="close",
+    )
+    ctx, _services = _ctx(llm_client, executor, services=services)
+
+    result = ActLoopMode()._result_from_outcome(
+        ctx,
+        outcome=AdaptiveToolLoopOutcome(
+            profile_name="general_adaptive_v1",
+            mode_name="act_adaptive",
+            termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+            state=AdaptiveToolLoopState(
+                scratchpad={
+                    "adaptive.tool_results": [
+                        {
+                            "tool_name": "web.search",
+                            "ok": True,
+                            "content": "source list",
+                            "data": {"hits": ["source-a", "source-b"]},
+                        }
+                    ]
+                }
+            ),
+            allowed_tools=frozenset({"web.search"}),
+            error_message="General act work ended without the required typed finalization_status contract.",
+        ),
+    )
+
+    assert result.status == "done"
+    assert "comparison summary" in str(result.message or "")
+    assert result.action_result is not None
+    assert result.action_result.error is None
+
+
 def test_act_adaptive_requires_typed_finalization_after_substantive_tool_work() -> None:
     llm_client = _FakeLLMClient(
         responses=[

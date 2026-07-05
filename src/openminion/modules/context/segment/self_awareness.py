@@ -10,13 +10,12 @@ from openminion.modules.runtime.self_model import (
 
 
 def render_self_awareness_block(request: BuildPackRequest) -> str:
-    payload = (
-        dict(request.self_awareness) if isinstance(request.self_awareness, dict) else {}
-    )
-    if not payload:
+    payload = request.self_awareness
+    if not isinstance(payload, dict) or not payload:
         return ""
-    snapshot = SelfModelSnapshot.model_validate(payload)
-    return render_self_awareness_context_block(snapshot)
+    return render_self_awareness_context_block(
+        SelfModelSnapshot.model_validate(payload)
+    )
 
 
 __all__ = ["render_self_awareness_block"]

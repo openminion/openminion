@@ -10,9 +10,11 @@ from openminion.modules.llm.schemas import Message
 
 from .contracts import (
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
+    ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
     AdaptiveToolLoopOutcome,
 )
+from .budget_control import _is_internal_failure_final_text
 from .direct_tool import (
     _direct_tool_turn_active,
     _remaining_direct_tool_name_sequence,
@@ -53,13 +55,14 @@ from .response_payloads import (
     _task_plan_step_completed_payload,
     _watch_outcome_payload,
 )
+from .runtime import _extract_visible_response_text
 from .status import emit_adaptive_status
 
 
 class AdaptiveLoopRunnerNoToolMixin:
     def _build_response_payloads(self, response: Any) -> dict[str, Any]:
         finalization_status = _finalization_status_payload(response)
-        final_text = str(getattr(response, "output_text", "") or "")
+        final_text = _extract_visible_response_text(response)
         salvage_text = _pending_finalization_salvage_text(self.loop_state)
         if (
             salvage_text is not None
@@ -133,6 +136,42 @@ class AdaptiveLoopRunnerNoToolMixin:
         salvage_text = payloads["salvage_text"]
         confident_complete = payloads["confident_complete"]
         normalized_final_text = str(final_text or "").strip()
+        if (
+            normalized_final_text
+            and _is_internal_failure_final_text(normalized_final_text)
+            and _count_substantive_non_control_tool_results(self.loop_state) > 0
+        ):
+            retry_key = "provider_fallback_final_answer_retry_used"
+            if not bool(self.loop_state.scratchpad.get(retry_key, False)):
+                self.loop_state.scratchpad[retry_key] = True
+                return self._retry_with_system_message(
+                    "Your previous reply was a provider recovery/fallback message, "
+                    "not the actual final answer. Use the completed tool results "
+                    "already in context and return the final user-facing answer "
+                    "now. Do not say the response was empty or ask the user to "
+                    "retry unless you still lack evidence after using the existing "
+                    "tool results.",
+                    discard_assistant_text=normalized_final_text,
+                )
+            self.loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
+            emit_adaptive_status(
+                self.loop_ctx,
+                profile=self.profile,
+                loop_state=self.loop_state,
+                detail_text=f"{self.public_mode_tag} provider fallback final answer",
+                mode_state="llm_error",
+                termination_reason=ADAPTIVE_TERM_LLM_ERROR,
+            )
+            return False, AdaptiveToolLoopOutcome(
+                profile_name=self.profile.profile_name,
+                mode_name=self.profile.mode_name,
+                termination_reason=ADAPTIVE_TERM_LLM_ERROR,
+                state=self.loop_state,
+                allowed_tools=self.allowed_tools,
+                error_message=(
+                    "Model returned provider recovery text instead of a real final answer."
+                ),
+            )
         if (
             normalized_final_text
             and _looks_like_unexecutable_tool_payload_text(normalized_final_text)

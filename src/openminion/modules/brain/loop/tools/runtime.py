@@ -162,6 +162,19 @@ def _updated_assistant_messages(
     return updated_messages
 
 
+def _extract_visible_response_text(response: LLMResponse) -> str:
+    text = str(getattr(response, "output_text", "") or "").strip()
+    if text:
+        return text
+    for assistant_message in reversed(
+        list(getattr(response, "assistant_messages", []) or [])
+    ):
+        content = str(getattr(assistant_message, "content", "") or "").strip()
+        if content:
+            return content
+    return ""
+
+
 def _normalize_structured_signal_response(
     response: LLMResponse,
     *,

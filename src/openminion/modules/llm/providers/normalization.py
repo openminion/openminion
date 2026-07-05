@@ -73,6 +73,16 @@ _NORMALIZATION_PROFILES: list[ProviderResponseNormalizationProfile] = [
 ]
 
 
+def is_provider_recovery_fallback_text(text: str) -> bool:
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return False
+    return any(
+        normalized == str(profile.fallback_text or "").strip().lower()
+        for profile in _NORMALIZATION_PROFILES
+    )
+
+
 def resolve_normalization_profile(
     *,
     provider_name: str = "",

@@ -24,11 +24,8 @@ def _is_substantive_tool_name(tool_name: Any) -> bool:
 def _loop_tool_result_payloads(
     loop_state: AdaptiveToolLoopState,
 ) -> list[dict[str, Any]]:
-    return [
-        item
-        for item in list(loop_state.scratchpad.get("adaptive.tool_results", []) or [])
-        if isinstance(item, dict)
-    ]
+    payloads = loop_state.scratchpad.get("adaptive.tool_results") or ()
+    return [item for item in payloads if isinstance(item, dict)]
 
 
 def _substantive_tool_results(
@@ -56,7 +53,6 @@ def _count_substantive_non_control_tool_results(
 
 
 def _loop_has_non_success_tool_result(loop_state: AdaptiveToolLoopState) -> bool:
-    for item in _loop_tool_result_payloads(loop_state):
-        if not bool(item.get("ok")):
-            return True
-    return False
+    return any(
+        not bool(item.get("ok")) for item in _loop_tool_result_payloads(loop_state)
+    )

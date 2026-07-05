@@ -14,6 +14,7 @@ from openminion.modules.llm.schemas import Message
 from .budget import _debit_llm_usage, _profile_budget_exhausted, _token_budget_exhausted
 from .budget_control import (
     _answer_only_finalization_messages,
+    _is_internal_failure_final_text,
     _llm_budget_available_for_answer_only,
 )
 from .contracts import (
@@ -31,6 +32,7 @@ from .evidence import (
     _successful_substantive_tool_results,
 )
 from .postprocess.rules import _looks_like_unexecutable_tool_payload_text
+from .runtime import _extract_visible_response_text
 from .status import emit_adaptive_status
 
 
@@ -84,6 +86,15 @@ def _duplicate_batch_execution_facts(
         scratchpad["duplicate_signature_execution_facts"] = facts
         loop_state.scratchpad = scratchpad
     return facts
+
+
+def _reset_duplicate_batch_tracking(loop_state: AdaptiveToolLoopState) -> None:
+    """Drop duplicate-batch memory when successful file mutation changed the workspace."""
+    scratchpad = dict(loop_state.scratchpad or {})
+    scratchpad.pop("duplicate_signature_retry_counts", None)
+    scratchpad.pop("duplicate_signature_execution_facts", None)
+    scratchpad.pop("duplicate_batch_answer_only_closure_pending", None)
+    loop_state.scratchpad = scratchpad
 
 
 def _action_result_has_retry_or_poll_signal(
@@ -374,9 +385,14 @@ def _force_duplicate_batch_answer_only_closure(
         )
     for assistant_message in list(getattr(response, "assistant_messages", []) or []):
         loop_state.messages.append(assistant_message)
-    final_text = str(getattr(response, "output_text", "") or "").strip()
+    final_text = _extract_visible_response_text(response)
     if _looks_like_unexecutable_tool_markup_final_text(final_text):
         loop_state.scratchpad["duplicate_batch_closure_raw_tool_markup_rejected"] = True
+        return None, duration_ms, tokens_used
+    if _is_internal_failure_final_text(final_text):
+        loop_state.scratchpad["duplicate_batch_closure_invalid_final_text"] = str(
+            final_text or ""
+        ).strip()
         return None, duration_ms, tokens_used
     if not final_text:
         loop_state.termination_reason = ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS

@@ -14,15 +14,18 @@ from ..budget import (
     _token_budget_exhausted,
 )
 from ..budget_control import (
+    _answer_only_finalization_messages,
     _effective_cap,
     _force_budget_answer_only_finalization,
     _maybe_extend_iteration_budget,
+    _is_internal_failure_final_text,
 )
 from ..contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
     ADAPTIVE_TERM_DISALLOWED_TOOL,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_LLM_ERROR,
     AdaptiveToolLoopOutcome,
 )
@@ -35,6 +38,7 @@ from ..direct_tool import (
 from ..engine_closure import AdaptiveLoopRunnerClosureMixin
 from ..no_tool import AdaptiveLoopRunnerNoToolMixin
 from ..events import IterationToolCallRecord
+from ..evidence import _successful_substantive_tool_results
 from ..iteration.helpers import (
     _build_intent_execution_state_message,
     _set_turn_progress,
@@ -45,6 +49,7 @@ from .rules import (
     _looks_like_unexecutable_tool_payload_text,
 )
 from ..response_payloads import _pending_finalization_salvage_text
+from ..runtime import _extract_visible_response_text
 from ..seeded import _run_seeded_command_step
 from ..status import emit_adaptive_status
 
@@ -53,6 +58,78 @@ class AdaptiveLoopRunnerPostprocessMixin(
     AdaptiveLoopRunnerClosureMixin,
     AdaptiveLoopRunnerNoToolMixin,
 ):
+    def _force_compact_answer_only_closeout(self) -> AdaptiveToolLoopOutcome | None:
+        tool_results = _successful_substantive_tool_results(self.loop_state)
+        if not tool_results:
+            return None
+        self.loop_state.scratchpad[
+            "tool_choice_none_compact_answer_only_retry_used"
+        ] = True
+        finalization_messages = _answer_only_finalization_messages(
+            loop_ctx=self.loop_ctx,
+            loop_state=self.loop_state,
+            tool_results=tool_results,
+            reason=(
+                "The previous answer-only closeout still returned tool calls. "
+                "Do not call more tools. Use only the successful tool evidence "
+                "already gathered and return the final user-facing answer now."
+            ),
+        )
+        emit_adaptive_status(
+            self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            detail_text=f"{self.public_mode_tag} compact answer-only closeout",
+            mode_state="answer_only_compact_closeout",
+        )
+        try:
+            response = self.runtime.complete(
+                messages=finalization_messages,
+                tools=[],
+                model=self.model,
+                tool_choice="none",
+                max_output_tokens=self.max_output_tokens,
+                metadata=self.metadata,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        _debit_llm_usage(self.loop_ctx, response)
+        self.loop_state.llm_calls += 1
+        for assistant_message in list(
+            getattr(response, "assistant_messages", []) or []
+        ):
+            self.loop_state.messages.append(assistant_message)
+        if not bool(getattr(response, "ok", False)):
+            return None
+        final_text = _extract_visible_response_text(response)
+        if (
+            final_text
+            and not _is_internal_failure_final_text(final_text)
+            and not _looks_like_execution_preface_draft(final_text)
+        ):
+            self.loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
+            return AdaptiveToolLoopOutcome(
+                profile_name=self.profile.profile_name,
+                mode_name=self.profile.mode_name,
+                termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+                state=self.loop_state,
+                allowed_tools=self.allowed_tools,
+                final_text=final_text,
+            )
+        if list(getattr(response, "tool_calls", []) or []):
+            return None
+        if not final_text or _is_internal_failure_final_text(final_text):
+            return None
+        self.loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
+        return AdaptiveToolLoopOutcome(
+            profile_name=self.profile.profile_name,
+            mode_name=self.profile.mode_name,
+            termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+            state=self.loop_state,
+            allowed_tools=self.allowed_tools,
+            final_text=final_text,
+        )
+
     def _handle_iteration_cap(self) -> tuple[str, AdaptiveToolLoopOutcome | None]:
         profile = self.profile
         loop_state = self.loop_state
@@ -98,6 +175,19 @@ class AdaptiveLoopRunnerPostprocessMixin(
         ):
             return "proceed", None
         if _tool_call_budget_exhausted(self.loop_ctx, self.loop_state):
+            budget_outcome = _force_budget_answer_only_finalization(
+                loop_ctx=self.loop_ctx,
+                profile=self.profile,
+                loop_state=self.loop_state,
+                runtime=self.runtime,
+                model=self.model,
+                max_output_tokens=self.max_output_tokens,
+                metadata=self.metadata,
+                allowed_tools=self.allowed_tools,
+                public_mode_tag=self.public_mode_tag,
+            )
+            if budget_outcome is not None:
+                return "return", budget_outcome
             self.loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
             emit_adaptive_status(
                 self.loop_ctx,
@@ -196,43 +286,44 @@ class AdaptiveLoopRunnerPostprocessMixin(
             mode_state="llm_call",
         )
         llm_start = time.monotonic()
-        response_was_tool_suppressed = False
+        llm_tools = _visible_tool_specs_for_direct_tool_turn(
+            self.loop_state,
+            self.active_tool_specs,
+        )
+        llm_tool_choice = self.profile.tool_choice
+        response_was_tool_suppressed = llm_tool_choice == "none"
+        if _pending_finalization_salvage_text(self.loop_state):
+            llm_tools = []
+            llm_tool_choice = "none"
+            response_was_tool_suppressed = True
+        elif bool(
+            self.loop_state.scratchpad.get(
+                "duplicate_batch_answer_only_closure_pending", False
+            )
+        ):
+            llm_tools = []
+            llm_tool_choice = "none"
+            response_was_tool_suppressed = True
+        elif _should_force_direct_tool_closure(self.loop_state):
+            self.loop_state.direct_tool_closure_consumed = True
+            self.loop_state.scratchpad["direct_tool_closure_forced"] = True
+            self.loop_state.messages.append(
+                _build_direct_tool_closure_message(self.loop_state)
+            )
+            llm_tools = []
+            llm_tool_choice = "none"
+            response_was_tool_suppressed = True
+        elif bool(
+            getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
+        ) and bool(getattr(self.loop_state, "direct_tool_closure_consumed", False)):
+            llm_tools = []
+            llm_tool_choice = "none"
+            response_was_tool_suppressed = True
+
         if self.pending_response is not None:
             response = self.pending_response
             self.pending_response = None
         else:
-            llm_tools = _visible_tool_specs_for_direct_tool_turn(
-                self.loop_state,
-                self.active_tool_specs,
-            )
-            llm_tool_choice = self.profile.tool_choice
-            if _pending_finalization_salvage_text(self.loop_state):
-                llm_tools = []
-                llm_tool_choice = "none"
-                response_was_tool_suppressed = True
-            elif bool(
-                self.loop_state.scratchpad.get(
-                    "duplicate_batch_answer_only_closure_pending", False
-                )
-            ):
-                llm_tools = []
-                llm_tool_choice = "none"
-                response_was_tool_suppressed = True
-            elif _should_force_direct_tool_closure(self.loop_state):
-                self.loop_state.direct_tool_closure_consumed = True
-                self.loop_state.scratchpad["direct_tool_closure_forced"] = True
-                self.loop_state.messages.append(
-                    _build_direct_tool_closure_message(self.loop_state)
-                )
-                llm_tools = []
-                llm_tool_choice = "none"
-                response_was_tool_suppressed = True
-            elif bool(
-                getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
-            ) and bool(getattr(self.loop_state, "direct_tool_closure_consumed", False)):
-                llm_tools = []
-                llm_tool_choice = "none"
-                response_was_tool_suppressed = True
             try:
                 response = self.runtime.complete(
                     messages=self.loop_state.messages,
@@ -373,6 +464,15 @@ class AdaptiveLoopRunnerPostprocessMixin(
         ) or bool(
             getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
         )
+        pending_finalization_text = _pending_finalization_salvage_text(self.loop_state)
+        budget_answer_only_active = bool(
+            self.loop_state.scratchpad.get(
+                "budget_answer_only_finalization_forced", False
+            )
+        )
+        final_answer_reserve_active = bool(
+            self.loop_state.scratchpad.get("coding.final_answer_reserve_used", False)
+        )
         if not bool(self.loop_state.scratchpad.get(retry_key, False)):
             self.loop_state.scratchpad[retry_key] = True
             if direct_tool_closure_active:
@@ -381,10 +481,17 @@ class AdaptiveLoopRunnerPostprocessMixin(
                     "Do not call any more tools. Return only the final "
                     "user-facing answer now."
                 )
-            elif _pending_finalization_salvage_text(self.loop_state) is not None:
+            elif pending_finalization_text is not None:
                 message = (
                     "Do not call tools. Return only the structured "
                     "finalization_status signal now."
+                )
+            elif final_answer_reserve_active or budget_answer_only_active:
+                message = (
+                    "Do not call tools. Return only the final user-facing "
+                    "answer now. Preserve any explicit labels, result markers, "
+                    "headings, validation notes, files-changed summaries, and "
+                    "other requested final-output constraints."
                 )
             else:
                 message = (
@@ -393,11 +500,25 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 )
             self.loop_state.messages.append(Message(role="system", content=message))
             return True, None
-        termination_reason = (
-            ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED
-            if direct_tool_closure_active
-            else ADAPTIVE_TERM_LLM_ERROR
-        )
+        if (
+            pending_finalization_text is not None
+            or budget_answer_only_active
+            or final_answer_reserve_active
+        ):
+            compact_closeout = self._force_compact_answer_only_closeout()
+            if compact_closeout is not None:
+                return False, compact_closeout
+            termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
+            error_message = "Answer-only finalization kept returning tool calls."
+        else:
+            termination_reason = (
+                ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED
+                if direct_tool_closure_active
+                else ADAPTIVE_TERM_LLM_ERROR
+            )
+            error_message = (
+                "Model returned tool calls after tool_choice=none was enforced."
+            )
         self.loop_state.termination_reason = termination_reason
         emit_adaptive_status(
             self.loop_ctx,
@@ -413,7 +534,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             termination_reason=termination_reason,
             state=self.loop_state,
             allowed_tools=self.allowed_tools,
-            error_message="Model returned tool calls after tool_choice=none was enforced.",
+            error_message=error_message,
         )
 
     def _validate_tool_calls(

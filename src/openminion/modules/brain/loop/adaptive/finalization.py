@@ -102,9 +102,89 @@ from .tool_scope import (  # noqa: E402
 from ..tools.iteration.helpers import (  # noqa: E402
     _requires_typed_finalization_contract,
 )
+from ..tools.evidence import (  # noqa: E402
+    _successful_substantive_tool_results,
+)
 
 
 class ActLoopFinalizationMixin:
+    def _maybe_close_from_blocked_outcome(
+        self: Any,
+        ctx: ExecutionContext,
+        *,
+        telemetry_payload: dict[str, Any],
+        message: str,
+        code: str,
+        status_detail: str,
+        closed_flag: str,
+        profile_name: str,
+    ) -> tuple[ExecutionResult | None, ActionResult]:
+        blocked_action = ActionResult(
+            command_id=new_uuid(),
+            status="blocked",
+            summary=message,
+            outputs=telemetry_payload,
+            error=ActionError(
+                code=code,
+                message=message,
+                details={"reason_code": code},
+            ),
+        )
+        try:
+            judgment = ctx.evaluate_turn_closure(
+                action_result=blocked_action,
+                completion_reason=code,
+            )
+            disposition = ctx.apply_closure_judgment(judgment=judgment)
+        except Exception:  # noqa: BLE001
+            judgment = None
+            disposition = ""
+        if (
+            judgment is None
+            or disposition != BRAIN_DISPOSITION_CLOSE
+            or not str(getattr(judgment, "final_answer", "") or "").strip()
+        ):
+            return None, blocked_action
+        close_message = final_close_message(
+            state=ctx.state,
+            judgment=judgment,
+            action_result=blocked_action,
+            fallback_message=message,
+        )
+        resolved_action = blocked_action.model_copy(
+            update={
+                "status": "success",
+                "summary": close_message,
+                "error": None,
+            },
+            deep=True,
+        )
+        ctx.extract_success_memories(
+            action_result=resolved_action,
+            judgment=judgment,
+        )
+        ctx.emit_status(
+            source_phase="ACT",
+            detail_text=status_detail,
+            mode=BRAIN_DECISION_ROUTE_ACT,
+            mode_state="done",
+            terminal=True,
+            payload={
+                **telemetry_payload,
+                "act.profile": profile_name,
+                closed_flag: True,
+                "adaptive.exhaustion_reason": code,
+            },
+        )
+        return ExecutionResult.from_step_output(
+            ctx.respond(
+                message=close_message,
+                status=BRAIN_STATE_DONE,
+                action_result=resolved_action,
+            ),
+            judgment=judgment,
+        ), blocked_action
+
     def _finalize_success(
         self: Any,
         ctx: ExecutionContext,
@@ -579,70 +659,17 @@ class ActLoopFinalizationMixin:
                     list(getattr(ctx.state, "intent_execution_states", []) or [])
                 ),
             )
-            blocked_action = ActionResult(
-                command_id=new_uuid(),
-                status="blocked",
-                summary=message,
-                outputs=telemetry_payload,
-                error=ActionError(
-                    code=code,
-                    message=message,
-                    details={"reason_code": code},
-                ),
+            closed_result, blocked_action = self._maybe_close_from_blocked_outcome(
+                ctx,
+                telemetry_payload=telemetry_payload,
+                message=message,
+                code=code,
+                status_detail=f"{_public_act_tag()} done",
+                closed_flag="adaptive.exhaustion_closed_by_closure_gate",
+                profile_name=BRAIN_ACT_PROFILE_GENERAL,
             )
-            try:
-                judgment = ctx.evaluate_turn_closure(
-                    action_result=blocked_action,
-                    completion_reason=code,
-                )
-                disposition = ctx.apply_closure_judgment(judgment=judgment)
-            except Exception:  # noqa: BLE001
-                judgment = None
-                disposition = ""
-            if (
-                judgment is not None
-                and disposition == BRAIN_DISPOSITION_CLOSE
-                and str(getattr(judgment, "final_answer", "") or "").strip()
-            ):
-                close_message = final_close_message(
-                    state=ctx.state,
-                    judgment=judgment,
-                    action_result=blocked_action,
-                    fallback_message=message,
-                )
-                resolved_action = blocked_action.model_copy(
-                    update={
-                        "status": "success",
-                        "summary": close_message,
-                        "error": None,
-                    },
-                    deep=True,
-                )
-                ctx.extract_success_memories(
-                    action_result=resolved_action,
-                    judgment=judgment,
-                )
-                ctx.emit_status(
-                    source_phase="ACT",
-                    detail_text=f"{_public_act_tag()} done",
-                    mode=BRAIN_DECISION_ROUTE_ACT,
-                    mode_state="done",
-                    terminal=True,
-                    payload={
-                        **telemetry_payload,
-                        "act.profile": BRAIN_ACT_PROFILE_GENERAL,
-                        "adaptive.exhaustion_closed_by_closure_gate": True,
-                        "adaptive.exhaustion_reason": code,
-                    },
-                )
-                return ExecutionResult.from_step_output(
-                    ctx.respond(
-                        message=close_message,
-                        status=BRAIN_STATE_DONE,
-                        action_result=resolved_action,
-                    ),
-                    judgment=judgment,
-                )
+            if closed_result is not None:
+                return closed_result
             return ExecutionResult(
                 status=BRAIN_STATE_WAITING_USER,
                 working_state=ctx.state,
@@ -705,6 +732,23 @@ class ActLoopFinalizationMixin:
                         ),
                         action_result=recovered_tool_failure,
                     )
+                if _successful_substantive_tool_results(outcome.state):
+                    closed_result, _blocked_action = (
+                        self._maybe_close_from_blocked_outcome(
+                            ctx,
+                            telemetry_payload=telemetry_payload,
+                            message=str(
+                                outcome.error_message
+                                or "General act work ended without the required typed finalization_status contract."
+                            ),
+                            code="act_finalization_contract_missing",
+                            status_detail=f"{_public_act_tag()} done",
+                            closed_flag="adaptive.contract_missing_closed_by_closure_gate",
+                            profile_name=BRAIN_ACT_PROFILE_GENERAL,
+                        )
+                    )
+                    if closed_result is not None:
+                        return closed_result
             message = (
                 outcome.error_message or "Adaptive loop integrity contract failed."
             )

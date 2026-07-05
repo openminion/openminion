@@ -19,6 +19,7 @@ from .contracts import (
     AdaptiveToolLoopState,
     semantic_batch_signature,
 )
+from .runtime import _extract_visible_response_text
 from .status import emit_adaptive_status
 
 
@@ -665,7 +666,7 @@ def _force_direct_tool_answer_only_closure(
             duration_ms,
             tokens_used,
         )
-    final_text = str(getattr(response, "output_text", "") or "").strip()
+    final_text = _extract_visible_response_text(response)
     if not final_text:
         loop_state.termination_reason = ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED
         emit_adaptive_status(

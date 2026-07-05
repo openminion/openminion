@@ -2,10 +2,36 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..duplicate_batch import _reset_duplicate_batch_tracking
+from ..iteration.helpers import _MUTATING_FILE_TOOLS
 from ..contracts import AdaptiveToolLoopContext, AdaptiveToolLoopProfile
 from ..snapshot import LoopSnapshot, LoopToolCallRecord, compress_transcript
 from ..telemetry import _emit_iteration_event
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
+
+
+def _has_successful_mutating_file_tool_result(
+    ordered_tool_results: list[tuple[Any, Any]],
+) -> bool:
+    for tool_call, command_outcome in ordered_tool_results:
+        tool_name = str(getattr(tool_call, "name", "") or "").strip()
+        if tool_name not in _MUTATING_FILE_TOOLS:
+            continue
+        action_result = getattr(command_outcome, "action_result", None)
+        status = str(getattr(action_result, "status", "") or "").strip().lower()
+        if status == "success":
+            return True
+    return False
+
+
+def _reset_successful_mutation_repetition_tracking(
+    loop_state: Any,
+    *,
+    iteration_tool_sequences: list[str],
+) -> None:
+    _reset_duplicate_batch_tracking(loop_state)
+    loop_state.seen_signatures = []
+    iteration_tool_sequences.clear()
 
 
 def finalize_iteration_state(
@@ -30,7 +56,13 @@ def finalize_iteration_state(
     public_mode_name: str,
     record_duplicate_batch_execution_facts: Any,
     direct_tool_batch_completed_successfully: Any,
+    iteration_tool_sequences: list[str],
 ) -> Any:
+    if _has_successful_mutating_file_tool_result(ordered_tool_results):
+        _reset_successful_mutation_repetition_tracking(
+            loop_state,
+            iteration_tool_sequences=iteration_tool_sequences,
+        )
     if batch_had_progress and signature not in set(loop_state.seen_signatures):
         loop_state.seen_signatures.append(signature)
     if batch_had_progress:

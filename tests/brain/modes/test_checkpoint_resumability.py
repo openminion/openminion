@@ -35,6 +35,8 @@ class _ModeServices:
     plan_calls: list[str] = field(default_factory=list)
     response_queue: list[str] = field(default_factory=list)
     runner: Any = None
+    closure_judgment: ClosureJudgment | None = None
+    closure_disposition: str | None = None
 
     def save_state(self, *, state: WorkingState) -> None:
         del state
@@ -122,10 +124,14 @@ class _ModeServices:
 
     def evaluate_turn_closure(self, **kwargs):
         del kwargs
+        if self.closure_judgment is not None:
+            return self.closure_judgment
         return ClosureJudgment(satisfied=True, next_action="close")
 
     def apply_closure_judgment(self, *, state, judgment):
         del state, judgment
+        if self.closure_disposition is not None:
+            return self.closure_disposition
         return "close"
 
     def extract_success_memories(self, **kwargs):
@@ -278,7 +284,7 @@ def _ctx(
         task_manager=task_manager,
         response_queue=list(response_queue or []),
     )
-    services.runner = SimpleNamespace(task_manager=task_manager)
+    services.runner = SimpleNamespace(task_manager=task_manager, tool_api=None)
     ctx = ExecutionContext(
         state=state,
         decision=decision,
@@ -485,6 +491,78 @@ def test_coding_mode_resumes_after_budget_exit() -> None:
 
         assert finished.status == "done"
         assert "app.py" in str(finished.message or "")
+
+
+def test_coding_mode_closes_from_tool_evidence_when_budget_is_exhausted() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
+        llm_client = _FakeLLMClient(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="fake-model",
+                    output_text="",
+                    tool_calls=[
+                        ToolCall(
+                            id="tc-1",
+                            name="file.read",
+                            arguments={"path": "/tmp/app.py"},
+                        )
+                    ],
+                    usage=UsageInfo(input_tokens=1, output_tokens=1),
+                )
+            ]
+        )
+        executor = _FakeCommandExecutor(
+            outcomes=[
+                CommandExecutionOutcome(
+                    approved_command=SimpleNamespace(tool_name="file.read"),
+                    action_result=ActionResult(
+                        command_id=new_uuid(),
+                        status="success",
+                        summary="read ok",
+                        outputs={"content": "def auth():\n    return True\n"},
+                    ),
+                )
+            ]
+        )
+        decision = SimpleNamespace(
+            mode="coding",
+            confidence=0.9,
+            reason_code="coding_task",
+            objective="inspect repo",
+            sub_intents=[],
+            rationale="",
+            question=None,
+            answer=None,
+            success_criteria={},
+        )
+        ctx, services = _ctx(
+            task_manager,
+            state=_state(
+                session_id="s-coding-close",
+                tool_calls=1,
+                goal="inspect repo",
+            ),
+            decision=decision,
+            user_input="find auth",
+            llm_adapter=SimpleNamespace(client=llm_client),
+            command_executor=executor,
+        )
+        services.closure_judgment = ClosureJudgment(
+            satisfied=True,
+            next_action="close",
+            final_answer="The auth logic lives in app.py and returns True.",
+        )
+        services.closure_disposition = "close"
+
+        result = CodingMode().execute(ctx)
+
+        assert result.status == "done"
+        assert "auth logic lives in app.py" in str(result.message or "")
+        assert result.action_result is not None
+        assert result.action_result.error is None
 
 
 def test_coding_mode_resumes_after_needs_user_without_duplicate_batch_stop() -> None:

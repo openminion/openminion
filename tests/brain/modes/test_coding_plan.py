@@ -100,4 +100,5 @@ def test_coding_plan_from_payload_falls_back_on_invalid_payload() -> None:
 
     assert plan.goal == "Do work"
     assert plan.current_phase == "implement"
-    assert [phase.name for phase in plan.phases] == ["implement"]
+    assert [phase.name for phase in plan.phases] == ["implement", "verify"]
+    assert plan.verifier_goal is None

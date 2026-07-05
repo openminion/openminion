@@ -71,10 +71,16 @@ _MUTATING_TOOL_NAME_PREFIXES: tuple[str, ...] = (
 
 
 def _is_mutating_result(result: Any) -> bool:
+    data = getattr(result, "data", {}) or {}
+    if isinstance(data, Mapping):
+        min_scope = str(data.get("tool_min_scope", "") or "").strip().upper()
+        if min_scope:
+            return min_scope in {"WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"}
+
     name = str(getattr(result, "tool_name", "") or "").strip().lower()
-    if not name:
-        return False
-    return any(name.startswith(prefix) for prefix in _MUTATING_TOOL_NAME_PREFIXES)
+    return bool(name) and any(
+        name.startswith(prefix) for prefix in _MUTATING_TOOL_NAME_PREFIXES
+    )
 
 
 def requires_typed_finalization_contract_for_results(results: Iterable[Any]) -> bool:

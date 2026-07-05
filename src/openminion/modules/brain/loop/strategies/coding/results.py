@@ -5,7 +5,6 @@ from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_DISPOSITION_CONTINUE,
     BRAIN_DECISION_ROUTE_ACT,
-    BRAIN_STATE_ACTIVE,
     BRAIN_STATE_CONTINUE,
     BRAIN_STATE_DONE,
     BRAIN_STATE_ERROR,
@@ -21,6 +20,7 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
 )
+from openminion.modules.brain.execution.closure import final_close_message
 from openminion.modules.brain.schemas import ActionResult, new_uuid
 
 from .contracts import (
@@ -117,6 +117,27 @@ def _result_from_outcome(
             action_result=outcome.action_result,
         )
     if outcome.termination_reason == CODING_TERM_DISALLOWED_TOOL:
+        salvaged_final_text = _salvage_final_answer_after_disallowed_writer(
+            runner,
+            outcome=outcome,
+        )
+        if salvaged_final_text is not None:
+            return _exit_final_text(
+                runner,
+                ctx,
+                loop,
+                salvaged_final_text,
+                allowed_tools,
+                build_blocked_result=build_blocked_result,
+            )
+        if _maybe_continue_after_verify_disallowed_tool(
+            runner,
+            ctx,
+            loop=loop,
+            outcome=outcome,
+        ):
+            runner._sync_coding_module_state(ctx)
+            return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
         message = outcome.error_message or "Coding mode requested a disallowed tool."
         return ExecutionResult(
             status=BRAIN_STATE_ERROR,
@@ -170,33 +191,45 @@ def _result_from_outcome(
             "[act:coding] repeated identical tool calls detected without reaching a "
             "final answer. Consider narrowing the scope or continuing in a follow-up turn."
         )
-        return ExecutionResult(
-            status=BRAIN_STATE_ACTIVE,
-            working_state=ctx.state,
+        return _exit_blocked_with_closure(
+            runner,
+            ctx,
+            loop=loop,
             message=message,
-            action_result=build_error_result(message, "coding_duplicate_tool_calls"),
+            code="coding_duplicate_tool_calls",
+            telemetry_payload=loop.telemetry_payload(allowed_tools),
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
         )
     if outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN:
         message = (
             "[act:coding] repeated the same tool pattern without making progress. "
             "Continue in a follow-up turn with a narrower implementation step."
         )
-        return ExecutionResult(
-            status=BRAIN_STATE_ACTIVE,
-            working_state=ctx.state,
+        return _exit_blocked_with_closure(
+            runner,
+            ctx,
+            loop=loop,
             message=message,
-            action_result=build_error_result(message, "coding_circular_tool_pattern"),
+            code="coding_circular_tool_pattern",
+            telemetry_payload=loop.telemetry_payload(allowed_tools),
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
         )
     if outcome.termination_reason == CODING_TERM_ITERATION_CAP:
         message = (
             "[act:coding] reached maximum iterations without a final answer. "
             "Consider narrowing the scope or continuing in a follow-up turn."
         )
-        return ExecutionResult(
-            status=BRAIN_STATE_ACTIVE,
-            working_state=ctx.state,
+        return _exit_blocked_with_closure(
+            runner,
+            ctx,
+            loop=loop,
             message=message,
-            action_result=build_error_result(message, "coding_iteration_cap"),
+            code="coding_iteration_cap",
+            telemetry_payload=loop.telemetry_payload(allowed_tools),
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
         )
     message = outcome.error_message or "Coding loop stopped unexpectedly."
     return ExecutionResult(
@@ -205,6 +238,114 @@ def _result_from_outcome(
         message=message,
         action_result=build_error_result(message, "coding_loop_error"),
     )
+
+
+def _salvage_final_answer_after_disallowed_writer(
+    runner: Any,
+    *,
+    outcome: Any,
+) -> str | None:
+    loop = runner._loop_state
+    if not bool(loop.scratchpad.get("coding.final_answer_reserve_used")):
+        return None
+    tool_name = str(getattr(outcome, "tool_name", "") or "").strip()
+    if tool_name not in {"file.write", "code.patch"}:
+        return None
+    tool_results = [
+        item
+        for item in list(loop.scratchpad.get("adaptive.tool_results", []) or [])
+        if isinstance(item, dict) and bool(item.get("ok"))
+    ]
+    return _salvage_reserved_closeout_from_existing_evidence(
+        runner,
+        tool_results=tool_results,
+        interruption_detail=(
+            "The model kept asking for extra write calls during the reserved "
+            "answer-only closeout, so this summary is derived from the existing "
+            "coding evidence."
+        ),
+    )
+
+
+def _salvage_reserved_closeout_from_existing_evidence(
+    runner: Any,
+    *,
+    tool_results: list[dict[str, Any]] | None = None,
+    interruption_detail: str,
+) -> str | None:
+    loop = runner._loop_state
+    if not bool(loop.scratchpad.get("coding.final_answer_reserve_used")):
+        return None
+    if tool_results is None:
+        tool_results = [
+            item
+            for item in list(loop.scratchpad.get("adaptive.tool_results", []) or [])
+            if isinstance(item, dict) and bool(item.get("ok"))
+        ]
+    if not tool_results:
+        return None
+
+    changed_paths: list[str] = []
+    for item in tool_results:
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
+        path = str(data.get("path", "") or "").strip()
+        if path and path not in changed_paths:
+            changed_paths.append(path)
+
+    verifier_status = (
+        "preserved from an earlier read-only verification step"
+        if runner._has_verifier_candidate()
+        else "not recorded after the final successful write"
+    )
+    requested_markers = runner._requested_final_markers()
+    marker_lines: list[str] = []
+    for marker in requested_markers:
+        normalized = str(marker or "").strip().lower().rstrip(":")
+        if not normalized:
+            continue
+        if normalized == "result":
+            marker_lines.append(
+                "result: reserved final closeout was interrupted after successful "
+                f"tool writes; returning deterministic run evidence instead. "
+                f"{interruption_detail}"
+            )
+            continue
+        if normalized == "files changed":
+            rendered_paths = (
+                ", ".join(changed_paths[:8]) if changed_paths else "none recorded"
+            )
+            marker_lines.append(f"files changed: {rendered_paths}")
+            continue
+        if normalized in {"validation", "validation result"}:
+            marker_lines.append(f"{normalized}: {verifier_status}")
+            continue
+        if normalized == "remaining follow-ups":
+            marker_lines.append(
+                "remaining follow-ups: no deterministic follow-up list was captured "
+                "before the reserved closeout was interrupted."
+            )
+            continue
+        marker_lines.append(
+            f"{normalized}: not captured before closeout interruption; preserved "
+            "written-file evidence is reported instead."
+        )
+
+    if not marker_lines:
+        rendered_paths = (
+            ", ".join(changed_paths[:8]) if changed_paths else "none recorded"
+        )
+        marker_lines = [
+            f"files changed: {rendered_paths}",
+            (
+                "result: reserved final closeout was interrupted after successful "
+                f"tool writes; returning deterministic run evidence instead. "
+                f"{interruption_detail}"
+            ),
+            f"validation: {verifier_status}",
+        ]
+    return "\n".join(marker_lines)
 
 
 def _maybe_continue_after_tool_failure(
@@ -240,6 +381,34 @@ def _maybe_continue_after_tool_failure(
     runner._append_phase_instruction()
     runner._emit_phase_status(ctx)
     return True
+
+
+def _maybe_continue_after_verify_disallowed_tool(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    loop: Any,
+    outcome: Any,
+) -> bool:
+    if runner._coding_plan is None or runner._coding_plan.current_phase != "verify":
+        return False
+    tool_name = str(getattr(outcome, "tool_name", "") or "").strip()
+    if tool_name not in {"file.write", "code.patch"}:
+        return False
+    if bool(loop.scratchpad.get("coding.final_answer_reserve_used")):
+        return False
+    if runner._has_verifier_candidate():
+        return runner._queue_final_answer_reserve(
+            ctx,
+            restore_answer_only_state=False,
+        )
+    if not runner._has_successful_mutating_file_result():
+        return False
+    return runner._queue_verification_reserve(
+        ctx,
+        restore_answer_only_state=False,
+        ensure_tool_budget=False,
+    )
 
 
 def _exit_continue(
@@ -287,6 +456,23 @@ def _exit_autonomous_blocked(
     build_blocked_result,
 ) -> ExecutionResult:
     loop = runner._loop_state
+    salvaged_final_text = _salvage_reserved_closeout_from_existing_evidence(
+        runner,
+        interruption_detail=(
+            "The reserved answer-only closeout was interrupted by a repeated "
+            "verification failure, so this summary is derived from the existing "
+            "coding evidence."
+        ),
+    )
+    if salvaged_final_text is not None:
+        return _exit_final_text(
+            runner,
+            ctx,
+            loop,
+            salvaged_final_text,
+            allowed_tools,
+            build_blocked_result=build_blocked_result,
+        )
     reason_text = {
         "blocked_cap": "self-correction cap reached",
         "blocked_novel_failure": "same verification failure repeated",
@@ -385,15 +571,115 @@ def _exit_budget_exhausted(
     *,
     build_blocked_result,
 ) -> ExecutionResult:
-    del allowed_tools
+    telemetry_payload = loop.telemetry_payload(allowed_tools)
     msg = (
         "[act:coding] budget exhausted before a final answer. "
         "Consider narrowing the scope or continuing in a follow-up turn."
     )
+    return _exit_blocked_with_closure(
+        runner,
+        ctx,
+        loop=loop,
+        message=msg,
+        code="coding_budget_exhausted",
+        telemetry_payload=telemetry_payload,
+        allowed_tools=allowed_tools,
+        build_blocked_result=build_blocked_result,
+    )
+
+
+def _exit_blocked_with_closure(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    loop: Any,
+    message: str,
+    code: str,
+    telemetry_payload: dict[str, Any],
+    allowed_tools: frozenset[str],
+    build_blocked_result,
+) -> ExecutionResult:
+    salvaged_final_text = _salvage_reserved_closeout_from_existing_evidence(
+        runner,
+        interruption_detail=(
+            "The reserved answer-only closeout was interrupted before the model "
+            "could finish the summary, so this answer is derived from the existing "
+            "coding evidence."
+        ),
+    )
+    if salvaged_final_text is not None:
+        return _exit_final_text(
+            runner,
+            ctx,
+            loop,
+            salvaged_final_text,
+            allowed_tools,
+            build_blocked_result=build_blocked_result,
+        )
+    blocked_action = build_blocked_result(message, code).model_copy(
+        update={"outputs": telemetry_payload},
+        deep=True,
+    )
+
+    try:
+        judgment = ctx.evaluate_turn_closure(
+            action_result=blocked_action,
+            completion_reason=code,
+        )
+        disposition = ctx.apply_closure_judgment(judgment=judgment)
+    except Exception:  # noqa: BLE001
+        judgment = None
+        disposition = None
+
+    if (
+        judgment is not None
+        and disposition != BRAIN_DISPOSITION_CONTINUE
+        and str(getattr(judgment, "final_answer", "") or "").strip()
+    ):
+        close_message = final_close_message(
+            state=ctx.state,
+            judgment=judgment,
+            action_result=blocked_action,
+            fallback_message=message,
+        )
+        resolved_action = blocked_action.model_copy(
+            update={
+                "status": BRAIN_ACTION_STATUS_SUCCESS,
+                "summary": close_message,
+                "error": None,
+            },
+            deep=True,
+        )
+        ctx.extract_success_memories(
+            action_result=resolved_action,
+            judgment=judgment,
+        )
+        ctx.emit_status(
+            source_phase="coding.loop",
+            detail_text="[act:coding] done",
+            mode=BRAIN_DECISION_ROUTE_ACT,
+            mode_state="done",
+            terminal=True,
+            payload={
+                **telemetry_payload,
+                "act.profile": BRAIN_ACT_PROFILE_CODING,
+                "coding.closed_by_closure_gate": True,
+                "coding.exhaustion_reason": code,
+            },
+        )
+        runner._clear_coding_module_state(ctx)
+        step_output = ctx.respond(
+            message=close_message,
+            status=BRAIN_STATE_DONE,
+            action_result=resolved_action,
+        )
+        runner._finalize_checkpoint(ctx, terminal=True, cursor=loop.iteration)
+        return ExecutionResult.from_step_output(step_output, judgment=judgment)
+
     runner._finalize_checkpoint(ctx, terminal=False, cursor=loop.iteration)
     return ExecutionResult(
-        status=BRAIN_STATE_ACTIVE,
+        status=BRAIN_STATE_WAITING_USER,
         working_state=ctx.state,
-        message=msg,
-        action_result=build_blocked_result(msg, "coding_budget_exhausted"),
+        message=message,
+        action_result=blocked_action,
     )

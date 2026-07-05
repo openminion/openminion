@@ -76,7 +76,10 @@ class CodingPlan(BaseModel):
     def fallback(cls, goal: str) -> "CodingPlan":
         return cls(
             goal=str(goal or "").strip() or "Complete the coding task.",
-            phases=[CodingPhase(name="implement", status="active")],
+            phases=[
+                CodingPhase(name="implement", status="active"),
+                CodingPhase(name="verify"),
+            ],
             current_phase="implement",
         )
 

@@ -287,6 +287,27 @@ def test_unified_entry_time_prompt_prefers_explicit_tool_sequence(
     assert "time" in tool_names
 
 
+def test_unified_entry_coding_category_exposes_only_coding_and_clarify(
+    tmp_path: Path,
+) -> None:
+    llm = _RecordingEntryLLM(_text_response("What kind of app should I scaffold?"))
+    runner = _build_runner(tmp_path, llm_api=llm)
+    state = _state("entry-coding-category")
+
+    decision = runner._decide(
+        state=state,
+        user_input="create a tiny python project",
+        logger=fake_logger(),
+        capability_category="coding",
+    )
+
+    assert decision.mode == "respond"
+    assert len(llm.requests) == 1
+    tool_names = [tool.name for tool in list(llm.requests[0].tools or [])]
+    assert set(tool_names) == {"clarify", "coding"}
+    assert len(tool_names) == 2
+
+
 def test_unified_entry_respond_path_carries_expected_trailers_metadata(
     tmp_path: Path,
     monkeypatch,

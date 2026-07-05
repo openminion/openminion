@@ -32,6 +32,8 @@ from .verification import (
 
 
 class CodingVerificationMixin:
+    _VERIFIER_CANDIDATE_TOOLS = frozenset({"exec.run", "file.read"})
+
     def _latest_tool_failure_summary(self: Any) -> str:
         for message in reversed(self._loop_state.messages):
             if message.role != "tool":
@@ -57,7 +59,10 @@ class CodingVerificationMixin:
     ) -> None:
         if not isinstance(command, ToolCommand):
             return
-        if str(command.tool_name or "").strip() != "exec.run":
+        if (
+            str(command.tool_name or "").strip().lower()
+            not in self._VERIFIER_CANDIDATE_TOOLS
+        ):
             return
         self._loop_state.scratchpad["coding.last_verifier_candidate"] = (
             serialize_verifier_candidate(command=command, action_result=action_result)
@@ -170,13 +175,24 @@ class CodingVerificationMixin:
 
         verifier_goal, goal_source = self._resolve_verifier_goal(ctx)
         if verifier_goal is None:
-            return self._exit_verification_unbound(
-                ctx,
-                allowed_tools=allowed_tools,
-                reason=(
-                    "No typed verifier goal is available for the coding verify phase."
-                ),
+            self._loop_state.scratchpad["coding.verifier_verdict"] = (
+                "verification_unbound"
             )
+            self._loop_state.scratchpad["coding.verify_gate_reason"] = (
+                "verification_unbound"
+            )
+            self._emit_verifier_status(
+                ctx,
+                mode_state="verification_unbound",
+                detail_text=(
+                    f"{_CODING_PUBLIC_TAG} verifier skipped: no typed verifier goal"
+                ),
+                extra_payload={
+                    "coding.verifier_goal_source": "unbound",
+                    "coding.verifier_skipped": True,
+                },
+            )
+            return None
 
         candidate = load_verifier_candidate(
             self._loop_state.scratchpad.get("coding.last_verifier_candidate")
@@ -186,7 +202,7 @@ class CodingVerificationMixin:
                 ctx,
                 allowed_tools=allowed_tools,
                 reason=(
-                    "No exec.run verifier candidate was captured for the coding "
+                    "No verification candidate was captured for the coding "
                     "verify phase."
                 ),
             )
@@ -262,9 +278,18 @@ class CodingVerificationMixin:
             return True
         current_phase = self._coding_plan.current_phase
         next_phase = self._coding_plan.next_phase_name()
+        verifier_goal_bound = self._coding_plan.verifier_goal is not None
         if current_phase == "implement" and next_phase == "verify":
             failure_summary = self._latest_tool_failure_summary()
             if failure_summary:
+                attempted = int(
+                    self._loop_state.scratchpad.get("coding.self_corrections", 0) or 0
+                )
+                if attempted >= self._max_self_corrections:
+                    self._loop_state.termination_reason = "blocked_cap"
+                    self._sync_plan_telemetry()
+                    self._emit_phase_status(ctx)
+                    return False
                 self._coding_plan.record_open_issue(failure_summary)
                 self._record_autonomous_correction(
                     ctx,
@@ -282,9 +307,13 @@ class CodingVerificationMixin:
                 )
                 self._emit_phase_status(ctx)
                 return False
-            if "exec.run" not in set(self._loop_state.tool_calls_made):
+            candidate_payload = self._loop_state.scratchpad.get(
+                "coding.last_verifier_candidate"
+            )
+            if verifier_goal_bound and not isinstance(candidate_payload, dict):
                 failure_summary = (
-                    "Run at least one exec.run verification command before verify."
+                    "Run at least one verification readback step (`file.read` or "
+                    "`exec.run`) before verify."
                 )
                 self._coding_plan.record_open_issue(failure_summary)
                 attempt = self._record_verify_gate_block(
@@ -303,8 +332,9 @@ class CodingVerificationMixin:
                     Message(
                         role="user",
                         content=(
-                            "Stay in implement and run at least one exec.run "
-                            "verification command before moving to verify."
+                            "Stay in implement and run at least one verification "
+                            "readback step (`file.read` or `exec.run`) before "
+                            "moving to verify."
                         ),
                     )
                 )

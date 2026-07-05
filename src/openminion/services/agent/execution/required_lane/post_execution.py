@@ -37,6 +37,7 @@ from .unavailable import (
     unavailable_discovery_retry_instruction,
 )
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS  # noqa: F401  (re-exported for in-module callers)
+
 if TYPE_CHECKING:
     from .runner import RequiredLaneRunner
 
@@ -82,6 +83,10 @@ def _pre_tool_draft_message(response: ProviderResponse) -> ProviderHistoryMessag
             f"{response.text}"
         ),
     )
+
+
+def _with_finalization_guidance(message: str) -> str:
+    return f"{message}\n\n{FINALIZATION_STATUS_RETRY_GUIDANCE}"
 
 
 def _needs_plain_text_retry(response: ProviderResponse) -> bool:
@@ -148,9 +153,7 @@ async def _retry_plain_text_final_response(
         "context and return only the final user-facing answer text."
     )
     if requires_finalization_status:
-        retry_user_message = (
-            f"{retry_user_message}\n\n{FINALIZATION_STATUS_RETRY_GUIDANCE}"
-        )
+        retry_user_message = _with_finalization_guidance(retry_user_message)
     final_response = await runner.runtime_ops.call_provider(
         ProviderRequest(
             user_message=(
@@ -221,9 +224,7 @@ async def _retry_stale_draft_final_response(
         "in context and return the actual final user-facing answer now."
     )
     if requires_finalization_status:
-        retry_user_message = (
-            f"{retry_user_message}\n\n{FINALIZATION_STATUS_RETRY_GUIDANCE}"
-        )
+        retry_user_message = _with_finalization_guidance(retry_user_message)
     final_response = await runner.runtime_ops.call_provider(
         ProviderRequest(
             user_message=(
@@ -574,9 +575,6 @@ async def _handle_final_response_tool_calls(
     )
 
 
-_is_empty_provider_response = is_empty_provider_response
-
-
 def _final_model_phase_result(
     runner: "RequiredLaneRunner",
     *,
@@ -590,7 +588,7 @@ def _final_model_phase_result(
     capability_fallback_trigger_reason: str | None,
     shared_capability_meta: Mapping[str, Any],
 ) -> _PhaseResult:
-    empty = _is_empty_provider_response(final_response)
+    empty = is_empty_provider_response(final_response)
     text = (
         "Provider returned an empty response with no tool calls or finalization status."
         if empty

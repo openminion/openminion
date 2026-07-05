@@ -68,10 +68,12 @@ _RAW_TOOL_MARKUP_RE = re.compile(
     re.IGNORECASE,
 )
 _RAW_XML_TOOL_WRAPPER_RE = re.compile(
-    r"<minimax:tool_call>|</minimax:tool_call>|<tool_call>|</tool_call>",
+    r"<minimax:tool_call>|</minimax:tool_call>|<tool_call>|</tool_call>|"
+    r"<functioncall>|</functioncall>|"
+    r"<invoke\s+name=|</invoke>|"
+    r"<tool\s+name=|</tool>|<param(?:eter)?\s+name=|</param(?:eter)?>",
     re.IGNORECASE,
 )
-
 _ENVELOPE_TARGET_NAMESPACE_MAP: dict[str, str] = {}
 _CANONICAL_MODEL_TOOL_ID_BY_LOWER = {
     model_tool_id.lower(): model_tool_id for model_tool_id in ALL_MODEL_TOOL_IDS_SET
@@ -380,7 +382,7 @@ def sanitize_envelope_leak(text: str, *, metadata: dict[str, Any] | None = None)
         raw_target = (
             metadata.get("envelope_target_raw", "unknown") if metadata else "unknown"
         )
-    elif detect_raw_tool_markup(text):
+    elif detect_raw_tool_markup(text) or detect_raw_xml_tool_wrapper(text):
         if metadata and metadata.get("fallback_tool_name_normalized"):
             return text
         reason = (

@@ -320,4 +320,6 @@ class ContextTelemetryOpsTests(unittest.TestCase):
                 "trim_applied": True,
             },
         )
-        self.assertEqual(payload["token_budget_buckets"]["retrieval"]["used_tokens"], 60)
+        self.assertEqual(
+            payload["token_budget_buckets"]["retrieval"]["used_tokens"], 60
+        )

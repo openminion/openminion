@@ -119,6 +119,18 @@ def resolve_capability_tool_fallback(
     if not available:
         return None
 
+    if normalized in available:
+        return normalized
+
+    for alias, canonical in (
+        ("code", "coding"),
+        ("coding", "coding"),
+        ("web", "research"),
+        ("deep_research", "research"),
+    ):
+        if normalized == alias and canonical in available:
+            return canonical
+
     preferred_by_category: dict[str, list[str]] = {
         MODEL_FILE_LIST_DIR: [MODEL_FILE_LIST_DIR, MODEL_FILE_FIND],
         MODEL_FILE_READ: [MODEL_FILE_READ],

@@ -5135,6 +5135,99 @@ def test_engine_retries_raw_tool_result_json_as_final_answer() -> None:
     assert second_raw_tool_result_answer not in retry_assistant_messages
 
 
+def test_engine_retries_provider_fallback_final_answer_after_tool_work() -> None:
+    fallback_text = (
+        "I could not parse a usable model response on this turn. Please retry."
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="file.read",
+                        arguments={"path": "sample.txt"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="openrouter",
+                model="fake-model",
+                output_text=fallback_text,
+                assistant_messages=[Message(role="assistant", content=fallback_text)],
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "fallback",
+                },
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="sample.txt currently contains the expected content.",
+                assistant_messages=[
+                    Message(
+                        role="assistant",
+                        content="sample.txt currently contains the expected content.",
+                    )
+                ],
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The read result is already sufficient.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4, llm_calls_max=6),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="sample.txt => hello",
+                    outputs={"content": "hello"},
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            profile_name="general_adaptive_v1",
+            allowed_tools=frozenset({"file.read"}),
+            max_iterations=4,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="read sample.txt and report")],
+        tool_specs=_tool_specs("file.read"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "sample.txt currently contains the expected content."
+    assert len(runtime.calls) == 3
+    retry_system_messages = [
+        str(message.content)
+        for message in runtime.calls[2]["messages"]
+        if message.role == "system"
+    ]
+    assert any(
+        "provider recovery/fallback message" in message
+        for message in retry_system_messages
+    )
+
+
 def test_engine_salvages_typed_finalization_with_status_only_follow_up() -> None:
     runtime = _FakeRuntime(
         responses=[
@@ -6074,7 +6167,14 @@ def test_engine_stops_on_budget_iteration_cap_and_nonrecoverable_tool_failure() 
                 tool_calls=[
                     ToolCall(id="call-1", name="file.read", arguments={"path": "a.py"})
                 ],
-            )
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                finish_reason="stop",
+            ),
         ]
     )
     budget_ctx = _LoopContext(
@@ -6873,6 +6973,119 @@ def test_different_failures_no_escalation() -> None:
     assert scratchpad.get("layer2_escalation_needed") is not True
 
 
+def test_successful_file_mutation_resets_duplicate_batch_memory() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="exec.run",
+                        arguments={"cmd": "pytest -q"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="file.write",
+                        arguments={
+                            "path": "greeting.py",
+                            "content": "print('fixed')\n",
+                        },
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-3",
+                        name="exec.run",
+                        arguments={"cmd": "pytest -q"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="fixed and verified",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The fix was applied and the verification rerun passed.",
+                },
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=6, llm_calls_max=10),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="failed",
+                    summary="pytest failed",
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="file updated",
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="pytest passed",
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile_with_recovery(
+            allowed_tools=frozenset({"exec.run", "file.write"})
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[
+            Message(role="user", content="fix the failing test and rerun it")
+        ],
+        tool_specs=_tool_specs("exec.run", "file.write"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "fixed and verified"
+    assert [call["tool_choice"] for call in runtime.calls[:3]] == [
+        "auto",
+        "auto",
+        "auto",
+    ]
+
+
 def _profile_with_budget_hint(
     *,
     allowed_tools: frozenset[str],
@@ -7087,6 +7300,73 @@ def test_general_profile_forces_answer_only_finalization_after_tool_budget_denia
     )
     assert "per-tool limit has been reached" in finalization_system_text
     assert "write the best user-facing final answer now" in finalization_system_text
+
+
+def test_general_profile_forces_answer_only_finalization_after_tool_call_cap() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="web.search",
+                        arguments={"query": "latest news"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="Here are the top three snippet-backed stories.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=6),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="search ok",
+                    outputs={"content": "Search snippets for three current stories."},
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            profile_name="general_adaptive_v1",
+            allowed_tools=frozenset({"web.search"}),
+            max_iterations=6,
+            max_tool_calls_per_loop=1,
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[
+            Message(
+                role="user",
+                content="gather latest news last 48h and summarize top 3",
+            )
+        ],
+        tool_specs=_tool_specs("web.search"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "Here are the top three snippet-backed stories."
+    assert runtime.calls[-1]["tool_choice"] == "none"
+    assert runtime.calls[-1]["tools"] == []
+    assert outcome.state.scratchpad["budget_answer_only_finalization_forced"] is True
 
 
 def test_budget_hint_injected_when_budget_below_threshold() -> None:
@@ -7609,3 +7889,82 @@ def test_different_tool_sequences_do_not_trigger_circular_pattern() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+
+
+def test_productive_file_write_sequences_do_not_trigger_circular_pattern() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="file.write", arguments={"path": "a.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c2", name="file.write", arguments={"path": "b.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c3", name="file.write", arguments={"path": "c.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="result: scaffold complete",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=10, llm_calls_max=20),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="wrote a.py"
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="wrote b.py"
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="wrote c.py"
+                ),
+            ),
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.write"}), max_iterations=10),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="scaffold the files")],
+        tool_specs=_tool_specs("file.write"),
+    )
+
+    assert outcome.termination_reason != ADAPTIVE_TERM_CIRCULAR_PATTERN
+    assert len(runtime.calls) >= 4

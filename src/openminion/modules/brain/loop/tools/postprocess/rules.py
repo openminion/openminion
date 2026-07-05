@@ -34,7 +34,12 @@ _PROGRESS_GERUND_RE = re.compile(
 )
 _UNFULFILLED_FILE_PLAN_RE = re.compile(
     r"\b(?:files?\s+to\s+(?:create|write)|(?:i['’]?ll|i will|we['’]?ll|we will)"
-    r"\s+(?:write|create|add)\s+(?:all\s+)?files?)\b",
+    r"\s+(?:write|create|add)\s+(?:all\s+)?files?|(?:brief\s+)?plan\s*:\s*"
+    r"(?:create|write|add)\b.*\bfiles?\b)\b",
+    re.IGNORECASE,
+)
+_STEP_PLAN_TAG_RE = re.compile(
+    r"<step\d+>\s*(?:create|write|add|read|verify|check|run)\b",
     re.IGNORECASE,
 )
 _PLAINTEXT_FILE_WRITE_TOOL_RE = re.compile(
@@ -174,6 +179,8 @@ def _looks_like_execution_preface_draft(text: str) -> bool:
     if not current:
         return False
     if _UNFULFILLED_FILE_PLAN_RE.search(current):
+        return True
+    if _STEP_PLAN_TAG_RE.search(current):
         return True
     if len(current) > 280:
         return False

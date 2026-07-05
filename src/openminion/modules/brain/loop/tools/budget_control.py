@@ -17,16 +17,26 @@ from openminion.modules.brain.loop.constants import (
     BUDGET_ANSWER_ONLY_TEXT_LIMIT,
     BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT,
     BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT,
-    BUDGET_FINALIZATION_STATUS_RETRY_PROMPT,
 )
 from openminion.modules.brain.schemas import (
     AdaptiveBudgetConfig,
     AskUserCommand,
-    FinalizationStatus,
 )
 from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.providers.normalization import (
+    is_provider_recovery_fallback_text,
+)
+from .runtime import _extract_visible_response_text
+from .runtime import _normalize_finalization_status_response
 
 from .budget import _debit_llm_usage
+from .budget_finalization import (
+    _finalization_status_from_response,
+    _recover_budget_finalization_status,
+    _reject_invalid_answer_only_final_text,
+    _retry_answer_only_completion_if_needed,
+    _termination_reason_for_status,
+)
 from .budget_extension import (
     apply_extension,
     check_safety_rails,
@@ -38,9 +48,7 @@ from .budget_extension import (
 from .contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_FINAL_TEXT,
-    ADAPTIVE_TERM_FINALIZATION_BLOCKED,
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
-    ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_NEEDS_USER,
     AdaptiveToolLoopContext,
@@ -63,8 +71,13 @@ _INTERNAL_FAILURE_FINAL_TEXT = (
 
 
 def _is_internal_failure_final_text(text: str) -> bool:
-    """Do not surface our own failure sentinel as a user-facing answer."""
-    return _INTERNAL_FAILURE_FINAL_TEXT in str(text or "").strip().lower()
+    """Do not surface runtime/provider fallback text as a user-facing answer."""
+    normalized = str(text or "").strip().lower()
+    if not normalized:
+        return False
+    if _INTERNAL_FAILURE_FINAL_TEXT in normalized:
+        return True
+    return is_provider_recovery_fallback_text(normalized)
 
 
 def _effective_cap(
@@ -476,7 +489,9 @@ def _force_budget_answer_only_finalization(
         reserve_final_answer=True,
     ):
         return None
+    restore_index = len(list(getattr(loop_state, "messages", []) or []))
     loop_state.scratchpad["budget_answer_only_finalization_forced"] = True
+    loop_state.scratchpad["budget_answer_only_restore_index"] = restore_index
     if not _budget_finalization_has_substantive_user_message(loop_state.messages):
         original_request = _budget_finalization_original_request(loop_ctx)
         if original_request:
@@ -515,16 +530,19 @@ def _force_budget_answer_only_finalization(
         detail_text=f"{public_mode_tag} answer-only budget finalization",
         mode_state="budget_answer_only_finalization",
     )
+    complete_kwargs = {
+        "tools": [],
+        "model": model,
+        "tool_choice": "none",
+        "max_output_tokens": int(max_output_tokens)
+        if max_output_tokens is not None
+        else None,
+        "metadata": metadata,
+    }
     try:
         response = runtime.complete(
             messages=loop_state.messages,
-            tools=[],
-            model=model,
-            tool_choice="none",
-            max_output_tokens=int(max_output_tokens)
-            if max_output_tokens is not None
-            else None,
-            metadata=metadata,
+            **complete_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
         if not has_tool_evidence:
@@ -554,6 +572,20 @@ def _force_budget_answer_only_finalization(
             allowed_tools=allowed_tools,
             error_message=str(exc),
         )
+    response, retry_outcome = _retry_answer_only_completion_if_needed(
+        response=response,
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        runtime=runtime,
+        complete_kwargs=complete_kwargs,
+        public_mode_tag=public_mode_tag,
+        allowed_tools=allowed_tools,
+        stop_outcome=_budget_stop_outcome,
+    )
+    if retry_outcome is not None:
+        return retry_outcome
+    response = _normalize_finalization_status_response(response)
     _debit_llm_usage(loop_ctx, response)
     loop_state.llm_calls += 1
     for assistant_message in list(getattr(response, "assistant_messages", []) or []):
@@ -590,7 +622,7 @@ def _force_budget_answer_only_finalization(
             allowed_tools=allowed_tools,
             error_message=error_message,
         )
-    final_text = str(getattr(response, "output_text", "") or "").strip()
+    final_text = _extract_visible_response_text(response)
     if _is_internal_failure_final_text(final_text):
         loop_state.scratchpad["budget_answer_only_finalization_error"] = (
             "internal_failure_final_text"
@@ -608,8 +640,9 @@ def _force_budget_answer_only_finalization(
         f"<{STATE_KEY_FINALIZATION_STATUS}>" in final_text
         and f"</{STATE_KEY_FINALIZATION_STATUS}>" in final_text
     )
-    if _answer_only_finalization_contract_requested(loop_ctx, loop_state) and not (
-        has_finalization_contract
+    if (
+        _answer_only_finalization_contract_requested(loop_ctx, loop_state)
+        and not has_finalization_contract
     ):
         if final_text and not list(getattr(response, "tool_calls", []) or []):
             finalization_status = _recover_budget_finalization_status(
@@ -646,6 +679,16 @@ def _force_budget_answer_only_finalization(
                 "This act turn required typed finalization_status contract."
             ),
         )
+    rejected_outcome = _reject_invalid_answer_only_final_text(
+        final_text=final_text,
+        response=response,
+        profile=profile,
+        loop_state=loop_state,
+        allowed_tools=allowed_tools,
+        has_tool_evidence=has_tool_evidence,
+    )
+    if rejected_outcome is not None:
+        return rejected_outcome
     if final_text and not list(getattr(response, "tool_calls", []) or []):
         loop_state.termination_reason = (
             _termination_reason_for_status(
@@ -672,67 +715,6 @@ def _force_budget_answer_only_finalization(
         allowed_tools=allowed_tools,
         error_message="Answer-only budget finalization did not produce final text.",
     )
-
-
-def _finalization_status_from_response(response: Any) -> dict[str, Any] | None:
-    payload = getattr(response, STATE_KEY_FINALIZATION_STATUS, None)
-    if not isinstance(payload, dict):
-        return None
-    try:
-        return FinalizationStatus.model_validate(payload).model_dump(mode="json")
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _termination_reason_for_status(status: str) -> str:
-    if status == "blocked":
-        return ADAPTIVE_TERM_FINALIZATION_BLOCKED
-    if status == "incomplete":
-        return ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
-    return ADAPTIVE_TERM_FINAL_TEXT
-
-
-def _recover_budget_finalization_status(
-    *,
-    loop_ctx: AdaptiveToolLoopContext,
-    profile: AdaptiveToolLoopProfile,
-    loop_state: AdaptiveToolLoopState,
-    runtime: Any,
-    model: str,
-    max_output_tokens: int | None,
-    metadata: dict[str, Any] | None,
-    final_text: str,
-    public_mode_tag: str,
-) -> dict[str, Any] | None:
-    loop_state.scratchpad["budget_finalization_status_retry_used"] = True
-    retry_messages = list(loop_state.messages)
-    retry_messages.append(Message(role="assistant", content=final_text))
-    retry_messages.append(
-        Message(role="system", content=BUDGET_FINALIZATION_STATUS_RETRY_PROMPT)
-    )
-    emit_adaptive_status(
-        loop_ctx,
-        profile=profile,
-        loop_state=loop_state,
-        detail_text=f"{public_mode_tag} budget finalization status retry",
-        mode_state="budget_finalization_status_retry",
-    )
-    try:
-        retry_response = runtime.complete(
-            messages=retry_messages,
-            tools=[],
-            model=model,
-            tool_choice="none",
-            max_output_tokens=int(max_output_tokens)
-            if max_output_tokens is not None
-            else None,
-            metadata=metadata,
-        )
-    except Exception:  # noqa: BLE001
-        return None
-    _debit_llm_usage(loop_ctx, retry_response)
-    loop_state.llm_calls += 1
-    return _finalization_status_from_response(retry_response)
 
 
 def _budget_finalization_has_substantive_user_message(
@@ -945,7 +927,7 @@ def _force_circular_pattern_answer_only_finalization(
         loop_state.messages.append(assistant_message)
     if list(getattr(response, "tool_calls", []) or []):
         return None
-    final_text = str(getattr(response, "output_text", "") or "").strip()
+    final_text = _extract_visible_response_text(response)
     if not final_text or _is_internal_failure_final_text(final_text):
         return None
     loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT

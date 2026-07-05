@@ -180,9 +180,10 @@ class CodingResumeMixin:
             Message(
                 role="user",
                 content=(
-                    "The confirmed policy-replay tool batch above has already "
-                    "executed successfully. Continue from those tool results; "
-                    "do not repeat the same confirmed tool calls."
+                    "A confirmed policy-replay tool batch has already been "
+                    "applied above. Continue from the existing tool results, "
+                    "and do not repeat the same confirmed tool calls unless "
+                    "later tool results require changed inputs."
                 ),
             )
         )

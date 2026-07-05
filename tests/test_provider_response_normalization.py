@@ -4,7 +4,10 @@ from types import SimpleNamespace
 
 from openminion.modules.llm.providers.behavior import resolve_behavior_profile
 from openminion.modules.llm.providers.base import ProviderToolCall
-from openminion.modules.llm.providers.normalization import normalize_provider_response
+from openminion.modules.llm.providers.normalization import (
+    is_provider_recovery_fallback_text,
+    normalize_provider_response,
+)
 
 
 def test_normalize_provider_response_coerces_object_shape() -> None:
@@ -78,6 +81,19 @@ def test_normalize_provider_response_recovers_empty_payload() -> None:
     assert normalized.finish_reason == "empty_payload_recovered"
     assert normalized.normalization.get("empty_payload_recovered") is True
     assert normalized.normalization.get("normalization_profile") == "openrouter-default"
+
+
+def test_provider_recovery_fallback_text_matches_registered_profiles() -> None:
+    assert is_provider_recovery_fallback_text(
+        "I could not parse a usable model response on this turn. Please retry."
+    )
+    assert is_provider_recovery_fallback_text(
+        "I received an empty response from OpenRouter. Please retry."
+    )
+    assert is_provider_recovery_fallback_text(
+        "I received an empty response from this OpenRouter model. Please retry."
+    )
+    assert not is_provider_recovery_fallback_text("Final answer: done.")
 
 
 def test_normalize_provider_response_applies_model_specific_finish_reason_mapping() -> (

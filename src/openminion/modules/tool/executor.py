@@ -181,6 +181,15 @@ def _runtime_resolution_data(
     }
 
 
+def _tool_contract_metadata(tool: Any) -> dict[str, Any]:
+    if not isinstance(tool, ToolSpec):
+        return {}
+    min_scope = str(getattr(tool, "min_scope", "") or "").strip().upper()
+    if not min_scope:
+        return {}
+    return {"tool_min_scope": min_scope}
+
+
 def _unknown_tool_result(
     *,
     call: ProviderToolCall,
@@ -501,6 +510,7 @@ def execute_single_call(
                 runtime_fallback_used=idx > 0,
             )
         )
+        enriched_data.update(_tool_contract_metadata(tool))
         last_result = ToolExecutionResult(
             tool_name=runtime_tool_name or resolution.runtime_tool_name or "unknown",
             ok=bool(executed.ok),

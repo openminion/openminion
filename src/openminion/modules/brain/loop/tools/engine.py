@@ -118,6 +118,7 @@ from .iteration.execution import execute_iteration_results
 from .postprocess.loop import finalize_iteration_state
 from .iteration.termination import finalize_iteration_cap_exit
 from .iteration.helpers import (
+    _MUTATING_FILE_TOOLS,
     _append_tool_result_payload,
     _build_enrichment_message,
     _build_intent_execution_state_message,
@@ -147,6 +148,15 @@ from .duplicate_batch import (  # noqa: F401
 
 
 MICRO_CORRECTION_ANOMALY_THRESHOLD = 0.5
+
+
+def _circular_sequence_marker(tool_calls: list[Any]) -> tuple[str, ...] | str:
+    tool_names = tuple(
+        str(getattr(item, "name", "") or "").strip() for item in tool_calls
+    )
+    if tool_names and set(tool_names).issubset(_MUTATING_FILE_TOOLS):
+        return semantic_batch_signature(tool_calls)
+    return tool_names
 
 
 def run_adaptive_tool_loop(
@@ -463,11 +473,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
             if outcome is not None:
                 return outcome
 
-            self.iteration_tool_sequences.append(
-                tuple(
-                    str(getattr(item, "name", "") or "").strip() for item in tool_calls
-                )
-            )
+            self.iteration_tool_sequences.append(_circular_sequence_marker(tool_calls))
             if (
                 len(self.iteration_tool_sequences) >= 3
                 and self.iteration_tool_sequences[-1]
@@ -635,6 +641,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 public_mode_name=self.public_mode_name,
                 record_duplicate_batch_execution_facts=_record_duplicate_batch_execution_facts,
                 direct_tool_batch_completed_successfully=_direct_tool_batch_completed_successfully,
+                iteration_tool_sequences=self.iteration_tool_sequences,
             )
 
         return finalize_iteration_cap_exit(
