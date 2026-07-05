@@ -59,6 +59,7 @@ def test_execute_calls_uses_policy_manager_fallback_tokens() -> None:
     assert result.ok
     assert result.content == "success"
     assert result.data["runtime_fallback_used"]
+    assert result.data["tool_min_scope"] == "READ_ONLY"
 
 
 def test_execute_calls_respects_denylist_precedence() -> None:

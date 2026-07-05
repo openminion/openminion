@@ -9,7 +9,7 @@ from unittest.mock import patch
 import openminion.api.operations.tools as api_tools_operations
 import openminion.api.routes.tools as api_tools_routes
 import openminion.cli.commands.tools as cli_tools_commands
-from openminion.api.routes.base import APIRouteContext
+from openminion.api.routes.contracts import APIRouteContext
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime.tools import ToolRuntimeConfig
 from openminion.base.types import Message

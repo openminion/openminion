@@ -29,10 +29,9 @@ def normalize_command_text(text: str) -> str:
     }
     if lower in aliases:
         return aliases[lower]
-    if lower.startswith("profile use "):
-        return "/profile use " + value.split(None, 2)[2]
-    if lower.startswith("agent use "):
-        return "/profile use " + value.split(None, 2)[2]
+    if lower.startswith(("profile use ", "agent use ")):
+        parts = value.split(None, 2)
+        return "/profile use " + parts[2] if len(parts) == 3 else value
     return value
 
 

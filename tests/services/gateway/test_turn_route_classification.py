@@ -30,9 +30,24 @@ def test_route_classifier_marks_file_context_without_changing_behavior():
 
 
 def test_route_classifier_marks_file_edit_as_code_edit():
-    route = classify_setup_cost_route(message="fix src/openminion/api/runtime.py")
+    route = classify_setup_cost_route(
+        message="fix src/openminion/api/runtime.py",
+        capability_category="coding",
+    )
 
     assert route.label == "code_edit_request"
+
+
+def test_route_classifier_keeps_project_scaffold_prompt_ambiguous_without_explicit_owner():
+    route = classify_setup_cost_route(
+        message=(
+            "Create a Python web app project with a backend service and frontend "
+            "shell for a small team dashboard."
+        )
+    )
+
+    assert route.label == "ambiguous_request"
+    assert route.reason == "fallback"
 
 
 def test_route_classifier_marks_research_category_without_text_guessing():
@@ -46,16 +61,19 @@ def test_route_classifier_marks_research_category_without_text_guessing():
 
 
 def test_route_classifier_marks_local_status_request():
-    route = classify_setup_cost_route(message="what is my disk usage?")
+    route = classify_setup_cost_route(
+        message="what is my disk usage?",
+        capability_category="ops",
+    )
 
     assert route.label == "local_status_request"
+    assert route.reason == "capability_category"
 
 
 def test_route_classifier_does_not_fast_path_code_hint_as_local_status():
     route = classify_setup_cost_route(message="fix my disk usage script")
 
-    assert route.label == "ambiguous_request"
-    assert route.reason == "code_hint_without_file"
+    assert route.label != "local_status_request"
 
 
 def test_route_classifier_falls_back_to_ambiguous_for_unclear_long_prompt():

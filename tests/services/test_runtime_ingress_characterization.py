@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-
 from openminion.base.config import OpenMinionConfig, resolve_agent_config
 from openminion.services.runtime.ingress import (
     build_manager_turn_request,

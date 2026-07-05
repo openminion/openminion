@@ -5,15 +5,58 @@ from typing import Mapping, Sequence
 _FILE_HINT_RE = re.compile(
     r"(^|\s)(@?[./~]?[\w.-]+(?:/[\w.-]+)+|@?[\w.-]+\.(?:py|md|json|toml|yaml|yml|txt))\b"
 )
-_CODE_HINTS = frozenset({"edit", "change", "modify", "fix", "patch", "refactor"})
-_LOCAL_HINTS = frozenset({"disk", "memory", "cpu", "process", "status", "ip"})
-_RESEARCH_HINTS = frozenset({"research", "search", "lookup", "latest", "current"})
+_RESEARCH_CATEGORIES = frozenset(
+    {
+        "deep_research",
+        "live",
+        "live_information",
+        "research",
+        "search",
+        "web",
+        "web.search",
+    }
+)
+_CODE_EDIT_CATEGORIES = frozenset(
+    {
+        "artifact_change",
+        "capability:cleanup",
+        "cleanup",
+        "code",
+        "coding",
+        "dev",
+    }
+)
+_FILE_CONTEXT_CATEGORIES = frozenset(
+    {
+        "file",
+        "file.find",
+        "file.list_dir",
+        "file.read",
+        "file.read_range",
+        "file_list",
+    }
+)
+_LOCAL_STATUS_CATEGORIES = frozenset({"host.metrics", "ops", "system.exec"})
 
 
 @dataclass(frozen=True)
 class SetupCostRoute:
     label: str
     reason: str
+
+
+def _route_for_capability_category(category: str) -> SetupCostRoute | None:
+    if not category:
+        return None
+    if category in _RESEARCH_CATEGORIES:
+        return SetupCostRoute("research_request", "capability_category")
+    if category in _CODE_EDIT_CATEGORIES:
+        return SetupCostRoute("code_edit_request", "capability_category")
+    if category in _FILE_CONTEXT_CATEGORIES:
+        return SetupCostRoute("file_context_request", "capability_category")
+    if category in _LOCAL_STATUS_CATEGORIES:
+        return SetupCostRoute("local_status_request", "capability_category")
+    return None
 
 
 def classify_setup_cost_route(
@@ -24,31 +67,21 @@ def classify_setup_cost_route(
     inbound_metadata: Mapping[str, str] | None = None,
 ) -> SetupCostRoute:
     text = str(message or "").strip()
-    lowered = text.lower()
-    words = set(re.findall(r"[a-z0-9_]+", lowered))
-    forced_count = len(tuple(forced_tools or ()))
+    words = set(re.findall(r"[a-z0-9_]+", text.lower()))
+    forced_count = len(forced_tools or ())
     category = str(capability_category or "").strip().lower()
-    metadata = dict(inbound_metadata or {})
+    metadata = inbound_metadata or {}
 
     if forced_count > 1:
         return SetupCostRoute("multi_tool_request", "multiple_forced_tools")
-    if category in {"research", "web", "deep_research"}:
-        return SetupCostRoute("research_request", "capability_category")
-    if category in {"coding", "code"}:
-        return SetupCostRoute("code_edit_request", "capability_category")
+    category_route = _route_for_capability_category(category)
+    if category_route is not None:
+        return category_route
     if metadata.get("file_mentions") or _FILE_HINT_RE.search(text):
-        if words & _CODE_HINTS:
-            return SetupCostRoute("code_edit_request", "file_and_code_hint")
         return SetupCostRoute("file_context_request", "file_hint")
-    if words & _RESEARCH_HINTS:
-        return SetupCostRoute("research_request", "research_hint")
-    if words & _CODE_HINTS:
-        return SetupCostRoute("ambiguous_request", "code_hint_without_file")
-    if words & _LOCAL_HINTS:
-        return SetupCostRoute("local_status_request", "local_status_hint")
     if forced_count == 1:
         return SetupCostRoute("tool_request", "single_forced_tool")
-    if text and len(text) <= 120 and "?" not in text:
+    if text and len(text) <= 120 and len(words) <= 8 and "?" not in text:
         return SetupCostRoute("no_tool_answer", "short_plain_prompt")
     return SetupCostRoute("ambiguous_request", "fallback")
 

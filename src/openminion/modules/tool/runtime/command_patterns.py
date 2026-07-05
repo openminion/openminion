@@ -1,6 +1,5 @@
-from collections.abc import Mapping as ABCMapping
-from collections.abc import Sequence as ABCSequence
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 
 def effective_command_argv(argv: Sequence[str]) -> tuple[str, ...]:
@@ -92,14 +91,14 @@ def matching_allow_pattern(
     argv = effective_command_argv(argv)
     known_tools = _known_command_tools(commands)
     patterns = commands.get("allow_patterns", COMMAND_ALLOW_PATTERNS)
-    if not isinstance(patterns, ABCSequence) or isinstance(patterns, (str, bytes)):
+    if not isinstance(patterns, Sequence) or isinstance(patterns, (str, bytes)):
         return None
 
     for pattern in patterns:
-        if not isinstance(pattern, ABCMapping):
+        if not isinstance(pattern, Mapping):
             continue
         pattern_argv = pattern.get("argv", ())
-        if not isinstance(pattern_argv, ABCSequence) or isinstance(
+        if not isinstance(pattern_argv, Sequence) or isinstance(
             pattern_argv, (str, bytes)
         ):
             continue
@@ -115,7 +114,7 @@ def matching_allow_pattern(
 
 def _known_command_tools(commands: Mapping[str, Any]) -> set[str]:
     configured = commands.get("known_tools", DISCOVERY_KNOWN_TOOLS)
-    if not isinstance(configured, ABCSequence) or isinstance(configured, (str, bytes)):
+    if not isinstance(configured, Sequence) or isinstance(configured, (str, bytes)):
         return set(DISCOVERY_KNOWN_TOOLS)
     return {str(tool).strip() for tool in configured if str(tool).strip()}
 
