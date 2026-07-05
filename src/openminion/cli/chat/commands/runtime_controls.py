@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shlex
 import sys
+from typing import Any
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.cli.presentation import styles
@@ -21,7 +22,7 @@ from ..runtime import ChatRuntimeState, ensure_inproc_runtime
 from ..ui import print_tools_from_payload, set_quiet_log_level
 
 
-def _print_tools(args, runtime_state: ChatRuntimeState, *, quiet: bool) -> None:
+def _print_tools(args: Any, runtime_state: ChatRuntimeState, *, quiet: bool) -> None:
     verbose = getattr(args, "verbose", False) or getattr(args, "tools_verbose", False)
 
     if runtime_state.endpoint is not None:
@@ -70,7 +71,7 @@ def _print_tools(args, runtime_state: ChatRuntimeState, *, quiet: bool) -> None:
             runtime_state.inproc_runtime = None
 
 
-def _handle_sidecar_command(*, line: str, config, args) -> None:
+def _handle_sidecar_command(*, line: str, config: Any, args: Any) -> None:
     try:
         tokens = shlex.split(line)
     except ValueError as exc:

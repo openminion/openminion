@@ -34,16 +34,12 @@ LEGACY_MODEL_NAMES = {
 }
 
 
-def _fail(message: str) -> tuple[bool, str]:
-    return False, message
-
-
 def _check_model_facing_registry() -> tuple[bool, str]:
     registry = build_default_tool_registry()
     names = {spec.name for spec in registry.model_provider_specs()}
     leaked = sorted(names & LEGACY_MODEL_NAMES)
     if leaked:
-        return _fail(
+        return False, (
             "Legacy names leaked to model-facing registry: " + ", ".join(leaked)
         )
     return True, "model_provider_specs() is canonical-only"
@@ -70,10 +66,10 @@ def _check_parser_normalization() -> tuple[bool, str]:
             allowed_tool_names=allowed,
         )
         if not calls:
-            return _fail(f"Parser did not recover call for payload={payload}")
+            return False, f"Parser did not recover call for payload={payload}"
         actual = str(calls[0].name or "")
         if actual != expected:
-            return _fail(
+            return False, (
                 f"Parser normalization mismatch: expected={expected} actual={actual}"
             )
     return True, "parser fallback normalization maps legacy names to canonical IDs"

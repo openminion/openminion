@@ -122,7 +122,7 @@ class ScaffoldCommandTests(unittest.TestCase):
             channel_path = Path(tmp) / "src/openminion/channels/relay.py"
             tool_path = Path(tmp) / "src/openminion/tools/greeter.py"
             self.assertIn(
-                "openminion.base.channel.base",
+                "openminion.base.channel.interface",
                 channel_path.read_text(encoding="utf-8"),
             )
             tool_content = tool_path.read_text(encoding="utf-8")
@@ -203,8 +203,8 @@ class ScaffoldCommandTests(unittest.TestCase):
                 encoding="utf-8"
             )
             factory_content = (pack_root / "factory.py").read_text(encoding="utf-8")
-            self.assertIn("openminion.base.channel.base", slack_content)
-            self.assertIn("openminion.base.channel.base", factory_content)
+            self.assertIn("openminion.base.channel.interface", slack_content)
+            self.assertIn("openminion.base.channel.interface", factory_content)
             self.assertIn("build_channels", factory_content)
             self.assertIn(".adapters.slack", factory_content)
 

@@ -8,7 +8,7 @@ import tempfile
 from openminion.api.operations.tools import execute_tool_run
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
-from openminion.cli.commands.toolctl import run_toolctl
+from openminion.cli.commands.tool_control import run_toolctl
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool import ToolExecutionContext
 from openminion.tools.tool_authoring.runner import execute_tool_file

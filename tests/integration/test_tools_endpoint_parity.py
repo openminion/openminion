@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from openminion.api.config import resolve_api_runtime
-from openminion.api.routes.base import APIRouteContext
+from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.routes.tools import handle_request as tools_handle_request
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config

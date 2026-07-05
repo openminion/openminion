@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from openminion.cli.commands.toolctl import register, run_toolctl
+from openminion.cli.commands.tool_control import register, run_toolctl
 from openminion.modules.tool import ToolRegistry
 
 from ._helpers import (

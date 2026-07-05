@@ -166,7 +166,9 @@ def test_reasoning_package_version_uses_canonical_owner() -> None:
 
 def test_scaffold_version_uses_canonical_owner() -> None:
     root = Path(__file__).resolve().parents[1]
-    scaffold_text = (root / "src" / "openminion" / "cli" / "commands" / "scaffold.py").read_text()
+    scaffold_text = (
+        root / "src" / "openminion" / "cli" / "commands" / "scaffold.py"
+    ).read_text()
     assert "OPENMINION_VERSION" in scaffold_text
     assert f'"{OPENMINION_VERSION}"' not in scaffold_text
 

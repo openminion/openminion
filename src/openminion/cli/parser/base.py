@@ -45,7 +45,7 @@ COMMAND_SPECS = (
     ),
     CommandSpec(
         "toolctl",
-        "openminion.cli.commands.toolctl",
+        "openminion.cli.commands.tool_control",
         "Operator controls for authored tools",
     ),
     CommandSpec("time", "openminion.cli.commands.time", "Trusted time helpers"),

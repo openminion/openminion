@@ -48,7 +48,7 @@ from .session import (
     _print_identity_help,
     _resolve_identity_db_path,
 )
-from .utility import _handle_sidecar_command, _print_sidecar_help, _print_tools
+from .runtime_controls import _handle_sidecar_command, _print_sidecar_help, _print_tools
 
 
 def _handle_debug_command(
