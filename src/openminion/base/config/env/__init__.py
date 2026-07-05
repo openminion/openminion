@@ -1,6 +1,6 @@
 """Environment access, validation, registry, and subprocess helpers."""
 
-from .base import (
+from .snapshot import (
     EnvironmentConfig,
     resolve_credential_env_value,
     resolve_environment_config,

@@ -1,4 +1,4 @@
-from .base import Channel
+from .interface import Channel
 from .console import ConsoleChannel
 from .registry import ChannelRegistry, build_default_channel_registry
 

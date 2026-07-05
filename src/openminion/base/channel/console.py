@@ -12,7 +12,7 @@ from openminion.base.constants import (
     NO_COLOR_ENV,
     OPENMINION_COLOR_ENV,
 )
-from .base import Channel
+from .interface import Channel
 from openminion.base.types import Message
 
 
