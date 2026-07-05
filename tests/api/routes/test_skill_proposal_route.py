@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from openminion.api.routes.base import APIRouteContext
+from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.routes.skill import handle_request
 from openminion.modules.skill.proposal import SkillProposal, SkillProposalDraft
 from openminion.modules.skill.proposal.queue import create_proposal

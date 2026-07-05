@@ -18,7 +18,7 @@ from openminion.api.core.validation import (
 from openminion.api.queries.owner import OwnerStatusQueryError, get_owner_status
 from openminion.api import metrics_registry
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     error_route_result,

@@ -4,7 +4,7 @@ from http import HTTPStatus
 
 from openminion.api.core.deps import resolve_runtime_manager
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     runtime_unavailable_route_result,

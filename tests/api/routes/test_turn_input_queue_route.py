@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from http import HTTPStatus
 
-from openminion.api.routes.base import APIRouteContext
+from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.routes.turns import handle_request
 from openminion.services.runtime.turn_input import TurnInputQueue
 

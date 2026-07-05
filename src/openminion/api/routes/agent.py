@@ -9,7 +9,7 @@ from urllib.parse import unquote
 from openminion.api.operations.agent import evict_agent_runtime
 from openminion.api.queries.agents import AgentQueryError, inspect_agent, list_agents
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     error_route_result,

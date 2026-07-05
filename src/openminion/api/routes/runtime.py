@@ -10,7 +10,7 @@ from openminion.api.core.deps import (
     v1_runtime_self_model,
 )
 
-from .base import APIRouteContext, RouteResult, runtime_unavailable_route_result
+from .contracts import APIRouteContext, RouteResult, runtime_unavailable_route_result
 
 
 def handle_request(

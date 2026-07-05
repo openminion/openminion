@@ -26,7 +26,7 @@ from openminion.services.runtime.turn_input import (
     TurnInputQueueStatus,
 )
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     error_route_result,
@@ -241,13 +241,7 @@ def _handle_enqueue_turn_input(
     except TurnInputQueueError as exc:
         return _queue_error_result(exc)
     except ValueError as exc:
-        return error_route_result(
-            HTTPStatus.BAD_REQUEST,
-            code="invalid_request",
-            message=str(exc),
-            details={"path": path},
-            retryable=False,
-        )
+        return _invalid_request(path=path, exc=exc)
     finally:
         close_api_runtime_if_owned(runtime, own_runtime=own_runtime)
 

@@ -5,7 +5,7 @@ from typing import Iterator
 
 import pytest
 
-from openminion.api.routes.base import APIRouteContext
+from openminion.api.routes.contracts import APIRouteContext
 from openminion.api.routes.memory import handle_request
 from openminion.modules.memory.contracts.provenance import (
     MemoryProvenanceEntry,

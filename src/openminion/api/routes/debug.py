@@ -9,7 +9,7 @@ from urllib.parse import unquote
 from openminion.api.core.deps import is_debug_api_enabled, register_api_debug_providers
 from openminion.services.diagnostics.debug import get_debug_registry
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     error_route_result,

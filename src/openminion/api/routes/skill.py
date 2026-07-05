@@ -13,7 +13,7 @@ from openminion.modules.skill.constants import SKILL_STATUS_DEPRECATED
 from openminion.modules.skill.errors import SkillError
 from openminion.modules.skill.runtime.skill import Skill
 
-from .base import APIRouteContext, RouteResult
+from .contracts import APIRouteContext, RouteResult
 
 
 _SKILLS_LIST_RE = re.compile(r"/v1/skills")

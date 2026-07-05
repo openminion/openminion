@@ -13,7 +13,7 @@ from openminion.api.operations.cron import (
 )
 from openminion.api.queries.cron import list_cron_jobs
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     exception_route_result,

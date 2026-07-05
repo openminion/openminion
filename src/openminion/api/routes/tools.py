@@ -17,7 +17,7 @@ from openminion.api.operations.tools import (
     normalize_tool_run_request,
 )
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     error_route_result,

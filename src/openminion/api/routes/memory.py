@@ -8,7 +8,7 @@ from urllib.parse import parse_qs
 
 from openminion.modules.memory import default_provenance_recorder
 
-from .base import APIRouteContext, RouteResult, error_route_result
+from .contracts import APIRouteContext, RouteResult, error_route_result
 
 
 _PROVENANCE_PATH = "/memory/provenance"

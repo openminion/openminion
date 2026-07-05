@@ -1,4 +1,4 @@
-from .base import APIRouteContext, RouteResult
+from .contracts import APIRouteContext, RouteResult
 from .admin import handle_request as handle_admin_request
 from .agent import handle_request as handle_agent_request
 from .cron import handle_request as handle_cron_request

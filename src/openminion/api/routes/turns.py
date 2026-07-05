@@ -17,7 +17,7 @@ from openminion.api.queries.sessions import append_session_event
 from openminion.api.turns import TurnRequestError, TurnTimeoutError, run_turn
 from .turn_inputs import handle_request as handle_turn_inputs_request
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     exception_route_result,

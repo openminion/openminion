@@ -13,7 +13,7 @@ from openminion.api.queries.sessions import (
     list_session_messages,
 )
 
-from .base import (
+from .contracts import (
     APIRouteContext,
     RouteResult,
     error_route_result,
