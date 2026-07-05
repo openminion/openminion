@@ -8,10 +8,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-SCRIPT_ROOT = Path(__file__).resolve().parent
-if str(SCRIPT_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_ROOT))
-
 REPO_IMPORT_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_IMPORT_ROOT))

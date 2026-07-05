@@ -11,10 +11,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-REPO_IMPORT_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_IMPORT_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_IMPORT_ROOT))
-
 from scripts.common.terminal_output import heading, item, section  # noqa: E402
 from scripts.validate.focus.terminal_no_textual import main as validate_no_textual  # noqa: E402
 from scripts.validate.focus.terminal_styles import main as validate_styles  # noqa: E402

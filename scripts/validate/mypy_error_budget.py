@@ -33,6 +33,7 @@ def _run_mypy(repo_root: Path) -> tuple[int, list[str]]:
         "-m",
         "mypy",
         "src/openminion",
+        "--explicit-package-bases",
         "--hide-error-context",
         "--no-error-summary",
         "--show-error-codes",
@@ -88,7 +89,7 @@ def main() -> int:
     if args.emit_baseline:
         payload = {
             "generated": "2026-05-31",
-            "command": ".venv/bin/python3.11 -m mypy src/openminion --hide-error-context --no-error-summary --show-error-codes",
+            "command": ".venv/bin/python3.11 -m mypy src/openminion --explicit-package-bases --hide-error-context --no-error-summary --show-error-codes",
             "monthly_burn_down_quota": DEFAULT_MONTHLY_BURN_DOWN_QUOTA,
             "total_errors": total,
             "package_errors": current,
