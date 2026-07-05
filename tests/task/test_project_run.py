@@ -109,7 +109,9 @@ def test_project_objective_contract_is_strict_and_serializable() -> None:
         milestones=("define contract", "prove projection"),
         constraints=("do not create a parallel goal evaluator",),
     )
-    ledger = ProjectObjectiveLedger(ledger_ref="artifact:objective.json", contract=contract)
+    ledger = ProjectObjectiveLedger(
+        ledger_ref="artifact:objective.json", contract=contract
+    )
 
     payload = ledger.model_dump(mode="json")
 
@@ -280,10 +282,13 @@ def test_project_run_rejects_duplicate_open_worker(tmp_path) -> None:
 
     duplicate = project_run.model_copy(update={"task_id": "task-2"})
 
-    assert find_open_project_worker(
-        manager,
-        project_run_id=project_run.project_run_id,
-    ).task_id == "task-1"
+    assert (
+        find_open_project_worker(
+            manager,
+            project_run_id=project_run.project_run_id,
+        ).task_id
+        == "task-1"
+    )
     with pytest.raises(ValueError, match="open project worker already exists"):
         save_project_run_checkpoint(
             manager,
@@ -365,7 +370,9 @@ def test_project_cycle_requires_reason_for_terminal_decisions(tmp_path) -> None:
         )
 
 
-def test_project_policy_state_survives_restart_and_denies_before_grants(tmp_path) -> None:
+def test_project_policy_state_survives_restart_and_denies_before_grants(
+    tmp_path,
+) -> None:
     manager, project_run = _create_project_task(tmp_path)
     state = build_project_policy_state(
         manager,
@@ -619,7 +626,9 @@ def test_project_report_includes_outcome_metrics_and_baseline_comparison() -> No
         ux_notes=("operator report is text-renderable",),
     )
 
-    comparisons = {comparison.metric: comparison for comparison in report.baseline_comparisons}
+    comparisons = {
+        comparison.metric: comparison for comparison in report.baseline_comparisons
+    }
     rendered = render_project_report(report)
 
     assert report.outcome == ProjectOutcomeClassification.COMPLETED_VERIFIED

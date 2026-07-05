@@ -100,9 +100,7 @@ class ProjectRun(_StrictProjectModel):
     last_checkpoint_id: str | None = None
     next_wakeup_at_ms: int | None = Field(default=None, ge=0)
     blocked_reason: str | None = None
-    verification_state: ProjectVerificationState = (
-        ProjectVerificationState.NOT_STARTED
-    )
+    verification_state: ProjectVerificationState = ProjectVerificationState.NOT_STARTED
     task_state: TaskLifecycleState | None = None
 
 
@@ -336,7 +334,9 @@ def save_project_run_checkpoint(
     link_project_run_to_task(task_manager, project_run)
     checkpoint = ProjectCheckpoint(
         checkpoint_id=checkpoint_id,
-        project_run=project_run.model_copy(update={"last_checkpoint_id": checkpoint_id}),
+        project_run=project_run.model_copy(
+            update={"last_checkpoint_id": checkpoint_id}
+        ),
         payload=dict(payload or {}),
     )
     task_manager.save_checkpoint(
@@ -671,9 +671,7 @@ def evaluate_project_budget(
         "tokens": max(0, int(tokens)),
     }
     remaining = {
-        key: max(0, limit - used[key])
-        for key, limit in limits.items()
-        if limit > 0
+        key: max(0, limit - used[key]) for key, limit in limits.items() if limit > 0
     }
     for key, limit in limits.items():
         if limit > 0 and used[key] > limit:
@@ -745,7 +743,10 @@ def apply_project_control(
     if record is None:
         raise KeyError(f"task not found: {task_id}")
 
-    if action == ProjectControlAction.PAUSE and record.state == TaskLifecycleState.ACTIVE:
+    if (
+        action == ProjectControlAction.PAUSE
+        and record.state == TaskLifecycleState.ACTIVE
+    ):
         record = task_manager.transition_task(
             task_id=record.task_id,
             to_state=TaskLifecycleState.PAUSED,

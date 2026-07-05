@@ -44,9 +44,9 @@ def test_project_worker_pilot_reports_include_required_evidence() -> None:
 
 
 def test_project_worker_soak_pilot_proves_restart_resume_and_duplicate_guard() -> None:
-    spec = {
-        pilot.pilot_id: pilot for pilot in soak_pilot_specs()
-    }["pilot-24h-restart-resume"]
+    spec = {pilot.pilot_id: pilot for pilot in soak_pilot_specs()}[
+        "pilot-24h-restart-resume"
+    ]
     report = build_project_pilot_report(spec)
 
     assert spec.pilot_id == "pilot-24h-restart-resume"
@@ -57,7 +57,9 @@ def test_project_worker_soak_pilot_proves_restart_resume_and_duplicate_guard() -
     assert report.proof_refs
 
 
-def test_project_worker_multiday_pilot_has_operator_blocked_and_verification_gate() -> None:
+def test_project_worker_multiday_pilot_has_operator_blocked_and_verification_gate() -> (
+    None
+):
     spec = {pilot.pilot_id: pilot for pilot in soak_pilot_specs()}["pilot-72h-multiday"]
     report = build_project_pilot_report(spec)
 
@@ -89,7 +91,9 @@ def test_project_worker_pilot_artifact_writer_outputs_json_markdown_and_status(
         markdown = artifact.markdown_path.read_text(encoding="utf-8")
         status = artifact.status_path.read_text(encoding="utf-8")
 
-        assert payload["report"]["metrics"]["proof_packet_completeness_percent"] == 100.0
+        assert (
+            payload["report"]["metrics"]["proof_packet_completeness_percent"] == 100.0
+        )
         assert payload["report"]["proof_refs"]
         assert payload["operator_status"]
         assert "compressed deterministic pilot artifact" in markdown

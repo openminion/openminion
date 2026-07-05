@@ -86,7 +86,9 @@ class ProjectCapabilityMatrix(_StrictCapabilityModel):
         raise KeyError(area)
 
 
-_GAP_ASSESSMENT_ROWS: dict[ProjectCapabilityArea, tuple[str, ProjectCapabilitySupport]] = {
+_GAP_ASSESSMENT_ROWS: dict[
+    ProjectCapabilityArea, tuple[str, ProjectCapabilitySupport]
+] = {
     ProjectCapabilityArea.WEBSITE_APP_BUILD: (
         "Focus and tools can compose app builds, but there is no dedicated app-build loop owner.",
         ProjectCapabilitySupport.PARTIAL,
@@ -282,7 +284,9 @@ def _capability_evidence_refs(area: ProjectCapabilityArea) -> tuple[str, ...]:
     if area in _CPACK_OWNED_AREAS:
         refs.extend((CPACK_SPEC_REF, CPACK_TRACKER_REF))
     if not refs:
-        refs.append("docs/specs/openminion-long-horizon-project-worker-v3-2026-07-03-spec.md")
+        refs.append(
+            "docs/specs/openminion-long-horizon-project-worker-v3-2026-07-03-spec.md"
+        )
     return tuple(refs)
 
 
@@ -321,7 +325,9 @@ def _capability_alternate_plan(
     if area == ProjectCapabilityArea.DESKTOP_APPS:
         return "Use file or Google Workspace workflows instead of native GUI control."
     if area == ProjectCapabilityArea.TTS:
-        return "Produce text/audio-artifact requirements only; do not claim speech output."
+        return (
+            "Produce text/audio-artifact requirements only; do not claim speech output."
+        )
     return "Use the existing composed tool workflow and record the missing first-class lane."
 
 

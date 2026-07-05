@@ -179,7 +179,8 @@ def soak_scenario_ids() -> tuple[str, ...]:
     return tuple(
         scenario.scenario_id
         for scenario in PROJECT_WORKER_SCENARIOS
-        if scenario.suite in {"deep", "soak"} or scenario.kind == ProjectWorkerScenarioKind.SOAK
+        if scenario.suite in {"deep", "soak"}
+        or scenario.kind == ProjectWorkerScenarioKind.SOAK
     )
 
 
@@ -191,7 +192,9 @@ def scenarios_for_suite(suite: str) -> tuple[ProjectWorkerScenario, ...]:
     if requested == "all":
         return PROJECT_WORKER_SCENARIOS
     if requested == "local":
-        return tuple(scenario for scenario in PROJECT_WORKER_SCENARIOS if not scenario.live)
+        return tuple(
+            scenario for scenario in PROJECT_WORKER_SCENARIOS if not scenario.live
+        )
     if requested == "deep":
         return tuple(
             scenario

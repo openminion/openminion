@@ -84,9 +84,7 @@ class TestModuleBaseIntegration:
                 health["extended"] = True
                 return health
 
-        descriptor = ModuleDescriptor(
-            name="extended", version=OPENMINION_VERSION
-        )
+        descriptor = ModuleDescriptor(name="extended", version=OPENMINION_VERSION)
         module = ExtendedModule(descriptor=descriptor)
         health = module.healthcheck()
 
