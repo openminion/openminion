@@ -118,6 +118,7 @@ class FocusScreen(
             verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
         )
         self._tool_widgets: dict[str, object] = {}
+        self._active_turn: Any | None = None
         self._approval_future: asyncio.Future[str] | None = None
         self._approval_widget: ToolApprovalWidget | None = None
         self._prompt_future: asyncio.Future[str] | None = None
@@ -352,6 +353,7 @@ class FocusScreen(
         self._set_busy(True)
         self._interrupt_requested = False
         self._status_controller.start_turn()
+        self._tool_widgets.clear()
         chat = self.query_one(FocusTranscript)
         if render_user:
             chat.push_message(
@@ -361,6 +363,7 @@ class FocusScreen(
         reply = ""
         failed = False
         turn = chat.begin_turn(role="assistant")
+        self._active_turn = turn
         turn._widget._message.sender = self._runtime.agent_id
         try:
             async for chunk in self._runtime.send_message(
@@ -403,6 +406,7 @@ class FocusScreen(
                 )
             )
         finally:
+            self._active_turn = None
             interrupted = bool(self._interrupt_requested)
             elapsed_seconds = time.perf_counter() - started
             self._last_turn_debug = {
@@ -513,8 +517,12 @@ class FocusScreen(
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = bool(busy)
-        indicator = self.query_one(ThinkingIndicator)
-        indicator.is_thinking = busy
+        try:
+            indicator = self.query_one(ThinkingIndicator)
+        except (QueryError, AttributeError):
+            indicator = None
+        if indicator is not None:
+            indicator.is_thinking = busy
         self._sync_input_state()
         self._refresh_header(status_mode="responding" if busy else "idle")
         self._push_status_line(state="responding" if busy else "idle")
@@ -585,7 +593,10 @@ class FocusScreen(
             view = self._status_controller.update(payload)
         except (QueryError, AttributeError):
             view = None
-        indicator = self.query_one(ThinkingIndicator)
+        try:
+            indicator = self.query_one(ThinkingIndicator)
+        except (QueryError, AttributeError):
+            return
         if view is None:
             label = format_progress_label(payload, fallback_label="Working...")
             indicator.status_label = label
@@ -651,33 +662,55 @@ class FocusScreen(
         if kind == "tool_started":
             self._refresh_header(status_mode="tool")
             self._push_status_line(state="tool", tool_name=tool_name)
-            widget = chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.TOOL,
-                    sender=f"tool:{tool_name}",
-                    body=tool_call_body(tool_event),
-                    tool_event=tool_event,
-                    tool_result=None,
+            active_turn = self._active_turn
+            if active_turn is not None:
+                widget = active_turn.upsert_tool_block(
+                    call_id=call_id,
+                    event=tool_event,
+                    pending=True,
                 )
-            )
+                chat.call_after_refresh(lambda: chat.scroll_end(animate=False))
+            else:
+                widget = chat.push_message(
+                    ChatMessage(
+                        kind=MessageKind.TOOL,
+                        sender=f"tool:{tool_name}",
+                        body=tool_call_body(tool_event),
+                        tool_event=tool_event,
+                        tool_result=None,
+                    )
+                )
             self._tool_widgets[call_id] = widget
             return
 
         widget = self._tool_widgets.get(call_id)
         if widget is None:
-            widget = chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.TOOL,
-                    sender=f"tool:{tool_name}",
-                    body=tool_call_body(tool_event),
-                    tool_event=tool_event,
-                    tool_result=tool_event.content or "Completed.",
+            active_turn = self._active_turn
+            if active_turn is not None:
+                widget = active_turn.upsert_tool_block(
+                    call_id=call_id,
+                    event=tool_event,
+                    pending=False,
                 )
-            )
+                chat.call_after_refresh(lambda: chat.scroll_end(animate=False))
+            else:
+                widget = chat.push_message(
+                    ChatMessage(
+                        kind=MessageKind.TOOL,
+                        sender=f"tool:{tool_name}",
+                        body=tool_call_body(tool_event),
+                        tool_event=tool_event,
+                        tool_result=tool_event.content or "Completed.",
+                    )
+                )
             self._tool_widgets[call_id] = widget
         else:
-            widget._message.tool_event = tool_event
-            widget.set_tool_result(tool_event.content or "Completed.")
+            if hasattr(widget, "set_tool_result"):
+                widget._message.tool_event = tool_event
+                widget.set_tool_result(tool_event.content or "Completed.")
+            elif hasattr(widget, "update_event"):
+                widget.update_event(tool_event, pending=False)
+                chat.call_after_refresh(lambda: chat.scroll_end(animate=False))
         self._refresh_header(status_mode="responding" if self._busy else "idle")
         self._push_status_line(
             state="responding" if self._busy else "idle",

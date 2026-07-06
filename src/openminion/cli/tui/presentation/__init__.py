@@ -5,6 +5,14 @@ from .header import (
     shorten_session_id,
     shorten_working_dir,
 )
+from .messages import (
+    looks_like_markdown,
+    render_body,
+    render_error_text,
+    render_markdown,
+    render_system_text,
+    render_user_text,
+)
 from .models import ChatMessage, MessageKind, ToolEvent, format_chat_timestamp
 from .status import (
     DEFAULT_PROGRESS_FALLBACK,
@@ -31,6 +39,12 @@ __all__ = [
     "format_chat_timestamp",
     "format_clock",
     "format_progress_label",
+    "looks_like_markdown",
+    "render_body",
+    "render_error_text",
+    "render_markdown",
+    "render_system_text",
+    "render_user_text",
     "resolve_theme_data_root",
     "resolve_runtime_data_root",
     "shorten_session_id",

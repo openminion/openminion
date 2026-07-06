@@ -42,6 +42,17 @@ def test_set_disabled_changes_prompt_and_blocks_read() -> None:
         asyncio.run(_try_read())
 
 
+def test_set_busy_switches_placeholder_copy() -> None:
+    c = TerminalComposer()
+    assert "Ask anything" in c._formatted_placeholder()[0][1]
+    c.set_busy(True)
+    assert (
+        "Type to queue while the current turn runs" in c._formatted_placeholder()[0][1]
+    )
+    c.set_busy(False)
+    assert "Ask anything" in c._formatted_placeholder()[0][1]
+
+
 def test_toggle_multiline_flips_state() -> None:
     c = TerminalComposer()
     assert c._multiline is False

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import time
 from typing import Literal
 
-from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.containers import ScrollableContainer
 from textual.css.query import QueryError
@@ -14,6 +13,12 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from openminion.cli.tui.presentation.models import ChatMessage, MessageKind, ToolEvent
+from openminion.cli.tui.presentation.messages import (
+    render_body,
+    render_error_text,
+    render_system_text,
+    render_user_text,
+)
 from openminion.cli.tui.presentation.tool.blocks import VerbosityLevel
 
 from .tool_block import ToolBlockWidget
@@ -37,10 +42,15 @@ class FocusMessageWidget(Widget):
 
     DEFAULT_CSS = """
     FocusMessageWidget { height: auto; padding: 0 1; }
-    FocusMessageWidget.--user { color: $text; }
-    FocusMessageWidget.--agent { color: $text; }
-    FocusMessageWidget.--system { color: $text-muted; }
-    FocusMessageWidget.--error { color: $error; }
+    FocusMessageWidget.--system {
+        border-left: tall $accent;
+        padding: 0 1 0 2;
+    }
+    FocusMessageWidget.--error {
+        border-left: tall $error;
+        background: $error 15%;
+        padding: 0 1 0 2;
+    }
     """
 
     def __init__(
@@ -85,38 +95,25 @@ class FocusMessageWidget(Widget):
         msg = self._message
         body = str(msg.body or "")
         if msg.kind == MessageKind.USER:
-            text = Text()
-            text.append("> ", style="dim")
-            text.append(body)
-            return self._with_cursor(text)
+            return self._with_cursor(render_user_text(body))
         if msg.kind == MessageKind.AGENT and not self._streaming:
             return self._body_renderable(body, markdown_allowed=True)
         if msg.kind == MessageKind.SYSTEM:
-            return Text(body, style="dim")
+            return render_system_text(body)
         if msg.kind == MessageKind.ERROR:
-            return Text(body, style="red")
+            return render_error_text(body)
         return self._with_cursor(Text(body))
 
     def _body_renderable(self, text: str, *, markdown_allowed: bool = True) -> object:
-        """Pick a Rich renderable for assistant body text."""
-        body = str(text or "")
-        if markdown_allowed and body and self._looks_like_markdown(body):
-            return RichMarkdown(body)
-        return self._with_cursor(Text(body))
+        renderable = render_body(text, markdown_allowed=markdown_allowed)
+        if isinstance(renderable, Text):
+            return self._with_cursor(renderable)
+        return renderable
 
     def _with_cursor(self, text: Text) -> Text:
         if self._streaming and self._streaming.visible:
             text.append(_STREAM_CURSOR)
         return text
-
-    @staticmethod
-    def _looks_like_markdown(text: str) -> bool:
-        # Conservative heuristic: presence of fenced code blocks,
-        sample = text.strip()
-        return bool(
-            sample.startswith(("#", "- ", "* ", "> ", "```", "1.", "|"))
-            or "```" in sample
-        )
 
     def update_body(self, text: str, *, streaming: bool = False) -> None:
         """Streaming-aware body update."""
@@ -168,16 +165,42 @@ class FocusMessageWidget(Widget):
                 pass
         self._refresh_body()
 
-    def append_tool_block(self, event: ToolEvent) -> None:
-        """Mount a tool block inside this message (streaming path)."""
+    def _tool_block_dom_id(self, call_id: str) -> str:
+        token = str(call_id or "").strip()
+        safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in token)
+        safe = safe.strip("-_") or "tool-block"
+        return f"{self.id or 'msg'}-{safe}"
+
+    def upsert_tool_block(
+        self,
+        *,
+        call_id: str,
+        event: ToolEvent,
+        pending: bool,
+    ) -> ToolBlockWidget:
+        """Create or update one inline tool block for this message."""
+        block_id = self._tool_block_dom_id(call_id or event.call_id or event.tool_name)
         try:
-            self.mount(
-                ToolBlockWidget(
-                    event,
-                    pending=False,
-                    verbosity=self._verbosity,
-                    id=f"{self.id or 'msg'}-tool-block-{int(time.monotonic() * 1000)}",
-                )
+            block = self.query_one(f"#{block_id}", ToolBlockWidget)
+        except QueryError:
+            block = ToolBlockWidget(
+                event,
+                pending=pending,
+                verbosity=self._verbosity,
+                id=block_id,
+            )
+            self.mount(block)
+            return block
+        block.update_event(event, pending=pending)
+        return block
+
+    def append_tool_block(self, event: ToolEvent) -> None:
+        """Mount a completed tool block inside this message."""
+        try:
+            self.upsert_tool_block(
+                call_id=event.call_id or f"tool-block-{int(time.monotonic() * 1000)}",
+                event=event,
+                pending=False,
             )
         except QueryError:
             pass
@@ -218,6 +241,19 @@ class TurnHandle:
 
     def append_tool_block(self, event: ToolEvent) -> None:
         self._widget.append_tool_block(event)
+
+    def upsert_tool_block(
+        self,
+        *,
+        call_id: str,
+        event: ToolEvent,
+        pending: bool,
+    ) -> ToolBlockWidget:
+        return self._widget.upsert_tool_block(
+            call_id=call_id,
+            event=event,
+            pending=pending,
+        )
 
     def complete(self, final_text: str | None = None) -> None:
         if final_text is not None:

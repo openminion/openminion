@@ -378,7 +378,12 @@ class SlashCommandMixin:
         return mode
 
     def action_cycle_permission_mode(self) -> None:
-        if not self._open_permissions_overlay():
+        opener = getattr(self, "_open_permissions_overlay", None)
+        if callable(opener):
+            if not opener():
+                return
+        else:
+            self._cycle_permission_mode_from_ui()
             return
         mode = format_permission_status_label(
             permission_mode=getattr(self._runtime, "permission_mode", "default"),

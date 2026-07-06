@@ -87,6 +87,7 @@ def test_progress_label_is_shared() -> None:
 
 _SHARED_OWNER_MODULES = [
     "openminion/src/openminion/cli/tui/presentation/models.py",
+    "openminion/src/openminion/cli/tui/presentation/messages.py",
     "openminion/src/openminion/cli/tui/presentation/status.py",
     "openminion/src/openminion/cli/tui/presentation/clipboard.py",
     "openminion/src/openminion/cli/tui/presentation/tool/blocks.py",
@@ -237,6 +238,12 @@ def test_presentation_package_reexports() -> None:
         "format_chat_timestamp",
         "format_clock",
         "format_progress_label",
+        "looks_like_markdown",
+        "render_body",
+        "render_error_text",
+        "render_markdown",
+        "render_system_text",
+        "render_user_text",
         "shorten_session_id",
         "shorten_working_dir",
         "tool_call_body",
@@ -286,6 +293,25 @@ def test_focus_live_and_history_both_flow_through_shared_tool_block() -> None:
         {"tool_name": "file.read", "args": {"path": "x.py"}, "content": "hi"}
     )
     assert isinstance(built, SharedToolEvent)
+
+
+def test_focus_and_terminal_share_message_rendering_owner() -> None:
+    import inspect
+
+    from openminion.cli.tui.focus.widgets.transcript import FocusMessageWidget
+    from openminion.cli.tui.terminal import transcript as terminal_transcript
+
+    focus_src = inspect.getsource(FocusMessageWidget)
+    assert "render_body" in focus_src
+    assert "render_error_text" in focus_src
+    assert "render_system_text" in focus_src
+    assert "render_user_text" in focus_src
+
+    terminal_src = inspect.getsource(terminal_transcript)
+    assert "render_body" in terminal_src
+    assert "render_error_text" in terminal_src
+    assert "render_system_text" in terminal_src
+    assert "render_user_text" in terminal_src
 
 
 def test_focus_directory_session_affinity_uses_shared_runtime() -> None:

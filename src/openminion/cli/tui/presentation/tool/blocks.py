@@ -137,6 +137,11 @@ class ToolBlockWidget(Widget):
                 self.display = False
                 return
             self.display = True
+            self.set_class(self._pending, "--pending")
+            exit_code = self._tool_event.exit_code
+            failed = exit_code is not None and exit_code != 0
+            self.set_class((not self._pending) and not failed, "--ok")
+            self.set_class(failed, "--fail")
             self.query_one(".focus-tool-block-title", Label).update(self._header_text())
             body = self.query_one(".focus-tool-block-body", Static)
             body.display = not self.collapsed

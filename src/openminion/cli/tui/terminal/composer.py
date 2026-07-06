@@ -17,6 +17,8 @@ _PROMPT_FRESH = "❯ "
 _PROMPT_RESUMED = "↳ "
 _PROMPT_DISABLED = "… "
 _COMPLETION_MENU_ROWS = 10
+_PLACEHOLDER_IDLE = "Ask anything · @ to mention a file · / for commands"
+_PLACEHOLDER_BUSY = "Type to queue while the current turn runs · Esc interrupts"
 
 
 def _call_safely(callback: object) -> None:
@@ -102,6 +104,7 @@ class TerminalComposer:
         self._completer = _SlashAndAtCompleter(slash_commands, path)
         self._is_resumed = False
         self._disabled = False
+        self._busy = False
         self._multiline = False
         self._bottom_toolbar = bottom_toolbar
         self._working_dir = working_dir
@@ -163,6 +166,9 @@ class TerminalComposer:
 
     def set_disabled(self, disabled: bool) -> None:
         self._disabled = bool(disabled)
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = bool(busy)
 
     def focus_input(self) -> None:
         pass
@@ -228,14 +234,7 @@ class TerminalComposer:
                     complete_while_typing=True,
                     multiline=Condition(lambda: self._multiline),
                     bottom_toolbar=self._formatted_bottom_toolbar,
-                    placeholder=FormattedText(
-                        [
-                            (
-                                "class:placeholder",
-                                "Ask anything · @ to mention a file · / for commands",
-                            )
-                        ]
-                    ),
+                    placeholder=self._formatted_placeholder(),
                 )
             finally:
                 self._multiline = False
@@ -252,6 +251,16 @@ class TerminalComposer:
         if isinstance(value, str):
             return ANSI(value)
         return value
+
+    def _formatted_placeholder(self) -> FormattedText:
+        return FormattedText(
+            [
+                (
+                    "class:placeholder",
+                    _PLACEHOLDER_BUSY if self._busy else _PLACEHOLDER_IDLE,
+                )
+            ]
+        )
 
     def _prompt_text(self) -> str:
         if self._disabled:

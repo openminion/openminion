@@ -1632,19 +1632,48 @@ ChatSearchBar {
 /* ── Shared tool-block widget (used by both TUI shells) ──── */
 
 .focus-tool-block {
-    border:  round $panel;
-    margin:  1 0;
+    background: $openminion-chat-tool-bg;
+    color: $openminion-chat-tool-fg;
+    border: round $openminion-surface-divider;
+    margin: 1 0;
     padding: 0 1;
-    height:  auto;
+    height: auto;
 }
 
 .focus-tool-block-title {
+    color: $openminion-chat-tool-fg;
     text-style: bold;
 }
 
 .focus-tool-block-body {
+    color: $openminion-text-primary;
     padding-top: 1;
-    height:      auto;
+    height: auto;
+}
+
+.focus-tool-block.--pending {
+    border: round $openminion-state-warning;
+}
+
+.focus-tool-block.--pending .focus-tool-block-title {
+    color: $openminion-state-warning;
+}
+
+.focus-tool-block.--ok {
+    border: round $openminion-state-ok;
+}
+
+.focus-tool-block.--ok .focus-tool-block-title {
+    color: $openminion-state-ok;
+}
+
+.focus-tool-block.--fail {
+    background: $openminion-chat-error-bg 20%;
+    border: round $openminion-state-error;
+}
+
+.focus-tool-block.--fail .focus-tool-block-title {
+    color: $openminion-state-error;
 }
 
 /* ── Shared chat-row selection (Phase 6, both TUI shells) ── */

@@ -3,9 +3,15 @@ from __future__ import annotations
 import asyncio
 import io
 
+from prompt_toolkit.output.defaults import create_output
 from rich.console import Console
+from rich.text import Text
 
 import openminion.cli.tui.terminal.transcript as transcript_module
+from openminion.cli.tui.terminal.prompt_output import (
+    write_console_render_via_prompt_output,
+    write_terminal_control_via_prompt_output,
+)
 from openminion.cli.tui.terminal.transcript import TerminalTranscript
 from openminion.cli.tui.presentation.models import (
     ChatMessage,
@@ -357,6 +363,81 @@ def test_terminal_writer_overrides_direct_console_print() -> None:
 
     assert rendered
     assert "hello" in rendered[0]
+
+
+def test_terminal_writer_flows_into_active_turn_completion() -> None:
+    buf = io.StringIO()
+    console = Console(
+        file=buf,
+        force_terminal=True,
+        color_system="truecolor",
+        width=160,
+    )
+    t = TerminalTranscript(console, verbosity="normal")
+    rendered: list[str] = []
+
+    def _writer(render) -> None:
+        render()
+        rendered.append(buf.getvalue())
+
+    t.set_terminal_writer(_writer)
+    handle = t.begin_turn(role="assistant")
+    handle.append_token("hello")
+    handle.complete()
+
+    assert rendered
+    assert "hello" in rendered[-1]
+
+
+def test_prompt_safe_mode_renders_inflight_status_before_first_token() -> None:
+    buf = io.StringIO()
+    console = Console(
+        file=buf,
+        force_terminal=True,
+        color_system="truecolor",
+        width=160,
+    )
+    t = TerminalTranscript(console, verbosity="normal")
+    rendered: list[str] = []
+
+    def _writer(render) -> None:
+        render()
+        rendered.append(buf.getvalue())
+
+    t.set_terminal_writer(_writer)
+    handle = t.begin_turn(role="assistant")
+    handle.set_status_label("Working...")
+
+    assert rendered
+    assert "Working..." in rendered[-1]
+
+
+def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output() -> None:
+    console = Console(force_terminal=True, color_system="truecolor", width=160)
+    out = io.StringIO()
+    prompt_output = create_output(stdout=out)
+
+    write_console_render_via_prompt_output(
+        console=console,
+        prompt_output=prompt_output,
+        render=lambda: console.print(Text("hello", style="bold green")),
+    )
+
+    rendered = out.getvalue()
+    assert "hello" in rendered
+    assert "\x1b[" not in rendered
+
+
+def test_prompt_safe_writer_preserves_terminal_control_bytes() -> None:
+    out = io.StringIO()
+    prompt_output = create_output(stdout=out)
+
+    write_terminal_control_via_prompt_output(
+        prompt_output=prompt_output,
+        payload="\r\033[2KWorking...",
+    )
+
+    assert out.getvalue() == "\r\033[2KWorking..."
 
 
 def test_post_turn_render_skips_already_narrated_call_id() -> None:

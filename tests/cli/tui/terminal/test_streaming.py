@@ -9,6 +9,7 @@ from openminion.cli.tui.terminal.streaming import (
     _BOUNDED_FALLBACK_THRESHOLD_S,
     TerminalTurnHandle,
 )
+from openminion.cli.tui.terminal.spinner import Spinner
 from openminion.cli.tui.presentation.models import ToolEvent
 
 
@@ -120,3 +121,37 @@ def test_complete_is_idempotent() -> None:
     handle = TerminalTurnHandle(console).start()
     handle.complete(final_text="once")
     handle.complete(final_text="twice")  # should be a no-op
+
+
+def test_prompt_safe_status_rewrites_in_place() -> None:
+    console, buffer = _make_console()
+    handle = TerminalTurnHandle(console)
+    handle.set_terminal_writer(lambda render: render())
+    handle.start()
+
+    handle.set_status_label("Analyzing request...")
+    handle.set_status_label("Loading memory context...")
+    handle.complete(final_text="ready")
+
+    output = buffer.getvalue()
+    assert "\r\033[2K" in output
+    assert "Analyzing request...\n" not in output
+    assert "Loading memory context...\n" not in output
+    assert "ready" in output
+
+
+def test_prompt_safe_mode_refreshes_elapsed_status() -> None:
+    console, buffer = _make_console()
+    handle = TerminalTurnHandle(console)
+    handle.set_terminal_writer(lambda render: render())
+    handle.start()
+    try:
+        assert handle._refresh_thread is not None
+        handle._spinner = Spinner(time.monotonic() - 2.1)
+        handle.set_status_label("Analyzing request...")
+
+        output = buffer.getvalue()
+        assert "Analyzing request..." in output
+        assert "2s" in output
+    finally:
+        handle.complete(final_text="ready")

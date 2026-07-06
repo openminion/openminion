@@ -3,6 +3,22 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+from openminion.cli.commands import tui as _tui_commands
+
+
+class _ForwardedTuiCommand:
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __call__(self, args: Any) -> Any:
+        return getattr(_tui_commands, self._name)(args)
+
+
+_inspect_tui_onboarding = _ForwardedTuiCommand("_inspect_tui_onboarding")
+_run_inline_setup_for_tui = _ForwardedTuiCommand("_run_inline_setup_for_tui")
+_silence_logging_for_tui = _ForwardedTuiCommand("_silence_logging_for_tui")
 
 
 def _resolve_focus_backend(args: argparse.Namespace) -> str:
@@ -37,10 +53,6 @@ def _resolve_focus_verbosity(args: argparse.Namespace) -> str:
 def _handle_focus_onboarding_gate(
     args: argparse.Namespace,
 ) -> tuple[int | None, argparse.Namespace]:
-    from openminion.cli.commands.tui import (
-        _inspect_tui_onboarding,
-        _run_inline_setup_for_tui,
-    )
     from openminion.services.bootstrap.onboarding import OnboardingAction
 
     onboarding_status = _inspect_tui_onboarding(args)
@@ -217,7 +229,6 @@ def _launch_textual_focus(
 
 def run_focus(args: argparse.Namespace) -> int:
     from openminion.api.runtime import APIRuntime
-    from openminion.cli.commands.tui import _silence_logging_for_tui
 
     gate_exit, args = _handle_focus_onboarding_gate(args)
     if gate_exit is not None:

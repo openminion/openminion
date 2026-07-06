@@ -142,24 +142,26 @@ class OpenMinionRuntime(
         )
         self._pending_candidate_session: Any | None = None
 
+        normalized_session_id = str(session_id or "").strip() or None
+
         if bind_immediately and not self._prompt_on_resume:
             self._ensure_agent_resolved()
             session = rt.sessions.resolve_session(
                 agent_id=self.agent_id,
                 channel=self._channel,
                 target=self._target,
-                session_id=session_id,
+                session_id=normalized_session_id,
             )
             self._session_id = session.id
             self._sync_conversation_id()
         elif self._prompt_on_resume:
             self._ensure_agent_resolved()
-            if str(session_id or "").strip():
-                self.bind_session(str(session_id))
+            if normalized_session_id:
+                self._resolve_startup_session(normalized_session_id)
             else:
                 self._refresh_pending_candidate()
-        elif str(session_id or "").strip():
-            self.bind_session(str(session_id))
+        elif normalized_session_id:
+            self._resolve_startup_session(normalized_session_id)
 
     def _select_channel_profile(self) -> object | None:
         config = getattr(self._rt, "config", None)
@@ -415,6 +417,29 @@ class OpenMinionRuntime(
         self._project_context_pending = False
         self._reset_token_usage_accounting()
 
+    def _resolve_startup_session(self, session_id: str) -> None:
+        self._ensure_agent_resolved()
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            raise ValueError("session_id is required")
+        session = self._rt.sessions.resolve_session(
+            agent_id=self.agent_id,
+            channel=self._channel,
+            target=self._target,
+            session_id=normalized_session_id,
+            metadata=self._session_metadata_patch(),
+        )
+        self._session_id = session.id
+        self._sync_conversation_id()
+        metadata_patch = self._session_metadata_patch()
+        if metadata_patch:
+            self._rt.sessions.update_session_metadata(
+                session_id=session.id,
+                patch=metadata_patch,
+            )
+        self._project_context_pending = False
+        self._reset_token_usage_accounting()
+
     def create_new_session(self) -> str:
         self._ensure_agent_resolved()
         prefix = _TARGET_KIND_FOCUS if self._target == _TARGET_KIND_FOCUS else "sess"
@@ -667,15 +692,50 @@ class OpenMinionRuntime(
                 "kind": "tool_started",
                 "tool_name": str(getattr(event, "tool_name", "") or ""),
                 "args": dict(getattr(event, "args", None) or {}),
+                "call_id": str(getattr(event, "call_id", "") or ""),
+                "state": str(getattr(event, "state", "") or ""),
+                "model_tool_name": str(getattr(event, "model_tool_name", "") or ""),
+                "runtime_tool_name": str(getattr(event, "runtime_tool_name", "") or ""),
+                "runtime_binding_id": str(
+                    getattr(event, "runtime_binding_id", "") or ""
+                ),
+                "runtime_fallback_used": bool(
+                    getattr(event, "runtime_fallback_used", False)
+                ),
+                "runtime_fallback_chain": list(
+                    getattr(event, "runtime_fallback_chain", None) or []
+                ),
+                "runtime_resolution_source": str(
+                    getattr(event, "runtime_resolution_source", "") or ""
+                ),
+                "fallback_index": getattr(event, "fallback_index", None),
             }
         if kind == "tool_call_completed":
             return {
                 "kind": "tool_completed",
                 "tool_name": str(getattr(event, "tool_name", "") or ""),
                 "args": dict(getattr(event, "args", None) or {}),
+                "call_id": str(getattr(event, "call_id", "") or ""),
                 "ok": bool(getattr(event, "ok", False)),
                 "duration_ms": getattr(event, "duration_ms", None),
+                "exit_code": getattr(event, "exit_code", None),
                 "content": str(getattr(event, "text", "") or ""),
+                "state": str(getattr(event, "state", "") or ""),
+                "model_tool_name": str(getattr(event, "model_tool_name", "") or ""),
+                "runtime_tool_name": str(getattr(event, "runtime_tool_name", "") or ""),
+                "runtime_binding_id": str(
+                    getattr(event, "runtime_binding_id", "") or ""
+                ),
+                "runtime_fallback_used": bool(
+                    getattr(event, "runtime_fallback_used", False)
+                ),
+                "runtime_fallback_chain": list(
+                    getattr(event, "runtime_fallback_chain", None) or []
+                ),
+                "runtime_resolution_source": str(
+                    getattr(event, "runtime_resolution_source", "") or ""
+                ),
+                "fallback_index": getattr(event, "fallback_index", None),
             }
         if kind == "budget_event":
             payload = dict(getattr(event, "budget_payload", None) or {})

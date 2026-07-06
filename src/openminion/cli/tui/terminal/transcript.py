@@ -3,23 +3,29 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable, Literal
 
 from rich.console import Console
-from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.tui.presentation.markers import token_rich_style
 from openminion.cli.tui.presentation.models import ChatMessage, MessageKind
+from openminion.cli.tui.presentation.messages import (
+    render_body,
+    render_error_text,
+    render_system_text,
+    render_user_text,
+)
 
 from .streaming import (
     TerminalTurnHandle,
     _TOOL_BLOCK_VERBOSE_MAX_LINES,
     _body_line_count,
-    _looks_like_markdown,
     _render_in_progress_tool_block,
     _render_full_tool_block,
     _render_tool_block,
     is_truncated,
 )
+
+_ERROR_STYLE = token_rich_style(StyleToken.ERROR)
 
 
 def get_app_or_none() -> Any | None:
@@ -42,16 +48,6 @@ def run_in_terminal(func: Callable[[], None], *, render_cli_done: bool = False) 
         return runner(func, render_cli_done=render_cli_done)
     func()
     return None
-
-
-_USER_PREFIX_STYLE = token_rich_style(StyleToken.USER, dim=True)
-_USER_PREFIX = Text("> ", style=_USER_PREFIX_STYLE)
-# SYSTEM-style lines route through MUTED tier + italic
-# so light terminals get a legible gray (not dim-black) and theme
-# switches propagate. Italic is preserved as a Rich modifier.
-_MUTED_BASE = token_rich_style(StyleToken.MUTED)
-_SYSTEM_STYLE = f"italic {_MUTED_BASE}" if _MUTED_BASE else "italic"
-_ERROR_STYLE = token_rich_style(StyleToken.ERROR)
 
 
 class TerminalTranscript:
@@ -107,7 +103,10 @@ class TerminalTranscript:
             plain=self._plain_spinner,
             footer_provider=footer_provider,
             show_response_time=self._show_response_time,
-        ).start()
+        )
+        if self._terminal_writer is not None:
+            handle.set_terminal_writer(self._terminal_writer)
+        handle.start()
         self._active_handle = handle
         original_complete = handle.complete
 
@@ -211,45 +210,22 @@ class TerminalTranscript:
 
     def _render(self, message: ChatMessage) -> None:
         if message.kind == MessageKind.USER:
-
-            def _render_user() -> None:
-                line = Text()
-                line.append("> ", style=_USER_PREFIX_STYLE)
-                line.append(message.body or "")
-                self._console.print(line)
-
-            self._write_render(_render_user)
+            self._write_render(
+                lambda: self._console.print(render_user_text(message.body or ""))
+            )
             return
         if message.kind == MessageKind.AGENT:
             body = str(message.body or "")
-
-            def _render_agent() -> None:
-                if body and _looks_like_markdown(body):
-                    self._console.print(
-                        RichMarkdown(
-                            body,
-                            code_theme="monokai",
-                            inline_code_lexer="text",
-                            justify="left",
-                        )
-                    )
-                else:
-                    self._console.print(Text(body))
-
-            self._write_render(_render_agent)
+            self._write_render(lambda: self._console.print(render_body(body)))
             return
         if message.kind == MessageKind.SYSTEM:
             self._write_render(
-                lambda: self._console.print(
-                    Text(message.body or "", style=_SYSTEM_STYLE)
-                )
+                lambda: self._console.print(render_system_text(message.body or ""))
             )
             return
         if message.kind == MessageKind.ERROR:
             self._write_render(
-                lambda: self._console.print(
-                    Text(message.body or "", style=_ERROR_STYLE)
-                )
+                lambda: self._console.print(render_error_text(message.body or ""))
             )
             return
         if message.kind == MessageKind.TOOL and message.tool_event is not None:

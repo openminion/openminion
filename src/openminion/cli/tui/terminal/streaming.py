@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import time
 from threading import Event, Thread
+from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console, Group
@@ -11,6 +12,7 @@ from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 
 from openminion.cli.presentation.styles import StyleToken
+from openminion.cli.tui.presentation.messages import looks_like_markdown
 from openminion.cli.status.tool_calls import (
     format_tool_fallback_marker,
     format_tool_provenance_marker,
@@ -27,12 +29,7 @@ from openminion.cli.tui.presentation.models import ToolEvent
 
 from .spinner import THINKING_VERB, Spinner, format_status_row
 
-
-def _looks_like_markdown(text: str) -> bool:
-    sample = text.strip()
-    return bool(
-        sample.startswith(("#", "- ", "* ", "> ", "```", "1.", "|")) or "```" in sample
-    )
+_looks_like_markdown = looks_like_markdown
 
 
 def _looks_like_unified_diff(text: str) -> bool:
@@ -106,8 +103,25 @@ class TerminalTurnHandle:
         self._refresh_thread: Thread | None = None
         self._inline_status_mode = False
         self._inline_status_visible = False
+        self._terminal_writer: Callable[[Callable[[], None]], Any] | None = None
+        self._prompt_safe_mode = False
+        self._last_prompt_safe_status_line = ""
+        self._prompt_safe_status_visible = False
+
+    def set_terminal_writer(self, writer: Callable[[Callable[[], None]], Any]) -> None:
+        self._terminal_writer = writer
+
+    def _write_render(self, render: Callable[[], None]) -> None:
+        writer = self._terminal_writer
+        if writer is not None:
+            writer(render)
+            return
+        render()
 
     def _refresh_live(self) -> None:
+        if self._prompt_safe_mode:
+            self._refresh_prompt_safe_status()
+            return
         if self._inline_status_mode:
             self._refresh_inline_status()
             return
@@ -155,9 +169,15 @@ class TerminalTurnHandle:
         self._started_at = time.monotonic()
         self._spinner = Spinner(self._started_at, plain=self._plain)
         self._refresh_stop.clear()
-        self._inline_status_mode = bool(getattr(self._console, "is_terminal", False))
+        self._prompt_safe_mode = self._terminal_writer is not None
+        self._inline_status_mode = (
+            bool(getattr(self._console, "is_terminal", False))
+            and not self._prompt_safe_mode
+        )
         self._inline_status_visible = False
-        if not self._inline_status_mode:
+        self._prompt_safe_status_visible = False
+        self._last_prompt_safe_status_line = ""
+        if not self._inline_status_mode and not self._prompt_safe_mode:
             self._live = Live(
                 self._render(),
                 console=self._console,
@@ -188,17 +208,22 @@ class TerminalTurnHandle:
         self.append_renderable(_render_tool_block(event))
 
     def append_renderable(self, renderable: Any) -> None:
+        if self._prompt_safe_mode:
+            self._clear_prompt_safe_status()
+            self._write_render(lambda: self._console.print(renderable))
+            self._refresh_prompt_safe_status()
+            return
         if self._inline_status_mode:
             self._clear_inline_status()
-            self._console.print(renderable)
+            self._write_render(lambda: self._console.print(renderable))
             self._refresh_inline_status()
             return
         if self._live is not None:
             self._live.stop()
-            self._console.print(renderable)
+            self._write_render(lambda: self._console.print(renderable))
             self._live.start(refresh=True)
         else:
-            self._console.print(renderable)
+            self._write_render(lambda: self._console.print(renderable))
 
     def complete(self, final_text: str | None = None) -> None:
         if self._completed:
@@ -208,11 +233,13 @@ class TerminalTurnHandle:
         elapsed = time.monotonic() - self._started_at
         is_bounded_fallback = elapsed <= _BOUNDED_FALLBACK_THRESHOLD_S
         self._refresh_stop.set()
+        if self._prompt_safe_mode:
+            self._clear_prompt_safe_status()
         if self._inline_status_mode:
             self._clear_inline_status()
             final_renderable = self._render_final_body(elapsed_seconds=elapsed)
             if final_renderable is not None:
-                self._console.print(final_renderable)
+                self._write_render(lambda: self._console.print(final_renderable))
         elif self._live is not None:
             final_renderable = self._render_final_body(elapsed_seconds=elapsed)
             if is_bounded_fallback:
@@ -225,16 +252,53 @@ class TerminalTurnHandle:
                 self._live.update(final_renderable, refresh=True)
             self._live.stop()
             self._live = None
+        else:
+            final_renderable = self._render_final_body(elapsed_seconds=elapsed)
+            if final_renderable is not None:
+                self._write_render(lambda: self._console.print(final_renderable))
         if self._refresh_thread is not None:
             self._refresh_thread.join(timeout=0.2)
             self._refresh_thread = None
         if not self._inline_status_mode:
-            self._console.print()
+            self._write_render(lambda: self._console.print())
         self._completed = True
 
     def _run_live_refresh_loop(self) -> None:
         while not self._refresh_stop.wait(0.2):
             self._refresh_live()
+
+    def _refresh_prompt_safe_status(self) -> None:
+        if self._completed or self._buffer:
+            self._clear_prompt_safe_status()
+            return
+        line = self._inline_status_line()
+        if not line or line == self._last_prompt_safe_status_line:
+            return
+        self._last_prompt_safe_status_line = line
+        self._write_prompt_safe_control(f"\r\033[2K{line}")
+        self._prompt_safe_status_visible = True
+
+    def _write_prompt_safe_control(self, payload: str) -> None:
+        control_writer = getattr(self._terminal_writer, "write_control", None)
+        if callable(control_writer):
+            control_writer(payload)
+            return
+
+        def _write() -> None:
+            file = getattr(self._console, "file", None)
+            if file is None:
+                return
+            file.write(payload)
+            file.flush()
+
+        self._write_render(_write)
+
+    def _clear_prompt_safe_status(self) -> None:
+        if not self._prompt_safe_status_visible:
+            return
+        self._write_prompt_safe_control("\r\033[2K")
+        self._prompt_safe_status_visible = False
+        self._last_prompt_safe_status_line = ""
 
     def _refresh_inline_status(self) -> None:
         if self._completed:

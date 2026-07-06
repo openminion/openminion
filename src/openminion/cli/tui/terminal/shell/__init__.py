@@ -15,10 +15,8 @@ try:
 except ImportError:  # pragma: no cover - POSIX-only terminal interrupt support.
     termios = None  # type: ignore[assignment]
     tty = None  # type: ignore[assignment]
-
 from rich.console import Console
 from rich.text import Text
-
 from openminion.base.config.env import resolve_environment_config
 from openminion.cli.status import format_token_usage_summary
 from openminion.cli.status.tool_calls import format_tool_args_preview
@@ -30,69 +28,25 @@ from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_fir
 
 from ..composer import TerminalComposer
 from ..overlays import TerminalOverlayPresenter
+from ..prompt_output import build_prompt_safe_terminal_writer
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
 from .labels import _runtime_label
 from .actions import (
     _copy_to_clipboard,
     _handle_slash,
-    _open_dashboard_side_trip,
+    _open_dashboard_side_trip as _open_dashboard_side_trip,
     _push_greeter,
     _run_shell_escape,
     _runtime_permission_mode,
     _cycle_permission_mode,
     _SLASH_COMMANDS,
 )
-from .renderers import (
-    _render_cost_snapshot,
-    _render_mcp_status,
-    _render_model_status,
-    _render_sessions_list,
-    _render_status_block,
-    _render_tools_list,
-)
-
+from .renderers import _render_model_status as _render_model_status
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.tui.presentation.markers import token_rich_style
 from openminion.cli.tui.presentation.slash_commands import slash_help_rows
-from openminion.cli.tui.presentation.visible_parity import (
-    statusline_label,
-)
-
-__all__ = [
-    "run_terminal_focus",
-    "_discover_custom_commands_for",
-    "_focus_history_path",
-    "_confirm_terminal_exit",
-    "_handle_slash_input",
-    "_run_one_shot_stdin",
-    "_run_agent_turn",
-    "_run_interruptible_agent_turn",
-    "_build_terminal_approval_callback",
-    "_route_durable_activity_event",
-    "_normalize_progress_kind",
-    "_build_turn_progress_callback",
-    "_finalize_turn_status_line",
-    "_start_escape_interrupt_watcher",
-    "_copy_to_clipboard",
-    "_handle_slash",
-    "_open_dashboard_side_trip",
-    "_push_greeter",
-    "_run_shell_escape",
-    "_runtime_permission_mode",
-    "_cycle_permission_mode",
-    "_SLASH_COMMANDS",
-    "_render_cost_snapshot",
-    "_render_mcp_status",
-    "_render_model_status",
-    "_render_sessions_list",
-    "_render_status_block",
-    "_render_tools_list",
-    "_show_response_time_enabled",
-    "_emit_startup_notice",
-    "_schedule_startup_notice",
-]
-
+from openminion.cli.tui.presentation.visible_parity import statusline_label
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -101,6 +55,8 @@ _MUTED_STYLE = token_rich_style(StyleToken.MUTED)
 _MUTED_ITALIC_STYLE = f"italic {_MUTED_STYLE}" if _MUTED_STYLE else "italic"
 _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 _ESCAPE_BYTE = b"\x1b"
+_TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
+_PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
 
 
 @dataclass(frozen=True)
@@ -259,17 +215,20 @@ def run_terminal_focus(
     startup_notice: Callable[[], str] | None = None,
 ) -> int:
     """Synchronous entry point. Wraps the async loop."""
-    return asyncio.run(
-        _run_terminal_focus_async(
-            runtime,
-            working_dir=working_dir or str(Path.cwd().resolve(strict=False)),
-            agent=agent,
-            session=session,
-            plain_spinner=plain_spinner,
-            verbosity=verbosity,
-            startup_notice=startup_notice,
+    try:
+        return asyncio.run(
+            _run_terminal_focus_async(
+                runtime,
+                working_dir=working_dir or str(Path.cwd().resolve(strict=False)),
+                agent=agent,
+                session=session,
+                plain_spinner=plain_spinner,
+                verbosity=verbosity,
+                startup_notice=startup_notice,
+            )
         )
-    )
+    except KeyboardInterrupt:
+        return 0
 
 
 def _build_ctrl_key_handlers(
@@ -393,6 +352,8 @@ class _TerminalFocusLoop:
         self.read_task: asyncio.Task[str] | None = None
         self.exit_after_turn = False
         self.turn_cancel_requested = False
+        self.active_turn_text = ""
+        self.active_turn_started_at = 0.0
 
     def refresh_status_line(self, *, state: str = "idle") -> None:
         self.status_line.set_state(
@@ -405,10 +366,17 @@ class _TerminalFocusLoop:
             state=state,
         )
 
-    def start_read_task(self) -> None:
+    def start_read_task(self, *, delay_seconds: float = 0.0) -> None:
         if self.read_task is not None and not self.read_task.done():
             return
-        self.read_task = asyncio.create_task(self.composer.read_line())
+        if delay_seconds <= 0:
+            self.read_task = asyncio.create_task(self.composer.read_line())
+            return
+        self.read_task = asyncio.create_task(self._read_line_after_delay(delay_seconds))
+
+    async def _read_line_after_delay(self, delay_seconds: float) -> str:
+        await asyncio.sleep(delay_seconds)
+        return await self.composer.read_line()
 
     async def cancel_read_task(self) -> None:
         task = self.read_task
@@ -428,6 +396,8 @@ class _TerminalFocusLoop:
         self.active_turn_task.cancel()
 
     async def start_turn(self, text: str) -> None:
+        self.active_turn_text = str(text or "")
+        self.active_turn_started_at = asyncio.get_running_loop().time()
         self.active_turn_task = asyncio.create_task(
             _run_agent_turn(
                 text=text,
@@ -442,10 +412,18 @@ class _TerminalFocusLoop:
                 ),
             )
         )
+        if callable(getattr(self.composer, "set_busy", None)):
+            self.composer.set_busy(True)
         self.refresh_status_line(state="responding")
-        self.start_read_task()
+        self.start_read_task(delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS)
 
     async def handle_busy_input(self, text: str) -> None:
+        if (
+            text == self.active_turn_text
+            and asyncio.get_running_loop().time() - self.active_turn_started_at
+            <= _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS
+        ):
+            return
         if text in ("/exit", "/quit"):
             self.exit_after_turn = True
             self.transcript.push_message(
@@ -502,7 +480,10 @@ class _TerminalFocusLoop:
                 raise
         finally:
             self.turn_cancel_requested = False
-            self.refresh_status_line()
+            queued_next = bool(self.pending_turns) and not self.exit_after_turn
+            if callable(getattr(self.composer, "set_busy", None)) and not queued_next:
+                self.composer.set_busy(False)
+            self.refresh_status_line(state="responding" if queued_next else "idle")
         if self.exit_after_turn:
             self.console.print(Text("(exit)", style=_MUTED_STYLE))
             return 0
@@ -641,11 +622,9 @@ async def _run_terminal_focus_async(
             transcript=transcript,
             working_dir=working_dir,
         )
-
     handle_ctrl_l, handle_ctrl_o = _build_ctrl_key_handlers(
         transcript=transcript, console=console
     )
-
     custom_commands = _discover_custom_commands_for(
         runtime=runtime, working_dir=working_dir
     )
@@ -674,12 +653,17 @@ async def _run_terminal_focus_async(
         on_escape=lambda: None,
         working_dir=working_dir,
     )
+    transcript.set_terminal_writer(
+        build_prompt_safe_terminal_writer(
+            console=console,
+            prompt_session=composer.prompt_session,
+        )
+    )
     overlay = TerminalOverlayPresenter(
         console=console,
         prompt_session=composer.prompt_session,
     )
     approval_grants: set[str] = set()
-
     _push_greeter(console, runtime=runtime, working_dir=working_dir)
     startup_notice_task = _schedule_startup_notice(
         startup_notice,

@@ -26,7 +26,11 @@ from openminion.cli.tui.focus.widgets import (
 )
 from openminion.cli.tui.providers.runtime import OpenMinionRuntime
 from openminion.cli.tui.widgets import ChatMessage, ChatSearchBar
-from openminion.cli.tui.focus.widgets import FocusComposer, FocusTranscript
+from openminion.cli.tui.focus.widgets import (
+    FocusComposer,
+    FocusMessageWidget,
+    FocusTranscript,
+)
 from openminion.cli.tui.presentation.models import MessageKind
 from openminion.services.bootstrap.onboarding import (
     OnboardingAction,
@@ -227,6 +231,18 @@ class _FakeStreamingGateway(_FakeGateway):
             kind="tool_call_started",
             tool_name="exec.run",
             args={"command": "pwd"},
+            call_id="stream-call-1",
+        )
+        yield GatewayStreamEvent(
+            trace_id="stream-1",
+            kind="tool_call_completed",
+            tool_name="exec.run",
+            args={"command": "pwd"},
+            call_id="stream-call-1",
+            ok=True,
+            duration_ms=12,
+            exit_code=0,
+            text=session_id,
         )
         yield GatewayStreamEvent(
             trace_id="stream-1", kind="assistant_token", text="hi "
@@ -569,6 +585,46 @@ async def test_openminion_runtime_focus_uses_gateway_streaming_when_available() 
     assert call["inbound_metadata"]["request_source"] == "stream-test"
     assert progress_events[0]["kind"] == "tool_started"
     assert progress_events[0]["tool_name"] == "exec.run"
+    assert progress_events[0]["call_id"] == "stream-call-1"
+    assert progress_events[1]["kind"] == "tool_completed"
+    assert progress_events[1]["call_id"] == "stream-call-1"
+
+
+@pytest.mark.asyncio
+async def test_focus_screen_streaming_tool_progress_updates_single_inline_block() -> (
+    None
+):
+    runtime = OpenMinionRuntime(
+        _FakeRuntime(streaming_gateway=True),
+        target="focus",
+        working_dir="/tmp/focus-streaming-ui",
+        bind_immediately=False,
+    )
+    runtime.create_new_session()
+    app = FocusApp(runtime=runtime, working_dir=runtime.working_dir)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        input_widget = app.screen.query_one("#focus-input", Input)
+        input_widget.value = "stream please"
+        input_widget.focus()
+        await pilot.press("enter")
+        for _ in range(20):
+            await pilot.pause()
+            if app.screen._busy is False:
+                break
+
+        blocks = list(app.screen.query(ToolBlockWidget))
+        assert len(blocks) == 1
+        tool_block = blocks[0]
+        assert not getattr(tool_block, "_pending", True)
+        all_msgs = list(app.screen.query_one(FocusTranscript)._messages)
+        assert not any(message.kind == MessageKind.TOOL for message in all_msgs)
+        parent_message = tool_block.parent
+        assert isinstance(parent_message, FocusMessageWidget)
+        assert parent_message._message.kind == MessageKind.AGENT
 
 
 def test_openminion_runtime_focus_explicit_session_and_candidate_lookup() -> None:
@@ -623,6 +679,31 @@ def test_openminion_runtime_focus_explicit_session_and_candidate_lookup() -> Non
     assert found is not None
     assert found.id == candidate.id
     assert runtime.is_bound is False
+
+
+def test_openminion_runtime_focus_creates_fresh_explicit_session_when_deferred() -> (
+    None
+):
+    rt = _FakeRuntime()
+    working_dir = str(Path("/tmp/focus-project").resolve())
+
+    runtime = OpenMinionRuntime(
+        rt,
+        target="focus",
+        agent_id="custom-agent",
+        working_dir=working_dir,
+        bind_immediately=False,
+        session_id="focus-fresh-explicit",
+    )
+
+    assert runtime.is_bound is True
+    assert runtime.session_id == "focus-fresh-explicit"
+    record = rt.sessions.get_session("focus-fresh-explicit")
+    assert record is not None
+    assert record.agent_id == "custom-agent"
+    assert record.target == "focus"
+    assert record.metadata["working_dir"] == working_dir
+    assert record.metadata["focus_mode"] is True
 
 
 def test_openminion_runtime_focus_history_expands_tool_events_and_relative_paths() -> (
@@ -853,7 +934,7 @@ async def test_focus_screen_tool_approval_flow_renders_tool_block() -> None:
                 break
 
         assert runtime.last_approval_result is True
-        assert app.screen.query_one(ToolBlockWidget)
+        tool_block = app.screen.query_one(ToolBlockWidget)
         assert not list(app.screen.query(ToolApprovalWidget))
         all_msgs = list(app.screen.query_one(FocusTranscript)._messages)
         agent_bodies = [(m.kind, m.body) for m in all_msgs]
@@ -861,6 +942,10 @@ async def test_focus_screen_tool_approval_flow_renders_tool_block() -> None:
             message.kind == MessageKind.AGENT and message.body == "Ran pwd."
             for message in all_msgs
         ), f"AGENT 'Ran pwd.' missing; messages={agent_bodies}"
+        assert not any(message.kind == MessageKind.TOOL for message in all_msgs)
+        parent_message = tool_block.parent
+        assert isinstance(parent_message, FocusMessageWidget)
+        assert parent_message._message.kind == MessageKind.AGENT
 
 
 @pytest.mark.asyncio

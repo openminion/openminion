@@ -22,6 +22,10 @@ from openminion.cli.tui.presentation.models import (
     ToolEvent,
     format_chat_timestamp,
 )
+from openminion.cli.tui.presentation.messages import (
+    looks_like_markdown,
+    render_body,
+)
 from openminion.cli.tui.presentation.tool.blocks import ToolBlockWidget
 from .chat_selection import ChatSelectionMixin, copyable_text_for_message  # noqa: F401
 
@@ -613,13 +617,7 @@ class MessageWidget(Widget):
             return self._highlight_text(clean, self._search_query)
         if not clean.strip():
             return Text(clean)
-        if not markdown_allowed or not MessageWidget._looks_like_markdown(clean):
-            return Text(clean)
-        return RichMarkdown(
-            clean,
-            code_theme="monokai",
-            inline_code_theme="monokai",
-        )
+        return render_body(clean, markdown_allowed=markdown_allowed)
 
     @staticmethod
     def _text_renderable(text: str) -> Text:
@@ -634,8 +632,7 @@ class MessageWidget(Widget):
 
     @staticmethod
     def _looks_like_markdown(text: str) -> bool:
-        markers = ("```", "# ", "- ", "* ", "1. ", "> ", "`", "**", "__")
-        return any(marker in text for marker in markers)
+        return looks_like_markdown(text)
 
     @staticmethod
     def _safe_message_id(message_id: str) -> str:
