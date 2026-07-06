@@ -16,9 +16,8 @@ Before cutting a public package release:
    docs aligned with the release claim,
 3. keep `src/openminion/__init__.py` public exports honest and documented,
 4. run repo-required validation gates from `openminion/`.
-5. run any tracker-required live confidence checks separately from static repo
-   gates; passing lint is not the same thing as a healthy provider-backed CLI
-   path.
+5. run any required live confidence checks separately from static repo gates;
+   passing lint is not the same thing as a healthy provider-backed CLI path.
 
 ## Package-local validation
 
@@ -68,8 +67,8 @@ Run from the package root:
 
 ## Live confidence checks
 
-When the release tracker requires a runtime-facing confidence pass, use the
-package-owned live CLI/E2E runners in addition to the static gates above.
+When a release needs a runtime-facing confidence pass, use the package-owned
+live CLI/E2E runners in addition to the static gates above.
 
 Examples:
 

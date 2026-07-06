@@ -60,7 +60,7 @@ boundary summary than the broader docs.
    rg --files src/openminion -g '*.py' | sort
    ```
 7. Keep temporary broad-sweep artifacts in the repository scratch area, not in this package root and not mixed into package source or docs surfaces.
-8. Prefer task-scoped validation during slice work; reserve broad repo-wide suites like `make check` for integration closeout or when the tracker explicitly requires them.
+8. Prefer task-scoped validation during slice work; reserve broad repo-wide suites like `make check` for integration closeout or when a release or integration surface explicitly requires them.
 9. Do not include unrelated refactors in the same PR.
 
 Commit message guidance:
