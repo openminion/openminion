@@ -20,6 +20,19 @@ from openminion.services.agent.execution.finalization import (
     finalization_status_termination_reason,
     requires_typed_finalization_contract,
 )
+from ...execution_prompts import (
+    build_duplicate_final_tool_call_feedback,
+    build_duplicate_final_tool_call_user_message,
+    build_finalization_status_retry_feedback,
+    build_finalization_status_retry_user_message,
+    build_plain_text_retry_feedback,
+    build_plain_text_retry_user_message,
+    build_pre_tool_draft_message_text,
+    build_stale_draft_retry_feedback,
+    build_stale_draft_retry_user_message,
+    build_tool_envelope_retry_user_message,
+    build_tool_execution_results_message,
+)
 from openminion.services.security.policy import ToolBudgetState
 
 from ..deps import ExecutorDeps
@@ -68,19 +81,22 @@ def _tool_feedback_context(
         batch=batch,
         tool_calls_count=len(response.tool_calls or []),
     ).get("tool_results", "[]")
-    message = f"Tool execution results:\n{payload}"
     requires_status = requires_typed_finalization_contract(batch)
-    if requires_status:
-        message = f"{message}\n\n{FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE}"
+    finalization_guidance = (
+        FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE if requires_status else ""
+    )
+    message = build_tool_execution_results_message(
+        payload=str(payload),
+        finalization_guidance=finalization_guidance,
+    )
     return str(payload), message, requires_status
 
 
 def _pre_tool_draft_message(response: ProviderResponse) -> ProviderHistoryMessage:
     return ProviderHistoryMessage(
         role="assistant",
-        content=(
-            "Pre-tool draft for the same request (not the final answer):\n"
-            f"{response.text}"
+        content=build_pre_tool_draft_message_text(
+            response_text=str(getattr(response, "text", "") or "")
         ),
     )
 
@@ -146,20 +162,13 @@ async def _retry_plain_text_final_response(
 ) -> ProviderResponse:
     if not _needs_plain_text_retry(final_response):
         return final_response
-    retry_user_message = (
-        f"Tool execution results:\n{tool_feedback_payload}\n\n"
-        "Do not emit any tool call markup, channel envelope, JSON tool payload, "
-        "or structured tool request. Use the existing tool results already in "
-        "context and return only the final user-facing answer text."
-    )
+    retry_user_message = build_plain_text_retry_feedback(payload=tool_feedback_payload)
     if requires_finalization_status:
         retry_user_message = _with_finalization_guidance(retry_user_message)
     final_response = await runner.runtime_ops.call_provider(
         ProviderRequest(
-            user_message=(
-                f"{DEFAULT_TOOL_LOOP_CONTINUE_PROMPT}\n\n"
-                "Return a plain-text answer only. Do not emit any tool call markup "
-                "or envelope text."
+            user_message=build_plain_text_retry_user_message(
+                base_prompt=DEFAULT_TOOL_LOOP_CONTINUE_PROMPT
             ),
             system_prompt=runner.runtime.system_prompt,
             history=runner.runtime.provider_history
@@ -182,11 +191,8 @@ async def _retry_plain_text_final_response(
         return final_response
     final_response = await runner.runtime_ops.call_provider(
         ProviderRequest(
-            user_message=(
-                f"{DEFAULT_TOOL_LOOP_CONTINUE_PROMPT}\n\n"
-                "The previous answer was blocked because it was still tool-envelope "
-                "markup. Do not mention the blocked envelope. Return only the final "
-                "user-facing answer from the tool results already provided."
+            user_message=build_tool_envelope_retry_user_message(
+                base_prompt=DEFAULT_TOOL_LOOP_CONTINUE_PROMPT
             ),
             system_prompt=runner.runtime.system_prompt,
             history=runner.runtime.provider_history
@@ -217,20 +223,13 @@ async def _retry_stale_draft_final_response(
         final_response=final_response,
     ):
         return final_response
-    retry_user_message = (
-        f"Tool execution results:\n{tool_feedback_payload}\n\n"
-        "Your previous answer repeated the pre-tool draft instead of using the "
-        "tool results. Do not repeat the draft. Use only the tool results already "
-        "in context and return the actual final user-facing answer now."
-    )
+    retry_user_message = build_stale_draft_retry_feedback(payload=tool_feedback_payload)
     if requires_finalization_status:
         retry_user_message = _with_finalization_guidance(retry_user_message)
     final_response = await runner.runtime_ops.call_provider(
         ProviderRequest(
-            user_message=(
-                f"{DEFAULT_TOOL_LOOP_CONTINUE_PROMPT}\n\n"
-                "Do not repeat the pre-tool draft. Use the tool results and return "
-                "the final user-facing answer."
+            user_message=build_stale_draft_retry_user_message(
+                base_prompt=DEFAULT_TOOL_LOOP_CONTINUE_PROMPT
             ),
             system_prompt=runner.runtime.system_prompt,
             history=runner.runtime.provider_history
@@ -307,15 +306,15 @@ async def _retry_finalization_status_response(
         getattr(final_response, STATE_KEY_FINALIZATION_STATUS, None)
     ):
         return final_response
-    retry_user_message = (
-        f"Tool execution results:\n{tool_feedback_payload}\n\n"
-        f"{FINALIZATION_STATUS_RETRY_GUIDANCE}"
+    retry_user_message = build_finalization_status_retry_feedback(
+        payload=tool_feedback_payload,
+        guidance=FINALIZATION_STATUS_RETRY_GUIDANCE,
     )
     final_response = await runner.runtime_ops.call_provider(
         ProviderRequest(
-            user_message=(
-                f"{DEFAULT_TOOL_LOOP_CONTINUE_PROMPT}\n\n"
-                f"{FINALIZATION_STATUS_RETRY_GUIDANCE}"
+            user_message=build_finalization_status_retry_user_message(
+                base_prompt=DEFAULT_TOOL_LOOP_CONTINUE_PROMPT,
+                guidance=FINALIZATION_STATUS_RETRY_GUIDANCE,
             ),
             system_prompt=runner.runtime.system_prompt,
             history=runner.runtime.provider_history
@@ -400,22 +399,15 @@ async def _retry_duplicate_final_tool_calls_response(
         batch=batch,
         tool_calls_count=len(response.tool_calls or []),
     ).get("tool_results", "[]")
-    retry_user_message = (
-        f"Tool execution results:\n{tool_feedback_payload}\n\n"
-        "You repeated the exact same tool call after it already ran. Do not "
-        "repeat that call. Use the tool results already in context and return "
-        "the final answer, or choose a different available tool only if the "
-        "existing results are insufficient."
-    )
     unavailable_instruction = unavailable_discovery_retry_instruction(response, batch)
-    if unavailable_instruction:
-        retry_user_message = f"{retry_user_message}\n\n{unavailable_instruction}"
+    retry_user_message = build_duplicate_final_tool_call_feedback(
+        payload=str(tool_feedback_payload),
+        unavailable_instruction=unavailable_instruction or "",
+    )
     retry_response = await runner.runtime_ops.call_provider(
         ProviderRequest(
-            user_message=(
-                f"{DEFAULT_TOOL_LOOP_CONTINUE_PROMPT}\n\n"
-                "Do not repeat the same tool call. Replan from the existing "
-                "tool results."
+            user_message=build_duplicate_final_tool_call_user_message(
+                base_prompt=DEFAULT_TOOL_LOOP_CONTINUE_PROMPT
             ),
             system_prompt=runner.runtime.system_prompt,
             history=runner.runtime.provider_history
@@ -423,7 +415,9 @@ async def _retry_duplicate_final_tool_calls_response(
                 _pre_tool_draft_message(response),
                 ProviderHistoryMessage(
                     role="user",
-                    content=f"Tool execution results:\n{tool_feedback_payload}",
+                    content=build_tool_execution_results_message(
+                        payload=str(tool_feedback_payload)
+                    ),
                 ),
                 ProviderHistoryMessage(
                     role="assistant",

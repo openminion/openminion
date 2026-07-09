@@ -69,7 +69,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 Suite names:
 
-- `local`: deterministic PTY launch and slash-command smoke.
+- `local`: deterministic PTY launch, slash-command smoke, and fake-runtime default-focus queue/progress/interrupt proof.
 - `core`: live MiniMax basic answer.
 - `tools`: live MiniMax tool and policy-recovery smoke.
 - `approval`: focused approval UI tests without live credentials.

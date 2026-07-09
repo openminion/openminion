@@ -27,6 +27,7 @@ from openminion.modules.tool.contracts.model_ids import (
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.tool.runtime import RuntimeContext
+from openminion.tools.config import workspace_retry_path
 
 from .cache import invalidate_repo_map_cache, repo_map_cache_get, repo_map_cache_put
 from .interfaces import RepoIndex, RepoIndexFile, RepoIndexImport, RepoIndexSymbol
@@ -192,9 +193,18 @@ def _resolve_code_path(ctx: RuntimeContext, raw_path: str, operation: str) -> Pa
     try:
         resolved.relative_to(workspace_root)
     except ValueError as exc:
+        retry_path = workspace_retry_path(raw_path)
         raise ToolRuntimeError(
             "POLICY_DENIED",
-            f"path escapes workspace root: {raw_path}",
+            (
+                f"path escapes workspace root: {raw_path}. "
+                f"Use a relative path under the workspace root, for example {retry_path}."
+            ),
+            details={
+                "workspace_root": str(workspace_root),
+                "retry_path": retry_path,
+                "retry_hint": "Use a relative path under the workspace root.",
+            },
         ) from exc
     ctx.policy.ensure_path_allowed(
         str(resolved),

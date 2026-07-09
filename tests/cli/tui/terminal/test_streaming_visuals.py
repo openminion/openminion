@@ -36,7 +36,7 @@ def test_complete_strips_cursor_and_status_row() -> None:
     output = buffer.getvalue()
     assert "▍" not in output
     final_lines = output.rstrip().splitlines()[-3:]
-    assert not any("esc to interrupt" in line for line in final_lines)
+    assert not any("esc interrupts" in line for line in final_lines)
 
 
 def test_plain_mode_drops_verb_keeps_elapsed_and_hint() -> None:
@@ -169,7 +169,9 @@ def test_wait_state_suppresses_empty_assistant_row_before_first_token() -> None:
     assert "⏺" not in output
     assert "▍" not in output
     assert "minimax-m2-7" in output
-    assert "esc to interrupt" in output
+    assert "esc interrupts" in output
+    assert "Type to queue while the current turn runs" in output
+    assert "esc interrupts · type to queue" not in output
 
 
 def test_pre_stream_thinking_frame_state() -> None:

@@ -30,7 +30,7 @@ class _DummySessionAPI:
         self._state = dict(state)
         self.written: dict | None = None
         self.events: list[dict] = []
-        self.turns: list[dict[str, str]] = []
+        self.turns: list[dict[str, object]] = []
 
     def get_latest_working_state(self, session_id: str) -> dict:
         return dict(self._state)
@@ -69,17 +69,18 @@ class _DummySessionAPI:
         attachments=None,
         meta=None,
     ) -> str:
-        del attachments, meta
-        self.turns.append(
-            {
-                "session_id": session_id,
-                "role": role,
-                "content": content,
-            }
-        )
+        del attachments
+        entry: dict[str, object] = {
+            "session_id": session_id,
+            "role": role,
+            "content": content,
+        }
+        if meta:
+            entry["meta"] = dict(meta)
+        self.turns.append(entry)
         return f"{session_id}-turn-{len(self.turns)}"
 
-    def list_turns(self, session_id: str) -> list[dict[str, str]]:
+    def list_turns(self, session_id: str) -> list[dict[str, object]]:
         return [
             dict(item) for item in self.turns if item.get("session_id") == session_id
         ]
@@ -902,6 +903,45 @@ def test_prior_turn_context_hint_uses_verbatim_prefix_for_long_assistant_reply()
     assert "Want me to book anything?" not in hint["assistant_message"]
 
 
+def test_prior_turn_context_hint_includes_recent_tool_failure() -> None:
+    bridge = DummyBridge()
+    runner = _DummyRunner({})
+    runner.session_api.append_turn(
+        session_id="brain-session-prior",
+        role="user",
+        content="Can you write and compile the assembly server?",
+    )
+    runner.session_api.append_turn(
+        session_id="brain-session-prior",
+        role="tool",
+        content=(
+            "file.write(path=/tmp/http_server.asm) failed: "
+            "path escapes workspace root: /tmp/http_server.asm"
+        ),
+        meta={
+            "tool_name": "file.write",
+            "ok": False,
+            "error_code": "POLICY_DENIED",
+        },
+    )
+
+    hint = bridge._prior_turn_context_hint(
+        runner=runner,
+        session_id="brain-session-prior",
+        history=[],
+    )
+
+    assert hint is not None
+    assert hint["user_message"] == "Can you write and compile the assembly server?"
+    assert hint["tool_events"] == [
+        (
+            "tool=file.write ok=false code=POLICY_DENIED "
+            "text=file.write(path=/tmp/http_server.asm) failed: "
+            "path escapes workspace root: /tmp/http_server.asm"
+        )
+    ]
+
+
 def test_prepare_turn_appends_prior_turn_context_block_when_prior_assistant_exists() -> (
     None
 ):
@@ -969,6 +1009,67 @@ def test_prepare_turn_appends_prior_turn_context_block_when_prior_assistant_exis
         "Oakland appears to be your current city. Would you like me to get the current weather in Oakland for you?"
         in captured["system_prompt"]
     )
+
+
+def test_prepare_turn_appends_prior_tool_failure_context() -> None:
+    bridge = DummyBridge()
+    runner = SimpleNamespace(
+        context_api=_DummyContextAdapter(),
+        session_api=_DummySessionAPI({}),
+    )
+    runner.session_api.append_turn(
+        session_id="brain-session-prior",
+        role="user",
+        content="Can you write and compile the assembly server?",
+    )
+    runner.session_api.append_turn(
+        session_id="brain-session-prior",
+        role="tool",
+        content=(
+            "file.write(path=/tmp/http_server.asm) failed: "
+            "path escapes workspace root: /tmp/http_server.asm"
+        ),
+        meta={
+            "tool_name": "file.write",
+            "ok": False,
+            "error_code": "POLICY_DENIED",
+        },
+    )
+
+    bridge._runtime_system_prompt = lambda *, user_message: "BASE SYSTEM"
+    bridge._get_runner = lambda: runner
+    bridge._reset_state_for_new_input = lambda **_: None
+    bridge._inject_gateway_system_context = lambda **_: None
+    bridge._security_policy = None
+    bridge._telemetryctl = None
+    bridge._llm_wrapper = None
+    captured: dict[str, str] = {}
+
+    def _capture_hydrate(*, runner, session_id, history, system_prompt):  # noqa: ANN001
+        captured["system_prompt"] = str(system_prompt)
+
+    bridge._hydrate_runner_session_context = _capture_hydrate  # type: ignore[method-assign]
+
+    asyncio.run(
+        bridge._prepare_turn(
+            message=Message(
+                channel="console",
+                target="user",
+                body="Where did that failed path come from?",
+                metadata={"request_id": "req-prior"},
+            ),
+            history=[],
+            forced_tools=None,
+            capability_category=None,
+            brain_session_id="brain-session-prior",
+        )
+    )
+
+    assert "## Prior Turn Context" in captured["system_prompt"]
+    assert "- prior_turn_present: true" in captured["system_prompt"]
+    assert "- tool_event:" in captured["system_prompt"]
+    assert "tool=file.write ok=false code=POLICY_DENIED" in captured["system_prompt"]
+    assert "/tmp/http_server.asm" in captured["system_prompt"]
 
 
 def test_prepare_turn_keeps_prior_turn_context_when_pending_context_exists() -> None:
@@ -1899,6 +2000,7 @@ def test_hydrate_runner_session_context_skips_duplicates_and_error_turns() -> No
             "session_id": "s1",
             "role": "user",
             "content": "new question",
+            "meta": {"source": "gateway_history_bridge"},
         },
     ]
 

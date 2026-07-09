@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+from typing import Any, cast
 
 from textual.css.query import QueryError
 
@@ -16,7 +17,16 @@ from openminion.cli.tui.presentation.permissions import (
 )
 from openminion.cli.tui.presentation import resolve_theme_data_root
 from openminion.cli.tui.presentation.detail_modes import resolve_details_mode
+from openminion.cli.tui.presentation.queue import (
+    queue_cleared_notice,
+    queue_command_usage_notice,
+    queue_drop_missing_notice,
+    queue_drop_notice,
+    queue_drop_usage_notice,
+    queue_listing,
+)
 from openminion.cli.tui.presentation.slash_commands import rich_slash_command_registry
+from openminion.services.runtime.turn_input import TurnInputQueueStatus
 
 from .widgets import FocusTranscript, PermissionsOverlay
 
@@ -440,6 +450,56 @@ class SlashCommandMixin:
                 body=f"Conversation compacted{suffix}.",
             )
         )
+
+    def _slash_queue(self, args: str) -> None:
+        owner = cast(Any, self)
+        parts = str(args or "").strip().split()
+        entries = owner._turn_input_queue.list_entries(
+            session_id=owner._runtime.session_id,
+            agent_id=owner._runtime.agent_id,
+            statuses={TurnInputQueueStatus.QUEUED},
+        )
+        if not parts:
+            self._push_system_body(queue_listing([entry.text for entry in entries]))
+            return
+        action = parts[0].lower()
+        if action == "clear":
+            count = 0
+            for entry in entries:
+                owner._turn_input_queue.drop(
+                    session_id=entry.session_id,
+                    queue_id=entry.queue_id,
+                    status_version=entry.status_version,
+                )
+                count += 1
+            self._push_system_body(queue_cleared_notice(count))
+            owner._push_status_line()
+            return
+        if action == "drop":
+            if len(parts) < 2:
+                self._push_system_body(queue_drop_usage_notice())
+                return
+            try:
+                index = int(parts[1])
+            except ValueError:
+                self._push_system_body(queue_drop_usage_notice())
+                return
+            if index < 1 or index > len(entries):
+                self._push_system_body(queue_drop_missing_notice(index))
+                return
+            entry = entries[index - 1]
+            owner._turn_input_queue.drop(
+                session_id=entry.session_id,
+                queue_id=entry.queue_id,
+                status_version=entry.status_version,
+            )
+            self._push_system_body(queue_drop_notice(index, entry.text))
+            owner._push_status_line()
+            return
+        if action == "run-next":
+            owner.run_worker(owner._cancel_current_and_run_next(), exclusive=False)
+            return
+        self._push_system_body(queue_command_usage_notice())
 
     def _slash_resume(self, _args: str) -> None:
         """Open the session picker pre-filtered to non-empty sessions."""

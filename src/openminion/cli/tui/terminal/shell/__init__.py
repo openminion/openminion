@@ -18,11 +18,16 @@ except ImportError:  # pragma: no cover - POSIX-only terminal interrupt support.
 from rich.console import Console
 from rich.text import Text
 from openminion.base.config.env import resolve_environment_config
-from openminion.cli.status import format_token_usage_summary
-from openminion.cli.status.tool_calls import format_tool_args_preview
 from openminion.cli.tui.presentation.models import (
     ChatMessage,
     MessageKind,
+)
+from openminion.cli.tui.presentation.queue import (
+    is_queue_command,
+    queue_preserved_after_interrupt_notice,
+    queue_run_next_empty_notice,
+    queue_run_next_notice,
+    queued_message_notice,
 )
 from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
 
@@ -32,6 +37,18 @@ from ..prompt_output import build_prompt_safe_terminal_writer
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
 from .labels import _runtime_label
+from .approval import (
+    build_terminal_approval_callback as _build_terminal_approval_callback,
+)
+from .progress import (
+    normalize_progress_kind as _normalize_progress_kind,
+    tick_turn_status_line as _tick_turn_status_line,
+)
+from .queue_control import apply_queue_command
+from .startup import (
+    cancel_startup_notice as _cancel_startup_notice,
+    schedule_startup_notice as _schedule_startup_notice,
+)
 from .actions import (
     _copy_to_clipboard,
     _handle_slash,
@@ -42,7 +59,14 @@ from .actions import (
     _cycle_permission_mode,
     _SLASH_COMMANDS,
 )
-from .renderers import _render_model_status as _render_model_status
+from .renderers import (
+    _render_cost_snapshot as _render_cost_snapshot,
+    _render_mcp_status as _render_mcp_status,
+    _render_model_status as _render_model_status,
+    _render_sessions_list as _render_sessions_list,
+    _render_status_block as _render_status_block,
+    _render_tools_list as _render_tools_list,
+)
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.tui.presentation.markers import token_rich_style
 from openminion.cli.tui.presentation.slash_commands import slash_help_rows
@@ -57,6 +81,7 @@ _SYSTEM_STYLE = token_rich_style(StyleToken.SYSTEM)
 _ESCAPE_BYTE = b"\x1b"
 _TYPEAHEAD_REOPEN_DELAY_SECONDS = 0.05
 _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS = 0.35
+_TYPEAHEAD_PROMPT_GAP_LINES = 1
 
 
 @dataclass(frozen=True)
@@ -109,40 +134,6 @@ def _focus_history_path(runtime: Any) -> str | None:
 
 def _show_response_time_enabled(env: Any | None = None) -> bool:
     return resolve_environment_config(env=env).openminion_show_response_time
-
-
-async def _emit_startup_notice(
-    startup_notice: Callable[[], str],
-    *,
-    transcript: TerminalTranscript,
-) -> None:
-    try:
-        notice = await asyncio.to_thread(startup_notice)
-    except Exception:
-        return
-    notice = str(notice or "").strip()
-    if not notice:
-        return
-    transcript.push_message(
-        ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=notice)
-    )
-
-
-def _schedule_startup_notice(
-    startup_notice: Callable[[], str] | None,
-    *,
-    transcript: TerminalTranscript,
-) -> asyncio.Task[None] | None:
-    if startup_notice is None:
-        return None
-    return asyncio.create_task(
-        _emit_startup_notice(startup_notice, transcript=transcript)
-    )
-
-
-def _cancel_startup_notice(task: asyncio.Task[None] | None) -> None:
-    if task is not None and not task.done():
-        task.cancel()
 
 
 def _start_escape_interrupt_watcher(
@@ -352,6 +343,8 @@ class _TerminalFocusLoop:
         self.read_task: asyncio.Task[str] | None = None
         self.exit_after_turn = False
         self.turn_cancel_requested = False
+        self.queue_auto_drain_paused = False
+        self.run_next_after_interrupt = False
         self.active_turn_text = ""
         self.active_turn_started_at = 0.0
 
@@ -366,16 +359,32 @@ class _TerminalFocusLoop:
             state=state,
         )
 
-    def start_read_task(self, *, delay_seconds: float = 0.0) -> None:
+    def start_read_task(
+        self,
+        *,
+        delay_seconds: float = 0.0,
+        leading_blank_lines: int = 0,
+    ) -> None:
         if self.read_task is not None and not self.read_task.done():
             return
         if delay_seconds <= 0:
-            self.read_task = asyncio.create_task(self.composer.read_line())
+            self.read_task = asyncio.create_task(
+                self._read_line_with_prompt_gap(leading_blank_lines)
+            )
             return
-        self.read_task = asyncio.create_task(self._read_line_after_delay(delay_seconds))
+        self.read_task = asyncio.create_task(
+            self._read_line_after_delay(delay_seconds, leading_blank_lines)
+        )
 
-    async def _read_line_after_delay(self, delay_seconds: float) -> str:
+    async def _read_line_after_delay(
+        self, delay_seconds: float, leading_blank_lines: int
+    ) -> str:
         await asyncio.sleep(delay_seconds)
+        return await self._read_line_with_prompt_gap(leading_blank_lines)
+
+    async def _read_line_with_prompt_gap(self, leading_blank_lines: int) -> str:
+        for _ in range(max(0, int(leading_blank_lines))):
+            self.console.print()
         return await self.composer.read_line()
 
     async def cancel_read_task(self) -> None:
@@ -395,6 +404,40 @@ class _TerminalFocusLoop:
         self.turn_cancel_requested = True
         self.active_turn_task.cancel()
 
+    def _push_system_message(self, body: str) -> None:
+        self.transcript.push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
+        )
+
+    async def handle_queue_command(self, text: str) -> None:
+        result = apply_queue_command(text, self.pending_turns)
+        if result.kind == "run_next":
+            await self._run_next_queued_turn()
+            return
+        if result.reset_pause:
+            self.queue_auto_drain_paused = False
+            self.run_next_after_interrupt = False
+        self._push_system_message(result.message)
+        self.refresh_status_line(
+            state="responding" if self.active_turn_task is not None else "idle"
+        )
+
+    async def _run_next_queued_turn(self) -> None:
+        if not self.pending_turns:
+            self._push_system_message(queue_run_next_empty_notice())
+            return
+        if self.active_turn_task is not None and not self.active_turn_task.done():
+            self.queue_auto_drain_paused = False
+            self.run_next_after_interrupt = True
+            self.turn_cancel_requested = True
+            self.active_turn_task.cancel()
+            return
+        next_text = self.pending_turns.popleft()
+        self.queue_auto_drain_paused = False
+        self._push_system_message(queue_run_next_notice(next_text))
+        self.refresh_status_line(state="responding")
+        await self.start_turn(next_text)
+
     async def start_turn(self, text: str) -> None:
         self.active_turn_text = str(text or "")
         self.active_turn_started_at = asyncio.get_running_loop().time()
@@ -410,12 +453,16 @@ class _TerminalFocusLoop:
                     pause_prompt=self.cancel_read_task,
                     resume_prompt=self.start_read_task,
                 ),
+                invalidate_prompt=getattr(self.composer, "invalidate", None),
             )
         )
         if callable(getattr(self.composer, "set_busy", None)):
             self.composer.set_busy(True)
         self.refresh_status_line(state="responding")
-        self.start_read_task(delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS)
+        self.start_read_task(
+            delay_seconds=_TYPEAHEAD_REOPEN_DELAY_SECONDS,
+            leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES,
+        )
 
     async def handle_busy_input(self, text: str) -> None:
         if (
@@ -426,24 +473,16 @@ class _TerminalFocusLoop:
             return
         if text in ("/exit", "/quit"):
             self.exit_after_turn = True
-            self.transcript.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body="Exit requested after the current turn finishes.",
-                )
-            )
+            self._push_system_message("Exit requested after the current turn finishes.")
+            return
+        if is_queue_command(text):
+            await self.handle_queue_command(text)
             return
         if text.startswith("/") or text.startswith("!"):
-            self.transcript.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=(
-                        "Commands are unavailable while a turn is running. "
-                        "Wait for the reply, or press Esc to interrupt."
-                    ),
-                )
+            self._push_system_message(
+                "Commands are unavailable while a turn is running. "
+                "Use `/queue` for queued prompts, wait for the reply, "
+                "or press Esc to interrupt."
             )
             return
         self.pending_turns.append(text)
@@ -451,13 +490,8 @@ class _TerminalFocusLoop:
             ChatMessage(kind=MessageKind.USER, sender="you", body=text),
             render=False,
         )
-        self.transcript.push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=f"Queued message ({len(self.pending_turns)} pending).",
-            )
-        )
+        self.queue_auto_drain_paused = False
+        self._push_system_message(queued_message_notice(len(self.pending_turns)))
         self.refresh_status_line(state="responding")
 
     async def handle_turn_completion(self) -> int | None:
@@ -469,26 +503,38 @@ class _TerminalFocusLoop:
             await finished_turn
         except asyncio.CancelledError:
             if self.turn_cancel_requested:
-                self.transcript.push_message(
-                    ChatMessage(
-                        kind=MessageKind.SYSTEM,
-                        sender="system",
-                        body="Interrupted current turn.",
+                if self.pending_turns and not self.run_next_after_interrupt:
+                    self.queue_auto_drain_paused = True
+                    self._push_system_message(
+                        queue_preserved_after_interrupt_notice(len(self.pending_turns))
                     )
-                )
+                else:
+                    self._push_system_message("Interrupted current turn.")
             else:
                 raise
         finally:
             self.turn_cancel_requested = False
-            queued_next = bool(self.pending_turns) and not self.exit_after_turn
+            run_next = self.run_next_after_interrupt
+            self.run_next_after_interrupt = False
+            queued_next = (
+                bool(self.pending_turns)
+                and not self.exit_after_turn
+                and not self.queue_auto_drain_paused
+            )
             if callable(getattr(self.composer, "set_busy", None)) and not queued_next:
                 self.composer.set_busy(False)
             self.refresh_status_line(state="responding" if queued_next else "idle")
         if self.exit_after_turn:
             self.console.print(Text("(exit)", style=_MUTED_STYLE))
             return 0
-        if self.pending_turns:
+        if run_next and self.pending_turns:
             next_text = self.pending_turns.popleft()
+            self._push_system_message(queue_run_next_notice(next_text))
+            self.refresh_status_line()
+            await self.start_turn(next_text)
+        elif self.pending_turns and not self.queue_auto_drain_paused:
+            next_text = self.pending_turns.popleft()
+            self._push_system_message(queue_run_next_notice(next_text))
             self.refresh_status_line()
             await self.start_turn(next_text)
         return None
@@ -497,6 +543,10 @@ class _TerminalFocusLoop:
         if text in ("/exit", "/quit"):
             return 0
         try:
+            if is_queue_command(text):
+                await self.handle_queue_command(text)
+                self.start_read_task()
+                return None
             if text.startswith("/"):
                 should_exit = await _handle_slash_input(
                     text,
@@ -562,11 +612,15 @@ class _TerminalFocusLoop:
             return None
         text = (text or "").strip()
         if not text:
-            self.start_read_task()
+            self.start_read_task(
+                leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES
+                if self.active_turn_task is not None
+                else 0
+            )
             return None
         if self.active_turn_task is not None:
             await self.handle_busy_input(text)
-            self.start_read_task()
+            self.start_read_task(leading_blank_lines=_TYPEAHEAD_PROMPT_GAP_LINES)
             return None
         return await self.handle_idle_input(text)
 
@@ -750,39 +804,22 @@ def _route_durable_activity_event(
     return False
 
 
-def _normalize_progress_kind(payload: dict[str, Any] | None) -> str:
-    """Normalize equivalent runtime progress event names for TUI routing."""
-
-    if not payload:
-        return ""
-    aliases = {
-        "tool_start": "tool_started",
-        "tool_started": "tool_started",
-        "tool_call_start": "tool_started",
-        "tool_call_started": "tool_started",
-        "tool_complete": "tool_completed",
-        "tool_completed": "tool_completed",
-        "tool_finish": "tool_completed",
-        "tool_finished": "tool_completed",
-        "tool_call_complete": "tool_completed",
-        "tool_call_completed": "tool_completed",
-    }
-    for key in ("kind", "source_event", "source_event_type", "event_type"):
-        raw = payload.get(key)
-        normalized = str(raw or "").strip().lower().replace(".", "_").replace("-", "_")
-        if normalized in aliases:
-            return aliases[normalized]
-    return ""
-
-
 def _build_turn_progress_callback(
     *,
     transcript: TerminalTranscript,
     handle: Any | None = None,
     status_controller: Any | None = None,
     status_line: TerminalStatusLine | None = None,
+    invalidate_prompt: Callable[[], None] | None = None,
 ):
     """Build the progress callback passed to ``runtime.send_message``."""
+
+    def _set_turn_status(label: str) -> None:
+        if status_line is None:
+            return
+        status_line.set_state(state="responding", turn_status=label)
+        if callable(invalidate_prompt):
+            invalidate_prompt()
 
     def _handle_progress(payload: dict[str, Any]) -> None:
         kind = _normalize_progress_kind(payload)
@@ -805,64 +842,19 @@ def _build_turn_progress_callback(
             setter = getattr(handle, "set_status_label", None)
             if callable(setter):
                 setter(label)
+            _set_turn_status(label)
 
     return _handle_progress
 
 
-def _format_terminal_approval_prompt(tool_name: str, args: dict[str, Any]) -> str:
-    name = str(tool_name or "tool").strip() or "tool"
-    args_preview = format_tool_args_preview(name, dict(args or {}))
-    call_line = f"{name}({args_preview})" if args_preview else f"{name}()"
-    return f"Approval required: {call_line}"
-
-
-def _build_terminal_approval_callback(
-    *,
-    overlay: TerminalOverlayPresenter,
-    session_grants: set[str],
-    pause_prompt: Callable[[], Any] | None = None,
-    resume_prompt: Callable[[], None] | None = None,
-) -> Callable[[str, dict[str, Any], Any], Any]:
-    async def _approval_callback(
-        tool_name: str,
-        args: dict[str, Any],
-        call_id: Any,
-    ) -> bool:
-        del call_id
-        normalized = str(tool_name or "").strip()
-        if normalized and normalized in session_grants:
-            return True
-        prompt = _format_terminal_approval_prompt(normalized, dict(args or {}))
-        if callable(pause_prompt):
-            await pause_prompt()
-        try:
-            decision = await overlay.present_approval_async(prompt)
-        finally:
-            if callable(resume_prompt):
-                resume_prompt()
-        if decision == "always" and normalized:
-            session_grants.add(normalized)
-            return True
-        return decision == "allow"
-
-    return _approval_callback
-
-
 def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) -> None:
-    """Refresh the footer with the latest usage summary after a turn ends."""
+    """Clear transient turn progress without mutating the persistent footer row."""
 
-    usage_summary = ""
-    snapshot_getter = getattr(runtime, "token_usage_snapshot", None)
-    if callable(snapshot_getter):
-        try:
-            usage_summary = format_token_usage_summary(snapshot_getter())
-        except (AttributeError, TypeError, ValueError):
-            usage_summary = ""
     status_line.set_state(
         state="idle",
-        usage_summary=usage_summary,
         permission_mode=_runtime_permission_mode(runtime),
         custom=statusline_label(runtime),
+        turn_status="",
     )
 
 
@@ -873,6 +865,7 @@ async def _run_interruptible_agent_turn(
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
     """Run one agent turn and let Escape cancel it in terminal focus."""
 
@@ -883,6 +876,7 @@ async def _run_interruptible_agent_turn(
             transcript=transcript,
             status_line=status_line,
             approval_callback=approval_callback,
+            invalidate_prompt=invalidate_prompt,
         )
     )
     watcher = _start_escape_interrupt_watcher(turn_task)
@@ -911,11 +905,20 @@ async def _run_agent_turn(
     transcript: TerminalTranscript,
     status_line: TerminalStatusLine | None,
     approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
+    invalidate_prompt: Callable[[], None] | None = None,
 ) -> None:
     """Stream tokens through the transcript turn handle."""
 
     if status_line is not None:
-        status_line.set_state(state="idle", elapsed_seconds=0.0)
+        status_line.set_state(state="responding", elapsed_seconds=0.0, turn_status="")
+    status_tick_task: asyncio.Task[None] | None = None
+    if status_line is not None:
+        status_tick_task = asyncio.create_task(
+            _tick_turn_status_line(
+                status_line=status_line,
+                invalidate_prompt=invalidate_prompt,
+            )
+        )
     handle = transcript.begin_turn(
         role="assistant",
         footer_provider=status_line.live_turn_footer
@@ -932,12 +935,17 @@ async def _run_agent_turn(
     initial_label = str(initial_status.primary_text or status_controller.fallback_label)
     if callable(setter):
         setter(initial_label)
+    if status_line is not None:
+        status_line.set_state(state="responding", turn_status=initial_label)
+    if callable(invalidate_prompt):
+        invalidate_prompt()
     try:
         progress_callback = _build_turn_progress_callback(
             transcript=transcript,
             handle=handle,
             status_controller=status_controller,
             status_line=status_line,
+            invalidate_prompt=invalidate_prompt,
         )
         send_kwargs: dict[str, Any] = {"progress_callback": progress_callback}
         if approval_callback is not None:
@@ -965,6 +973,12 @@ async def _run_agent_turn(
             ChatMessage(kind=MessageKind.ERROR, sender="error", body=str(exc))
         )
     finally:
+        if status_tick_task is not None:
+            status_tick_task.cancel()
+            try:
+                await status_tick_task
+            except asyncio.CancelledError:
+                pass
         status_controller.end_turn()
         if status_line is not None:
             _finalize_turn_status_line(runtime, status_line)

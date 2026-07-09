@@ -38,6 +38,9 @@ from openminion.services.gateway.turn.runtime import (
     _append_memory_retrieval_context,
     _inject_memory_context,
 )
+from openminion.modules.prompting.context_blocks import (
+    THIRD_BRAIN_GRAPH_CONTEXT_HEADER,
+)
 
 MemoryEventEmitter = Callable[..., None]
 
@@ -154,7 +157,7 @@ def _format_graph_results(
     max_chars: int,
     max_results: int,
 ) -> tuple[str, dict[str, str]]:
-    lines = ["## Third-brain graph context"]
+    lines = [THIRD_BRAIN_GRAPH_CONTEXT_HEADER]
     included = 0
     omitted = 0
     seen: set[tuple[str, str, str]] = set()

@@ -5,6 +5,7 @@ from openminion.modules.llm.providers.base import ProviderHistoryMessage
 
 from .prompt_history import _map_history_to_provider, _resolve_system_prompt
 from .turn_context import append_grounding_blocks, build_grounding_facts
+from openminion.modules.prompting.context_blocks import build_project_context_block
 
 
 @dataclass(frozen=True)
@@ -81,30 +82,5 @@ def _append_project_context_block(
     system_prompt: str,
     inbound_metadata: dict[str, str],
 ) -> str:
-    body = str(inbound_metadata.get("project_context_body", "") or "").strip()
-    if not body:
-        return system_prompt
-    source_name = str(inbound_metadata.get("project_context_name", "") or "").strip()
-    path_text = str(inbound_metadata.get("project_context_path", "") or "").strip()
-    truncated = (
-        str(inbound_metadata.get("project_context_truncated", "") or "").strip().lower()
-        == "true"
-    )
-    lines = [
-        "## Project Context File",
-    ]
-    if source_name:
-        lines.append(f"- source_name: {source_name}")
-    if path_text:
-        lines.append(f"- path: {path_text}")
-    if truncated:
-        lines.append("- note: content was truncated to stay within shell limits.")
-    lines.extend(
-        [
-            "",
-            "Treat the following project context file as authoritative local guidance for this project:",
-            body,
-        ]
-    )
-    block = "\n".join(lines).strip()
+    block = build_project_context_block(inbound_metadata=inbound_metadata)
     return "\n\n".join(part for part in (system_prompt, block) if part).strip()

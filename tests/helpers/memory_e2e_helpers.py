@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import fields, is_dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
 
@@ -47,6 +48,21 @@ def _shift_iso_timestamp(value: str | None, *, days: int) -> str | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return (parsed - timedelta(days=int(days))).isoformat()
+
+
+def _default_candidate_claim_key(
+    *,
+    candidate_type: str,
+    key: str | None,
+    title: str | None,
+    content: str,
+) -> str:
+    raw = str(key or title or content or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")[:80]
+    if not slug:
+        slug = "candidate"
+    prefix = "pref" if candidate_type == "user_preference" else candidate_type
+    return f"{prefix}:{slug}"
 
 
 class E2EMemoryHarness:
@@ -119,16 +135,29 @@ class E2EMemoryHarness:
         confidence: float = 0.7,
         promotion_ready: bool = True,
         key: str | None = None,
+        claim_key: str | None = None,
+        source_class: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> str:
 
         self._run_counter += 1
+        candidate_title = title or content[:80]
         base_meta: dict[str, Any] = {}
         if promotion_ready:
             base_meta["reconfirmation_count"] = 3
             base_meta["retrieval_hit_count"] = 3
         if meta:
             base_meta.update(meta)
+        effective_claim_key = claim_key
+        effective_source_class = source_class
+        if promotion_ready:
+            effective_claim_key = effective_claim_key or _default_candidate_claim_key(
+                candidate_type=candidate_type,
+                key=key,
+                title=candidate_title,
+                content=content,
+            )
+            effective_source_class = effective_source_class or "user_input"
         candidate_id = f"seed-cand-{self._run_counter}"
         self.service.candidate_put(
             MemoryCandidate(
@@ -136,10 +165,12 @@ class E2EMemoryHarness:
                 session_id=session_id,
                 proposed_scope=f"agent:{self.agent_id}",
                 type=candidate_type,
-                title=title or content[:80],
+                title=candidate_title,
                 content=content,
                 confidence=confidence,
                 key=key,
+                claim_key=effective_claim_key,
+                source_class=effective_source_class,
                 meta=base_meta,
             )
         )

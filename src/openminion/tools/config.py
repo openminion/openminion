@@ -175,6 +175,14 @@ def resolve_tool_workspace_root(
     return fallback_path.resolve(strict=False)
 
 
+def workspace_retry_path(raw_path: str) -> str:
+    candidate = Path(str(raw_path or "")).expanduser()
+    if candidate.is_absolute() and len(candidate.parts) >= 3 and candidate.parts[1] == "tmp":
+        return str(Path("tmp", *candidate.parts[2:]))
+    name = candidate.name or "scratch.txt"
+    return str(Path("tmp") / name)
+
+
 def resolve_tool_data_root(
     *,
     data_root: str | Path | None = None,

@@ -489,6 +489,40 @@ def _print_unknown_slash_notice(cmd: str, console: Console) -> None:
     )
 
 
+def _handle_visible_parity_slash(
+    cmd: str,
+    text: str,
+    *,
+    runtime: Any,
+    console: Console,
+    status_line: TerminalStatusLine,
+    working_dir: str,
+) -> None:
+    arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
+    if cmd == "/context":
+        console.print(Text(render_context_report(runtime), style=_SYSTEM_STYLE))
+    elif cmd == "/memory":
+        console.print(Text(render_memory_report(runtime), style=_SYSTEM_STYLE))
+    elif cmd == "/skills":
+        console.print(Text(render_skills_report(runtime), style=_SYSTEM_STYLE))
+    elif cmd == "/effort":
+        console.print(
+            Text(handle_effort_command(runtime, arg), style=_MUTED_ITALIC_STYLE)
+        )
+    elif cmd == "/statusline":
+        console.print(
+            Text(handle_statusline_command(runtime, arg), style=_MUTED_ITALIC_STYLE)
+        )
+        status_line.set_state(custom=statusline_label(runtime))
+    elif cmd == "/undo":
+        console.print(
+            Text(
+                handle_undo_command(runtime, arg, working_dir=working_dir),
+                style=_MUTED_ITALIC_STYLE,
+            )
+        )
+
+
 async def _handle_slash(
     text: str,
     *,
@@ -554,35 +588,14 @@ async def _handle_slash(
     if cmd == "/status":
         _render_status_block(runtime=runtime, console=console, working_dir=working_dir)
         return False
-    if cmd == "/context":
-        console.print(Text(render_context_report(runtime), style=_SYSTEM_STYLE))
-        return False
-    if cmd == "/memory":
-        console.print(Text(render_memory_report(runtime), style=_SYSTEM_STYLE))
-        return False
-    if cmd == "/skills":
-        console.print(Text(render_skills_report(runtime), style=_SYSTEM_STYLE))
-        return False
-    if cmd == "/effort":
-        arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
-        console.print(
-            Text(handle_effort_command(runtime, arg), style=_MUTED_ITALIC_STYLE)
-        )
-        return False
-    if cmd == "/statusline":
-        arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
-        console.print(
-            Text(handle_statusline_command(runtime, arg), style=_MUTED_ITALIC_STYLE)
-        )
-        status_line.set_state(custom=statusline_label(runtime))
-        return False
-    if cmd == "/undo":
-        arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
-        console.print(
-            Text(
-                handle_undo_command(runtime, arg, working_dir=working_dir),
-                style=_MUTED_ITALIC_STYLE,
-            )
+    if cmd in ("/context", "/memory", "/skills", "/effort", "/statusline", "/undo"):
+        _handle_visible_parity_slash(
+            cmd,
+            text,
+            runtime=runtime,
+            console=console,
+            status_line=status_line,
+            working_dir=working_dir,
         )
         return False
     if cmd == "/tools":
@@ -621,6 +634,14 @@ async def _handle_slash(
         return False
     if cmd == "/compact":
         _handle_slash_compact(runtime=runtime, console=console)
+        return False
+    if cmd == "/queue":
+        console.print(
+            Text(
+                "(/queue is handled by the focus input loop; use it from the focus prompt)",
+                style=_MUTED_ITALIC_STYLE,
+            )
+        )
         return False
     if cmd in ("/quiet", "/verbose", "/normal"):
         _handle_slash_verbosity(cmd, transcript=transcript, console=console)

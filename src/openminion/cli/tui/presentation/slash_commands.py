@@ -103,6 +103,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "_slash_compact",
         "_slash_compact",
     ),
+    SlashCommandMetadata(
+        "/queue",
+        "Inspect or control queued type-ahead prompts",
+        "_slash_queue",
+        "_slash_queue",
+    ),
     SlashCommandMetadata("/copy", "Copy last/selected message", None, "_slash_copy"),
     SlashCommandMetadata(
         "/status",

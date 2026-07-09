@@ -58,6 +58,7 @@ VALIDATE_PATTERN_MODULES := \
 	validate.asyncio_run_boundary \
 	validate.artifact_locations \
 	validate.path_structure_hygiene \
+	validate.prompt_literals \
 	validate.method_loc \
 	validate.broad_exception \
 	validate.filename_underscore_hygiene \
@@ -103,6 +104,7 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/asyncio_run_boundary \
 	validate/artifact_locations \
 	validate/path_structure_hygiene \
+	validate/prompt_literals \
 	validate/method_loc \
 	validate/broad_exception \
 	validate/filename_underscore_hygiene \

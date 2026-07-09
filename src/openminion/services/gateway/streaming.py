@@ -26,8 +26,10 @@ class GatewayStreamEvent(BaseModel):
     text: str | None = None
     tool_name: str | None = None
     args: dict[str, Any] | None = None
+    call_id: str | None = None
     ok: bool | None = None
     duration_ms: int | None = Field(default=None, ge=0)
+    exit_code: int | None = None
     budget_event_type: str | None = None
     budget_payload: dict[str, Any] | None = None
     status_payload: dict[str, Any] | None = None
@@ -113,6 +115,7 @@ def gateway_stream_event_from_progress(
             ts=ts,
             tool_name=str(payload.get("tool_name", "") or "").strip() or None,
             args=dict(payload.get("args", {}) or {}),
+            call_id=str(payload.get("call_id", "") or "").strip() or None,
             **_extract_provenance_fields(payload),
         )
     if kind == "tool_completed":
@@ -122,8 +125,10 @@ def gateway_stream_event_from_progress(
             ts=ts,
             tool_name=str(payload.get("tool_name", "") or "").strip() or None,
             args=dict(payload.get("args", {}) or {}),
+            call_id=str(payload.get("call_id", "") or "").strip() or None,
             ok=bool(payload.get("ok", False)),
             duration_ms=_coerce_optional_int(payload.get("duration_ms")),
+            exit_code=_coerce_optional_int(payload.get("exit_code")),
             text=str(payload.get("content", "") or "") or None,
             **_extract_provenance_fields(payload),
         )
