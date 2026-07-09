@@ -13,6 +13,12 @@ from openminion.modules.memory.runtime.gc import (
 )
 from openminion.modules.memory.models import MemoryCandidate, SessionSummaryContent
 from openminion.services.agent.memory.extraction import _content_text
+from openminion.modules.prompting.memory import (
+    CURRENT_SESSION_CALLBACK_CONTEXT_LABEL,
+    CURRENT_SESSION_SUMMARY_HEADER,
+    PRIOR_SESSION_CONTEXT_LABEL,
+    PRIOR_SESSION_SUMMARY_HEADER,
+)
 
 
 class SessionLifecycleMixin:
@@ -735,12 +741,12 @@ class SessionLifecycleMixin:
                     if len(target) >= 3:
                         break
         lines = (
-            ["## Current session summary", "", "Current session callback context:"]
+            [CURRENT_SESSION_SUMMARY_HEADER, "", CURRENT_SESSION_CALLBACK_CONTEXT_LABEL]
             if current_session
             else [
-                "## Continuing from recent sessions",
+                PRIOR_SESSION_SUMMARY_HEADER,
                 "",
-                "Most relevant prior session:",
+                PRIOR_SESSION_CONTEXT_LABEL,
             ]
         )
         key_decision_section: list[str] | None = None

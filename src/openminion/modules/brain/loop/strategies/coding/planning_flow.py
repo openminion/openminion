@@ -18,6 +18,7 @@ from openminion.modules.tool.contracts.model_ids import (
 )
 
 from .llm import DefaultCodingLLMRuntime
+from .prompts import build_coding_plan_system_prompt
 from .plan import CodingPlan, coding_plan_from_payload
 
 
@@ -92,24 +93,12 @@ class CodingPlanningMixin:
         self: Any,
         ctx: ExecutionContext,
     ) -> str:
-        parts = [
-            "Return a JSON CodingPlan with fields goal, phases, current_phase, "
-            "scratchpad, completed_steps, open_issues, subtasks, and optional "
-            "verifier_goal. Use phases in order explore -> plan -> implement -> "
-            "verify, or return a single implement phase.",
-            "When you can state structural verification facts without guessing, "
-            "populate verifier_goal with goal_id, description, success_criteria, "
-            "deliverables, and optional failure_conditions using the typed Goal "
-            "shape. Omit verifier_goal instead of inventing one.",
-        ]
         repo_index = self._load_repo_index_context(ctx)
-        if repo_index:
-            parts.extend(("", "[REPO INDEX]", repo_index))
-        else:
-            repo_map = self._load_repo_map_context(ctx)
-            if repo_map:
-                parts.extend(("", "[REPO MAP - FALLBACK]", repo_map))
-        return "\n".join(parts).strip()
+        repo_map = "" if repo_index else self._load_repo_map_context(ctx)
+        return build_coding_plan_system_prompt(
+            repo_index=repo_index,
+            repo_map=repo_map,
+        )
 
     def _load_repo_index_context(self: Any, ctx: ExecutionContext) -> str:
         action_result = self._load_context_action_result(

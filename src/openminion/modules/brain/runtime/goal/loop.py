@@ -10,6 +10,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openminion.modules.brain.constants import MissionStatus
+from openminion.modules.prompting.continuation import build_goal_run_continuation_prompt
 from openminion.modules.brain.storage.goals import GoalStore
 from .clock import goal_now_ms
 from openminion.modules.task.autonomy import (
@@ -572,16 +573,13 @@ def build_continuation_prompt(
 ) -> str:
     """Build the short structural prompt for the next automatic turn."""
 
-    lines = [
-        f"Continue goal {state.goal_id}.",
-        f"Evaluator outcome: {evaluation.outcome}.",
-        f"Reason: {evaluation.reason}",
-    ]
-    if evaluation.evidence_refs:
-        lines.append("Evidence: " + ", ".join(evaluation.evidence_refs))
-    if evaluation.next_instruction:
-        lines.append("Next instruction: " + evaluation.next_instruction)
-    return "\n".join(lines)
+    return build_goal_run_continuation_prompt(
+        goal_id=state.goal_id,
+        evaluator_outcome=evaluation.outcome,
+        reason=evaluation.reason,
+        evidence_refs=evaluation.evidence_refs,
+        next_instruction=evaluation.next_instruction,
+    )
 
 
 def parse_replay_evaluations(

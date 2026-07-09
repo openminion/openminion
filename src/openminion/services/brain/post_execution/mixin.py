@@ -1,6 +1,8 @@
 import json
 import time
 import uuid
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Callable
 
 from openminion.base.config.action_policy import (
@@ -44,6 +46,28 @@ def _emit_prep_status(
         callback(status)
     except Exception:  # noqa: BLE001 — best-effort telemetry; must not break turn prep
         return
+
+
+def _bind_tool_workspace_root(
+    tool_api: Any, metadata_source: Mapping[str, Any]
+) -> None:
+    workspace_root = str(metadata_source.get("workspace_root", "") or "").strip()
+    if not workspace_root:
+        return
+
+    workspace_path = Path(workspace_root).expanduser()
+    if hasattr(tool_api, "workspace_root"):
+        tool_api.workspace_root = workspace_path
+
+    policy = getattr(tool_api, "policy", None)
+    policy_raw = getattr(policy, "raw", None)
+    if isinstance(policy_raw, dict):
+        policy_raw["workspace_root"] = str(workspace_path)
+        context_metadata = policy_raw.get("context_metadata")
+        if not isinstance(context_metadata, dict):
+            context_metadata = {}
+            policy_raw["context_metadata"] = context_metadata
+        context_metadata["workspace_root"] = str(workspace_path)
 
 
 def _parse_permission_overrides(metadata_source: dict[str, Any]) -> dict[str, str]:
@@ -264,6 +288,7 @@ class BrainBridgeTurnMixin:
         )
         tool_api = getattr(runner, "tool_api", None)
         if tool_api is not None and hasattr(tool_api, "policy_adapter"):
+            _bind_tool_workspace_root(tool_api, message.metadata or {})
             tool_api.policy_adapter = tool_policy_adapter
 
     def _bind_inbound_permission_metadata(

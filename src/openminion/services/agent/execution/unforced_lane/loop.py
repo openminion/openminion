@@ -9,6 +9,14 @@ from openminion.services.agent.execution.finalization import (
     FINALIZATION_STATUS_RETRY_GUIDANCE,
     requires_typed_finalization_contract_for_results,
 )
+from ...execution_prompts import (
+    build_duplicate_tool_replan_feedback,
+    build_duplicate_tool_replan_user_message,
+    build_finalization_status_retry_feedback,
+    build_plain_text_retry_feedback,
+    build_plain_text_retry_user_message,
+    build_tool_argument_retry_feedback,
+)
 from openminion.services.security.policy import ToolBudgetState
 
 from ..deps import ExecutorDeps
@@ -171,21 +179,16 @@ def _build_plain_text_follow_up_retry_request(
     tool_feedback_payload: str,
     require_typed_finalization: bool,
 ):
-    retry_user_message = (
-        f"Tool execution results:\n{tool_feedback_payload}\n\n"
-        "Do not emit any tool call markup, channel envelope, JSON tool payload, "
-        "or structured tool request. Use the existing tool results already in "
-        "context and return only the final user-facing answer text."
-    )
+    retry_user_message = build_plain_text_retry_feedback(payload=tool_feedback_payload)
     if require_typed_finalization:
         retry_user_message = (
             f"{retry_user_message}\n\n{FINALIZATION_STATUS_RETRY_GUIDANCE}"
         )
     return type(follow_up_request)(
         user_message=(
-            f"{follow_up_request.user_message}\n\n"
-            "Return a plain-text answer only. Do not emit any tool call markup "
-            "or envelope text."
+            build_plain_text_retry_user_message(
+                base_prompt=follow_up_request.user_message
+            )
         ),
         system_prompt=runner.runtime.system_prompt,
         history=runner.runtime.provider_history
@@ -223,17 +226,12 @@ def _build_duplicate_tool_replan_request(
         batch=last_batch,
         tool_calls_count=len(response.tool_calls or []),
     ).get("tool_results", "[]")
-    retry_user_message = (
-        f"Tool execution results:\n{tool_feedback_payload}\n\n"
-        f"The previous assistant response repeated the same tool-call signature: "
-        f"{signature}. Do not repeat that call. Use the existing tool results "
-        "to answer, or choose a different available tool only if more evidence "
-        "is required."
+    retry_user_message = build_duplicate_tool_replan_feedback(
+        payload=str(tool_feedback_payload),
+        signature=signature,
     )
     return ProviderRequest(
-        user_message=(
-            "Continue from the existing tool results. Do not repeat the same tool call."
-        ),
+        user_message=build_duplicate_tool_replan_user_message(),
         system_prompt=runner.runtime.system_prompt,
         history=runner.runtime.provider_history
         + [
@@ -258,14 +256,7 @@ def _tool_argument_retry_feedback(
     missing_fields = str(
         deps.extract_missing_argument_fields(list(batch.results)) or ""
     )
-    missing_suffix = (
-        f" Missing required field(s): {missing_fields}." if missing_fields else ""
-    )
-    return (
-        "The previous tool call had invalid arguments."
-        f"{missing_suffix} Retry the same user task with corrected tool arguments. "
-        "Do not repeat the invalid arguments."
-    )
+    return build_tool_argument_retry_feedback(missing_fields=missing_fields)
 
 
 def _failure_signature(batch: ToolExecutionBatch) -> tuple[str, str] | None:
@@ -479,10 +470,9 @@ async def handle_unforced_tool_calls(
             if requires_finalization_status and not bool(
                 getattr(response, STATE_KEY_FINALIZATION_STATUS, None)
             ):
-                retry_user_message = (
-                    "Tool execution results:\n"
-                    f"{tool_feedback_payload}\n\n"
-                    f"{FINALIZATION_STATUS_RETRY_GUIDANCE}"
+                retry_user_message = build_finalization_status_retry_feedback(
+                    payload=str(tool_feedback_payload),
+                    guidance=FINALIZATION_STATUS_RETRY_GUIDANCE,
                 )
                 response = await runner.runtime_ops.call_provider(
                     _build_retry_request(

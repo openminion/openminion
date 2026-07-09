@@ -169,6 +169,94 @@ class _BusyCommandComposer:
         raise EOFError
 
 
+class _QueueCommandRuntime:
+    agent_id = "alpha"
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    permission_mode = "default"
+
+    def __init__(self) -> None:
+        self.sent_texts: list[str] = []
+        self.first_chunk_sent = asyncio.Event()
+        self.release_turn = asyncio.Event()
+
+    async def send_message(self, text: str, **kwargs):
+        del kwargs
+        self.sent_texts.append(text)
+        if text == "first":
+            yield "first chunk"
+            self.first_chunk_sent.set()
+            await self.release_turn.wait()
+            yield " done"
+        else:
+            yield f"{text} reply"
+        await asyncio.sleep(0)
+
+
+class _QueueCommandComposer:
+    runtime: _QueueCommandRuntime
+
+    def __init__(self, *args, **kwargs) -> None:
+        del args, kwargs
+        self._calls = 0
+        self.prompt_session = object()
+
+    def set_busy(self, busy: bool) -> None:
+        del busy
+
+    async def read_line(self) -> str:
+        self._calls += 1
+        if self._calls == 1:
+            return "first"
+        if self._calls == 2:
+            await type(self).runtime.first_chunk_sent.wait()
+            return "second"
+        if self._calls == 3:
+            return "/queue"
+        if self._calls == 4:
+            return "/queue drop 1"
+        if self._calls == 5:
+            return "/queue"
+        if self._calls == 6:
+            return "third"
+        if self._calls == 7:
+            return "/queue clear"
+        if self._calls == 8:
+            type(self).runtime.release_turn.set()
+            raise EOFError
+        raise EOFError
+
+
+class _LoopComposer:
+    def __init__(self) -> None:
+        self.busy_events: list[bool] = []
+        self.prompt_session = object()
+
+    def set_busy(self, busy: bool) -> None:
+        self.busy_events.append(bool(busy))
+
+    async def read_line(self) -> str:
+        raise EOFError
+
+
+class _SingleTurnRuntime:
+    agent_id = "alpha"
+    provider_name = "openai"
+    model_name = "gpt-4.1-mini"
+    permission_mode = "default"
+
+    async def send_message(self, text: str, **kwargs):
+        del text, kwargs
+        yield "answer"
+
+
+class _PromptGapComposer:
+    prompt_session = object()
+
+    async def read_line(self) -> str:
+        raise EOFError
+
+
 class _TTYInput:
     def isatty(self) -> bool:
         return True
@@ -277,6 +365,10 @@ async def test_terminal_focus_keeps_accepting_input_while_turn_streams(
         for msg in transcript._messages
     )
     assert any(
+        msg.kind == MessageKind.SYSTEM and msg.body == "Running queued message: second"
+        for msg in transcript._messages
+    )
+    assert any(
         msg.kind == MessageKind.USER and msg.body == "second"
         for msg in transcript._messages
     )
@@ -329,7 +421,17 @@ async def test_terminal_focus_drains_multiple_queued_inputs_fifo(
     ]
     assert queue_messages == [
         "Queued message (1 pending).",
-        "Queued message (2 pending).",
+        "Queued messages (2 pending).",
+    ]
+    running_messages = [
+        msg.body
+        for msg in transcript._messages
+        if msg.kind == MessageKind.SYSTEM
+        and msg.body.startswith("Running queued message:")
+    ]
+    assert running_messages == [
+        "Running queued message: second",
+        "Running queued message: third",
     ]
     composer = _MultiQueueComposer.last_instance
     assert composer is not None
@@ -386,6 +488,154 @@ async def test_terminal_focus_busy_commands_are_not_queued_or_dispatched(
         and "Commands are unavailable while a turn is running" in msg.body
     ]
     assert len(blocked_messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_queue_commands_work_while_turn_streams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _QueueCommandRuntime()
+    _QueueCommandComposer.runtime = runtime
+    output = io.StringIO()
+
+    monkeypatch.setattr(terminal_shell, "TerminalComposer", _QueueCommandComposer)
+    monkeypatch.setattr(terminal_shell, "TerminalTranscript", _CapturedTranscript)
+    monkeypatch.setattr(
+        terminal_shell,
+        "Console",
+        lambda: Console(file=output, force_terminal=False, width=120),
+    )
+    monkeypatch.setattr(terminal_shell, "_push_greeter", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        terminal_shell, "_schedule_startup_notice", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(terminal_shell.sys, "stdin", _TTYInput())
+    monkeypatch.setattr(terminal_shell, "statusline_label", lambda runtime: "")
+
+    result = await terminal_shell._run_terminal_focus_async(
+        runtime,
+        working_dir="/tmp/focus-terminal-queue-commands",
+        agent=None,
+        session=None,
+    )
+
+    assert result == 0
+    assert runtime.sent_texts == ["first"]
+
+    transcript = _CapturedTranscript.last_instance
+    assert transcript is not None
+    bodies = [msg.body for msg in transcript._messages]
+    assert "Queued message (1 pending)." in bodies
+    assert any("1. second" in body for body in bodies)
+    assert any(body.startswith("Dropped queued message 1: second") for body in bodies)
+    assert "No queued messages." in bodies
+    assert "Cleared 1 queued message." in bodies
+    assert not any(
+        msg.kind == MessageKind.USER and msg.body in {"/queue", "/queue clear"}
+        for msg in transcript._messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_interrupt_preserves_queue_until_run_next() -> None:
+    runtime = _QueueCommandRuntime()
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    status_line = terminal_shell.TerminalStatusLine()
+    composer = _LoopComposer()
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=status_line,
+        composer=composer,
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-interrupt",
+        custom_commands={},
+        approval_grants=set(),
+    )
+
+    await loop.start_turn("first")
+    await runtime.first_chunk_sent.wait()
+    await loop.handle_busy_input("second")
+    loop.request_turn_interrupt()
+    await loop.handle_turn_completion()
+
+    assert runtime.sent_texts == ["first"]
+    assert list(loop.pending_turns) == ["second"]
+    assert loop.queue_auto_drain_paused is True
+    assert loop.active_turn_task is None
+    assert any(
+        msg.kind == MessageKind.SYSTEM and "Preserved 1 queued message" in msg.body
+        for msg in transcript._messages
+    )
+
+    await loop.handle_queue_command("/queue run-next")
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+
+    assert runtime.sent_texts == ["first", "second"]
+    assert list(loop.pending_turns) == []
+    assert loop.queue_auto_drain_paused is False
+    assert any(
+        msg.kind == MessageKind.SYSTEM and msg.body == "Running queued message: second"
+        for msg in transcript._messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_adds_one_gap_before_typeahead_prompt() -> None:
+    runtime = _QueueCommandRuntime()
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_PromptGapComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-prompt-gap",
+        custom_commands={},
+        approval_grants=set(),
+    )
+
+    loop.start_read_task(leading_blank_lines=1)
+
+    assert loop.read_task is not None
+    with pytest.raises(EOFError):
+        await loop.read_task
+
+    assert output.getvalue() == "\n"
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_adds_one_gap_after_idle_answer() -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, width=120)
+    transcript = terminal_shell.TerminalTranscript(console, plain_spinner=True)
+    transcript.set_terminal_writer(lambda render: render())
+    loop = terminal_shell._TerminalFocusLoop(
+        runtime=_SingleTurnRuntime(),
+        console=console,
+        transcript=transcript,
+        status_line=terminal_shell.TerminalStatusLine(),
+        composer=_LoopComposer(),
+        overlay=object(),
+        working_dir="/tmp/focus-terminal-question-gap",
+        custom_commands={},
+        approval_grants=set(),
+    )
+
+    await loop.handle_idle_input("question?")
+    await loop.handle_turn_completion()
+    await loop.cancel_read_task()
+
+    rendered = output.getvalue()
+    assert rendered.startswith("⏺ answer")
+    assert rendered.endswith("\n\n")
 
 
 @pytest.mark.asyncio

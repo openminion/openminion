@@ -1,5 +1,7 @@
 # Vocabulary validation requires every emitted termination_reason here.
 
+from openminion.modules.prompting.continuation import TOOL_LOOP_CONTINUE_PROMPT
+
 TERMINATION_REASON_TASK_COMPLETE = "task_complete"
 TERMINATION_REASON_TOOL_FINAL = "tool_final"
 TERMINATION_REASON_TOOL_DIRECT = "tool_direct"
@@ -71,14 +73,7 @@ TERMINATION_REASON_VALUES: frozenset[str] = frozenset(
 
 
 SERVICES_TRACES_SUBDIR = "traces"
-DEFAULT_TOOL_LOOP_CONTINUE_PROMPT = (
-    "Synthesize the completed tool execution results from this same turn into the "
-    "final answer for the original request. Treat the most recent "
-    "'Tool execution results' message as runtime-provided output from this same "
-    "turn, not as a new user request. Treat the immediately preceding assistant "
-    "message as an in-progress pre-tool draft, not as the final answer. Do not "
-    "claim the answer was already provided; provide the final answer now."
-)
+DEFAULT_TOOL_LOOP_CONTINUE_PROMPT = TOOL_LOOP_CONTINUE_PROMPT
 PRIOR_TURN_CONTEXT_CHAR_LIMIT = 300
 
 IDENTITY_RUNTIME_STATUS_NOT_STARTED = "not_started"

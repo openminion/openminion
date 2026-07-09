@@ -13,6 +13,7 @@ from openminion.cli.tui.focus.app import FocusApp, _DemoFocusRuntime
 from openminion.cli.tui.focus.screen import FocusScreen
 from openminion.cli.tui.focus.widgets import FocusTranscript, PermissionsOverlay
 from openminion.cli.tui.focus.widgets.transcript import MessageKind
+from openminion.services.runtime.turn_input import TurnInputQueueStatus
 
 
 def _make_app(tmp: str) -> FocusApp:
@@ -86,6 +87,43 @@ async def test_slash_permissions_bare_opens_focus_menu() -> None:
                 "#focus-permissions-overlay-list", OptionList
             )
             assert option_list.option_count == 4
+
+
+@pytest.mark.asyncio
+async def test_slash_queue_uses_shared_queue_vocabulary() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+            runtime = screen._runtime
+            screen._turn_input_queue.enqueue(
+                session_id=runtime.session_id,
+                agent_id=runtime.agent_id,
+                text="queued follow-up prompt",
+                source_client="test",
+            )
+
+            screen._handle_command("/queue")
+            await pilot.pause()
+            chat = screen.query_one(FocusTranscript)
+            body = _last_system_body(chat)
+
+            assert "Queued messages:" in body
+            assert "1. queued follow-up prompt" in body
+            assert "/queue drop <index>" in body
+
+            screen._handle_command("/queue drop 1")
+            await pilot.pause()
+
+            assert _last_system_body(chat).startswith("Dropped queued message 1")
+            remaining = screen._turn_input_queue.list_entries(
+                session_id=runtime.session_id,
+                agent_id=runtime.agent_id,
+                statuses={TurnInputQueueStatus.QUEUED},
+            )
+            assert remaining == []
 
 
 @pytest.mark.asyncio

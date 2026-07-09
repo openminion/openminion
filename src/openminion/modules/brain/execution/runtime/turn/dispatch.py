@@ -27,6 +27,9 @@ from ...intent_state import (
 )
 from ...lifecycle import set_phase
 from ...preflight import ValidationResult
+from openminion.modules.prompting.continuation import (
+    build_plan_checkpoint_continuation_message,
+)
 
 
 @dataclass(slots=True)
@@ -527,7 +530,10 @@ def _invoke_and_finalize(
             runner,
             state=state,
             logger=logger,
-            message=f"Completed {state.cursor}/{len(state.plan.steps)} steps. Reply 'continue' to proceed.",
+            message=build_plan_checkpoint_continuation_message(
+                cursor=state.cursor,
+                total_steps=len(state.plan.steps),
+            ),
             status=BRAIN_STATE_WAITING_USER,
             action_result=result.action_result,
         )

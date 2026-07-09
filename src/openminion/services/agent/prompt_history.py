@@ -4,18 +4,14 @@ from typing import Any
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
+from openminion.modules.prompting.identity import AGENT_IDENTITY_FRAME
 from openminion.modules.llm.providers.base import ProviderHistoryMessage, LLMProvider
 from openminion.modules.llm.providers.tool_calling import (
     detect_raw_envelope,
     detect_raw_tool_markup,
 )
 
-_IDENTITY_FRAME = (
-    "## Your Identity\n\n"
-    "You are the agent described below. Apply this persona to all responses — "
-    "voice, tone, and name — not only when directly asked about yourself. "
-    "Do not describe yourself using information outside this profile.\n\n"
-)
+_IDENTITY_FRAME = AGENT_IDENTITY_FRAME
 
 
 def _history_role(role: str) -> str:

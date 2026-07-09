@@ -1,4 +1,5 @@
 from ..schemas import WorkingState
+from openminion.modules.prompting.continuation import build_continuation_choice_message
 
 _CONTINUATION_CHOICE_TOKENS = frozenset({"continue", "retry", "cancel"})
 _RESUME_LIKE_INPUTS = frozenset(
@@ -27,16 +28,7 @@ def is_resume_like_input(text: str | None) -> bool:
 
 
 def continuation_choice_message(reason: str | None) -> str:
-    guidance = str(reason or "").strip()
-    base = (
-        "The previous step completed successfully, but it did not fully satisfy the goal."
-        + (f" Closure guidance: {guidance}" if guidance else "")
-    )
-    return (
-        f"{base}\n"
-        "Reply 'continue' to choose a distinct action, "
-        "'retry' to reassess the original request, or 'cancel' to stop."
-    )
+    return str(build_continuation_choice_message(reason))
 
 
 def clear_continuation_reply(

@@ -1,6 +1,10 @@
 import json
 from typing import Any
 
+from openminion.modules.prompting.continuation import (
+    PARTIAL_SUCCESS_CONTINUATION_PROMPT,
+)
+
 from ..constants import (
     BRAIN_ACTION_STATUS_BLOCKED,
     BRAIN_ACTION_STATUS_FAILED,
@@ -87,7 +91,7 @@ def _intent_status_reason(item: IntentExecutionState) -> str:
 def build_partial_success_summary(
     intent_execution_states: list[IntentExecutionState] | None,
     *,
-    continuation_prompt: str | None = "Reply 'continue' to resume the remaining work.",
+    continuation_prompt: str | None = PARTIAL_SUCCESS_CONTINUATION_PROMPT,
 ) -> str | None:
     states = list(intent_execution_states or [])
     if not states:
