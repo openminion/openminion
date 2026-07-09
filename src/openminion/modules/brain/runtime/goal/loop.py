@@ -573,12 +573,14 @@ def build_continuation_prompt(
 ) -> str:
     """Build the short structural prompt for the next automatic turn."""
 
-    return build_goal_run_continuation_prompt(
-        goal_id=state.goal_id,
-        evaluator_outcome=evaluation.outcome,
-        reason=evaluation.reason,
-        evidence_refs=evaluation.evidence_refs,
-        next_instruction=evaluation.next_instruction,
+    return str(
+        build_goal_run_continuation_prompt(
+            goal_id=state.goal_id,
+            evaluator_outcome=evaluation.outcome,
+            reason=evaluation.reason,
+            evidence_refs=evaluation.evidence_refs,
+            next_instruction=evaluation.next_instruction,
+        )
     )
 
 

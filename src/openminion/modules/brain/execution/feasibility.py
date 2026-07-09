@@ -112,8 +112,10 @@ def feasibility_user_message(report: FeasibilityReport | None) -> str:
 
 
 def feasibility_choice_message(report: FeasibilityReport | None) -> str:
-    return build_feasibility_choice_prompt(
-        user_message=feasibility_user_message(report)
+    return str(
+        build_feasibility_choice_prompt(
+            user_message=feasibility_user_message(report)
+        )
     )
 
 
