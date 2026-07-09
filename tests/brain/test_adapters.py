@@ -625,40 +625,6 @@ class ToolAdapterTests(unittest.TestCase):
         self.assertEqual(len(res_art["artifact_refs"]), 1)
         self.assertEqual(res_art["artifact_refs"][0]["ref"], "art_123")
 
-    def test_tool_adapter_uses_policy_workspace_root(self) -> None:
-        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-        from openminion.modules.tool import Policy
-
-        with tempfile.TemporaryDirectory() as tmp:
-            parent = Path(tmp) / "parent"
-            focused = Path(tmp) / "focused"
-            adapter = ToolAdapter(
-                workspace_root=parent,
-                policy=Policy(raw={"workspace_root": str(focused)}),
-            )
-
-            self.assertEqual(adapter._effective_workspace_root(), focused)
-
-    def test_tool_workspace_binding_updates_adapter_and_policy(self) -> None:
-        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
-        from openminion.services.brain.post_execution.mixin import (
-            _bind_tool_workspace_root,
-        )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            parent = Path(tmp) / "parent"
-            focused = Path(tmp) / "focused"
-            adapter = ToolAdapter(workspace_root=parent)
-
-            _bind_tool_workspace_root(adapter, {"workspace_root": str(focused)})
-
-            self.assertEqual(adapter.workspace_root, focused)
-            self.assertEqual(adapter.policy.raw["workspace_root"], str(focused))
-            self.assertEqual(
-                adapter.policy.raw["context_metadata"]["workspace_root"],
-                str(focused),
-            )
-
 
 class A2AAndPolicyAdapterTests(unittest.TestCase):
     def test_local_a2a_adapter(self) -> None:

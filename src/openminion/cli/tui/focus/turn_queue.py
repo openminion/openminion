@@ -6,10 +6,6 @@ from typing import Any, cast
 
 from openminion.cli.tui.focus.widgets import FocusTranscript
 from openminion.cli.tui.presentation.models import ChatMessage, MessageKind
-from openminion.cli.tui.presentation.queue import (
-    queue_run_next_empty_notice,
-    queued_message_notice,
-)
 from openminion.services.runtime.turn_input import (
     QUEUE_EVENT_DEQUEUED,
     QUEUE_EVENT_ENQUEUED,
@@ -42,7 +38,7 @@ class FocusTurnQueueMixin:
             ChatMessage(
                 kind=MessageKind.SYSTEM,
                 sender="system",
-                body=queued_message_notice(owner._queued_count()),
+                body=f"Queued message ({owner._queued_count()} pending).",
             )
         )
         owner._push_status_line(state="responding")
@@ -158,7 +154,7 @@ class FocusTurnQueueMixin:
                 ChatMessage(
                     kind=MessageKind.SYSTEM,
                     sender="system",
-                    body=queue_run_next_empty_notice(),
+                    body="No queued message is available to run next.",
                 )
             )
             return

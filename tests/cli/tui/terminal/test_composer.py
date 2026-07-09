@@ -2,25 +2,15 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from prompt_toolkit.completion import Completion
-from prompt_toolkit.data_structures import Point
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text.ansi import ANSI
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.input.defaults import create_pipe_input
-from prompt_toolkit.layout.containers import Window
-from prompt_toolkit.layout.menus import CompletionsMenuControl
-from prompt_toolkit.mouse_events import MouseButton, MouseEvent, MouseEventType
 from prompt_toolkit.output import DummyOutput
 
-import openminion.cli.tui.terminal.composer as composer_module
-from openminion.cli.tui.terminal.composer import (
-    _ClickableCompletionMenuControl,
-    TerminalComposer,
-)
+from openminion.cli.tui.terminal.composer import TerminalComposer
 from openminion.cli.tui.presentation.contracts import Composer
 
 
@@ -54,15 +44,12 @@ def test_set_disabled_changes_prompt_and_blocks_read() -> None:
 
 def test_set_busy_switches_placeholder_copy() -> None:
     c = TerminalComposer()
-    assert c._prompt_text() == "❯ "
     assert "Ask anything" in c._formatted_placeholder()[0][1]
     c.set_busy(True)
-    assert c._prompt_text() == "❯ "
-    busy_placeholder = c._formatted_placeholder()[0][1]
-    assert "Type to queue while the current turn runs" in busy_placeholder
-    assert "Esc interrupts" in busy_placeholder
+    assert (
+        "Type to queue while the current turn runs" in c._formatted_placeholder()[0][1]
+    )
     c.set_busy(False)
-    assert c._prompt_text() == "❯ "
     assert "Ask anything" in c._formatted_placeholder()[0][1]
 
 
@@ -98,86 +85,6 @@ def test_history_file_enables_file_history(tmp_path: Path) -> None:
 def test_completion_menu_reserves_ten_rows() -> None:
     c = TerminalComposer()
     assert c._session.reserve_space_for_menu == 10
-
-
-def test_completion_menu_enables_mouse_support() -> None:
-    c = TerminalComposer()
-    assert c._session.mouse_support is True
-
-
-def _completion_menu_controls(node: object) -> list[CompletionsMenuControl]:
-    controls: list[CompletionsMenuControl] = []
-    seen: set[int] = set()
-
-    def visit(current: object) -> None:
-        current_id = id(current)
-        if current_id in seen:
-            return
-        seen.add(current_id)
-
-        if (
-            isinstance(current, Window)
-            and isinstance(current.content, CompletionsMenuControl)
-        ):
-            controls.append(current.content)
-
-        content = getattr(current, "content", None)
-        if content is not None:
-            visit(content)
-        alternative = getattr(current, "alternative_content", None)
-        if alternative is not None:
-            visit(alternative)
-        for child in getattr(current, "children", ()) or ():
-            visit(child)
-        for float_item in getattr(current, "floats", ()) or ():
-            visit(getattr(float_item, "content", None))
-
-    visit(node)
-    return controls
-
-
-def test_completion_menu_uses_clickable_vertical_control() -> None:
-    c = TerminalComposer()
-    controls = _completion_menu_controls(c._session.layout.container)
-
-    assert any(isinstance(control, _ClickableCompletionMenuControl) for control in controls)
-
-
-def test_clickable_completion_menu_applies_mouse_selected_completion(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    applied: list[Completion] = []
-    completion = Completion("/context")
-    buffer = SimpleNamespace(
-        complete_state=SimpleNamespace(completions=[Completion("/clear"), completion]),
-        apply_completion=lambda selected: applied.append(selected),
-    )
-    monkeypatch.setattr(
-        composer_module,
-        "get_app",
-        lambda: SimpleNamespace(current_buffer=buffer),
-    )
-
-    control = _ClickableCompletionMenuControl()
-    event = MouseEvent(
-        position=Point(x=0, y=1),
-        event_type=MouseEventType.MOUSE_UP,
-        button=MouseButton.LEFT,
-        modifiers=frozenset(),
-    )
-
-    assert control.mouse_handler(event) is None
-    assert applied == [completion]
-
-
-def test_bottom_toolbar_keeps_single_row_height() -> None:
-    c = TerminalComposer(bottom_toolbar=lambda: "stats")
-    root = c._session.layout.container
-    bottom_container = root.children[-1]
-    bottom_window = bottom_container.content
-
-    assert int(bottom_window.height.min) == 1
-    assert int(bottom_window.height.preferred) == 1
 
 
 def test_history_file_persists_across_composer_recreation(tmp_path: Path) -> None:

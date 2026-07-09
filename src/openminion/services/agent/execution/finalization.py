@@ -9,10 +9,6 @@ from openminion.modules.brain.schemas import FinalizationStatus
 from openminion.modules.llm.providers.base import ProviderResponse
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
-from openminion.modules.prompting.finalization import (
-    FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE as _FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE,
-    FINALIZATION_STATUS_RETRY_GUIDANCE as _FINALIZATION_STATUS_RETRY_GUIDANCE,
-)
 
 FINAL_ANSWER_ENVELOPE_REQUIRED_KEYS: frozenset[str] = frozenset(
     {"status", "summary", "output"}
@@ -31,8 +27,22 @@ _STATUS_ATTR_RE = re.compile(
     r'\bstatus\s*=\s*"(?P<status>final_answer|incomplete|blocked)"'
 )
 
-FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE: str = _FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE
-FINALIZATION_STATUS_RETRY_GUIDANCE: str = _FINALIZATION_STATUS_RETRY_GUIDANCE
+FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE = (
+    "After substantive tool-backed work, return the user-facing final answer and "
+    'append <finalization_status>{"status":"final_answer|incomplete|blocked",'
+    '"reasoning":"...","remaining_work":"...","blocking_reason":"..."}'
+    "</finalization_status>. Use final_answer only when the requested deliverable "
+    "is actually complete. Use incomplete when more work remains. Use blocked "
+    "when you cannot finish truthfully. Keep the answer text before the "
+    "finalization_status trailer."
+)
+
+FINALIZATION_STATUS_RETRY_GUIDANCE = (
+    "Your prior answer omitted the required typed "
+    "<finalization_status>...</finalization_status> trailer for substantive "
+    "tool-backed work. Reply again with the same user-facing answer and append "
+    "the finalization_status trailer."
+)
 
 
 _MUTATING_TOOL_NAME_PREFIXES: tuple[str, ...] = (

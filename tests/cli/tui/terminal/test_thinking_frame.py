@@ -40,10 +40,9 @@ def test_thinking_frame_renderable_uses_thinking_verb() -> None:
 
     assert isinstance(renderable, Group)
     rows = list(renderable.renderables)
-    assert len(rows) == 3
+    assert len(rows) == 2
     status_row_text = rows[1].plain
     assert THINKING_VERB in status_row_text
-    assert rows[2].plain == "Type to queue while the current turn runs"
     handle.complete()
 
 

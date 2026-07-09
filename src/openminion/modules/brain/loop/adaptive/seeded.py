@@ -15,9 +15,6 @@ from openminion.modules.brain.constants import (
 )
 from openminion.modules.brain.config import ADAPTIVE_BUDGET_HARD_CAP
 from openminion.modules.context.compress.eligibility import CompactionBudgetState
-from openminion.modules.prompting.continuation import (
-    build_plan_checkpoint_continuation_message,
-)
 from openminion.modules.brain.execution.continuation import continuation_choice_message
 from openminion.modules.brain.execution.closure import final_close_message
 from openminion.modules.brain.execution.loop_contracts import (
@@ -501,9 +498,9 @@ class ActLoopSeededMixin:
             ctx.state.continuation_guard_reason = ""
             return ExecutionResult.from_step_output(
                 ctx.respond(
-                    message=build_plan_checkpoint_continuation_message(
-                        cursor=ctx.state.cursor,
-                        total_steps=len(ctx.state.plan.steps),
+                    message=(
+                        f"Completed {ctx.state.cursor}/{len(ctx.state.plan.steps)} "
+                        "steps. Reply 'continue' to proceed."
                     ),
                     status=BRAIN_STATE_WAITING_USER,
                 )

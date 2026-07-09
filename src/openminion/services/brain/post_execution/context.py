@@ -21,10 +21,6 @@ from openminion.services.agent.turn_context import (
 )
 from openminion.tools.task.constants import WATCH_TURN_KIND_CHECK
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
-from openminion.services.brain.post_execution.constants import (
-    PRIOR_TURN_TOOL_EVENT_CHAR_LIMIT,
-    PRIOR_TURN_TOOL_EVENT_LIMIT,
-)
 
 _TURN_SIGNATURE_WINDOW = 16
 
@@ -441,34 +437,26 @@ def _prior_turn_context_hint(
     runner: BrainRunner,
     session_id: str,
     history: list[Message],
-) -> dict[str, Any] | None:
+) -> dict[str, str] | None:
     def _latest_pair_from_messages(
         items: list[Message],
-    ) -> tuple[str, str, list[str]] | None:
+    ) -> tuple[str, str] | None:
         latest_user = ""
         latest_assistant = ""
-        tool_events: list[str] = []
         for item in items:
-            metadata = getattr(item, "metadata", {}) or {}
-            role_raw = str(metadata.get("role", "") or "").strip().lower()
-            role = _history_role(role_raw)
+            role = _history_role(item.metadata.get("role", ""))
             content = str(item.body or "").strip()
             if not content:
                 continue
-            if role_raw in {"tool", "tool_result", "tool-call", "tool_result_message"}:
-                _append_prior_tool_event(
-                    tool_events,
-                    _compact_prior_tool_event(content=content, metadata=metadata),
-                )
-            elif role == "assistant":
+            if role == "assistant":
                 if self._is_state_machine_error_text(content):
                     continue
                 latest_assistant = content
             elif role == "user":
                 latest_user = content
-        if not latest_user and not latest_assistant and not tool_events:
+        if not latest_user and not latest_assistant:
             return None
-        return latest_user, latest_assistant, tool_events[-PRIOR_TURN_TOOL_EVENT_LIMIT:]
+        return latest_user, latest_assistant
 
     pair = _latest_pair_from_messages(history)
     if pair is None:
@@ -478,7 +466,6 @@ def _prior_turn_context_hint(
             turns = []
         latest_user = ""
         latest_assistant = ""
-        tool_events: list[str] = []
         for item in turns:
             if not isinstance(item, dict):
                 continue
@@ -486,60 +473,23 @@ def _prior_turn_context_hint(
             content = str(item.get("content", item.get("text", ""))).strip()
             if not content:
                 continue
-            if role_raw in {"tool", "tool_result", "tool-call", "tool_result_message"}:
-                raw_meta = item.get("meta", item.get("metadata", {}))
-                metadata = raw_meta if isinstance(raw_meta, dict) else {}
-                _append_prior_tool_event(
-                    tool_events,
-                    _compact_prior_tool_event(content=content, metadata=metadata),
-                )
-            elif role_raw in {"assistant", "outbound"}:
+            if role_raw in {"assistant", "outbound"}:
                 if self._is_state_machine_error_text(content):
                     continue
                 latest_assistant = content
             elif role_raw in {"user", "inbound"}:
                 latest_user = content
-        if latest_user or latest_assistant or tool_events:
-            pair = (
-                latest_user,
-                latest_assistant,
-                tool_events[-PRIOR_TURN_TOOL_EVENT_LIMIT:],
-            )
+        if latest_user or latest_assistant:
+            pair = (latest_user, latest_assistant)
     if pair is None:
         return None
-    user_message, assistant_message, tool_events = pair
-    payload: dict[str, Any] = {}
+    user_message, assistant_message = pair
+    payload: dict[str, str] = {}
     if user_message:
         payload["user_message"] = user_message[:PRIOR_TURN_CONTEXT_CHAR_LIMIT]
     if assistant_message:
         payload["assistant_message"] = assistant_message[:PRIOR_TURN_CONTEXT_CHAR_LIMIT]
-    if tool_events:
-        payload["tool_events"] = tool_events
     return payload or None
-
-
-def _append_prior_tool_event(events: list[str], event: str) -> None:
-    if event:
-        events.append(event[:PRIOR_TURN_TOOL_EVENT_CHAR_LIMIT])
-
-
-def _compact_prior_tool_event(*, content: str, metadata: dict[str, Any]) -> str:
-    bits: list[str] = []
-    tool_name = str(
-        metadata.get("tool_name", metadata.get("name", metadata.get("tool", ""))) or ""
-    ).strip()
-    if tool_name:
-        bits.append(f"tool={tool_name}")
-    ok_value = metadata.get("ok")
-    if ok_value is not None:
-        bits.append(f"ok={str(ok_value).lower()}")
-    error_code = str(metadata.get("error_code", metadata.get("code", "")) or "").strip()
-    if error_code:
-        bits.append(f"code={error_code}")
-    text = " ".join(str(content or "").strip().split())
-    if text:
-        bits.append(f"text={text}")
-    return " ".join(bits)[:PRIOR_TURN_TOOL_EVENT_CHAR_LIMIT]
 
 
 def _append_runtime_grounding_block(

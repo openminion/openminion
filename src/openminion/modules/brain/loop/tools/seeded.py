@@ -22,10 +22,6 @@ from .contracts import (
     AdaptiveToolLoopOutcome,
     profile_include_reflect,
 )
-from .prompts import (
-    build_seeded_invalid_workdir_recovery_message,
-    build_seeded_policy_denial_recovery_message,
-)
 from .status import emit_adaptive_status
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -64,11 +60,12 @@ def _policy_denial_recovery_message(action_result: Any) -> str | None:
         return None
     suggested_fix = str(details.get("suggested_fix", "") or "").strip()
     blocked_tool = str(details.get("tool_name", "") or "").strip() or "tool"
-    return build_seeded_policy_denial_recovery_message(
-        blocked_tool=blocked_tool,
-        suggested_tool=suggested_tool,
-        suggested_fix=suggested_fix,
+    message = (
+        f"The seeded {blocked_tool} command was blocked by policy. Do not "
+        f"repeat it. Retry the same user task using {suggested_tool} if that "
+        "structured tool can satisfy the intent."
     )
+    return f"{message} {suggested_fix}" if suggested_fix else message
 
 
 def _invalid_workdir_recovery_message(action_result: Any) -> str | None:
@@ -91,7 +88,12 @@ def _invalid_workdir_recovery_message(action_result: Any) -> str | None:
     workdir = str(details.get("workdir", "") or "").strip()
     if not workdir or "workdir" not in message.lower():
         return None
-    return build_seeded_invalid_workdir_recovery_message()
+    return (
+        "The seeded exec.run command used a workdir that does not exist. "
+        "Do not repeat it. Retry the same user task using the absolute workspace "
+        "directory from the original request as exec.run workdir, or use file tools "
+        "with absolute paths for inspection before running verification."
+    )
 
 
 def _confirmed_tool_failure_recovery_message(action_result: Any) -> str | None:

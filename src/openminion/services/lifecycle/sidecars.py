@@ -15,10 +15,6 @@ from openminion.services.bootstrap.paths import (
     SERVICES_STATE_DIRNAME,
     SERVICES_TOOL_RUNTIME_SUBDIR,
 )
-from openminion.services.lifecycle.prompts import (
-    PINCHTAB_AUTOSTART_PROMPT,
-    build_sidecar_policy_prompt,
-)
 from openminion.services.security.policy import (
     DECISION_ALLOW,
     DECISION_REQUIRE_APPROVAL,
@@ -34,6 +30,17 @@ from openminion.services.security.policy import (
 )
 
 from openminion.base.time import utc_now_iso as _iso_now
+
+
+_PINCHTAB_PROMPT = (
+    "OpenMinion can start the PinchTab browser service locally when needed.\n"
+    "This launches a background process on your machine.\n"
+    "Allow auto-start for PinchTab? [y/N]: "
+)
+
+_POLICY_PROMPT = (
+    "Sidecar action requires approval.\nAllow {verb} for sidecar '{name}'? [y/N]: "
+)
 
 
 def _truthy(value: str | None) -> bool:
@@ -422,7 +429,7 @@ class SidecarManager:
                 return {"allowed": False, **payload, "reason": "approval_required"}
             prompt_fn = prompt_fn or input
             try:
-                answer = prompt_fn(build_sidecar_policy_prompt(verb=verb, name=name))
+                answer = prompt_fn(_POLICY_PROMPT.format(verb=verb, name=name))
             except Exception as exc:  # noqa: BLE001
                 self._logger.debug("policy prompt failed: %s", exc)
                 return {"allowed": False, **payload, "reason": "prompt_failed"}
@@ -531,7 +538,7 @@ def default_sidecar_manager(
         name="pinchtab",
         description="PinchTab browser bridge daemon",
         autostart_env_key="PINCHTAB_AUTOSTART",
-        prompt=PINCHTAB_AUTOSTART_PROMPT,
+        prompt=_PINCHTAB_PROMPT,
         adapter=adapter,
     )
     return SidecarManager(

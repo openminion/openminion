@@ -87,19 +87,7 @@ class ContextBuildersMixin:
         query_text: str,
         agent_records: list[Any],
     ) -> bool:
-        normalized_query = str(query_text or "").strip().lower()
-        exact_answer_requested = any(
-            phrase in normalized_query
-            for phrase in (
-                "answer with only",
-                "only the",
-                "just the",
-            )
-        )
-        if exact_answer_requested and agent_records:
-            return False
-        if len(str(query_text or "").strip()) >= 10:
-            return True
+        del query_text
         return not agent_records
 
     def _record_turn_provenance_trace(

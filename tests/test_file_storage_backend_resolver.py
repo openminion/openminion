@@ -14,7 +14,6 @@ from openminion.tools.file.plugin import (
     _h_search_files,
     _reset_backend_cache_for_tests,
     _resolve_path_lexical,
-    _resolve_workspace_root,
 )
 
 
@@ -70,27 +69,6 @@ def test_get_backend_defaults_to_local_and_caches_same_context(tmp_path: Path):
 def test_get_backend_isolated_by_run_root(tmp_path: Path):
     first_ctx = _ctx(tmp_path, backend_type="memory", run_root_name="run-one")
     second_ctx = _ctx(tmp_path, backend_type="memory", run_root_name="run-two")
-
-    first = _get_backend(first_ctx)
-    second = _get_backend(second_ctx)
-
-    assert isinstance(first, InMemoryStorageBackend)
-    assert isinstance(second, InMemoryStorageBackend)
-    assert first is not second
-
-
-def test_get_backend_isolated_by_workspace_root_for_shared_run_root(tmp_path: Path):
-    first_ctx = _ctx(tmp_path, backend_type="memory", run_root_name="shared-run")
-    second_ctx = _ctx(tmp_path, backend_type="memory", run_root_name="shared-run")
-    second_workspace = tmp_path / "second-workspace"
-    second_workspace.mkdir()
-    second_ctx.workspace = second_workspace
-    second_ctx.policy.raw["workspace_root"] = str(second_workspace)
-    second_ctx.policy.raw["paths"] = {
-        "read_allow": [str(second_workspace)],
-        "write_allow": [str(second_workspace)],
-        "deny": [],
-    }
 
     first = _get_backend(first_ctx)
     second = _get_backend(second_ctx)
@@ -200,22 +178,7 @@ def test_resolve_path_lexical_rejects_workspace_escape(tmp_path: Path):
         _resolve_path_lexical(ctx, "../outside.txt", operation="read")
 
     assert excinfo.value.code == "POLICY_DENIED"
-    assert "path escapes workspace root: ../outside.txt" in excinfo.value.message
-    assert "Use a relative path under the workspace root" in excinfo.value.message
-    assert excinfo.value.details["retry_path"] == "tmp/outside.txt"
-
-
-def test_resolve_path_lexical_suggests_workspace_local_tmp_for_absolute_tmp(
-    tmp_path: Path,
-):
-    ctx = _ctx(tmp_path)
-
-    with pytest.raises(ToolRuntimeError) as excinfo:
-        _resolve_path_lexical(ctx, "/tmp/http_server.asm", operation="write")
-
-    assert excinfo.value.code == "POLICY_DENIED"
-    assert excinfo.value.details["retry_path"] == "tmp/http_server.asm"
-    assert "tmp/http_server.asm" in excinfo.value.message
+    assert excinfo.value.message == "path escapes workspace root: ../outside.txt"
 
 
 def test_resolve_path_lexical_uses_context_metadata_cwd_for_relative_paths(
@@ -261,22 +224,6 @@ def test_resolve_path_lexical_honors_workspace_root_env_when_policy_has_no_root(
     )
 
     assert resolved == str(scratch / "pyproject.toml")
-
-
-def test_resolve_workspace_root_prefers_policy_root_over_tool_fallback(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    ctx = _ctx(tmp_path)
-    broad_workspace = tmp_path / "parent-workspace"
-    broad_workspace.mkdir()
-
-    monkeypatch.setattr(
-        "openminion.tools.file.plugin.resolve_tool_workspace_root",
-        lambda *, env, fallback: broad_workspace,
-    )
-
-    assert _resolve_workspace_root(ctx) == ctx.workspace
 
 
 def test_resolve_path_lexical_workspace_root_env_overrides_context_workspace(

@@ -12,11 +12,6 @@ from openminion.services.agent.execution.finalization import (
 from openminion.services.agent.execution.followup import (
     available_follow_up_tools,
 )
-from ...execution_prompts import (
-    build_denied_tool_recovery_hint,
-    build_pre_tool_draft_message_text,
-    build_tool_execution_results_message,
-)
 
 from ..deps import ExecutorDeps
 
@@ -34,13 +29,15 @@ def build_follow_up_request(
         batch=batch,
         tool_calls_count=len(response.tool_calls or []),
     ).get("tool_results", "[]")
-    tool_feedback_message = build_tool_execution_results_message(
-        payload=str(tool_feedback_payload),
-        extra_feedback=str(extra_tool_feedback or ""),
-        finalization_guidance=(
-            FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE if require_typed_finalization else ""
-        ),
-    )
+    tool_feedback_message = f"Tool execution results:\n{tool_feedback_payload}"
+    if str(extra_tool_feedback or "").strip():
+        tool_feedback_message = (
+            f"{tool_feedback_message}\n\n{str(extra_tool_feedback).strip()}"
+        )
+    if require_typed_finalization:
+        tool_feedback_message = (
+            f"{tool_feedback_message}\n\n{FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE}"
+        )
     tool_history_entry = ProviderHistoryMessage(
         role="user",
         content=tool_feedback_message,
@@ -52,8 +49,9 @@ def build_follow_up_request(
         + [
             ProviderHistoryMessage(
                 role="assistant",
-                content=build_pre_tool_draft_message_text(
-                    response_text=str(getattr(response, "text", "") or "")
+                content=(
+                    "Pre-tool draft for the same request (not the final answer):\n"
+                    f"{response.text}"
                 ),
             ),
             tool_history_entry,
@@ -94,11 +92,14 @@ def denied_tool_recovery_hint(batch: ToolExecutionBatch) -> str | None:
         if not suggested_tool:
             continue
         blocked_tool = str(getattr(result, "tool_name", "") or "").strip() or "tool"
-        return build_denied_tool_recovery_hint(
-            blocked_tool=blocked_tool,
-            suggested_tool=suggested_tool,
-            suggested_fix=suggested_fix,
+        guidance = (
+            f"The previous {blocked_tool} call was blocked by policy. "
+            f"Do not repeat it. Retry the same user task using {suggested_tool} "
+            "if that structured tool can satisfy the intent."
         )
+        if suggested_fix:
+            guidance = f"{guidance} {suggested_fix}"
+        return guidance
     return None
 
 

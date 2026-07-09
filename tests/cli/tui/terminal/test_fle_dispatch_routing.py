@@ -371,23 +371,20 @@ def test_call_id_recorded_in_dedup_set_after_tool_started() -> None:
     assert "abc-123" in transcript._live_narrated_call_ids
 
 
-# ── (5) FTR-02 footer owns turn state, not tool rows ───────────────
+# ── (5) FTR-02 footer stays idle across tool events ───────────────
 
 
-def test_footer_owns_turn_state_without_taking_tool_event_ownership() -> None:
+def test_footer_stays_identity_only_across_tool_events() -> None:
     transcript, _ = _make_transcript()
     status_line = TerminalStatusLine()
     status_line.set_state(agent="alpha", model="openai/test", cwd="/tmp")
 
     state_history: list[str] = []
-    turn_status_history: list[str] = []
     original_set_state = status_line.set_state
 
     def _spy_set_state(**segments):
         if "state" in segments and segments["state"] is not None:
             state_history.append(str(segments["state"]))
-        if "turn_status" in segments and segments["turn_status"]:
-            turn_status_history.append(str(segments["turn_status"]))
         return original_set_state(**segments)
 
     status_line.set_state = _spy_set_state  # type: ignore[method-assign]
@@ -418,8 +415,11 @@ def test_footer_owns_turn_state_without_taking_tool_event_ownership() -> None:
             status_line=status_line,
         )
     )
+    assert "responding" not in state_history, (
+        "tool events should stay owned by the inline turn handle rather than "
+        f"reentering the shared footer state; history: {state_history}"
+    )
     assert "tool" not in state_history, state_history
-    assert any("Working" in label for label in turn_status_history)
     assert status_line.state == "idle"
 
 

@@ -20,12 +20,7 @@ class Suite:
 
 
 SUITES: dict[str, Suite] = {
-    "local": Suite(
-        (
-            "tests/e2e/tui/focus/test_local.py",
-            "tests/e2e/tui/focus/test_fake_terminal_focus.py",
-        )
-    ),
+    "local": Suite(("tests/e2e/tui/focus/test_local.py",)),
     "core": Suite(("tests/e2e/tui/focus/test_live_basic.py",), live=True),
     "tools": Suite(("tests/e2e/tui/focus/test_live_tools.py",), live=True),
     "approval": Suite(
@@ -72,7 +67,6 @@ SUITES: dict[str, Suite] = {
     "regression": Suite(
         (
             "tests/e2e/tui/focus/test_local.py",
-            "tests/e2e/tui/focus/test_fake_terminal_focus.py",
             "tests/cli/tui/focus",
             "tests/cli/tui/terminal",
             "tests/cli/status",

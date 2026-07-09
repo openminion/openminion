@@ -56,7 +56,7 @@ def test_complete_shows_muted_whole_second_response_time() -> None:
     handle.complete()
     output = buffer.getvalue()
     assert "Done in 3s" in output
-    assert output.endswith("Done in 3s")
+    assert output.endswith("Done in 3s\n\n")
     assert "3.4s" not in output
 
 
@@ -123,7 +123,7 @@ def test_complete_is_idempotent() -> None:
     handle.complete(final_text="twice")  # should be a no-op
 
 
-def test_prompt_safe_status_does_not_print_phase_rows_into_prompt() -> None:
+def test_prompt_safe_status_rewrites_in_place() -> None:
     console, buffer = _make_console()
     handle = TerminalTurnHandle(console)
     handle.set_terminal_writer(lambda render: render())
@@ -134,28 +134,13 @@ def test_prompt_safe_status_does_not_print_phase_rows_into_prompt() -> None:
     handle.complete(final_text="ready")
 
     output = buffer.getvalue()
-    assert "\r\033[2K" not in output
-    assert "Analyzing request..." not in output
-    assert "Loading memory context..." not in output
-    assert "type to queue ›" not in output
-    assert "esc interrupts · type to queue" not in output
+    assert "\r\033[2K" in output
+    assert "Analyzing request...\n" not in output
+    assert "Loading memory context...\n" not in output
     assert "ready" in output
 
 
-def test_prompt_safe_completion_leaves_one_prompt_gap() -> None:
-    console, buffer = _make_console()
-    handle = TerminalTurnHandle(console)
-    handle.set_terminal_writer(lambda render: render())
-    handle.start()
-
-    handle.complete(final_text="ready")
-
-    output = buffer.getvalue()
-    assert output.count("ready") == 1
-    assert output.endswith("\n\n")
-
-
-def test_prompt_safe_mode_keeps_elapsed_status_out_of_prompt_output() -> None:
+def test_prompt_safe_mode_refreshes_elapsed_status() -> None:
     console, buffer = _make_console()
     handle = TerminalTurnHandle(console)
     handle.set_terminal_writer(lambda render: render())
@@ -166,41 +151,7 @@ def test_prompt_safe_mode_keeps_elapsed_status_out_of_prompt_output() -> None:
         handle.set_status_label("Analyzing request...")
 
         output = buffer.getvalue()
-        assert "Analyzing request..." not in output
-        assert "2s" not in output
-    finally:
-        handle.complete(final_text="ready")
-
-
-def test_prompt_safe_status_skips_elapsed_only_repaints() -> None:
-    console, buffer = _make_console()
-    handle = TerminalTurnHandle(console)
-    handle.set_terminal_writer(lambda render: render())
-    handle.start()
-    try:
-        handle.set_status_label("Analyzing request...")
-        first_output = buffer.getvalue()
-
-        handle._spinner = Spinner(time.monotonic() - 9.0)
-        handle._refresh_prompt_safe_status()
-
-        assert buffer.getvalue() == first_output
-    finally:
-        handle.complete(final_text="ready")
-
-
-def test_prompt_safe_status_keeps_queue_hint_out_of_status_output() -> None:
-    console, buffer = _make_console()
-    handle = TerminalTurnHandle(console)
-    handle.set_terminal_writer(lambda render: render())
-    handle.start()
-    try:
-        handle.set_status_label("Analyzing request...")
-
-        output = buffer.getvalue()
-        assert "Analyzing request..." not in output
-        assert "esc interrupts" not in output
-        assert "type to queue ›" not in output
-        assert "esc interrupts · type to queue" not in output
+        assert "Analyzing request..." in output
+        assert "2s" in output
     finally:
         handle.complete(final_text="ready")

@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
-from collections import Counter
 from typing import Any, Callable, Iterable, Literal
 
 from rich.console import Console
@@ -74,9 +71,6 @@ class TerminalTranscript:
         self._hidden_failed_count: int = 0
         self._truncated_blocks: list[Any] = []
         self._live_narrated_call_ids: set[str] = set()
-        self._started_tool_signatures: set[tuple[str, str]] = set()
-        self._completed_tool_signatures: set[tuple[str, str, str, str]] = set()
-        self._collapsed_tool_results: Counter[str] = Counter()
         self._active_handle: Any | None = None
         self._terminal_writer: Callable[[Callable[[], None]], Any] | None = None
 
@@ -114,7 +108,6 @@ class TerminalTranscript:
             handle.set_terminal_writer(self._terminal_writer)
         handle.start()
         self._active_handle = handle
-        self._reset_turn_tool_compaction()
         original_complete = handle.complete
 
         def _complete(final_text: str | None = None) -> None:
@@ -125,7 +118,6 @@ class TerminalTranscript:
             original_complete(final_text)
             self._active_handle = None
             self._maybe_print_hidden_tool_summary()
-            self._maybe_print_collapsed_tool_summary()
 
         handle.complete = _complete  # type: ignore[method-assign]
         return handle
@@ -134,14 +126,12 @@ class TerminalTranscript:
         if message.kind == MessageKind.USER:
             self._hidden_tool_count = 0
             self._hidden_failed_count = 0
-            self._reset_turn_tool_compaction()
         self._messages.append(message)
         self._selected_message_id = message.msg_id
         if render:
             self._render(message)
         if render and message.kind == MessageKind.AGENT:
             self._maybe_print_hidden_tool_summary()
-            self._maybe_print_collapsed_tool_summary()
 
     def _maybe_print_hidden_tool_summary(self) -> None:
         if self._hidden_tool_count <= 0:
@@ -159,33 +149,6 @@ class TerminalTranscript:
         self._console.print(Text(line, style="dim italic"))
         self._hidden_tool_count = 0
         self._hidden_failed_count = 0
-
-    def _maybe_print_collapsed_tool_summary(self) -> None:
-        if not self._collapsed_tool_results:
-            return
-        hidden_count = sum(self._collapsed_tool_results.values())
-        noun = "tool result" if hidden_count == 1 else "tool results"
-        examples = self._format_collapsed_tool_examples()
-        suffix = f" — {examples}" if examples else ""
-        line = f"({hidden_count} repeated {noun} collapsed{suffix})"
-        self._console.print(Text(line, style="dim italic"))
-        self._collapsed_tool_results.clear()
-
-    def _format_collapsed_tool_examples(self) -> str:
-        if not self._collapsed_tool_results:
-            return ""
-        parts: list[str] = []
-        for label, count in self._collapsed_tool_results.most_common(3):
-            parts.append(f"{label} ×{count}")
-        remaining = len(self._collapsed_tool_results) - len(parts)
-        if remaining > 0:
-            parts.append(f"+{remaining} more")
-        return ", ".join(parts)
-
-    def _reset_turn_tool_compaction(self) -> None:
-        self._started_tool_signatures = set()
-        self._completed_tool_signatures = set()
-        self._collapsed_tool_results = Counter()
 
     def set_messages(self, messages: list[ChatMessage]) -> None:
         self.reset_session_state()
@@ -205,7 +168,6 @@ class TerminalTranscript:
         self._hidden_failed_count = 0
         self._truncated_blocks = []
         self._live_narrated_call_ids = set()
-        self._reset_turn_tool_compaction()
 
     def filter_messages(self, query: str) -> None:
         if query:
@@ -313,11 +275,6 @@ class TerminalTranscript:
             if call_id:
                 self._live_narrated_call_ids.add(call_id)
             return
-        should_render_start = (
-            True
-            if self._verbosity == "verbose"
-            else self._remember_tool_start(tool_name, args)
-        )
         renderable = _render_in_progress_tool_block(tool_name, args)
         handle = self._active_handle
         if handle is not None and hasattr(handle, "set_active_tool"):
@@ -328,15 +285,14 @@ class TerminalTranscript:
                     args=args,
                     started_at=_time.monotonic(),
                 )
-                if should_render_start and not self._append_live_renderable(renderable):
+                if not self._append_live_renderable(renderable):
                     self._write_render(lambda: self._console.print(renderable))
                 if call_id:
                     self._live_narrated_call_ids.add(call_id)
                 return
             except (AttributeError, RuntimeError, ValueError):
                 pass
-        if should_render_start:
-            self._console.print(renderable)
+        self._console.print(renderable)
         if call_id:
             self._live_narrated_call_ids.add(call_id)
 
@@ -400,11 +356,6 @@ class TerminalTranscript:
                 self._live_narrated_call_ids.add(call_id)
             return
 
-        if self._collapse_repeated_tool_result(event):
-            if call_id:
-                self._live_narrated_call_ids.add(call_id)
-            return
-
         renderable = _render_tool_block(event)
         if not self._append_live_renderable(renderable):
             self._write_render(lambda: self._console.print(renderable))
@@ -412,34 +363,6 @@ class TerminalTranscript:
             self._truncated_blocks.append(event)
         if call_id:
             self._live_narrated_call_ids.add(call_id)
-
-    def _remember_tool_start(self, tool_name: str, args: dict[str, Any]) -> bool:
-        signature = (tool_name, _stable_digest(args))
-        if signature in self._started_tool_signatures:
-            return False
-        self._started_tool_signatures.add(signature)
-        return True
-
-    def _collapse_repeated_tool_result(self, event: Any) -> bool:
-        args_digest = _stable_digest(getattr(event, "args", {}))
-        body_digest = _stable_digest(getattr(event, "full_content", "") or "")
-        exit_label = str(getattr(event, "exit_code", None))
-        signature = (
-            getattr(event, "tool_name", ""),
-            args_digest,
-            exit_label,
-            body_digest,
-        )
-        if signature not in self._completed_tool_signatures:
-            self._completed_tool_signatures.add(signature)
-            return False
-        label = _tool_summary_label(
-            str(getattr(event, "tool_name", "") or "tool"),
-            dict(getattr(event, "args", {}) or {}),
-            getattr(event, "exit_code", None),
-        )
-        self._collapsed_tool_results[label] += 1
-        return True
 
     def _append_live_renderable(self, renderable: Any) -> bool:
         handle = self._active_handle
@@ -527,56 +450,6 @@ class TerminalTranscript:
         event = list(reversed(self._truncated_blocks))[index - 1]
         self._console.print(_render_full_tool_block(event))
         return True
-
-
-def _stable_digest(value: Any) -> str:
-    normalized = json.dumps(
-        _json_safe(value),
-        sort_keys=True,
-        ensure_ascii=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, dict):
-        return [(str(key), _json_safe(value[key])) for key in sorted(value, key=str)]
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(item) for item in value]
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return repr(value)
-
-
-def _tool_summary_label(
-    tool_name: str,
-    args: dict[str, Any],
-    exit_code: int | None,
-) -> str:
-    name = (tool_name or "tool").strip() or "tool"
-    arg_preview = _tool_arg_preview(args)
-    status = "failed" if exit_code not in (None, 0) else ""
-    label = f"{name}({arg_preview})" if arg_preview else name
-    return f"{label} {status}".strip()
-
-
-def _tool_arg_preview(args: dict[str, Any]) -> str:
-    for key in ("cmd", "command", "path", "file", "query", "pattern", "url"):
-        if key in args:
-            return _short_preview(args[key])
-    try:
-        _key, value = next(iter(args.items()))
-    except StopIteration:
-        return ""
-    return _short_preview(value)
-
-
-def _short_preview(value: Any, *, limit: int = 48) -> str:
-    text = str(value or "").strip().replace("\n", " ")
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3] + "..."
 
 
 def _copyable_text(message: ChatMessage) -> str | None:

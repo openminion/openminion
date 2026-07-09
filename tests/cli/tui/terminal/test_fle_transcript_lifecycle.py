@@ -205,74 +205,6 @@ def test_completed_without_prior_started_still_renders() -> None:
     assert "ok" in out
 
 
-def test_repeated_tool_start_is_collapsed_by_signature() -> None:
-    t, buf = _make("normal")
-    payload = {"tool_name": "web.search", "args": {"query": "MSFT stock"}}
-
-    t.handle_tool_started({"call_id": "c1", **payload})
-    t.handle_tool_started({"call_id": "c2", **payload})
-
-    out = buf.getvalue()
-    assert out.count("Running web.search(MSFT stock)") == 1
-    assert "c1" in t._live_narrated_call_ids
-    assert "c2" in t._live_narrated_call_ids
-
-
-def test_repeated_tool_failure_result_is_collapsed_by_signature() -> None:
-    t, buf = _make("normal")
-    payload = {
-        "tool_name": "web.search",
-        "args": {"query": "MSFT stock"},
-        "content": "tool_budget_calls_exceeded",
-        "exit_code": 1,
-    }
-
-    t.handle_tool_completed({"call_id": "c1", **payload})
-    t.handle_tool_completed({"call_id": "c2", **payload})
-    t._maybe_print_collapsed_tool_summary()
-
-    out = buf.getvalue()
-    assert out.count("tool_budget_calls_exceeded") == 1
-    assert "1 repeated tool result collapsed" in out
-    assert "web.search(MSFT stock) failed ×1" in out
-    assert "c1" in t._live_narrated_call_ids
-    assert "c2" in t._live_narrated_call_ids
-
-
-def test_same_tool_args_with_different_result_still_renders() -> None:
-    t, buf = _make("normal")
-    base = {"tool_name": "web.search", "args": {"query": "MSFT stock"}}
-
-    t.handle_tool_completed({"call_id": "c1", **base, "content": "first"})
-    t.handle_tool_completed({"call_id": "c2", **base, "content": "second"})
-
-    out = buf.getvalue()
-    assert "first" in out
-    assert "second" in out
-    assert "repeated tool result collapsed" not in out
-
-
-def test_repeated_tool_events_remain_exhaustive_in_verbose_mode() -> None:
-    t, buf = _make("verbose")
-    payload = {
-        "tool_name": "web.search",
-        "args": {"query": "MSFT stock"},
-        "content": "tool_budget_calls_exceeded",
-        "exit_code": 1,
-    }
-
-    t.handle_tool_started({"call_id": "c1", **payload})
-    t.handle_tool_started({"call_id": "c2", **payload})
-    t.handle_tool_completed({"call_id": "c1", **payload})
-    t.handle_tool_completed({"call_id": "c2", **payload})
-    t._maybe_print_collapsed_tool_summary()
-
-    out = buf.getvalue()
-    assert out.count("Running web.search(MSFT stock)") == 2
-    assert out.count("tool_budget_calls_exceeded") == 2
-    assert "repeated tool result collapsed" not in out
-
-
 def test_completed_during_live_turn_appends_via_handle() -> None:
     t, buf = _make("normal")
 
@@ -457,7 +389,7 @@ def test_terminal_writer_flows_into_active_turn_completion() -> None:
     assert "hello" in rendered[-1]
 
 
-def test_prompt_safe_mode_keeps_inflight_status_out_of_prompt_output() -> None:
+def test_prompt_safe_mode_renders_inflight_status_before_first_token() -> None:
     buf = io.StringIO()
     console = Console(
         file=buf,
@@ -476,7 +408,8 @@ def test_prompt_safe_mode_keeps_inflight_status_out_of_prompt_output() -> None:
     handle = t.begin_turn(role="assistant")
     handle.set_status_label("Working...")
 
-    assert rendered == []
+    assert rendered
+    assert "Working..." in rendered[-1]
 
 
 def test_prompt_safe_writer_routes_rich_ansi_through_prompt_output() -> None:

@@ -322,13 +322,11 @@ def _timezone_from_resolved_location(
             {"location": query},
         )
     config_auto_timezone = config.model_copy(update={"timezone": "auto"})
-    _current, _forecast_url, forecast_payload = (
-        weather_plugin.forecast_openmeteo_current(
-            latitude=coordinates[0],
-            longitude=coordinates[1],
-            config=config_auto_timezone,
-            timeout_s=timeout_s,
-        )
+    _current, _forecast_url, forecast_payload = weather_plugin.forecast_openmeteo_current(
+        latitude=coordinates[0],
+        longitude=coordinates[1],
+        config=config_auto_timezone,
+        timeout_s=timeout_s,
     )
     timezone_name = _timezone_from_forecast_payload(forecast_payload)
     if timezone_name:

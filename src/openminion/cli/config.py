@@ -44,9 +44,7 @@ def infer_workspace_home_root(cwd: Path) -> Path | None:
 def resolve_cli_tool_provider_specs_and_dispatch_map(
     runtime_tools: Any,
 ) -> tuple[list[Any], dict[str, Any]]:
-    from openminion.services.tool.exposure import (
-        get_visible_tool_specs_and_dispatch_map,
-    )
+    from openminion.services.tool.exposure import get_visible_tool_specs_and_dispatch_map
 
     return get_visible_tool_specs_and_dispatch_map(runtime_tools)
 

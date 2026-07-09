@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_CODE_GREP,
     MODEL_CODE_PATCH,
@@ -22,7 +19,6 @@ from openminion.tools.code.plugin import (
     _h_repo_index,
     _h_repo_map,
     _h_symbol_find,
-    _resolve_code_path,
     register,
 )
 from openminion.tools.file.plugin import _h_write_file
@@ -65,19 +61,6 @@ def test_code_register_exposes_expected_tools() -> None:
         MODEL_CODE_SYMBOL_FIND,
     ):
         assert registry.get(tool_name).name == tool_name
-
-
-def test_resolve_code_path_suggests_workspace_local_tmp_for_absolute_tmp(
-    tmp_path: Path,
-) -> None:
-    ctx = _ctx(tmp_path)
-
-    with pytest.raises(ToolRuntimeError) as excinfo:
-        _resolve_code_path(ctx, "/tmp/http_server.asm", operation="write")
-
-    assert excinfo.value.code == "POLICY_DENIED"
-    assert excinfo.value.details["retry_path"] == "tmp/http_server.asm"
-    assert "tmp/http_server.asm" in excinfo.value.message
 
 
 def test_patch_applies_single_hunk(tmp_path: Path) -> None:

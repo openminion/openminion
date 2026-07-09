@@ -555,31 +555,6 @@ async def test_openminion_runtime_focus_deferred_binding_and_send_message_forwar
 
 
 @pytest.mark.asyncio
-async def test_openminion_runtime_focus_working_dir_overrides_stale_workspace_root() -> (
-    None
-):
-    rt = _FakeRuntime()
-    runtime = OpenMinionRuntime(
-        rt,
-        target="focus",
-        working_dir="/tmp/focus-project/openminion",
-        bind_immediately=False,
-    )
-    runtime.create_new_session()
-
-    await _collect_chunks(
-        runtime,
-        "where am I?",
-        inbound_metadata={"workspace_root": "/tmp/focus-project"},
-    )
-
-    call = rt.resolve_gateway("alpha").calls[-1]
-    assert call["inbound_metadata"]["workspace_root"] == str(
-        Path("/tmp/focus-project/openminion").resolve()
-    )
-
-
-@pytest.mark.asyncio
 async def test_openminion_runtime_focus_uses_gateway_streaming_when_available() -> None:
     rt = _FakeRuntime(streaming_gateway=True)
     runtime = OpenMinionRuntime(

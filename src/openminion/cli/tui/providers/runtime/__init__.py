@@ -645,7 +645,10 @@ class OpenMinionRuntime(
         inbound_metadata: dict[str, str] | None,
     ) -> dict[str, str] | None:
         merged = dict(inbound_metadata or {})
-        if self._working_dir:
+        if (
+            self._working_dir
+            and not str(merged.get("workspace_root", "") or "").strip()
+        ):
             merged["workspace_root"] = self._working_dir
         if self._project_context_pending and self._project_context is not None:
             merged.update(build_project_context_metadata(self._project_context))

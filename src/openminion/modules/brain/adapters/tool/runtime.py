@@ -230,14 +230,6 @@ class ToolAdapter:
 
         return _CompositePolicyAdapter([base_adapter, extra_adapter])
 
-    def _effective_workspace_root(self, policy: Policy | None = None) -> Path:
-        raw = getattr(policy or self.policy, "raw", None)
-        if isinstance(raw, Mapping):
-            workspace_root = str(raw.get("workspace_root", "") or "").strip()
-            if workspace_root:
-                return Path(workspace_root).expanduser()
-        return self.workspace_root
-
     def execute(
         self, *, command: dict[str, Any], session_id: str, trace_id: str
     ) -> dict[str, Any]:
@@ -308,6 +300,7 @@ class ToolAdapter:
                 code="NOT_FOUND",
                 message=f"Tool '{tool_name}' is not registered.",
             )
+
         if runtime_tool is not None:
             if isinstance(runtime_tool, ToolSpec):
                 spec = runtime_tool
@@ -416,7 +409,6 @@ class ToolAdapter:
                     }
                 )
 
-        effective_workspace_root = self._effective_workspace_root(policy_for_run)
         replay_confirmed = bool(replay_confirmation_metadata)
         watch_write_authorization_requested = _watch_write_authorization_requested(
             tool_name=tool_name,
@@ -477,7 +469,7 @@ class ToolAdapter:
         extra_adapter = None if permission_mode == "bypass" else self.policy_adapter
         local_adapter = LocalPolicyAdapter(
             policy=policy_for_run,
-            workspace=effective_workspace_root,
+            workspace=self.workspace_root,
             scope=policy_for_run.max_scope(),
             confirm=auto_confirm,
         )
@@ -492,7 +484,7 @@ class ToolAdapter:
 
         ctx = RuntimeContext(
             policy=policy_for_run,
-            workspace=effective_workspace_root,
+            workspace=self.workspace_root,
             run_root=run_root,
             scope=policy_for_run.max_scope(),
             confirm=auto_confirm,

@@ -30,7 +30,7 @@ from openminion.modules.tool.contracts.model_ids import (
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.tool.runtime import RuntimeContext
-from openminion.tools.config import resolve_tool_workspace_root, workspace_retry_path
+from openminion.tools.config import resolve_tool_workspace_root
 
 from .backends import (
     EditOperation,
@@ -277,7 +277,7 @@ class FileEditArgs(BaseModel):
         return normalized
 
 
-_backend_cache: dict[tuple[str, str, str], StorageBackend] = {}
+_backend_cache: dict[tuple[str, str], StorageBackend] = {}
 
 
 def _resolve_workspace_root(ctx: RuntimeContext) -> Path:
@@ -289,14 +289,13 @@ def _resolve_workspace_root(ctx: RuntimeContext) -> Path:
     if explicit_workspace:
         return Path(explicit_workspace).expanduser().resolve(strict=False)
 
+    env_workspace = resolve_tool_workspace_root(env=runtime_env, fallback="")
+    if str(env_workspace) != str(Path.cwd().resolve(strict=False)):
+        return env_workspace
     raw = getattr(ctx.policy, "raw", {})
     workspace_root = raw.get("workspace_root")
     if workspace_root:
         return Path(workspace_root).expanduser().resolve(strict=False)
-
-    env_workspace = resolve_tool_workspace_root(env=runtime_env, fallback="")
-    if str(env_workspace) != str(Path.cwd().resolve(strict=False)):
-        return env_workspace
     return Path(ctx.workspace).expanduser().resolve(strict=False)
 
 
@@ -329,18 +328,9 @@ def _resolve_path_lexical(ctx: RuntimeContext, raw_path: str, operation: str) ->
     try:
         resolved.relative_to(workspace_root)
     except ValueError:
-        retry_path = workspace_retry_path(raw_path)
         raise ToolRuntimeError(
             "POLICY_DENIED",
-            (
-                f"path escapes workspace root: {raw_path}. "
-                f"Use a relative path under the workspace root, for example {retry_path}."
-            ),
-            details={
-                "workspace_root": str(workspace_root),
-                "retry_path": retry_path,
-                "retry_hint": "Use a relative path under the workspace root.",
-            },
+            f"path escapes workspace root: {raw_path}",
         )
 
     ctx.policy.ensure_path_allowed(
@@ -356,12 +346,12 @@ def _get_backend(ctx: RuntimeContext) -> StorageBackend:
     backend_type = str(
         raw.get("file_backend", FILE_BACKEND_LOCAL) or FILE_BACKEND_LOCAL
     )
-    workspace_root = _resolve_workspace_root(ctx)
-    cache_key = (backend_type, str(ctx.run_root), str(workspace_root))
+    cache_key = (backend_type, str(ctx.run_root))
     cached = _backend_cache.get(cache_key)
     if cached is not None:
         return cached
 
+    workspace_root = _resolve_workspace_root(ctx)
     if backend_type == FILE_BACKEND_LOCAL:
         backend: StorageBackend = LocalStorageBackend(workspace_root)
     elif backend_type == FILE_BACKEND_MEMORY:
