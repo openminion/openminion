@@ -30,3 +30,13 @@ Domain-specific prompt builders stay with their domain owner, preferably in a
 local `prompts.py` module when there is more than one prompt or a non-trivial
 renderer. Files intentionally kept outside this module must be listed in
 `scripts.validate.prompt_literals` with a durable owner rationale.
+
+## Public surface
+
+`openminion.modules.prompting` re-exports every stable fragment and helper named
+in this module. Callers may import from the package root when they need a shared
+prompt contract, or from the leaf file when that makes the local owner clearer.
+
+This package intentionally has no `cli.py`, `service.py`, `interfaces.py`,
+`schemas.py`, or `config.py`. It does not expose runtime state, typed payloads,
+operator-tunable settings, or a callable service boundary.

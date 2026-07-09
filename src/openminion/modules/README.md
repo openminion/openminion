@@ -23,7 +23,7 @@ policy wiring, lifecycle hooks, and cross-module orchestration. Do not move code
 between the two layers unless the owning tracker names the paired owner,
 validator effect, and behavior tests.
 
-Fourteen subsystems are standalone domain owners with no `services/` peer:
+Fifteen subsystems are standalone domain owners with no `services/` peer:
 
 - `a2a/`
 - `artifact/`
@@ -31,6 +31,7 @@ Fourteen subsystems are standalone domain owners with no `services/` peer:
 - `llm/`
 - `memory/`
 - `policy/`
+- `prompting/`
 - `registry/`
 - `retrieve/`
 - `secret/`

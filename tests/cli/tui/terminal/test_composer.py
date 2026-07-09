@@ -115,9 +115,8 @@ def _completion_menu_controls(node: object) -> list[CompletionsMenuControl]:
             return
         seen.add(current_id)
 
-        if (
-            isinstance(current, Window)
-            and isinstance(current.content, CompletionsMenuControl)
+        if isinstance(current, Window) and isinstance(
+            current.content, CompletionsMenuControl
         ):
             controls.append(current.content)
 
@@ -140,7 +139,9 @@ def test_completion_menu_uses_clickable_vertical_control() -> None:
     c = TerminalComposer()
     controls = _completion_menu_controls(c._session.layout.container)
 
-    assert any(isinstance(control, _ClickableCompletionMenuControl) for control in controls)
+    assert any(
+        isinstance(control, _ClickableCompletionMenuControl) for control in controls
+    )
 
 
 def test_clickable_completion_menu_applies_mouse_selected_completion(

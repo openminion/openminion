@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import openminion.modules.prompting as prompting
 from openminion.modules.prompting.context_blocks import (
     CURRENT_SESSION_SUMMARY_HEADER,
     GROUNDING_BLOCK_HEADER,
@@ -40,6 +41,7 @@ from openminion.modules.prompting.identity import (
     IDENTITY_DIRECTIVE,
     TOOL_RESULT_FORMAT_TEXT,
 )
+from openminion.modules.prompting.constants import PROMPTING_MODULE_OWNER
 from openminion.services.agent.execution_prompts import (
     build_denied_tool_recovery_hint,
     build_duplicate_final_tool_call_feedback,
@@ -58,6 +60,48 @@ from openminion.services.agent.execution_prompts import (
     build_tool_envelope_retry_user_message,
     build_tool_execution_results_message,
 )
+
+
+def test_prompting_package_exports_declared_shared_surface() -> None:
+    expected_exports = {
+        "ACTIVE_TASK_CONTINUATION_PROMPT",
+        "AGENT_IDENTITY_FRAME",
+        "BRAIN_FRESHNESS_POLICY_CONSTRAINT",
+        "CURRENT_SESSION_CALLBACK_CONTEXT_LABEL",
+        "CURRENT_SESSION_SUMMARY_HEADER",
+        "DECIDE_STYLE_OVERRIDES",
+        "DEFAULT_SAFETY_TEXT",
+        "FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE",
+        "FINALIZATION_STATUS_RETRY_GUIDANCE",
+        "GROUNDING_BLOCK_HEADER",
+        "IDENTITY_DIRECTIVE",
+        "PARTIAL_SUCCESS_CONTINUATION_PROMPT",
+        "PENDING_TURN_BLOCK_HEADER",
+        "PRIOR_SESSION_CONTEXT_LABEL",
+        "PRIOR_SESSION_SUMMARY_HEADER",
+        "PRIOR_TURN_BLOCK_HEADER",
+        "PROJECT_CONTEXT_FILE_HEADER",
+        "PROMPTING_MODULE_OWNER",
+        "THIRD_BRAIN_GRAPH_CONTEXT_HEADER",
+        "TOOL_LOOP_CONTINUE_PROMPT",
+        "TOOL_RESULT_FORMAT_TEXT",
+        "build_active_task_continuation_prompt",
+        "build_continuation_choice_message",
+        "build_feasibility_choice_prompt",
+        "build_goal_run_continuation_prompt",
+        "build_plan_checkpoint_continuation_message",
+        "build_project_context_block",
+        "build_successful_tool_continuation_prompt",
+        "fixed_profile_rewrites",
+    }
+
+    assert set(prompting.__all__) == expected_exports
+    assert prompting.PROMPTING_MODULE_OWNER == PROMPTING_MODULE_OWNER
+    assert (
+        prompting.CURRENT_SESSION_CALLBACK_CONTEXT_LABEL
+        == CURRENT_SESSION_CALLBACK_CONTEXT_LABEL
+    )
+    assert prompting.PRIOR_SESSION_CONTEXT_LABEL == PRIOR_SESSION_CONTEXT_LABEL
 
 
 def test_identity_prompt_fragments_preserve_current_text() -> None:
