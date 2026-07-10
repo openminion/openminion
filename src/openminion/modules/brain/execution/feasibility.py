@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from .runtime.turn import feasibility as _feasibility_runtime
+from openminion.modules.prompting.continuation import build_feasibility_choice_prompt
 from ..diagnostics.events import CanonicalEventLogger
 from ..schemas import (
     ActDecision,
@@ -111,13 +112,9 @@ def feasibility_user_message(report: FeasibilityReport | None) -> str:
 
 
 def feasibility_choice_message(report: FeasibilityReport | None) -> str:
-    base = feasibility_user_message(report)
-    options = (
-        "Reply 'continue' to proceed with the viable work, "
-        "'skip' to execute only the viable subset, "
-        "'retry' to reassess the plan, or 'cancel' to stop."
+    return str(
+        build_feasibility_choice_prompt(user_message=feasibility_user_message(report))
     )
-    return f"{base}\n{options}".strip()
 
 
 def apply_viable_subset(state: WorkingState, report: FeasibilityReport) -> bool:

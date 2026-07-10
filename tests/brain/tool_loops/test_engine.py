@@ -5941,6 +5941,68 @@ def test_engine_keeps_pending_duplicate_batch_on_normal_tool_path() -> None:
     assert duplicate_runtime.calls[2]["tool_choice"] == "auto"
 
 
+def test_engine_retries_pending_duplicate_batch_with_compact_closeout() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-repeated",
+                        name="file.write",
+                        arguments={"path": "a.py", "content": "value = 1\n"},
+                    )
+                ],
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="result: wrote a.py from recorded tool evidence",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state())
+    initial_state = AdaptiveToolLoopState(
+        messages=[Message(role="user", content="write a.py and report result")],
+        scratchpad={
+            "duplicate_batch_answer_only_closure_pending": True,
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote a.py",
+                    "data": {"path": "a.py"},
+                }
+            ],
+        },
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.write"})),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=list(initial_state.messages),
+        initial_state=initial_state,
+        tool_specs=_tool_specs("file.write"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "result: wrote a.py from recorded tool evidence"
+    assert len(runtime.calls) == 2
+    assert runtime.calls[0]["tool_choice"] == "none"
+    assert runtime.calls[1]["tool_choice"] == "none"
+    assert runtime.calls[1]["tools"] == []
+    assert bool(
+        outcome.state.scratchpad.get("tool_choice_none_compact_answer_only_retry_used")
+    )
+
+
 def test_engine_finalizes_from_evidence_when_duplicate_closure_returns_tools() -> None:
     duplicate_runtime = _FakeRuntime(
         responses=[

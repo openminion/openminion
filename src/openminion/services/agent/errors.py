@@ -3,6 +3,9 @@ from typing import Any, Mapping, Optional
 
 from openminion.modules.llm.providers.base import ProviderToolSpec
 from openminion.modules.tool.dispatch import _get_registry_manager
+from .execution_prompts import (
+    build_required_tool_retry_prompt as _render_required_tool_retry_prompt,
+)
 
 
 def _is_generic_open_object_schema(schema: Mapping[str, Any]) -> bool:
@@ -103,15 +106,10 @@ def build_required_tool_retry_prompt(
     tool_name: str,
     spec: ProviderToolSpec,
 ) -> str:
-    required_fields = required_fields_from_spec(spec)
-    required_hint = ", ".join(required_fields) if required_fields else "none"
-    return (
-        f"{user_message}\n\n"
-        "[CRITICAL TOOL-CALL INSTRUCTION]\n"
-        f"You MUST call exactly one tool: '{tool_name}'.\n"
-        "Do not answer with plain text.\n"
-        f"Required fields to include when applicable: {required_hint}.\n"
-        "Return a valid tool call now."
+    return _render_required_tool_retry_prompt(
+        user_message=user_message,
+        tool_name=tool_name,
+        required_fields=required_fields_from_spec(spec),
     )
 
 

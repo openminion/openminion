@@ -65,7 +65,7 @@ def test_slash_at_completer_present() -> None:
 def test_read_line_passes_placeholder_kwarg() -> None:
     src = inspect.getsource(TerminalComposer.read_line)
     assert "placeholder=" in src
-    assert "placeholder=self._formatted_placeholder()" in src
+    assert "placeholder=self._formatted_placeholder" in src
 
 
 def test_read_line_still_passes_patch_stdout_context() -> None:

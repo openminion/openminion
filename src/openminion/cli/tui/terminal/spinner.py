@@ -47,6 +47,14 @@ SPINNER_FRAMES: tuple[str, ...] = (
 )
 
 
+def format_elapsed_label(seconds: float) -> str:
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}m{secs:02d}s"
+
+
 class Spinner:
     def __init__(
         self,
@@ -74,12 +82,7 @@ class Spinner:
         return SPINNER_FRAMES[index]
 
     def elapsed_label(self, now: float) -> str:
-        elapsed = max(0.0, float(now) - self._start)
-        if elapsed < 60:
-            return f"{int(elapsed)}s"
-        minutes = int(elapsed // 60)
-        seconds = int(elapsed - minutes * 60)
-        return f"{minutes}m{seconds:02d}s"
+        return format_elapsed_label(float(now) - self._start)
 
 
 def format_status_row(
@@ -116,5 +119,6 @@ __all__ = [
     "Spinner",
     "THINKING_VERB",
     "VERBS",
+    "format_elapsed_label",
     "format_status_row",
 ]

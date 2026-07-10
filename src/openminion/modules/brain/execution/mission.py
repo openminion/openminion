@@ -22,6 +22,7 @@ from ..constants import (
     BRAIN_RESET_POLICY_MISSION_REVISE,
     BRAIN_RESET_POLICY_MISSION_START,
     BRAIN_RESET_POLICY_ORDINARY,
+    MissionStatus,
 )
 from ..schemas import (
     BudgetCounters,
@@ -476,15 +477,16 @@ def apply_turn_reset_policy(
 def set_mission_status(
     *,
     mission: MissionState,
-    status: str,
+    status: MissionStatus | str,
     reason: str,
     route_action: str,
 ) -> None:
-    mission.status = status
+    normalized_status = MissionStatus(status)
+    mission.status = normalized_status
     mission.latest_reason = _normalized_text(reason)
     mission.latest_route_action = route_action
     mission.last_progress_at = iso_now()
-    if status == BRAIN_MISSION_STATUS_COMPLETED:
+    if normalized_status == BRAIN_MISSION_STATUS_COMPLETED:
         mission.completed_at = iso_now()
 
 

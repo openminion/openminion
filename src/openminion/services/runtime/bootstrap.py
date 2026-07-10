@@ -70,6 +70,10 @@ from openminion.modules.policy.runtime.action_policy import (
 from openminion.services.runtime.daytona.client import DaytonaClient
 from openminion.services.runtime.daytona.config import DaytonaConfig
 from openminion.services.runtime.daytona.runner import DaytonaRunner
+from openminion.services.runtime.errors import (
+    PluginActivationError,
+    RuntimeBootstrapError,
+)
 from openminion.services.runtime.memory import (
     _build_memory_v2_gateway_adapter as _build_bootstrap_memory_v2_gateway_adapter_impl,
     _normalize_runtime_memory_provider,
@@ -89,16 +93,13 @@ def build_action_policy_service(
     data_root: Path,
 ) -> Any | None:
     """Build the canonical policy service once per runtime bootstrap."""
-    try:
-        from openminion.modules.policy.runtime.service import PolicyCtl
-    except Exception:
-        return None
+    from openminion.modules.policy.runtime.service import PolicyCtl
 
     policy_dir = data_root / "policy"
     policy_dir.mkdir(parents=True, exist_ok=True)
     db_path = policy_dir / "policy.db"
 
-    action_policy = getattr(config, "action_policy", None)
+    action_policy = config.action_policy
     policy_ctl = PolicyCtl.with_sqlite(
         db_path,
         config=policy_config_from_action_policy(action_policy),
@@ -311,7 +312,9 @@ def build_agent_memory_service(
     session_context: SessionContextService | None = None,
     retrieve_ctl: Any | None = None,
     storage_path: Path | None = None,
-) -> Any:
+) -> (
+    HelloWorldMemoryService | MemoryServiceGatewayAdapter | DisabledMemoryGatewayAdapter
+):
     env_provider = _resolve_env_override(
         config_manager=config_manager,
         config=config,
@@ -329,7 +332,7 @@ def build_agent_memory_service(
             agent_id=agent_id,
             logger=logger,
             enabled=bool(config.runtime.memory_enabled),
-        )  # type: ignore[return-value]
+        )
 
     # memory_v2: V2 SQLite-backed adapter (new default)
     if normalized_provider == "memory_v2":
@@ -416,7 +419,7 @@ def enforce_plugin_activation_policy(
         policy_version=security_policy.policy_version,
     )
     if trust_decision.decision != DECISION_ALLOW:
-        raise RuntimeError(
+        raise PluginActivationError(
             "plugin trust policy blocked activation "
             f"(plugin={manifest.id}, decision={trust_decision.decision}, reason={trust_decision.reason_code})"
         )
@@ -439,7 +442,7 @@ def enforce_plugin_activation_policy(
     )
     if decision.decision == DECISION_ALLOW:
         return
-    raise RuntimeError(
+    raise PluginActivationError(
         "security policy blocked plugin activation "
         f"(plugin={manifest.id}, decision={decision.decision}, reason={decision.reason_code})"
     )
@@ -510,8 +513,12 @@ def build_gateway_service(
         if callable(build_structurer):
             try:
                 resolved_memory.configure_session_summary_structurer(build_structurer())
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "session summary structurer unavailable for profile=%s error=%s",
+                    profile_name,
+                    exc,
+                )
 
     return GatewayService(
         agent_service,
@@ -549,15 +556,23 @@ def _try_seed_identity(
         if callable(get_profile):
             try:
                 profile = get_profile(agent_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "identity_seeder: get_profile failed agent_id=%s error=%s",
+                    agent_id,
+                    exc,
+                )
         if profile is None:
             load_profile = getattr(identity_ctl, "load_profile", None)
             if callable(load_profile):
                 try:
                     profile = load_profile(agent_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(
+                        "identity_seeder: load_profile failed agent_id=%s error=%s",
+                        agent_id,
+                        exc,
+                    )
 
         if profile is None:
             return
@@ -913,7 +928,7 @@ def build_agent_runtime_service(
     except Exception as exc:  # noqa: BLE001
         fallback_reason = str(exc)
         logger.error("Brain runtime mode failed. Error: %s", exc)
-        raise RuntimeError(f"Brain runtime mode failed. Error: {exc}") from exc
+        raise RuntimeBootstrapError(f"Brain runtime mode failed. Error: {exc}") from exc
 
     brain_storage_path = resolve_brain_sessions_db_path(storage_path=storage_path)
     return (

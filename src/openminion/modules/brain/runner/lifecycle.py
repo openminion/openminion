@@ -8,6 +8,7 @@ from ..constants import (
     BRAIN_ACTIVE_STATES,
     BRAIN_STATE_JOB_PENDING,
     BRAIN_STATE_WAITING_USER,
+    MissionStatus,
 )
 from ..config import RunnerOptions
 from ..diagnostics.events import CanonicalEventLogger
@@ -139,7 +140,7 @@ def run_until_idle(
             ):
                 set_mission_status(
                     mission=last.working_state.mission,
-                    status="paused",
+                    status=MissionStatus.PAUSED,
                     reason="mission paused because async state had no pending jobs to poll",
                     route_action=str(
                         getattr(last.working_state.mission, "latest_route_action", "")
@@ -198,7 +199,7 @@ def run_until_idle(
             ):
                 set_mission_status(
                     mission=last.working_state.mission,
-                    status="awaiting_async",
+                    status=MissionStatus.AWAITING_ASYNC,
                     reason="mission is still waiting on async work",
                     route_action=str(
                         getattr(last.working_state.mission, "latest_route_action", "")

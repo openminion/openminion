@@ -27,7 +27,12 @@ from openminion.cli.tui.presentation.markers import (
 )
 from openminion.cli.tui.presentation.models import ToolEvent
 
-from .spinner import THINKING_VERB, Spinner, format_status_row
+from .spinner import (
+    THINKING_VERB,
+    Spinner,
+    format_elapsed_label,
+    format_status_row,
+)
 
 _looks_like_markdown = looks_like_markdown
 
@@ -59,6 +64,7 @@ def _looks_like_unified_diff(text: str) -> bool:
 
 
 _STREAM_CURSOR = "▍"
+_LIVE_STATUS_HINT = "esc interrupts"
 _BOUNDED_FALLBACK_THRESHOLD_S = 0.05
 _LIVE_REFRESH_PER_SECOND = 4
 _TOOL_BLOCK_TRUNCATE_LINES = 6
@@ -105,8 +111,6 @@ class TerminalTurnHandle:
         self._inline_status_visible = False
         self._terminal_writer: Callable[[Callable[[], None]], Any] | None = None
         self._prompt_safe_mode = False
-        self._last_prompt_safe_status_line = ""
-        self._prompt_safe_status_visible = False
 
     def set_terminal_writer(self, writer: Callable[[Callable[[], None]], Any]) -> None:
         self._terminal_writer = writer
@@ -175,8 +179,6 @@ class TerminalTurnHandle:
             and not self._prompt_safe_mode
         )
         self._inline_status_visible = False
-        self._prompt_safe_status_visible = False
-        self._last_prompt_safe_status_line = ""
         if not self._inline_status_mode and not self._prompt_safe_mode:
             self._live = Live(
                 self._render(),
@@ -235,6 +237,19 @@ class TerminalTurnHandle:
         self._refresh_stop.set()
         if self._prompt_safe_mode:
             self._clear_prompt_safe_status()
+            final_renderable = self._render_final_body(elapsed_seconds=elapsed)
+            if final_renderable is not None:
+
+                def _print_final_with_gap() -> None:
+                    self._console.print(final_renderable)
+                    self._console.print()
+
+                self._write_render(_print_final_with_gap)
+            if self._refresh_thread is not None:
+                self._refresh_thread.join(timeout=0.2)
+                self._refresh_thread = None
+            self._completed = True
+            return
         if self._inline_status_mode:
             self._clear_inline_status()
             final_renderable = self._render_final_body(elapsed_seconds=elapsed)
@@ -259,8 +274,6 @@ class TerminalTurnHandle:
         if self._refresh_thread is not None:
             self._refresh_thread.join(timeout=0.2)
             self._refresh_thread = None
-        if not self._inline_status_mode:
-            self._write_render(lambda: self._console.print())
         self._completed = True
 
     def _run_live_refresh_loop(self) -> None:
@@ -268,37 +281,10 @@ class TerminalTurnHandle:
             self._refresh_live()
 
     def _refresh_prompt_safe_status(self) -> None:
-        if self._completed or self._buffer:
-            self._clear_prompt_safe_status()
-            return
-        line = self._inline_status_line()
-        if not line or line == self._last_prompt_safe_status_line:
-            return
-        self._last_prompt_safe_status_line = line
-        self._write_prompt_safe_control(f"\r\033[2K{line}")
-        self._prompt_safe_status_visible = True
-
-    def _write_prompt_safe_control(self, payload: str) -> None:
-        control_writer = getattr(self._terminal_writer, "write_control", None)
-        if callable(control_writer):
-            control_writer(payload)
-            return
-
-        def _write() -> None:
-            file = getattr(self._console, "file", None)
-            if file is None:
-                return
-            file.write(payload)
-            file.flush()
-
-        self._write_render(_write)
+        return
 
     def _clear_prompt_safe_status(self) -> None:
-        if not self._prompt_safe_status_visible:
-            return
-        self._write_prompt_safe_control("\r\033[2K")
-        self._prompt_safe_status_visible = False
-        self._last_prompt_safe_status_line = ""
+        return
 
     def _refresh_inline_status(self) -> None:
         if self._completed:
@@ -344,7 +330,7 @@ class TerminalTurnHandle:
             )
         spinner_frame = self._spinner.current_frame(now) or "✻"
         elapsed_label = self._spinner.elapsed_label(now)
-        return f"{spinner_frame} {status_label} · {elapsed_label} · esc to interrupt"
+        return f"{spinner_frame} {status_label} · {elapsed_label} · {_LIVE_STATUS_HINT}"
 
     def _response_time_row(self, elapsed_seconds: float | None) -> Text | None:
         if not self._show_response_time or elapsed_seconds is None:
@@ -371,7 +357,6 @@ class TerminalTurnHandle:
             rows: list[Any] = [marker, md]
             if response_time is not None:
                 rows.append(response_time)
-                rows.append(Text())
             return Group(*rows)
         final_row = Text()
         final_row.append_text(marker_text(MARKER_ASSISTANT, bold=True))
@@ -379,7 +364,9 @@ class TerminalTurnHandle:
         final_row.append(buffer)
         if response_time is None:
             return final_row
-        return Group(final_row, response_time, Text())
+        final_row.append("\n")
+        final_row.append_text(response_time)
+        return final_row
 
     def _render(
         self,
@@ -448,10 +435,13 @@ class TerminalTurnHandle:
         status_row = format_status_row(
             verb,
             elapsed_label,
-            "esc to interrupt",
+            _LIVE_STATUS_HINT,
             plain=self._plain,
             status_label=self._status_label,
             spinner_frame=self._spinner.current_frame(now),
+        )
+        queue_hint_row = Text(
+            "Type to queue while the current turn runs", style="dim italic"
         )
         rows = []
         if running_block is not None:
@@ -463,6 +453,7 @@ class TerminalTurnHandle:
         if footer_row is not None:
             rows.append(footer_row)
         rows.append(status_row)
+        rows.append(queue_hint_row)
         return Group(*rows)
 
 
@@ -631,12 +622,7 @@ def _body_line_count(event: ToolEvent) -> int:
     return body.count("\n") + 1
 
 
-def _format_elapsed_seconds(seconds: float) -> str:
-    seconds = max(0.0, float(seconds))
-    if seconds < 60:
-        return f"{int(seconds)}s"
-    minutes, secs = divmod(int(seconds), 60)
-    return f"{minutes}m{secs:02d}s"
+_format_elapsed_seconds = format_elapsed_label
 
 
 def _render_in_progress_tool_block(

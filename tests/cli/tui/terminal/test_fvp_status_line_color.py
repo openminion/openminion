@@ -73,6 +73,54 @@ def test_active_turn_footer_is_plain_when_color_disabled() -> None:
     assert "2.0s" not in text
 
 
+def test_active_turn_brain_row_uses_warning_color_in_live_footer() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        state="responding",
+        elapsed_seconds=2.0,
+        agent="alpha",
+        model="openai/test",
+        turn_status="Analyzing request...",
+    )
+    with patch(
+        "openminion.cli.presentation.styles.is_color_enabled",
+        return_value=True,
+    ):
+        text = line.live_turn_footer()
+        warn_open, _ = style_token(StyleToken.WARNING)
+    rows = text.splitlines()
+    assert len(rows) == 2
+    assert "brain:" in rows[0]
+    assert "Analyzing request..." in rows[0]
+    assert warn_open in rows[0]
+    assert "queue:" not in rows[1]
+    assert warn_open not in rows[1]
+
+
+def test_active_turn_brain_row_uses_warning_color_in_bottom_toolbar() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        state="responding",
+        elapsed_seconds=2.0,
+        agent="alpha",
+        model="openai/test",
+        turn_status="Analyzing request...",
+    )
+    with patch(
+        "openminion.cli.presentation.styles.is_color_enabled",
+        return_value=True,
+    ):
+        text = line.bottom_toolbar()
+        warn_open, _ = style_token(StyleToken.WARNING)
+    rows = text.splitlines()
+    assert len(rows) == 2
+    assert "brain:" in rows[0]
+    assert "Analyzing request..." in rows[0]
+    assert warn_open in rows[0]
+    assert "alpha" in rows[1]
+    assert warn_open not in rows[1]
+
+
 def test_live_turn_footer_keeps_ansi_identity_segments() -> None:
     line = TerminalStatusLine()
     line.set_state(

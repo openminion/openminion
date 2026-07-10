@@ -4,21 +4,35 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI, FormattedText
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.menus import CompletionsMenuControl
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.styles import Style
+
 from openminion.cli.ux.input_normalization import normalize_multiline_input_text
 
 
 _PROMPT_FRESH = "❯ "
 _PROMPT_RESUMED = "↳ "
 _PROMPT_DISABLED = "… "
+_PROMPT_BUSY = "❯ "
 _COMPLETION_MENU_ROWS = 10
 _PLACEHOLDER_IDLE = "Ask anything · @ to mention a file · / for commands"
 _PLACEHOLDER_BUSY = "Type to queue while the current turn runs · Esc interrupts"
+_FOCUS_PROMPT_STYLE = Style.from_dict(
+    {
+        "bottom-toolbar": "noreverse bg:#111827 #8b949e",
+        "bottom-toolbar.text": "noreverse bg:#111827 #8b949e",
+        "placeholder": "italic #6b7280",
+    }
+)
 
 
 def _call_safely(callback: object) -> None:
@@ -28,6 +42,62 @@ def _call_safely(callback: object) -> None:
         callback()
     except Exception:
         pass
+
+
+class _ClickableCompletionMenuControl(CompletionsMenuControl):
+    """Vertical completion menu that applies clicked entries."""
+
+    def mouse_handler(self, mouse_event: MouseEvent) -> object:
+        if mouse_event.event_type != MouseEventType.MOUSE_UP:
+            return super().mouse_handler(mouse_event)
+
+        buffer = get_app().current_buffer
+        state = buffer.complete_state
+        if state is None:
+            return None
+
+        index = mouse_event.position.y
+        if 0 <= index < len(state.completions):
+            buffer.apply_completion(state.completions[index])
+        return None
+
+
+def _install_clickable_completion_menu(session: PromptSession[str]) -> None:
+    """Make prompt-toolkit's vertical completion menu click-to-apply."""
+
+    seen: set[int] = set()
+
+    def visit(node: object) -> None:
+        node_id = id(node)
+        if node_id in seen:
+            return
+        seen.add(node_id)
+
+        if (
+            isinstance(node, Window)
+            and isinstance(node.content, CompletionsMenuControl)
+            and not isinstance(node.content, _ClickableCompletionMenuControl)
+        ):
+            node.content = _ClickableCompletionMenuControl()
+
+        content = getattr(node, "content", None)
+        if content is not None:
+            visit(content)
+
+        alternative = getattr(node, "alternative_content", None)
+        if alternative is not None:
+            visit(alternative)
+
+        for child in getattr(node, "children", ()) or ():
+            visit(child)
+
+        for float_item in getattr(node, "floats", ()) or ():
+            visit(getattr(float_item, "content", None))
+
+    try:
+        visit(session.layout.container)
+    except Exception:
+        return
 
 
 class _SlashAndAtCompleter(Completer):
@@ -154,12 +224,15 @@ class TerminalComposer:
 
         self._key_bindings = kb
         history = FileHistory(history_file) if history_file else None
-        self._session = PromptSession(
+        self._session: PromptSession[str] = PromptSession(
             history=history,
             key_bindings=kb,
             enable_history_search=True,
+            mouse_support=True,
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
+            style=_FOCUS_PROMPT_STYLE,
         )
+        _install_clickable_completion_menu(self._session)
 
     def set_resumed(self, is_resumed: bool) -> None:
         self._is_resumed = bool(is_resumed)
@@ -173,8 +246,14 @@ class TerminalComposer:
     def focus_input(self) -> None:
         pass
 
+    def invalidate(self) -> None:
+        app = getattr(self._session, "app", None)
+        invalidator = getattr(app, "invalidate", None)
+        if callable(invalidator):
+            invalidator()
+
     @property
-    def prompt_session(self) -> PromptSession:
+    def prompt_session(self) -> PromptSession[str]:
         return self._session
 
     def toggle_multiline(self) -> None:
@@ -234,7 +313,7 @@ class TerminalComposer:
                     complete_while_typing=True,
                     multiline=Condition(lambda: self._multiline),
                     bottom_toolbar=self._formatted_bottom_toolbar,
-                    placeholder=self._formatted_placeholder(),
+                    placeholder=self._formatted_placeholder,
                 )
             finally:
                 self._multiline = False
@@ -249,6 +328,8 @@ class TerminalComposer:
             else self._bottom_toolbar
         )
         if isinstance(value, str):
+            if not value.strip():
+                return None
             return ANSI(value)
         return value
 
@@ -265,6 +346,8 @@ class TerminalComposer:
     def _prompt_text(self) -> str:
         if self._disabled:
             return _PROMPT_DISABLED
+        if self._busy:
+            return _PROMPT_BUSY
         if self._is_resumed:
             return _PROMPT_RESUMED
         return _PROMPT_FRESH

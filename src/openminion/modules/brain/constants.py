@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from enum import StrEnum
+
+from openminion.modules.prompting.decision import (
+    BRAIN_FRESHNESS_POLICY_CONSTRAINT as _BRAIN_FRESHNESS_POLICY_CONSTRAINT,
+)
 from typing import Literal
 from pathlib import Path
 
@@ -72,10 +76,7 @@ TOOL_MESSAGE_DEPTH_LIMIT = 3
 TOOL_MESSAGE_SEQUENCE_LIMIT = 8
 TOOL_MESSAGE_STRING_LIMIT = 1200
 
-# Constraint emitted when a time-sensitive tool path fails freshness checks.
-BRAIN_FRESHNESS_POLICY_CONSTRAINT = (
-    "FRESHNESS_POLICY: Do not fabricate stale real-time data"
-)
+BRAIN_FRESHNESS_POLICY_CONSTRAINT = _BRAIN_FRESHNESS_POLICY_CONSTRAINT
 
 
 class ExecutionOutcome(StrEnum):

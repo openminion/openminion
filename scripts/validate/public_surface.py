@@ -32,7 +32,7 @@ _INTERNAL_SUBPACKAGES: frozenset[str] = frozenset({"runtime", "storage", "provid
 _ADVISORY_MODE: bool = True
 
 # Categories listed here fail CI; omitted categories stay advisory.
-_FAIL_CATEGORIES: frozenset[str] = frozenset()
+_FAIL_CATEGORIES: frozenset[str] = frozenset({"providers", "runtime"})
 
 # Frozen baseline of detected (importer_relpath, target_dotted_path) reaches.
 # TSV shape per line: <importer_relpath_from_src_openminion>	<target_full_dotted_module>

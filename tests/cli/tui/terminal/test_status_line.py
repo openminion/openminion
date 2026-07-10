@@ -26,6 +26,8 @@ def test_idle_toolbar_chains_segments() -> None:
     assert "main" in text
     assert "123/8000" in text
     assert "$0.01" in text
+    assert "input:" not in text
+    assert "queue:" not in text
 
 
 def test_active_turn_footer_stays_identity_only() -> None:
@@ -44,6 +46,31 @@ def test_active_turn_footer_stays_identity_only() -> None:
     assert "alpha" in text
     assert "model: x" in text
     assert "cwd: /tmp/wd" in text
+    assert "queue:" not in text
+    assert "brain:" not in text
+
+
+def test_active_turn_footer_shows_turn_status_separate_from_prompt() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        agent="alpha",
+        model="x",
+        cwd="/tmp/wd",
+        state="responding",
+        elapsed_seconds=2.5,
+        turn_status="Analyzing request...",
+    )
+    text = line.bottom_toolbar()
+    rows = text.splitlines()
+    assert len(rows) == 2
+    assert "brain: Analyzing request..." in rows[0]
+    assert "2s" in rows[0]
+    assert "queue:" not in rows[0]
+    assert "brain:" not in rows[1]
+    assert "alpha" in text
+    assert "model: x" in text
+    assert "2.5s" not in text
+    assert "Esc cancel" not in text
 
 
 def test_active_turn_footer_suppresses_custom_status_copy() -> None:
@@ -58,6 +85,7 @@ def test_active_turn_footer_suppresses_custom_status_copy() -> None:
     text = line.bottom_toolbar()
     assert "minimax-m2-7" in text
     assert "openai/MiniMax-M2.7" in text
+    assert "queue:" not in text
     assert "Analyzing request..." not in text
 
 
@@ -78,11 +106,37 @@ def test_live_turn_footer_keeps_identity_without_active_timer_or_hint() -> None:
     assert "openai/MiniMax-M2.7" in text
     assert "/repo/openminion" in text
     assert "1200/8000" in text
-    assert "queued: 2" in text
+    assert "queued: 2" not in text
     assert "6.8s" not in text
     assert "Esc cancel" not in text
     assert "responding" not in text
     assert "Loading session history..." not in text
+
+
+def test_live_turn_footer_shows_turn_status_without_queue_prompt_text() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        agent="minimax-m2-7",
+        model="openai/MiniMax-M2.7",
+        cwd="/repo/openminion",
+        state="responding",
+        elapsed_seconds=6.8,
+        turn_status="Loading session history...",
+        queued_count=2,
+    )
+    text = line.live_turn_footer()
+    rows = text.splitlines()
+    assert len(rows) == 2
+    assert "brain: Loading session history..." in rows[0]
+    assert "6s" in rows[0]
+    assert "brain:" not in rows[1]
+    assert "status:" not in rows[1]
+    assert "minimax-m2-7" in text
+    assert "openai/MiniMax-M2.7" in text
+    assert "queued: 2" not in text
+    assert "type to queue" not in text
+    assert "6.8s" not in text
+    assert "Esc cancel" not in text
 
 
 def test_tool_state_footer_stays_identity_only() -> None:
@@ -99,6 +153,7 @@ def test_tool_state_footer_stays_identity_only() -> None:
     assert "0.1s" not in text
     assert "alpha" in text
     assert "openai/test" in text
+    assert "queue:" not in text
 
 
 def test_input_state_no_longer_appends_keybind_hint_suffix() -> None:
@@ -126,3 +181,25 @@ def test_idle_toolbar_shows_queued_count_when_present() -> None:
 
     assert "alpha" in text
     assert "queued: 1" in text
+    assert "input:" not in text
+
+
+def test_bottom_identity_row_stays_stable_when_turn_finishes() -> None:
+    line = TerminalStatusLine()
+    line.set_state(
+        agent="minimax-m2-7",
+        model="openai/MiniMax-M2.7",
+        cwd="/repo/openminion",
+        branch="main",
+        tokens="12.5k / 8k",
+        state="responding",
+        turn_status="Analyzing request...",
+    )
+    active_rows = line.bottom_toolbar().splitlines()
+
+    line.set_state(state="idle", turn_status="")
+
+    assert "input:" not in line.bottom_toolbar()
+    assert "queue:" not in line.bottom_toolbar()
+    assert "brain:" not in line.bottom_toolbar()
+    assert line.bottom_toolbar() == active_rows[-1]

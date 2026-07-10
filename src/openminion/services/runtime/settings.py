@@ -73,7 +73,7 @@ class RuntimeConfig:
             return cls()
 
         try:
-            import yaml  # type: ignore[import]  # optional dependency
+            import yaml
 
             with open(path, encoding="utf-8") as fh:
                 raw = yaml.safe_load(fh) or {}

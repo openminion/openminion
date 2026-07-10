@@ -38,7 +38,7 @@ from openminion.modules.task.project_reports import (
     build_project_report_from_task,
     render_project_report,
 )
-from openminion.modules.task.runtime.lifecycle import TaskManager
+from openminion.modules.task import TaskManager
 from openminion.services.context.budget import (
     ContextBudgetConfig,
     assemble_budgeted_context,

@@ -81,15 +81,6 @@ class ContextBuildersMixin:
                 structured.append(record)
         return structured + historical_summaries
 
-    def _should_include_recent_session_summaries(
-        self,
-        *,
-        query_text: str,
-        agent_records: list[Any],
-    ) -> bool:
-        del query_text
-        return not agent_records
-
     def _record_turn_provenance_trace(
         self,
         *,
@@ -297,7 +288,6 @@ class ContextBuildersMixin:
         self,
         *,
         limit: int,
-        query_text: str,
         session_id: str,
         recent_summaries: list[Any],
         agent_records: list[Any],
@@ -306,15 +296,10 @@ class ContextBuildersMixin:
         session_records: list[Any],
     ) -> tuple[str, str, str, str]:
         parts: list[str] = []
-        recent_section = ""
-        if self._should_include_recent_session_summaries(
-            query_text=query_text,
-            agent_records=agent_records,
-        ):
-            recent_section = self._format_session_summaries(
-                recent_summaries,
-                max_chars=limit // 4,
-            )
+        recent_section = self._format_session_summaries(
+            recent_summaries,
+            max_chars=limit // 4,
+        )
         if recent_section:
             parts.append(recent_section)
         agent_section = _format_records_as_context(
@@ -509,7 +494,6 @@ class ContextBuildersMixin:
                 recalled_session_section,
             ) = self._format_context_sections(
                 limit=limit,
-                query_text=query_text,
                 session_id=session_id,
                 recent_summaries=recent_summaries,
                 agent_records=agent_records,

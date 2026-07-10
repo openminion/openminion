@@ -5,10 +5,15 @@ from typing import Any, Mapping, Sequence
 
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.config import resolve_services_roots
+from openminion.modules.prompting.context_blocks import (
+    GROUNDING_BLOCK_HEADER,
+    PENDING_TURN_BLOCK_HEADER,
+    PRIOR_TURN_BLOCK_HEADER,
+)
 
-_GROUNDING_BLOCK_HEADER = "## Runtime Grounding"
-_PENDING_TURN_BLOCK_HEADER = "## Pending Turn Context"
-_PRIOR_TURN_BLOCK_HEADER = "## Prior Turn Context"
+_GROUNDING_BLOCK_HEADER = GROUNDING_BLOCK_HEADER
+_PENDING_TURN_BLOCK_HEADER = PENDING_TURN_BLOCK_HEADER
+_PRIOR_TURN_BLOCK_HEADER = PRIOR_TURN_BLOCK_HEADER
 _GROUNDING_BLOCK_BUDGET_TOKENS = 150
 
 
@@ -225,7 +230,11 @@ def _render_prior_turn_context_block(
             prior_turn_hint.get("assistant_message"),
             limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT,
         )
-        if not user_text and not assistant_text:
+        tool_events = _normalize_list(
+            prior_turn_hint.get("tool_events"),
+            limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT,
+        )
+        if not user_text and not assistant_text and not tool_events:
             return ""
         lines = [
             _PRIOR_TURN_BLOCK_HEADER,
@@ -235,6 +244,8 @@ def _render_prior_turn_context_block(
             lines.append(f"- user: {json.dumps(user_text)}")
         if assistant_text:
             lines.append(f"- assistant: {json.dumps(assistant_text)}")
+        for event in tool_events[:3]:
+            lines.append(f"- tool_event: {json.dumps(event)}")
         return "\n".join(lines).strip()
     text = _bounded_text(prior_turn_hint, limit=PRIOR_TURN_CONTEXT_CHAR_LIMIT)
     if not text:
@@ -266,12 +277,12 @@ def _normalize_mapping(value: Any) -> dict[str, str]:
     return normalized
 
 
-def _normalize_list(value: Any) -> list[str]:
+def _normalize_list(value: Any, *, limit: int = 100) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, str):
         return []
     normalized: list[str] = []
     for item in value:
-        text = _bounded_text(item, limit=100)
+        text = _bounded_text(item, limit=limit)
         if text:
             normalized.append(text)
     return normalized

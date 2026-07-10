@@ -6,6 +6,11 @@
       "module": "runtime",
       "classification": "cli_exempt_internal",
       "reason": "library only module with runtime helpers consumed by services; no operator facing CLI surface"
+    },
+    {
+      "module": "prompting",
+      "classification": "cli_exempt_internal",
+      "reason": "library only module with shared prompt builders consumed by runtime flows; no operator facing CLI surface"
     }
   ]
 }

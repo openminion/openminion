@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from openminion.modules.memory.models import MemoryRecord
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
@@ -426,7 +428,14 @@ def test_h4_triggers_summary_compression_once_per_first_turn() -> None:
     )
 
 
-def test_h5_places_agent_memory_after_historical_session_summaries() -> None:
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What is my email? Answer with only the email address.",
+        "What is my email? Return only the latest email address.",
+    ],
+)
+def test_h5_keeps_historical_summaries_for_exact_answer_prompts(query: str) -> None:
     service = Mock()
     service.search.side_effect = [
         [
@@ -469,13 +478,45 @@ def test_h5_places_agent_memory_after_historical_session_summaries() -> None:
 
     rendered, _ = adapter.build_context_with_metadata(
         session_id="session-1",
-        user_message="What is my email? Answer with only the email address.",
+        user_message=query,
     )
 
+    summary_index = rendered.index("## Continuing from recent sessions")
     agent_index = rendered.index("## Agent Memory")
-    assert agent_index >= 0
+    assert summary_index < agent_index
     assert "new@example.com" in rendered
-    assert "old@example.com" not in rendered
+    assert "old@example.com" in rendered
+
+
+def test_h5_keeps_recent_summary_for_short_prompt_without_agent_records() -> None:
+    service = Mock()
+    service.search.return_value = []
+    service.list.return_value = [
+        SimpleNamespace(
+            title="Deployment follow-up",
+            content={
+                "summary_text": "The deployment review remains open.",
+                "topic_keywords": ["deployment"],
+                "active_threads": [],
+            },
+        )
+    ]
+    session_context = Mock()
+    session_context.get_turn_count.return_value = 0
+    adapter = MemoryServiceGatewayAdapter(
+        service,
+        agent_id="continuity-agent",
+        session_context=session_context,
+    )
+
+    rendered, meta = adapter.build_context_with_metadata(
+        session_id="session-1",
+        user_message="hi",
+    )
+
+    assert "## Continuing from recent sessions" in rendered
+    assert "The deployment review remains open." in rendered
+    assert meta["prior_context_present"] == "true"
 
 
 def test_h6_retrieves_prior_session_summary_mid_session() -> None:

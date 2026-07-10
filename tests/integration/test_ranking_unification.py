@@ -76,7 +76,7 @@ def test_capsule_order_changes_when_ranking_weights_change(tmp_path: Path) -> No
             tags=["deploy"],
             created_at="2026-03-27T00:00:00+00:00",
             updated_at="2026-03-27T00:00:00+00:00",
-            confidence=0.20,
+            confidence=0.85,
         )
     )
 

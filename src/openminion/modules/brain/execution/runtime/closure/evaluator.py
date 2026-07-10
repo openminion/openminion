@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
+
 from ....constants import (
     BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_DISPOSITION_CLOSE,
@@ -37,8 +39,8 @@ from ... import closure as closure_api
 from ...closure.checks import (
     _can_continue_for_freshness,
     _closure_action_outputs,
-    _final_answer_claims_mutation_without_tool_evidence,
-    _final_answer_reads_like_progress_note,
+    _closure_finalization_status,
+    _has_successful_mutation_tool_evidence,
 )
 from .final_answer import repair_missing_final_answer_if_needed
 from .mission import apply_mission_completion_gate
@@ -335,7 +337,8 @@ def _build_closure_hints(
                 "You are the turn-closure gate. Decide if the original user goal is fully "
                 "satisfied by the available execution results. Return structured fields: "
                 "satisfied (bool), reason (string), next_action (close|continue|replan), "
-                "final_answer (string|null), and optional post_completion_critique "
+                "final_answer (string|null), mutation_claimed (bool), and optional "
+                "post_completion_critique "
                 "(intent_id, summary, lessons, next_time_action). "
                 "If post_completion_critique is present, its intent_id must exactly "
                 "match one of the typed intent outcomes for this turn. When "
@@ -350,7 +353,8 @@ def _build_closure_hints(
                 "final-answer format, titled sections, or required headings, the "
                 "final_answer must preserve that requested shape. Do not close with a "
                 "progress note, future-work narration, raw tool transcript, or a prose "
-                "summary that omits required headings."
+                "summary that omits required headings. Set mutation_claimed=true only "
+                "when final_answer says that files or other workspace artifacts changed."
             )
         },
     }
@@ -435,24 +439,30 @@ def _enforce_consistency_guards(
             if judgment.reason
             else "inconsistent_unsatisfied_close"
         )
-    invalid_close = _final_answer_claims_mutation_without_tool_evidence(
-        str(judgment.final_answer or ""), action_result=action_result
-    ) or _final_answer_reads_like_progress_note(str(judgment.final_answer or ""))
-    if (
-        judgment.satisfied
-        and judgment.next_action == BRAIN_DISPOSITION_CLOSE
-        and invalid_close
-    ):
-        suffix = (
-            "mutation_claim_without_tool_evidence"
-            if _final_answer_claims_mutation_without_tool_evidence(
-                str(judgment.final_answer or ""), action_result=action_result
-            )
-            else "progress_note_without_completion"
+    status = _closure_finalization_status(action_result)
+    closes = judgment.satisfied and judgment.next_action == BRAIN_DISPOSITION_CLOSE
+    if status is not None and status.status == "final_answer" and not closes:
+        judgment.reason = (
+            f"{judgment.reason}; finalization_status_conflict"
+            if judgment.reason
+            else "finalization_status_conflict"
         )
+    elif status is not None and status.status != "final_answer" and closes:
         judgment.satisfied = False
         judgment.next_action = BRAIN_DISPOSITION_CONTINUE
         judgment.final_answer = None
+        suffix = f"finalization_status_{status.status}"
+        judgment.reason = f"{judgment.reason}; {suffix}" if judgment.reason else suffix
+        closes = False
+    if (
+        closes
+        and judgment.mutation_claimed
+        and not _has_successful_mutation_tool_evidence(action_result)
+    ):
+        judgment.satisfied = False
+        judgment.next_action = BRAIN_DISPOSITION_CONTINUE
+        judgment.final_answer = None
+        suffix = "mutation_claim_without_tool_evidence"
         judgment.reason = f"{judgment.reason}; {suffix}" if judgment.reason else suffix
 
 
@@ -523,6 +533,7 @@ def _emit_closure_completed(
     )
     verification_fact = evaluate_verification(tool_results=tool_results)
     review_fact = observe_review_invocation(tool_results)
+    finalization_status = _closure_finalization_status(action_result)
     freshness_verified = not bool(
         verify_freshness_answer(
             contract=state.freshness_contract,
@@ -539,6 +550,10 @@ def _emit_closure_completed(
             "next_action": judgment.next_action,
             "reason": judgment.reason,
             "final_answer_present": bool(judgment.final_answer),
+            "mutation_claimed": judgment.mutation_claimed,
+            STATE_KEY_FINALIZATION_STATUS: finalization_status.status
+            if finalization_status is not None
+            else None,
             "freshness_verified": freshness_verified,
             "plan_reconciliation": plan_reconciliation_fact.model_dump(mode="json")
             if plan_reconciliation_fact is not None
@@ -562,6 +577,7 @@ def _emit_closure_completed(
                 "next_action": judgment.next_action,
                 "reason": judgment.reason,
                 "final_answer_present": bool(judgment.final_answer),
+                "mutation_claimed": judgment.mutation_claimed,
             },
         )
 

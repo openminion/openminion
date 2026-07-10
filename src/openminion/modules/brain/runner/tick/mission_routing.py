@@ -4,6 +4,7 @@ from ...constants import (
     BRAIN_STATE_ACTIVE,
     BRAIN_STATE_STOPPED,
     BRAIN_STATE_WAITING_USER,
+    MissionStatus,
 )
 from ...diagnostics.transitions import set_status_unchecked
 from ...execution.mission import (
@@ -170,7 +171,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
         )
         set_mission_status(
             mission=state.mission,
-            status="paused",
+            status=MissionStatus.PAUSED,
             reason="mission paused by user",
             route_action=mission_route.action,
         )
@@ -205,7 +206,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
         )
         set_mission_status(
             mission=state.mission,
-            status="cancelled",
+            status=MissionStatus.CANCELLED,
             reason="mission cancelled by user",
             route_action=mission_route.action,
         )
@@ -250,7 +251,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             )
         set_mission_status(
             mission=state.mission,
-            status="paused",
+            status=MissionStatus.PAUSED,
             reason="mission paused by forked ordinary turn",
             route_action=mission_route.action,
         )

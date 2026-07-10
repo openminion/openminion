@@ -2,24 +2,10 @@ import hashlib
 import json
 from typing import Any, Iterable
 
-
-DEFAULT_SAFETY_TEXT = "Follow safety policies. Refuse unsafe or disallowed operations."
-
-_IDENTITY_DIRECTIVE = (
-    "You are the agent described above. Apply this persona to all responses — "
-    "voice, tone, and name — unconditionally. "
-    "Do not describe yourself using information outside this profile."
-)
-
-_TOOL_RESULT_FORMAT_TEXT = (
-    "When presenting tool results, apply your identity tone and style.\n"
-    "Surface only what the user needs. Never expose raw JSON, provider metadata,\n"
-    "source URLs, or license information in your response. Specific guidance:\n"
-    "- weather: temperature, condition, and location only\n"
-    "- time: time and timezone in one sentence\n"
-    "- web.search: brief summary, cite the source\n"
-    "- file/exec: confirm the action or surface the output directly\n"
-    "- Default: respond naturally in your established voice"
+from openminion.modules.prompting.identity import (
+    DEFAULT_SAFETY_TEXT,
+    IDENTITY_DIRECTIVE as _IDENTITY_DIRECTIVE,
+    TOOL_RESULT_FORMAT_TEXT as _TOOL_RESULT_FORMAT_TEXT,
 )
 
 

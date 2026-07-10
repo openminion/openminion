@@ -21,7 +21,7 @@ def test_module_cli_exemptions_policy_is_machine_readable_and_aligned() -> None:
     exemptions = payload.get("exemptions")
     assert isinstance(exemptions, list)
 
-    _ALLOWED_EXEMPT_MODULES = {"runtime"}
+    _ALLOWED_EXEMPT_MODULES = {"runtime", "prompting"}
 
     module_names = set()
     for item in exemptions:
