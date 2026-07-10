@@ -54,6 +54,7 @@ class ClosureJudgment(BaseModel):
     reason: str = ""
     next_action: Literal["close", "continue", "replan"] = "close"
     final_answer: str | None = None
+    mutation_claimed: bool = False
     post_completion_critique: PostCompletionCritique | None = None
     plan_reconciliation: PlanReconciliationFact | None = None
     verification: VerificationFact | None = None

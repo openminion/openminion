@@ -22,10 +22,8 @@ from openminion.modules.brain.schemas import (
     AdaptiveBudgetConfig,
     AskUserCommand,
 )
+from openminion.modules.llm import is_provider_recovery_fallback_text
 from openminion.modules.llm.schemas import Message
-from openminion.modules.llm.providers.normalization import (
-    is_provider_recovery_fallback_text,
-)
 from .runtime import _extract_visible_response_text
 from .runtime import _normalize_finalization_status_response
 

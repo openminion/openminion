@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:
+    from .store import SQLiteSessionStore
 
 
 def create_snapshot(store: Any, session_id: str, seq_upto: int | None = None) -> str:
@@ -280,7 +283,7 @@ def get_latest_seed_bundle(store: Any, session_id: str) -> dict[str, Any] | None
 
 
 def create_run_record(
-    store: Any,
+    store: SQLiteSessionStore,
     session_id: str,
     run_type: str = "llm",
     *,
@@ -289,7 +292,7 @@ def create_run_record(
     model_id: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> str:
-    return store._run_store.create_run_record(
+    return store.run_store.create_run_record(
         session_id,
         run_type,
         run_id=run_id,
@@ -300,14 +303,14 @@ def create_run_record(
 
 
 def finish_run_record(
-    store: Any,
+    store: SQLiteSessionStore,
     run_id: str,
     *,
     status: str = "completed",
     input_tokens: int | None = None,
     output_tokens: int | None = None,
 ) -> None:
-    store._run_store.finish_run_record(
+    store.run_store.finish_run_record(
         run_id,
         status=status,
         input_tokens=input_tokens,
@@ -316,29 +319,31 @@ def finish_run_record(
 
 
 def add_run_usage_delta(
-    store: Any,
+    store: SQLiteSessionStore,
     run_id: str,
     *,
     input_tokens: int = 0,
     output_tokens: int = 0,
 ) -> None:
-    store._run_store.add_run_usage_delta(
+    store.run_store.add_run_usage_delta(
         run_id,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
 
 
-def get_run_record(store: Any, run_id: str) -> dict[str, Any] | None:
-    return store._run_store.get_run_record(run_id)
+def get_run_record(store: SQLiteSessionStore, run_id: str) -> dict[str, Any] | None:
+    return store.run_store.get_run_record(run_id)
 
 
-def list_run_records(store: Any, session_id: str) -> list[dict[str, Any]]:
-    return store._run_store.list_run_records(session_id)
+def list_run_records(
+    store: SQLiteSessionStore, session_id: str
+) -> list[dict[str, Any]]:
+    return store.run_store.list_run_records(session_id)
 
 
 def add_message_ref(
-    store: Any,
+    store: SQLiteSessionStore,
     session_id: str,
     role: str,
     *,
@@ -348,7 +353,7 @@ def add_message_ref(
     content_inline: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> str:
-    return store._run_store.add_message_ref(
+    return store.run_store.add_message_ref(
         session_id,
         role,
         run_id=run_id,

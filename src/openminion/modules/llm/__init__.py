@@ -14,12 +14,14 @@ __all__ = [
     "ToolChoice",
     "ToolSpec",
     "UsageInfo",
+    "is_provider_recovery_fallback_text",
 ]
 
 if TYPE_CHECKING:  # pragma: no cover
     from .runtime.client import LLMCTL, LLMClient
     from .errors import ErrorCode, LLMCtlError
     from .providers.factory import RuntimeLLMHandle
+    from .providers.normalization import is_provider_recovery_fallback_text
     from .schemas import (
         LLMRequest,
         LLMResponse,
@@ -45,6 +47,10 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "LLMResponse": (".schemas", "LLMResponse"),
     "ResponseError": (".schemas", "ResponseError"),
     "RuntimeLLMHandle": (".providers.factory", "RuntimeLLMHandle"),
+    "is_provider_recovery_fallback_text": (
+        ".providers.normalization",
+        "is_provider_recovery_fallback_text",
+    ),
 }
 
 

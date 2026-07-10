@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 
 from openminion.modules.brain.config import MissionConfig, RunnerOptions
 from openminion.modules.brain.adapters.a2a import LocalA2AAdapter
@@ -15,7 +16,9 @@ from openminion.modules.brain.diagnostics.events import CanonicalEventLogger
 from openminion.modules.brain.execution.mission import (
     allocate_mission_turn_budget,
     build_mission_state,
+    set_mission_status,
 )
+from openminion.modules.brain.constants import MissionStatus
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.brain.runner.lifecycle import run_until_idle
 from openminion.modules.brain.schemas import (
@@ -24,10 +27,12 @@ from openminion.modules.brain.schemas import (
     AgentDefaults,
     AgentProfile,
     BudgetCounters,
+    ClosureJudgment,
     FreshnessContract,
     FreshnessObligations,
     JobHandle,
     LLMProfiles,
+    MissionState,
     Plan,
     StepOutput,
     ToolCommand,
@@ -95,6 +100,50 @@ def _echo_command(*, command_id: str = "cmd-echo") -> ToolCommand:
         args={"msg": "hi"},
         success_criteria={"status": "success"},
     )
+
+
+def _mission_for_status_test(tmp_path: Path, suffix: str) -> MissionState:
+    runner, _session = _build_runner(tmp_path)
+    state = WorkingState(
+        session_id=f"mission-status-{suffix}",
+        agent_id=runner.profile.agent_id,
+        trace_id=f"trace-mission-status-{suffix}",
+        budgets_remaining=BudgetCounters(
+            ticks=0, tool_calls=0, a2a_calls=0, tokens=0, time_ms=0
+        ),
+    )
+    return build_mission_state(
+        runner=runner,
+        state=state,
+        objective="Validate mission status",
+    )
+
+
+def test_mission_status_assignments_preserve_enum_type(tmp_path: Path) -> None:
+    mission = _mission_for_status_test(tmp_path, "assignment")
+
+    mission.status = "paused"
+    assert mission.status is MissionStatus.PAUSED
+
+    set_mission_status(
+        mission=mission,
+        status="active",
+        reason="resume",
+        route_action="continue",
+    )
+    assert mission.status is MissionStatus.ACTIVE
+
+
+def test_set_mission_status_rejects_unknown_value(tmp_path: Path) -> None:
+    mission = _mission_for_status_test(tmp_path, "invalid")
+
+    with pytest.raises(ValueError):
+        set_mission_status(
+            mission=mission,
+            status="unknown",
+            reason="invalid",
+            route_action="continue",
+        )
 
 
 def _stub_successful_action_turn(
@@ -188,6 +237,39 @@ class _MissionJudgeLLM:
                 self.repair_payload or {"final_answer": "Completed successfully."}
             )
         return dict(self.mission_payload)
+
+
+def _evaluate_closure_case(
+    tmp_path: Path,
+    *,
+    session_id: str,
+    goal: str,
+    closure_payload: dict[str, object],
+    action_result: ActionResult,
+    completion_reason: str = "coding_final_text",
+) -> ClosureJudgment:
+    llm_api = _MissionJudgeLLM(
+        mission_payload={"outcome": "complete", "reason": "unused"},
+        closure_payload=closure_payload,
+    )
+    runner, session = _build_runner(
+        tmp_path,
+        llm_api=llm_api,
+        context_api=_ContextAPI(),
+    )
+    state = runner._load_or_init_state(session_id)
+    state.status = "done"
+    state.goal = goal
+    return runner._evaluate_turn_closure(
+        state=state,
+        action_result=action_result,
+        logger=CanonicalEventLogger(
+            session_api=session,
+            session_id=session_id,
+            agent_id=runner.profile.agent_id,
+        ),
+        completion_reason=completion_reason,
+    )
 
 
 def test_interpret_reset_policy_preserves_goal_for_mission_continue() -> None:
@@ -803,117 +885,195 @@ def test_turn_closure_repairs_missing_final_answer_before_close() -> None:
         assert llm_api.calls == ["ClosureJudgment", "_ClosureFinalAnswerRepair"]
 
 
-def test_turn_closure_rejects_mutation_claim_without_mutation_tool_evidence() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        context_api = _ContextAPI()
-        llm_api = _MissionJudgeLLM(
-            mission_payload={"outcome": "complete", "reason": "unused"},
-            closure_payload={
-                "satisfied": True,
-                "reason": "claimed file updates",
-                "next_action": "close",
-                "final_answer": (
-                    "CHANGES\n"
-                    "- Modified pyproject.toml: Added `[project.scripts]`.\n"
-                    "TESTS\n"
-                    "- Command exited with code 0."
-                ),
-            },
-        )
-        runner, session = _build_runner(
-            Path(tmp),
-            llm_api=llm_api,
-            context_api=context_api,
-        )
-        state = runner._load_or_init_state("s-mutation-claim-without-tool-evidence")
-        state.status = "done"
-        state.goal = "Update pyproject.toml and README.md, then run tests."
-        logger = CanonicalEventLogger(
-            session_api=session,
-            session_id="s-mutation-claim-without-tool-evidence",
-            agent_id=runner.profile.agent_id,
-        )
-
-        judgment = runner._evaluate_turn_closure(
-            state=state,
-            action_result=ActionResult(
-                command_id="cmd-mutation-claim",
-                status="success",
-                summary="model claimed changes without mutation tools",
-                outputs={
-                    "tool_results": [
-                        {"tool_name": "file.read", "ok": True},
-                        {"tool_name": "exec.run", "ok": True},
-                    ],
-                },
+def test_turn_closure_rejects_mutation_claim_without_mutation_tool_evidence(
+    tmp_path: Path,
+) -> None:
+    judgment = _evaluate_closure_case(
+        tmp_path,
+        session_id="s-mutation-claim-without-tool-evidence",
+        goal="Update pyproject.toml and README.md, then run tests.",
+        closure_payload={
+            "satisfied": True,
+            "reason": "claimed file updates",
+            "next_action": "close",
+            "mutation_claimed": True,
+            "final_answer": (
+                "CHANGES\n"
+                "- Modified pyproject.toml: Added `[project.scripts]`.\n"
+                "TESTS\n"
+                "- Command exited with code 0."
             ),
-            logger=logger,
-            completion_reason="research_final_text",
-        )
-
-        assert judgment.satisfied is False
-        assert judgment.next_action == "continue"
-        assert judgment.final_answer is None
-        assert "mutation_claim_without_tool_evidence" in judgment.reason
-
-
-def test_turn_closure_rejects_progress_note_close_answer() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        context_api = _ContextAPI()
-        llm_api = _MissionJudgeLLM(
-            mission_payload={"outcome": "complete", "reason": "unused"},
-            closure_payload={
-                "satisfied": True,
-                "reason": "tool completed",
-                "next_action": "close",
-                "final_answer": (
-                    "The pyproject.toml was created. Now I need to create the "
-                    "remaining files."
-                ),
+        },
+        action_result=ActionResult(
+            command_id="cmd-mutation-claim",
+            status="success",
+            summary="model claimed changes without mutation tools",
+            outputs={
+                "tool_results": [
+                    {"tool_name": "file.read", "ok": True},
+                    {"tool_name": "exec.run", "ok": True},
+                ],
             },
-        )
-        runner, session = _build_runner(
-            Path(tmp),
-            llm_api=llm_api,
-            context_api=context_api,
-        )
-        state = runner._load_or_init_state("s-progress-note-close")
-        state.status = "done"
-        state.goal = "Create the scratch project and verify it passes pytest."
-        logger = CanonicalEventLogger(
-            session_api=session,
-            session_id="s-progress-note-close",
-            agent_id=runner.profile.agent_id,
-        )
+        ),
+        completion_reason="research_final_text",
+    )
 
-        judgment = runner._evaluate_turn_closure(
-            state=state,
-            action_result=ActionResult(
-                command_id="cmd-progress-note",
-                status="success",
-                summary="created pyproject.toml",
-                outputs={
-                    "tool_results": [
-                        {
-                            "tool_name": "file.write",
-                            "ok": True,
-                            "data": {
-                                "path": "/workspace/pyproject.toml",
-                                "mode": "write",
-                                "bytes_written": 42,
-                            },
-                        }
-                    ],
-                },
+    assert judgment.satisfied is False
+    assert judgment.next_action == "continue"
+    assert judgment.final_answer is None
+    assert "mutation_claim_without_tool_evidence" in judgment.reason
+
+
+def test_turn_closure_rejects_typed_incomplete_status(tmp_path: Path) -> None:
+    judgment = _evaluate_closure_case(
+        tmp_path,
+        session_id="s-progress-note-close",
+        goal="Create the scratch project and verify it passes pytest.",
+        closure_payload={
+            "satisfied": True,
+            "reason": "tool completed",
+            "next_action": "close",
+            "final_answer": (
+                "The pyproject.toml was created. Now I need to create the remaining files."
             ),
-            logger=logger,
-            completion_reason="coding_final_text",
-        )
+        },
+        action_result=ActionResult(
+            command_id="cmd-progress-note",
+            status="success",
+            summary="created pyproject.toml",
+            outputs={
+                "adaptive.finalization_status": {
+                    "status": "incomplete",
+                    "reasoning": "Only the project metadata exists.",
+                    "remaining_work": "Create the remaining files.",
+                    "blocking_reason": "",
+                },
+                "tool_results": [
+                    {
+                        "tool_name": "file.write",
+                        "ok": True,
+                        "data": {
+                            "path": "/workspace/pyproject.toml",
+                            "mode": "write",
+                            "bytes_written": 42,
+                        },
+                    }
+                ],
+            },
+        ),
+    )
 
-        assert judgment.satisfied is False
-        assert judgment.next_action == "continue"
-        assert judgment.final_answer is None
-        assert "progress_note_without_completion" in judgment.reason
+    assert judgment.satisfied is False
+    assert judgment.next_action == "continue"
+    assert judgment.final_answer is None
+    assert "finalization_status_incomplete" in judgment.reason
+
+
+def test_turn_closure_rejects_typed_blocked_status(tmp_path: Path) -> None:
+    judgment = _evaluate_closure_case(
+        tmp_path,
+        session_id="s-blocked-status-close",
+        goal="Build and verify the scratch project.",
+        closure_payload={
+            "satisfied": True,
+            "reason": "incorrect close",
+            "next_action": "close",
+            "final_answer": "The task is complete.",
+        },
+        action_result=ActionResult(
+            command_id="cmd-blocked-status",
+            status="success",
+            summary="dependency unavailable",
+            outputs={
+                "adaptive.finalization_status": {
+                    "status": "blocked",
+                    "reasoning": "A required dependency is unavailable.",
+                    "remaining_work": "Run the verification suite.",
+                    "blocking_reason": "Dependency unavailable.",
+                }
+            },
+        ),
+    )
+
+    assert judgment.satisfied is False
+    assert judgment.next_action == "continue"
+    assert judgment.final_answer is None
+    assert "finalization_status_blocked" in judgment.reason
+
+
+def test_turn_closure_accepts_truthful_mutation_claim_with_tool_evidence(
+    tmp_path: Path,
+) -> None:
+    judgment = _evaluate_closure_case(
+        tmp_path,
+        session_id="s-truthful-mutation-claim",
+        goal="Update pyproject.toml and verify it.",
+        closure_payload={
+            "satisfied": True,
+            "reason": "file updated and verified",
+            "next_action": "close",
+            "final_answer": "Updated pyproject.toml and verified the result.",
+            "mutation_claimed": True,
+        },
+        action_result=ActionResult(
+            command_id="cmd-truthful-mutation",
+            status="success",
+            summary="file updated",
+            outputs={
+                "adaptive.finalization_status": {
+                    "status": "final_answer",
+                    "reasoning": "The requested file was updated.",
+                    "remaining_work": "",
+                    "blocking_reason": "",
+                },
+                "tool_results": [
+                    {
+                        "tool_name": "file.write",
+                        "ok": True,
+                        "data": {"path": "/workspace/pyproject.toml"},
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert judgment.satisfied is True
+    assert judgment.next_action == "close"
+    assert judgment.mutation_claimed is True
+
+
+def test_turn_closure_records_finalization_status_conflict_without_forcing_close(
+    tmp_path: Path,
+) -> None:
+    judgment = _evaluate_closure_case(
+        tmp_path,
+        session_id="s-finalization-status-conflict",
+        goal="Complete and verify the scratch project.",
+        closure_payload={
+            "satisfied": False,
+            "reason": "verification is incomplete",
+            "next_action": "continue",
+            "final_answer": None,
+        },
+        action_result=ActionResult(
+            command_id="cmd-finalization-conflict",
+            status="success",
+            summary="model requested final answer",
+            outputs={
+                "adaptive.finalization_status": {
+                    "status": "final_answer",
+                    "reasoning": "The loop believes work is complete.",
+                    "remaining_work": "",
+                    "blocking_reason": "",
+                }
+            },
+        ),
+    )
+
+    assert judgment.satisfied is False
+    assert judgment.next_action == "continue"
+    assert judgment.final_answer is None
+    assert "finalization_status_conflict" in judgment.reason
 
 
 def test_turn_closure_continues_when_closure_schema_is_invalid() -> None:

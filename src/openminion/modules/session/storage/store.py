@@ -25,6 +25,7 @@ from openminion.modules.storage.runtime.module_integrity import (
 )
 from .base import SessionStore
 from .component_wiring import build_store_components
+from .context import RunStore
 from .json_utils import to_json
 from .migrations import MIGRATIONS, list_migrations
 from .rows import row_to_session_event
@@ -332,6 +333,10 @@ class SQLiteSessionStore(SessionStore):
         self._session_helper = components.session_helper
         self._replay_helper = components.replay_helper
         self._slice_store = components.slice_store
+
+    @property
+    def run_store(self) -> RunStore:
+        return self._run_store
 
     create_snapshot = _create_snapshot_facade
     add_cron_job = _add_cron_job_facade

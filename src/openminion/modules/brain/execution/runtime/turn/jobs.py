@@ -13,6 +13,7 @@ from ....constants import (
     BRAIN_STATE_DONE,
     BRAIN_STATE_JOB_PENDING,
     BRAIN_STATE_WAITING_USER,
+    MissionStatus,
 )
 from ....diagnostics.events import CanonicalEventLogger
 from ....diagnostics.transitions import transition
@@ -114,7 +115,7 @@ def _mark_job_still_pending(
     if mission_is_active(state) and state.mission is not None:
         set_mission_status(
             mission=state.mission,
-            status="awaiting_async",
+            status=MissionStatus.AWAITING_ASYNC,
             reason=f"async job {job.task_id} is still pending",
             route_action=str(getattr(state.mission, "latest_route_action", "") or ""),
         )
@@ -201,7 +202,7 @@ def _resume_mission_after_success(
     if mission_is_active(state) and state.mission is not None:
         set_mission_status(
             mission=state.mission,
-            status="active",
+            status=MissionStatus.ACTIVE,
             reason=f"async job {job.task_id} resumed mission execution",
             route_action=str(getattr(state.mission, "latest_route_action", "") or ""),
         )

@@ -1,7 +1,7 @@
-import re
 from typing import Any
 
-from ...schemas import ActionResult, WorkingState
+from ...schemas.decisions import FinalizationStatus
+from ...schemas.state import ActionResult, WorkingState
 
 _CLOSURE_TOOL_RESULT_DATA_KEYS = frozenset(
     {
@@ -17,18 +17,6 @@ _CLOSURE_TOOL_RESULT_DATA_KEYS = frozenset(
         "query_time",
         "url",
     }
-)
-_PROGRESS_NOTE_PATTERNS = (
-    re.compile(r"\blet me\s+(?!know\b)"),
-    re.compile(r"\bnow i need to\b"),
-    re.compile(r"\bi still need to\b"),
-    re.compile(r"\bstill need to\b"),
-    re.compile(r"\bnow executing\b"),
-    re.compile(r"\bi(?:'ll| will) next\b"),
-    re.compile(r"\bi(?:'m| am) going to\b"),
-    re.compile(r"\bremaining files\b"),
-    re.compile(r"\bbefore i can\b"),
-    re.compile(r"\bto understand what needs to be completed\b"),
 )
 
 
@@ -105,33 +93,9 @@ def _closure_action_outputs(action_result: ActionResult | None) -> dict[str, Any
     return payload
 
 
-def _final_answer_claims_mutation_without_tool_evidence(
-    answer: str,
-    *,
+def _has_successful_mutation_tool_evidence(
     action_result: ActionResult | None,
 ) -> bool:
-    token = str(answer or "").strip()
-    if not token:
-        return False
-    lower = token.lower()
-    if any(
-        phrase in lower
-        for phrase in (
-            "no changes were required",
-            "no change was required",
-            "no file modifications were required",
-            "changes needed: none",
-        )
-    ):
-        return False
-    if not re.search(
-        r"(?:^|\n)\s*(?:[-*]\s*)?(?:modified|updated|added|wrote|created)\b"
-        r"|(?:\bi\s+)?(?:modified|updated|added|wrote|created)\s+"
-        r"(?:the\s+)?(?:file|readme|pyproject|tests?/|[a-z0-9_.-]+/)",
-        lower,
-    ):
-        return False
-
     outputs = dict(getattr(action_result, "outputs", {}) or {}) if action_result else {}
     tool_results = [
         item
@@ -139,21 +103,28 @@ def _final_answer_claims_mutation_without_tool_evidence(
         if isinstance(item, dict)
     ]
     mutation_tools = {"file.write", "file.edit", "model.file_write", "model.file_edit"}
-    return not any(
+    return any(
         bool(item.get("ok"))
         and str(item.get("tool_name", "") or "").strip() in mutation_tools
         for item in tool_results
     )
 
 
-def _final_answer_reads_like_progress_note(answer: str) -> bool:
-    token = str(answer or "").strip()
-    if not token:
-        return False
-    lower = token.lower()
-    if "let me know" in lower:
-        lower = lower.replace("let me know", "")
-    return any(pattern.search(lower) for pattern in _PROGRESS_NOTE_PATTERNS)
+def _closure_finalization_status(
+    action_result: ActionResult | None,
+) -> FinalizationStatus | None:
+    outputs = getattr(action_result, "outputs", None)
+    if not isinstance(outputs, dict):
+        return None
+    raw_status = outputs.get("adaptive.finalization_status")
+    if isinstance(raw_status, FinalizationStatus):
+        return raw_status
+    if not isinstance(raw_status, dict):
+        return None
+    try:
+        return FinalizationStatus.model_validate(raw_status)
+    except ValueError:
+        return None
 
 
 def _can_continue_for_freshness(state: WorkingState) -> bool:

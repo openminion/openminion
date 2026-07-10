@@ -224,7 +224,7 @@ class PostActionJudgment(BaseModel):
 
 
 class MissionState(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     mission_id: str = Field(..., min_length=1)
     objective: str = Field(..., min_length=1)

@@ -170,71 +170,8 @@ class TurnExecutorComponents:
     unforced_lane: Any
 
 
-class TurnFlowBuilder:
-    @staticmethod
-    def build_service_port(service: Any) -> TurnFlowServicePort:
-        return AgentServiceTurnFlowAdapter(_service=service)
-
-    @staticmethod
-    def build_turn_executor_components(
-        *,
-        service: Any | None = None,
-        service_port: TurnFlowServicePort | None = None,
-        runtime: TurnRuntimeContext,
-    ) -> TurnExecutorComponents:
-        from .runtime import ExecutorRuntime
-        from .required_lane import RequiredLaneRunner
-        from .unforced_lane import UnforcedLaneRunner
-
-        resolved_service_port = service_port or TurnFlowBuilder.build_service_port(
-            service
-        )
-        runtime_ops = ExecutorRuntime(
-            service_port=resolved_service_port,
-            runtime=runtime,
-        )
-        required_lane = RequiredLaneRunner(
-            service_port=resolved_service_port,
-            runtime=runtime,
-            runtime_ops=runtime_ops,
-        )
-        unforced_lane = UnforcedLaneRunner(
-            service_port=resolved_service_port,
-            runtime=runtime,
-            runtime_ops=runtime_ops,
-        )
-        return TurnExecutorComponents(
-            service_port=resolved_service_port,
-            runtime_ops=runtime_ops,
-            required_lane=required_lane,
-            unforced_lane=unforced_lane,
-        )
-
-    @staticmethod
-    def build_turn_executor(
-        *,
-        service: Any | None = None,
-        service_port: TurnFlowServicePort | None = None,
-        runtime: TurnRuntimeContext,
-    ) -> Any:
-        from .executor import TurnExecutor
-
-        components = TurnFlowBuilder.build_turn_executor_components(
-            service=service,
-            service_port=service_port,
-            runtime=runtime,
-        )
-        return TurnExecutor(
-            runtime=runtime,
-            service_port=components.service_port,
-            runtime_ops=components.runtime_ops,
-            required_lane=components.required_lane,
-            unforced_lane=components.unforced_lane,
-        )
-
-
 def build_service_port(service: Any) -> TurnFlowServicePort:
-    return TurnFlowBuilder.build_service_port(service)
+    return AgentServiceTurnFlowAdapter(_service=service)
 
 
 def build_turn_executor_components(
@@ -243,10 +180,30 @@ def build_turn_executor_components(
     service_port: TurnFlowServicePort | None = None,
     runtime: TurnRuntimeContext,
 ) -> TurnExecutorComponents:
-    return TurnFlowBuilder.build_turn_executor_components(
-        service=service,
-        service_port=service_port,
+    from .required_lane import RequiredLaneRunner
+    from .runtime import ExecutorRuntime
+    from .unforced_lane import UnforcedLaneRunner
+
+    resolved_service_port = service_port or build_service_port(service)
+    runtime_ops = ExecutorRuntime(
+        service_port=resolved_service_port,
         runtime=runtime,
+    )
+    required_lane = RequiredLaneRunner(
+        service_port=resolved_service_port,
+        runtime=runtime,
+        runtime_ops=runtime_ops,
+    )
+    unforced_lane = UnforcedLaneRunner(
+        service_port=resolved_service_port,
+        runtime=runtime,
+        runtime_ops=runtime_ops,
+    )
+    return TurnExecutorComponents(
+        service_port=resolved_service_port,
+        runtime_ops=runtime_ops,
+        required_lane=required_lane,
+        unforced_lane=unforced_lane,
     )
 
 
@@ -256,16 +213,24 @@ def build_turn_executor(
     service_port: TurnFlowServicePort | None = None,
     runtime: TurnRuntimeContext,
 ) -> Any:
-    return TurnFlowBuilder.build_turn_executor(
+    from .executor import TurnExecutor
+
+    components = build_turn_executor_components(
         service=service,
         service_port=service_port,
         runtime=runtime,
+    )
+    return TurnExecutor(
+        runtime=runtime,
+        service_port=components.service_port,
+        runtime_ops=components.runtime_ops,
+        required_lane=components.required_lane,
+        unforced_lane=components.unforced_lane,
     )
 
 
 __all__ = [
     "AgentServiceTurnFlowAdapter",
-    "TurnFlowBuilder",
     "TurnExecutorComponents",
     "build_service_port",
     "build_turn_executor",

@@ -310,7 +310,7 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         self.assertIn("Continuing from recent sessions", first_context)
         self.assertNotIn("Continuing from recent sessions", second_context)
 
-    def test_build_context_prefers_structured_facts_over_historical_summaries(
+    def test_build_context_keeps_structured_facts_after_historical_summaries(
         self,
     ) -> None:
         class _FakeSessionContext:
@@ -367,8 +367,11 @@ class TestMemoryServiceGatewayAdapterEnabled(unittest.TestCase):
         self.assertIn("## Agent Memory", context)
         self.assertIn("copy remembered values verbatim", context)
         self.assertIn("new@example.com", context)
-        self.assertNotIn("old@example.com", context)
-        self.assertNotIn("Continuing from recent sessions", context)
+        self.assertIn("old@example.com", context)
+        self.assertLess(
+            context.index("## Continuing from recent sessions"),
+            context.index("## Agent Memory"),
+        )
 
     def test_record_turn_clears_last_retrieved_items_after_turn(
         self,

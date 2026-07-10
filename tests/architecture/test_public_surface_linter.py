@@ -124,3 +124,28 @@ def test_advisory_mode_flag_is_diff_visible() -> None:
     validator = _load_validator()
     assert isinstance(validator._ADVISORY_MODE, bool)
     assert isinstance(validator._FAIL_CATEGORIES, frozenset)
+
+
+@pytest.mark.parametrize("category", ["providers", "runtime"])
+def test_internal_runtime_and_provider_drift_fails(category: str) -> None:
+    validator = _load_validator()
+    reach = (
+        "services/example.py",
+        f"openminion.modules.example.{category}.implementation",
+    )
+
+    assert validator._drift_should_fail(
+        [reach], [], validator._ADVISORY_MODE, validator._FAIL_CATEGORIES
+    )
+
+
+def test_storage_drift_remains_advisory() -> None:
+    validator = _load_validator()
+    reach = (
+        "services/example.py",
+        "openminion.modules.example.storage.implementation",
+    )
+
+    assert not validator._drift_should_fail(
+        [reach], [], validator._ADVISORY_MODE, validator._FAIL_CATEGORIES
+    )

@@ -58,6 +58,28 @@ class AdaptiveLoopRunnerPostprocessMixin(
     AdaptiveLoopRunnerClosureMixin,
     AdaptiveLoopRunnerNoToolMixin,
 ):
+    def _retry_pending_duplicate_batch_closeout(self) -> AdaptiveToolLoopOutcome:
+        compact_closeout = self._force_compact_answer_only_closeout()
+        if compact_closeout is not None:
+            return compact_closeout
+        self.loop_state.termination_reason = ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
+        emit_adaptive_status(
+            self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            detail_text=f"{self.public_mode_tag} repeated tool batch",
+            mode_state="duplicate_tool_calls",
+            termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+        )
+        return AdaptiveToolLoopOutcome(
+            profile_name=self.profile.profile_name,
+            mode_name=self.profile.mode_name,
+            termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+            state=self.loop_state,
+            allowed_tools=self.allowed_tools,
+            error_message="Answer-only closure returned more tool calls.",
+        )
+
     def _force_compact_answer_only_closeout(self) -> AdaptiveToolLoopOutcome | None:
         tool_results = _successful_substantive_tool_results(self.loop_state)
         if not tool_results:
@@ -441,23 +463,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 "duplicate_batch_answer_only_closure_pending", False
             )
         ):
-            self.loop_state.termination_reason = ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
-            emit_adaptive_status(
-                self.loop_ctx,
-                profile=self.profile,
-                loop_state=self.loop_state,
-                detail_text=f"{self.public_mode_tag} repeated tool batch",
-                mode_state="duplicate_tool_calls",
-                termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
-            )
-            return False, AdaptiveToolLoopOutcome(
-                profile_name=self.profile.profile_name,
-                mode_name=self.profile.mode_name,
-                termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
-                state=self.loop_state,
-                allowed_tools=self.allowed_tools,
-                error_message="Answer-only closure returned more tool calls.",
-            )
+            return False, self._retry_pending_duplicate_batch_closeout()
         retry_key = "tool_choice_none_retry_used"
         direct_tool_closure_active = bool(
             self.loop_state.scratchpad.get("direct_tool_closure_forced", False)
