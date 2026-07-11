@@ -12,7 +12,7 @@ async def smoke_dashboard(config_path: str) -> list[str]:
     errors: list[str] = []
     try:
         from openminion.api.runtime import APIRuntime
-        from openminion.cli.contracts import ProviderBundle
+        from openminion.cli.parser.contracts import ProviderBundle
         from openminion.cli.tui.app import OpenMinionApp
         from openminion.cli.tui.providers.runtime import OpenMinionRuntime
 
