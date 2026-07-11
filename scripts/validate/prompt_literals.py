@@ -57,7 +57,7 @@ _ALLOWED_DOMAIN_OWNED = {
     "modules/brain/retry.py": "retry repair guidance is retry-policy owned",
     "modules/memory/runtime/consolidation/merge.py": "memory consolidation prompt is memory-runtime owned",
     "services/agent/execution_prompts.py": "agent execution retry prompts are domain-owned",
-    "services/agent/memory/extraction.py": "memory exact-value guidance is memory-extraction owned",
+    "modules/memory/runtime/extraction/records.py": "memory exact-value guidance is memory-extraction owned",
     "services/lifecycle/prompts.py": "sidecar approval prompts are operator UX, not LLM prompts",
 }
 
@@ -231,6 +231,36 @@ def collect_findings(root: Path = SRC_ROOT) -> list[Finding]:
     return findings
 
 
+def collect_domain_owner_findings(
+    root: Path = SRC_ROOT,
+    allowed: dict[str, str] = _ALLOWED_DOMAIN_OWNED,
+) -> list[Finding]:
+    """Report stale or empty domain-owned prompt exemptions."""
+
+    findings: list[Finding] = []
+    for relative_path, rationale in sorted(allowed.items()):
+        path = root / relative_path
+        if not path.is_file():
+            findings.append(
+                Finding(
+                    path=path,
+                    line=1,
+                    name="<missing-domain-owner>",
+                    preview=rationale,
+                )
+            )
+        elif not _scan_file(path):
+            findings.append(
+                Finding(
+                    path=path,
+                    line=1,
+                    name="<empty-domain-owner>",
+                    preview=rationale,
+                )
+            )
+    return findings
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -241,7 +271,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    findings = collect_findings()
+    findings = collect_domain_owner_findings() + collect_findings()
     if not findings:
         print(
             "[prompt-literals] clean — stable runtime prompts route through modules/prompting"
