@@ -8,8 +8,8 @@ from openminion.services.agent.errors import (
     missing_required_for_call,
     required_fields_from_spec,
 )
-from openminion.services.agent.execution.required_lane import RequiredLaneMixin
-from openminion.services.agent.execution.required_lane import RequiredLaneState
+from openminion.services.agent.execution.required import RequiredLaneMixin
+from openminion.services.agent.execution.required import RequiredLaneState
 from openminion.modules.llm.providers.base import ProviderToolCall, ProviderToolSpec
 
 

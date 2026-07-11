@@ -11,8 +11,8 @@ from openminion.base.types import AgentResponse, Message
 from openminion.modules.llm.providers.base import ProviderResponse, ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.agent.execution.deps import ExecutorDeps
-from openminion.services.agent.execution.unforced_lane.loop import (
+from openminion.services.agent.execution.dependencies import ExecutorDeps
+from openminion.services.agent.execution.unforced.loop import (
     handle_unforced_tool_calls,
 )
 
@@ -508,7 +508,7 @@ def test_cumulative_successful_batches_accept_typed_finalization_contract() -> N
 
 
 def test_immediate_tool_result_response_only_blocks_when_denied() -> None:
-    from openminion.services.agent.execution.unforced_lane import loop
+    from openminion.services.agent.execution.unforced import loop
 
     source = open(loop.__file__).read()
     # The exact early-return pattern is the load-bearing contract;
@@ -525,7 +525,7 @@ def test_immediate_tool_result_response_only_blocks_when_denied() -> None:
 def test_no_prose_keyword_heuristic_in_mct04_branch() -> None:
     import ast
 
-    from openminion.services.agent.execution.unforced_lane import loop
+    from openminion.services.agent.execution.unforced import loop
 
     source = open(loop.__file__).read()
     tree = ast.parse(source)

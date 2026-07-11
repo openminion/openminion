@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from openminion.base.types import Message
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
-from openminion.services.agent.execution.base import _unavailable_response
+from openminion.services.agent.execution.flow import _unavailable_response
 from openminion.services.agent.service import AgentService
 from openminion.services.brain.post_execution.postprocess import (
     _attach_tool_result_metadata,
@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 GUARDED_FILES: tuple[Path, ...] = (
     REPO_ROOT / "src" / "openminion" / "services" / "agent" / "service.py",
-    REPO_ROOT / "src" / "openminion" / "services" / "agent" / "execution" / "base.py",
+    REPO_ROOT / "src" / "openminion" / "services" / "agent" / "execution" / "flow.py",
     REPO_ROOT
     / "src"
     / "openminion"
@@ -123,7 +123,7 @@ class SourceCentralizationGuardTests(unittest.TestCase):
 
 class CrossFileConstantIdentityTests(unittest.TestCase):
     def test_consumers_resolve_to_same_constant_value(self) -> None:
-        from openminion.services.agent.execution.base import (
+        from openminion.services.agent.execution.flow import (
             CONTRACT_VERSION_V2 as base_constant,
         )
         from openminion.services.agent.service import (

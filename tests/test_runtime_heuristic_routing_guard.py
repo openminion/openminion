@@ -68,12 +68,12 @@ def test_intent_router_module_removed_entirely() -> None:
 
 
 def test_orchestrator_capability_resolution_direct_passthrough() -> None:
-    source = (
-        _REPO_ROOT / "src/openminion/services/lifecycle/request_orchestrator.py"
-    ).read_text(encoding="utf-8")
-    assert "def _resolve_capability_category(" in source
-    assert "return _resolve_capability_category_impl(" in source
-    assert "explicit_category=explicit_category" in source
+    from openminion.services.lifecycle import request_orchestrator
+    from openminion.services.runtime.ingress import resolve_capability_category
+
+    assert (
+        request_orchestrator._resolve_capability_category is resolve_capability_category
+    )
 
 
 def test_runner_nl_tool_parser_surface_removed() -> None:
@@ -92,12 +92,10 @@ def test_runtime_weather_clarification_prompt_present_in_executor() -> None:
     assert "Which location should I check weather for?" not in source
 
 
-def test_execution_controller_does_not_call_intent_classifier_for_conversation() -> (
-    None
-):
-    from openminion.services.agent.execution import controller
+def test_execution_tool_plan_does_not_call_intent_classifier_for_conversation() -> None:
+    from openminion.services.agent.execution import tool_plan
 
-    source = inspect.getsource(controller)
+    source = inspect.getsource(tool_plan)
     assert "classify_intent(" not in source
 
 

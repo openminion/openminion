@@ -1,8 +1,8 @@
 from typing import TYPE_CHECKING
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 from .metadata import build_required_outcome, invalid_tool_arguments_metadata
-from .provider_phase import phase_recover_no_tool_calls
+from .provider import phase_recover_no_tool_calls
 from .state import RequiredLaneState, _PhaseResult
 
 if TYPE_CHECKING:

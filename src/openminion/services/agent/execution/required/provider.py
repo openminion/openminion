@@ -6,7 +6,7 @@ from openminion.modules.llm.providers.base import (
     ProviderResponse,
 )
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 from .state import RequiredLaneState, _PhaseResult
 
 if TYPE_CHECKING:

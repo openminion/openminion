@@ -173,7 +173,7 @@ def resolve_service_port(owner: Any) -> TurnFlowServicePort:
     service = getattr(owner, "_service", None)
     if service is None:
         raise RuntimeError("turn-flow owner is missing service adapter")
-    from .builder import build_service_port
+    from .composition import build_service_port
 
     return build_service_port(service)
 

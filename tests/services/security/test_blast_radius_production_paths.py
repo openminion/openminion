@@ -205,7 +205,7 @@ def test_path5_tool_fallbacks_attaches_adapter_to_context() -> None:
 
 def test_path6_required_lane_arg_retry_attaches_adapter_when_missing() -> None:
     _assert_module_source_contains(
-        "openminion.services.agent.execution.required_lane.post_execution",
+        "openminion.services.agent.execution.required.completion",
         "SEAM_AGENT_REQUIRED_LANE_RETRY",
         "build_default_composition_boundary_adapter",
         "state.ctx.blast_radius_adapter",

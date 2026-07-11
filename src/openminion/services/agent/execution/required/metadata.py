@@ -5,7 +5,7 @@ from openminion.base.types import AgentResponse
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 from ..state import RequiredLaneOutcome
 from .state import RequiredLaneState, _PhaseResult
 

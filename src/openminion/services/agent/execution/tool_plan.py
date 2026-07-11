@@ -2,7 +2,7 @@ from typing import Any, Callable, Optional
 
 from openminion.base.types import Message
 
-from .builder import build_service_port
+from .composition import build_service_port
 from .ports import TurnFlowServicePort
 from .state import ToolPlan
 

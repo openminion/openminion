@@ -3,7 +3,7 @@ from typing import Any
 
 from openminion.services.security.policy import ToolBudgetState
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 from ..ports import (
     RuntimeOpsPort,
     TurnFlowServicePort,
@@ -11,16 +11,16 @@ from ..ports import (
     resolve_runtime_ops,
     resolve_service_port,
 )
-from .arg_validation import phase_validate_args
-from .execution_phase import phase_execute
+from .arguments import phase_validate_args
+from .execution import phase_execute
 from .metadata import (
     build_required_outcome,
     consume_required_phase_result,
     empty_required_lane_outcome,
     invalid_tool_arguments_metadata,
 )
-from .post_execution import phase_post_execution
-from .provider_phase import phase_provider_call, phase_recover_no_tool_calls
+from .completion import phase_post_execution
+from .provider import phase_provider_call, phase_recover_no_tool_calls
 from .state import RequiredLaneState
 
 

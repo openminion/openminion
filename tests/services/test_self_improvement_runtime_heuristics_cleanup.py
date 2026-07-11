@@ -7,7 +7,7 @@ from pathlib import Path
 from openminion.base.config import OpenMinionConfig
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.services.lifecycle import self_improvement as self_improvement_module
-from openminion.services.agent.execution import base as agent_execution_base
+from openminion.services.agent.execution import flow as agent_execution_flow
 from openminion.services.brain.post_execution import (
     context as brain_post_execution_context,
 )
@@ -109,7 +109,7 @@ class SIRH03HardenedInvariants(unittest.TestCase):
     def test_sirh03_call_site_modules_have_no_forbidden_call_patterns(
         self,
     ) -> None:
-        for module in (agent_execution_base, brain_post_execution_context):
+        for module in (agent_execution_flow, brain_post_execution_context):
             path = Path(module.__file__)
             source = path.read_text(encoding="utf-8")
             for lineno, line in enumerate(source.splitlines(), start=1):

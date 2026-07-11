@@ -28,8 +28,8 @@ Re-exported from `openminion.services.agent`:
 Internal modules of note:
 
 - `service.py` — `AgentService`
-- `execution/` — turn execution controller, lane runners, validators, and
-  finalization helpers
+- `execution/` — turn flow (`flow.py`), composition, tool planning, lane
+  runners (`required/`, `unforced/`), validators, and finalization helpers
 - `hooks.py` — hook fabric
 - `lifecycle.py` — lifecycle event registry and settings-driven lifecycle hooks
 - `identity.py`, `identity_binding.py` — identity binding at turn time

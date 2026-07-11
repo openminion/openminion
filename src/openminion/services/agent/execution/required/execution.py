@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING, Any
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.security.policy import ToolBudgetState
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 from .metadata import build_required_outcome
 from .state import RequiredLaneState, _PhaseResult
 from .unavailable import (
     unavailable_discovery_or_version_message,
     unavailable_discovery_retry_instruction,
 )
-from ..unforced_lane.follow_up import (
+from ..unforced.followup import (
     build_follow_up_request,
     denied_tool_recovery_hint,
 )

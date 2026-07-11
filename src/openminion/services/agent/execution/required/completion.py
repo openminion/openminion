@@ -35,7 +35,7 @@ from ...execution_prompts import (
 )
 from openminion.services.security.policy import ToolBudgetState
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 from ..followup import available_follow_up_tools, recover_text_tool_calls
 from ..validators import is_empty_provider_response
 from .metadata import (
