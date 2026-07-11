@@ -3,7 +3,7 @@ from typing import Any
 
 from openminion.modules.memory.models import MemoryPatchResult
 from openminion.modules.memory.storage.base import SearchQueryOptions
-from openminion.services.agent.memory.extraction import (
+from openminion.modules.memory.runtime.extraction.records import (
     _extract_facts_todos_done,
     explicit_durable_fact_projection_from_content,
     explicit_memory_type_from_content,

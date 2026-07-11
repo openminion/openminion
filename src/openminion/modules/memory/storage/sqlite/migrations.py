@@ -137,6 +137,12 @@ def _record_goal_tag_migration(conn: sqlite3.Connection) -> None:
     )
 
 
+def _record_namespace_migration(conn: sqlite3.Connection) -> None:
+    columns = _table_columns(conn, "memory_records")
+    if "namespace_json" not in columns:
+        conn.execute("ALTER TABLE memory_records ADD COLUMN namespace_json TEXT")
+
+
 MIGRATIONS = [
     (1, "v1_baseline", MIGRATION_V1),
     (2, "v2_candidate_meta", _candidate_meta_migration),
@@ -146,6 +152,7 @@ MIGRATIONS = [
     (6, "v6_record_delete_audit", _record_delete_audit_migration),
     (7, "v7_record_bitemporal", _record_bitemporal_migration),
     (8, "v8_record_goal_tag", _record_goal_tag_migration),
+    (9, "v9_record_namespace", _record_namespace_migration),
 ]
 
 

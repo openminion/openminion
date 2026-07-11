@@ -11,15 +11,17 @@ from openminion.modules.memory.config import from_base_config
 from openminion.modules.memory.models import MemoryCandidate, MemoryRecord
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
-from openminion.services.agent.memory import (
+from openminion.modules.memory.runtime import (
     learning as agent_memory_learning,
-    text_processing as agent_memory_text_processing,
     turn_recording as agent_memory_turn_recording,
+)
+from openminion.modules.memory.runtime.extraction import (
+    text as agent_memory_text_processing,
 )
 from openminion.services.agent.memory.gateway_adapter import (
     MemoryServiceGatewayAdapter,
 )
-from openminion.services.agent.memory.learning import LearningMixin
+from openminion.modules.memory.runtime.learning import LearningMixin
 
 
 _AGENT_ID = "tmac-agent"
@@ -190,7 +192,7 @@ def test_tmac03_classifier_and_helpers_are_removed_from_learning_mixin() -> None
             "a new dedicated lane, not by reviving this symbol."
         )
         assert not hasattr(agent_memory_learning, name), (
-            f"TMAC-03: `openminion.services.agent.memory.learning.{name}` "
+            f"TMAC-03: `openminion.modules.memory.runtime.learning.{name}` "
             "must stay removed at module level."
         )
 

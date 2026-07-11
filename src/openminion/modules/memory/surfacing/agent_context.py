@@ -13,10 +13,10 @@ from openminion.modules.memory.storage.base import (
     RecordOrder,
     SearchQueryOptions,
 )
-from openminion.services.agent.memory.extraction import (
+from openminion.modules.memory.runtime.extraction.records import (
     _format_records_as_context,
 )
-from openminion.services.agent.memory.retrieval import (
+from openminion.modules.memory.runtime.retrieval_pipeline import (
     build_empty_meta,
 )
 

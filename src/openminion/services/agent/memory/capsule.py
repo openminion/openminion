@@ -21,11 +21,11 @@ def normalize_memory_provider(raw: Any) -> str:
     normalized = str(raw or "").strip().lower()
     if normalized in {"", "memory_v2"}:
         return "memory_v2"
-    if normalized == "memory_v2_hello_world":
-        return "memory_v2_hello_world"
+    if normalized in {"memory_v2_smoke", "memory_v2_hello_world"}:
+        return "memory_v2_smoke"
     raise ValueError(
         f"Unsupported memory_provider={raw!r}. "
-        "Supported values: memory_v2, memory_v2_hello_world."
+        "Supported values: memory_v2, memory_v2_smoke (memory_v2_hello_world is a legacy alias)."
     )
 
 

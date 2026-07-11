@@ -2,7 +2,7 @@ import argparse
 import sys
 import tomllib
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 VerbosityLevel = Literal["quiet", "normal", "verbose"]
 ProgressLevel = Literal["full", "minimal", "off"]
@@ -84,12 +84,12 @@ def resolve_verbosity(
 ) -> VerbosityLevel:
     flag_value = getattr(args, "verbosity", None)
     if flag_value in _VERBOSITY_VALUES:
-        return flag_value  # type: ignore[return-value]
+        return cast(VerbosityLevel, flag_value)
 
     raw_env = _read_env_value("OPENMINION_VERBOSITY")
     normalized_env = _normalize_choice(raw_env, _VERBOSITY_VALUES)
     if normalized_env is not None:
-        return normalized_env  # type: ignore[return-value]
+        return cast(VerbosityLevel, normalized_env)
     if raw_env:
         _warn_invalid_value(
             "OPENMINION_VERBOSITY",
@@ -102,7 +102,7 @@ def resolve_verbosity(
     normalized_legacy = _normalize_choice(legacy_env, _VERBOSITY_VALUES)
     if normalized_legacy is not None:
         _emit_deprecation_warning("OPENMINION_FOCUS_VERBOSITY", "OPENMINION_VERBOSITY")
-        return normalized_legacy  # type: ignore[return-value]
+        return cast(VerbosityLevel, normalized_legacy)
     if legacy_env:
         print(
             f"openminion: unrecognized OPENMINION_FOCUS_VERBOSITY={legacy_env.strip().lower()!r}; "
@@ -116,7 +116,7 @@ def resolve_verbosity(
     prefs_value = prefs.get("verbosity", "")
     normalized_prefs = _normalize_choice(prefs_value, _VERBOSITY_VALUES)
     if normalized_prefs is not None:
-        return normalized_prefs  # type: ignore[return-value]
+        return cast(VerbosityLevel, normalized_prefs)
     if prefs_value:
         _warn_invalid_value(
             "verbosity",
@@ -165,7 +165,7 @@ def resolve_progress(
 ) -> ProgressLevel:
     flag_value = getattr(args, "progress", None)
     if flag_value in _PROGRESS_VALUES:
-        return flag_value  # type: ignore[return-value]
+        return cast(ProgressLevel, flag_value)
 
     alias = _resolve_progress_alias_flags(args)
     if alias is not None:
@@ -174,7 +174,7 @@ def resolve_progress(
     raw_env = _read_env_value("OPENMINION_PROGRESS")
     normalized_env = _normalize_choice(raw_env, _PROGRESS_VALUES)
     if normalized_env is not None:
-        return normalized_env  # type: ignore[return-value]
+        return cast(ProgressLevel, normalized_env)
     if raw_env:
         _warn_invalid_value(
             "OPENMINION_PROGRESS",
@@ -198,7 +198,7 @@ def resolve_progress(
     prefs_value = prefs.get("progress", "")
     normalized_prefs = _normalize_choice(prefs_value, _PROGRESS_VALUES)
     if normalized_prefs is not None:
-        return normalized_prefs  # type: ignore[return-value]
+        return cast(ProgressLevel, normalized_prefs)
     if prefs_value:
         _warn_invalid_value(
             "progress",

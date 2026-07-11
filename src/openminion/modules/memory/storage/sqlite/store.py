@@ -20,6 +20,7 @@ from openminion.modules.artifact.refs import (
 from ..base import (
     MemoryStore,
     ListQueryOptions,
+    record_matches_namespaces,
 )
 from ..migrations import list_migrations
 from ..postgres.sql import _clamp01
@@ -162,15 +163,18 @@ class SQLiteMemoryStore(MemoryStore):
             conn.execute(
                 """
                 INSERT INTO memory_records (
-                    id, scope, type, key, title, content_json, tags_json, entities_json, goal_id,
+                    id, scope, namespace_json, type, key, title, content_json, tags_json, entities_json, goal_id,
                     source, confidence, evidence_json, meta_json, last_hit_at, event_time, valid_to, tier, access_count, expires_at, created_at, updated_at,
                     supersedes_id, superseded_by_id, supersession_reason, is_deleted,
                     deleted_at, deleted_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
                     record.scope,
+                    json.dumps(record.namespace.as_dict())
+                    if record.namespace is not None
+                    else None,
                     record.type,
                     record.key,
                     record.title,
@@ -418,7 +422,7 @@ class SQLiteMemoryStore(MemoryStore):
                 else " ORDER BY updated_at ASC"
             )
 
-        if options.limit is not None:
+        if options.limit is not None and not options.namespaces:
             query += " LIMIT ?"
             params.append(options.limit)
             if options.offset is not None:
@@ -427,7 +431,18 @@ class SQLiteMemoryStore(MemoryStore):
 
         with self._connect() as conn:
             cursor = conn.execute(query, params)
-            return [self._create_record_from_row(row) for row in cursor.fetchall()]
+            records = [self._create_record_from_row(row) for row in cursor.fetchall()]
+        if options.namespaces:
+            records = [
+                record
+                for record in records
+                if record_matches_namespaces(record, options.namespaces)
+            ]
+            offset = max(0, int(options.offset or 0))
+            records = records[offset:]
+            if options.limit is not None:
+                records = records[: max(1, int(options.limit))]
+        return records
 
     def list_scopes(self) -> list[str]:
         with self._connect() as conn:

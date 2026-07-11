@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, runtime_checkable
+
+from sophiagraph.query import ListQueryOptions, SearchQueryOptions
 
 from .contracts import (
     MEMORY_CONTRACT_VERSION,
     ensure_memory_contract_compatibility,
 )
+from .models import MemoryRecord
 
 
 MEMORY_INTERFACE_VERSION = MEMORY_CONTRACT_VERSION
@@ -64,6 +67,15 @@ class MemoryServiceInterface(Protocol):
     def candidate_update(self, candidate_id: str, patch: dict[str, Any]) -> Any: ...
 
     def promote_candidate(self, candidate_id: str, target_scope: str) -> Any: ...
+
+
+@runtime_checkable
+class MemoryNamespaceQueryInterface(Protocol):
+    """Runtime-facing durable memory query contract."""
+
+    def list_records(self, options: ListQueryOptions) -> list[MemoryRecord]: ...
+
+    def search_records(self, options: SearchQueryOptions) -> list[MemoryRecord]: ...
 
 
 def ensure_memory_compatibility(

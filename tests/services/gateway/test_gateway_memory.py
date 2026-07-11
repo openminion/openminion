@@ -8,7 +8,7 @@ from tests.services.gateway._gateway_service_support import (
     Path,
     _CaptureProvider,
     _FailingMemoryAdapter,
-    _HelloWorldMemoryV2Adapter,
+    _EphemeralSmokeMemoryAdapter,
     _StaticSecurityEventAgent,
     asyncio,
     create_memory_adapter,
@@ -884,9 +884,9 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         self.assertEqual(payload.get("reason_code"), "memory_policy_snapshot")
         self.assertNotEqual(str(payload.get("run_id", "")).strip(), "")
 
-    def test_gateway_memory_v2_hello_world_swap_smoke(self) -> None:
+    def test_gateway_memory_v2_smoke_swap_smoke(self) -> None:
         provider = _CaptureProvider()
-        memory_v2 = _HelloWorldMemoryV2Adapter()
+        memory_v2 = _EphemeralSmokeMemoryAdapter()
         with patch.dict(
             os.environ,
             {"OPENMINION_MEMORY_CAPSULE_STRATEGY": "dynamic_turn"},
@@ -913,14 +913,14 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
         history = provider.requests[0].history
         self.assertGreaterEqual(len(history), 1)
         self.assertEqual(history[0].role, "system")
-        self.assertIn("hello-world-memory-v2 is active", history[0].content)
+        self.assertIn("ephemeral-memory-smoke is active", history[0].content)
         self.assertTrue(any(name == "record_turn" for name, _ in memory_v2.calls))
 
-    def test_gateway_memory_v2_hello_world_swap_keeps_memory_trace_signals(
+    def test_gateway_memory_v2_smoke_swap_keeps_memory_trace_signals(
         self,
     ) -> None:
         provider = _CaptureProvider()
-        memory_v2 = _HelloWorldMemoryV2Adapter()
+        memory_v2 = _EphemeralSmokeMemoryAdapter()
         session_id = "memory-v2-trace-swap"
         with patch.dict(
             os.environ,
@@ -938,7 +938,7 @@ class GatewayServiceMemoryTests(GatewayServiceTestCase):
                 gateway.run_once(
                     channel="console",
                     target="local-user",
-                    message="remember: parity fact from hello world",
+                    message="remember: parity fact from smoke memory",
                     session_id=session_id,
                 )
             )

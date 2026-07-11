@@ -1,9 +1,18 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-06-23
+Last updated: 2026-07-10
 
 This file tracks package-facing release notes for `openminion`.
+
+## Unreleased
+
+- Added typed SophiaGraph namespace filters to existing `memctl` list/search
+  commands and local memory-record HTTP routes.
+- Preserved all eight namespace dimensions in the integrated SQLite store and
+  retained permanent legacy scope compatibility.
+- Documented the local-operator security boundary and deterministic namespace
+  smoke coverage.
 
 ## 0.0.1 - 2026-06-23
 

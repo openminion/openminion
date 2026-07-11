@@ -21,6 +21,7 @@ from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
     SearchQueryOptions,
+    record_matches_namespaces,
 )
 from openminion.modules.memory.storage.capabilities import (
     BackendCapabilities,
@@ -205,6 +206,7 @@ class InMemoryRecordStore:
             )
             and (options.include_invalidated or _is_temporally_current(item))
             and (not options.scopes or item.scope in options.scopes)
+            and record_matches_namespaces(item, options.namespaces)
             and (allowed_types is None or str(item.type) in allowed_types)
             and (allowed_tiers is None or str(item.tier) in allowed_tiers)
         ]
@@ -626,6 +628,7 @@ class InMemorySearchIndex:
                 limit=None,
                 offset=0,
                 order_by=None,
+                namespaces=options.namespaces,
             )
         )
         if query:

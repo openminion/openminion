@@ -303,9 +303,9 @@ def _normalize_runtime_memory_provider(value: str) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in {"", "memory_v2"}:
         return "memory_v2"
-    if normalized == "memory_v2_hello_world":
-        return "memory_v2_hello_world"
+    if normalized in {"memory_v2_smoke", "memory_v2_hello_world"}:
+        return "memory_v2_smoke"
     raise ValueError(
         "Unsupported runtime.memory_provider="
-        f"{value!r}. Supported providers: memory_v2, memory_v2_hello_world."
+        f"{value!r}. Supported providers: memory_v2, memory_v2_smoke (memory_v2_hello_world is a legacy alias)."
     )

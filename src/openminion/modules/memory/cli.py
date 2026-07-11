@@ -20,7 +20,8 @@ from openminion.modules.memory.storage.base import (
     SearchQueryOptions,
     CandidateListOptions,
 )
-from openminion.modules.memory.models import CandidateReview
+from openminion.modules.memory.errors import InvalidArgumentError
+from openminion.modules.memory.models import CandidateReview, MemoryNamespace
 from openminion.modules.memory.portability import (
     MemoryBundleExportOptions,
     MemoryBundleImportOptions,
@@ -55,6 +56,7 @@ from openminion.modules.memory.diagnostics.tool_failure import (
     render_tool_failure_fact_diagnostic_report,
 )
 from openminion.modules.memory.runtime.scorer import score_records
+from openminion.modules.memory.runtime.scope import resolve_namespace_filter
 from openminion.modules.memory.runtime.promotion import PromotionPolicy
 from openminion.modules.memory.runtime.gc import run_gc
 from openminion.modules.cli_common import (
@@ -180,6 +182,38 @@ def _build_candidate_review(reviewer: str, note: Optional[str]) -> CandidateRevi
     return CandidateReview(reviewer, datetime.now(timezone.utc).isoformat(), note)
 
 
+def _resolve_cli_namespace(
+    *,
+    scope: str | None,
+    tenant_id: str | None,
+    org_id: str | None,
+    user_id: str | None,
+    agent_id: str | None,
+    session_id: str | None,
+    conversation_id: str | None,
+    project_id: str | None,
+    graph_id: str | None,
+) -> MemoryNamespace | None:
+    values = {
+        "tenant_id": tenant_id,
+        "org_id": org_id,
+        "user_id": user_id,
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "conversation_id": conversation_id,
+        "project_id": project_id,
+        "graph_id": graph_id,
+    }
+    supplied = {key: value for key, value in values.items() if value is not None}
+    if not scope and not supplied:
+        return None
+    try:
+        return resolve_namespace_filter(scope=scope, namespace=supplied or None)
+    except InvalidArgumentError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+
 def _render_search_result(record: Any) -> str:
     title = str(getattr(record, "title", "") or "").strip()
     content = getattr(record, "content", "")
@@ -282,38 +316,50 @@ def _register_trace_commands(trace_app: typer.Typer) -> None:
         typer.echo(render_trace_rows(events))
 
 
-def _register_read_commands(app: typer.Typer) -> None:
+def _register_namespace_list_command(app: typer.Typer) -> None:
     @app.command("list")
     def cmd_list(
-        scope: str = typer.Option(..., help="Scope to list records from"),
+        scope: Optional[str] = typer.Option(None, help="Legacy scope filter"),
         type: Optional[str] = typer.Option(None, help="Filter by type"),
         limit: int = typer.Option(100, help="Max results"),
         json_out: bool = typer.Option(False, "--json", help="Output as JSON"),
         db: Optional[str] = typer.Option(None, help="Override DB path"),
+        tenant_id: Optional[str] = typer.Option(None, "--tenant-id"),
+        org_id: Optional[str] = typer.Option(None, "--org-id"),
+        user_id: Optional[str] = typer.Option(None, "--user-id"),
+        agent_id: Optional[str] = typer.Option(None, "--agent-id"),
+        session_id: Optional[str] = typer.Option(None, "--session-id"),
+        conversation_id: Optional[str] = typer.Option(None, "--conversation-id"),
+        project_id: Optional[str] = typer.Option(None, "--project-id"),
+        graph_id: Optional[str] = typer.Option(None, "--graph-id"),
     ):
         """List memory records."""
+        namespace = _resolve_cli_namespace(
+            scope=scope,
+            tenant_id=tenant_id,
+            org_id=org_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            graph_id=graph_id,
+        )
+        if namespace is None:
+            typer.echo("Error: --scope or at least one namespace id is required", err=True)
+            raise typer.Exit(1)
         svc = _get_service(db)
         opts = ListQueryOptions(
-            scopes=[scope], types=[type] if type else None, limit=limit
+            scopes=[scope] if scope else [],
+            types=[type] if type else None,
+            limit=limit,
+            namespaces=[namespace],
         )
         records = svc.list(opts)
         _output(records, json_out)
 
-    @app.command("get")
-    def cmd_get(
-        record_id: str = typer.Argument(..., help="Record ID"),
-        json_out: bool = typer.Option(False, "--json"),
-        db: Optional[str] = typer.Option(None),
-    ):
-        """Get a single memory record by ID."""
-        svc = _get_service(db)
-        try:
-            record = svc.get(record_id)
-            _output(record, json_out)
-        except Exception as e:
-            typer.echo(f"Error: {e}", err=True)
-            raise typer.Exit(1)
 
+def _register_namespace_search_command(app: typer.Typer) -> None:
     @app.command("search")
     def cmd_search(
         query: str = typer.Argument(..., help="Full-text search query"),
@@ -322,11 +368,33 @@ def _register_read_commands(app: typer.Typer) -> None:
         explain: bool = typer.Option(False, "--explain"),
         json_out: bool = typer.Option(False, "--json"),
         db: Optional[str] = typer.Option(None),
+        tenant_id: Optional[str] = typer.Option(None, "--tenant-id"),
+        org_id: Optional[str] = typer.Option(None, "--org-id"),
+        user_id: Optional[str] = typer.Option(None, "--user-id"),
+        agent_id: Optional[str] = typer.Option(None, "--agent-id"),
+        session_id: Optional[str] = typer.Option(None, "--session-id"),
+        conversation_id: Optional[str] = typer.Option(None, "--conversation-id"),
+        project_id: Optional[str] = typer.Option(None, "--project-id"),
+        graph_id: Optional[str] = typer.Option(None, "--graph-id"),
     ):
         """Full-text search across memory records."""
+        namespace = _resolve_cli_namespace(
+            scope=scope,
+            tenant_id=tenant_id,
+            org_id=org_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            conversation_id=conversation_id,
+            project_id=project_id,
+            graph_id=graph_id,
+        )
         svc = _get_service(db)
         opts = SearchQueryOptions(
-            query=query, scopes=[scope] if scope else [], limit=limit
+            query=query,
+            scopes=[scope] if scope else [],
+            limit=limit,
+            namespaces=[namespace] if namespace is not None else None,
         )
         records = svc.search(opts)
         if explain:
@@ -353,6 +421,27 @@ def _register_read_commands(app: typer.Typer) -> None:
                 f"type_bonus={float(breakdown.get('type_bonus', 0.0) or 0.0):.3f} "
                 f"confidence={float(breakdown.get('confidence', 0.0) or 0.0):.3f}"
             )
+
+
+def _register_read_commands(app: typer.Typer) -> None:
+    _register_namespace_list_command(app)
+
+    @app.command("get")
+    def cmd_get(
+        record_id: str = typer.Argument(..., help="Record ID"),
+        json_out: bool = typer.Option(False, "--json"),
+        db: Optional[str] = typer.Option(None),
+    ):
+        """Get a single memory record by ID."""
+        svc = _get_service(db)
+        try:
+            record = svc.get(record_id)
+            _output(record, json_out)
+        except Exception as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(1)
+
+    _register_namespace_search_command(app)
 
     @app.command("candidates")
     def cmd_candidates(

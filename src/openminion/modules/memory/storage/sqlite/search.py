@@ -8,7 +8,7 @@ from dataclasses import replace
 from typing import Any
 
 from ...models import MemoryRecord, MemoryType
-from ..base import SearchQueryOptions
+from ..base import SearchQueryOptions, record_matches_namespaces
 from .queries import is_fts_query_parse_error, sanitize_fts_query
 
 logger = logging.getLogger(__name__)
@@ -25,19 +25,21 @@ def _rank_fts_results_with_scores(
 
 
 def search(store: Any, options: SearchQueryOptions) -> list[MemoryRecord]:
-    if not options.query or not options.scopes:
+    if not options.query or (not options.scopes and not options.namespaces):
         return []
 
-    placeholders_scopes = ",".join("?" * len(options.scopes))
     query = f"""
         SELECT r.*, bm25(memory_fts) as score
         FROM memory_fts f
         JOIN memory_records r ON f.id = r.id
         WHERE memory_fts MATCH ?
-        AND r.scope IN ({placeholders_scopes})
         AND {"(r.is_deleted = 0 OR r.superseded_by_id IS NOT NULL)" if options.include_invalidated else "r.is_deleted = 0"}
     """
-    params = [options.query] + list(options.scopes)
+    params = [options.query]
+    if options.scopes:
+        placeholders_scopes = ",".join("?" * len(options.scopes))
+        query += f" AND r.scope IN ({placeholders_scopes})"
+        params.extend(options.scopes)
     if not options.include_invalidated:
         query += " AND (r.valid_to IS NULL OR r.valid_to > ?)"
         params.append(datetime.datetime.now(datetime.timezone.utc).isoformat())
@@ -98,6 +100,12 @@ def search(store: Any, options: SearchQueryOptions) -> list[MemoryRecord]:
         return []
 
     ranked_results = _rank_fts_results_with_scores(raw_results)
+    if options.namespaces:
+        ranked_results = [
+            item
+            for item in ranked_results
+            if record_matches_namespaces(item[0], options.namespaces)
+        ]
     if options.limit is not None:
         ranked_results = ranked_results[: options.limit]
     if not ranked_results:

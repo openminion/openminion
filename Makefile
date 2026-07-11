@@ -43,6 +43,7 @@ VALIDATE_PATTERN_MODULES := \
 	validate.runtime_step_ownership \
 	validate.no_source_e2e_artifact_refs \
 	validate.services_layout \
+	validate.memory_boundary \
 	validate.base_charter \
 	validate.openminion_root_layout \
 	validate.modules_shape \
@@ -89,6 +90,7 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/runtime_step_ownership \
 	validate/no_source_e2e_artifact_refs \
 	validate/services_layout \
+	validate/memory_boundary \
 	validate/base_charter \
 	validate/openminion_root_layout \
 	validate/modules_shape \

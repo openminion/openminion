@@ -12,7 +12,7 @@ from openminion.modules.memory.runtime.gc import (
     purge_soft_deleted,
 )
 from openminion.modules.memory.models import MemoryCandidate, SessionSummaryContent
-from openminion.services.agent.memory.extraction import _content_text
+from openminion.modules.memory.runtime.extraction.records import _content_text
 from openminion.modules.prompting.memory import (
     CURRENT_SESSION_CALLBACK_CONTEXT_LABEL,
     CURRENT_SESSION_SUMMARY_HEADER,

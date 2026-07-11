@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from openminion.services.agent.memory.retrieval import RetrievalPipeline
+from openminion.modules.memory.runtime.retrieval_pipeline import RetrievalPipeline
 
 
 def _make_pipeline() -> RetrievalPipeline:

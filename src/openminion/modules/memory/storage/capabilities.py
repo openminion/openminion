@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from builtins import list as list_type
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -52,15 +53,15 @@ class RecordStore(Protocol):
 
     def tombstone(self, scope: str, type: MemoryType, key: str) -> None: ...
 
-    def list(self, options: ListQueryOptions) -> list[MemoryRecord]: ...
+    def list(self, options: ListQueryOptions) -> list_type[MemoryRecord]: ...
 
-    def list_scopes(self) -> list[str]: ...
+    def list_scopes(self) -> list_type[str]: ...
 
     def touch_last_hit(self, record_id: str) -> None: ...
 
     def apply_outcome_feedback(
         self,
-        record_ids: list[str],
+        record_ids: list_type[str],
         *,
         outcome: Literal["success", "failed", "timeout"],
         command_id: str,
@@ -76,24 +77,24 @@ class RecordStore(Protocol):
         self,
         record_id: str,
         *,
-        relation_types: list[MemoryRelationType] | None = None,
+        relation_types: list_type[MemoryRelationType] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryRelation]: ...
+    ) -> list_type[MemoryRelation]: ...
 
     def get_related_records(
         self,
         record_id: str,
-        scopes: list[str],
+        scopes: list_type[str],
         *,
-        relation_types: list[MemoryRelationType] | None = None,
+        relation_types: list_type[MemoryRelationType] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryRecord]: ...
+    ) -> list_type[MemoryRecord]: ...
 
     def candidate_get(self, candidate_id: str) -> MemoryCandidate | None: ...
 
     def candidate_list(
         self, options: CandidateListOptions
-    ) -> list[MemoryCandidate]: ...
+    ) -> list_type[MemoryCandidate]: ...
 
     def candidate_update(
         self, candidate_id: str, patch: dict[str, Any]
@@ -107,22 +108,22 @@ class RecordStore(Protocol):
         self, old_record_id: str, new_record_id: str, reason: str = ""
     ) -> MemoryRecord: ...
 
-    def history(self, scope: str, type: MemoryType, key: str) -> list[MemoryRecord]: ...
+    def history(self, scope: str, type: MemoryType, key: str) -> list_type[MemoryRecord]: ...
 
 
 @runtime_checkable
 class SearchIndex(Protocol):
-    def search(self, options: SearchQueryOptions) -> list[MemoryRecord]: ...
+    def search(self, options: SearchQueryOptions) -> list_type[MemoryRecord]: ...
 
     def retrieve_by_entities(
         self,
-        entities: list[str],
-        scopes: list[str],
+        entities: list_type[str],
+        scopes: list_type[str],
         *,
-        types: list[MemoryType] | None = None,
-        tiers: list[MemoryTier] | None = None,
+        types: list_type[MemoryType] | None = None,
+        tiers: list_type[MemoryTier] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryRecord]: ...
+    ) -> list_type[MemoryRecord]: ...
 
     def transition_tier(
         self,
@@ -138,9 +139,9 @@ class SearchIndex(Protocol):
         self,
         *,
         record_id: str | None = None,
-        scopes: list[str] | None = None,
+        scopes: list_type[str] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryTierTransition]: ...
+    ) -> list_type[MemoryTierTransition]: ...
 
     def put_tier_transition(self, transition: MemoryTierTransition) -> str: ...
 
@@ -153,7 +154,7 @@ class VectorIndex(Protocol):
         query: str,
         top_k: int,
         filters: dict[str, Any] | None = None,
-    ) -> list[tuple[str, float, dict[str, Any] | None]]: ...
+    ) -> list_type[tuple[str, float, dict[str, Any] | None]]: ...
 
 
 class CapabilityMemoryStore:
@@ -196,19 +197,19 @@ class CapabilityMemoryStore:
     def tombstone(self, scope: str, type: MemoryType, key: str) -> None:
         self._records.tombstone(scope, type, key)
 
-    def list(self, options: ListQueryOptions) -> list[MemoryRecord]:
+    def list(self, options: ListQueryOptions) -> list_type[MemoryRecord]:
         return self._records.list(options)
 
-    def list_scopes(self) -> list[str]:
+    def list_scopes(self) -> list_type[str]:
         return self._records.list_scopes()
 
     def list_records_by_goal_id(
         self,
         goal_id: str,
         *,
-        scopes: list[str] | None = None,
+        scopes: list_type[str] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryRecord]:
+    ) -> list_type[MemoryRecord]:
         return self._records.list_records_by_goal_id(
             goal_id,
             scopes=scopes,
@@ -220,7 +221,7 @@ class CapabilityMemoryStore:
 
     def apply_outcome_feedback(
         self,
-        record_ids: list[str],
+        record_ids: list_type[str],
         *,
         outcome: Literal["success", "failed", "timeout"],
         command_id: str,
@@ -235,18 +236,18 @@ class CapabilityMemoryStore:
             feedback_delta=feedback_delta,
         )
 
-    def search(self, options: SearchQueryOptions) -> list[MemoryRecord]:
+    def search(self, options: SearchQueryOptions) -> list_type[MemoryRecord]:
         return self._search.search(options)
 
     def retrieve_by_entities(
         self,
-        entities: list[str],
-        scopes: list[str],
+        entities: list_type[str],
+        scopes: list_type[str],
         *,
-        types: list[MemoryType] | None = None,
-        tiers: list[MemoryTier] | None = None,
+        types: list_type[MemoryType] | None = None,
+        tiers: list_type[MemoryTier] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryRecord]:
+    ) -> list_type[MemoryRecord]:
         return self._search.retrieve_by_entities(
             entities=entities,
             scopes=scopes,
@@ -276,9 +277,9 @@ class CapabilityMemoryStore:
         self,
         *,
         record_id: str | None = None,
-        scopes: list[str] | None = None,
+        scopes: list_type[str] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryTierTransition]:
+    ) -> list_type[MemoryTierTransition]:
         return self._records.list_tier_transitions(
             record_id=record_id,
             scopes=scopes,
@@ -298,9 +299,9 @@ class CapabilityMemoryStore:
         self,
         record_id: str,
         *,
-        relation_types: list[MemoryRelationType] | None = None,
+        relation_types: list_type[MemoryRelationType] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryRelation]:
+    ) -> list_type[MemoryRelation]:
         return self._records.list_relations(
             record_id,
             relation_types=relation_types,
@@ -310,11 +311,11 @@ class CapabilityMemoryStore:
     def get_related_records(
         self,
         record_id: str,
-        scopes: list[str],
+        scopes: list_type[str],
         *,
-        relation_types: list[MemoryRelationType] | None = None,
+        relation_types: list_type[MemoryRelationType] | None = None,
         limit: int | None = None,
-    ) -> list[MemoryRecord]:
+    ) -> list_type[MemoryRecord]:
         return self._records.get_related_records(
             record_id,
             scopes,
@@ -325,7 +326,7 @@ class CapabilityMemoryStore:
     def candidate_get(self, candidate_id: str) -> MemoryCandidate | None:
         return self._records.candidate_get(candidate_id)
 
-    def candidate_list(self, options: CandidateListOptions) -> list[MemoryCandidate]:
+    def candidate_list(self, options: CandidateListOptions) -> list_type[MemoryCandidate]:
         return self._records.candidate_list(options)
 
     def candidate_update(
@@ -345,7 +346,7 @@ class CapabilityMemoryStore:
             reason=reason,
         )
 
-    def history(self, scope: str, type: MemoryType, key: str) -> list[MemoryRecord]:
+    def history(self, scope: str, type: MemoryType, key: str) -> list_type[MemoryRecord]:
         return self._records.history(scope, type, key)
 
 

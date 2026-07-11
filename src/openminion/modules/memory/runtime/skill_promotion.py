@@ -1,14 +1,12 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sophiagraph.audit.events import MemoryAuditEvent
 
 from openminion.modules.memory.storage.audit import MemoryAuditSink
-from openminion.modules.skill.config import SkillConfig
-from openminion.modules.skill.proposal.promotion import (
-    PromotionPassReport,
-    run_promotion_pass,
-)
+if TYPE_CHECKING:
+    from openminion.modules.skill.config import SkillConfig
+    from openminion.modules.skill.proposal.promotion import PromotionPassReport
 
 
 SKILL_PROMOTION_PASS_EVENT_TYPE = "skill_promotion_pass"
@@ -18,11 +16,11 @@ SKILL_PROMOTION_PASS_EVENT_TYPE = "skill_promotion_pass"
 class SkillPromotionRunResult:
     enabled: bool
     dry_run: bool
-    report: PromotionPassReport | None
+    report: "PromotionPassReport | None"
 
 
 def _emit_audit_event(
-    audit_sink: MemoryAuditSink | None, report: PromotionPassReport
+    audit_sink: MemoryAuditSink | None, report: "PromotionPassReport"
 ) -> None:
     if audit_sink is None:
         return
@@ -51,7 +49,7 @@ def _emit_audit_event(
 
 def run_skill_promotion_cadence_once(
     *,
-    config: SkillConfig,
+    config: "SkillConfig",
     memory_api: Any,
     audit_sink: MemoryAuditSink | None = None,
     force_enabled: bool = False,
@@ -59,6 +57,8 @@ def run_skill_promotion_cadence_once(
     enabled = bool(config.promotion_cadence_enabled) or bool(force_enabled)
     if not enabled:
         return SkillPromotionRunResult(enabled=False, dry_run=True, report=None)
+
+    from openminion.modules.skill.proposal.promotion import run_promotion_pass
 
     report = run_promotion_pass(
         memory_api,

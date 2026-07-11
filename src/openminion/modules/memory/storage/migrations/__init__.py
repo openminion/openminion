@@ -13,6 +13,7 @@ MIGRATIONS = (
     BASELINE_REVISION,
     "0002_audit",
     "0003_validity",
+    "0004_namespace",
 )
 
 

@@ -22,9 +22,9 @@ from openminion.modules.memory.storage.base import (
     RecordOrder,
 )
 from openminion.modules.memory.runtime.scorer import score_records
-from openminion.services.agent.memory.config_values import _safe_float
-from openminion.services.agent.memory.extraction import _content_text
-from openminion.services.agent.memory.text_processing import (
+from openminion.modules.memory.runtime.config_values import coerce_float
+from openminion.modules.memory.runtime.extraction.records import _content_text
+from openminion.modules.memory.runtime.extraction.text import (
     _normalize_fact_key,
     _tokenize_text,
 )
@@ -762,7 +762,7 @@ class LearningMixin:
                     "tags": tags,
                     "entities": sorted(_tokenize_text(content)),
                     "source": "agent_inferred",
-                    "confidence": _safe_float(insight.get("confidence", 0.7), 0.7),
+                    "confidence": coerce_float(insight.get("confidence", 0.7), 0.7),
                 },
             )
             # the reflection insight-write `_detect_contradiction`

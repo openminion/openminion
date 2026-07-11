@@ -5,6 +5,7 @@ MIGRATION_V1 = """
 CREATE TABLE IF NOT EXISTS memory_records (
   id                 TEXT PRIMARY KEY,
   scope              TEXT NOT NULL,
+  namespace_json     TEXT,
   type               TEXT NOT NULL,
   key                TEXT,
   title              TEXT,

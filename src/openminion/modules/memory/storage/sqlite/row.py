@@ -6,6 +6,7 @@ from openminion.modules.memory.models import (
     ArtifactRef,
     CandidateReview,
     MemoryCandidate,
+    MemoryNamespace,
     MemoryRecord,
     MemoryRelation,
     MemoryTierTransition,
@@ -29,9 +30,16 @@ def _create_sqlite_record_from_row(row: sqlite3.Row) -> MemoryRecord:
     valid_to = row["valid_to"] if "valid_to" in row_keys else None
     goal_id = row["goal_id"] if "goal_id" in row_keys else None
     created_at = row["created_at"]
+    namespace_json = row["namespace_json"] if "namespace_json" in row_keys else None
+    namespace_payload = json.loads(namespace_json) if namespace_json else None
     return MemoryRecord(
         id=row["id"],
         scope=row["scope"],
+        namespace=(
+            MemoryNamespace.from_dict(namespace_payload)
+            if isinstance(namespace_payload, dict) and namespace_payload
+            else None
+        ),
         type=row["type"],
         content=json.loads(row["content_json"]),
         created_at=created_at,

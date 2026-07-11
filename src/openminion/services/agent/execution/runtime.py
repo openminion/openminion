@@ -16,8 +16,8 @@ from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResu
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.modules.tool.runtime.memory import MemoryToolRuntimeService
 from openminion.services.agent.memory import resolve_memory_root
-from openminion.services.agent.memory.hello_world import (
-    HelloWorldMemoryService,
+from openminion.modules.memory.smoke import (
+    EphemeralMemorySmokeProvider,
 )
 from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
@@ -145,7 +145,7 @@ class ExecutorRuntime:
                 self._memory_tool_service = service
                 return service
             return None
-        if isinstance(built, (DisabledMemoryGatewayAdapter, HelloWorldMemoryService)):
+        if isinstance(built, (DisabledMemoryGatewayAdapter, EphemeralMemorySmokeProvider)):
             return None
         if isinstance(built, MemoryToolRuntimeService):
             self._memory_tool_service = built

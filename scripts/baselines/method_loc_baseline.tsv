@@ -196,8 +196,8 @@ src/openminion/modules/tool/schema_service.py	ToolSchemaService.collect_executio
 src/openminion/services/agent/execution/required_lane/execution_phase.py	phase_execute	202	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/agent/execution/required_lane/post_execution.py	_handle_final_response_tool_calls	131	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/agent/execution/unforced_lane/loop.py	handle_unforced_tool_calls	245	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/services/agent/memory/retrieval.py	RetrievalPipeline.rank_and_format	110	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/services/agent/memory/session_lifecycle.py	SessionLifecycleMixin._format_session_summaries	248	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/memory/runtime/retrieval_pipeline.py	RetrievalPipeline.rank_and_format	110	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/memory/runtime/session_lifecycle.py	SessionLifecycleMixin._format_session_summaries	248	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/brain/client.py	OpenMinionLLMClient.call	318	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/channel/authenticity.py	evaluate_inbound_authenticity	131	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/services/gateway/memory.py	record_memory_turn	148	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

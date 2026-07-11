@@ -53,5 +53,9 @@ class StoreWriteError(MemctlError):
     code = "STORE_WRITE_FAILED"
 
 
+class MemoryQueryUnavailableError(MemctlError):
+    code = "MEMORY_UNAVAILABLE"
+
+
 class MigrationRequiredError(MemctlError):
     code = "MIGRATION_REQUIRED"

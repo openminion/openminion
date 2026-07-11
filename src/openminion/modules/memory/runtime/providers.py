@@ -11,11 +11,16 @@ MemoryProviderFactory = Callable[[dict[str, Any]], Any]
 
 def create_memory_provider_registry() -> ModuleRegistry[MemoryProviderFactory]:
     registry = ModuleRegistry[MemoryProviderFactory](expected_contract_version="v1")
-    from openminion.modules.memory.memory_v2_hello_world import HelloWorldMemoryProvider
+    from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 
     registry.register(
+        "smoke",
+        lambda config: EphemeralMemorySmokeProvider(agent_id=str(config.get("agent_id", "openminion"))),
+        contract_version="v1",
+    )
+    registry.register(
         "hello_world",
-        lambda config: HelloWorldMemoryProvider(),
+        lambda config: EphemeralMemorySmokeProvider(agent_id=str(config.get("agent_id", "openminion"))),
         contract_version="v1",
     )
 

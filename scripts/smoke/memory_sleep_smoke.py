@@ -6,7 +6,7 @@ import sys
 from dataclasses import dataclass
 
 from openminion.modules.memory.storage.audit import InMemoryMemoryAuditSink
-from openminion.services.agent.memory.sleep_runner import (
+from openminion.modules.memory.runtime.sleep_runner import (
     SleepRunner,
     SleepRunnerConfig,
 )

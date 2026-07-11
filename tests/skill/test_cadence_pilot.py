@@ -25,7 +25,7 @@ from openminion.modules.skill.suggestion import (
     run_suggestion_surface_pass,
     suggestion_status,
 )
-from openminion.services.agent.memory.skill_promotion import (
+from openminion.modules.memory.runtime.skill_promotion import (
     run_skill_promotion_cadence_once,
 )
 

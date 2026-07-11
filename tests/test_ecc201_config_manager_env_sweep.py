@@ -13,9 +13,7 @@ from openminion.services.gateway.config import (
     resolve_memory_dynamic_retrieval_enabled,
 )
 from openminion.services.runtime.bootstrap import build_agent_memory_service
-from openminion.services.agent.memory.hello_world import (
-    HelloWorldMemoryService,
-)
+from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -47,7 +45,7 @@ def test_gateway_config_reads_env_from_config_manager(tmp_path, monkeypatch) -> 
 def test_build_agent_memory_service_prefers_config_manager_env(
     tmp_path, monkeypatch
 ) -> None:
-    monkeypatch.setenv("OPENMINION_MEMORY_PROVIDER", "memory_v2_hello_world")
+    monkeypatch.setenv("OPENMINION_MEMORY_PROVIDER", "memory_v2_smoke")
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]
     config.runtime.memory_enabled = True
@@ -62,7 +60,7 @@ def test_build_agent_memory_service_prefers_config_manager_env(
         config_manager=manager,
     )
 
-    assert isinstance(adapter, HelloWorldMemoryService)
+    assert isinstance(adapter, EphemeralMemorySmokeProvider)
 
 
 def test_brain_bridge_override_uses_environment_config_owner() -> None:
