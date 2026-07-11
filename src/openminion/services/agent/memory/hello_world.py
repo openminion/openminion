@@ -10,6 +10,8 @@ from openminion.services.agent.memory import (
 )
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
+from openminion.modules.memory.errors import MemoryQueryUnavailableError
+from openminion.modules.memory.interfaces import ListQueryOptions, SearchQueryOptions
 
 _FACT_PREFIX_RE = re.compile(r"^\s*(?:remember|fact)\s*:\s*(.+)$", flags=re.IGNORECASE)
 _FACT_INLINE_RE = re.compile(r"^\s*remember\s+(.+)$", flags=re.IGNORECASE)
@@ -41,6 +43,18 @@ class HelloWorldMemoryService:
     @property
     def enabled(self) -> bool:
         return self._enabled
+
+    def list_records(self, options: ListQueryOptions) -> list[object]:
+        del options
+        raise MemoryQueryUnavailableError(
+            "hello-world memory does not expose durable record queries"
+        )
+
+    def search_records(self, options: SearchQueryOptions) -> list[object]:
+        del options
+        raise MemoryQueryUnavailableError(
+            "hello-world memory does not expose durable record queries"
+        )
 
     def _state(self, session_id: str) -> _SessionState:
         session_key = str(session_id or "").strip() or "default"

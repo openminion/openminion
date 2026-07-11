@@ -1,7 +1,7 @@
 # OpenMinion API Compatibility
 
 Status: active
-Last updated: 2026-07-03
+Last updated: 2026-07-10
 
 Purpose: record the supported public import roots and entrypoint compatibility
 posture for `openminion`.
@@ -70,6 +70,15 @@ surface:
 20. `policyctl`
 
 The script names are defined in `pyproject.toml`.
+
+`memctl list` and `memctl search` additively support the eight canonical
+SophiaGraph namespace ID options. Existing scope-only invocations remain part
+of the compatibility surface. Request details are documented in
+`docs/memory-namespace-queries.md`.
+
+The local HTTP API also exposes `POST /memory/records/list` and
+`POST /memory/records/search`. These are operator query surfaces, not a
+multi-tenant authentication or RBAC promise.
 
 ## Non-promises
 

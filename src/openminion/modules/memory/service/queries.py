@@ -25,6 +25,7 @@ from openminion.modules.memory.runtime.scorer import clamp01 as clamp_score
 from openminion.modules.memory.storage.base import (
     ListQueryOptions,
     SearchQueryOptions,
+    record_matches_namespaces,
 )
 
 
@@ -55,17 +56,28 @@ class MemoryServiceQueryMixin:
             for scope in options.scopes:
                 assert_scope_matches_agent(scope, agent_id)
         started = perf_counter()
+        resolved_limit = self._apply_retrieval_limit(options.limit)
         normalized = ListQueryOptions(
             scopes=list(options.scopes),
             types=options.types,
             tiers=options.tiers,
             include_invalidated=bool(getattr(options, "include_invalidated", False)),
-            limit=self._apply_retrieval_limit(options.limit),
-            offset=options.offset,
+            limit=None if options.namespaces else resolved_limit,
+            offset=None if options.namespaces else options.offset,
             order_by=options.order_by,
             namespaces=options.namespaces,
         )
         rows = self._store.list(normalized)
+        if options.namespaces:
+            rows = [
+                record
+                for record in rows
+                if record_matches_namespaces(record, options.namespaces)
+            ]
+            offset = max(0, int(options.offset or 0))
+            rows = rows[offset:]
+            if resolved_limit is not None:
+                rows = rows[:resolved_limit]
         self._emit_query_metrics(
             session_id=self._resolve_telemetry_session_id(
                 scopes=list(normalized.scopes)
@@ -89,6 +101,7 @@ class MemoryServiceQueryMixin:
             for scope in options.scopes:
                 assert_scope_matches_agent(scope, agent_id)
         started = perf_counter()
+        resolved_limit = self._apply_retrieval_limit(options.limit)
         normalized = SearchQueryOptions(
             query=options.query,
             scopes=list(options.scopes),
@@ -96,10 +109,18 @@ class MemoryServiceQueryMixin:
             tiers=options.tiers,
             filters=options.filters,
             include_invalidated=bool(getattr(options, "include_invalidated", False)),
-            limit=self._apply_retrieval_limit(options.limit),
+            limit=None if options.namespaces else resolved_limit,
             namespaces=options.namespaces,
         )
         rows = self._store.search(normalized)
+        if options.namespaces:
+            rows = [
+                record
+                for record in rows
+                if record_matches_namespaces(record, options.namespaces)
+            ]
+            if resolved_limit is not None:
+                rows = rows[:resolved_limit]
         self._emit_query_metrics(
             session_id=self._resolve_telemetry_session_id(
                 scopes=list(normalized.scopes)

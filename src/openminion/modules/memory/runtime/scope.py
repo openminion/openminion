@@ -1,14 +1,18 @@
+from collections.abc import Mapping
+from dataclasses import fields
 from datetime import datetime, timezone
 from typing import Callable, Literal
 import uuid
 
 from pydantic import BaseModel, Field
+from sophiagraph.contracts.errors import InvalidArgumentError as SophiaInvalidArgumentError
 
 from .constants import (
     MEMORY_SCOPE_BOUNDARY_EVENT_TYPE as _SCOPE_BOUNDARY_EVENT_TYPE,
     MEMORY_SCOPE_BOUNDARY_LEDGER_MAX_EVENTS as _LEDGER_MAX,
 )
 from ..errors import InvalidArgumentError
+from ..models import MemoryNamespace, MemoryScope
 
 
 ScopeAccessMode = Literal[
@@ -23,6 +27,73 @@ ScopeOperation = Literal["read", "write"]
 
 
 _GLOBAL_DEFAULT_SCOPE = "global:default"
+
+
+def resolve_namespace_filter(
+    *,
+    scope: str | None = None,
+    namespace: Mapping[str, object] | MemoryNamespace | None = None,
+) -> MemoryNamespace:
+    """Resolve one typed namespace filter from explicit product inputs."""
+
+    allowed_fields = {field.name for field in fields(MemoryNamespace)}
+    if isinstance(namespace, MemoryNamespace):
+        values = namespace.as_dict()
+    elif namespace is None:
+        values = {}
+    elif isinstance(namespace, Mapping):
+        if not namespace:
+            raise InvalidArgumentError("namespace must not be empty")
+        unknown = sorted(set(namespace) - allowed_fields)
+        if unknown:
+            raise InvalidArgumentError(
+                f"unknown namespace fields: {', '.join(unknown)}"
+            )
+        invalid_types = sorted(
+            key
+            for key, value in namespace.items()
+            if value is not None and not isinstance(value, str)
+        )
+        if invalid_types:
+            raise InvalidArgumentError(
+                f"namespace fields must be strings: {', '.join(invalid_types)}"
+            )
+        values = {
+            key: value.strip()
+            for key, value in namespace.items()
+            if isinstance(value, str) and value.strip()
+        }
+        if not values:
+            raise InvalidArgumentError("namespace must contain at least one id")
+    else:
+        raise InvalidArgumentError("namespace must be an object")
+
+    normalized_scope = str(scope or "").strip()
+    if normalized_scope:
+        try:
+            parsed = MemoryScope.parse(normalized_scope)
+        except SophiaInvalidArgumentError as exc:
+            raise InvalidArgumentError(str(exc)) from exc
+        scope_field = {
+            "session": "session_id",
+            "agent": "agent_id",
+            "project": "project_id",
+            "global": "graph_id",
+        }[parsed.kind]
+        existing = values.get(scope_field)
+        if existing is not None and existing != parsed.value:
+            raise InvalidArgumentError(
+                f"conflicting namespace {scope_field}: "
+                f"{existing!r} != {parsed.value!r}"
+            )
+        values[scope_field] = parsed.value
+
+    if not values:
+        raise InvalidArgumentError("scope or namespace is required")
+    try:
+        return MemoryNamespace.from_dict(values)
+    except SophiaInvalidArgumentError as exc:
+        raise InvalidArgumentError(str(exc)) from exc
 
 
 class ScopeAccessDecision(BaseModel):
@@ -243,5 +314,6 @@ __all__ = [
     "emit_read_decision",
     "emit_write_decision",
     "record_scope_boundary_event",
+    "resolve_namespace_filter",
     "snapshot_ledger",
 ]

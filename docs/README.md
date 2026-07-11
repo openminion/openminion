@@ -33,6 +33,9 @@ This directory holds the public package documentation for standalone
 - [`long-horizon-project-worker.md`](long-horizon-project-worker.md)
   records the alpha project-worker substrate, current proof shape, and the
   boundary between compressed pilot evidence and real elapsed multi-day claims.
+- [`memory-namespace-queries.md`](memory-namespace-queries.md)
+  documents typed memory list/search filters across `memctl` and the local HTTP
+  API, including the operator-security and legacy-scope boundaries.
 
 ## Package-local code/docs boundaries
 

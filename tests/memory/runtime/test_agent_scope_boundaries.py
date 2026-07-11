@@ -16,9 +16,11 @@ from openminion.modules.memory.runtime.scope import (
     emit_read_decision,
     emit_write_decision,
     record_scope_boundary_event,
+    resolve_namespace_filter,
     snapshot_ledger,
 )
-from openminion.modules.memory.errors import MemctlError
+from openminion.modules.memory.errors import InvalidArgumentError, MemctlError
+from openminion.modules.memory.models import MemoryNamespace
 
 
 @pytest.fixture(autouse=True)
@@ -141,6 +143,83 @@ class TestCrossAgentLeakPrevention:
     def test_assert_rejects_empty_scope(self) -> None:
         with pytest.raises(MemctlError, match="scope must be a non-empty"):
             assert_scope_matches_agent("", "agent-a")
+
+
+class TestNamespaceFilterResolution:
+    def test_all_dimensions_round_trip_through_canonical_type(self) -> None:
+        namespace = resolve_namespace_filter(
+            namespace={
+                "tenant_id": "tenant-a",
+                "org_id": "org-a",
+                "user_id": "user-a",
+                "agent_id": "agent-a",
+                "session_id": "session-a",
+                "conversation_id": "conversation-a",
+                "project_id": "project-a",
+                "graph_id": "graph-a",
+            }
+        )
+
+        assert isinstance(namespace, MemoryNamespace)
+        assert namespace.as_dict() == {
+            "tenant_id": "tenant-a",
+            "org_id": "org-a",
+            "user_id": "user-a",
+            "agent_id": "agent-a",
+            "session_id": "session-a",
+            "conversation_id": "conversation-a",
+            "project_id": "project-a",
+            "graph_id": "graph-a",
+        }
+
+    @pytest.mark.parametrize(
+        ("scope", "expected"),
+        [
+            ("session:s1", {"session_id": "s1"}),
+            ("agent:a1", {"agent_id": "a1"}),
+            ("project:p1", {"project_id": "p1"}),
+            ("global:g1", {"graph_id": "g1"}),
+        ],
+    )
+    def test_scope_only_uses_canonical_bridge(
+        self, scope: str, expected: dict[str, str]
+    ) -> None:
+        assert resolve_namespace_filter(scope=scope).as_dict() == expected
+
+    def test_matching_scope_merges_with_explicit_dimensions(self) -> None:
+        namespace = resolve_namespace_filter(
+            scope="agent:agent-a",
+            namespace={"user_id": "user-a", "agent_id": "agent-a"},
+        )
+
+        assert namespace.as_dict() == {
+            "user_id": "user-a",
+            "agent_id": "agent-a",
+        }
+
+    def test_conflicting_scope_fails_closed(self) -> None:
+        with pytest.raises(InvalidArgumentError, match="conflicting namespace agent_id"):
+            resolve_namespace_filter(
+                scope="agent:agent-a",
+                namespace={"agent_id": "agent-b"},
+            )
+
+    @pytest.mark.parametrize("namespace", [{}, {"user_id": ""}])
+    def test_empty_explicit_namespace_is_rejected(self, namespace) -> None:
+        with pytest.raises(InvalidArgumentError, match="namespace must"):
+            resolve_namespace_filter(namespace=namespace)
+
+    def test_unknown_or_display_name_fields_are_rejected(self) -> None:
+        with pytest.raises(InvalidArgumentError, match="display_name"):
+            resolve_namespace_filter(namespace={"display_name": "Alice"})
+
+    def test_non_string_ids_are_rejected(self) -> None:
+        with pytest.raises(InvalidArgumentError, match="must be strings"):
+            resolve_namespace_filter(namespace={"user_id": 123})
+
+    def test_missing_scope_and_namespace_is_rejected(self) -> None:
+        with pytest.raises(InvalidArgumentError, match="scope or namespace"):
+            resolve_namespace_filter()
 
 
 class TestSharedScopePolicySurfacing:

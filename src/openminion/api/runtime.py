@@ -29,6 +29,7 @@ from openminion.modules.llm.providers.factory import (
     RuntimeLLMHandle,
     build_runtime_llm_handle,
 )
+from openminion.modules.memory.interfaces import MemoryNamespaceQueryInterface
 from openminion.modules.storage.runtime.context import (
     RuntimeStorageContext,
     build_runtime_storage,
@@ -366,6 +367,7 @@ def _finalize_runtime_instance(
         self_improvement=infrastructure["self_improvement"],
         agent=agent,
         gateway=gateway,
+        memory_queries=infrastructure["agent_memory"],
         action_policy=infrastructure["action_policy"],
         retrieve_ctl=infrastructure["retrieve_ctl"],
         knowledge_graphs=infrastructure["knowledge_graphs"],
@@ -469,6 +471,7 @@ class APIRuntime:
     self_improvement: SelfImprovementEngine
     agent: AgentService
     gateway: GatewayService
+    memory_queries: MemoryNamespaceQueryInterface
     action_policy: object | None
     retrieve_ctl: object | None
     knowledge_graphs: object | None

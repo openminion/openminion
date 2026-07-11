@@ -15,7 +15,7 @@ from ...errors import (
     PromotionDeniedError,
     StoreWriteError,
 )
-from ...models import MemoryCandidate, MemoryRecord, MemoryType
+from ...models import MemoryCandidate, MemoryNamespace, MemoryRecord, MemoryType
 
 if TYPE_CHECKING:
     from .store import SQLiteMemoryStore
@@ -26,6 +26,7 @@ def _sqlite_insert_record(
     *,
     record_id: str,
     scope: str,
+    namespace: MemoryNamespace | None,
     record_type: MemoryType,
     key: str | None,
     title: str | None,
@@ -52,14 +53,15 @@ def _sqlite_insert_record(
     conn.execute(
         """
         INSERT INTO memory_records (
-            id, scope, type, key, title, content_json, tags_json, entities_json,
+            id, scope, namespace_json, type, key, title, content_json, tags_json, entities_json,
             source, confidence, evidence_json, meta_json, last_hit_at, event_time, valid_to, tier, access_count, expires_at, created_at, updated_at,
             supersedes_id, superseded_by_id, supersession_reason, is_deleted
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             record_id,
             scope,
+            json.dumps(namespace.as_dict()) if namespace is not None else None,
             record_type,
             key,
             title,
@@ -150,6 +152,7 @@ def _sqlite_upsert_payload(
             "meta": record_patch.get("meta", {}),
             "expires_at": record_patch.get("expires_at"),
             "title": record_patch.get("title"),
+            "namespace": record_patch.get("namespace"),
         }
 
     content = json.loads(row["content_json"])
@@ -172,6 +175,12 @@ def _sqlite_upsert_payload(
         "meta": record_patch.get("meta", json.loads(row["meta_json"])),
         "expires_at": record_patch.get("expires_at", row["expires_at"]),
         "title": record_patch.get("title", row["title"]),
+        "namespace": record_patch.get(
+            "namespace",
+            MemoryNamespace.from_dict(json.loads(row["namespace_json"]))
+            if row["namespace_json"]
+            else None,
+        ),
     }
 
 
@@ -206,6 +215,46 @@ def _load_sqlite_record(store: SQLiteMemoryStore, record_id: str) -> MemoryRecor
         return store._create_record_from_row(row)
 
 
+def _sqlite_find_current_keyed_record(
+    conn: sqlite3.Connection,
+    scope: str,
+    record_type: MemoryType,
+    key: str,
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT id, title, content_json, tags_json, entities_json, source,
+               confidence, evidence_json, meta_json, expires_at, namespace_json
+        FROM memory_records
+        WHERE scope = ? AND type = ? AND key = ? AND is_deleted = 0
+          AND superseded_by_id IS NULL
+        """,
+        (scope, record_type, key),
+    ).fetchone()
+
+
+def _load_approved_candidate(
+    conn: sqlite3.Connection,
+    store: SQLiteMemoryStore,
+    candidate_id: str,
+) -> MemoryCandidate:
+    row = conn.execute(
+        "SELECT * FROM memory_candidates WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    if row is None:
+        raise NotFoundError(
+            f"Candidate {candidate_id} not found",
+            details={"candidate_id": candidate_id},
+        )
+    if row["status"] != MEMORY_CANDIDATE_STATUS_APPROVED:
+        raise PromotionDeniedError(
+            f"Candidate {candidate_id} is not approved for promotion",
+            details={"candidate_id": candidate_id},
+        )
+    return store._create_candidate_from_row(row)
+
+
 def upsert(
     store: SQLiteMemoryStore,
     scope: str,
@@ -221,16 +270,12 @@ def upsert(
         with store._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                row = conn.execute(
-                    """
-                    SELECT id, title, content_json, tags_json, entities_json, source,
-                           confidence, evidence_json, meta_json, expires_at
-                    FROM memory_records
-                    WHERE scope = ? AND type = ? AND key = ? AND is_deleted = 0
-                      AND superseded_by_id IS NULL
-                    """,
-                    (scope, record_type, key),
-                ).fetchone()
+                row = _sqlite_find_current_keyed_record(
+                    conn,
+                    scope,
+                    record_type,
+                    key,
+                )
                 supersedes_id = str(row["id"]) if row else None
                 if row is not None:
                     removed_owner_id = supersedes_id
@@ -243,6 +288,7 @@ def upsert(
                     conn,
                     record_id=result_id,
                     scope=scope,
+                    namespace=payload["namespace"],
                     record_type=record_type,
                     key=key,
                     title=payload["title"],
@@ -329,21 +375,11 @@ def promote_candidate(
         with store._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                row = conn.execute(
-                    "SELECT * FROM memory_candidates WHERE candidate_id = ?",
-                    (candidate_id,),
-                ).fetchone()
-                if row is None:
-                    raise NotFoundError(
-                        f"Candidate {candidate_id} not found",
-                        details={"candidate_id": candidate_id},
-                    )
-                if row["status"] != MEMORY_CANDIDATE_STATUS_APPROVED:
-                    raise PromotionDeniedError(
-                        f"Candidate {candidate_id} is not approved for promotion",
-                        details={"candidate_id": candidate_id},
-                    )
-                promoted_candidate = store._create_candidate_from_row(row)
+                promoted_candidate = _load_approved_candidate(
+                    conn,
+                    store,
+                    candidate_id,
+                )
                 existing = _sqlite_find_target_key_collision(
                     conn,
                     promoted_candidate,
@@ -358,6 +394,7 @@ def promote_candidate(
                     conn,
                     record_id=new_id,
                     scope=target_scope,
+                    namespace=None,
                     record_type=promoted_candidate.type,
                     key=promoted_candidate.key,
                     title=promoted_candidate.title,

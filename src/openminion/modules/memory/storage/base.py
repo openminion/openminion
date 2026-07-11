@@ -14,11 +14,21 @@ from ..models import (
     MemoryRelation,
     MemoryRelationType,
     MemoryRecord,
+    MemoryNamespace,
     MemoryTier,
     MemoryTierTransition,
     MemoryTierTransitionReason,
     MemoryType,
 )
+
+
+def record_matches_namespaces(
+    record: MemoryRecord,
+    namespaces: list[MemoryNamespace] | None,
+) -> bool:
+    if not namespaces:
+        return True
+    return any(record.effective_namespace.matches(item) for item in namespaces)
 
 
 @runtime_checkable
