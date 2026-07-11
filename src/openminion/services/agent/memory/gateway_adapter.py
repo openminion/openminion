@@ -24,29 +24,23 @@ from openminion.modules.memory.diagnostics.operability import (
     configured_trace_file_path,
     serialize_for_json,
 )
-from openminion.services.agent.memory.config_values import (
-    _cfg_section,
-    _cfg_value,
-    _is_mock_like,
-    _safe_bool,
-    _safe_float,
-    _safe_int,
-)
-from openminion.services.agent.memory.antonyms import (
+from openminion.modules.memory.diagnostics.export import export_memory_debug
+from openminion.modules.memory.service.agent_gateway import (
+    MEMORY_ANTONYMS_FILENAME,
+    LearningMixin,
+    RetrievalPipeline,
+    SessionLifecycleMixin,
+    TurnRecordingMixin,
+    config_section,
+    config_value,
+    is_mock_like,
+    coerce_bool,
+    coerce_float,
+    coerce_int,
+    build_empty_meta,
     ensure_default_antonym_config,
 )
-from openminion.services.agent.memory.context import ContextBuildersMixin
-from openminion.services.agent.memory.constants import (
-    SERVICES_MEMORY_ANTONYMS_FILENAME,
-)
-from openminion.services.agent.memory.debug import export_memory_debug
-from openminion.services.agent.memory.learning import LearningMixin
-from openminion.services.agent.memory.retrieval import (
-    RetrievalPipeline,
-    build_empty_meta,
-)
-from openminion.services.agent.memory.session_lifecycle import SessionLifecycleMixin
-from openminion.services.agent.memory.turn_recording import TurnRecordingMixin
+from openminion.modules.memory.surfacing.agent_context import ContextBuildersMixin
 from openminion.services.config import resolve_services_path, resolve_services_roots
 from openminion.services.bootstrap.paths import (
     SERVICES_CONFIG_SUBDIR,
@@ -152,7 +146,7 @@ class MemoryServiceGatewayAdapter(
         self._auto_extract_enabled = bool(
             getattr(self._candidate_learning_config, "auto_extract_enabled", False)
         )
-        self._auto_extract_halflife_days = _safe_int(
+        self._auto_extract_halflife_days = coerce_int(
             getattr(self._candidate_learning_config, "survival_halflife_days", 14),
             14,
             minimum=1,
@@ -162,28 +156,28 @@ class MemoryServiceGatewayAdapter(
         )
 
     def _apply_retrieval_config(self) -> None:
-        retrieval_cfg = _cfg_section(self._memory_config, "retrieval")
+        retrieval_cfg = config_section(self._memory_config, "retrieval")
         if retrieval_cfg is None:
             return
-        self._retrieval_min_confidence = _safe_float(
-            _cfg_value(retrieval_cfg, "min_confidence_default", 0.6),
+        self._retrieval_min_confidence = coerce_float(
+            config_value(retrieval_cfg, "min_confidence_default", 0.6),
             0.6,
         )
-        self._feedback_boost_on_reference = _safe_float(
-            _cfg_value(retrieval_cfg, "feedback_boost_on_reference", 0.1),
+        self._feedback_boost_on_reference = coerce_float(
+            config_value(retrieval_cfg, "feedback_boost_on_reference", 0.1),
             0.1,
         )
-        self._feedback_demote_on_correction = _safe_float(
-            _cfg_value(retrieval_cfg, "feedback_demote_on_correction", 0.3),
+        self._feedback_demote_on_correction = coerce_float(
+            config_value(retrieval_cfg, "feedback_demote_on_correction", 0.3),
             0.3,
         )
 
     def _apply_retention_config(self) -> None:
-        retention_cfg = _cfg_section(self._memory_config, "retention")
+        retention_cfg = config_section(self._memory_config, "retention")
         if retention_cfg is None:
             return
-        self._session_summary_max_chars = _safe_int(
-            _cfg_value(
+        self._session_summary_max_chars = coerce_int(
+            config_value(
                 retention_cfg,
                 "session_summary_max_chars",
                 self._session_summary_max_chars,
@@ -191,8 +185,8 @@ class MemoryServiceGatewayAdapter(
             self._session_summary_max_chars,
             minimum=64,
         )
-        self._session_summary_checkpoint_message_interval = _safe_int(
-            _cfg_value(
+        self._session_summary_checkpoint_message_interval = coerce_int(
+            config_value(
                 retention_cfg,
                 "session_summary_checkpoint_message_interval",
                 self._session_summary_checkpoint_message_interval,
@@ -200,77 +194,77 @@ class MemoryServiceGatewayAdapter(
             self._session_summary_checkpoint_message_interval,
             minimum=1,
         )
-        self._summary_compression_age_days = _safe_int(
-            _cfg_value(retention_cfg, "summary_compression_age_days", 14),
+        self._summary_compression_age_days = coerce_int(
+            config_value(retention_cfg, "summary_compression_age_days", 14),
             14,
             minimum=1,
         )
-        self._summary_compression_max_chars = _safe_int(
-            _cfg_value(retention_cfg, "summary_compression_max_chars", 100),
+        self._summary_compression_max_chars = coerce_int(
+            config_value(retention_cfg, "summary_compression_max_chars", 100),
             100,
             minimum=1,
         )
 
     def _apply_reflection_config(self) -> None:
-        reflection_cfg = _cfg_section(self._memory_config, "reflection")
+        reflection_cfg = config_section(self._memory_config, "reflection")
         if reflection_cfg is None:
             return
-        self._reflection_enabled = _safe_bool(
-            _cfg_value(reflection_cfg, "reflection_enabled", True), True
+        self._reflection_enabled = coerce_bool(
+            config_value(reflection_cfg, "reflection_enabled", True), True
         )
-        self._reflection_interval_sessions = _safe_int(
-            _cfg_value(reflection_cfg, "reflection_interval_sessions", 5),
+        self._reflection_interval_sessions = coerce_int(
+            config_value(reflection_cfg, "reflection_interval_sessions", 5),
             5,
             minimum=1,
         )
-        self._contradiction_similarity_threshold = _safe_float(
-            _cfg_value(reflection_cfg, "contradiction_similarity_threshold", 0.8),
+        self._contradiction_similarity_threshold = coerce_float(
+            config_value(reflection_cfg, "contradiction_similarity_threshold", 0.8),
             0.8,
         )
-        self._max_insights_per_reflection = _safe_int(
-            _cfg_value(reflection_cfg, "max_insights_per_reflection", 5), 5, minimum=1
+        self._max_insights_per_reflection = coerce_int(
+            config_value(reflection_cfg, "max_insights_per_reflection", 5), 5, minimum=1
         )
-        self._promotion_enabled = _safe_bool(
-            _cfg_value(reflection_cfg, "promotion_enabled", True), True
+        self._promotion_enabled = coerce_bool(
+            config_value(reflection_cfg, "promotion_enabled", True), True
         )
-        self._correction_promotion_min_count = _safe_int(
-            _cfg_value(reflection_cfg, "correction_promotion_min_count", 3),
+        self._correction_promotion_min_count = coerce_int(
+            config_value(reflection_cfg, "correction_promotion_min_count", 3),
             3,
             minimum=1,
         )
-        self._correction_promotion_confidence = _safe_float(
-            _cfg_value(reflection_cfg, "correction_promotion_confidence", 0.85), 0.85
+        self._correction_promotion_confidence = coerce_float(
+            config_value(reflection_cfg, "correction_promotion_confidence", 0.85), 0.85
         )
-        self._preference_stability_min_sessions = _safe_int(
-            _cfg_value(reflection_cfg, "preference_stability_min_sessions", 5),
+        self._preference_stability_min_sessions = coerce_int(
+            config_value(reflection_cfg, "preference_stability_min_sessions", 5),
             5,
             minimum=1,
         )
-        self._preference_stability_boost = _safe_float(
-            _cfg_value(reflection_cfg, "preference_stability_boost", 0.1), 0.1
+        self._preference_stability_boost = coerce_float(
+            config_value(reflection_cfg, "preference_stability_boost", 0.1), 0.1
         )
-        self._max_correction_promotions_per_run = _safe_int(
-            _cfg_value(reflection_cfg, "max_correction_promotions_per_run", 2),
+        self._max_correction_promotions_per_run = coerce_int(
+            config_value(reflection_cfg, "max_correction_promotions_per_run", 2),
             2,
             minimum=1,
         )
-        self._max_preference_boosts_per_run = _safe_int(
-            _cfg_value(reflection_cfg, "max_preference_boosts_per_run", 3),
+        self._max_preference_boosts_per_run = coerce_int(
+            config_value(reflection_cfg, "max_preference_boosts_per_run", 3),
             3,
             minimum=1,
         )
-        self._reboost_cooldown_multiplier = _safe_float(
-            _cfg_value(reflection_cfg, "reboost_cooldown_multiplier", 2.0),
+        self._reboost_cooldown_multiplier = coerce_float(
+            config_value(reflection_cfg, "reboost_cooldown_multiplier", 2.0),
             2.0,
             minimum=0.1,
             maximum=365.0,
         )
-        raw_threshold_overrides = _cfg_value(
+        raw_threshold_overrides = config_value(
             reflection_cfg, "contradiction_threshold_overrides", {}
         )
         if isinstance(raw_threshold_overrides, dict):
             self._contradiction_threshold_overrides = {
-                str(key): _safe_float(value, self._contradiction_similarity_threshold)
+                str(key): coerce_float(value, self._contradiction_similarity_threshold)
                 for key, value in raw_threshold_overrides.items()
             }
 
@@ -284,7 +278,7 @@ class MemoryServiceGatewayAdapter(
         roots = resolve_services_roots(fallback_to_cwd=True)
         ensure_default_antonym_config(
             resolve_services_path(
-                Path(SERVICES_CONFIG_SUBDIR) / SERVICES_MEMORY_ANTONYMS_FILENAME,
+                Path(SERVICES_CONFIG_SUBDIR) / MEMORY_ANTONYMS_FILENAME,
                 roots=roots,
                 relative_to="data_root",
             )
@@ -344,9 +338,9 @@ class MemoryServiceGatewayAdapter(
         self._retrieve_ctl = retrieve_ctl
         raw_retrieve_config = getattr(retrieve_ctl, "config", None)
         self._config = (
-            None if _is_mock_like(raw_retrieve_config) else raw_retrieve_config
+            None if is_mock_like(raw_retrieve_config) else raw_retrieve_config
         )
-        self._memory_config = None if _is_mock_like(memory_config) else memory_config
+        self._memory_config = None if is_mock_like(memory_config) else memory_config
         self._ranking_config = ranking_config
         self._candidate_learning_config = candidate_learning_config
         self._candidate_learning_readiness_enabled = False

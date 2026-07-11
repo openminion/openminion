@@ -7,10 +7,7 @@ from .interfaces import (
     MemoryReadClient,
     MemoryWriteClient,
 )
-from .hello_world import (
-    HelloWorldContractCheck,
-    ensure_memory_hello_world_contract,
-)
+from .smoke import SmokeMemoryContractCheck, ensure_memory_smoke_contract
 from .types import (
     ClaimKeyContract,
     MemoryCandidateDecision,
@@ -40,7 +37,7 @@ __all__ = [
     "MemoryReadClient",
     "MemoryRuntimeSnapshot",
     "MemoryWriteClient",
-    "HelloWorldContractCheck",
-    "ensure_memory_hello_world_contract",
+    "SmokeMemoryContractCheck",
+    "ensure_memory_smoke_contract",
     "ensure_memory_contract_compatibility",
 ]

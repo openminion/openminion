@@ -3,7 +3,7 @@ import re
 from typing import Any
 
 from openminion.modules.memory.models import MemoryType
-from openminion.services.agent.memory.text_processing import (
+from openminion.modules.memory.runtime.extraction.text import (
     _FACT_INLINE_RE,
     _FACT_PREFIX_RE,
     _DONE_PREFIX_RE,

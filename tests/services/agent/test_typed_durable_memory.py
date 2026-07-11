@@ -11,7 +11,7 @@ from openminion.modules.memory.storage.base import (
     ListQueryOptions,
 )
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
-from openminion.services.agent.memory.extraction import (
+from openminion.modules.memory.runtime.extraction.records import (
     explicit_memory_type_from_content,
 )
 from openminion.services.agent.memory.gateway_adapter import (

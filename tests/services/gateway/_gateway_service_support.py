@@ -218,7 +218,7 @@ class _SuccessfulSearchTool(Tool):
         )
 
 
-class _HelloWorldMemoryV2Adapter:
+class _EphemeralSmokeMemoryAdapter:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
@@ -228,7 +228,7 @@ class _HelloWorldMemoryV2Adapter:
         return (
             "Agent canonical memory (cross-session):\n\n"
             "Relevant facts:\n"
-            "- hello-world-memory-v2 is active"
+            "- ephemeral-memory-smoke is active"
         )
 
     def build_retrieval_context(self, *, session_id: str, user_message: str) -> str:
@@ -237,7 +237,7 @@ class _HelloWorldMemoryV2Adapter:
         return (
             "Agent memory (dynamic retrieval):\n\n"
             "Relevant facts:\n"
-            "- retrieval channel from hello-world-memory-v2"
+            "- retrieval channel from ephemeral-memory-smoke"
         )
 
     def record_turn(
@@ -256,7 +256,7 @@ class _HelloWorldMemoryV2Adapter:
         return MemoryPatchResult(facts_added=0, todos_added=0, todos_completed=0)
 
 
-class _FailingMemoryAdapter(_HelloWorldMemoryV2Adapter):
+class _FailingMemoryAdapter(_EphemeralSmokeMemoryAdapter):
     def record_turn(
         self,
         *,
@@ -280,7 +280,7 @@ class _FailingMemoryAdapter(_HelloWorldMemoryV2Adapter):
         raise RuntimeError("simulated memory write failure")
 
 
-class _QuotaThenRecoverMemoryAdapter(_HelloWorldMemoryV2Adapter):
+class _QuotaThenRecoverMemoryAdapter(_EphemeralSmokeMemoryAdapter):
     def __init__(self) -> None:
         super().__init__()
         self._failed = False
@@ -297,11 +297,11 @@ class _QuotaThenRecoverMemoryAdapter(_HelloWorldMemoryV2Adapter):
         return (
             "Agent canonical memory (cross-session):\n\n"
             "Relevant facts:\n"
-            "- hello-world-memory-v2 recovered"
+            "- ephemeral-memory-smoke recovered"
         )
 
 
-class _WriteFailOnceMemoryAdapter(_HelloWorldMemoryV2Adapter):
+class _WriteFailOnceMemoryAdapter(_EphemeralSmokeMemoryAdapter):
     def __init__(self) -> None:
         super().__init__()
         self._failed = False
@@ -440,7 +440,7 @@ __all__ = [
     "_FailingMemoryAdapter",
     "_FailingSearchTool",
     "_FlakyProvider",
-    "_HelloWorldMemoryV2Adapter",
+    "_EphemeralSmokeMemoryAdapter",
     "_QuotaThenRecoverMemoryAdapter",
     "_SequenceTextProvider",
     "_SinkChannel",

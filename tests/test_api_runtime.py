@@ -16,9 +16,7 @@ from openminion.base.config import ConfigError, OpenMinionConfig, save_config
 from openminion.modules.storage.runtime.migrations import DEFAULT_MIGRATIONS
 from openminion.api.queries.sessions import list_session_messages
 from openminion.api.turns import run_turn
-from openminion.services.agent.memory.hello_world import (
-    HelloWorldMemoryService,
-)
+from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
 from openminion.services.tool.exposure import get_model_exposure_specs
 from tests.helpers import (
@@ -450,13 +448,13 @@ class APIRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
 
-    def test_memory_policy_question_no_longer_shortcuts_with_hello_world_provider(
+    def test_memory_policy_question_no_longer_shortcuts_with_smoke_provider(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = _write_echo_config(
                 Path(tmp),
-                memory_provider="memory_v2_hello_world",
+                memory_provider="memory_v2_smoke",
             )
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
@@ -465,7 +463,7 @@ class APIRuntimeTests(unittest.TestCase):
                         str(config_path),
                         {
                             "message": "what is your memory retention and refresh policy?",
-                            "session_id": "mv2hw-memory-policy",
+                            "session_id": "mv2smoke-memory-policy",
                             "channel": "console",
                             "target": "api-user",
                         },
@@ -477,7 +475,7 @@ class APIRuntimeTests(unittest.TestCase):
                 self.assertFalse(metadata.get("memory_policy_version"))
 
                 events = runtime.sessions.list_events(
-                    session_id="mv2hw-memory-policy",
+                    session_id="mv2smoke-memory-policy",
                     limit=20,
                 )
                 policy_events = [
@@ -489,26 +487,26 @@ class APIRuntimeTests(unittest.TestCase):
             finally:
                 runtime.close()
 
-    def test_runtime_uses_hello_world_memory_provider_when_configured(self) -> None:
+    def test_runtime_uses_smoke_memory_provider_when_configured(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             import os as _os_module
 
             _os_module.environ["OPENMINION_DATA_ROOT"] = str(Path(tmp) / ".openminion")
             config_path = _write_echo_config(
                 Path(tmp),
-                memory_provider="memory_v2_hello_world",
+                memory_provider="memory_v2_smoke",
             )
             runtime = APIRuntime.from_config_path(str(config_path))
             try:
                 self.assertIsInstance(
-                    runtime.gateway._agent_memory, HelloWorldMemoryService
+                    runtime.gateway._agent_memory, EphemeralMemorySmokeProvider
                 )  # noqa: SLF001
                 with redirect_stdout(io.StringIO()):
                     result = run_turn(
                         str(config_path),
                         {
-                            "message": "remember: hello world provider fact",
-                            "session_id": "mv2hw-provider-config",
+                            "message": "remember: smoke provider fact",
+                            "session_id": "mv2smoke-provider-config",
                             "channel": "console",
                             "target": "api-user",
                         },
@@ -554,13 +552,13 @@ class APIRuntimeTests(unittest.TestCase):
             config_path = _write_echo_config(Path(tmp))
             with patch.dict(
                 os.environ,
-                {"OPENMINION_MEMORY_PROVIDER": "memory_v2_hello_world"},
+                {"OPENMINION_MEMORY_PROVIDER": "memory_v2_smoke"},
                 clear=False,
             ):
                 runtime = APIRuntime.from_config_path(str(config_path))
                 try:
                     self.assertIsInstance(
-                        runtime.gateway._agent_memory, HelloWorldMemoryService
+                        runtime.gateway._agent_memory, EphemeralMemorySmokeProvider
                     )  # noqa: SLF001
                 finally:
                     runtime.close()

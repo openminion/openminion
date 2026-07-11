@@ -3,7 +3,7 @@ from typing import Any
 
 
 @dataclass(frozen=True)
-class HelloWorldContractCheck:
+class SmokeMemoryContractCheck:
     ok: bool
     errors: list[str]
 
@@ -15,11 +15,11 @@ _REQUIRED_METHODS = (
 )
 
 
-def ensure_memory_hello_world_contract(
+def ensure_memory_smoke_contract(
     component: Any,
     *,
     strict: bool = True,
-) -> HelloWorldContractCheck:
+) -> SmokeMemoryContractCheck:
     errors: list[str] = []
     for name in _REQUIRED_METHODS:
         member = getattr(component, name, None)
@@ -29,12 +29,12 @@ def ensure_memory_hello_world_contract(
         errors.append(f"{issue} member: {name}")
     if errors and strict:
         raise TypeError(
-            f"memory hello-world contract violation: {errors}"
+            f"memory smoke contract violation: {errors}"
         )  # allow-bare-raise: defensive type guard
-    return HelloWorldContractCheck(ok=not errors, errors=errors)
+    return SmokeMemoryContractCheck(ok=not errors, errors=errors)
 
 
 __all__ = [
-    "HelloWorldContractCheck",
-    "ensure_memory_hello_world_contract",
+    "SmokeMemoryContractCheck",
+    "ensure_memory_smoke_contract",
 ]

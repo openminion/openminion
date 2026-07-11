@@ -4,7 +4,7 @@ import unittest
 from typing import Any
 
 from openminion.modules.brain.tools.executor import _TOOL_OUTCOME_RECORD_TYPE
-from openminion.services.agent.memory.extraction import (
+from openminion.modules.memory.runtime.extraction.records import (
     _extract_facts_todos_done,
 )
 

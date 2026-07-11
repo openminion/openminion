@@ -1,31 +1,29 @@
+"""Ephemeral smoke memory provider used for runtime and API contract tests.
+
+This provider is intentionally non-durable. It lives under the memory module
+owner so demo/smoke behavior does not grow inside service-layer agent wiring.
+"""
+
 import hashlib
 import logging
-import re
 from dataclasses import dataclass
-from typing import Dict, List
-
-from openminion.services.agent.memory import (
-    MEMORY_ENVELOPE_VERSION,
-    MemoryPatchResult,
-)
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
 from openminion.modules.memory.errors import MemoryQueryUnavailableError
 from openminion.modules.memory.interfaces import ListQueryOptions, SearchQueryOptions
+from openminion.modules.memory.models import MemoryPatchResult
 
-_FACT_PREFIX_RE = re.compile(r"^\s*(?:remember|fact)\s*:\s*(.+)$", flags=re.IGNORECASE)
-_FACT_INLINE_RE = re.compile(r"^\s*remember\s+(.+)$", flags=re.IGNORECASE)
+SMOKE_MEMORY_ENVELOPE_VERSION = "memory_envelope.v1"
 
 
 @dataclass
 class _SessionState:
     generation: int
-    facts: List[str]
     last_patch_id: str
     updated_at: str
 
 
-class HelloWorldMemoryService:
+class EphemeralMemorySmokeProvider:
     contract_version = "v1"
 
     def __init__(
@@ -38,7 +36,7 @@ class HelloWorldMemoryService:
         self._agent_id = str(agent_id or "").strip() or "openminion"
         self._logger = logger or logging.getLogger(__name__)
         self._enabled = bool(enabled)
-        self._sessions: Dict[str, _SessionState] = {}
+        self._sessions: dict[str, _SessionState] = {}
 
     @property
     def enabled(self) -> bool:
@@ -47,13 +45,13 @@ class HelloWorldMemoryService:
     def list_records(self, options: ListQueryOptions) -> list[object]:
         del options
         raise MemoryQueryUnavailableError(
-            "hello-world memory does not expose durable record queries"
+            "ephemeral smoke memory does not expose durable record queries"
         )
 
     def search_records(self, options: SearchQueryOptions) -> list[object]:
         del options
         raise MemoryQueryUnavailableError(
-            "hello-world memory does not expose durable record queries"
+            "ephemeral smoke memory does not expose durable record queries"
         )
 
     def _state(self, session_id: str) -> _SessionState:
@@ -62,7 +60,6 @@ class HelloWorldMemoryService:
         if current is None:
             current = _SessionState(
                 generation=0,
-                facts=[],
                 last_patch_id="",
                 updated_at=_utc_now_iso(),
             )
@@ -78,7 +75,7 @@ class HelloWorldMemoryService:
         facts_after: int,
     ) -> dict[str, str]:
         return {
-            "memory_envelope_version": MEMORY_ENVELOPE_VERSION,
+            "memory_envelope_version": SMOKE_MEMORY_ENVELOPE_VERSION,
             "memory_envelope_lane": lane,
             "memory_envelope_limit_chars": str(max(0, len(text))),
             "memory_envelope_chars_before": str(max(0, len(text))),
@@ -107,21 +104,19 @@ class HelloWorldMemoryService:
             return "", self._build_metadata(
                 lane="capsule", text="", facts_before=0, facts_after=0
             )
-        state = self._state(session_id)
+        del session_id
         lines = [
             "Agent canonical memory (cross-session):",
             "",
             "Relevant facts:",
-            "- hello-world-memory-v2 is active",
+            "- ephemeral-memory-smoke provider is active",
         ]
-        for item in state.facts[-5:]:
-            lines.append(f"- {item}")
         text = "\n".join(lines).strip()
         return text, self._build_metadata(
             lane="capsule",
             text=text,
-            facts_before=max(0, len(state.facts) + 1),
-            facts_after=max(0, len(state.facts[-5:]) + 1),
+            facts_before=1,
+            facts_after=1,
         )
 
     def build_retrieval_context(
@@ -150,21 +145,19 @@ class HelloWorldMemoryService:
             return "", self._build_metadata(
                 lane="retrieval", text="", facts_before=0, facts_after=0
             )
-        state = self._state(session_id)
+        del session_id
         lines = [
             "Agent memory (dynamic retrieval):",
             "",
             "Relevant facts:",
-            "- retrieval channel from hello-world-memory-v2",
+            "- retrieval channel from ephemeral-memory-smoke provider",
         ]
-        for item in state.facts[-3:]:
-            lines.append(f"- {item}")
         text = "\n".join(lines).strip()
         return text, self._build_metadata(
             lane="retrieval",
             text=text,
-            facts_before=max(0, len(state.facts) + 1),
-            facts_after=max(0, len(state.facts[-3:]) + 1),
+            facts_before=1,
+            facts_after=1,
         )
 
     def derive_patch_id(
@@ -178,25 +171,6 @@ class HelloWorldMemoryService:
         raw = f"{session_id}|{run_id}|{request_id}|{(user_message or '').strip()}"
         digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
         return f"patch-{digest}"
-
-    def _extract_facts(self, user_message: str) -> list[str]:
-        values: list[str] = []
-        for raw in str(user_message or "").splitlines():
-            line = raw.strip()
-            if not line:
-                continue
-            prefixed = _FACT_PREFIX_RE.match(line)
-            if prefixed is not None:
-                text = str(prefixed.group(1) or "").strip()
-                if text:
-                    values.append(text)
-                continue
-            inline = _FACT_INLINE_RE.match(line)
-            if inline is not None:
-                text = str(inline.group(1) or "").strip()
-                if text:
-                    values.append(text)
-        return values
 
     def record_turn(
         self,
@@ -219,15 +193,11 @@ class HelloWorldMemoryService:
             request_id=request_id,
             user_message=user_message,
         )
-        facts = self._extract_facts(user_message)
-        if facts:
-            state.facts.extend(facts)
-            state.facts = state.facts[-50:]
         state.generation += 1
         state.last_patch_id = patch_id
         state.updated_at = _utc_now_iso()
         return MemoryPatchResult(
-            facts_added=len(facts),
+            facts_added=0,
             todos_added=0,
             todos_completed=0,
             patch_id=patch_id,

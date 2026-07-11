@@ -11,11 +11,13 @@ from openminion.modules.memory.config import from_base_config
 from openminion.modules.memory.models import MemoryCandidate
 from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
-from openminion.services.agent.memory import (
+from openminion.modules.memory.runtime import (
     config_values as agent_memory_config,
     learning as agent_memory_learning,
-    text_processing as agent_memory_text_processing,
     turn_recording as agent_memory_turn_recording,
+)
+from openminion.modules.memory.runtime.extraction import (
+    text as agent_memory_text_processing,
 )
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
 
@@ -78,7 +80,7 @@ def test_mfac02_lexical_retrieval_signal_classifier_is_removed() -> None:
         "runtime owner of user+assistant prose semantics. It must not come "
         "back in any form — create a typed feedback lane instead."
     )
-    from openminion.services.agent.memory.learning import LearningMixin
+    from openminion.modules.memory.runtime.learning import LearningMixin
 
     assert not hasattr(LearningMixin, "_apply_feedback_signals"), (
         "MFAC-02: `_apply_feedback_signals` was removed with its sole "
@@ -110,8 +112,8 @@ def test_mfac02_lexical_retrieval_signal_classifier_is_removed() -> None:
         "_detect_retrieval_signals(",
         "._apply_feedback_signals(",
         "self._apply_feedback_signals",
-        "from openminion.services.agent.memory.learning import _detect_retrieval_signals",
-        "from openminion.services.agent.memory.learning import _apply_feedback_signals",
+        "from openminion.modules.memory.runtime.learning import _detect_retrieval_signals",
+        "from openminion.modules.memory.runtime.learning import _apply_feedback_signals",
     ]
     for pattern in forbidden_call_patterns:
         assert pattern not in turn_recording_source, (
@@ -183,8 +185,8 @@ def test_mfac03_candidate_turn_signals_method_is_fully_removed() -> None:
 
 def test_mfac03_record_candidate_retrieval_hits_is_removed() -> None:
 
-    from openminion.services.agent.memory import context as agent_memory_context
-    from openminion.services.agent.memory.learning import LearningMixin
+    from openminion.modules.memory.surfacing import agent_context as agent_memory_context
+    from openminion.modules.memory.runtime.learning import LearningMixin
 
     # 1. Structural absence on the mixin.
     assert not hasattr(LearningMixin, "_record_candidate_retrieval_hits"), (

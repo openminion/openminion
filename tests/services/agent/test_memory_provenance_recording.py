@@ -7,7 +7,7 @@ from openminion.modules.memory.runtime.provenance import (
     default_provenance_recorder,
     set_default_provenance_recorder,
 )
-from openminion.services.agent.memory.context import ContextBuildersMixin
+from openminion.modules.memory.surfacing.agent_context import ContextBuildersMixin
 
 
 class _RecordingHarness(ContextBuildersMixin):

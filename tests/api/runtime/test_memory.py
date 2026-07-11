@@ -13,7 +13,7 @@ from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
     MemoryServiceGatewayAdapter,
 )
-from openminion.services.agent.memory.hello_world import HelloWorldMemoryService
+from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 
 
 class _QueryService:
@@ -77,7 +77,7 @@ def test_gateway_adapter_normalizes_provider_query_failures() -> None:
     "adapter",
     [
         DisabledMemoryGatewayAdapter(agent_id="a"),
-        HelloWorldMemoryService(agent_id="a"),
+        EphemeralMemorySmokeProvider(agent_id="a"),
     ],
 )
 def test_non_durable_adapters_report_query_unavailability(adapter) -> None:

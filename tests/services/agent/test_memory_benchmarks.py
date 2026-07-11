@@ -13,7 +13,7 @@ from openminion.modules.memory.service import MemoryService
 from openminion.modules.memory.storage.base import ListQueryOptions
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
-from openminion.services.agent.memory.identity_seeder import seed_identity_pins
+from openminion.modules.memory.runtime.identity_seeder import seed_identity_pins
 
 
 def _make_bench_adapter(

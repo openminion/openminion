@@ -7,7 +7,7 @@ from openminion.modules.brain.runtime.recurrence import (
 )
 from openminion.modules.memory.storage.audit import InMemoryMemoryAuditSink
 from openminion.modules.skill.config import SkillConfig
-from openminion.services.agent.memory.skill_promotion import (
+from openminion.modules.memory.runtime.skill_promotion import (
     SKILL_PROMOTION_PASS_EVENT_TYPE,
     SkillPromotionRunResult,
     run_skill_promotion_cadence_once,

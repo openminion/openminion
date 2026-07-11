@@ -27,7 +27,7 @@ class _Record:
 
 def test_existing_renderer_does_not_include_confidence():
 
-    from openminion.services.agent.memory.extraction import (
+    from openminion.modules.memory.runtime.extraction.records import (
         _format_records_as_context,
     )
 

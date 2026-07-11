@@ -237,23 +237,23 @@ def test_session_lifecycle_partial_retention_object_fails_loudly_post_mref(
 
     with (
         mock.patch(
-            "openminion.services.agent.memory.session_lifecycle.apply_confidence_decay",
+            "openminion.modules.memory.runtime.session_lifecycle.apply_confidence_decay",
             return_value=(0, 0),
         ) as decay,
         mock.patch(
-            "openminion.services.agent.memory.session_lifecycle.compress_old_summaries_gc",
+            "openminion.modules.memory.runtime.session_lifecycle.compress_old_summaries_gc",
             return_value=(0, 0),
         ) as compress,
         mock.patch(
-            "openminion.services.agent.memory.session_lifecycle.enforce_scope_capacity",
+            "openminion.modules.memory.runtime.session_lifecycle.enforce_scope_capacity",
             return_value={},
         ) as capacity,
         mock.patch(
-            "openminion.services.agent.memory.session_lifecycle.evict_stale_insights",
+            "openminion.modules.memory.runtime.session_lifecycle.evict_stale_insights",
             return_value=0,
         ) as stale,
         mock.patch(
-            "openminion.services.agent.memory.session_lifecycle.purge_soft_deleted",
+            "openminion.modules.memory.runtime.session_lifecycle.purge_soft_deleted",
             return_value=SimpleNamespace(
                 deleted_records=0,
                 deleted_candidates=0,

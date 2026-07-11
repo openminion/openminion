@@ -1,8 +1,9 @@
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 
-from openminion.modules.retrieve.schemas import RetrievalFilters
+if TYPE_CHECKING:
+    from openminion.modules.retrieve.schemas import RetrievalFilters
 
 
 def clamp01(value: float) -> float:
@@ -225,7 +226,9 @@ class RetrievalPipeline:
         project_id: str | None,
         source_types: list[str],
         time_window_hours: int | None,
-    ) -> RetrievalFilters:
+    ) -> "RetrievalFilters":
+        from openminion.modules.retrieve.schemas import RetrievalFilters
+
         return RetrievalFilters(
             scope_keys=self._build_retrieve_scope_keys(
                 session_id=session_id,
@@ -312,6 +315,8 @@ class RetrievalPipeline:
             source_types=["mem", "episode"],
             time_window_hours=168,
         )
+        from openminion.modules.retrieve.schemas import RetrievalFilters
+
         knowledge_filters = RetrievalFilters(
             scope_keys=[],
             types=["skill", "doc", "artifact"],

@@ -17,11 +17,11 @@ class SleepRunnerConfig:
 
     def __post_init__(self) -> None:  # pragma: no cover - simple guards
         if self.interval_seconds < 1:
-            raise ValueError("interval_seconds must be >= 1")
+            raise ValueError("interval_seconds must be >= 1")  # allow-bare-raise: dataclass config validation guard
         if self.max_candidates_per_run < 1:
-            raise ValueError("max_candidates_per_run must be >= 1")
+            raise ValueError("max_candidates_per_run must be >= 1")  # allow-bare-raise: dataclass config validation guard
         if not 0.0 <= self.prune_utility_threshold <= 1.0:
-            raise ValueError("prune_utility_threshold must be in [0, 1]")
+            raise ValueError("prune_utility_threshold must be in [0, 1]")  # allow-bare-raise: dataclass config validation guard
 
 
 @dataclass(frozen=True)

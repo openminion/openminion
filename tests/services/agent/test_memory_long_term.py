@@ -217,7 +217,7 @@ def test_direct_sqlite_store_list(tmp_path: Path) -> None:
 
 
 def test_identity_seeder_integration(tmp_path: Path) -> None:
-    from openminion.services.agent.memory.identity_seeder import seed_identity_pins
+    from openminion.modules.memory.runtime.identity_seeder import seed_identity_pins
 
     service = _make_memory_service(tmp_path / "memory.db")
     count = seed_identity_pins(
@@ -243,7 +243,7 @@ def test_identity_seeder_integration(tmp_path: Path) -> None:
 
 
 def test_identity_seeder_idempotent(tmp_path: Path) -> None:
-    from openminion.services.agent.memory.identity_seeder import seed_identity_pins
+    from openminion.modules.memory.runtime.identity_seeder import seed_identity_pins
 
     service = _make_memory_service(tmp_path / "memory.db")
     profile = _profile(

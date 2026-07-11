@@ -17,8 +17,8 @@ from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
     MemoryServiceGatewayAdapter,
 )
-from openminion.services.agent.memory.hello_world import (
-    HelloWorldMemoryService,
+from openminion.modules.memory.smoke import (
+    EphemeralMemorySmokeProvider,
 )
 from openminion.modules.context.knowledge import (
     KNOWLEDGE_GRAPHS_CONFIG_KEY,
@@ -313,7 +313,7 @@ def build_agent_memory_service(
     retrieve_ctl: Any | None = None,
     storage_path: Path | None = None,
 ) -> (
-    HelloWorldMemoryService | MemoryServiceGatewayAdapter | DisabledMemoryGatewayAdapter
+    EphemeralMemorySmokeProvider | MemoryServiceGatewayAdapter | DisabledMemoryGatewayAdapter
 ):
     env_provider = _resolve_env_override(
         config_manager=config_manager,
@@ -326,9 +326,9 @@ def build_agent_memory_service(
     )
     normalized_provider = _normalize_runtime_memory_provider(configured_provider)
 
-    # memory_v2_hello_world: in-memory hello-world memory service
-    if normalized_provider == "memory_v2_hello_world":
-        return HelloWorldMemoryService(
+    # memory_v2_smoke: ephemeral smoke memory provider; memory_v2_hello_world remains a legacy alias
+    if normalized_provider == "memory_v2_smoke":
+        return EphemeralMemorySmokeProvider(
             agent_id=agent_id,
             logger=logger,
             enabled=bool(config.runtime.memory_enabled),
@@ -353,7 +353,7 @@ def build_agent_memory_service(
 
     raise ValueError(
         "Unsupported runtime.memory_provider="
-        f"{configured_provider!r}. Supported providers: memory_v2, memory_v2_hello_world."
+        f"{configured_provider!r}. Supported providers: memory_v2, memory_v2_smoke (memory_v2_hello_world is a legacy alias)."
     )
 
 
@@ -549,7 +549,7 @@ def _try_seed_identity(
 ) -> None:
     """MV2-07: Try to seed identity pins; log and swallow errors."""
     try:
-        from openminion.services.agent.memory.identity_seeder import seed_identity_pins
+        from openminion.modules.memory.runtime.identity_seeder import seed_identity_pins
 
         profile = None
         get_profile = getattr(identity_ctl, "get_profile", None)

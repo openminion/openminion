@@ -1,31 +1,31 @@
 from typing import Any, Mapping
 
 
-def _is_mock_like(value: Any) -> bool:
+def is_mock_like(value: Any) -> bool:
     return value is not None and "unittest.mock" in type(value).__module__
 
 
-def _cfg_section(config: Any, name: str) -> Any | None:
-    if config is None or _is_mock_like(config):
+def config_section(config: Any, name: str) -> Any | None:
+    if config is None or is_mock_like(config):
         return None
     if isinstance(config, Mapping):
         section = config.get(name)
     else:
         section = getattr(config, name, None)
-    return None if _is_mock_like(section) else section
+    return None if is_mock_like(section) else section
 
 
-def _cfg_value(section: Any, name: str, default: Any) -> Any:
+def config_value(section: Any, name: str, default: Any) -> Any:
     if section is None:
         return default
     if isinstance(section, Mapping):
         value = section.get(name, default)
     else:
         value = getattr(section, name, default)
-    return default if _is_mock_like(value) else value
+    return default if is_mock_like(value) else value
 
 
-def _safe_bool(value: Any, default: bool) -> bool:
+def coerce_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -40,7 +40,7 @@ def _safe_bool(value: Any, default: bool) -> bool:
     return default
 
 
-def _safe_int(value: Any, default: int, *, minimum: int | None = None) -> int:
+def coerce_int(value: Any, default: int, *, minimum: int | None = None) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -50,7 +50,7 @@ def _safe_int(value: Any, default: int, *, minimum: int | None = None) -> int:
     return parsed
 
 
-def _safe_float(
+def coerce_float(
     value: Any,
     default: float,
     *,
@@ -65,10 +65,10 @@ def _safe_float(
 
 
 __all__ = [
-    "_cfg_section",
-    "_cfg_value",
-    "_is_mock_like",
-    "_safe_bool",
-    "_safe_float",
-    "_safe_int",
+    "coerce_bool",
+    "coerce_float",
+    "coerce_int",
+    "config_section",
+    "config_value",
+    "is_mock_like",
 ]

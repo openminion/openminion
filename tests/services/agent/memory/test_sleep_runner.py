@@ -7,7 +7,7 @@ import pytest
 from openminion.modules.memory.storage.audit import (
     InMemoryMemoryAuditSink,
 )
-from openminion.services.agent.memory.sleep_runner import (
+from openminion.modules.memory.runtime.sleep_runner import (
     CRON_EVENT_TEXT_SLEEP_RUN_ONCE,
     CRON_PAYLOAD_KIND_SYSTEM_EVENT,
     EVENT_TYPE_SLEEP_CONSOLIDATION,

@@ -1798,7 +1798,7 @@ class RunnerDecisionTests(unittest.TestCase):
             self.assertEqual(llm.call_count, 0)
             self.assertEqual(state.llm_calls_used, 0)
 
-    def test_decide_low_budget_with_memory_v2_hello_world_snapshot_still_responds(
+    def test_decide_low_budget_with_memory_v2_smoke_snapshot_still_responds(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1835,7 +1835,7 @@ class RunnerDecisionTests(unittest.TestCase):
                         "policy_source": "runtime.config",
                         "policy_version": "memory_policy_snapshot.v1",
                         "memory_enabled": True,
-                        "memory_provider": "memory_v2_hello_world",
+                        "memory_provider": "memory_v2_smoke",
                         "capsule_strategy": "dynamic_turn",
                         "refresh_policy": "refresh_each_turn",
                         "dynamic_retrieval_enabled": True,
@@ -1844,7 +1844,7 @@ class RunnerDecisionTests(unittest.TestCase):
                     },
                 ),
             )
-            state = runner._load_or_init_state("s-low-budget-hello-world")
+            state = runner._load_or_init_state("s-low-budget-smoke")
             state.budgets_remaining.tokens = 60
             decision = runner._decide(
                 state=state,

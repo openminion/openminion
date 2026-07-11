@@ -273,21 +273,21 @@ class ReinforceRecordTests(unittest.TestCase):
 
 class NormalizedValueEqualTests(unittest.TestCase):
     def test_exact_match(self) -> None:
-        from openminion.services.agent.memory.learning import (
+        from openminion.modules.memory.runtime.learning import (
             _normalized_value_equal,
         )
 
         self.assertTrue(_normalized_value_equal("a@x.com", "a@x.com"))
 
     def test_case_insensitive(self) -> None:
-        from openminion.services.agent.memory.learning import (
+        from openminion.modules.memory.runtime.learning import (
             _normalized_value_equal,
         )
 
         self.assertTrue(_normalized_value_equal("A@X.COM", "a@x.com"))
 
     def test_whitespace_collapse(self) -> None:
-        from openminion.services.agent.memory.learning import (
+        from openminion.modules.memory.runtime.learning import (
             _normalized_value_equal,
         )
 
@@ -299,7 +299,7 @@ class NormalizedValueEqualTests(unittest.TestCase):
         )
 
     def test_different_values_not_equal(self) -> None:
-        from openminion.services.agent.memory.learning import (
+        from openminion.modules.memory.runtime.learning import (
             _normalized_value_equal,
         )
 
@@ -308,7 +308,7 @@ class NormalizedValueEqualTests(unittest.TestCase):
         self.assertFalse(_normalized_value_equal("us-east-1", "eu-west-2"))
 
     def test_empty_strings_equal(self) -> None:
-        from openminion.services.agent.memory.learning import (
+        from openminion.modules.memory.runtime.learning import (
             _normalized_value_equal,
         )
 
