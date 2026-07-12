@@ -69,6 +69,16 @@ SUITES: dict[str, Suite] = {
             "tests/cli/tui/focus/test_focus_status_format_parity.py",
         ),
     ),
+    "tier-a": Suite(
+        (
+            "tests/e2e/tui/focus/test_fake_terminal_focus.py",
+            "tests/cli/tui/focus/test_focus_approval_persistence.py",
+            "tests/cli/tui/terminal/test_overlays.py",
+            "tests/policy/test_policy_service.py",
+            "tests/brain/test_confirmation_replay_bridge_integration.py",
+            "tests/integration/test_parallel_rollout_patch_apply.py",
+        ),
+    ),
     "regression": Suite(
         (
             "tests/e2e/tui/focus/test_local.py",

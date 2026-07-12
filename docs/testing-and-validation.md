@@ -96,6 +96,18 @@ PYTHONDONTWRITEBYTECODE=1 \
 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py local
 ```
 
+Before release, run the deterministic Tier A coding-harness journey gate:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py tier-a
+```
+
+This gate covers PTY answer/interrupt/queue behavior, approval and session-grant
+flows, and an isolated code edit/diff/validation/rollback journey. Live MiniMax
+smoke remains separate evidence for provider behavior and must not replace this
+deterministic gate.
+
 Run live MiniMax focus smoke when a compatible config and credentials are
 available:
 

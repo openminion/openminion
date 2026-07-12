@@ -22,6 +22,19 @@ Run a single suite:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py progress-visibility
 ```
 
+Run the deterministic Tier A release journey gate:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py tier-a
+```
+
+Tier A composes existing canonical owners rather than duplicating their tests:
+
+1. real PTY answer, interrupt, and queued-input flows,
+2. approval allow-once, session grant, deny, and replay behavior,
+3. detached Git-worktree edit, diff, focused validation, and cleanup rollback.
+
 Run live MiniMax focus smoke:
 
 ```bash
@@ -79,6 +92,7 @@ Suite names:
 - `soak`: live goal-style long coding and research-to-code loops.
 - `queued-input`: focused queued-input/status tests without live credentials.
 - `progress-visibility`: progress/status rendering tests without live credentials.
+- `tier-a`: deterministic bounded coding-harness release journeys.
 - `regression`: broad local focus/terminal/status regression suite.
 - `live`: basic plus tools live suites.
 - `complex`: full complex live suite.
