@@ -10,7 +10,7 @@ from openminion.services.agent.execution.finalization import (
 from openminion.services.agent.constants import TERMINATION_REASON_LOOP_NO_PROGRESS
 from openminion.services.security.policy import ToolBudgetState
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 
 
 def _blocked_tool_response_text(batch: ToolExecutionBatch) -> str:

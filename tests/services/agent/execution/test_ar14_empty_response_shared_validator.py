@@ -17,8 +17,8 @@ REQUIRED_LANE_FILE = (
     / "services"
     / "agent"
     / "execution"
-    / "required_lane"
-    / "post_execution.py"
+    / "required"
+    / "completion.py"
 )
 UNFORCED_LANE_FILE = (
     REPO_ROOT
@@ -28,7 +28,7 @@ UNFORCED_LANE_FILE = (
     / "services"
     / "agent"
     / "execution"
-    / "unforced_lane"
+    / "unforced"
     / "loop.py"
 )
 
@@ -109,7 +109,7 @@ def _file_defines_local_predicate(path: Path) -> bool:
 def test_required_lane_imports_shared_validator() -> None:
     assert REQUIRED_LANE_FILE.exists(), f"missing {REQUIRED_LANE_FILE}"
     assert _file_imports_shared_validator(REQUIRED_LANE_FILE), (
-        "AR-14: required_lane/post_execution.py must import "
+        "AR-14: required/completion.py must import "
         "`is_empty_provider_response` from the shared validators module"
     )
 
@@ -117,15 +117,15 @@ def test_required_lane_imports_shared_validator() -> None:
 def test_required_lane_no_longer_defines_local_predicate() -> None:
     assert not _file_defines_local_predicate(REQUIRED_LANE_FILE), (
         "AR-14: the local `_is_empty_provider_response` def in "
-        "required_lane/post_execution.py should be gone — only the alias "
-        "to the shared validator remains."
+        "required/completion.py should stay removed; use only the shared "
+        "validator."
     )
 
 
 def test_unforced_lane_imports_shared_validator() -> None:
     assert UNFORCED_LANE_FILE.exists(), f"missing {UNFORCED_LANE_FILE}"
     assert _file_imports_shared_validator(UNFORCED_LANE_FILE), (
-        "AR-14: unforced_lane/loop.py must import "
+        "AR-14: unforced/loop.py must import "
         "`is_empty_provider_response` from the shared validators module"
     )
 
@@ -133,7 +133,7 @@ def test_unforced_lane_imports_shared_validator() -> None:
 def test_unforced_lane_uses_predicate_in_loop_body() -> None:
     text = UNFORCED_LANE_FILE.read_text(encoding="utf-8")
     assert "is_empty_provider_response(response)" in text, (
-        "AR-14: unforced_lane/loop.py must call "
+        "AR-14: unforced/loop.py must call "
         "`is_empty_provider_response(response)` before returning "
         "`model_final_response`"
     )
@@ -148,7 +148,7 @@ def test_unforced_lane_has_empty_provider_response_builder() -> None:
         / "services"
         / "agent"
         / "execution"
-        / "unforced_lane"
+        / "unforced"
         / "metadata.py"
     )
     text = metadata_file.read_text(encoding="utf-8")

@@ -927,8 +927,6 @@ tests/scripts/test_validate_termination_reason_vocabulary.py	4
 tests/secret/test_interfaces_contract.py	2
 tests/secret/test_secret_postgres.py	2
 tests/services/agent/_agent_service_support.py	3
-tests/services/agent/execution/required_lane/test_empty_provider_response_guard.py	4
-tests/services/agent/execution/required_lane/test_post_execution_follow_up.py	4
 tests/services/agent/execution/test_ar09_repeated_failure_sentinel.py	4
 tests/services/agent/execution/test_ar13_finalization_trigger_widening.py	4
 tests/services/agent/execution/test_ar14_empty_response_shared_validator.py	5

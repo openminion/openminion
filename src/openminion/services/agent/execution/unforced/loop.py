@@ -19,12 +19,12 @@ from ...execution_prompts import (
 )
 from openminion.services.security.policy import ToolBudgetState
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 from ..followup import recover_text_tool_calls
 
 from ...constants import NO_PROGRESS_FAILURE_THRESHOLD
-from .follow_up import build_follow_up_request
-from .follow_up import denied_tool_recovery_hint
+from .followup import build_follow_up_request
+from .followup import denied_tool_recovery_hint
 from .metadata import (
     blocked_tool_response,
     direct_tool_response,

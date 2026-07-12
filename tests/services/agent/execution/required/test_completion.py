@@ -13,8 +13,8 @@ from openminion.modules.llm.providers.base import (
 )
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.agent.execution.deps import ExecutorDeps
-from openminion.services.agent.execution.required_lane.post_execution import (
+from openminion.services.agent.execution.dependencies import ExecutorDeps
+from openminion.services.agent.execution.required.completion import (
     _call_initial_final_response,
     _retry_stale_draft_final_response,
     post_execution_follow_up_result,

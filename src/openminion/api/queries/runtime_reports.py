@@ -322,7 +322,6 @@ def build_runtime_posture_report(
         overrides=overrides,
     )
     tool_budget = getattr(runtime.security_policy, "tool_budget_policy", None)
-    # surface bridge canonical-parts posture when the active
     bridge_diag_fn = getattr(agent_service, "bridge_diagnostics", None)
     bridge_diagnostics_payload: dict[str, Any] | None = None
     if callable(bridge_diag_fn):

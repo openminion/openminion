@@ -16,7 +16,7 @@ def _repo_root() -> Path:
 ROOT = _repo_root()
 EXECUTION_DIR = ROOT / "src" / "openminion" / "services" / "agent" / "execution"
 LEGACY_FILE = ROOT / "src" / "openminion" / "services" / "agent" / "turn_flow.py"
-FEATURE_MODULES = {"controller", "executor", "events", "validators"}
+FEATURE_MODULES = {"executor", "response", "tool_plan", "validators"}
 
 
 def _imported_feature_modules(path: Path) -> set[str]:

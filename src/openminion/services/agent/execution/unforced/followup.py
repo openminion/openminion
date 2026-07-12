@@ -18,7 +18,7 @@ from ...execution_prompts import (
     build_tool_execution_results_message,
 )
 
-from ..deps import ExecutorDeps
+from ..dependencies import ExecutorDeps
 
 
 def build_follow_up_request(

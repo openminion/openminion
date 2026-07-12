@@ -62,16 +62,3 @@ def v1_tool_arguments(body: dict) -> dict:
     if not isinstance(raw_arguments, dict):
         raise ValueError("`arguments` must be an object.")
     return dict(raw_arguments)
-
-
-def v1_turn_timeout_seconds(body: dict, runtime) -> float:
-    timeout_raw = body.get("timeout_seconds")
-    if timeout_raw is None:
-        return float(runtime.config.gateway.api_turn_timeout_seconds)
-    try:
-        timeout = float(timeout_raw)
-    except (TypeError, ValueError):
-        raise ValueError("`timeout_seconds` must be a number greater than zero.")
-    if timeout <= 0:
-        raise ValueError("`timeout_seconds` must be greater than zero.")
-    return timeout

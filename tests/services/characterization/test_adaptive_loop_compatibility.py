@@ -7,8 +7,8 @@ from openminion.base.types import AgentResponse, Message
 from openminion.modules.llm.providers.base import ProviderResponse
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.agent.execution.deps import ExecutorDeps
-from openminion.services.agent.execution.unforced_lane import UnforcedLaneMixin
+from openminion.services.agent.execution.dependencies import ExecutorDeps
+from openminion.services.agent.execution.unforced import UnforcedLaneMixin
 
 
 class _FakeLegacyLoop(UnforcedLaneMixin):

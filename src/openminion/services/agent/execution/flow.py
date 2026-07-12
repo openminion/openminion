@@ -11,11 +11,11 @@ from openminion.services.agent.hooks import HookContext
 
 from ..context import build_context
 from ..prompt_history import _provider_tool_call_strategy
-from .builder import build_service_port, build_turn_executor
-from .controller import build_tool_plan
-from .deps import ExecutorDeps
-from .events import finalize_turn_response, tool_calls_payload
+from .composition import build_service_port, build_turn_executor
+from .dependencies import ExecutorDeps
+from .response import finalize_turn_response, tool_calls_payload
 from .state import TurnRuntimeContext
+from .tool_plan import build_tool_plan
 from .validators import (
     canonical_tool_chain,
     canonical_tool_name,

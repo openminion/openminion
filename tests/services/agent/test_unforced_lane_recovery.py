@@ -16,11 +16,11 @@ from openminion.modules.llm.providers.base import (
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.constants import TERMINATION_REASON_LOOP_NO_PROGRESS
-from openminion.services.agent.execution.deps import ExecutorDeps
-from openminion.services.agent.execution.unforced_lane.follow_up import (
+from openminion.services.agent.execution.dependencies import ExecutorDeps
+from openminion.services.agent.execution.unforced.followup import (
     denied_tool_recovery_hint,
 )
-from openminion.services.agent.execution.unforced_lane.loop import (
+from openminion.services.agent.execution.unforced.loop import (
     handle_unforced_tool_calls,
 )
 

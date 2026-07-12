@@ -14,7 +14,6 @@ from openminion.api.config import (
 )
 from openminion.api.constants import API_METRICS_TOKEN_ENV, API_METRICS_TOKEN_HEADER
 from openminion.api.runtime import APIRuntime
-from openminion.modules.tool.refs import tool_result_artifact_refs
 from openminion.services.bootstrap.config import bootstrap_config_manager
 from openminion.services.diagnostics.debug import (
     DebugRegistry,
@@ -113,16 +112,6 @@ def v1_runtime_self_model(
     agent_id: str | None = None,
 ) -> dict[str, Any]:
     return runtime.runtime_self_model(agent_id=agent_id)
-
-
-def v1_tool_result_artifact_refs(
-    *, trace_id: str, session_id: str, result: Any
-) -> list[dict[str, str]]:
-    return tool_result_artifact_refs(
-        trace_id=trace_id,
-        session_id=session_id,
-        result=result,
-    )
 
 
 def _probe_runtime_subsystem(

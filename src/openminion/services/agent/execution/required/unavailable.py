@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, Any, Mapping
 
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.agent.execution.deps import ExecutorDeps
+from openminion.services.agent.execution.dependencies import ExecutorDeps
 from openminion.services.agent.execution.loop_quality import (
     exec_command_action_class,
     exec_tool_call_command,
