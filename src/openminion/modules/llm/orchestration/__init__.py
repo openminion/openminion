@@ -1,3 +1,10 @@
+from .capabilities import (
+    ProviderCapabilityRow,
+    missing_profile_capabilities,
+    profile_capability_facts,
+    provider_capability_matrix,
+    request_capability_requirements,
+)
 from .config import load_catalog_config, resolve_route
 from .schemas import (
     AgentLLMBudgets,
@@ -21,6 +28,7 @@ from .schemas import (
     NormalizationRules,
     ProfileCapabilities,
     ProfileCostHint,
+    ProviderCapabilityName,
     ProviderProfile,
     RequestBudget,
     ResponseError,
@@ -60,6 +68,8 @@ __all__ = [
     "NormalizationRules",
     "ProfileCapabilities",
     "ProfileCostHint",
+    "ProviderCapabilityName",
+    "ProviderCapabilityRow",
     "ProviderProfile",
     "RequestBudget",
     "ResponseError",
@@ -74,5 +84,9 @@ __all__ = [
     "Usage",
     "UsageTotal",
     "load_catalog_config",
+    "missing_profile_capabilities",
+    "profile_capability_facts",
+    "provider_capability_matrix",
+    "request_capability_requirements",
     "resolve_route",
 ]

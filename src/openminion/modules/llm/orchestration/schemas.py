@@ -15,6 +15,15 @@ SelectionPolicyName = Literal[
 ]
 CandidateStatus = Literal["success", "failed", "timeout"]
 FallbackMode = Literal["single", "ensemble"]
+ProviderCapabilityName = Literal[
+    "json",
+    "tools",
+    "vision",
+    "streaming",
+    "prompt_caching",
+    "cost",
+    "auth",
+]
 
 
 class ProfileCostHint(BaseModel):
@@ -265,6 +274,7 @@ class RuntimeLLMRequest(BaseModel):
     purpose: str = Field(default="act", min_length=1)
     messages: List[Message] = Field(default_factory=list)
     output_schema: Optional[Dict[str, Any]] = None
+    required_capabilities: List[ProviderCapabilityName] = Field(default_factory=list)
     constraints: Optional[Dict[str, Any]] = None
     budget: RequestBudget = Field(default_factory=RequestBudget)
     trace: TraceContext = Field(default_factory=TraceContext)

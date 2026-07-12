@@ -19,6 +19,7 @@ from openminion.modules.llm.orchestration import (
     ProviderProfile,
     RuntimeLLMRequest,
     load_catalog_config,
+    provider_capability_matrix,
     resolve_route,
 )
 from openminion.modules.llm.orchestration.selection import heuristic_selection
@@ -314,7 +315,13 @@ class OrchestrationTests(unittest.TestCase):
                         "id": "fast",
                         "provider": "prov_fast",
                         "model": "m-fast",
-                        "supports_json": True,
+                        "auth_ref": "env:PROV_FAST_TOKEN",
+                        "capabilities": {
+                            "supports_json": True,
+                            "supports_tools": True,
+                            "supports_streaming": True,
+                            "supports_prompt_caching": True,
+                        },
                     },
                     {
                         "id": "slow",
@@ -399,6 +406,67 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(reflect_route.profile_id, "alt")
         plan_route = resolve_route(policy, "plan")
         self.assertEqual(plan_route.profile_id, "fast")
+
+    def test_provider_capability_matrix_reports_explicit_profile_facts(self) -> None:
+        rows = {row.profile_id: row for row in provider_capability_matrix(self.catalog)}
+
+        self.assertTrue(rows["fast"].tools)
+        self.assertTrue(rows["fast"].streaming)
+        self.assertTrue(rows["fast"].prompt_caching)
+        self.assertFalse(rows["fast"].cost)
+        self.assertTrue(rows["fast"].auth)
+        self.assertFalse(rows["alt"].tools)
+
+        priced_catalog = load_catalog_config(
+            {
+                "profiles": [
+                    {
+                        "id": "priced",
+                        "provider": "priced-provider",
+                        "model": "priced-model",
+                        "cost_hint": {"input_per_1k": 0.001},
+                    }
+                ]
+            }
+        )
+        self.assertTrue(provider_capability_matrix(priced_catalog)[0].cost)
+
+    def test_provider_call_rejects_missing_capability_before_transport(self) -> None:
+        result = self.orch.call(
+            self._request().model_copy(update={"required_capabilities": ["tools"]}),
+            "alt",
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.error.code, "INVALID_ARGUMENT")
+        self.assertEqual(result.error.details["missing_capabilities"], ["tools"])
+        self.assertEqual(self.provider_alt.seen_requests, [])
+
+    def test_agent_route_uses_capable_fallback_without_probing_primary(self) -> None:
+        policy = AgentLLMPolicy.model_validate(
+            {
+                "default_route": {"mode": "single", "profile_id": "alt"},
+                "fallbacks": {
+                    "plan": {
+                        "fallback_profile_ids": ["fast"],
+                        "fallback_mode": "single",
+                        "max_fallback_attempts": 1,
+                    }
+                },
+            }
+        )
+        request = self._request().model_copy(
+            update={"required_capabilities": ["tools"]}
+        )
+
+        result = asyncio.run(
+            self.orch.call_for_agent("agent-1", "plan", request, policy)
+        )
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.profile_id, "fast")
+        self.assertEqual(self.provider_alt.seen_requests, [])
+        self.assertEqual(len(self.provider_fast.seen_requests), 1)
 
     def test_fallback_selection_uses_provider_order_not_response_length(self) -> None:
         result = heuristic_selection(
