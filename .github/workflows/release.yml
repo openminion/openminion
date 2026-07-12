@@ -6,7 +6,7 @@ name: Release
 # the public API surface" by:
 #
 #   1. PR + push to main: build-only validation (no publish).
-#   2. Pre-release tags (`v*-alpha*`, `v*-beta*`, `v*-rc*`): publish to TestPyPI.
+#   2. Pre-release tags (`v*alpha*`, `v*beta*`, `v*rc*`): publish to TestPyPI.
 #   3. Final release tags (`v*` not matching pre-release pattern): publish to
 #      PyPI, **gated** on the `pypi` GitHub environment (must be configured
 #      with required reviewers — repo admin sets this).
@@ -136,7 +136,7 @@ jobs:
     name: Publish to TestPyPI (pre-release tags)
     needs: [build, verify-built-artifacts]
     runs-on: ubuntu-latest
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi') || (startsWith(github.ref, 'refs/tags/v') && (contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc'))) }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi') || (startsWith(github.ref, 'refs/tags/v') && (contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc'))) }}
     environment:
       name: testpypi
       url: https://test.pypi.org/project/openminion/
@@ -157,7 +157,7 @@ jobs:
     name: Publish to PyPI (final release tags, gated)
     needs: [build, verify-built-artifacts]
     runs-on: ubuntu-latest
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi') || (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-alpha') && !contains(github.ref, '-beta') && !contains(github.ref, '-rc')) }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi') || (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc')) }}
     environment:
       name: pypi
       url: https://pypi.org/project/openminion/
