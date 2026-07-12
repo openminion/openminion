@@ -20,7 +20,7 @@ from openminion.services.agent.execution.finalization import (
     finalization_status_termination_reason,
     requires_typed_finalization_contract,
 )
-from ...execution_prompts import (
+from ..prompts import (
     build_duplicate_final_tool_call_feedback,
     build_duplicate_final_tool_call_user_message,
     build_finalization_status_retry_feedback,

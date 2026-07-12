@@ -12,7 +12,7 @@ from openminion.services.agent.execution.finalization import (
 from openminion.services.agent.execution.followup import (
     available_follow_up_tools,
 )
-from ...execution_prompts import (
+from ..prompts import (
     build_denied_tool_recovery_hint,
     build_pre_tool_draft_message_text,
     build_tool_execution_results_message,

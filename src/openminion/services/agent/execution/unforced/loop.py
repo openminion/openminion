@@ -9,7 +9,7 @@ from openminion.services.agent.execution.finalization import (
     FINALIZATION_STATUS_RETRY_GUIDANCE,
     requires_typed_finalization_contract_for_results,
 )
-from ...execution_prompts import (
+from ..prompts import (
     build_duplicate_tool_replan_feedback,
     build_duplicate_tool_replan_user_message,
     build_finalization_status_retry_feedback,

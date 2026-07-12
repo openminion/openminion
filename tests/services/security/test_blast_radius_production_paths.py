@@ -196,7 +196,7 @@ def test_path4_agent_service_runtime_attaches_adapter_on_demand(monkeypatch) -> 
 
 def test_path5_tool_fallbacks_attaches_adapter_to_context() -> None:
     _assert_module_source_contains(
-        "openminion.services.agent.fallbacks",
+        "openminion.services.agent.execution.fallbacks",
         "SEAM_AGENT_TOOL_FALLBACKS",
         "build_default_composition_boundary_adapter",
         "blast_radius_adapter=",

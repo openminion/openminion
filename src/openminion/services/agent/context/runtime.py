@@ -3,8 +3,8 @@ from dataclasses import dataclass
 from openminion.base.types import Message
 from openminion.modules.llm.providers.base import ProviderHistoryMessage
 
-from .prompt_history import _map_history_to_provider, _resolve_system_prompt
-from .turn_context import append_grounding_blocks, build_grounding_facts
+from .grounding import append_grounding_blocks, build_grounding_facts
+from .history import _map_history_to_provider, _resolve_system_prompt
 from openminion.modules.prompting.context_blocks import build_project_context_block
 
 

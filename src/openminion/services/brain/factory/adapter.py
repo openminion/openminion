@@ -14,7 +14,7 @@ from openminion.modules.brain.adapters.factory import (
     create_skill_adapter,
     create_tool_adapter,
 )
-from openminion.services.agent.prompt_history import _resolve_system_prompt
+from openminion.services.agent.context.history import _resolve_system_prompt
 
 
 def create_session_api(

@@ -52,7 +52,7 @@
     "openminion/modules/telemetry/otel_export.py": 2,
     "openminion/modules/tool/runtime/blast_radius.py": 2,
     "openminion/services/agent/execution/runtime.py": 2,
-    "openminion/services/agent/prompt_history.py": 2,
+    "openminion/services/agent/context/history.py": 2,
     "openminion/services/context/adapter.py": 2,
     "openminion/api/agent.py": 1,
     "openminion/api/handoff.py": 1,

@@ -38,11 +38,13 @@ from openminion.modules.prompting.finalization import (
 from openminion.modules.prompting.identity import (
     AGENT_IDENTITY_FRAME,
     DEFAULT_SAFETY_TEXT,
+    DEFAULT_SYSTEM_PROMPT,
     IDENTITY_DIRECTIVE,
     TOOL_RESULT_FORMAT_TEXT,
 )
+from openminion.services.agent.context.history import _resolve_system_prompt
 from openminion.modules.prompting.constants import PROMPTING_MODULE_OWNER
-from openminion.services.agent.execution_prompts import (
+from openminion.services.agent.execution.prompts import (
     build_denied_tool_recovery_hint,
     build_duplicate_final_tool_call_feedback,
     build_duplicate_final_tool_call_user_message,
@@ -71,6 +73,7 @@ def test_prompting_package_exports_declared_shared_surface() -> None:
         "CURRENT_SESSION_SUMMARY_HEADER",
         "DECIDE_STYLE_OVERRIDES",
         "DEFAULT_SAFETY_TEXT",
+        "DEFAULT_SYSTEM_PROMPT",
         "FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE",
         "FINALIZATION_STATUS_RETRY_GUIDANCE",
         "GROUNDING_BLOCK_HEADER",
@@ -110,6 +113,8 @@ def test_identity_prompt_fragments_preserve_current_text() -> None:
     assert DEFAULT_SAFETY_TEXT == (
         "Follow safety policies. Refuse unsafe or disallowed operations."
     )
+    assert DEFAULT_SYSTEM_PROMPT == "You are a helpful assistant."
+    assert _resolve_system_prompt("") == DEFAULT_SYSTEM_PROMPT
     assert "unconditionally" in IDENTITY_DIRECTIVE
     assert (
         "- weather: temperature, condition, and location only"

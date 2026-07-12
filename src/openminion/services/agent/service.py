@@ -43,7 +43,7 @@ from .constants import (
     DEFAULT_TOOL_LOOP_CONTINUE_PROMPT as _DEFAULT_TOOL_LOOP_CONTINUE_PROMPT,
     TOOL_OUTPUT_FRAME_THRESHOLD_CHARS,
 )
-from .prompt_history import (
+from .context.history import (
     _history_role,
     _looks_like_tool_call_envelope_text,
     _loop_tool_feedback,
@@ -52,7 +52,7 @@ from .prompt_history import (
     _resolve_system_prompt,
 )
 from .identity_binding import bind_agent_identity_runtime_api
-from .fallbacks import AgentToolFallbacks
+from .execution.fallbacks import AgentToolFallbacks
 from .execution import AgentTurnFlowMixin
 from .execution.finalization import normalize_provider_response_finalization_status
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS

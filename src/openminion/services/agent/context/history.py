@@ -4,7 +4,10 @@ from typing import Any
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
-from openminion.modules.prompting.identity import AGENT_IDENTITY_FRAME
+from openminion.modules.prompting.identity import (
+    AGENT_IDENTITY_FRAME,
+    DEFAULT_SYSTEM_PROMPT,
+)
 from openminion.modules.llm.providers.base import ProviderHistoryMessage, LLMProvider
 from openminion.modules.llm.providers.tool_calling import (
     detect_raw_envelope,
@@ -12,6 +15,7 @@ from openminion.modules.llm.providers.tool_calling import (
 )
 
 _IDENTITY_FRAME = AGENT_IDENTITY_FRAME
+_DEFAULT_SYSTEM_PROMPT: str = str(DEFAULT_SYSTEM_PROMPT)
 
 
 def _history_role(role: str) -> str:
@@ -96,17 +100,17 @@ def _provider_tool_call_strategy(
 def _resolve_system_prompt(config: OpenMinionConfig | str) -> str:
     if isinstance(config, str):
         prompt = config.strip()
-        return prompt or "You are a helpful assistant."
+        return prompt or _DEFAULT_SYSTEM_PROMPT
     from openminion.base.config.core import resolve_default_agent_id
 
     try:
         default_agent_id = resolve_default_agent_id(config)
     except Exception:  # noqa: BLE001
-        return "You are a helpful assistant."
+        return _DEFAULT_SYSTEM_PROMPT
     profile = config.agents.get(default_agent_id)
     if profile is not None and profile.system_prompt:
         return profile.system_prompt
-    return "You are a helpful assistant."
+    return _DEFAULT_SYSTEM_PROMPT
 
 
 def resolve_self_awareness_prompt_answer(

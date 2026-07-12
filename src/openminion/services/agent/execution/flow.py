@@ -10,7 +10,7 @@ from openminion.services.security.policy import ToolBudgetState
 from openminion.services.agent.hooks import HookContext
 
 from ..context import build_context
-from ..prompt_history import _provider_tool_call_strategy
+from ..context.history import _provider_tool_call_strategy
 from .composition import build_service_port, build_turn_executor
 from .dependencies import ExecutorDeps
 from .response import finalize_turn_response, tool_calls_payload

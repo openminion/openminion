@@ -4,8 +4,12 @@ from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.dispatch import _get_registry_manager
 
-from ..errors import collect_missing_required, extract_missing_fields, is_argument_error
-from ..prompt_history import _looks_like_tool_call_envelope_text
+from ..context.history import _looks_like_tool_call_envelope_text
+from .tool_arguments import (
+    collect_missing_required,
+    extract_missing_fields,
+    is_argument_error,
+)
 
 
 def is_empty_provider_response(response: Any) -> bool:

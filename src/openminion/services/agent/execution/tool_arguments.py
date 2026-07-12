@@ -3,7 +3,7 @@ from typing import Any, Mapping, Optional
 
 from openminion.modules.llm.providers.base import ProviderToolSpec
 from openminion.modules.tool.dispatch import _get_registry_manager
-from .execution_prompts import (
+from .prompts import (
     build_required_tool_retry_prompt as _render_required_tool_retry_prompt,
 )
 

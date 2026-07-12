@@ -5,7 +5,7 @@ from openminion.base.types import Message
 from openminion.modules.llm.providers.base import ProviderToolSpec, ProviderToolCall
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 
-from .errors import (
+from .tool_arguments import (
     normalize_required_tool_arguments,
     sanitize_arguments_for_spec,
 )
@@ -275,7 +275,7 @@ class AgentToolFallbacksMixin:
         )
 
 
-from .errors import build_required_tool_retry_prompt  # noqa: E402
+from .tool_arguments import build_required_tool_retry_prompt  # noqa: E402
 
 
 class AgentToolFallbacks(AgentToolFallbacksMixin):

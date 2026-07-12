@@ -22,7 +22,7 @@ from openminion.modules.session.storage.repository import create_sqlite_cron_rep
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.modules.task import TaskManager
-from openminion.services.agent.fallbacks import AgentToolFallbacksMixin
+from openminion.services.agent.execution.fallbacks import AgentToolFallbacksMixin
 from openminion.services.agent.execution.executor import TurnExecutor
 from tests._csc_fixtures import _csc_install_default_agent
 

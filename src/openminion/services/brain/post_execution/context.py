@@ -15,7 +15,7 @@ from openminion.modules.memory.runtime.consolidation import (
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.services.agent import _history_role, _resolve_system_prompt
 from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
-from openminion.services.agent.turn_context import (
+from openminion.services.agent.context.grounding import (
     append_grounding_blocks,
     build_grounding_facts,
 )

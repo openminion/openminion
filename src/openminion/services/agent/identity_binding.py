@@ -42,7 +42,7 @@ from .constants import (
     IDENTITY_RUNTIME_STATUS_SYNCED,
     IDENTITY_RUNTIME_STATUS_SYNC_FAILED,
 )
-from .prompt_history import _IDENTITY_FRAME, _resolve_system_prompt
+from .context.history import _IDENTITY_FRAME, _resolve_system_prompt
 
 
 class AgentIdentityMixin:

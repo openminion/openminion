@@ -11,7 +11,7 @@ from openminion.cli.tui.project_context import (
     resolve_project_context,
     write_init_template,
 )
-from openminion.services.agent.context import _append_project_context_block
+from openminion.services.agent.context.runtime import _append_project_context_block
 
 
 def test_project_context_import_does_not_eagerly_import_textual_app() -> None:

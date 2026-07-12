@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-from openminion.services.agent.errors import (
+from openminion.services.agent.execution.tool_arguments import (
     collect_missing_required,
     missing_required_for_call,
     required_fields_from_spec,

@@ -32,6 +32,7 @@ _TEXT_MARKERS = (
     "You are the agent described",
 )
 _INLINE_TEXT_MARKERS = (
+    "You are a helpful assistant.",
     "Tool execution results:",
     "Do not emit any tool call markup",
     "Return a plain-text answer",
@@ -56,7 +57,7 @@ _ALLOWED_DOMAIN_OWNED = {
     "modules/brain/loop/tools/response_payloads.py": "structured-response guidance is response-payload owned",
     "modules/brain/retry.py": "retry repair guidance is retry-policy owned",
     "modules/memory/runtime/consolidation/merge.py": "memory consolidation prompt is memory-runtime owned",
-    "services/agent/execution_prompts.py": "agent execution retry prompts are domain-owned",
+    "services/agent/execution/prompts.py": "agent execution retry prompts are domain-owned",
     "modules/memory/runtime/extraction/records.py": "memory exact-value guidance is memory-extraction owned",
     "services/lifecycle/prompts.py": "sidecar approval prompts are operator UX, not LLM prompts",
 }
