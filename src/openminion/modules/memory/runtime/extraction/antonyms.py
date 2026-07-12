@@ -73,10 +73,14 @@ def load_antonym_pairs(config_path: str | Path) -> set[frozenset[str]]:
     path = Path(config_path)
     payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(payload, dict):
-        raise ValueError("memory antonyms payload must be a mapping")  # allow-bare-raise: config payload validation guard
+        raise ValueError(
+            "memory antonyms payload must be a mapping"
+        )  # allow-bare-raise: config payload validation guard
     pairs_payload = payload.get("pairs") or []
     if not isinstance(pairs_payload, list):
-        raise ValueError("memory antonyms pairs must be a list")  # allow-bare-raise: config payload validation guard
+        raise ValueError(
+            "memory antonyms pairs must be a list"
+        )  # allow-bare-raise: config payload validation guard
     pairs: set[frozenset[str]] = set()
     for raw_pair in pairs_payload:
         if not isinstance(raw_pair, (list, tuple)) or len(raw_pair) != 2:
@@ -87,7 +91,9 @@ def load_antonym_pairs(config_path: str | Path) -> set[frozenset[str]]:
             continue
         pairs.add(frozenset((left, right)))
     if not pairs:
-        raise ValueError("memory antonyms config did not contain any valid pairs")  # allow-bare-raise: config payload validation guard
+        raise ValueError(
+            "memory antonyms config did not contain any valid pairs"
+        )  # allow-bare-raise: config payload validation guard
     return pairs
 
 

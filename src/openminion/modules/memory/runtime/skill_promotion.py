@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from sophiagraph.audit.events import MemoryAuditEvent
 
 from openminion.modules.memory.storage.audit import MemoryAuditSink
+
 if TYPE_CHECKING:
     from openminion.modules.skill.config import SkillConfig
     from openminion.modules.skill.proposal.promotion import PromotionPassReport

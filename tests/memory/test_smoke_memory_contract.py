@@ -57,4 +57,3 @@ def test_smoke_provider_does_not_extract_user_facts() -> None:
     text = provider.build_context(session_id="s", user_message="what do you know?")
     assert "project codename is Orion" not in text
     assert "ephemeral-memory-smoke provider is active" in text
-

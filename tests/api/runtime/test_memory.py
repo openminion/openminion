@@ -115,7 +115,9 @@ def test_runtime_exposes_same_memory_adapter(monkeypatch) -> None:
         "authored_tools": object(),
         "default_agent": default_agent,
     }
-    monkeypatch.setattr(runtime_module, "build_runtime_manager", lambda runtime: object())
+    monkeypatch.setattr(
+        runtime_module, "build_runtime_manager", lambda runtime: object()
+    )
 
     runtime = runtime_module._finalize_runtime_instance(
         cls=_RuntimeCapture,

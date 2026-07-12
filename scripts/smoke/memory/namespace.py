@@ -187,9 +187,7 @@ def run_smoke(artifact_dir: Path) -> dict:
         host, port = server.server_address
         base_url = f"http://{host}:{port}"
         try:
-            list_body = {
-                "namespace": {"user_id": "user-a", "agent_id": "agent-a"}
-            }
+            list_body = {"namespace": {"user_id": "user-a", "agent_id": "agent-a"}}
             status, payload = _post_exchange(base_url, exchanges, "list", list_body)
             if status != 200:
                 raise AssertionError(f"API list returned {status}")
@@ -221,7 +219,9 @@ def run_smoke(artifact_dir: Path) -> dict:
                     body,
                 )
                 if status != 200 or payload.get("count") != 0:
-                    raise AssertionError(f"API mismatch did not return zero for {field}")
+                    raise AssertionError(
+                        f"API mismatch did not return zero for {field}"
+                    )
             cases["api_mismatches"] = "pass"
 
             conflict_body = {
@@ -231,8 +231,13 @@ def run_smoke(artifact_dir: Path) -> dict:
             status, payload = _post_exchange(
                 base_url, exchanges, "conflict", conflict_body
             )
-            if status != 400 or payload.get("error", {}).get("code") != "invalid_request":
-                raise AssertionError("scope conflict did not return 400 invalid_request")
+            if (
+                status != 400
+                or payload.get("error", {}).get("code") != "invalid_request"
+            ):
+                raise AssertionError(
+                    "scope conflict did not return 400 invalid_request"
+                )
             cases["api_scope_conflict"] = "pass"
 
             Handler.runtime = SimpleNamespace(
@@ -242,8 +247,13 @@ def run_smoke(artifact_dir: Path) -> dict:
             status, payload = _post_exchange(
                 base_url, exchanges, "disabled", disabled_body
             )
-            if status != 503 or payload.get("error", {}).get("code") != "memory_unavailable":
-                raise AssertionError("disabled memory did not return 503 memory_unavailable")
+            if (
+                status != 503
+                or payload.get("error", {}).get("code") != "memory_unavailable"
+            ):
+                raise AssertionError(
+                    "disabled memory did not return 503 memory_unavailable"
+                )
             cases["api_disabled"] = "pass"
         finally:
             server.shutdown()

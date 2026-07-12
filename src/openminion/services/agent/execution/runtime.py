@@ -145,7 +145,9 @@ class ExecutorRuntime:
                 self._memory_tool_service = service
                 return service
             return None
-        if isinstance(built, (DisabledMemoryGatewayAdapter, EphemeralMemorySmokeProvider)):
+        if isinstance(
+            built, (DisabledMemoryGatewayAdapter, EphemeralMemorySmokeProvider)
+        ):
             return None
         if isinstance(built, MemoryToolRuntimeService):
             self._memory_tool_service = built

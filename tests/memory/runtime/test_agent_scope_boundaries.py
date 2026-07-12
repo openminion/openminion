@@ -198,7 +198,9 @@ class TestNamespaceFilterResolution:
         }
 
     def test_conflicting_scope_fails_closed(self) -> None:
-        with pytest.raises(InvalidArgumentError, match="conflicting namespace agent_id"):
+        with pytest.raises(
+            InvalidArgumentError, match="conflicting namespace agent_id"
+        ):
             resolve_namespace_filter(
                 scope="agent:agent-a",
                 namespace={"agent_id": "agent-b"},

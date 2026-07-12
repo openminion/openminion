@@ -15,12 +15,16 @@ def create_memory_provider_registry() -> ModuleRegistry[MemoryProviderFactory]:
 
     registry.register(
         "smoke",
-        lambda config: EphemeralMemorySmokeProvider(agent_id=str(config.get("agent_id", "openminion"))),
+        lambda config: EphemeralMemorySmokeProvider(
+            agent_id=str(config.get("agent_id", "openminion"))
+        ),
         contract_version="v1",
     )
     registry.register(
         "hello_world",
-        lambda config: EphemeralMemorySmokeProvider(agent_id=str(config.get("agent_id", "openminion"))),
+        lambda config: EphemeralMemorySmokeProvider(
+            agent_id=str(config.get("agent_id", "openminion"))
+        ),
         contract_version="v1",
     )
 

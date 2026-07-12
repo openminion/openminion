@@ -313,7 +313,9 @@ def build_agent_memory_service(
     retrieve_ctl: Any | None = None,
     storage_path: Path | None = None,
 ) -> (
-    EphemeralMemorySmokeProvider | MemoryServiceGatewayAdapter | DisabledMemoryGatewayAdapter
+    EphemeralMemorySmokeProvider
+    | MemoryServiceGatewayAdapter
+    | DisabledMemoryGatewayAdapter
 ):
     env_provider = _resolve_env_override(
         config_manager=config_manager,

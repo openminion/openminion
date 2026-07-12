@@ -108,7 +108,9 @@ class RecordStore(Protocol):
         self, old_record_id: str, new_record_id: str, reason: str = ""
     ) -> MemoryRecord: ...
 
-    def history(self, scope: str, type: MemoryType, key: str) -> list_type[MemoryRecord]: ...
+    def history(
+        self, scope: str, type: MemoryType, key: str
+    ) -> list_type[MemoryRecord]: ...
 
 
 @runtime_checkable
@@ -326,7 +328,9 @@ class CapabilityMemoryStore:
     def candidate_get(self, candidate_id: str) -> MemoryCandidate | None:
         return self._records.candidate_get(candidate_id)
 
-    def candidate_list(self, options: CandidateListOptions) -> list_type[MemoryCandidate]:
+    def candidate_list(
+        self, options: CandidateListOptions
+    ) -> list_type[MemoryCandidate]:
         return self._records.candidate_list(options)
 
     def candidate_update(
@@ -346,7 +350,9 @@ class CapabilityMemoryStore:
             reason=reason,
         )
 
-    def history(self, scope: str, type: MemoryType, key: str) -> list_type[MemoryRecord]:
+    def history(
+        self, scope: str, type: MemoryType, key: str
+    ) -> list_type[MemoryRecord]:
         return self._records.history(scope, type, key)
 
 
