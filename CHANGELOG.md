@@ -1,11 +1,15 @@
 # OpenMinion Changelog
 
 Status: active
-Last updated: 2026-07-10
+Last updated: 2026-07-12
 
 This file tracks package-facing release notes for `openminion`.
 
 ## Unreleased
+
+- No unreleased package-facing changes yet.
+
+## Current package line - 2026-07-12
 
 - Added typed SophiaGraph namespace filters to existing `memctl` list/search
   commands and local memory-record HTTP routes.
