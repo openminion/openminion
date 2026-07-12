@@ -5,7 +5,10 @@ from openminion.modules.brain.loop.rollouts.interfaces import (
     RolloutScorer,
     RolloutSelector,
 )
-from openminion.modules.brain.loop.rollouts.isolator import WorktreeIsolator
+from openminion.modules.brain.loop.rollouts.isolator import (
+    TempdirIsolator,
+    WorktreeIsolator,
+)
 from openminion.modules.brain.loop.rollouts.runner import (
     HighestScoreSelector,
     parallel_rollout,
@@ -30,6 +33,7 @@ __all__ = [
     "RolloutScorer",
     "RolloutSelector",
     "StubRolloutScorer",
+    "TempdirIsolator",
     "WorktreeIsolator",
     "is_step_eligible_for_parallel_rollout",
     "parallel_rollout",

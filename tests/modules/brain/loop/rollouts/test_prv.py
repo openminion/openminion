@@ -12,7 +12,7 @@ from openminion.modules.brain.loop.rollouts import (
     RolloutPlan,
     RolloutResult,
     StubRolloutScorer,
-    WorktreeIsolator,
+    TempdirIsolator,
     is_step_eligible_for_parallel_rollout,
     parallel_rollout,
 )
@@ -66,7 +66,7 @@ def test_rollout_result_succeeded_flag_reads_error():
 
 
 def test_isolator_allocates_n_temp_dirs_and_releases():
-    isolator = WorktreeIsolator()
+    isolator = TempdirIsolator()
     dirs = isolator.allocate(3)
     assert len(dirs) == 3
     assert all(d.is_dir() for d in dirs)
@@ -75,7 +75,7 @@ def test_isolator_allocates_n_temp_dirs_and_releases():
 
 
 def test_isolator_worktrees_context_manager_cleans_up_on_exception():
-    isolator = WorktreeIsolator()
+    isolator = TempdirIsolator()
     captured: list = []
     try:
         with isolator.worktrees(2) as dirs:
@@ -87,7 +87,7 @@ def test_isolator_worktrees_context_manager_cleans_up_on_exception():
 
 
 def test_isolator_assert_no_leaks_passes_after_release():
-    isolator = WorktreeIsolator()
+    isolator = TempdirIsolator()
     isolator.allocate(2)
     isolator.release()
     isolator.assert_no_leaks()
@@ -95,7 +95,7 @@ def test_isolator_assert_no_leaks_passes_after_release():
 
 def test_isolator_assert_no_leaks_raises_when_dirs_remain():
 
-    isolator = WorktreeIsolator()
+    isolator = TempdirIsolator()
     d = isolator.allocate(1)[0]
     assert d.exists()
     # Do NOT release; detector should trip.
