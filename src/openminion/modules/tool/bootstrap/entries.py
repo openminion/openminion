@@ -236,6 +236,12 @@ _TOOL_BOOTSTRAP_ENTRIES: tuple[_ToolBootstrapEntry, ...] = (
     ),
     _ToolBootstrapEntry(
         kind="tool",
+        module_name="openminion.tools.ops",
+        label="System operations",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
         module_name="openminion.tools.ip",
         label="IP",
         required=False,

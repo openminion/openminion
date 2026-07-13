@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import io
-from contextlib import redirect_stdout
 from types import SimpleNamespace
 
-from openminion.cli.chat.commands.goal import handle_goal_command
+from openminion.cli.commands.goal import execute_goal_cli_command
 from openminion.modules.brain.checkpoint import CheckpointManager
 from openminion.modules.brain.loop.tools.task_ops import stable_task_id_for_plan_id
 from openminion.modules.brain.runtime.goal.long_running import LongRunningGoalRuntime
@@ -197,19 +195,11 @@ def test_lgmh_smoke_cross_session_cron_and_goal_cli(tmp_path, monkeypatch) -> No
     assert goal_store.get("goal-smoke").status == "active"  # type: ignore[union-attr]
     assert mission_store.get("mission-smoke").status == "active"  # type: ignore[union-attr]
 
-    monkeypatch.setattr(
-        "openminion.cli.chat.commands.goal.resolve_cli_roots",
-        lambda **_kwargs: SimpleNamespace(data_root=db_path.parent),
+    del monkeypatch
+    _tone, rendered = execute_goal_cli_command(
+        "/goal show goal-smoke",
+        session_id="sess-smoke",
+        db_path=db_path,
     )
-    monkeypatch.setattr(
-        "openminion.cli.chat.commands.goal.resolve_brain_runtime_db_path",
-        lambda *, storage_path: db_path,
-    )
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        handled = handle_goal_command("/goal show goal-smoke", session_id="sess-smoke")
-
-    assert handled is True
-    rendered = buf.getvalue()
     assert "goal-smoke [active] goal goal-smoke" in rendered
     assert "success_criteria=1" in rendered

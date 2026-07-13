@@ -33,9 +33,11 @@ COMMAND_SPECS = (
     ),
     CommandSpec("chat", "openminion.cli.commands.chat", "Interactive chat client"),
     CommandSpec(
-        "dashboard", "openminion.cli.commands.tui", "Launch the monitoring dashboard"
+        "dashboard",
+        "openminion.cli.commands.tui",
+        "Launch the deprecated monitoring dashboard during migration",
     ),
-    CommandSpec("tui", "openminion.cli.commands.tui", "Launch focus mode"),
+    CommandSpec("tui", "openminion.cli.commands.tui", argparse.SUPPRESS),
     CommandSpec("sessions", "openminion.cli.commands.sessions", "Session operations"),
     CommandSpec(
         "sidecar", "openminion.cli.commands.sidecar", "Sidecar lifecycle controls"
@@ -197,8 +199,8 @@ def build_parser(*, selected_command: str | None = None) -> argparse.ArgumentPar
         prog="openminion",
         description=(
             "Python-first OpenMinion runtime. Bare `openminion` opens the "
-            "default focus shell; `openminion dashboard` opens the monitoring "
-            "overview."
+            "Textual Focus shell; piped input and `openminion run` execute "
+            "one-shot requests."
         ),
         allow_abbrev=False,
     )

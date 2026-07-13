@@ -109,29 +109,6 @@ class TestNegativeFixtures:
         assert index_path.exists(), f"Negative fixture index not found: {index_path}"
 
 
-class TestSkillCommands:
-    def test_skill_ingest_function_available(self):
-        # openminion.cli.chat.commands is in-tree; absence is shim breakage, not optional dep.
-        from openminion.cli.chat.commands import _run_chat_skill_ingest
-
-        assert callable(_run_chat_skill_ingest), (
-            "_run_chat_skill_ingest should be callable"
-        )
-
-    def test_skill_list_function_available(self):
-        # openminion.cli.chat.commands is in-tree; absence is shim breakage, not optional dep.
-        from openminion.cli.chat.commands import _run_chat_skill_list
-
-        assert callable(_run_chat_skill_list), "_run_chat_skill_list should be callable"
-
-    def test_skill_command_handler_available(self):
-        from openminion.cli.chat.commands import _handle_skill_command
-
-        assert callable(_handle_skill_command), (
-            "_handle_skill_command should be callable"
-        )
-
-
 class TestFixtureSchema:
     def _parse_frontmatter(self, content: str) -> dict:
         lines = content.split("\n")

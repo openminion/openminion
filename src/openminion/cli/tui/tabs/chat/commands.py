@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import io
 from pathlib import Path
-from types import SimpleNamespace
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -13,7 +12,7 @@ from textual.css.query import QueryError
 from textual.screen import ModalScreen
 from textual.widgets import Button, DataTable, Label, OptionList
 
-from openminion.cli.tui.presentation import resolve_theme_data_root
+from openminion.cli.presentation import resolve_theme_data_root
 
 from ...widgets import ChatMessage, ChatView, MessageKind, SidebarItem
 
@@ -249,17 +248,8 @@ class ChatCommandMixin:
         elif action == "help":
             self.screen.action_show_help()
         elif action == "menu":
-            bridge_context = self._build_cli_bridge_context()
-            config = (
-                bridge_context.config
-                if bridge_context is not None
-                else SimpleNamespace(
-                    runtime=SimpleNamespace(menu_pairing_enabled=False)
-                )
-            )
             body = self._capture_cli_chat_ui_text(
                 self._print_grouped_menu,
-                config=config,
             )
             chat.push_message(
                 ChatMessage(
@@ -419,7 +409,7 @@ class ChatCommandMixin:
             return f"/permissions: {exc}"
 
     def _diff_command_body(self, text: str) -> str:
-        from openminion.cli.tui.presentation.git.diff import render_git_diff
+        from openminion.cli.presentation.git.diff import render_git_diff
 
         parts = str(text or "").strip().split(maxsplit=1)
         args = parts[1].strip() if len(parts) > 1 else ""
@@ -429,7 +419,7 @@ class ChatCommandMixin:
             return f"/diff: {exc}"
 
     def _visible_parity_command_body(self, action: str, text: str) -> str:
-        from openminion.cli.tui.presentation.visible_parity import (
+        from openminion.cli.presentation.visible_parity import (
             handle_effort_command,
             handle_statusline_command,
             handle_undo_command,
@@ -460,8 +450,6 @@ class ChatCommandMixin:
             return False
 
         bridgeable = (
-            "/artifacts",
-            "/debug",
             "/pair",
             "/trust",
             "/untrust",
@@ -474,57 +462,19 @@ class ChatCommandMixin:
             return False
 
         chat = self.query_one(ChatView)
-        bridge_context = self._build_cli_bridge_context()
-        if bridge_context is None:
-            if normalized.startswith("/debug"):
-                return False
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body="This slash command needs a real configured runtime.",
-                )
+        command = normalized.split(maxsplit=1)[0]
+        chat.push_message(
+            ChatMessage(
+                kind=MessageKind.SYSTEM,
+                sender="system",
+                body=(
+                    f"{command} is no longer hosted by the deprecated dashboard. "
+                    "Use the canonical OpenMinion CLI or Focus permissions and "
+                    "resource commands."
+                ),
             )
-            return True
-
-        from openminion.cli.chat.commands import handle_chat_command
-
-        buffer = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
-                result = handle_chat_command(
-                    line=normalized,
-                    args=bridge_context.args,
-                    config=bridge_context.config,
-                    agent_id=self._runtime.agent_id,
-                    session_id=self._runtime.session_id,
-                    transport=self._runtime.transport,
-                    mode=bridge_context.runtime_state.mode,
-                    runtime_state=bridge_context.runtime_state,
-                    last_artifacts=list(self._last_artifacts),
-                    last_turn_debug=dict(self._last_turn_debug),
-                )
-        except Exception as exc:
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.ERROR,
-                    sender="error",
-                    body=f"Command failed: {type(exc).__name__}: {exc}",
-                )
-            )
-            return True
-
-        output = buffer.getvalue().strip()
-        if output:
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=output,
-                )
-            )
-        self._apply_cli_bridge_result(result)
-        return bool(getattr(result, "handled", True))
+        )
+        return True
 
     @staticmethod
     def _capture_cli_chat_ui_text(callback, /, *args, **kwargs) -> str:
@@ -534,7 +484,7 @@ class ChatCommandMixin:
         return buffer.getvalue().strip()
 
     def _handle_theme(self, line: str = "/theme") -> None:
-        from openminion.cli.chat.ui import handle_theme
+        from openminion.cli.presentation.theme import handle_theme
 
         handle_theme(
             line=line,
@@ -544,59 +494,12 @@ class ChatCommandMixin:
         )
 
     @staticmethod
-    def _print_grouped_menu(*, config) -> None:
-        from openminion.cli.chat.ui import print_grouped_menu
+    def _print_grouped_menu() -> None:
+        from openminion.cli.presentation.slash_commands import slash_help_rows
 
-        print_grouped_menu(config=config)
-
-    def _build_cli_bridge_context(self):
-        api_runtime = getattr(self._runtime, "_rt", None)
-        config = getattr(api_runtime, "config", None)
-        if api_runtime is None or config is None:
-            return None
-
-        from openminion.cli.chat.runtime import ChatRuntimeState
-
-        config_path = str(getattr(api_runtime, "config_path", "") or "")
-        args = SimpleNamespace(
-            config=config_path or None,
-            quiet=True,
-            no_progress=True,
-            verbose=False,
-            tools_verbose=False,
-        )
-        mode = str(getattr(getattr(config, "runtime", None), "process_mode", "") or "")
-        runtime_state = ChatRuntimeState(
-            endpoint=None,
-            transport=self._runtime.transport,
-            inproc_runtime=api_runtime,
-            mode=mode or "single-process",
-            auto_start=False,
-            show_progress=False,
-            quiet=True,
-        )
-        return SimpleNamespace(
-            args=args,
-            config=config,
-            runtime_state=runtime_state,
-        )
-
-    def _apply_cli_bridge_result(self, result) -> None:
-        if bool(getattr(result, "exit", False)):
-            self.app.exit()
-            return
-
-        next_agent = str(getattr(result, "agent_id", "") or "").strip()
-        if next_agent:
-            self._do_switch_agent(next_agent)
-            self._refresh_sidebar()
-
-        next_session = str(getattr(result, "session_id", "") or "").strip()
-        if next_session:
-            self._do_switch_session(next_session)
-
-        if bool(getattr(result, "new_conversation", False)):
-            self.action_new_session()
+        print("Commands:")
+        for name, description in slash_help_rows():
+            print(f"  {name:<14} {description}")
 
     def action_copy_message(self) -> None:
         chat = self.query_one(ChatView)
@@ -642,8 +545,16 @@ class ChatCommandMixin:
         def _on_selected(categories: list[str] | None) -> None:
             if not categories:
                 return
-            for category in categories:
-                self._handle_cli_bridge_command(f"/trust {category}")
+            self.query_one(ChatView).push_message(
+                ChatMessage(
+                    kind=MessageKind.SYSTEM,
+                    sender="system",
+                    body=(
+                        "Dashboard trust changes are retired. Use the canonical "
+                        "Focus permissions overlay for: " + ", ".join(categories)
+                    ),
+                )
+            )
 
         self.app.push_screen(TrustCategoryModal(list(_TRUST_CATEGORIES)), _on_selected)
 

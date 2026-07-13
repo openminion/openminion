@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from textual.css.query import QueryError
 
 from openminion.cli.status import PhaseStatusController, format_token_usage_summary
-from openminion.cli.tui.presentation import (
+from openminion.cli.presentation import (
     ThinkingIndicator,
     ToolEvent,
     build_tool_event_from_progress,
@@ -15,10 +15,6 @@ from openminion.cli.tui.presentation import (
 )
 
 from ...widgets import ChatInputBar, ChatMessage, ChatView, MessageKind
-
-_CHAT_TURN_MAX_ATTEMPTS = 3
-_CHAT_TURN_RETRY_BACKOFF_SECONDS = (0.25, 0.5)
-
 
 class ChatTurnMixin:
     def _tick_elapsed(self) -> None:
@@ -160,102 +156,74 @@ class ChatTurnMixin:
         if "progress_callback" in sig.parameters:
             send_kwargs["progress_callback"] = progress_cb
 
-        from openminion.cli.chat.runtime import is_retryable_turn_error
-
         try:
             loop = asyncio.get_running_loop()
-            for attempt in range(1, _CHAT_TURN_MAX_ATTEMPTS + 1):
-                accumulated = ""
-                pending_tool_widgets: dict[str, object] = {}
-                try:
-                    chunks: list[str] = await loop.run_in_executor(
-                        None,
-                        lambda: self._collect_chunks_sync(rt, text, send_kwargs),
+            try:
+                chunks: list[str] = await loop.run_in_executor(
+                    None,
+                    lambda: self._collect_chunks_sync(rt, text, send_kwargs),
+                )
+            except Exception as exc:
+                chat.push_message(
+                    ChatMessage(
+                        kind=MessageKind.ERROR,
+                        sender="error",
+                        body=str(exc),
                     )
-                except Exception as exc:
-                    if attempt < _CHAT_TURN_MAX_ATTEMPTS and is_retryable_turn_error(
-                        exc
-                    ):
-                        chat.push_message(
-                            ChatMessage(
-                                kind=MessageKind.SYSTEM,
-                                sender="system",
-                                body=self._retry_notice_text(
-                                    attempt=attempt,
-                                    max_attempts=_CHAT_TURN_MAX_ATTEMPTS,
-                                    error=exc,
-                                ),
-                            )
-                        )
-                        await asyncio.sleep(
-                            _CHAT_TURN_RETRY_BACKOFF_SECONDS[
-                                min(
-                                    attempt - 1,
-                                    len(_CHAT_TURN_RETRY_BACKOFF_SECONDS) - 1,
-                                )
-                            ]
-                        )
-                        continue
-                    chat.push_message(
-                        ChatMessage(
-                            kind=MessageKind.ERROR,
-                            sender="error",
-                            body=str(exc),
-                        )
-                    )
-                    break
+                )
+                return
 
-                for chunk in chunks:
-                    normalized = str(chunk or "")
-                    if normalized.startswith("[tool-result:"):
-                        tool_line, _, rest = normalized.partition("\n")
-                        tool_id = self._tool_chunk_id(tool_line, prefix="[tool-result:")
-                        tool_widget = pending_tool_widgets.get(tool_id)
-                        if tool_widget is not None:
-                            tool_widget.set_tool_result(rest.strip() or "Completed.")
-                        else:
-                            chat.push_message(
-                                ChatMessage(
-                                    kind=MessageKind.TOOL,
-                                    sender=f"tool:{tool_id}",
-                                    body=f"{tool_id} completed",
-                                    tool_result=rest.strip() or "Completed.",
-                                )
-                            )
-                        continue
-                    if normalized.startswith("[tool:"):
-                        tool_line, _, rest = normalized.partition("\n")
-                        tool_id = self._tool_chunk_id(tool_line, prefix="[tool:")
-                        tool_call = self._tool_chunk_body(tool_line)
-                        widget = chat.push_message(
+            accumulated = ""
+            pending_tool_widgets: dict[str, object] = {}
+            for chunk in chunks:
+                normalized = str(chunk or "")
+                if normalized.startswith("[tool-result:"):
+                    tool_line, _, rest = normalized.partition("\n")
+                    tool_id = self._tool_chunk_id(tool_line, prefix="[tool-result:")
+                    tool_widget = pending_tool_widgets.get(tool_id)
+                    if tool_widget is not None:
+                        tool_widget.set_tool_result(rest.strip() or "Completed.")
+                    else:
+                        chat.push_message(
                             ChatMessage(
                                 kind=MessageKind.TOOL,
                                 sender=f"tool:{tool_id}",
-                                body=tool_call,
-                                tool_result=rest.strip() or None,
+                                body=f"{tool_id} completed",
+                                tool_result=rest.strip() or "Completed.",
                             )
                         )
-                        if rest.strip():
-                            widget.set_tool_result(rest.strip())
-                        else:
-                            pending_tool_widgets[tool_id] = widget
-                    else:
-                        accumulated += normalized
-                if accumulated:
-                    chat.push_message(
+                    continue
+                if normalized.startswith("[tool:"):
+                    tool_line, _, rest = normalized.partition("\n")
+                    tool_id = self._tool_chunk_id(tool_line, prefix="[tool:")
+                    widget = chat.push_message(
                         ChatMessage(
-                            kind=MessageKind.AGENT,
-                            sender=rt.agent_id,
-                            body=accumulated,
+                            kind=MessageKind.TOOL,
+                            sender=f"tool:{tool_id}",
+                            body=self._tool_chunk_body(tool_line),
+                            tool_result=rest.strip() or None,
                         )
                     )
-                    self._maybe_auto_name_session(accumulated)
-                for widget in pending_tool_widgets.values():
-                    if getattr(widget, "_message", None) is not None and (
-                        getattr(widget._message, "tool_result", None) is None
-                    ):
-                        widget.set_tool_result("Completed.")
-                break
+                    if rest.strip():
+                        widget.set_tool_result(rest.strip())
+                    else:
+                        pending_tool_widgets[tool_id] = widget
+                else:
+                    accumulated += normalized
+            if accumulated:
+                chat.push_message(
+                    ChatMessage(
+                        kind=MessageKind.AGENT,
+                        sender=rt.agent_id,
+                        body=accumulated,
+                    )
+                )
+                self._maybe_auto_name_session(accumulated)
+            for widget in pending_tool_widgets.values():
+                if getattr(widget, "_message", None) is not None and (
+                    getattr(widget._message, "tool_result", None) is None
+                ):
+                    widget.set_tool_result("Completed.")
         finally:
             self._set_busy(False)
             self._refresh_token_usage_summary()
@@ -286,15 +254,6 @@ class ChatTurnMixin:
         input_bar.set_disabled(busy)
         if not busy:
             input_bar.focus_input()
-
-    @staticmethod
-    def _retry_notice_text(*, attempt: int, max_attempts: int, error: object) -> str:
-        message = str(error).strip() or "turn failed"
-        next_attempt = int(attempt) + 1
-        return (
-            f"[chat] transient failure, retrying "
-            f"({next_attempt}/{max_attempts}): {message}"
-        )
 
     @staticmethod
     def _tool_chunk_id(tool_line: str, *, prefix: str) -> str:

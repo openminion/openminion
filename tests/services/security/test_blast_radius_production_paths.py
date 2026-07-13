@@ -84,9 +84,15 @@ def test_path2_executor_runtime_shares_turn_adapter_between_gate_and_executor() 
     _assert_module_source_contains(
         "openminion.services.agent.execution.runtime",
         "SEAM_AGENT_EXECUTOR_RUNTIME",
-        "turn_boundary_adapter",
+        "turn_boundary_adapter=boundary_adapter",
+    )
+    _assert_module_source_contains(
+        "openminion.services.agent.execution.policy",
         "blast_radius_adapter=turn_boundary_adapter",
-        "ctx.blast_radius_adapter = turn_boundary_adapter",
+    )
+    _assert_module_source_contains(
+        "openminion.services.agent.execution.resources",
+        "context.blast_radius_adapter = turn_boundary_adapter",
     )
 
 

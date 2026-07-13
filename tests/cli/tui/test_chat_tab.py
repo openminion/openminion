@@ -13,7 +13,7 @@ from openminion.cli.presentation import styles
 from openminion.cli.status import TokenUsageSnapshot
 from openminion.cli.theme import DARK
 from openminion.cli.tui.app import DemoSessionsProvider, OpenMinionApp
-from openminion.cli.tui.presentation import copy_to_clipboard
+from openminion.cli.presentation import copy_to_clipboard
 from openminion.cli.tui.screen import AppHeader
 from openminion.cli.tui.tabs.chat import ChatTab, ThinkingIndicator
 from openminion.cli.tui.widgets import SidebarItem
@@ -644,46 +644,11 @@ async def test_chat_progress_callback_updates_thinking_indicator_label() -> None
 
 
 @pytest.mark.asyncio
-async def test_chat_bridge_command_routes_cli_output_into_chat(monkeypatch) -> None:
-    from openminion.cli.chat.commands import base as base_module
-
-    seen: list[str] = []
-
-    def _fake_handle_chat_command(**kwargs):
-        seen.append(kwargs["line"])
-        print("grant-001 tool=exec")
-        return base_module.ChatCommandResult(handled=True)
-
-    monkeypatch.setattr(
-        "openminion.cli.chat.commands.handle_chat_command",
-        _fake_handle_chat_command,
-    )
-
+async def test_trust_modal_routes_selected_categories_to_focus() -> None:
     app = OpenMinionApp(runtime=_BridgeRuntime())
     async with app.run_test() as pilot:
         await pilot.pause()
         chat_tab = app.screen.query_one(ChatTab)
-        chat_tab._handle_command("/grants")
-        await pilot.pause()
-
-        assert seen == ["/grants"]
-        system_messages = [
-            str(node.render())
-            for node in app.screen.query("#chat-view .message-system")
-        ]
-        assert any("grant-001 tool=exec" in rendered for rendered in system_messages)
-
-
-@pytest.mark.asyncio
-async def test_trust_modal_dispatches_selected_categories() -> None:
-    seen: list[str] = []
-
-    app = OpenMinionApp(runtime=_BridgeRuntime())
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        chat_tab = app.screen.query_one(ChatTab)
-        chat_tab._handle_cli_bridge_command = seen.append  # type: ignore[method-assign]
-
         chat_tab._open_trust_modal()
         await pilot.pause()
 
@@ -693,7 +658,16 @@ async def test_trust_modal_dispatches_selected_categories() -> None:
         app.screen.query_one("#trust-confirm").press()
         await pilot.pause()
 
-        assert seen == ["/trust exec", "/trust weather"]
+        system_messages = [
+            str(node.render())
+            for node in app.screen.query("#chat-view .message-system")
+        ]
+        assert any(
+            "Focus permissions overlay" in rendered
+            and "exec" in rendered
+            and "weather" in rendered
+            for rendered in system_messages
+        )
 
 
 @pytest.mark.asyncio
@@ -715,41 +689,6 @@ async def test_artifacts_modal_renders_last_turn_artifacts_table() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chat_debug_command_uses_cli_bridge_output_when_available(
-    monkeypatch,
-) -> None:
-    from openminion.cli.chat.commands import base as base_module
-
-    seen: list[str] = []
-
-    def _fake_handle_chat_command(**kwargs):
-        seen.append(kwargs["line"])
-        print("debug context")
-        print("tool_calls=3")
-        return base_module.ChatCommandResult(handled=True)
-
-    monkeypatch.setattr(
-        "openminion.cli.chat.commands.handle_chat_command",
-        _fake_handle_chat_command,
-    )
-
-    app = OpenMinionApp(runtime=_BridgeRuntime())
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        chat_tab = app.screen.query_one(ChatTab)
-        chat_tab._handle_command("/debug")
-        await pilot.pause()
-
-        assert seen == ["/debug"]
-        system_messages = [
-            str(node.render())
-            for node in app.screen.query("#chat-view .message-system")
-        ]
-        assert any("debug context" in rendered for rendered in system_messages)
-        assert any("tool_calls=3" in rendered for rendered in system_messages)
-
-
-@pytest.mark.asyncio
 async def test_chat_theme_command_renders_theme_info_in_system_message() -> None:
     app = OpenMinionApp(runtime=_BridgeRuntime())
     async with app.run_test() as pilot:
@@ -762,7 +701,7 @@ async def test_chat_theme_command_renders_theme_info_in_system_message() -> None
             str(node.render())
             for node in app.screen.query("#chat-view .message-system")
         ]
-        assert any("Chat Theme Settings" in rendered for rendered in system_messages)
+        assert any("Theme Settings" in rendered for rendered in system_messages)
         assert any("NO_COLOR env" in rendered for rendered in system_messages)
 
 
@@ -837,8 +776,8 @@ async def test_chat_menu_command_renders_grouped_menu_in_system_message() -> Non
             str(node.render())
             for node in app.screen.query("#chat-view .message-system")
         ]
-        assert any("=== SESSION ===" in rendered for rendered in system_messages)
-        assert any("=== CONTROL ===" in rendered for rendered in system_messages)
+        assert any("Commands:" in rendered for rendered in system_messages)
+        assert any("/permissions" in rendered for rendered in system_messages)
 
 
 @pytest.mark.asyncio
@@ -915,7 +854,7 @@ async def test_chat_copy_message_reports_clipboard_unavailable(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_chat_turn_retries_retryable_errors_and_reports_notice() -> None:
+async def test_chat_turn_leaves_runtime_retry_ownership_to_provider() -> None:
     runtime = _RetryRuntime()
     app = OpenMinionApp(runtime=runtime)
     async with app.run_test() as pilot:
@@ -926,18 +865,12 @@ async def test_chat_turn_retries_retryable_errors_and_reports_notice() -> None:
         for _ in range(20):
             await pilot.pause()
 
-        assert runtime.calls == 2
-        system_messages = [
+        assert runtime.calls == 1
+        error_messages = [
             str(node.render())
-            for node in app.screen.query("#chat-view .message-system")
+            for node in app.screen.query("#chat-view .message-error-body")
         ]
-        assert any(
-            "transient failure, retrying" in rendered for rendered in system_messages
-        )
-        rendered_bodies = [
-            str(node.render()) for node in app.screen.query("#chat-view .message-body")
-        ]
-        assert any("echo: retry me" in rendered for rendered in rendered_bodies)
+        assert any("request timed out" in rendered for rendered in error_messages)
 
 
 @pytest.mark.asyncio
@@ -951,7 +884,7 @@ async def test_chat_diff_command_surfaces_git_diff_output(monkeypatch) -> None:
         )()
 
     monkeypatch.setattr(
-        "openminion.cli.tui.presentation.git.diff.render_git_diff",
+        "openminion.cli.presentation.git.diff.render_git_diff",
         _fake_render_git_diff,
     )
     app = OpenMinionApp()

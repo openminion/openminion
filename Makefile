@@ -55,7 +55,6 @@ VALIDATE_PATTERN_MODULES := \
 	validate.cli_layout \
 	validate.openminion_eval_layout \
 	validate.focus_layout \
-	validate.chat_import_boundaries \
 	validate.no_raw_control_value_strings \
 	validate.asyncio_run_boundary \
 	validate.artifact_locations \
@@ -103,7 +102,6 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/cli_layout \
 	validate/openminion_eval_layout \
 	validate/focus_layout \
-	validate/chat_import_boundaries \
 	validate/no_raw_control_value_strings \
 	validate/asyncio_run_boundary \
 	validate/artifact_locations \

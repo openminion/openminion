@@ -21,15 +21,12 @@ class Suite:
 
 SUITES: dict[str, Suite] = {
     "local": Suite(
-        (
-            "tests/e2e/tui/focus/test_local.py",
-            "tests/e2e/tui/focus/test_fake_terminal_focus.py",
-        )
+        ("tests/e2e/tui/focus/test_local.py",)
     ),
     "core": Suite(("tests/e2e/tui/focus/test_live_basic.py",), live=True),
     "tools": Suite(("tests/e2e/tui/focus/test_live_tools.py",), live=True),
     "approval": Suite(
-        ("tests/cli/tui/focus/test_focus_mode.py",),
+        ("tests/cli/interactive/test_focus_mode.py",),
         ("-k", "approval"),
     ),
     "research": Suite(
@@ -57,23 +54,22 @@ SUITES: dict[str, Suite] = {
     ),
     "queued-input": Suite(
         (
-            "tests/cli/tui/focus/test_focus_input_chrome.py",
-            "tests/cli/tui/focus/test_focus_status_line_richness.py",
+            "tests/cli/interactive/test_focus_input_chrome.py",
+            "tests/cli/interactive/test_focus_status_line_richness.py",
         ),
         ("-k", "queued"),
     ),
     "progress-visibility": Suite(
         (
             "tests/cli/status",
-            "tests/cli/tui/terminal/test_spinner.py",
-            "tests/cli/tui/focus/test_focus_status_format_parity.py",
+            "tests/cli/interactive/test_focus_status_format_parity.py",
+            "tests/cli/interactive/test_focus_status_line_richness.py",
         ),
     ),
     "tier-a": Suite(
         (
-            "tests/e2e/tui/focus/test_fake_terminal_focus.py",
-            "tests/cli/tui/focus/test_focus_approval_persistence.py",
-            "tests/cli/tui/terminal/test_overlays.py",
+            "tests/cli/interactive/test_focus_approval_persistence.py",
+            "tests/cli/interactive/test_focus_slash_commands.py",
             "tests/policy/test_policy_service.py",
             "tests/brain/test_confirmation_replay_bridge_integration.py",
             "tests/integration/test_parallel_rollout_patch_apply.py",
@@ -82,9 +78,8 @@ SUITES: dict[str, Suite] = {
     "regression": Suite(
         (
             "tests/e2e/tui/focus/test_local.py",
-            "tests/e2e/tui/focus/test_fake_terminal_focus.py",
-            "tests/cli/tui/focus",
-            "tests/cli/tui/terminal",
+            "tests/cli/interactive",
+            "tests/cli/presentation",
             "tests/cli/status",
         ),
     ),

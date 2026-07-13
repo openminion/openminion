@@ -10,7 +10,7 @@ from textual.widget import Widget
 from textual.widgets import Label
 
 from openminion.cli.status import PhaseStatusController
-from openminion.cli.tui.presentation import ThinkingIndicator, copy_to_clipboard  # noqa: F401
+from openminion.cli.presentation import ThinkingIndicator, copy_to_clipboard  # noqa: F401
 
 from .commands import ChatCommandMixin
 from .turns import ChatTurnMixin
@@ -370,6 +370,6 @@ class ChatTab(ChatTurnMixin, ChatCommandMixin, Widget):
 
 
 def _format_session_age(updated_at: str) -> str:
-    from openminion.cli.tui.presentation.models import format_chat_timestamp
+    from openminion.cli.presentation.models import format_chat_timestamp
 
     return format_chat_timestamp(updated_at)

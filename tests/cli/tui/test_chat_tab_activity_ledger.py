@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
-from openminion.cli.tui.presentation.models import MessageKind
+from openminion.cli.presentation.models import MessageKind
 from openminion.cli.tui.tabs.chat import ChatTab
 
 

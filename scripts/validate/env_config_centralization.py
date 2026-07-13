@@ -30,7 +30,7 @@ ALLOWED_FROM_SOURCES_FILES = {
     Path("src/openminion/base/config/manager.py"),
     Path("src/openminion/base/config/paths.py"),
     Path("src/openminion/cli/commands/focus.py"),
-    Path("src/openminion/cli/chat/_deprecation.py"),
+    Path("src/openminion/cli/ux/deprecation.py"),
     Path("src/openminion/cli/ux/verbosity.py"),
     Path("src/openminion/cli/main.py"),
     Path("src/openminion/daemon.py"),
@@ -68,9 +68,7 @@ ALLOWED_DIRECT_ENV_FILES = {
 # reintroduce direct process-env reads or feature-level from_sources calls.
 REQUIRED_CANONICAL_CLI_FILES = {
     Path("src/openminion/cli/commands/chat.py"),
-    Path("src/openminion/cli/chat/commands/context.py"),
-    Path("src/openminion/cli/chat/commands/session.py"),
-    Path("src/openminion/cli/chat/ui.py"),
+    Path("src/openminion/cli/commands/tui.py"),
     Path("src/openminion/cli/commands/agents.py"),
     Path("src/openminion/cli/commands/status/__init__.py"),
     Path("src/openminion/cli/presentation/styles.py"),

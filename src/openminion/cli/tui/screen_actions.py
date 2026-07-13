@@ -52,6 +52,14 @@ class MainScreenActionsMixin:
             tab_id = str(pane.id)
         if not tab_id:
             tab_id = str(self.query_one(TabbedContent).active)
+        from openminion.cli.status.surface import record_surface_event
+
+        record_surface_event(
+            self._runtime,
+            surface="dashboard",
+            action="tab",
+            tab=tab_id,
+        )
         self.query_one(FooterBar).set_context_hints(tab_id)
         self._refresh_tab_badges()
         self.call_after_refresh(self._focus_active_tab, tab_id)

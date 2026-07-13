@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openminion.cli.tui.presentation.tool.progress import (
+from openminion.cli.presentation.tool.progress import (
     build_tool_event_from_progress,
 )
 

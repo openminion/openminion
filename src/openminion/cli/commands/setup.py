@@ -180,24 +180,24 @@ def _run_setup_doctor(*, config_path: Path) -> int:
     )
 
 
-def _launch_post_setup_chat(args, *, config_path: Path) -> int:
-    from openminion.cli.commands.chat import run_chat
+def _launch_post_setup_focus(args, *, config_path: Path) -> int:
+    from openminion.cli.commands.focus import run_focus
 
-    chat_args = SimpleNamespace(
+    focus_args = SimpleNamespace(
         config=str(config_path),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
         agent=getattr(args, "agent", None),
         session="onboarding-first-run",
-        quiet=False,
-        no_progress=False,
-        conversation=None,
-        resume=False,
-        reset_session=False,
-        demo=False,
-        verbose=False,
-        tools_verbose=False,
-        first_session_tip=True,
+        dir=str(Path.cwd()),
+        theme=None,
+        no_interactive=False,
+        no_context=False,
+        no_update_check=False,
+        rich=True,
+        terminal=False,
     )
-    return int(run_chat(chat_args) or 0)
+    return int(run_focus(focus_args) or 0)
 
 
 def _resolve_runtime_helper(name: str) -> Any:
@@ -263,11 +263,9 @@ def _print_post_setup_tips() -> None:
         "and `openminion agent` (CUC). Same env vars: "
         "`OPENMINION_VERBOSITY` and `OPENMINION_PROGRESS`. "
         "Piped contexts auto-detect to `--progress off`.",
-        "`openminion chat` is in maintenance mode (soft-deprecated). "
-        "Use `openminion` (focus shell) for new interactive work; "
-        "see the chat migration guide for the transition path. "
-        "Suppress chat's deprecation notice on scripted runs "
-        "with `OPENMINION_CHAT_NO_DEPRECATION=1`.",
+        "`openminion chat` is a compatibility alias. Use bare `openminion` "
+        "or `openminion focus` for interactive work, and `openminion run` "
+        "for scripted one-shot execution.",
     )
     for paragraph in paragraphs:
         print(paragraph)
@@ -292,12 +290,15 @@ def run_setup(args) -> int:
         return doctor_code
 
     if getattr(args, "no_chat", False):
-        print("Setup complete. Chat launch skipped because --no-chat was requested.")
+        print(
+            "Setup complete. Interactive launch skipped because "
+            "--no-chat/--no-focus was requested."
+        )
         _print_post_setup_tips()
         return 0
 
-    print("Setup validation passed. Entering chat...")
-    return _resolve_runtime_helper("_launch_post_setup_chat")(
+    print("Setup validation passed. Entering Focus...")
+    return _resolve_runtime_helper("_launch_post_setup_focus")(
         args, config_path=saved_path
     )
 
@@ -309,8 +310,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
     setup.add_argument(
         "--no-chat",
+        "--no-focus",
+        dest="no_chat",
         action="store_true",
-        help="Configure and validate only; do not continue into chat afterwards",
+        help="Configure and validate only; do not launch Focus afterwards",
     )
     setup.add_argument(
         "--agent",

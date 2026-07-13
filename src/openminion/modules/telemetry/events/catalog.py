@@ -123,6 +123,9 @@ MSPO_MEMORY_SPAN_READ = "mspo_memory_span_read"
 
 CHAT_PHASE_TIMING = "chat.phase_timing"
 TUI_RENDER = "tui.render"
+CLI_SURFACE_USED = "cli.surface.used"
+CLI_DEPRECATION_SHOWN = "cli.deprecation.shown"
+CLI_DASHBOARD_TAB_ACTIVATED = "cli.dashboard.tab_activated"
 SELF_MODEL_SNAPSHOT_BUILT = "self_model.snapshot_built"
 SELF_MODEL_SNAPSHOT_DEGRADED = "self_model.snapshot_degraded"
 SELF_AWARENESS_ANSWER_DEGRADED = "self_awareness.answer_degraded"
@@ -145,6 +148,10 @@ TOOL_RUN = "tool.run"
 TOOL_CALL_LEGACY = "tool_call"
 TOOL_ENVELOPE_REPAIR_RETRY = "tool_envelope.repair_retry"
 TOOL_ENVELOPE_REPAIR_EXHAUSTED = "tool_envelope.repair_exhausted"
+
+CAPABILITY_PACK_ACTIVATED = "capability_pack.activated"
+CAPABILITY_PACK_ACTIVATION_DENIED = "capability_pack.activation_denied"
+CAPABILITY_PACK_OVERRIDE_APPLIED = "capability_pack.override_applied"
 
 PAE_IDLE_TICK_CANCELLED = "pae.idle_tick.cancelled"
 PAE_IDLE_TICK_SCHEDULED = "pae.idle_tick.scheduled"
@@ -284,6 +291,9 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MSPO_MEMORY_SPAN_READ,
         CHAT_PHASE_TIMING,
         TUI_RENDER,
+        CLI_SURFACE_USED,
+        CLI_DEPRECATION_SHOWN,
+        CLI_DASHBOARD_TAB_ACTIVATED,
         SELF_MODEL_SNAPSHOT_BUILT,
         SELF_MODEL_SNAPSHOT_DEGRADED,
         SELF_AWARENESS_ANSWER_DEGRADED,
@@ -304,6 +314,9 @@ EVENT_TYPES: frozenset[str] = frozenset(
         TOOL_CALL_LEGACY,
         TOOL_ENVELOPE_REPAIR_RETRY,
         TOOL_ENVELOPE_REPAIR_EXHAUSTED,
+        CAPABILITY_PACK_ACTIVATED,
+        CAPABILITY_PACK_ACTIVATION_DENIED,
+        CAPABILITY_PACK_OVERRIDE_APPLIED,
         PAE_IDLE_TICK_CANCELLED,
         PAE_IDLE_TICK_SCHEDULED,
         PAE_IDLE_TICK_SUPPRESSED,
@@ -495,6 +508,9 @@ __all__ = [
     "TOOL_CALL_LEGACY",
     "TOOL_ENVELOPE_REPAIR_RETRY",
     "TOOL_ENVELOPE_REPAIR_EXHAUSTED",
+    "CAPABILITY_PACK_ACTIVATED",
+    "CAPABILITY_PACK_ACTIVATION_DENIED",
+    "CAPABILITY_PACK_OVERRIDE_APPLIED",
     "PAE_IDLE_TICK_CANCELLED",
     "PAE_IDLE_TICK_SCHEDULED",
     "PAE_IDLE_TICK_SUPPRESSED",

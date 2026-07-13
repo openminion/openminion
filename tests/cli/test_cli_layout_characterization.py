@@ -8,15 +8,15 @@ IMPORT_SURFACE = [
     ("openminion.cli.main", "main"),
     ("openminion.cli.config", "load_cli_config"),
     ("openminion.cli.constants", "CLI_DEFAULT_THEME_VARIANT"),
-    ("openminion.cli.config_helpers", "load_config"),
-    ("openminion.cli.paths", "CLI_IDENTITY_DB_FILENAME"),
+    ("openminion.cli.bootstrap.loader", "load_config"),
+    ("openminion.cli.bootstrap.paths", "CLI_IDENTITY_DB_FILENAME"),
     ("openminion.cli.parser", "build_parser"),
-    ("openminion.cli.parser_helpers", "add_json_output_flag"),
-    ("openminion.cli.contracts", "CLI_INTERFACE_VERSION"),
+    ("openminion.cli.parser.flags", "add_json_output_flag"),
+    ("openminion.cli.parser.contracts", "CLI_INTERFACE_VERSION"),
     ("openminion.cli.identity.provenance", "build_identity_provenance"),
     ("openminion.cli.identity.sync", "sync_cli_identity_profiles"),
-    ("openminion.cli.daemon_client", "daemon_request"),
-    ("openminion.cli.styles", "StyleToken"),
+    ("openminion.cli.transport.daemon_client", "daemon_request"),
+    ("openminion.cli.presentation.styles", "StyleToken"),
 ]
 PACKAGE_ALIAS_IMPORTS = {
     "parser": "build_parser",
@@ -32,9 +32,9 @@ EXPECTED_ROOT_FILES = {
 }
 EXPECTED_GROUP_DIRS = {
     "bootstrap",
-    "chat",
     "commands",
     "identity",
+    "interactive",
     "parser",
     "presentation",
     "status",

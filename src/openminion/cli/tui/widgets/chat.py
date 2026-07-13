@@ -16,17 +16,17 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Input, Label, Static
 
-from openminion.cli.tui.presentation.models import (
+from openminion.cli.presentation.models import (
     ChatMessage,
     MessageKind,
     ToolEvent,
     format_chat_timestamp,
 )
-from openminion.cli.tui.presentation.messages import (
+from openminion.cli.presentation.messages import (
     looks_like_markdown,
     render_body,
 )
-from openminion.cli.tui.presentation.tool.blocks import ToolBlockWidget
+from openminion.cli.presentation.tool.blocks import ToolBlockWidget
 from .chat_selection import ChatSelectionMixin, copyable_text_for_message  # noqa: F401
 
 __all__ = [

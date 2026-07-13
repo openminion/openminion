@@ -31,7 +31,7 @@ def test_no_subcommand_with_tty_and_config_launches_focus(monkeypatch) -> None:
 
     monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake_run_focus)
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(),
     )
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -51,7 +51,7 @@ def test_no_subcommand_with_no_config_runs_setup(monkeypatch) -> None:
 
     monkeypatch.setattr("openminion.cli.commands.setup.run_setup", _fake_run_setup)
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(should_launch_setup=True),
     )
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -64,11 +64,11 @@ def test_no_subcommand_with_no_config_runs_setup(monkeypatch) -> None:
 
 def test_no_subcommand_with_should_fail_fast_exits_two(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(should_fail_fast=True),
     )
     monkeypatch.setattr(
-        "openminion.cli.main.format_fail_fast_message",
+        "openminion.services.bootstrap.onboarding.format_fail_fast_message",
         lambda **kw: "remediation message",
     )
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -79,14 +79,12 @@ def test_no_subcommand_with_should_fail_fast_exits_two(monkeypatch, capsys) -> N
     assert excinfo.value.code == 2
 
 
-def test_no_subcommand_pipe_with_data_dispatches_terminal_flow(
-    monkeypatch, capsys
-) -> None:
+def test_no_subcommand_pipe_with_data_dispatches_one_shot(monkeypatch, capsys) -> None:
     import io
     import sys as _sys
 
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(),
     )
     # Non-TTY stdin with content.
@@ -97,15 +95,15 @@ def test_no_subcommand_pipe_with_data_dispatches_terminal_flow(
 
     called = {}
 
-    def _fake_run_focus(_args):
-        called["focus"] = True
+    def _fake_run(prompt_args):
+        called["prompt"] = prompt_args.prompt
         return 0
 
-    monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake_run_focus)
+    monkeypatch.setattr("openminion.cli.commands.run.run_openminion", _fake_run)
 
     rc = cli_main([])
     assert rc == 0
-    assert called.get("focus") is True
+    assert called.get("prompt") == "summarize the plan"
 
 
 def test_no_subcommand_pipe_with_no_data_prints_help(monkeypatch, capsys) -> None:
@@ -113,7 +111,7 @@ def test_no_subcommand_pipe_with_no_data_prints_help(monkeypatch, capsys) -> Non
     import sys as _sys
 
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(),
     )
     fake_stdin = io.StringIO("")
@@ -143,7 +141,7 @@ def test_no_subcommand_pipe_with_whitespace_only_data_prints_help(
     import sys as _sys
 
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(),
     )
     fake_stdin = io.StringIO("   \n  \t\n")
@@ -181,15 +179,13 @@ def test_explicit_focus_subcommand_routes_to_focus(monkeypatch) -> None:
 
 
 def test_dashboard_subcommand_routes_to_dashboard(monkeypatch) -> None:
-    from openminion.cli.parser import base as parser_base
-
     called = {}
 
     def _fake(_args):
         called["dashboard"] = True
         return 0
 
-    monkeypatch.setattr(parser_base.tui_cmd, "run_tui", _fake)
+    monkeypatch.setattr("openminion.cli.commands.tui.run_tui", _fake)
     rc = cli_main(["dashboard"])
     assert rc == 0
     assert called.get("dashboard") is True
@@ -209,15 +205,13 @@ def test_tui_subcommand_routes_to_focus_by_default(monkeypatch) -> None:
 
 
 def test_tui_dashboard_flag_routes_to_dashboard(monkeypatch) -> None:
-    from openminion.cli.parser import base as parser_base
-
     called = {}
 
     def _fake(_args):
         called["dashboard"] = True
         return 0
 
-    monkeypatch.setattr(parser_base.tui_cmd, "run_tui", _fake)
+    monkeypatch.setattr("openminion.cli.commands.tui.run_tui", _fake)
     rc = cli_main(["tui", "--dashboard"])
     assert rc == 0
     assert called.get("dashboard") is True

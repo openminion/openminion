@@ -19,7 +19,7 @@ from openminion.cli.status import (
     usage_totals_from_mapping,
 )
 from openminion.cli.parser.contracts import CLI_INTERFACE_VERSION
-from openminion.cli.tui.presentation.models import ChatMessage
+from openminion.cli.presentation.models import ChatMessage
 from openminion.cli.tui.widgets import SidebarItem
 from openminion.cli.tui.project_context import (
     ProjectContextInfo,

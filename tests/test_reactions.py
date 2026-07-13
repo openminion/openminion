@@ -3,7 +3,6 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from tests._csc_fixtures import _csc_install_default_agent
 
 
 def _message_ref() -> dict[str, str]:
@@ -52,30 +51,6 @@ class TestReactionsConfig(unittest.TestCase):
         config_dict = config.__dict__
         self.assertIn("reactions_enabled", config_dict)
         self.assertIn("reactions_default_policy", config_dict)
-
-
-class TestReactionsDebugInfo(unittest.TestCase):
-    def test_get_reactions_debug_info_returns_dict(self):
-        from openminion.cli.chat.commands import _get_reactions_debug_info
-        from openminion.base.config import OpenMinionConfig
-
-        info = _get_reactions_debug_info(config=OpenMinionConfig())
-        self.assertIn("enabled", info)
-        self.assertIn("plugin_installed", info)
-        self.assertIn("available", info)
-        self.assertIn("default_policy", info)
-
-    def test_get_reactions_debug_info_with_disabled_config(self):
-        from openminion.cli.chat.commands import _get_reactions_debug_info
-        from openminion.base.config import OpenMinionConfig
-
-        config = OpenMinionConfig()
-        _csc_install_default_agent(config)  # type: ignore[attr-defined]
-        config.runtime.reactions_enabled = False
-
-        info = _get_reactions_debug_info(config=config)
-        self.assertFalse(info.get("enabled"))
-        self.assertFalse(info.get("available"))
 
 
 class TestReactionsToolInventory(unittest.TestCase):

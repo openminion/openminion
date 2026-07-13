@@ -101,12 +101,9 @@ If you want the interactive surface next, launch the default focus shell:
 python -m openminion
 ```
 
-Use the dashboard when you want the monitoring / overview surface across chats,
-sessions, agents, tools, memory, cron, and system state:
-
-```bash
-python -m openminion dashboard
-```
+The legacy dashboard remains available only as a deprecated migration surface.
+See [`docs/terminal-surfaces.md`](docs/terminal-surfaces.md) for its replacement
+map and release gate.
 
 ## Contributor setup
 
@@ -178,6 +175,8 @@ Tool package note:
   is the current package-local proof snapshot for the active alpha line.
 - [`docs/runtime-surfaces.md`](docs/runtime-surfaces.md) maps the supported
   CLI, runtime, and Python-library surfaces.
+- [`docs/terminal-surfaces.md`](docs/terminal-surfaces.md) records the canonical
+  terminal product, compatibility aliases, and dashboard migration gate.
 - [`docs/long-horizon-project-worker.md`](docs/long-horizon-project-worker.md)
   records the alpha project-worker substrate, proof shape, and current claim
   boundary for longer objectives.
@@ -193,15 +192,12 @@ Tool package note:
 
 The default `openminion` invocation is the recommended interactive surface:
 
-1. `openminion` launches the terminal-flow focus shell on a TTY. Output stays in
-   your terminal's primary buffer, so scrollback behaves like `git log`.
-2. `cat prompt.md | openminion` runs one stdin-backed turn and exits.
-3. `openminion tui` also launches focus mode by default. Use
-   `openminion dashboard` or `openminion tui --dashboard` when you want the
-   monitoring dashboard across chats, sessions, agents, tools, memory, cron,
-   and system state.
-4. `openminion focus --rich` opens the Textual focus shell with alt-screen,
-   overlays, and an in-app dashboard side-trip.
+1. `openminion` launches Textual Focus on a TTY.
+2. `cat prompt.md | openminion` runs one stdin-backed turn and exits without
+   mounting Textual.
+3. `openminion run` is the explicit one-shot command for scripts and JSON.
+4. `openminion focus` is the named form of the same interactive product.
+5. `openminion chat` and `openminion tui` are hidden compatibility aliases.
 5. Each agent turn shows a `⏺` marker, verb-rotating thinking spinner,
    colored `●` tool-call markers, and syntax-highlighted code blocks.
 6. `--plain-spinner` drops the verb rotation but keeps the elapsed counter and
@@ -232,7 +228,7 @@ The default `openminion` invocation is the recommended interactive surface:
     while a tool is active, then renders the final tool block below it. Quiet
     mode suppresses narration but still counts the call in the end-of-turn
     summary.
-11. Focus terminal-flow slash commands include `/clear`, `/compact`, `/cost`,
+11. Focus slash commands include `/clear`, `/compact`, `/cost`,
     `/dashboard`, `/exit`, `/expand`, `/help`, `/init`, `/mcp`, `/model`,
     `/new`, `/normal`, `/quiet`, `/quit`, `/readonly`, `/resume`, `/sessions`,
     `/status`, `/tools`, and `/verbose`.
@@ -244,28 +240,19 @@ The default `openminion` invocation is the recommended interactive surface:
       or `<DATA_ROOT>/commands/*.md`; command templates can use `$ARGUMENTS`,
       `$1..$N`, `@file`, and shell interpolation with `!` commands.
 
-## Legacy chat surface
+## Compatibility aliases
 
-`openminion chat` is in maintenance mode and soft-deprecated as of
-`2026-05-10`:
+`openminion chat` and `openminion tui` print a migration notice and forward to
+the canonical owner. They do not retain separate interactive implementations.
+Piped chat input forwards to one-shot execution; unsupported old flags fail
+with migration help. Notice suppression is available through
+`OPENMINION_CHAT_NO_DEPRECATION=1` and
+`OPENMINION_TUI_NO_DEPRECATION=1`.
 
-`openminion chat` is the legacy interactive REPL surface. It predates the
-focus shell and continues to work for users who depend on it, but **it is no
-longer the recommended interactive surface**. Use `openminion` (focus
-terminal-flow) for new work. The repository chat CLI charter records the full
-maintenance-mode declaration, migration path, and removal criteria. A one-line
-dim deprecation notice prints on chat launch; suppress it for scripted
-invocations with `OPENMINION_CHAT_NO_DEPRECATION=1`.
-
-Chat-only behavior preserved during the notice period:
-
-1. `chat` shows a waiting spinner by default; disable with `chat --no-progress`.
-2. Suppress INFO logs for cleaner chat UI: `chat --quiet`.
-3. Interactive chat prompt and assistant lines are color-coded in TTY, with `[session|agent]` context.
-4. Prompt format is `[session|agent] you>`.
-5. `chat` automatically retries transient turn failures once before showing a final error.
-6. Provider/API turn failures are non-fatal in `chat`; the REPL stays open and prints `[chat] turn failed: ...`.
-7. Slash commands: `/`, `/help`, `/status`, `/clear`, `/agent`, `/session`, `/tools`, `/artifacts`, `/debug`, `/exit`.
+`openminion dashboard` remains a deprecated compatibility surface pending a
+separate post-release deletion approval. Its migration map, privacy rules, and
+release gate are documented in
+[`docs/terminal-surfaces.md`](docs/terminal-surfaces.md).
 
 ## Cross-surface UX flags
 
@@ -288,12 +275,8 @@ These apply uniformly to focus, gateway, run, and agent surfaces:
    vars still resolve with deprecation warnings.
 6. `NO_COLOR=1` follows the universal convention by mapping to
    `--progress minimal`.
-7. The Textual `--rich` shell does NOT yet honor the verbosity ladder. Use the
-   default terminal-flow shell for the full UX.
-8. `openminion chat` is in maintenance mode and does NOT honor the unified
-   `--verbosity` / `--progress` flags. It keeps its own existing
-   `--no-progress` / `--quiet` flags during the soft-deprecation notice period.
-   The repository chat CLI charter records the current policy.
+7. Compatibility aliases do not own separate rendering or progress behavior;
+   interactive aliases use the same Textual Focus implementation.
 
 ## Shared logging conventions
 
@@ -309,7 +292,8 @@ These apply uniformly to focus, gateway, run, and agent surfaces:
 3. For any UI integration or plugin, use gateway ingress (`/v1/turn*` or
    `GatewayService.run_once`) rather than direct agent-service calls. The
    repository UI gateway contract documents that boundary.
-4. `openminion chat` remains supported during the soft-deprecation notice period for users who depend on its specific affordances; new users should pick focus or gateway instead.
+4. Compatibility aliases remain only for migration and do not own a separate
+   conversational loop.
 
 ## Costs and warranty
 

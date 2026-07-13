@@ -204,6 +204,7 @@ def _runtime_special_values(payload: dict[str, Any]) -> dict[str, Any]:
         "plugins": coerce_plugin_runtime_policy_config(
             payload.get("plugins"), field_path="system.runtime.plugins"
         ),
+        "system_operations": dict(payload.get("system_operations", {})),
         "mcp_servers": coerce_mcp_server_configs(payload.get("mcp_servers")),
         "mcp_publish": coerce_mcp_publish_config(payload.get("mcp_publish")),
         "mcp_sampling_mode": normalize_mcp_sampling_mode(
@@ -220,6 +221,8 @@ def _runtime_special_values(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _build_runtime_config(effective_runtime_payload: dict[str, Any]) -> RuntimeConfig:
     _reject_legacy_runtime_shape(effective_runtime_payload)
+    if not isinstance(effective_runtime_payload.get("system_operations", {}), dict):
+        raise ConfigError("'runtime.system_operations' must be an object")
     runtime_kwargs: dict[str, Any] = {
         key: str(effective_runtime_payload.get(key, default))
         for key, default in _STRING_DEFAULTS
@@ -237,18 +240,14 @@ def _build_runtime_config(effective_runtime_payload: dict[str, Any]) -> RuntimeC
         }
     )
     runtime_kwargs.update(_runtime_special_values(effective_runtime_payload))
-    if "tool_schema_shortlisting_enabled" in effective_runtime_payload:
-        runtime_kwargs["tool_schema_shortlisting_enabled"] = _as_bool(
-            effective_runtime_payload.get("tool_schema_shortlisting_enabled"),
-            True,
-        )
-        runtime_kwargs["has_tool_schema_shortlisting_enabled"] = True
-    if "allow_background_write_authorization" in effective_runtime_payload:
-        runtime_kwargs["allow_background_write_authorization"] = _as_bool(
-            effective_runtime_payload.get("allow_background_write_authorization"),
-            False,
-        )
-        runtime_kwargs["has_allow_background_write_authorization"] = True
+    optional_bools = (
+        ("tool_schema_shortlisting_enabled", True),
+        ("allow_background_write_authorization", False),
+    )
+    for key, default in optional_bools:
+        if key in effective_runtime_payload:
+            runtime_kwargs[key] = _as_bool(effective_runtime_payload.get(key), default)
+            runtime_kwargs[f"has_{key}"] = True
     if "trailer_guidance_variant" in effective_runtime_payload:
         variant, has_variant = _parse_trailer_guidance_variant_map(
             effective_runtime_payload.get("trailer_guidance_variant"),
@@ -281,6 +280,7 @@ def _runtime_config_to_payload(config: RuntimeConfig) -> dict[str, Any]:
             ),
             "tool_selection": _config_value_to_payload(config.tool_selection),
             "tools": tool_runtime_config_to_dict(config.tools),
+            "system_operations": _config_value_to_payload(config.system_operations),
             "mcp_servers": [
                 _mcp_server_to_payload(item)
                 for item in coerce_mcp_server_configs(config.mcp_servers)
@@ -304,9 +304,8 @@ def _runtime_config_to_payload(config: RuntimeConfig) -> dict[str, Any]:
             config.allow_background_write_authorization
         )
     if config.has_trailer_guidance_variant:
-        payload["trailer_guidance_variant"] = dict(
-            config.trailer_guidance_variant or {}
-        )
+        variant = dict(config.trailer_guidance_variant or {})
+        payload["trailer_guidance_variant"] = variant
     optional_policies = {
         "provider_policy": provider_runtime_policy_to_dict(config.provider_policy),
         "thinking_policy": thinking_runtime_policy_to_dict(config.thinking_policy),
@@ -324,6 +323,7 @@ def _system_runtime_mirror(config: RuntimeConfig) -> dict[str, Any]:
         "thinking_policy": thinking_runtime_policy_to_dict(config.thinking_policy),
         "modes": mode_runtime_policy_to_dict(config.modes),
         "plugins": plugin_runtime_policy_to_dict(config.plugins),
+        "system_operations": _config_value_to_payload(config.system_operations),
     }
     brain_mirror: dict[str, Any] = {}
     if config.has_tool_schema_shortlisting_enabled:

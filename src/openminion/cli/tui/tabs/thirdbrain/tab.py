@@ -14,7 +14,7 @@ from textual.css.query import QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Static
 
-from openminion.cli.tui.presentation import copy_to_clipboard
+from openminion.cli.presentation import copy_to_clipboard
 from .changes import (
     ThirdBrainChangeSummary,
     ThirdBrainRefreshDeltaSummary,

@@ -117,9 +117,9 @@ that should not become part of the public validator surface.
 8. `scripts/validate/tool_selection_scoring_contract.py` and
    `scripts/validate/runtime_step_ownership.py` are the canonical
    contract-first names for the two runtime anti-LLM guards.
-9. `scripts/validate/focus_layout.py` is the lint entrypoint for focus-layout
-   enforcement. The three individual focus validators remain intentionally
-   callable for baseline updates under `scripts/validate/focus/`.
+9. `scripts/validate/focus_layout.py` is the lint entrypoint for the canonical
+   interactive-surface layout check. Its widget-isolation guard keeps Textual
+   Focus independent from dashboard body widgets.
 10. `scripts/validate/runner_delegates.py` is a generic brain-runner contract
    guard: every generated `RUNNER_DELEGATES` key must have a static source/test
    consumer, and every `_runner_delegate("...")` call must target a defined
@@ -139,10 +139,7 @@ that should not become part of the public validator surface.
 15. When a validator emits machine-readable JSON, keep the JSON payload on
     stdout and put human-readable headings, summaries, and findings on stderr
     so CLI users get readable output without breaking JSON consumers.
-16. `scripts/validate/chat_import_boundaries.py` is the canonical chat-surface
-    boundary guard; use contract-first boundary naming instead of
-    surface-specific isolation jargon.
-17. `scripts/validate/filename_underscore_hygiene.py` is the advisory
+16. `scripts/validate/filename_underscore_hygiene.py` is the advisory
     naming-practice guard for Python files under `src/`, `scripts/`, and
     `examples/`; it tracks current multi-underscore filename debt with a frozen
     baseline and warns on new drift there. Even when drift is zero, the report

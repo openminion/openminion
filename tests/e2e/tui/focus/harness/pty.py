@@ -14,6 +14,11 @@ import time
 from typing import Callable
 
 
+def _make_controlling_terminal(slave_fd: int) -> None:
+    os.setsid()
+    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+
 @dataclass(slots=True)
 class PtySession:
     argv: tuple[str, ...]
@@ -54,7 +59,7 @@ class PtySession:
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=slave_fd,
-            preexec_fn=os.setsid,
+            preexec_fn=lambda: _make_controlling_terminal(slave_fd),
         )
         os.close(slave_fd)
         self._master_fd = master_fd

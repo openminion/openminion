@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, cast
+from typing import Any, Iterable, Mapping, cast
 
 from openminion.modules.skill.runtime.bundle_metadata import (
     BUNDLE_METADATA_TRUST_UNTRUSTED_LOCAL,
@@ -78,6 +78,19 @@ _REFERENCE_FILE_SUFFIXES = (
     ".yml",
     ".ini",
 )
+
+
+def _capability_metadata(front_matter: Mapping[str, Any]) -> dict[str, list[str]]:
+    return {
+        key: normalize_text_list(front_matter.get(key))
+        for key in (
+            "teaches",
+            "requires_tools",
+            "safe_for_domains",
+            "forbidden_claims",
+            "evidence_expectations",
+        )
+    }
 
 
 class SkillIngestMixin:
@@ -386,7 +399,6 @@ class SkillIngestMixin:
         parse_warnings = list(parse_warnings) + front_matter_unknown_key_warnings(
             front_matter
         )
-
         if "procedure" not in sections:
             promoted_procedure = _promote_procedure_from_freeform_sections(sections)
             if promoted_procedure:
@@ -514,6 +526,7 @@ class SkillIngestMixin:
             else None,
             created_at=now,
             updated_at=now,
+            **_capability_metadata(front_matter),
         )
         package.version_hash = package.to_version_hash()
         return package, parse_warnings

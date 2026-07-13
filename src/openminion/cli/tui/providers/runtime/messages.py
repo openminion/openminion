@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from openminion.base.types import Message
-from openminion.cli.tui.presentation.models import ChatMessage, MessageKind, ToolEvent
-from openminion.cli.tui.presentation.tool.blocks import tool_call_body
+from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
+from openminion.cli.presentation.tool.blocks import tool_call_body
 
 TARGET_KIND_FOCUS: str = "focus"
 _TIMESTAMPED_SENDER_PREFIX_RE = re.compile(

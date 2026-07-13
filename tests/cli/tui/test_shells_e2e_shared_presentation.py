@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from openminion.cli.tui.app import DemoRuntime, OpenMinionApp
-from openminion.cli.tui.focus.app import FocusApp, _DemoFocusRuntime
-from openminion.cli.tui.presentation import (
+from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
+from openminion.cli.presentation import (
     ChatMessage,
     MessageKind,
     ThinkingIndicator,
@@ -58,7 +58,7 @@ async def test_dashboard_tool_event_message_renders_shared_tool_block() -> None:
 async def test_focus_tui_launches_with_demo_shell(
     tmp_path,
 ) -> None:
-    from openminion.cli.tui.focus.widgets import FocusTranscript
+    from openminion.cli.interactive.widgets import FocusTranscript
 
     runtime = _DemoFocusRuntime(working_dir=str(tmp_path))
     app = FocusApp(runtime=runtime, working_dir=str(tmp_path))
@@ -188,7 +188,7 @@ async def test_focus_does_not_create_orphan_session_when_resuming(tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_focus_inline_approval_fires_shared_callback(tmp_path) -> None:
-    from openminion.cli.tui.focus.widgets import ToolApprovalWidget
+    from openminion.cli.interactive.widgets import ToolApprovalWidget
 
     runtime = _DemoFocusRuntime(working_dir=str(tmp_path))
     app = FocusApp(runtime=runtime, working_dir=str(tmp_path))

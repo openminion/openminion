@@ -88,30 +88,3 @@ def test_threading_signatures_accept_approval_callback() -> None:
         assert "approval_callback" in sig.parameters, (
             f"{fn.__qualname__} is missing approval_callback in its signature"
         )
-
-
-def test_chat_runtime_request_inproc_turn_threads_approval_callback() -> None:
-
-    import openminion.cli.chat.runtime as chat_runtime_module
-
-    captured: dict[str, Any] = {}
-
-    def fake_run_turn(**kwargs: Any) -> dict:
-        captured.update(kwargs)
-        return {"ok": True, "metadata": {}, "body": ""}
-
-    sentinel: Any = object()
-
-    original = chat_runtime_module.run_turn
-    chat_runtime_module.run_turn = fake_run_turn
-    try:
-        chat_runtime_module.request_inproc_turn(
-            runtime=MagicMock(),
-            config_path=None,
-            payload={"message": "hi"},
-            show_progress=False,
-            approval_callback=sentinel,
-        )
-    finally:
-        chat_runtime_module.run_turn = original
-    assert captured.get("approval_callback") is sentinel

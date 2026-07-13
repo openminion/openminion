@@ -15,8 +15,10 @@ def artifact_root(tmp_path: Path) -> Path:
     else:
         # Keep the default artifact/scratch root inside the shared workspace so
         # live file tools can write to scenario-owned scratch paths without
-        # tripping the workspace-root guard.
-        root = _DEFAULT_ARTIFACT_ROOT / tmp_path.name
+        # tripping the workspace-root guard. Include pytest's per-run parent
+        # directory so repeated runs cannot inherit sessions or other state
+        # from an earlier invocation with the same test name.
+        root = _DEFAULT_ARTIFACT_ROOT / tmp_path.parent.name / tmp_path.name
     root.mkdir(parents=True, exist_ok=True)
     return root
 

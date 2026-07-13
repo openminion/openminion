@@ -8,6 +8,10 @@ from typing import Any
 from openminion.base.config import resolve_config_path
 from openminion.cli.config import load_cli_config, resolve_cli_roots
 from openminion.cli.identity.sync import sync_cli_identity_profiles
+from openminion.cli.ux.deprecation import (
+    deprecation_suppressed,
+    print_deprecation_notice,
+)
 from openminion.modules.cli_common import has_tty
 from openminion.services.bootstrap.onboarding import (
     OnboardingAction,
@@ -18,6 +22,25 @@ from openminion.services.bootstrap.onboarding import (
     format_fail_fast_message,
     resolve_surface_onboarding_route,
 )
+
+_DASHBOARD_NOTICE = (
+    "openminion dashboard is deprecated and remains available for migration. "
+    "Use bare `openminion` for interactive work and the documented CLI/API "
+    "surfaces for operations. Suppress this notice with "
+    "OPENMINION_DASHBOARD_NO_DEPRECATION=1."
+)
+_TUI_NOTICE = (
+    "openminion tui is a compatibility alias; use bare `openminion` or "
+    "`openminion focus`. Suppress this notice with "
+    "OPENMINION_TUI_NO_DEPRECATION=1."
+)
+
+
+def dashboard_deprecation_message() -> str:
+    """Return the dashboard migration notice unless the operator suppressed it."""
+    if deprecation_suppressed("OPENMINION_DASHBOARD_NO_DEPRECATION"):
+        return ""
+    return _DASHBOARD_NOTICE
 
 
 def launch_dashboard(
@@ -256,6 +279,12 @@ def _resolve_initial_tab(
 
 
 def run_tui(args) -> int:
+    from openminion.cli.status.surface import record_surface_event
+
+    notice_shown = print_deprecation_notice(
+        _DASHBOARD_NOTICE,
+        suppression_env="OPENMINION_DASHBOARD_NO_DEPRECATION",
+    )
     requested_agent = _normalized_agent(args)
     no_picker = bool(getattr(args, "no_picker", False))
     resolved_theme = _resolve_tui_theme(args)
@@ -283,6 +312,10 @@ def run_tui(args) -> int:
         return 1
 
     try:
+        surface = str(getattr(args, "surface", "dashboard") or "dashboard")
+        record_surface_event(runtime, surface=surface, action="launch")
+        if notice_shown:
+            record_surface_event(runtime, surface=surface, action="deprecation")
         tui_runtime = OpenMinionRuntime(runtime, prompt_on_resume=True)
         if requested_agent and requested_agent != tui_runtime.agent_id:
             tui_runtime.switch_agent(requested_agent)
@@ -321,9 +354,15 @@ def run_tui_entry(args) -> int:
     canonical `dashboard` command and the explicit `tui --dashboard` flag.
     """
     if bool(getattr(args, "dashboard", False)):
+        args.surface = "tui-dashboard"
         return run_tui(args)
     from openminion.cli.commands.focus import run_focus
 
+    args.surface = "tui"
+    args.deprecation_notice_shown = print_deprecation_notice(
+        _TUI_NOTICE,
+        suppression_env="OPENMINION_TUI_NO_DEPRECATION",
+    )
     return int(run_focus(args) or 0)
 
 
@@ -413,9 +452,9 @@ def _register_tui_focus_args(parser: argparse.ArgumentParser) -> None:
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     dashboard = subparsers.add_parser(
         "dashboard",
-        help="Launch the monitoring dashboard for chats, sessions, agents, and tools",
+        help="Launch the deprecated monitoring dashboard during migration",
         description=(
-            "Launch the full-screen OpenMinion dashboard. Use bare "
+            "Launch the deprecated full-screen OpenMinion dashboard. Use bare "
             "`openminion` for the default focus shell; use this command for "
             "monitoring and overview across chats, sessions, agents, tools, "
             "memory, cron, and system state."
@@ -426,7 +465,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     tui = subparsers.add_parser(
         "tui",
-        help="Launch focus mode; use --dashboard for the monitoring dashboard",
+        help="Compatibility alias for focus; --dashboard opens the deprecated dashboard",
         description=(
             "`openminion tui` launches the default focus shell for one-agent "
             "work. Use `openminion tui --dashboard` or `openminion dashboard` "

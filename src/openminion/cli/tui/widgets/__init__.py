@@ -1,4 +1,4 @@
-from openminion.cli.tui.presentation.models import ChatMessage, MessageKind, ToolEvent
+from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 
 from .chat import ChatSearchBar, ChatView, EmptyStatePulse
 from .input_bar import ChatInputBar

@@ -34,7 +34,7 @@ _ALLOWLISTED_FILES: frozenset[str] = frozenset(
         "openminion/modules/telemetry/cli.py",
         "openminion/modules/llm/cli.py",
         # Canonical sync/async bridge.
-        "openminion/modules/llm/runtime/sync.py",
+        "openminion/modules/runtime/sync.py",
         # Defensive wrappers that prove no running loop before `asyncio.run`.
         "openminion/services/brain/client.py",
         "openminion/services/runtime/ingress/__init__.py",

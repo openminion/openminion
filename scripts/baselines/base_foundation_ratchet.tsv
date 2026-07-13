@@ -33,7 +33,7 @@ config/parser/security.py	166	5	80	6
 config/parser/storage.py	117	3	50	9
 config/paths.py	255	9	47	5
 config/providers.py	132	0	0	0
-config/runtime/__init__.py	316	4	32	4
+config/runtime/__init__.py	314	4	32	4
 config/runtime/capability.py	388	11	45	4
 config/runtime/capability_resolution.py	261	8	64	5
 config/runtime/profile.py	369	13	95	4

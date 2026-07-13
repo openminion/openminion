@@ -326,14 +326,13 @@ async def test_command_palette_filters_and_switches_tabs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_help_screen_chat_commands_are_sourced_from_shared_help_lines(
+async def test_help_screen_chat_commands_are_sourced_from_shared_registry(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "openminion.cli.tui.screen.chat_help_lines",
+        "openminion.cli.tui.screen.slash_help_rows",
         lambda: [
-            "Chat commands:",
-            "  /custom            custom help text from shared registry",
+            ("/custom", "custom help text from shared registry"),
         ],
     )
 

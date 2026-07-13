@@ -16,6 +16,9 @@ OBSI, AUCM, EVRP).
 
 ## Current members
 
+- `sync.py` — generic compatibility bridge for synchronous callers that must
+  run a coroutine, including callers already hosted inside an event loop.
+
 - `credentials.py` — canonical credential-boundary owner. Lands
   the CRES audit (§5) anchors:
   - `CredentialRef` (frozen dataclass, 6 fields).

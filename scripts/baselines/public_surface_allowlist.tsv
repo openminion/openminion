@@ -4,10 +4,6 @@ api/operations/skill.py	openminion.modules.skill.runtime.skill
 api/core/infrastructure.py	openminion.modules.llm.providers.factory
 api/core/infrastructure.py	openminion.modules.storage.runtime
 api/core/profiles.py	openminion.modules.storage.runtime
-cli/chat/commands/session.py	openminion.modules.policy.runtime.action_policy
-cli/chat/commands/session.py	openminion.modules.session.storage.sqlite_store
-cli/chat/session.py	openminion.modules.storage.runtime.session_store
-cli/chat/session.py	openminion.modules.storage.runtime.sqlite
 cli/commands/agent.py	openminion.modules.memory.storage.sqlite.store
 cli/commands/agents.py	openminion.modules.storage.runtime.registry_store
 cli/commands/cron.py	openminion.modules.llm.providers.base

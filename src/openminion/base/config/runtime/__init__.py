@@ -134,6 +134,7 @@ class RuntimeConfig:
     thinking_policy: ThinkingRuntimePolicyConfig | None = None
     modes: dict[str, ModeRuntimePolicyConfig] = field(default_factory=dict)
     plugins: PluginRuntimePolicyConfig | None = None
+    system_operations: dict[str, object] = field(default_factory=dict)
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     mcp_publish: MCPPublishConfig = field(default_factory=MCPPublishConfig)
     mcp_sampling_mode: str = "disabled"
@@ -280,18 +281,15 @@ def resolve_identity_db_from_env(
     if configured_db:
         candidate = Path(configured_db).expanduser()
         if not candidate.is_absolute():
-            candidate = (
-                resolve_identity_root_from_env(
-                    env=resolved_env,
-                    home_root=home_root,
-                )
-                / candidate
+            identity_root = resolve_identity_root_from_env(
+                env=resolved_env, home_root=home_root
             )
+            candidate = identity_root / candidate
         return candidate.resolve()
-    return (
-        resolve_identity_root_from_env(env=resolved_env, home_root=home_root)
-        / _BASE_IDENTITY_DB_FILENAME
-    ).resolve()
+    identity_root = resolve_identity_root_from_env(
+        env=resolved_env, home_root=home_root
+    )
+    return (identity_root / _BASE_IDENTITY_DB_FILENAME).resolve()
 
 
 __all__ = [

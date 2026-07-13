@@ -5,7 +5,7 @@ import inspect
 import pytest
 from textual.app import App, ComposeResult
 
-from openminion.cli.tui.presentation.models import (
+from openminion.cli.presentation.models import (
     ChatMessage,
     MessageKind,
     ToolEvent,
@@ -273,7 +273,7 @@ def test_dashboard_ctrl_y_uses_shared_chat_view_copy_api() -> None:
 def test_focus_ctrl_y_uses_shared_chat_view_copy_api() -> None:
     import re
 
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
 
     src = inspect.getsource(FocusScreen)
     assert "copy_selected_message" in src

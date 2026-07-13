@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+import time
 from typing import Callable
 
 from .assertions import (
     assert_expected_markers,
     assert_focus_turn_completed,
     assert_no_terminal_crash,
+    visible_text,
 )
 from .pty import PtySession
 from .scenarios import FocusScenario
 
-_PROMPT_RE = re.compile(r"❯|Ask anything|/ for commands")
+_READY_RE = re.compile(r"Ask anything|Reply, or / for commands")
 _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _APPROVAL_RE = re.compile(r"Reply exactly yes to confirm|Policy confirmation required")
 _TURN_EVENT_RE = re.compile(
@@ -63,7 +65,6 @@ class FocusProbe:
             self.agent_id,
             "--dir",
             str(self.workdir),
-            "--terminal",
             "--no-update-check",
             "--progress",
             "minimal",
@@ -75,7 +76,6 @@ class FocusProbe:
             "OPENMINION_DATA_ROOT": str(self.data_root),
             "PYTHONPATH": "src",
             "OPENMINION_SHOW_RESPONSE_TIME": "1",
-            "OPENMINION_FOCUS_BACKEND": "terminal",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
 
@@ -96,12 +96,23 @@ class FocusProbe:
         )
 
     def wait_ready(self, session: PtySession) -> str:
-        transcript = session.wait_for(_PROMPT_RE, timeout=60)
-        assert_no_terminal_crash(transcript)
-        return transcript
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            transcript = session.transcript
+            if _READY_RE.search(visible_text(transcript)):
+                assert_no_terminal_crash(transcript)
+                return transcript
+            time.sleep(0.05)
+        transcript = session.transcript
+        raise AssertionError(
+            "timed out waiting for the enabled Focus composer\n"
+            f"{visible_text(transcript)[-2000:]}"
+        )
 
     def run_slash(self, session: PtySession, command: str, *, marker: str) -> str:
-        session.type_line(command)
+        session.send(command)
+        time.sleep(0.1)
+        session.send("\n")
         transcript = session.wait_for(re.escape(marker), timeout=60)
         assert_no_terminal_crash(transcript)
         return transcript

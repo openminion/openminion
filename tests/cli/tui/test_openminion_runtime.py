@@ -318,6 +318,7 @@ async def test_openminion_runtime_marks_focus_returns_as_caller_delivered() -> N
         {
             "workspace_root": str(Path("/tmp/focus-ws").resolve(strict=False)),
             "caller_handles_delivery": "true",
+            "conversation_id": "focus-sess-001",
         }
     ]
 

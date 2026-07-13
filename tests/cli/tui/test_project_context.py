@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 from openminion.cli.tui.project_context import (
     build_init_template,
@@ -23,49 +22,6 @@ def test_project_context_import_does_not_eagerly_import_textual_app() -> None:
 
     assert module.__name__ == "openminion.cli.tui.project_context"
     assert "openminion.cli.tui.app" not in sys.modules
-
-
-def test_chat_runner_disables_prompt_toolkit_for_dumb_term(monkeypatch) -> None:
-    monkeypatch.setenv("TERM", "dumb")
-    runner = importlib.import_module("openminion.cli.chat.runner")
-
-    reader = runner._build_prompt_toolkit_chat_reader(None)
-
-    assert reader is None
-
-
-def test_chat_runner_prompt_toolkit_builder_falls_back_on_value_error(
-    monkeypatch,
-) -> None:
-    runner = importlib.import_module("openminion.cli.chat.runner")
-    monkeypatch.setenv("TERM", "xterm-256color")
-    monkeypatch.setattr(runner, "_PROMPT_TOOLKIT_AVAILABLE", True)
-
-    def _boom(*_args, **_kwargs):
-        raise ValueError("bad prompt toolkit state")
-
-    monkeypatch.setattr(runner, "_PromptToolkitInteractiveChatReader", _boom)
-
-    reader = runner._build_prompt_toolkit_chat_reader(None)
-
-    assert reader is None
-
-
-def test_apply_chat_theme_swallow_resolve_theme_value_error(
-    monkeypatch, tmp_path: Path
-) -> None:
-    runner = importlib.import_module("openminion.cli.chat.runner")
-
-    monkeypatch.setattr(
-        "openminion.cli.theme.resolve_theme",
-        lambda **_kwargs: (_ for _ in ()).throw(ValueError("bad theme")),
-    )
-
-    # Bounded helper contract: theme bootstrap failure must not raise.
-    runner._apply_chat_theme(
-        SimpleNamespace(theme="light"),
-        SimpleNamespace(data_root=tmp_path),
-    )
 
 
 def test_resolve_project_context_prefers_openminion_md(tmp_path: Path) -> None:

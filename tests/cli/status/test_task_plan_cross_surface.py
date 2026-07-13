@@ -1,19 +1,14 @@
 from __future__ import annotations
 
-import io
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from rich.console import Console
-
-from openminion.cli.chat.runtime import _format_stream_progress_note
 from openminion.cli.status.activity_ledger import (
     KIND_PLAN,
     activity_from_progress_payload,
 )
-from openminion.cli.tui.focus.screen import FocusScreen
-from openminion.cli.tui.terminal.transcript import TerminalTranscript
-from openminion.cli.tui.presentation.models import MessageKind
+from openminion.cli.interactive.screen import FocusScreen
+from openminion.cli.presentation.models import MessageKind
 from openminion.cli.tui.tabs.chat import ChatTab
 
 
@@ -50,44 +45,6 @@ def test_task_plan_payload_routes_to_plan_kind() -> None:
 def test_task_plan_step_completed_routes_to_plan_kind() -> None:
     event = activity_from_progress_payload(_STEP_COMPLETED_PAYLOAD)
     assert event is not None and event.kind == KIND_PLAN
-
-
-def test_chat_cli_renders_plan_full_render() -> None:
-    note = _format_stream_progress_note(_FULL_PLAN_PAYLOAD)
-    assert note is not None
-    assert "Plan" in note
-    assert "lint" in note and "test" in note and "ship" in note
-
-
-def test_chat_cli_renders_plan_step_done_one_line() -> None:
-    note = _format_stream_progress_note(_STEP_COMPLETED_PAYLOAD)
-    assert note == "Plan step done: lint"
-
-
-def test_chat_cli_renders_plan_step_blocked_with_reason() -> None:
-    note = _format_stream_progress_note(_STEP_BLOCKED_PAYLOAD)
-    assert note == "Plan step blocked: ship — missing token"
-
-
-def test_terminal_flow_pushes_durable_plan_row() -> None:
-    buf = io.StringIO()
-    console = Console(file=buf, force_terminal=False, width=120, no_color=True)
-    transcript = TerminalTranscript(console, verbosity="normal")
-    event = activity_from_progress_payload(_FULL_PLAN_PAYLOAD)
-    transcript.push_activity_event(event)
-    out = buf.getvalue()
-    assert "Plan" in out
-    assert "lint" in out
-    assert "[x] lint" in out
-
-
-def test_terminal_flow_pushes_plan_step_blocked_line() -> None:
-    buf = io.StringIO()
-    console = Console(file=buf, force_terminal=False, width=120, no_color=True)
-    transcript = TerminalTranscript(console, verbosity="normal")
-    event = activity_from_progress_payload(_STEP_BLOCKED_PAYLOAD)
-    transcript.push_activity_event(event)
-    assert "Plan step blocked: ship — missing token" in buf.getvalue()
 
 
 def test_focus_rich_pushes_durable_plan_row() -> None:

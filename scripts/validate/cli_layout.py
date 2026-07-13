@@ -32,9 +32,9 @@ ALLOWED_ROOT_FILES = {
 }
 ALLOWED_TOP_LEVEL_DIRS = {
     "bootstrap",
-    "chat",
     "commands",
     "identity",
+    "interactive",
     "parser",
     "presentation",
     "status",

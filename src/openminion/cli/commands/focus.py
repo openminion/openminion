@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -21,27 +20,14 @@ _run_inline_setup_for_tui = _ForwardedTuiCommand("_run_inline_setup_for_tui")
 _silence_logging_for_tui = _ForwardedTuiCommand("_silence_logging_for_tui")
 
 
-def _resolve_focus_backend(args: argparse.Namespace) -> str:
+def _legacy_terminal_requested(args: argparse.Namespace) -> bool:
     from openminion.base.config.env import EnvironmentConfig
 
     if bool(getattr(args, "terminal", False)):
-        return "terminal"
-    if bool(getattr(args, "rich", False)):
-        return "textual"
+        return True
     env = EnvironmentConfig.from_sources()
     env_value = str(env.get("OPENMINION_FOCUS_BACKEND", "") or "").strip().lower()
-    if env_value in ("textual", "rich"):
-        return "textual"
-    if env_value in ("terminal", "flow", "terminal-flow"):
-        return "terminal"
-    return "terminal"
-
-
-def _resolve_plain_spinner(args: argparse.Namespace) -> bool:
-    from openminion.cli.ux.verbosity import resolve_progress
-
-    progress = resolve_progress(args, default="full")
-    return progress in ("minimal", "off")
+    return env_value in ("terminal", "flow", "terminal-flow")
 
 
 def _resolve_focus_verbosity(args: argparse.Namespace) -> str:
@@ -85,43 +71,13 @@ def _enforce_textual_tty_requirement() -> int | None:
     if stdin_tty and stdout_tty:
         return None
     print(
-        "openminion focus --rich: the Textual rich shell "
+        "openminion focus: the Textual shell "
         "requires an interactive terminal (TTY) on both "
-        "stdin and stdout. Either run from an interactive "
-        "shell, or use --terminal for the terminal-flow shell "
-        "which supports piped stdin "
-        "(e.g. `cat prompt.md | openminion`).",
+        "stdin and stdout. Run from an interactive shell, or pipe a prompt "
+        "to bare `openminion` for one-shot execution.",
         file=_sys.stderr,
     )
     return 2
-
-
-def _launch_terminal_focus(
-    args: argparse.Namespace, runtime, *, working_dir: str
-) -> int:
-    from openminion.cli.tui.project_context import resolve_project_context
-    from openminion.cli.tui.terminal import run_terminal_focus
-    from openminion.cli.tui.providers import OpenMinionRuntime
-
-    terminal_runtime = OpenMinionRuntime(
-        runtime,
-        target="focus",
-        agent_id=str(getattr(args, "agent", "") or "").strip() or None,
-        working_dir=working_dir,
-        bind_immediately=True,
-        session_id=str(getattr(args, "session", "") or "").strip() or None,
-    )
-    if not bool(getattr(args, "no_context", False)):
-        terminal_runtime.set_project_context(resolve_project_context(working_dir))
-    return run_terminal_focus(
-        terminal_runtime,
-        working_dir=working_dir,
-        agent=str(getattr(args, "agent", "") or "").strip() or None,
-        session=str(getattr(args, "session", "") or "").strip() or None,
-        plain_spinner=_resolve_plain_spinner(args),
-        verbosity=_resolve_focus_verbosity(args),
-        startup_notice=_build_update_notice_resolver(args),
-    )
 
 
 def _resolve_update_notice(args: argparse.Namespace) -> str:
@@ -159,18 +115,6 @@ def _resolve_update_notice(args: argparse.Namespace) -> str:
         return ""
 
 
-def _build_update_notice_resolver(
-    args: argparse.Namespace,
-) -> Callable[[], str] | None:
-    if bool(getattr(args, "no_update_check", False)):
-        return None
-
-    def _resolve() -> str:
-        return _resolve_update_notice(args)
-
-    return _resolve
-
-
 def _maybe_print_update_notice(args: argparse.Namespace) -> None:
     notice = _resolve_update_notice(args)
     if not notice:
@@ -202,7 +146,7 @@ def _launch_textual_focus(
     args: argparse.Namespace, runtime, *, working_dir: str
 ) -> int:
     from openminion.cli.tui.project_context import resolve_project_context
-    from openminion.cli.tui.focus import FocusApp
+    from openminion.cli.interactive import FocusApp
     from openminion.cli.tui.providers import OpenMinionRuntime
 
     focus_runtime = OpenMinionRuntime(
@@ -229,17 +173,27 @@ def _launch_textual_focus(
 
 def run_focus(args: argparse.Namespace) -> int:
     from openminion.api.runtime import APIRuntime
+    from openminion.cli.status.surface import record_surface_event
+
+    if _legacy_terminal_requested(args):
+        import sys
+
+        print(
+            "openminion focus: the legacy terminal-flow renderer has been "
+            "retired. Remove --terminal or OPENMINION_FOCUS_BACKEND=terminal "
+            "to use the canonical Textual Focus shell.",
+            file=sys.stderr,
+        )
+        return 2
 
     gate_exit, args = _handle_focus_onboarding_gate(args)
     if gate_exit is not None:
         return gate_exit
 
-    backend = _resolve_focus_backend(args)
     _silence_logging_for_tui(args)
-    if backend == "textual":
-        tty_exit = _enforce_textual_tty_requirement()
-        if tty_exit is not None:
-            return tty_exit
+    tty_exit = _enforce_textual_tty_requirement()
+    if tty_exit is not None:
+        return tty_exit
 
     runtime = None
     try:
@@ -252,8 +206,10 @@ def run_focus(args: argparse.Namespace) -> int:
         working_dir = str(
             Path(getattr(args, "dir", None) or ".").expanduser().resolve(strict=False)
         )
-        if backend == "terminal":
-            return _launch_terminal_focus(args, runtime, working_dir=working_dir)
+        surface = str(getattr(args, "surface", "focus") or "focus")
+        record_surface_event(runtime, surface=surface, action="launch")
+        if bool(getattr(args, "deprecation_notice_shown", False)):
+            record_surface_event(runtime, surface=surface, action="deprecation")
         _maybe_print_update_notice(args)
         return _launch_textual_focus(args, runtime, working_dir=working_dir)
     except Exception as exc:
@@ -271,9 +227,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "focus",
         help="Launch the focused single-agent shell",
         description=(
-            "Launch the focused single-agent shell. Bare `openminion` uses "
-            "this surface by default; use `openminion dashboard` for the "
-            "monitoring / overview UI across chats and sessions."
+            "Launch the OpenMinion interactive CLI. Bare `openminion` uses "
+            "this Textual surface by default."
         ),
     )
     focus.add_argument(
@@ -318,18 +273,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     backend.add_argument(
         "--rich",
         action="store_true",
-        help=(
-            "Use the Textual rich shell. This is the default for interactive "
-            "TTY sessions; the flag is kept for explicitness."
-        ),
+        help=argparse.SUPPRESS,
     )
     backend.add_argument(
         "--terminal",
         action="store_true",
-        help=(
-            "Use the terminal-flow shell. Useful for piped stdin, minimal "
-            "terminals, or debugging the terminal renderer."
-        ),
+        help=argparse.SUPPRESS,
     )
     from openminion.cli.ux.verbosity import (
         add_progress_flag,

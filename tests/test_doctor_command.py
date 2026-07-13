@@ -133,7 +133,7 @@ class DoctorCommandTests(unittest.TestCase):
                     return_value=0,
                 ) as doctor_mock,
                 mock.patch(
-                    "openminion.cli.commands.setup._launch_post_setup_chat",
+                    "openminion.cli.commands.setup._launch_post_setup_focus",
                     return_value=0,
                 ) as chat_mock,
             ):
@@ -144,7 +144,7 @@ class DoctorCommandTests(unittest.TestCase):
             self.assertEqual(code, 0)
             doctor_mock.assert_called_once_with(config_path=config_path)
             chat_mock.assert_called_once_with(args, config_path=config_path)
-            self.assertIn("Setup validation passed. Entering chat...", buf.getvalue())
+            self.assertIn("Setup validation passed. Entering Focus...", buf.getvalue())
 
     def test_setup_stops_when_doctor_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,7 +168,7 @@ class DoctorCommandTests(unittest.TestCase):
                     return_value=1,
                 ) as doctor_mock,
                 mock.patch(
-                    "openminion.cli.commands.setup._launch_post_setup_chat"
+                    "openminion.cli.commands.setup._launch_post_setup_focus"
                 ) as chat_mock,
             ):
                 buf = io.StringIO()

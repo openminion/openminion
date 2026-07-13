@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from openminion.cli.commands.focus import _resolve_focus_backend
+from openminion.cli.commands.focus import _legacy_terminal_requested
 
 
 def _args(**overrides) -> SimpleNamespace:
@@ -14,51 +14,25 @@ def _args(**overrides) -> SimpleNamespace:
 
 
 @pytest.mark.parametrize(
-    ("env_value", "rich_flag", "expected"),
+    ("env_value", "terminal_flag", "expected"),
     [
-        (None, False, "terminal"),
-        (None, True, "textual"),
-        ("textual", False, "textual"),
-        ("terminal", False, "terminal"),
-        ("garbage", False, "terminal"),
-        ("textual", True, "textual"),
-        ("terminal", True, "textual"),
+        (None, False, False),
+        ("textual", False, False),
+        ("garbage", False, False),
+        ("terminal", False, True),
+        ("flow", False, True),
+        ("terminal-flow", False, True),
+        (None, True, True),
     ],
 )
-def test_focus_backend_resolution(
-    monkeypatch, env_value: str | None, rich_flag: bool, expected: str
+def test_legacy_terminal_request_detection(
+    monkeypatch, env_value: str | None, terminal_flag: bool, expected: bool
 ) -> None:
-    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     if env_value is None:
         monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
     else:
         monkeypatch.setenv("OPENMINION_FOCUS_BACKEND", env_value)
-    assert _resolve_focus_backend(_args(rich=rich_flag)) == expected
-
-
-def test_focus_backend_defaults_to_terminal_for_interactive_tty(monkeypatch) -> None:
-    monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-
-    assert _resolve_focus_backend(_args()) == "terminal"
-
-
-def test_focus_backend_defaults_to_terminal_for_piped_stdin(monkeypatch) -> None:
-    monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
-    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-
-    assert _resolve_focus_backend(_args()) == "terminal"
-
-
-def test_focus_terminal_flag_wins_over_interactive_default(monkeypatch) -> None:
-    monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
-    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
-    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-
-    assert _resolve_focus_backend(_args(terminal=True)) == "terminal"
+    assert _legacy_terminal_requested(_args(terminal=terminal_flag)) is expected
 
 
 def test_focus_subparser_registers_rich_and_terminal_flags() -> None:
@@ -80,6 +54,14 @@ def test_focus_subparser_registers_rich_and_terminal_flags() -> None:
     parsed_no_flag = parser.parse_args(["focus"])
     assert parsed_no_flag.rich is False
     assert parsed_no_flag.terminal is False
+
+
+def test_legacy_terminal_flag_returns_migration_error(monkeypatch, capsys) -> None:
+    from openminion.cli.commands import focus as focus_cmd
+
+    monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
+    assert focus_cmd.run_focus(_args(terminal=True)) == 2
+    assert "legacy terminal-flow renderer has been retired" in capsys.readouterr().err
 
 
 def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
@@ -109,7 +91,7 @@ def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
     assert rc == 2
     captured = capsys.readouterr()
     assert "requires an interactive terminal" in captured.err
-    assert "--terminal" in captured.err
+    assert "pipe a prompt" in captured.err
 
 
 def test_rich_with_tty_does_not_short_circuit(monkeypatch) -> None:

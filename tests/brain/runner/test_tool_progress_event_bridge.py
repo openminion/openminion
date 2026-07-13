@@ -134,8 +134,10 @@ def test_emit_tool_progress_event_invalid_duration_ms_dropped() -> None:
     assert "duration_ms" not in payload
 
 
-def test_chat_cli_progress_note_renders_brain_emitted_payload() -> None:
-    from openminion.cli.chat.runtime import _format_stream_progress_note
+def test_shared_progress_builder_renders_brain_emitted_payload() -> None:
+    from openminion.cli.presentation.tool.progress import (
+        build_tool_event_from_progress,
+    )
 
     runner, received = _capture_events()
 
@@ -145,11 +147,9 @@ def test_chat_cli_progress_note_renders_brain_emitted_payload() -> None:
         args={"command": "ls -la"},
         call_id="c1",
     )
-    note = _format_stream_progress_note(received[0])
-    assert note is not None
-    # The TESS-03 shared formatter surfaces the canonical tool name in
-    # the rendered note string.
-    assert "bash" in note
+    event = build_tool_event_from_progress(received[0])
+    assert event is not None
+    assert event.tool_name == "bash"
 
 
 def test_terminal_consumer_keying_recognizes_brain_emitted_payload() -> None:

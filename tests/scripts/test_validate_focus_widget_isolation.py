@@ -97,7 +97,7 @@ def test_clean_file_returns_no_violations(guard_module, tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path,
         "from textual.widget import Widget\n"
-        "from openminion.cli.tui.focus.widgets import FocusStatusLine\n",
+        "from openminion.cli.interactive.widgets import FocusStatusLine\n",
     )
     assert guard_module._scan_file(fixture) == []
 
@@ -169,7 +169,7 @@ def test_live_tree_baseline_matches_expected_violations(
     # The only file with violations today is focus/screen.py; both
     # symbols are body widgets. ChatSearchBar (also imported there)
     # is on the exception list and must NOT show up.
-    expected_file = "src/openminion/cli/tui/focus/screen.py"
+    expected_file = "src/openminion/cli/interactive/screen.py"
     assert set(symbols_by_file.keys()) <= {expected_file}, (
         f"unexpected violation file(s): {set(symbols_by_file.keys())}"
     )

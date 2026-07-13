@@ -454,7 +454,7 @@ def test_chat_tab_agent_switch_respects_prompt_on_resume() -> None:
 
 
 def test_focus_screen_not_touched_by_phase_7() -> None:
-    import openminion.cli.tui.focus.screen as focus_screen
+    import openminion.cli.interactive.screen as focus_screen
 
     src = inspect.getsource(focus_screen)
     # Focus must not reach into shared-adapter prompt_on_resume plumbing

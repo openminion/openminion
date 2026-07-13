@@ -1,6 +1,5 @@
 import pytest
 from types import SimpleNamespace
-from unittest.mock import patch
 
 
 def _weather_runner():
@@ -155,96 +154,6 @@ class TestFreshnessPolicy:
         assert "[TIMEOUT]" in response
         assert "Retry options" in response or "retry" in response.lower()
         assert "cannot provide stale" in response.lower() or "stale" in response.lower()
-
-
-class TestDebugUsageFields:
-    def test_module_usage_debug_info_returns_expected_fields(self):
-        from openminion.cli.chat.commands import _get_module_usage_debug_info
-
-        class MockConfig:
-            class storage:
-                path = "/tmp/test"
-
-        result = _get_module_usage_debug_info(
-            config=MockConfig(),
-            session_id="test-session",
-        )
-
-        assert "modules" in result
-        assert "note" in result
-
-        modules = result["modules"]
-        assert "openminion-memory" in modules
-        assert "openminion-retrieve" in modules
-        assert "openminion-identity" in modules
-
-        for module_name, module_info in modules.items():
-            assert "importable" in module_info
-            assert "available" in module_info
-            assert "last_used_at" in module_info
-            assert "recent_calls" in module_info
-            assert "degraded_reason" in module_info
-
-    def test_module_usage_debug_info_queries_module_usage_without_weather_alias(
-        self, tmp_path
-    ):
-        from openminion.cli.chat.commands import _get_module_usage_debug_info
-
-        db_path = tmp_path / "records.db"
-        db_path.write_text("", encoding="utf-8")
-        captured_params: list[tuple[object, ...]] = []
-
-        class FakeCursor:
-            def fetchall(self):
-                return [{"call_count": 0, "last_used": None, "success_count": 0}]
-
-        class FakeConnection:
-            def execute(self, _sql, params):
-                captured_params.append(tuple(params))
-                return FakeCursor()
-
-        class FakeStore:
-            def __init__(self, _path, wal=True):
-                self.connection = FakeConnection()
-
-            def close(self):
-                return None
-
-        class MockConfig:
-            class storage:
-                path = str(db_path)
-
-        with patch(
-            "openminion.modules.storage.record_store.RecordStoreSQLite", FakeStore
-        ):
-            result = _get_module_usage_debug_info(
-                config=MockConfig(),
-                session_id="test-session",
-            )
-
-        assert "modules" in result
-        assert captured_params
-        assert all(len(params) == 2 for params in captured_params)
-        assert all(
-            "weather.openmeteo.current" not in str(params) for params in captured_params
-        )
-
-    def test_module_usage_debug_info_handles_missing_storage(self):
-        from openminion.cli.chat.commands import _get_module_usage_debug_info
-
-        class MockConfig:
-            class storage:
-                path = ""
-
-        result = _get_module_usage_debug_info(
-            config=MockConfig(),
-            session_id="test-session",
-        )
-
-        assert "modules" in result
-        for module_info in result["modules"].values():
-            assert not module_info["available"]
-            assert module_info["degraded_reason"] is not None
 
 
 class TestNegativePaths:

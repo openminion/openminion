@@ -6,7 +6,7 @@ import pytest
 
 from openminion.cli.theme import DARK, LIGHT
 from openminion.cli.tui.app import OpenMinionApp
-from openminion.cli.tui.focus.app import FocusApp, _DemoFocusRuntime
+from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
 
 
 @pytest.mark.asyncio

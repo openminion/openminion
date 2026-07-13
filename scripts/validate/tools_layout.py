@@ -43,6 +43,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "location",
     "memory",
     "mcp",
+    "ops",
     "plan",
     "reaction",
     "search",

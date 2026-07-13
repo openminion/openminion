@@ -105,7 +105,29 @@ def _run_default_focus(
                 session=None,
                 working_dir=None,
                 no_resume=False,
-                rich=False,
+                rich=True,
+            )
+        )
+        or 0
+    )
+
+
+def _run_piped_prompt(args: object, prompt: str) -> int:
+    from openminion.cli.commands.run import run_openminion
+
+    return int(
+        run_openminion(
+            SimpleNamespace(
+                config=getattr(args, "config", None),
+                prompt=prompt,
+                file="",
+                agent=None,
+                session=None,
+                resume=False,
+                reset_session=False,
+                purpose="piped-input",
+                stream=False,
+                json=False,
             )
         )
         or 0
@@ -170,17 +192,7 @@ def _run_no_handler(
         except (OSError, ValueError):
             stdin_text = ""
         if stdin_text.strip():
-            import io as _io
-
-            _replacement = _io.StringIO(stdin_text)
-            _replacement.isatty = lambda: False  # type: ignore[method-assign]
-            sys.stdin = _replacement  # type: ignore[assignment]
-            return _run_default_focus(
-                args,
-                home_root,
-                data_root,
-                no_interactive=True,
-            )
+            return _run_piped_prompt(args, stdin_text.strip())
         parser.print_help()
         return 1
     parser.print_help()

@@ -133,17 +133,6 @@ def test_argparse_invalid_choice_rejected() -> None:
         parser.parse_args(["focus", "--verbosity", "loud"])
 
 
-def test_run_terminal_focus_accepts_verbosity_kwarg() -> None:
-    import inspect
-
-    from openminion.cli.tui.terminal.shell import run_terminal_focus
-
-    sig = inspect.signature(run_terminal_focus)
-    assert "verbosity" in sig.parameters
-    # Default is "normal" so existing callers aren't broken.
-    assert sig.parameters["verbosity"].default == "normal"
-
-
 def test_only_ux_module_reads_legacy_focus_verbosity_env() -> None:
     import pathlib
     import subprocess

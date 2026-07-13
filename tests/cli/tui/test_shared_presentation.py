@@ -8,7 +8,7 @@ import pytest
 
 
 def test_chat_models_come_from_shared_owner() -> None:
-    from openminion.cli.tui.presentation.models import (
+    from openminion.cli.presentation.models import (
         ChatMessage,
         MessageKind,
         ToolEvent,
@@ -38,10 +38,10 @@ def test_chat_models_come_from_shared_owner() -> None:
 
 
 def test_tool_block_widget_is_shared() -> None:
-    from openminion.cli.tui.focus.widgets.tool_block import (
+    from openminion.cli.interactive.widgets.tool_block import (
         ToolBlockWidget as FocusToolBlock,
     )
-    from openminion.cli.tui.presentation.tool.blocks import ToolBlockWidget
+    from openminion.cli.presentation.tool.blocks import ToolBlockWidget
     from openminion.cli.tui.widgets.chat import ToolBlockWidget as DashboardToolBlock
 
     assert ToolBlockWidget is FocusToolBlock
@@ -49,7 +49,7 @@ def test_tool_block_widget_is_shared() -> None:
 
 
 def test_thinking_indicator_is_shared() -> None:
-    from openminion.cli.tui.presentation.status import (
+    from openminion.cli.presentation.status import (
         ThinkingIndicator as SharedThinkingIndicator,
     )
     from openminion.cli.tui.tabs.chat import (
@@ -60,17 +60,17 @@ def test_thinking_indicator_is_shared() -> None:
 
 
 def test_clipboard_is_shared() -> None:
-    from openminion.cli.tui.presentation.clipboard import copy_to_clipboard
+    from openminion.cli.presentation.clipboard import copy_to_clipboard
     from openminion.cli.tui.tabs.chat import copy_to_clipboard as chat_copy
 
     assert chat_copy is copy_to_clipboard
 
 
 def test_tool_context_hint_is_shared() -> None:
-    from openminion.cli.tui.focus.widgets.tool_block import (
+    from openminion.cli.interactive.widgets.tool_block import (
         tool_context_hint as focus_hint,
     )
-    from openminion.cli.tui.presentation.tool.blocks import tool_context_hint
+    from openminion.cli.presentation.tool.blocks import tool_context_hint
 
     assert tool_context_hint is focus_hint
     assert tool_context_hint("exec.run", {"command": "ls"}) == "ls"
@@ -80,24 +80,24 @@ def test_tool_context_hint_is_shared() -> None:
 
 
 def test_progress_label_is_shared() -> None:
-    from openminion.cli.tui.presentation.status import format_progress_label
+    from openminion.cli.presentation.status import format_progress_label
 
     assert format_progress_label({}, fallback_label="Working...") == "Working..."
 
 
 _SHARED_OWNER_MODULES = [
-    "openminion/src/openminion/cli/tui/presentation/models.py",
-    "openminion/src/openminion/cli/tui/presentation/messages.py",
-    "openminion/src/openminion/cli/tui/presentation/status.py",
-    "openminion/src/openminion/cli/tui/presentation/clipboard.py",
-    "openminion/src/openminion/cli/tui/presentation/tool/blocks.py",
-    "openminion/src/openminion/cli/tui/presentation/tool/progress.py",
-    "openminion/src/openminion/cli/tui/presentation/header.py",
+    "openminion/src/openminion/cli/presentation/models.py",
+    "openminion/src/openminion/cli/presentation/messages.py",
+    "openminion/src/openminion/cli/presentation/status.py",
+    "openminion/src/openminion/cli/presentation/clipboard.py",
+    "openminion/src/openminion/cli/presentation/tool/blocks.py",
+    "openminion/src/openminion/cli/presentation/tool/progress.py",
+    "openminion/src/openminion/cli/presentation/header.py",
     "openminion/src/openminion/cli/tui/widgets/chat.py",
 ]
 
 _FORBIDDEN_PREFIXES = (
-    "openminion.cli.tui.focus.",
+    "openminion.cli.interactive.",
     "openminion.cli.tui.tabs.",
 )
 
@@ -133,18 +133,18 @@ def test_shared_owners_do_not_import_shell_modules(
 
 
 def test_focus_screen_does_not_import_dashboard_chat(_repo_root: Path) -> None:
-    path = _repo_root / "openminion/src/openminion/cli/tui/focus/screen.py"
+    path = _repo_root / "openminion/src/openminion/cli/interactive/screen.py"
     imports = _collect_import_names(path)
     assert "openminion.cli.tui.tabs.chat" not in imports, (
         "focus/screen.py must not import from openminion.cli.tui.tabs.chat; "
-        "use openminion.cli.tui.presentation instead."
+        "use openminion.cli.presentation instead."
     )
 
 
 def test_header_helpers_format_shared_facts() -> None:
     import os
 
-    from openminion.cli.tui.presentation.header import (
+    from openminion.cli.presentation.header import (
         RuntimeHeaderContext,
         format_clock,
         shorten_session_id,
@@ -179,7 +179,7 @@ def test_header_helpers_format_shared_facts() -> None:
 
 
 def test_build_tool_event_from_progress_normalizes_payload() -> None:
-    from openminion.cli.tui.presentation.tool.progress import (
+    from openminion.cli.presentation.tool.progress import (
         build_tool_event_from_progress,
     )
 
@@ -203,7 +203,7 @@ def test_build_tool_event_from_progress_normalizes_payload() -> None:
 
 
 def test_build_tool_event_applies_normalize_args() -> None:
-    from openminion.cli.tui.presentation.tool.progress import (
+    from openminion.cli.presentation.tool.progress import (
         build_tool_event_from_progress,
     )
 
@@ -225,7 +225,7 @@ def test_build_tool_event_applies_normalize_args() -> None:
 
 
 def test_presentation_package_reexports() -> None:
-    mod = importlib.import_module("openminion.cli.tui.presentation")
+    mod = importlib.import_module("openminion.cli.presentation")
     expected = {
         "ChatMessage",
         "MessageKind",
@@ -256,7 +256,7 @@ def test_presentation_package_reexports() -> None:
 def test_dashboard_push_tool_event_mounts_shared_tool_block() -> None:
     import inspect
 
-    from openminion.cli.tui.presentation.tool.blocks import ToolBlockWidget
+    from openminion.cli.presentation.tool.blocks import ToolBlockWidget
     from openminion.cli.tui.widgets.chat import MessageWidget
 
     compose_src = inspect.getsource(MessageWidget.compose)
@@ -275,7 +275,7 @@ def test_dashboard_push_tool_event_mounts_shared_tool_block() -> None:
 def test_focus_live_and_history_both_flow_through_shared_tool_block() -> None:
     import inspect
 
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
 
     focus_src = inspect.getsource(FocusScreen)
     assert "build_tool_event_from_progress" in focus_src
@@ -284,8 +284,8 @@ def test_focus_live_and_history_both_flow_through_shared_tool_block() -> None:
 
     runtime_src = inspect.getsource(RuntimeMessageMixin)
     assert "_tool_event_from_metadata" in runtime_src
-    from openminion.cli.tui.presentation.models import ToolEvent as SharedToolEvent
-    from openminion.cli.tui.presentation.tool.progress import (
+    from openminion.cli.presentation.models import ToolEvent as SharedToolEvent
+    from openminion.cli.presentation.tool.progress import (
         build_tool_event_from_progress,
     )
 
@@ -295,29 +295,10 @@ def test_focus_live_and_history_both_flow_through_shared_tool_block() -> None:
     assert isinstance(built, SharedToolEvent)
 
 
-def test_focus_and_terminal_share_message_rendering_owner() -> None:
-    import inspect
-
-    from openminion.cli.tui.focus.widgets.transcript import FocusMessageWidget
-    from openminion.cli.tui.terminal import transcript as terminal_transcript
-
-    focus_src = inspect.getsource(FocusMessageWidget)
-    assert "render_body" in focus_src
-    assert "render_error_text" in focus_src
-    assert "render_system_text" in focus_src
-    assert "render_user_text" in focus_src
-
-    terminal_src = inspect.getsource(terminal_transcript)
-    assert "render_body" in terminal_src
-    assert "render_error_text" in terminal_src
-    assert "render_system_text" in terminal_src
-    assert "render_user_text" in terminal_src
-
-
 def test_focus_directory_session_affinity_uses_shared_runtime() -> None:
     import inspect
 
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
     from openminion.cli.tui.providers.runtime import OpenMinionRuntime
 
     focus_src = inspect.getsource(FocusScreen)
@@ -339,7 +320,7 @@ def test_focus_directory_session_affinity_uses_shared_runtime() -> None:
 def test_focus_inline_approval_uses_shared_approval_callback() -> None:
     import inspect
 
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
     from openminion.cli.tui.providers.runtime import OpenMinionRuntime
 
     focus_src = inspect.getsource(FocusScreen)
@@ -358,7 +339,7 @@ def test_dashboard_progress_callback_builds_shared_tool_event() -> None:
     assert "build_tool_event_from_progress" in src, (
         "Dashboard ChatTab no longer uses the shared tool-event builder; "
         "it must route tool_started/tool_completed payloads through "
-        "`openminion.cli.tui.presentation.tool.progress.build_tool_event_from_progress`."
+        "`openminion.cli.presentation.tool.progress.build_tool_event_from_progress`."
     )
     assert "tool_call_body" in src, (
         "Dashboard ChatTab no longer uses the shared `tool_call_body`; "

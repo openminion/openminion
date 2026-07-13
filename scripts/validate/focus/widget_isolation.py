@@ -44,9 +44,9 @@ REPO_ROOT = next(
     ),
     Path(__file__).resolve().parents[3],
 )
-FOCUS_SCREEN = REPO_ROOT / "src" / "openminion" / "cli" / "tui" / "focus" / "screen.py"
+FOCUS_SCREEN = REPO_ROOT / "src" / "openminion" / "cli" / "interactive" / "screen.py"
 FOCUS_WIDGETS_DIR = (
-    REPO_ROOT / "src" / "openminion" / "cli" / "tui" / "focus" / "widgets"
+    REPO_ROOT / "src" / "openminion" / "cli" / "interactive" / "widgets"
 )
 BASELINE_PATH = (
     REPO_ROOT / "scripts" / "baselines" / "focus_widget_isolation_baseline.txt"
@@ -96,7 +96,7 @@ def _scan_file(path: Path) -> list[Violation]:
 
 
 def _scan_focus_surface() -> list[Violation]:
-    """Scan `focus/screen.py` and every file under `focus/widgets/`."""
+    """Scan the canonical interactive screen and its widgets."""
     violations: list[Violation] = []
     if FOCUS_SCREEN.is_file():
         violations.extend(_scan_file(FOCUS_SCREEN))

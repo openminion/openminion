@@ -218,22 +218,6 @@ def test_status_from_payload_passes_through_phase_status() -> None:
 # ── Cross-shell adoption proof ────────────────────────────────────────────────
 
 
-def test_chat_cli_phase_status_display_uses_shared_controller() -> None:
-    import inspect
-
-    from openminion.cli.chat.ui import PhaseStatusDisplay
-
-    src = inspect.getsource(PhaseStatusDisplay)
-    assert "PhaseStatusController" in src, (
-        "chat CLI PhaseStatusDisplay no longer uses the shared status "
-        "controller; signature/elapsed dedup is back to shell-local."
-    )
-    assert "_last_signature" not in src, (
-        "chat CLI should not maintain a shell-local signature cache; "
-        "dedup must go through the shared controller."
-    )
-
-
 def test_dashboard_chat_uses_shared_status_controller() -> None:
     import inspect
 
@@ -249,7 +233,7 @@ def test_dashboard_chat_uses_shared_status_controller() -> None:
 def test_focus_screen_uses_shared_status_controller() -> None:
     import inspect
 
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
 
     src = inspect.getsource(FocusScreen)
     assert "PhaseStatusController" in src, (
@@ -304,7 +288,7 @@ def test_shared_status_owner_does_not_import_shell_modules(
     bad = [name for name in imports if name.startswith(_FORBIDDEN_PREFIXES)]
     assert not bad, (
         f"{rel_path} imports shell-local module(s): {bad}. "
-        "Shared CLI status owners must not reach into cli.chat or cli.tui."
+        "Shared CLI status owners must not reach into an interactive shell."
     )
 
 

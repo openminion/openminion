@@ -5,7 +5,7 @@ import pytest
 from openminion.cli.theme import DARK, LIGHT
 from openminion.cli.theme.textual_adapter import as_tcss_preamble
 from openminion.cli.tui.app import OpenMinionApp
-from openminion.cli.tui.focus.app import FocusApp, _DemoFocusRuntime
+from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
 
 
 def test_preamble_declares_openminion_prefixed_variables() -> None:

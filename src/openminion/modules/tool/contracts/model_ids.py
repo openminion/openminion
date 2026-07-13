@@ -42,6 +42,18 @@ MODEL_IP_PUBLIC = "ip.public"
 MODEL_IP_LOCAL = "ip.local"
 MODEL_BROWSER = "browser"
 
+OPS_MODEL_TOOL_IDS: tuple[str, ...] = (
+    "ops.target.list",
+    "ops.target.inspect",
+    "ops.host.snapshot",
+    "ops.service.inspect",
+    "ops.logs.query",
+    "ops.network.inspect",
+    "ops.command.observe",
+    "ops.job.inspect",
+    "ops.job.cancel",
+)
+
 MODEL_GWS_CALL = "gws.call"
 MODEL_GWS_SCHEMA = "gws.schema"
 MODEL_GWS_AUTH_SETUP = "gws.auth.setup"
@@ -134,6 +146,7 @@ ALL_MODEL_TOOL_IDS: tuple[str, ...] = (
     MODEL_IP_PUBLIC,
     MODEL_IP_LOCAL,
     MODEL_BROWSER,
+    *OPS_MODEL_TOOL_IDS,
     MODEL_GWS_CALL,
     MODEL_GWS_SCHEMA,
     MODEL_GWS_AUTH_SETUP,

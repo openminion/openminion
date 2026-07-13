@@ -19,13 +19,12 @@ from textual.widgets import (
     TabPane,
 )
 
-from openminion.cli.chat.ui import chat_help_lines
 from openminion.cli.parser.contracts import (
     AgentRuntimeAPI,
     ChatRuntimeAPI,
     ProviderBundle,
 )
-from openminion.cli.tui.presentation import resolve_runtime_data_root
+from openminion.cli.presentation import resolve_runtime_data_root, slash_help_rows
 from .screen_actions import MainScreenActionsMixin
 from .tabs import (
     AgentsTab,
@@ -50,7 +49,7 @@ class AppHeader(Static):
         self._transport = transport
 
     def _short_sess(self, sid: str) -> str:
-        from openminion.cli.tui.presentation.header import shorten_session_id
+        from openminion.cli.presentation.header import shorten_session_id
 
         return shorten_session_id(sid, length=12)
 
@@ -790,17 +789,7 @@ class HelpScreen(Screen):
 
     @staticmethod
     def _chat_command_entries() -> list[tuple[str, str]]:
-        entries: list[tuple[str, str]] = []
-        for line in chat_help_lines():
-            text = str(line).rstrip()
-            if not text or text.endswith(":"):
-                continue
-            stripped = text.strip()
-            if not stripped.startswith("/"):
-                continue
-            command, _, description = stripped.partition("  ")
-            entries.append((command.strip(), description.strip()))
-        return entries
+        return list(slash_help_rows())
 
     SECTIONS = [
         (

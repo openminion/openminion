@@ -1,6 +1,6 @@
 # TUI focus E2E harness
 
-These tests drive the terminal focus shell through a real POSIX PTY. They cover
+These tests drive Textual Focus through a real POSIX PTY. They cover
 the surface a person uses: launch, prompt readiness, slash commands, live turns,
 tool turns, and opt-in complex workflows.
 
@@ -93,7 +93,7 @@ Suite names:
 - `queued-input`: focused queued-input/status tests without live credentials.
 - `progress-visibility`: progress/status rendering tests without live credentials.
 - `tier-a`: deterministic bounded coding-harness release journeys.
-- `regression`: broad local focus/terminal/status regression suite.
+- `regression`: broad local Focus, presentation, and status regression suite.
 - `live`: basic plus tools live suites.
 - `complex`: full complex live suite.
 - `deep`: live plus complex live suites.

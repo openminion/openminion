@@ -27,6 +27,9 @@ This directory holds the public package documentation for standalone
 - [`runtime-surfaces.md`](runtime-surfaces.md) records the
   package-owned CLI, API, gateway, and Python-library surfaces and their
   intended use.
+- [`terminal-surfaces.md`](terminal-surfaces.md) records the canonical terminal
+  product, compatibility aliases, dashboard migration map, and retirement
+  gates.
 - [`testing-and-validation.md`](testing-and-validation.md)
   records the package-local smoke flow, validation gates, and public
   first-user checks.

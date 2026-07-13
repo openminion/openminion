@@ -34,8 +34,8 @@ async def smoke_dashboard() -> list[str]:
 async def smoke_focus(tmp_path: str) -> list[str]:
     errors: list[str] = []
     try:
-        from openminion.cli.tui.focus.app import FocusApp, _DemoFocusRuntime
-        from openminion.cli.tui.focus.widgets import (
+        from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
+        from openminion.cli.interactive.widgets import (
             FocusComposer,
             FocusStatusLine,
             FocusTranscript,

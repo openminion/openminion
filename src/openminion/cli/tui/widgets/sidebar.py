@@ -95,7 +95,7 @@ class _ClickableItem(Static):
             age_text = ""
             if updated_raw:
                 try:
-                    from openminion.cli.tui.presentation.models import (
+                    from openminion.cli.presentation.models import (
                         format_chat_timestamp,
                     )
 

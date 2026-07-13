@@ -12,8 +12,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.common.terminal_output import heading, item, section  # noqa: E402
-from scripts.validate.focus.terminal_no_textual import main as validate_no_textual  # noqa: E402
-from scripts.validate.focus.terminal_styles import main as validate_styles  # noqa: E402
 from scripts.validate.focus.widget_isolation import main as validate_widget_isolation  # noqa: E402
 
 
@@ -21,8 +19,6 @@ Check = tuple[str, Callable[[list[str]], int]]
 
 CHECKS: tuple[Check, ...] = (
     ("focus_widget_isolation", validate_widget_isolation),
-    ("terminal_no_textual", validate_no_textual),
-    ("terminal_styles", validate_styles),
 )
 
 

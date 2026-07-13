@@ -3,8 +3,10 @@ from __future__ import annotations
 import inspect
 import unittest
 
-from openminion.cli.chat.ui import _phase_status_text
-from openminion.modules.brain.diagnostics.status import PhaseStatus
+from openminion.modules.brain.diagnostics.status import (
+    PhaseStatus,
+    format_phase_status_text,
+)
 
 
 class GapAPreCallEmitAlwaysFiresTests(unittest.TestCase):
@@ -55,7 +57,7 @@ class GapAPreCallEmitAlwaysFiresTests(unittest.TestCase):
 
 class GapCPhaseLabelComposedWithProgressTests(unittest.TestCase):
     def test_specific_phase_label_injected_after_llm_slot(self) -> None:
-        text = _phase_status_text(
+        text = format_phase_status_text(
             PhaseStatus(
                 trace_id="trace-ppl-gap-c-analyzing",
                 status_key="analyzing",
@@ -67,7 +69,7 @@ class GapCPhaseLabelComposedWithProgressTests(unittest.TestCase):
         self.assertEqual(text, "LLM 1/12 | Analyzing request...")
 
     def test_specific_phase_label_injected_with_tokens_only(self) -> None:
-        text = _phase_status_text(
+        text = format_phase_status_text(
             PhaseStatus(
                 trace_id="trace-ppl-gap-c-tokens-only",
                 status_key="executing",
@@ -79,7 +81,7 @@ class GapCPhaseLabelComposedWithProgressTests(unittest.TestCase):
         self.assertEqual(text, "Executing step... | ↑6.2k ↓412 tokens")
 
     def test_specific_phase_label_with_all_slots(self) -> None:
-        text = _phase_status_text(
+        text = format_phase_status_text(
             PhaseStatus(
                 trace_id="trace-ppl-gap-c-full",
                 status_key="executing",
@@ -97,7 +99,7 @@ class GapCPhaseLabelComposedWithProgressTests(unittest.TestCase):
         )
 
     def test_generic_working_status_stays_progress_only(self) -> None:
-        text = _phase_status_text(
+        text = format_phase_status_text(
             PhaseStatus(
                 trace_id="trace-ppl-gap-c-working",
                 status_key="working",
@@ -114,7 +116,7 @@ class GapCPhaseLabelComposedWithProgressTests(unittest.TestCase):
         )
 
     def test_phase_label_preserved_when_no_progress_fields(self) -> None:
-        text = _phase_status_text(
+        text = format_phase_status_text(
             PhaseStatus(
                 trace_id="trace-ppl-gap-c-control",
                 status_key="analyzing",
@@ -125,7 +127,7 @@ class GapCPhaseLabelComposedWithProgressTests(unittest.TestCase):
         self.assertEqual(text, "Analyzing request... Preparing turn...")
 
     def test_terminal_and_waiting_states_are_label_only(self) -> None:
-        waiting = _phase_status_text(
+        waiting = format_phase_status_text(
             PhaseStatus(
                 trace_id="trace-ppl-gap-c-waiting",
                 status_key="waiting_for_user",
@@ -137,7 +139,7 @@ class GapCPhaseLabelComposedWithProgressTests(unittest.TestCase):
         )
         self.assertEqual(waiting, "Waiting for your reply...")
 
-        completed = _phase_status_text(
+        completed = format_phase_status_text(
             PhaseStatus(
                 trace_id="trace-ppl-gap-c-completed",
                 status_key="completed",
@@ -313,10 +315,13 @@ class PPL03LLMBoundaryEmitAlignmentTests(unittest.TestCase):
     def test_every_set_turn_progress_call_in_engine_has_call_count_and_limit(
         self,
     ) -> None:
-        from openminion.modules.brain.loop.tools import (
-            engine as engine_module,
-            loop_dispatch,
-            loop_execution,
+        from openminion.modules.brain.loop.tools import engine as engine_module
+        from openminion.modules.brain.loop.tools.iteration import (
+            dispatch as loop_dispatch,
+            execution as loop_execution,
+        )
+        from openminion.modules.brain.loop.tools.postprocess import (
+            engine as postprocess_engine,
         )
 
         source = "\n".join(
@@ -324,6 +329,7 @@ class PPL03LLMBoundaryEmitAlignmentTests(unittest.TestCase):
                 inspect.getsource(engine_module),
                 inspect.getsource(loop_dispatch),
                 inspect.getsource(loop_execution),
+                inspect.getsource(postprocess_engine),
             )
         )
         # Find every `_set_turn_progress(...)` call site.

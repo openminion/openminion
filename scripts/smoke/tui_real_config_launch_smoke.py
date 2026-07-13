@@ -50,7 +50,7 @@ async def smoke_focus(config_path: str) -> list[str]:
     errors: list[str] = []
     try:
         from openminion.api.runtime import APIRuntime
-        from openminion.cli.tui.focus.app import FocusApp
+        from openminion.cli.interactive.app import FocusApp
         from openminion.cli.tui.providers.runtime import OpenMinionRuntime
 
         rt = APIRuntime.from_config_path(config_path)

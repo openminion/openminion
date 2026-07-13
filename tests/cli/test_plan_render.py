@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-import io
-from contextlib import redirect_stdout
-from types import SimpleNamespace
-
-from openminion.cli.chat.commands.plan import handle_plan_command
 from openminion.cli.presentation.plan_render import (
     EMPTY_PLAN_TEXT,
     STATUS_MARK,
@@ -12,11 +7,6 @@ from openminion.cli.presentation.plan_render import (
     render_plan,
     render_plan_envelope,
 )
-from openminion.tools.todo.plugin import _h_set, _reset_store_for_tests
-
-
-def _ctx(session_id: str = "sess-render-test") -> object:
-    return SimpleNamespace(session_id=session_id)
 
 
 class TestStatusMark:
@@ -138,56 +128,3 @@ class TestRenderEnvelope:
         }
         output = render_plan_envelope(envelope)
         assert "[x] task" in output
-
-
-class TestHandlePlanCommand:
-    def setup_method(self) -> None:
-        _reset_store_for_tests()
-
-    def _capture(
-        self, line: str, *, session_id: str = "sess-plan-cmd"
-    ) -> tuple[bool, str]:
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            handled = handle_plan_command(line, session_id=session_id)
-        return handled, buf.getvalue()
-
-    def test_plan_bare_renders_current_plan(self) -> None:
-        _h_set({"items": ["read", "edit", "run"]}, _ctx("sess-plan-cmd"))
-        handled, output = self._capture("/plan")
-        assert handled is True
-        assert "Plan" in output
-        assert "[ ] read" in output
-
-    def test_plan_show_renders_current_plan(self) -> None:
-        _h_set({"items": ["a"]}, _ctx("sess-plan-cmd"))
-        handled, output = self._capture("/plan show")
-        assert handled is True
-        assert "[ ] a" in output
-
-    def test_plan_show_with_no_plan_renders_empty_text(self) -> None:
-        handled, output = self._capture("/plan show", session_id="sess-virgin")
-        assert handled is True
-        assert EMPTY_PLAN_TEXT in output
-
-    def test_plan_clear_drops_plan_and_prints_confirmation(self) -> None:
-        _h_set({"items": ["x"]}, _ctx("sess-plan-cmd"))
-        handled, output = self._capture("/plan clear")
-        assert handled is True
-        assert "Plan cleared." in output
-        assert EMPTY_PLAN_TEXT in output
-
-        _, post = self._capture("/plan show")
-        assert EMPTY_PLAN_TEXT in post
-
-    def test_unknown_subaction_returns_usage_error(self) -> None:
-        handled, output = self._capture("/plan frobnicate")
-        assert handled is True
-        assert "usage:" in output
-        assert "show" in output
-        assert "clear" in output
-
-    def test_handler_always_returns_true(self) -> None:
-        for line in ("/plan", "/plan show", "/plan clear", "/plan xyz", "/plan   "):
-            handled, _ = self._capture(line)
-            assert handled is True, f"line={line!r} not handled"

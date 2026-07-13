@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 from textual.css.query import QueryError
 
-from openminion.cli.tui.presentation.models import ToolEvent
-from openminion.cli.tui.presentation.tool.blocks import (
+from openminion.cli.presentation.models import ToolEvent
+from openminion.cli.presentation.tool.blocks import (
     ToolBlockWidget,
     _NORMAL_LINE_CAP,
     _VERBOSE_LINE_CAP,
@@ -81,14 +81,14 @@ def test_tool_block_normal_render_uses_6_line_cap() -> None:
 
 
 def test_focus_transcript_default_verbosity_is_normal() -> None:
-    from openminion.cli.tui.focus.widgets.transcript import FocusTranscript
+    from openminion.cli.interactive.widgets.transcript import FocusTranscript
 
     transcript = FocusTranscript()
     assert transcript.verbosity == "normal"
 
 
 def test_focus_transcript_accepts_verbosity_kwarg() -> None:
-    from openminion.cli.tui.focus.widgets.transcript import FocusTranscript
+    from openminion.cli.interactive.widgets.transcript import FocusTranscript
 
     transcript = FocusTranscript(verbosity="quiet")
     assert transcript.verbosity == "quiet"
@@ -97,7 +97,7 @@ def test_focus_transcript_accepts_verbosity_kwarg() -> None:
 
 
 def test_focus_transcript_set_verbosity_updates_property() -> None:
-    from openminion.cli.tui.focus.widgets.transcript import FocusTranscript
+    from openminion.cli.interactive.widgets.transcript import FocusTranscript
 
     transcript = FocusTranscript()
     transcript.set_verbosity("quiet")
@@ -109,7 +109,7 @@ def test_focus_transcript_set_verbosity_updates_property() -> None:
 
 
 def test_focus_screen_slash_registry_contains_verbosity_slashes() -> None:
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
 
     descriptor = FocusScreen._slash_command_registry  # type: ignore[attr-defined]
 
@@ -130,7 +130,7 @@ def test_focus_screen_slash_registry_contains_verbosity_slashes() -> None:
 
 
 def test_focus_screen_has_verbosity_handlers() -> None:
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
 
     assert callable(getattr(FocusScreen, "_slash_quiet", None))
     assert callable(getattr(FocusScreen, "_slash_normal", None))
@@ -139,7 +139,7 @@ def test_focus_screen_has_verbosity_handlers() -> None:
 
 
 def test_focus_screen_apply_session_verbosity_ignores_missing_transcript() -> None:
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
 
     class _Stub:
         _verbosity = "normal"
@@ -155,7 +155,7 @@ def test_focus_screen_apply_session_verbosity_ignores_missing_transcript() -> No
 
 
 def test_focus_screen_cycle_permission_mode_ignores_missing_transcript() -> None:
-    from openminion.cli.tui.focus.screen import FocusScreen
+    from openminion.cli.interactive.screen import FocusScreen
 
     class _Stub:
         def _cycle_permission_mode_from_ui(self) -> str:
@@ -168,7 +168,7 @@ def test_focus_screen_cycle_permission_mode_ignores_missing_transcript() -> None
 
 
 def test_focus_app_accepts_verbosity_kwarg() -> None:
-    from openminion.cli.tui.focus.app import FocusApp
+    from openminion.cli.interactive.app import FocusApp
 
     app = FocusApp(verbosity="quiet")
     assert app._verbosity == "quiet"
@@ -179,7 +179,7 @@ def test_focus_app_accepts_verbosity_kwarg() -> None:
 
 
 def test_focus_app_verbosity_invalid_falls_back_to_normal() -> None:
-    from openminion.cli.tui.focus.app import FocusApp
+    from openminion.cli.interactive.app import FocusApp
 
     app = FocusApp(verbosity="bogus")
     assert app._verbosity == "normal"
