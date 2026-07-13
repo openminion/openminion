@@ -20,6 +20,7 @@ from openminion.modules.tool import (
     build_default_tool_registry_debug_report,
 )
 from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.errors import ToolRuntimeError
 
 
 class _EchoArgs(BaseModel):
@@ -101,6 +102,29 @@ class _WeatherCurrentTool(Tool):
 
 
 class ToolRegistryTests(unittest.TestCase):
+    def test_sidecar_autostart_requires_runtime_binding(self) -> None:
+        registry = ToolRegistry()
+
+        with self.assertRaisesRegex(
+            ToolRuntimeError, "sidecar autostart is unavailable"
+        ):
+            registry.ensure_sidecar_autostart(name="pinchtab")
+
+    def test_sidecar_autostart_delegates_to_runtime_binding(self) -> None:
+        registry = ToolRegistry()
+        calls: list[dict[str, object]] = []
+
+        def autostart(**kwargs):
+            calls.append(kwargs)
+            return {"enabled": True, "source": "test"}
+
+        registry.bind_sidecar_autostart(autostart)
+
+        result = registry.ensure_sidecar_autostart(name="pinchtab")
+
+        self.assertEqual(result, {"enabled": True, "source": "test"})
+        self.assertEqual(calls, [{"name": "pinchtab"}])
+
     def test_policy_for_known_tool_reads_execution_policy(self) -> None:
         registry = ToolRegistry([_PolicyTool()])
         policy = registry.policy_for("policy_tool")

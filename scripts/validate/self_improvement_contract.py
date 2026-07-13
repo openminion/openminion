@@ -15,7 +15,9 @@ from scripts.common.terminal_output import emit_json_report  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "openminion"
-SELF_IMPROVEMENT_PATH = SRC_ROOT / "services" / "lifecycle" / "self_improvement.py"
+SELF_IMPROVEMENT_PATH = (
+    SRC_ROOT / "modules" / "brain" / "runtime" / "improvement" / "notes.py"
+)
 ALLOWED_TRIGGER_TOKEN_CONTEXTS = {
     ("ImprovementNote",),
     ("ImprovementNote", "to_dict"),

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from openminion.base.config.contracts import (
+from openminion.modules.context.contracts import (
     CONTRACT_REGISTRY,
     check_contract_registry_health,
 )

@@ -5,12 +5,12 @@ import inspect
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from openminion.api.runtime import APIRuntime
+    from openminion.services.runtime.interfaces import RuntimeFacade
 
 
 def _emit_chat_phase_timing(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     timer: "object",
     request: "object",
 ) -> None:

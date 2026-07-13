@@ -451,11 +451,7 @@ def execute_single_call(
 
         if isinstance(tool, ToolSpec) and tool.sidecar:
             try:
-                from openminion.services.lifecycle.sidecars import (
-                    ensure_sidecar_autostart,
-                )
-
-                autostart = ensure_sidecar_autostart(
+                autostart = registry.ensure_sidecar_autostart(
                     name=tool.sidecar,
                     config_path=env_owner.get(OPENMINION_CONFIG_PATH_ENV, "") or None,
                     runtime_env=env_owner.snapshot(),

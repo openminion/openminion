@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 import pytest
 
-from openminion.services.runtime.daytona.client import (
+from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaClient,
     DaytonaClientError,
     DaytonaConfig,

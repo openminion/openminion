@@ -14,6 +14,17 @@ from openminion.services.channel.authenticity import (
 )
 
 
+def test_service_authenticity_surface_is_canonical_controlplane_owner() -> None:
+    from openminion.modules.controlplane.channels.authenticity import (
+        ChannelAuthenticityPolicy as canonical,
+    )
+    from openminion.services.channel.authenticity import (
+        ChannelAuthenticityPolicy as compatibility,
+    )
+
+    assert compatibility is canonical
+
+
 class ChannelAuthenticityTests(unittest.TestCase):
     def test_trusted_channel_is_allowed_without_signature(self) -> None:
         policy = build_channel_authenticity_policy(ChannelAuthenticityConfig())

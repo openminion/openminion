@@ -1,0 +1,4 @@
+source	import
+routes/debug.py	openminion.services.diagnostics.debug
+routes/health.py	openminion.services.health.service
+routes/skill.py	openminion.modules.skill.constants

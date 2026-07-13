@@ -12,7 +12,7 @@ from openminion.services.security.policy import (
     evaluate_plugin_trust_policy,
 )
 from openminion.services.security.validate import run_security_validate
-from openminion.services.security.untrusted_content import (
+from openminion.modules.policy import (
     sanitize_untrusted_content,
     safe_tag,
 )

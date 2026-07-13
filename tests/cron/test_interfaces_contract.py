@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import Mock
-from openminion.services.cron.interfaces import (
+from openminion.modules.task.scheduling.interfaces import (
     CRON_INTERFACE_VERSION,
     CronError,
     ensure_cron_store_compatibility,

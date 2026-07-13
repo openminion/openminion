@@ -31,7 +31,7 @@ def init_vector_adapter(
         return None, None
 
     try:
-        from openminion.services.integration.vector_sync import VectorSyncScheduler
+        from openminion.modules.storage.runtime.vector_sync import VectorSyncScheduler
 
         vector_adapter = _build_vector_adapter(
             config=config,

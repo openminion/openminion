@@ -23,6 +23,15 @@ from openminion.services.tool.selection import (
 )
 
 
+def test_service_tool_selection_surface_is_canonical_module_owner() -> None:
+    from openminion.modules.tool.selection import ToolSelectionService as canonical
+    from openminion.services.tool.selection import (
+        ToolSelectionService as compatibility,
+    )
+
+    assert compatibility is canonical
+
+
 class MockTool(Tool):
     def __init__(
         self,

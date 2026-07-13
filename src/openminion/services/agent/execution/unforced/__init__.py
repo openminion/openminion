@@ -1,3 +1,3 @@
-from .runner import UnforcedLaneMixin, UnforcedLaneRunner
+from .runner import UnforcedLaneRunner
 
-__all__ = ["UnforcedLaneMixin", "UnforcedLaneRunner"]
+__all__ = ["UnforcedLaneRunner"]

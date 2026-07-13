@@ -23,7 +23,7 @@ from openminion.cli.config import (
 )
 from openminion.base.types import Message
 from openminion.modules.llm.providers.factory import SUPPORTED_PROVIDERS
-from openminion.services.agent.identity import load_identity_bundle
+from openminion.modules.identity import load_identity_bundle
 from openminion.services.health.probes import (
     ProbeResult,
     probe_channels_enabled,

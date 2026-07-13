@@ -22,7 +22,7 @@ from openminion.modules.brain.schemas import (
 from openminion.modules.brain.tools.action_dispatch import (
     execute_action_dispatch,
 )
-from openminion.services.agent.lifecycle import (
+from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
     get_default_lifecycle_registry,
     reset_default_lifecycle_registry,

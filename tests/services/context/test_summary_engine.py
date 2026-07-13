@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openminion.services.context.summary_engine import (
+from openminion.modules.context.summary.engine import (
     SessionSummaryEngine,
     SummaryTurn,
 )

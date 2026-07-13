@@ -11,21 +11,7 @@ from openminion.modules.identity.config import (
     from_base_config,
     resolve_default_render_budget,
 )
-from openminion.modules.identity.runtime.renderer import (
-    _CANONICAL_PURPOSES,
-    normalize_purpose,
-)
-from openminion.services.config import (
-    resolve_services_env,
-    resolve_services_path,
-    resolve_services_roots,
-)
-from openminion.services.bootstrap.paths import (
-    SERVICES_IDENTITY_DB_FILENAME,
-    SERVICES_IDENTITY_SUBDIR,
-)
-
-from .constants import (
+from openminion.modules.identity.constants import (
     IDENTITY_RUNTIME_STATUS_BUNDLE_EMPTY,
     IDENTITY_RUNTIME_STATUS_BUNDLE_INVALID,
     IDENTITY_RUNTIME_STATUS_BUNDLE_ROOT_UNSET,
@@ -42,6 +28,20 @@ from .constants import (
     IDENTITY_RUNTIME_STATUS_SYNCED,
     IDENTITY_RUNTIME_STATUS_SYNC_FAILED,
 )
+from openminion.modules.identity.runtime.renderer import (
+    _CANONICAL_PURPOSES,
+    normalize_purpose,
+)
+from openminion.services.config import (
+    resolve_services_env,
+    resolve_services_path,
+    resolve_services_roots,
+)
+from openminion.services.bootstrap.paths import (
+    SERVICES_IDENTITY_DB_FILENAME,
+    SERVICES_IDENTITY_SUBDIR,
+)
+
 from .context.history import _IDENTITY_FRAME, _resolve_system_prompt
 
 
@@ -420,7 +420,7 @@ class AgentIdentityMixin:
             self._identity_import_summary = summary
             return False
         try:
-            from openminion.services.agent.identity import load_identity_bundle
+            from openminion.modules.identity import load_identity_bundle
 
             bundle = load_identity_bundle(self._identity_agent_id, root=bundle_root)
             summary["bundle_root"] = str(bundle.root_path)
@@ -712,6 +712,9 @@ _AGENT_IDENTITY_RUNTIME_API_NAMES = (
     "_discover_startup_yaml_profile_paths",
     "_sync_startup_yaml_profiles",
     "_classify_profile_source",
+    "_identity_bundle_existing_profile_state",
+    "_identity_bundle_documents",
+    "_upsert_identity_bundle_profile",
     "_import_identity_bundle_profile",
     "_resolve_identity_db_path",
     "_init_identity_runtime",

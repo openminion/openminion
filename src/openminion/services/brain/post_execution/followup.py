@@ -23,7 +23,7 @@ from openminion.services.agent import (
     _map_history_to_provider,
     _resolve_system_prompt,
 )
-from openminion.services.tool.exposure import get_allowed_model_tool_names
+from openminion.modules.tool.exposure import get_allowed_model_tool_names
 
 
 def _dated_evidence_lines_from_tool_results(

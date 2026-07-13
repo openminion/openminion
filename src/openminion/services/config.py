@@ -5,7 +5,6 @@ from pathlib import Path
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.base.config.paths import resolve_data_root, resolve_home_root
-
 from .constants import (
     MEMORY_CAPSULE_STRATEGY_DYNAMIC_TURN,
     MEMORY_CAPSULE_STRATEGY_FROZEN_SESSION,
@@ -17,8 +16,6 @@ _OPENMINION_PLUGIN_PATHS_ENV = "OPENMINION_PLUGIN_PATHS"
 _DEFAULT_SERVICES_PLUGIN_SEARCH_RELATIVE_PATH = (
     Path("src") / "openminion" / "extensions" / "custom"
 )
-SELF_IMPROVEMENT_MAX_CONTEXT_CHARS = 240
-
 ServicesEnv = EnvironmentConfig
 
 

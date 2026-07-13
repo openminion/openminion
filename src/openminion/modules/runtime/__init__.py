@@ -67,6 +67,7 @@ from openminion.modules.runtime.credentials import (
     record_credential_access_event,
     redacted_credential_ref,
     reload_credential_after_auth_failure,
+    resolve_credential_env_value,
     resolve_credential_ref,
 )
 from openminion.modules.runtime.intervention import (
@@ -174,6 +175,7 @@ __all__ = [
     "record_credential_access_event",
     "redacted_credential_ref",
     "reload_credential_after_auth_failure",
+    "resolve_credential_env_value",
     "resolve_credential_ref",
     "DIVERGENCE_KINDS",
     "DivergenceKind",

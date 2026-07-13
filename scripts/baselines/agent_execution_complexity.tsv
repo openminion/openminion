@@ -1,0 +1,4 @@
+# Monotonic agent-execution complexity limits. Values may only decrease.
+package_loc	6390
+passthrough_count	49
+dispatch_owner_count	1

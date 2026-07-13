@@ -3,7 +3,7 @@ from __future__ import annotations
 from openminion.modules.llm.providers.base import ProviderToolSpec
 from openminion.modules.tool.registry import ToolSpec
 from openminion.modules.tool import build_default_tool_registry
-from openminion.services.tool.exposure import (
+from openminion.modules.tool.exposure import (
     get_allowed_model_tool_names,
     get_model_exposure_specs,
     get_visible_tool_specs_and_dispatch_map,

@@ -330,7 +330,7 @@ class _RuntimeMappedSessionClient:
     def get_slice(
         self, *, session_id: str, purpose: str, limits: dict[str, int]
     ) -> Any:
-        from openminion.services.context.slices import (
+        from openminion.modules.context.slices import (
             build_session_slice_from_runtime_store,
         )
 

@@ -35,6 +35,17 @@ from openminion.services.runtime.verifier_binding import (
 )
 
 
+def test_runtime_verifier_binding_surface_is_canonical_brain_adapter() -> None:
+    from openminion.services.brain.adapters.run_verification import (
+        bind_run_terminal_event as canonical,
+    )
+    from openminion.services.runtime.verifier_binding import (
+        bind_run_terminal_event as compatibility,
+    )
+
+    assert compatibility is canonical
+
+
 def _goal(
     *,
     criterion_count: int = 1,

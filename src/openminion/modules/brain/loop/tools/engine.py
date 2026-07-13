@@ -9,9 +9,6 @@ from openminion.modules.brain.loop.constants import (
 )
 from openminion.modules.llm.schemas import Message
 from .contracts import (
-    ADAPTIVE_CLOSURE_ENGINE_SINGLE_PASS,
-    ADAPTIVE_TERM_CIRCULAR_PATTERN,
-    ADAPTIVE_TERM_FINAL_TEXT,
     AdaptiveToolLoopContext,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopProfile,
@@ -118,7 +115,6 @@ from .iteration.execution import execute_iteration_results
 from .postprocess.loop import finalize_iteration_state
 from .iteration.termination import finalize_iteration_cap_exit
 from .iteration.helpers import (
-    _MUTATING_FILE_TOOLS,
     _append_tool_result_payload,
     _build_enrichment_message,
     _build_intent_execution_state_message,
@@ -145,18 +141,6 @@ from .duplicate_batch import (  # noqa: F401
     _force_duplicate_batch_answer_only_closure,
     _record_duplicate_batch_execution_facts,
 )
-
-
-MICRO_CORRECTION_ANOMALY_THRESHOLD = 0.5
-
-
-def _circular_sequence_marker(tool_calls: list[Any]) -> tuple[str, ...] | str:
-    tool_names = tuple(
-        str(getattr(item, "name", "") or "").strip() for item in tool_calls
-    )
-    if tool_names and set(tool_names).issubset(_MUTATING_FILE_TOOLS):
-        return semantic_batch_signature(tool_calls)
-    return tool_names
 
 
 def run_adaptive_tool_loop(
@@ -472,50 +456,6 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 continue
             if outcome is not None:
                 return outcome
-
-            self.iteration_tool_sequences.append(_circular_sequence_marker(tool_calls))
-            if (
-                len(self.iteration_tool_sequences) >= 3
-                and self.iteration_tool_sequences[-1]
-                == self.iteration_tool_sequences[-2]
-                == self.iteration_tool_sequences[-3]
-            ):
-                circular_outcome = _force_circular_pattern_answer_only_finalization(
-                    loop_ctx=self.loop_ctx,
-                    profile=self.profile,
-                    loop_state=self.loop_state,
-                    runtime=self.runtime,
-                    model=self.model,
-                    max_output_tokens=self.max_output_tokens,
-                    metadata=self.metadata,
-                    allowed_tools=self.allowed_tools,
-                    public_mode_tag=self.public_mode_tag,
-                )
-                if circular_outcome is not None:
-                    if (
-                        circular_outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-                        and self.profile.final_closure_policy
-                        == ADAPTIVE_CLOSURE_ENGINE_SINGLE_PASS
-                        and self.finalizer is not None
-                    ):
-                        circular_outcome.mode_result = self.finalizer(circular_outcome)
-                    return circular_outcome
-                self.loop_state.termination_reason = ADAPTIVE_TERM_CIRCULAR_PATTERN
-                emit_adaptive_status(
-                    self.loop_ctx,
-                    profile=self.profile,
-                    loop_state=self.loop_state,
-                    detail_text=f"{self.public_mode_tag} circular tool pattern detected",
-                    mode_state="circular_pattern",
-                    termination_reason=ADAPTIVE_TERM_CIRCULAR_PATTERN,
-                )
-                return AdaptiveToolLoopOutcome(
-                    profile_name=self.profile.profile_name,
-                    mode_name=self.profile.mode_name,
-                    termination_reason=ADAPTIVE_TERM_CIRCULAR_PATTERN,
-                    state=self.loop_state,
-                    allowed_tools=self.allowed_tools,
-                )
 
             if _is_empty_plan_lookup_diversion(
                 self.loop_ctx,

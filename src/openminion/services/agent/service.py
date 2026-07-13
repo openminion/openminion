@@ -29,14 +29,14 @@ from openminion.modules.llm.providers.tool_choice import (
 )
 from openminion.modules.tool import ToolRegistry
 
-from openminion.services.agent.hooks import HookRegistry
+from openminion.services.runtime.plugins import PluginRegistry
 from openminion.services.security.blast_radius.wiring import (
     SEAM_AGENT_SERVICE,
     build_default_composition_boundary_adapter,
 )
 from openminion.services.security.policy import SecurityPolicyEngine
 from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
-from openminion.services.tool.exposure import get_allowed_model_tool_names
+from openminion.modules.tool.exposure import get_allowed_model_tool_names
 from openminion.services.tool.selection import ToolSelectionService
 
 from .constants import (
@@ -171,7 +171,7 @@ class AgentService(AgentTurnFlowMixin):
     def __init__(
         self,
         config: OpenMinionConfig,
-        plugins: HookRegistry,
+        plugins: PluginRegistry,
         provider: object | None,
         logger: logging.Logger,
         *,

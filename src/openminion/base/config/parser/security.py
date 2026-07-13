@@ -30,6 +30,17 @@ def _list_payload(payload: dict[str, Any], key: str, default: list[Any]) -> list
     return value if isinstance(value, list) else list(default)
 
 
+def _string_ids(values: list[Any]) -> list[str]:
+    return [str(item) for item in values if isinstance(item, (str, int))]
+
+
+def _normalized_tokens(
+    values: list[Any], default: list[str] | None = None
+) -> list[str]:
+    tokens = [str(item).strip().lower() for item in values if str(item).strip()]
+    return tokens or list(default or [])
+
+
 def _build_gateway_security_sections(
     *,
     gateway_payload: dict[str, Any],
@@ -55,37 +66,22 @@ def _build_gateway_security_sections(
         "channel_policy": ChannelPolicyConfig(
             dm_policy=str(channel_policy_payload.get("dm_policy", "pairing")),
             group_policy=str(channel_policy_payload.get("group_policy", "disabled")),
-            dm_allowlist=[
-                str(item)
-                for item in normalized_channel_defaults["dm_allowlist"]
-                if isinstance(item, (str, int))
-            ],
-            group_allowlist=[
-                str(item)
-                for item in normalized_channel_defaults["group_allowlist"]
-                if isinstance(item, (str, int))
-            ],
-            paired_dm_senders=[
-                str(item)
-                for item in normalized_channel_defaults["paired_dm_senders"]
-                if isinstance(item, (str, int))
-            ],
+            dm_allowlist=_string_ids(normalized_channel_defaults["dm_allowlist"]),
+            group_allowlist=_string_ids(normalized_channel_defaults["group_allowlist"]),
+            paired_dm_senders=_string_ids(
+                normalized_channel_defaults["paired_dm_senders"]
+            ),
         ),
         "channel_authenticity": ChannelAuthenticityConfig(
             mode=_normalize_channel_authenticity_mode(
                 channel_authenticity_payload.get("mode")
             ),
-            trusted_channels=[
-                str(item).strip().lower()
-                for item in normalized_channel_defaults["trusted_channels"]
-                if str(item).strip()
-            ]
-            or ["console"],
-            required_channels=[
-                str(item).strip().lower()
-                for item in normalized_channel_defaults["required_channels"]
-                if str(item).strip()
-            ],
+            trusted_channels=_normalized_tokens(
+                normalized_channel_defaults["trusted_channels"], ["console"]
+            ),
+            required_channels=_normalized_tokens(
+                normalized_channel_defaults["required_channels"]
+            ),
             secret_env_by_channel=_as_string_dict(
                 channel_authenticity_payload.get("secret_env_by_channel"),
                 lower_keys=True,
@@ -94,38 +90,33 @@ def _build_gateway_security_sections(
                 0,
                 _as_int(channel_authenticity_payload.get("max_age_seconds"), 300),
             ),
-            allowed_algorithms=[
-                str(item).strip().lower()
-                for item in _list_payload(
+            allowed_algorithms=_normalized_tokens(
+                _list_payload(
                     channel_authenticity_payload,
                     "allowed_algorithms",
                     ["hmac-sha256"],
-                )
-                if str(item).strip()
-            ]
-            or ["hmac-sha256"],
+                ),
+                ["hmac-sha256"],
+            ),
         ),
         "security": SecurityConfig(
             tool_policy=ToolPolicyConfig(
-                default_required_scopes=[
-                    str(item).strip().lower()
-                    for item in _list_payload(
+                default_required_scopes=_normalized_tokens(
+                    _list_payload(
                         tool_policy_payload,
                         "default_required_scopes",
                         ["tool.execute"],
+                    ),
+                    ["tool.execute"],
+                ),
+                **{
+                    name: max(1, _as_int(tool_policy_payload.get(name), default))
+                    for name, default in (
+                        ("max_calls_per_run", 8),
+                        ("max_calls_per_tool", 4),
+                        ("max_budget_cost_per_run", 16),
                     )
-                    if str(item).strip()
-                ]
-                or ["tool.execute"],
-                max_calls_per_run=max(
-                    1, _as_int(tool_policy_payload.get("max_calls_per_run"), 8)
-                ),
-                max_calls_per_tool=max(
-                    1, _as_int(tool_policy_payload.get("max_calls_per_tool"), 4)
-                ),
-                max_budget_cost_per_run=max(
-                    1, _as_int(tool_policy_payload.get("max_budget_cost_per_run"), 16)
-                ),
+                },
             )
         ),
         "action_policy": _build_action_policy_config(action_policy_payload),

@@ -5,7 +5,6 @@ from typing import Any, NamedTuple
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 
 from openminion.modules.brain.constants import (
-    BRAIN_ACTION_STATUS_BLOCKED,
     BRAIN_ACTION_STATUS_FAILED,
     BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_ACTION_STATUS_SUCCESS,
@@ -26,6 +25,7 @@ from ..contracts import (
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
     canonical_tool_call_signature,
+    is_budget_exhausted_action_result,
 )
 from ..evidence import _count_substantive_non_control_tool_results
 from ..confirmation import (
@@ -264,11 +264,7 @@ def execute_iteration_results(
                 ),
             )
 
-        if (
-            action_result.status == BRAIN_ACTION_STATUS_BLOCKED
-            and getattr(getattr(action_result, "error", None), "code", "")
-            == "BUDGET_EXCEEDED"
-        ):
+        if is_budget_exhausted_action_result(action_result):
             loop_state.messages.append(
                 action_result_to_tool_message(
                     getattr(tool_call, "id", None),

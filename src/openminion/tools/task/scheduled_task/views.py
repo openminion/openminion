@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from openminion.modules.task import TaskManager
-from openminion.services.cron.scheduling import normalize_schedule
+from openminion.modules.task.scheduling.schedule import normalize_schedule
 
 from ..constants import (
     FIRST_RUN_PENDING_NOTE,

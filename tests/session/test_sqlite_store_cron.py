@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from openminion.services.cron.scheduling import to_iso_utc, utc_now
+from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
 

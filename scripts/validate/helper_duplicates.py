@@ -134,12 +134,16 @@ def _is_excluded_pair(rel_dir: str, fn_name: str) -> bool:
     return False
 
 
-def main() -> int:
+def scan(
+    scan_root: pathlib.Path = SCAN_ROOT,
+    *,
+    repo_root: pathlib.Path = REPO_ROOT,
+) -> list[str]:
     dir_fn_files: dict[pathlib.Path, dict[str, list[pathlib.Path]]] = (
         collections.defaultdict(lambda: collections.defaultdict(list))
     )
 
-    for path in sorted(SCAN_ROOT.rglob("*.py")) if SCAN_ROOT.exists() else ():
+    for path in sorted(scan_root.rglob("*.py")) if scan_root.exists() else ():
         if _is_excluded_file(path):
             continue
         parent = path.parent
@@ -148,7 +152,10 @@ def main() -> int:
 
     hits: list[str] = []
     for directory, fn_map in sorted(dir_fn_files.items()):
-        rel_dir = str(directory.relative_to(REPO_ROOT))
+        try:
+            rel_dir = str(directory.relative_to(repo_root))
+        except ValueError:
+            rel_dir = str(directory)
         for fn_name, files in sorted(fn_map.items()):
             if len(files) < 2:
                 continue
@@ -158,8 +165,16 @@ def main() -> int:
             non_storage_files = [f for f in files if not _is_storage_pair_file(f)]
             if len(non_storage_files) < 2 and len(storage_files) >= len(files) - 1:
                 continue
-            file_list = ", ".join(str(f.relative_to(REPO_ROOT)) for f in sorted(files))
+            file_list = ", ".join(
+                str(f.relative_to(repo_root)) if f.is_relative_to(repo_root) else str(f)
+                for f in sorted(files)
+            )
             hits.append(f"{rel_dir}: duplicate helper '{fn_name}' in [{file_list}]")
+    return hits
+
+
+def main() -> int:
+    hits = scan()
 
     if hits:
         sys.stderr.write(

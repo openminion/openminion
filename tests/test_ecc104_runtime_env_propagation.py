@@ -23,7 +23,8 @@ from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.modules.task import TaskManager
 from openminion.services.agent.execution.fallbacks import AgentToolFallbacksMixin
-from openminion.services.agent.execution.executor import TurnExecutor
+from openminion.services.agent.execution.composition import build_service_port
+from openminion.services.agent.execution.runtime import ExecutorRuntime
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -63,9 +64,11 @@ def test_turn_executor_injects_runtime_env_into_tool_execution_context():
         _security_policy=None,
     )
     runtime = SimpleNamespace(inbound=inbound)
-    executor = TurnExecutor(service=service, runtime=runtime)
+    runtime_ops = ExecutorRuntime(
+        service_port=build_service_port(service), runtime=runtime
+    )
 
-    built = executor._build_tool_execution_context()
+    built = runtime_ops._build_tool_execution_context()
     assert built.metadata["runtime_env"] == {"ECC_104_EXECUTOR": "enabled"}
     assert built.metadata["runtime_tools"]["search"]["default_provider"] == "brave"
     assert built.metadata["runtime_tools"]["search"]["allow_fallback"] is False
@@ -73,7 +76,7 @@ def test_turn_executor_injects_runtime_env_into_tool_execution_context():
     assert built.metadata["tool_binding_source"] == "runtime_policy"
 
     asyncio.run(
-        executor.execute_tool_calls(
+        runtime_ops.execute_tool_calls(
             [ProviderToolCall(name="weather", arguments={}, source="test")],
             tool_budget_state=None,
             context_metadata_overrides={"runtime_env": {"ECC_104_OVERRIDE": "1"}},
@@ -111,8 +114,10 @@ def test_turn_executor_injects_resolved_runtime_storage_path():
         storage_path=resolved_storage_path,
     )
 
-    executor = TurnExecutor(service=service, runtime=runtime)
-    built = executor._build_tool_execution_context()
+    runtime_ops = ExecutorRuntime(
+        service_port=build_service_port(service), runtime=runtime
+    )
+    built = runtime_ops._build_tool_execution_context()
 
     assert built.metadata["storage_path"] == str(resolved_storage_path)
     assert built.metadata["storage_path"] != config.storage.path
@@ -143,9 +148,11 @@ def test_turn_executor_injects_memory_service_into_tool_execution_context(
     runtime = SimpleNamespace(
         inbound=Message(channel="console", target="user", body="hello", metadata={})
     )
-    executor = TurnExecutor(service=service, runtime=runtime)
+    runtime_ops = ExecutorRuntime(
+        service_port=build_service_port(service), runtime=runtime
+    )
 
-    built = executor._build_tool_execution_context()
+    built = runtime_ops._build_tool_execution_context()
 
     assert built.memory_service is not None
     assert callable(getattr(built.memory_service, "write_record", None))
@@ -169,9 +176,11 @@ def test_turn_executor_injects_sandbox_runner_into_tool_execution_context():
         inbound=Message(channel="console", target="user", body="hello", metadata={}),
         sandbox_runner=sentinel_runner,
     )
-    executor = TurnExecutor(service=service, runtime=runtime)
+    runtime_ops = ExecutorRuntime(
+        service_port=build_service_port(service), runtime=runtime
+    )
 
-    built = executor._build_tool_execution_context()
+    built = runtime_ops._build_tool_execution_context()
 
     assert built.sandbox_runner is sentinel_runner
 

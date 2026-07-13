@@ -37,7 +37,7 @@ ALLOWED_PRINT_CALL_PATH_PATTERNS = (
     re.compile(r"^src/openminion/modules/controlplane/adapters/cli_adapter\.py$"),
     re.compile(r"^src/openminion/modules/identity/controlplane/main\.py$"),
     re.compile(r"^src/openminion/modules/task/runtime/migration_runner\.py$"),
-    re.compile(r"^src/openminion/services/context/cleanup\.py$"),
+    re.compile(r"^src/openminion/cli/commands/context_cleanup\.py$"),
     re.compile(r"^src/openminion/services/runtime/cli\.py$"),
 )
 PRINT_SCAN_PREFIXES = (

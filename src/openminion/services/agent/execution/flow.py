@@ -14,29 +14,16 @@ from ..context.history import _provider_tool_call_strategy
 from .composition import build_service_port, build_turn_executor
 from .dependencies import ExecutorDeps
 from .response import finalize_turn_response, tool_calls_payload
-from .state import TurnRuntimeContext
+from .state import RequiredLaneOutcome, ToolPlan, TurnRuntimeContext
 from .tool_plan import build_tool_plan
-from .validators import (
-    canonical_tool_chain,
-    canonical_tool_name,
-    collect_missing_required_args,
-    extract_missing_argument_fields,
-    is_tool_argument_error,
-    looks_like_tool_call_envelope,
-)
+from .validators import canonical_tool_chain, canonical_tool_name
 
 
 def _build_executor_deps(service, finalize_response) -> ExecutorDeps:
     return ExecutorDeps(
         finalize_response=finalize_response,
-        tool_calls_payload=tool_calls_payload,
-        looks_like_tool_call_envelope=looks_like_tool_call_envelope,
         identity_metadata=service._identity_metadata,
         tool_batch_metadata=service._tool_batch_metadata,
-        collect_missing_required_args=collect_missing_required_args,
-        is_tool_argument_error=is_tool_argument_error,
-        extract_missing_argument_fields=extract_missing_argument_fields,
-        canonical_tool_name=canonical_tool_name,
     )
 
 
@@ -206,19 +193,16 @@ async def _handle_unforced_provider_response(
 async def _run_required_lane(
     *,
     executor,
-    intent_category: str,
-    effective_forced_tools: list[str],
-    fallback_chain: list[str],
-    capability_primary: str | None,
+    plan: ToolPlan,
     tool_call_strategy: str,
     tool_budget_state: ToolBudgetState | None,
     executor_deps: ExecutorDeps,
 ):
     return await executor.run_required_tool_lane(
-        intent_category=intent_category,
-        effective_forced_tools=effective_forced_tools,
-        fallback_chain=fallback_chain,
-        capability_primary=capability_primary,
+        intent_category=plan.intent_category,
+        effective_forced_tools=plan.effective_forced_tools,
+        fallback_chain=plan.fallback_chain,
+        capability_primary=plan.capability_primary,
         tool_call_strategy=tool_call_strategy,
         tool_budget_state=tool_budget_state,
         deps=executor_deps,
@@ -241,12 +225,8 @@ async def _complete_unforced_lane(
     *,
     executor,
     runtime: TurnRuntimeContext,
-    inbound: Message,
-    intent_category: str,
-    capability_primary: str | None,
-    fallback_chain: list[str],
-    attempted_tools: list[str],
-    capability_fallback_trigger_reason: str | None,
+    plan: ToolPlan,
+    required_outcome: RequiredLaneOutcome,
     tool_call_strategy: str,
     tool_budget_state: ToolBudgetState | None,
     executor_deps: ExecutorDeps,
@@ -261,8 +241,8 @@ async def _complete_unforced_lane(
         service,
         executor=executor,
         response=response,
-        inbound=inbound,
-        intent_category=intent_category,
+        inbound=runtime.inbound,
+        intent_category=plan.intent_category,
         tool_call_strategy=tool_call_strategy,
         tool_budget_state=tool_budget_state,
         deps=executor_deps,
@@ -273,33 +253,13 @@ async def _complete_unforced_lane(
     return service._build_final_stop_response(
         finalize_response=finalize_response,
         response=response,
-        inbound=inbound,
-        intent_category=intent_category,
-        capability_primary=capability_primary,
-        fallback_chain=fallback_chain,
-        attempted_tools=attempted_tools,
-        capability_fallback_trigger_reason=capability_fallback_trigger_reason,
+        inbound=runtime.inbound,
+        plan=plan,
+        required_outcome=required_outcome,
     )
 
 
 class AgentTurnFlowMixin:
-    def _build_executor_deps(
-        self,
-        *,
-        finalize_response: Any,
-    ) -> "ExecutorDeps":
-        return ExecutorDeps(
-            finalize_response=finalize_response,
-            tool_calls_payload=tool_calls_payload,
-            looks_like_tool_call_envelope=looks_like_tool_call_envelope,
-            identity_metadata=self._identity_metadata,
-            tool_batch_metadata=self._tool_batch_metadata,
-            collect_missing_required_args=collect_missing_required_args,
-            is_tool_argument_error=is_tool_argument_error,
-            extract_missing_argument_fields=extract_missing_argument_fields,
-            canonical_tool_name=canonical_tool_name,
-        )
-
     def _build_unavailable_response(
         self,
         *,
@@ -367,12 +327,10 @@ class AgentTurnFlowMixin:
         finalize_response: Any,
         response: Any,
         inbound: Message,
-        intent_category: str | None,
-        capability_primary: str | None,
-        fallback_chain: list[Any],
-        attempted_tools: list[str],
-        capability_fallback_trigger_reason: str | None,
+        plan: ToolPlan,
+        required_outcome: RequiredLaneOutcome,
     ) -> AgentResponse:
+        attempted_tools = required_outcome.attempted_tools
         return finalize_response(
             AgentResponse(
                 text=response.text,
@@ -381,16 +339,17 @@ class AgentTurnFlowMixin:
                 metadata={
                     "model": response.model,
                     "finish_reason": response.finish_reason or "stop",
-                    "intent_category": intent_category or "none",
-                    "capability_category": intent_category or "none",
-                    "capability_primary": capability_primary,
-                    "capability_fallback_chain": json.dumps(fallback_chain),
+                    "intent_category": plan.intent_category or "none",
+                    "capability_category": plan.intent_category or "none",
+                    "capability_primary": plan.capability_primary,
+                    "capability_fallback_chain": json.dumps(plan.fallback_chain),
                     "capability_attempted_tools": json.dumps(attempted_tools),
-                    "capability_fallback_trigger_reason": capability_fallback_trigger_reason
-                    or "",
+                    "capability_fallback_trigger_reason": (
+                        required_outcome.capability_fallback_trigger_reason or ""
+                    ),
                     "capability_final_tool": attempted_tools[-1]
                     if attempted_tools
-                    else capability_primary or "",
+                    else plan.capability_primary or "",
                     **self._identity_metadata(),
                 },
             )
@@ -440,22 +399,17 @@ class AgentTurnFlowMixin:
             forced_tools=forced_tools,
             capability_category=capability_category,
         )
-        intent_category = plan.intent_category
-        effective_forced_tools = plan.effective_forced_tools
-        fallback_chain = plan.fallback_chain
-        capability_primary = plan.capability_primary
-
         unavailable = self._build_unavailable_response(
             finalize_response=_finalize_response,
             plan=plan,
-            intent_category=intent_category,
+            intent_category=plan.intent_category,
             inbound=inbound,
         )
         if unavailable is not None:
             return unavailable
 
-        if capability_primary is None and effective_forced_tools:
-            capability_primary = effective_forced_tools[0]
+        if plan.capability_primary is None and plan.effective_forced_tools:
+            plan.capability_primary = plan.effective_forced_tools[0]
 
         tool_budget_state = (
             ToolBudgetState() if self._security_policy is not None else None
@@ -463,17 +417,10 @@ class AgentTurnFlowMixin:
         executor_deps = _build_executor_deps(self, _finalize_response)
         required_outcome = await _run_required_lane(
             executor=executor,
-            intent_category=intent_category,
-            effective_forced_tools=effective_forced_tools,
-            fallback_chain=fallback_chain,
-            capability_primary=capability_primary,
+            plan=plan,
             tool_call_strategy=tool_call_strategy,
             tool_budget_state=tool_budget_state,
             executor_deps=executor_deps,
-        )
-        attempted_tools = list(required_outcome.attempted_tools)
-        capability_fallback_trigger_reason = (
-            required_outcome.capability_fallback_trigger_reason
         )
         if required_outcome.response is not None:
             return required_outcome.response
@@ -482,12 +429,8 @@ class AgentTurnFlowMixin:
             self,
             executor=executor,
             runtime=runtime,
-            inbound=inbound,
-            intent_category=intent_category,
-            capability_primary=capability_primary,
-            fallback_chain=fallback_chain,
-            attempted_tools=attempted_tools,
-            capability_fallback_trigger_reason=capability_fallback_trigger_reason,
+            plan=plan,
+            required_outcome=required_outcome,
             tool_call_strategy=tool_call_strategy,
             tool_budget_state=tool_budget_state,
             executor_deps=executor_deps,

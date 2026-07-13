@@ -4,13 +4,7 @@ from typing import Any
 from openminion.services.security.policy import ToolBudgetState
 
 from ..dependencies import ExecutorDeps
-from ..ports import (
-    RuntimeOpsPort,
-    TurnFlowServicePort,
-    resolve_runtime_context,
-    resolve_runtime_ops,
-    resolve_service_port,
-)
+from ..ports import RuntimeOpsPort, TurnFlowServicePort
 from .arguments import phase_validate_args
 from .execution import phase_execute
 from .metadata import (
@@ -21,35 +15,32 @@ from .metadata import (
 )
 from .completion import phase_post_execution
 from .provider import phase_provider_call, phase_recover_no_tool_calls
-from .state import RequiredLaneState
+from .state import RequiredLaneConfig, RequiredLaneState
 
 
 class RequiredLaneRunner:
     def __init__(
         self,
         *,
-        service_port: TurnFlowServicePort | None = None,
-        runtime: Any | None = None,
-        runtime_ops: RuntimeOpsPort | None = None,
+        service_port: TurnFlowServicePort,
+        runtime: Any,
+        runtime_ops: RuntimeOpsPort,
     ) -> None:
-        if service_port is not None:
-            self._service_port = service_port
-        if runtime is not None:
-            self._runtime = runtime
-        if runtime_ops is not None:
-            self._runtime_ops = runtime_ops
+        self._service_port = service_port
+        self._runtime = runtime
+        self._runtime_ops = runtime_ops
 
     @property
     def service_port(self) -> TurnFlowServicePort:
-        return resolve_service_port(self)
+        return self._service_port
 
     @property
     def runtime(self) -> Any:
-        return resolve_runtime_context(self)
+        return self._runtime
 
     @property
     def runtime_ops(self) -> RuntimeOpsPort:
-        return resolve_runtime_ops(self)
+        return self._runtime_ops
 
     _invalid_tool_arguments_metadata = staticmethod(invalid_tool_arguments_metadata)
 
@@ -58,13 +49,7 @@ class RequiredLaneRunner:
         *,
         state: RequiredLaneState,
         deps: ExecutorDeps,
-        intent_category: str,
-        required_tool_lane: bool,
-        fallback_chain: list[str],
-        capability_primary: str | None,
-        tool_call_strategy: str,
-        tool_budget_state: ToolBudgetState | None,
-        allow_runtime_direct_fallback: bool,
+        config: RequiredLaneConfig,
     ) -> Any | None:
         tool_to_try = str(state.tool_to_try or "")
         logger = self.service_port.logger
@@ -76,47 +61,30 @@ class RequiredLaneRunner:
             lambda: phase_provider_call(
                 self,
                 state=state,
-                intent_category=intent_category,
-                required_tool_lane=required_tool_lane,
-                tool_call_strategy=tool_call_strategy,
+                config=config,
             ),
             lambda: phase_recover_no_tool_calls(
                 self,
                 state=state,
-                deps=deps,
-                intent_category=intent_category,
-                fallback_chain=fallback_chain,
-                allow_runtime_direct_fallback=allow_runtime_direct_fallback,
+                config=config,
             ),
             lambda: phase_validate_args(
                 self,
                 state=state,
                 deps=deps,
-                intent_category=intent_category,
-                fallback_chain=fallback_chain,
-                allow_runtime_direct_fallback=allow_runtime_direct_fallback,
-                required_tool_lane=required_tool_lane,
-                tool_call_strategy=tool_call_strategy,
+                config=config,
             ),
             lambda: phase_execute(
                 self,
                 state=state,
                 deps=deps,
-                intent_category=intent_category,
-                fallback_chain=fallback_chain,
-                tool_call_strategy=tool_call_strategy,
-                tool_budget_state=tool_budget_state,
-                allow_runtime_direct_fallback=allow_runtime_direct_fallback,
+                config=config,
             ),
             lambda: phase_post_execution(
                 self,
                 state=state,
                 deps=deps,
-                intent_category=intent_category,
-                capability_primary=capability_primary,
-                fallback_chain=fallback_chain,
-                tool_call_strategy=tool_call_strategy,
-                tool_budget_state=tool_budget_state,
+                config=config,
             ),
         )
         for phase_call in phase_calls:
@@ -155,18 +123,21 @@ class RequiredLaneRunner:
             getattr(selection_cfg, "enforce_required_tool_call", True)
             and effective_forced_tools
         )
+        lane_config = RequiredLaneConfig(
+            intent_category=intent_category,
+            fallback_chain=fallback_chain,
+            capability_primary=capability_primary,
+            tool_call_strategy=tool_call_strategy,
+            tool_budget_state=tool_budget_state,
+            allow_runtime_direct_fallback=allow_runtime_direct_fallback,
+            required_tool_lane=required_tool_lane,
+        )
 
         while state.tool_to_try:
             outcome = await self._run_required_phase_sequence(
                 state=state,
                 deps=deps,
-                intent_category=intent_category,
-                required_tool_lane=required_tool_lane,
-                fallback_chain=fallback_chain,
-                capability_primary=capability_primary,
-                tool_call_strategy=tool_call_strategy,
-                tool_budget_state=tool_budget_state,
-                allow_runtime_direct_fallback=allow_runtime_direct_fallback,
+                config=lane_config,
             )
             if outcome is not None:
                 return outcome
@@ -213,8 +184,4 @@ class RequiredLaneRunner:
         return empty_required_lane_outcome(state)
 
 
-class RequiredLaneMixin(RequiredLaneRunner):
-    pass
-
-
-__all__ = ["RequiredLaneMixin", "RequiredLaneRunner"]
+__all__ = ["RequiredLaneRunner"]

@@ -2,8 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from openminion.services.agent.identity import load_identity_bundle
+from openminion.modules.identity import load_identity_bundle
 from openminion.services.identity.client import IdentityBundleClient
+
+
+def test_agent_identity_compatibility_surface_is_canonical() -> None:
+    from openminion.modules.identity import load_identity_bundle as canonical
+
+    assert load_identity_bundle is canonical
 
 
 def _write_bundle(

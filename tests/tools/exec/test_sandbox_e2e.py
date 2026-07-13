@@ -6,11 +6,11 @@ from typing import Any, Mapping
 
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.runtime.policy import Policy
-from openminion.services.runtime.daytona.client import (
+from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaConfig,
     DaytonaTransportError,
 )
-from openminion.services.runtime.daytona.runner import DaytonaRunner
+from openminion.modules.runtime.sandboxes.daytona import DaytonaRunner
 from openminion.tools.exec.constants import EXEC_ARTIFACT_THRESHOLD_BYTES
 from openminion.tools.exec.plugin import _h_exec_run
 
@@ -180,7 +180,7 @@ class _FakeSandboxTransport:
 
 
 def _runner(transport: _FakeSandboxTransport) -> DaytonaRunner:
-    from openminion.services.runtime.daytona.client import DaytonaClient
+    from openminion.modules.runtime.sandboxes.daytona import DaytonaClient
 
     return DaytonaRunner(
         client=DaytonaClient(

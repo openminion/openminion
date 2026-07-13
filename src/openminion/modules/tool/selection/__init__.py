@@ -1,0 +1,63 @@
+"""Tool shortlist, schema exposure, and retry contracts."""
+
+from .constants import (
+    CATEGORY_BROWSER,
+    CATEGORY_EXEC,
+    CATEGORY_FILE,
+    CATEGORY_WEB,
+    DEFAULT_MAX_TOOLS,
+    DEFAULT_MIN_CONFIDENCE,
+    TOOL_SELECTION_MODE_AUTO,
+    TOOL_SELECTION_MODE_FORCED,
+    TOOL_SELECTION_MODE_MANUAL,
+)
+from .records import (
+    CANONICAL_CATEGORY_COMPAT_IDS,
+    PREFERRED_MODEL_TOOLS_BY_CATEGORY,
+    READ_ONLY_BLOCKED_CATEGORIES,
+    FilterOutcome,
+    SchemaExposure,
+    SelectionMode,
+    SelectionResult,
+    ShortlistPlan,
+    ToolStub,
+    ValidationError,
+    create_validation_error,
+    first_available_tool,
+    selection_result_to_provider_specs,
+    stub_to_provider_spec,
+)
+from .service import (
+    ToolSelectionService,
+    ValidationRetryManager,
+    create_tool_selection_service,
+)
+
+__all__ = [
+    "CANONICAL_CATEGORY_COMPAT_IDS",
+    "CATEGORY_BROWSER",
+    "CATEGORY_EXEC",
+    "CATEGORY_FILE",
+    "CATEGORY_WEB",
+    "DEFAULT_MAX_TOOLS",
+    "DEFAULT_MIN_CONFIDENCE",
+    "PREFERRED_MODEL_TOOLS_BY_CATEGORY",
+    "READ_ONLY_BLOCKED_CATEGORIES",
+    "FilterOutcome",
+    "SchemaExposure",
+    "SelectionMode",
+    "SelectionResult",
+    "ShortlistPlan",
+    "TOOL_SELECTION_MODE_AUTO",
+    "TOOL_SELECTION_MODE_FORCED",
+    "TOOL_SELECTION_MODE_MANUAL",
+    "ToolSelectionService",
+    "ToolStub",
+    "ValidationError",
+    "ValidationRetryManager",
+    "create_tool_selection_service",
+    "create_validation_error",
+    "first_available_tool",
+    "selection_result_to_provider_specs",
+    "stub_to_provider_spec",
+]

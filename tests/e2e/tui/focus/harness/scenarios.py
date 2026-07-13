@@ -88,9 +88,10 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         prompt=(
             "Plan and implement a tiny Python function under {scratch_dir}, run a "
             "focused check if available, and summarize with the exact label "
-            "`result:`. Keep the change "
-            "isolated to that scratch directory. Do not write JSON tool snippets "
-            "in the final answer."
+            "`result:`. Keep the change isolated to that scratch directory. Use "
+            "native file tools for files and direct exec.run commands for checks; "
+            "do not use redirection, pipes, chaining, heredocs, or JSON tool "
+            "snippets in the final answer."
         ),
         expected_markers=("result",),
         timeout=900,
@@ -105,8 +106,9 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "Create a small Python module and test under {scratch_dir}. Intentionally "
             "start with a failing edge case, fix it, rerun the focused check, and "
             "summarize the bug, fix, and final result using the exact label "
-            "`result:`. Do not write JSON tool "
-            "snippets in the final answer."
+            "`result:`. Use native file tools for files and direct exec.run "
+            "commands for checks; do not use redirection, pipes, chaining, "
+            "heredocs, or JSON tool snippets in the final answer."
         ),
         expected_markers=("result",),
         timeout=1200,
@@ -121,8 +123,9 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "Build a tiny command-line Python project under {scratch_dir} with a "
             "module, a CLI entry file, and tests. Keep it minimal, run focused "
             "validation if available, and finish with files changed plus the "
-            "exact label `result:`. "
-            "Do not write JSON tool snippets in the final answer."
+            "exact label `result:`. Use native file tools for files and direct "
+            "exec.run commands for checks; do not use redirection, pipes, "
+            "chaining, heredocs, or JSON tool snippets in the final answer."
         ),
         expected_markers=("result",),
         timeout=1500,

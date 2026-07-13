@@ -65,20 +65,8 @@ def _tool_batch_metadata(
 def _deps() -> ExecutorDeps:
     return ExecutorDeps(
         finalize_response=lambda response: response,
-        tool_calls_payload=lambda calls: json.dumps(
-            [
-                {"name": call.name, "arguments": dict(call.arguments)}
-                for call in list(calls or [])
-            ],
-            sort_keys=True,
-        ),
-        looks_like_tool_call_envelope=lambda text: False,
         identity_metadata=lambda: {},
         tool_batch_metadata=_tool_batch_metadata,
-        collect_missing_required_args=lambda *args, **kwargs: {},
-        is_tool_argument_error=lambda result: False,
-        extract_missing_argument_fields=lambda results: "",
-        canonical_tool_name=lambda name: str(name or ""),
     )
 
 
@@ -507,17 +495,17 @@ def test_cumulative_successful_batches_accept_typed_finalization_contract() -> N
 # Structural guardrail: the fix operates on the `denied` flag only.
 
 
-def test_immediate_tool_result_response_only_blocks_when_denied() -> None:
-    from openminion.services.agent.execution.unforced import loop
+def test_finish_iteration_only_blocks_when_denied() -> None:
+    from openminion.services.agent.execution.unforced import followup
 
-    source = open(loop.__file__).read()
+    source = open(followup.__file__).read()
     # The exact early-return pattern is the load-bearing contract;
     # if anyone widens the short-circuit back to `not batch.has_success`
     # this test fails fast.
-    assert "if denied:\n        return blocked_tool_response(" in source
+    assert "if state.denied:\n        return blocked_tool_response(" in source
     # And the wide condition must NOT be present any more.
     assert (
-        "if denied or not batch.has_success:\n        return blocked_tool_response"
+        "if state.denied or not batch.has_success:\n        return blocked_tool_response"
         not in source
     )
 
@@ -525,15 +513,14 @@ def test_immediate_tool_result_response_only_blocks_when_denied() -> None:
 def test_no_prose_keyword_heuristic_in_mct04_branch() -> None:
     import ast
 
-    from openminion.services.agent.execution.unforced import loop
+    from openminion.services.agent.execution.unforced import followup
 
-    source = open(loop.__file__).read()
+    source = open(followup.__file__).read()
     tree = ast.parse(source)
     func = next(
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_immediate_tool_result_response"
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "finish_iteration"
     )
     # Walk every Constant string node inside the function body
     # (excluding the docstring) and assert none is a tool-output

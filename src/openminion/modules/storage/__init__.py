@@ -43,6 +43,7 @@ from openminion.modules.storage.models import BlobRef, EventRef, ReindexReport, 
 from openminion.modules.storage.runtime.provider_selection import (
     resolve_storage_provider,
 )
+from openminion.modules.storage.runtime.vector_sync import VectorSyncScheduler
 from openminion.modules.storage.record_store import RecordStore, RecordStoreSQLite
 from openminion.modules.storage.telemetry import (
     NoopStorageTelemetryHook,
@@ -87,6 +88,7 @@ __all__ = (
     "BlobStoreInterface",
     "StructuredStoreInterface",
     "VectorStoreInterface",
+    "VectorSyncScheduler",
     "UnsupportedCapabilityError",
     "create_capability_error_envelope",
     "ensure_interface_compatibility",

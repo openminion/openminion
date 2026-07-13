@@ -31,10 +31,16 @@ def get_owner_status(
     if int(window_hours) <= 0:
         raise OwnerStatusQueryError("`hours` must be greater than zero.")
 
-    return build_owner_status(
-        config_path=config_path,
-        runtime=runtime,
-        session_limit=int(session_limit),
-        run_limit_per_session=int(run_limit_per_session),
-        window_hours=int(window_hours),
-    )
+    own_runtime = runtime is None
+    active_runtime = runtime or APIRuntime.from_config_path(config_path)
+    try:
+        return build_owner_status(
+            config_path=config_path,
+            runtime=active_runtime,
+            session_limit=int(session_limit),
+            run_limit_per_session=int(run_limit_per_session),
+            window_hours=int(window_hours),
+        )
+    finally:
+        if own_runtime:
+            active_runtime.close()

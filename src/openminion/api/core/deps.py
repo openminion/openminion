@@ -22,7 +22,7 @@ from openminion.services.diagnostics.debug import (
     WiringSource,
     is_debug_surface_enabled,
 )
-from openminion.services.tool.exposure import get_visible_tool_specs_and_dispatch_map
+from openminion.modules.tool.exposure import get_visible_tool_specs_and_dispatch_map
 
 _DEFAULT_API_CONFIG_HINT = "~/.openminion/config.json"
 
@@ -64,17 +64,16 @@ def resolve_runtime_manager(
 
 
 def configured_agent_ids(runtime: APIRuntime) -> list[str]:
-    if hasattr(runtime, "list_registered_agents"):
-        listed = getattr(runtime, "list_registered_agents")
-        if callable(listed):
-            try:
-                resolved = listed()
-                if isinstance(resolved, list):
-                    return sorted(
-                        str(item).strip() for item in resolved if str(item).strip()
-                    )
-            except Exception:
-                pass
+    listed = getattr(runtime, "list_registered_agents", None)
+    if callable(listed):
+        try:
+            resolved = listed()
+            if isinstance(resolved, list):
+                return sorted(
+                    str(item).strip() for item in resolved if str(item).strip()
+                )
+        except Exception:
+            pass
     configured = {str(item).strip() for item in runtime.config.agents.keys()}
     return sorted(item for item in configured if item)
 
@@ -157,22 +156,14 @@ def _probe_runtime_subsystem(
 
 
 def _runtime_subsystem_health(runtime: APIRuntime) -> dict[str, Any]:
+    candidates = {
+        "storage": ("record_store", "storage", "runtime_storage"),
+        "memory": ("memory", "memory_api", "memoryctl"),
+        "provider": ("provider", "llm", "llm_api", "llmctl"),
+    }
     return {
-        "storage": _probe_runtime_subsystem(
-            runtime,
-            "storage",
-            ("record_store", "storage", "runtime_storage"),
-        ),
-        "memory": _probe_runtime_subsystem(
-            runtime,
-            "memory",
-            ("memory", "memory_api", "memoryctl"),
-        ),
-        "provider": _probe_runtime_subsystem(
-            runtime,
-            "provider",
-            ("provider", "llm", "llm_api", "llmctl"),
-        ),
+        name: _probe_runtime_subsystem(runtime, name, attrs)
+        for name, attrs in candidates.items()
     }
 
 
@@ -282,12 +273,13 @@ def v1_daemon_health(
             "config_path": resolved_config_path,
             "subsystems": {},
         }
+    subsystems = _runtime_subsystem_health(runtime)
     manager = getattr(runtime, "runtime_manager", None)
     if manager is None:
         return {
             "available": False,
             "config_path": resolved_config_path,
-            "subsystems": _runtime_subsystem_health(runtime),
+            "subsystems": subsystems,
         }
     list_agents = getattr(manager, "list_agents", None)
     if not callable(list_agents):
@@ -295,7 +287,7 @@ def v1_daemon_health(
             "available": True,
             "agents_hot": 0,
             "config_path": resolved_config_path,
-            "subsystems": _runtime_subsystem_health(runtime),
+            "subsystems": subsystems,
         }
     try:
         statuses = list_agents()
@@ -305,7 +297,7 @@ def v1_daemon_health(
         "available": True,
         "agents_hot": len(statuses),
         "config_path": resolved_config_path,
-        "subsystems": _runtime_subsystem_health(runtime),
+        "subsystems": subsystems,
     }
 
 

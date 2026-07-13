@@ -1,7 +1,10 @@
 from openminion.base.version import OPENMINION_VERSION
-
-from .delivery import HttpPost, OutboundSender, deliver_cron_result
-from .interfaces import (
+from openminion.modules.controlplane import (
+    HttpPost,
+    OutboundSender,
+    deliver_cron_result,
+)
+from openminion.modules.task.scheduling.interfaces import (
     CRON_INTERFACE_VERSION,
     CronSchedulerInterface,
     CronStoreProtocol,
@@ -9,15 +12,7 @@ from .interfaces import (
     ensure_cron_compatibility,
     ensure_cron_store_compatibility,
 )
-from .scheduler import (
-    CronDeliveryHandler,
-    CronEventHook,
-    CronExecutionResult,
-    CronExecutor,
-    CronScheduler,
-    CronStore,
-)
-from .scheduling import (
+from openminion.modules.task.scheduling.schedule import (
     MisfirePolicy,
     compute_next_due,
     default_delete_after_run,
@@ -33,6 +28,15 @@ from .scheduling import (
     to_iso_utc,
     utc_now,
     validate_target_payload_pair,
+)
+
+from .scheduler import (
+    CronDeliveryHandler,
+    CronEventHook,
+    CronExecutionResult,
+    CronExecutor,
+    CronScheduler,
+    CronStore,
 )
 
 __all__ = [

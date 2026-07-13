@@ -1,10 +1,13 @@
 from dataclasses import dataclass, field
 from threading import Event, RLock, Thread
 from time import monotonic
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, TypeAlias
 from uuid import uuid4
 
-from .interfaces import CRON_INTERFACE_VERSION, CronStoreProtocol
+from openminion.modules.task.scheduling.interfaces import (
+    CRON_INTERFACE_VERSION,
+    CronStoreProtocol,
+)
 
 if TYPE_CHECKING:
     from openminion.services.supervision import SupervisionPolicy
@@ -51,7 +54,7 @@ class CronExecutionResult:
     isolated_session_id: str | None = None
 
 
-CronStore = CronStoreProtocol
+CronStore: TypeAlias = CronStoreProtocol
 
 
 CronExecutor = Callable[
@@ -75,7 +78,7 @@ class CronScheduler:
     def __init__(
         self,
         *,
-        store: CronStore,
+        store: CronStoreProtocol,
         daemon_id: str | None = None,
         daemon_component_id: str = "primary",
         daemon_pid: int | None = None,

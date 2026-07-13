@@ -8,8 +8,10 @@ from openminion.services.agent.execution.tool_arguments import (
     missing_required_for_call,
     required_fields_from_spec,
 )
-from openminion.services.agent.execution.required import RequiredLaneMixin
 from openminion.services.agent.execution.required import RequiredLaneState
+from openminion.services.agent.execution.required.metadata import (
+    invalid_tool_arguments_metadata,
+)
 from openminion.modules.llm.providers.base import ProviderToolCall, ProviderToolSpec
 
 
@@ -146,7 +148,7 @@ def test_arg_retry_attempted_blocks_second_repair() -> None:
 
 
 def test_invalid_tool_arguments_metadata_structure() -> None:
-    metadata = RequiredLaneMixin._invalid_tool_arguments_metadata(
+    metadata = invalid_tool_arguments_metadata(
         tool_name="web.search",
         missing_fields_csv="query,location",
     )
@@ -169,7 +171,7 @@ def test_invalid_tool_arguments_metadata_structure() -> None:
 
 
 def test_invalid_tool_arguments_metadata_with_single_field() -> None:
-    metadata = RequiredLaneMixin._invalid_tool_arguments_metadata(
+    metadata = invalid_tool_arguments_metadata(
         tool_name="weather",
         missing_fields_csv="city",
     )

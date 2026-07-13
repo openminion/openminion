@@ -1,9 +1,11 @@
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from ..dependencies import ExecutorDeps
+from ..validators import collect_missing_required_args
 from .metadata import build_required_outcome, invalid_tool_arguments_metadata
 from .provider import phase_recover_no_tool_calls
-from .state import RequiredLaneState, _PhaseResult
+from .state import RequiredLaneConfig, RequiredLaneState, _PhaseResult
 
 if TYPE_CHECKING:
     from .runner import RequiredLaneRunner
@@ -52,38 +54,24 @@ async def _recover_after_arg_retry_without_calls(
     runner: "RequiredLaneRunner",
     *,
     state: RequiredLaneState,
-    deps: ExecutorDeps,
-    intent_category: str,
-    fallback_chain: list[str],
-    allow_runtime_direct_fallback: bool,
+    config: RequiredLaneConfig,
     retry_response,
     ctx,
     runtime_args_filled: bool,
 ) -> _PhaseResult:
     recover_result = await phase_recover_no_tool_calls(
         runner,
-        state=RequiredLaneState(
+        state=replace(
+            state,
             all_attempts=list(state.all_attempts),
-            tool_to_try=state.tool_to_try,
-            current_fallback_idx=state.current_fallback_idx,
             arg_retry_attempted=True,
-            denied_tool_recovery_attempted=state.denied_tool_recovery_attempted,
-            required_tool_retry_attempted=state.required_tool_retry_attempted,
             attempted_tools=list(state.attempted_tools),
-            termination_reason=state.termination_reason,
-            capability_fallback_trigger_reason=state.capability_fallback_trigger_reason,
-            spec=state.spec,
-            request=state.request,
             response=retry_response,
             runtime_args_filled=runtime_args_filled,
             ctx=ctx,
-            batch=state.batch,
             security_events=list(state.security_events),
         ),
-        deps=deps,
-        intent_category=intent_category,
-        fallback_chain=fallback_chain,
-        allow_runtime_direct_fallback=allow_runtime_direct_fallback,
+        config=config,
     )
     recover_result.state_updates = {
         "arg_retry_attempted": True,
@@ -97,11 +85,7 @@ async def phase_validate_args(
     *,
     state: RequiredLaneState,
     deps: ExecutorDeps,
-    intent_category: str,
-    fallback_chain: list[str],
-    allow_runtime_direct_fallback: bool,
-    required_tool_lane: bool,
-    tool_call_strategy: str,
+    config: RequiredLaneConfig,
 ) -> _PhaseResult:
     response = state.response
     if response is None or not response.tool_calls or runner.service_port.tools is None:
@@ -110,20 +94,16 @@ async def phase_validate_args(
             state_updates={"termination_reason": "required_tool_call_missing"},
         )
 
-    inbound = runner.runtime.inbound
-    tool_to_try = str(state.tool_to_try or "")
-    spec = state.spec
     request = state.request
     arg_retry_attempted = bool(state.arg_retry_attempted)
 
     ctx = runner.runtime_ops._build_tool_execution_context()
-    if allow_runtime_direct_fallback and isinstance(ctx.metadata, dict):
+    if config.allow_runtime_direct_fallback and isinstance(ctx.metadata, dict):
         ctx.metadata.setdefault("allow_runtime_direct", "false")
 
     runtime_args_filled = False
-    del inbound, required_tool_lane, spec, tool_to_try
 
-    missing_required = deps.collect_missing_required_args(
+    missing_required = collect_missing_required_args(
         response.tool_calls,
         spec_lookup=runner.service_port.get_spec_for_tool,
     )
@@ -141,16 +121,16 @@ async def phase_validate_args(
             runner,
             state=state,
             deps=deps,
-            intent_category=intent_category,
+            intent_category=config.intent_category,
             response=response,
             missing_required=missing_required,
         )
 
     retry_response = await runner.runtime_ops.call_provider(
         request,
-        tool_call_strategy=tool_call_strategy,
+        tool_call_strategy=config.tool_call_strategy,
     )
-    retry_missing = deps.collect_missing_required_args(
+    retry_missing = collect_missing_required_args(
         list(retry_response.tool_calls or []),
         spec_lookup=runner.service_port.get_spec_for_tool,
     )
@@ -159,7 +139,7 @@ async def phase_validate_args(
             runner,
             state=state,
             deps=deps,
-            intent_category=intent_category,
+            intent_category=config.intent_category,
             response=retry_response,
             missing_required=retry_missing,
         )
@@ -175,10 +155,7 @@ async def phase_validate_args(
     return await _recover_after_arg_retry_without_calls(
         runner,
         state=state,
-        deps=deps,
-        intent_category=intent_category,
-        fallback_chain=fallback_chain,
-        allow_runtime_direct_fallback=allow_runtime_direct_fallback,
+        config=config,
         retry_response=retry_response,
         ctx=ctx,
         runtime_args_filled=runtime_args_filled,

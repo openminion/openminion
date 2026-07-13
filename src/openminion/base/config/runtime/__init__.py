@@ -251,7 +251,7 @@ def resolve_identity_root_from_env(
         process_env=process_env,
     )
     base_root = _resolve_identity_home_root(resolved_env, home_root=home_root)
-    data_root = resolve_data_root(
+    data_root: Path = resolve_data_root(
         base_root,
         data_root=resolved_env.get(OPENMINION_DATA_ROOT_ENV, ""),
     )

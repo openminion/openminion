@@ -1,4 +1,4 @@
-from openminion.services.security.untrusted_content import analyze_untrusted_content
+from openminion.modules.policy import analyze_untrusted_content
 
 
 def test_console_channel_is_not_wrapped_by_default() -> None:

@@ -32,7 +32,7 @@ from .constants import (
     EXEC_ARTIFACT_THRESHOLD_BYTES,
 )
 from .process import PROCESS_MANAGER, ShellFamily, _select_shell
-from openminion.services.runtime.daytona.client import DaytonaClientError
+from openminion.modules.runtime.sandboxes.daytona import DaytonaClientError
 from .schemas import (
     ExecRunArgs,
     ExecRunResult,

@@ -31,6 +31,7 @@ def run_turn(
     return _run_turn(
         config_path=config_path,
         payload=payload,
+        runtime_factory=APIRuntime.from_config_path,
         request_id=request_id,
         progress_callback=progress_callback,
         approval_callback=approval_callback,

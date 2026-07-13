@@ -131,6 +131,16 @@ def is_argument_error(result: Any) -> bool:
 def extract_missing_fields(results: list[Any]) -> str:
     missing_fields: list[str] = []
     for result in results:
+        data = getattr(result, "data", {}) or {}
+        structured_fields: list[str] = []
+        if isinstance(data, dict):
+            for field in data.get("missing_fields", []) or []:
+                token = str(field or "").strip().lower()
+                if token:
+                    structured_fields.append(token)
+        if structured_fields:
+            missing_fields.extend(structured_fields)
+            continue
         error = str(getattr(result, "error", "")).strip()
         if not error:
             continue

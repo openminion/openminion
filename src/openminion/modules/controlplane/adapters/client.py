@@ -4,7 +4,9 @@ from typing import Any, Callable
 
 from openminion.modules.controlplane.interfaces import CONTROLPLANE_INTERFACE_VERSION
 from openminion.modules.controlplane.contracts.models import BrainClient
-from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
+from openminion.modules.controlplane.constants import (
+    CALLER_HANDLES_DELIVERY_METADATA_KEY,
+)
 
 
 class OpenMinionIntegrationError(RuntimeError):
@@ -72,21 +74,11 @@ class OpenMinionBrainClient(BrainClient):
         return self._gateway
 
     def _build_runtime(self) -> Any:
-        if self.runtime_factory is not None:
-            return self.runtime_factory(self.config_path)
-
-        try:
-            from openminion.services.runtime import OpenMinionRuntime
-        except ModuleNotFoundError as exc:  # pragma: no cover - optional dependency
+        if self.runtime_factory is None:
             raise OpenMinionIntegrationError(
-                "OpenMinion is not installed. Install the openminion package to enable integration."
-            ) from exc
-
-        return OpenMinionRuntime.from_config_path(
-            self.config_path,
-            home_root=self.home_root,
-            data_root=self.data_root,
-        )
+                "OpenMinion runtime integration requires an explicit runtime_factory."
+            )
+        return self.runtime_factory(self.config_path)
 
     def run(
         self,

@@ -3,9 +3,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, Mapping, Protocol
+from typing import TYPE_CHECKING, Literal, Mapping, Protocol
 
 from openminion.base.time import utc_now_iso as _now_iso
+
+if TYPE_CHECKING:
+    from openminion.base.config.env import EnvironmentConfig
 
 CredentialScopeKind = Literal[
     "process",
@@ -266,6 +269,39 @@ def record_credential_access_event(
     return event
 
 
+def resolve_credential_env_value(
+    ref: CredentialRef,
+    *,
+    caller_agent_id: str,
+    caller_profile_id: str,
+    access_site: str,
+    audit_log: CredentialAuditLog,
+    env: "EnvironmentConfig | Mapping[str, object] | None" = None,
+) -> str:
+    """Resolve an env-backed credential after scope and audit enforcement."""
+    from openminion.base.config.env import resolve_environment_config
+
+    if ref.source_kind != "env":
+        raise ValueError(
+            "resolve_credential_env_value only resolves env-source refs; "
+            f"received source_kind={ref.source_kind!r}."
+        )
+    assert_credential_scope(
+        ref,
+        caller_agent_id=caller_agent_id,
+        caller_profile_id=caller_profile_id,
+    )
+    record_credential_access_event(
+        ref,
+        access_site=access_site,
+        caller_agent_id=caller_agent_id,
+        caller_profile_id=caller_profile_id,
+        decision="allowed",
+        audit_log=audit_log,
+    )
+    return resolve_environment_config(env=env).get(ref.env_name, "")
+
+
 def reload_credential_after_auth_failure(
     ref: CredentialRef,
     *,
@@ -336,5 +372,6 @@ __all__ = (
     "record_credential_access_event",
     "redacted_credential_ref",
     "reload_credential_after_auth_failure",
+    "resolve_credential_env_value",
     "resolve_credential_ref",
 )

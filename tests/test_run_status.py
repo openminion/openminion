@@ -12,6 +12,13 @@ from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.storage.runtime.sqlite import connect_database
 
 
+def test_service_run_status_surface_is_canonical_task_owner() -> None:
+    from openminion.modules.task.run import Run as canonical
+    from openminion.services.runtime.run_status import Run as compatibility
+
+    assert compatibility is canonical
+
+
 def _build_sessions(tmp_path):
     database_path = tmp_path / "state" / "openminion.db"
     migrate_database(database_path)

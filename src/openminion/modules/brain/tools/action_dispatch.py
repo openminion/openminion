@@ -27,7 +27,7 @@ from openminion.modules.brain.schemas import (  # type: ignore[attr-defined]
     WorkingState,
 )
 from openminion.modules.tool.contracts.model_ids import MODEL_TASK_DELEGATE
-from openminion.services.agent.lifecycle import (
+from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
     LifecycleEvent,
     fire_lifecycle_event,
@@ -82,7 +82,7 @@ def _fire_subagent_stop_lifecycle(
     result: ActionResult,
     duration_ms: int,
 ) -> None:
-    """EVPF-08: observe-only lifecycle hook for completed subagent dispatch."""
+    """Emit an observe-only lifecycle event after subagent dispatch."""
     try:
         fire_lifecycle_event(
             LifecycleEvent(
@@ -304,7 +304,7 @@ def execute_action_dispatch(
                     exc=exc,
                 )
         try:
-            from openminion.services.agent.lifecycle import (
+            from openminion.modules.brain.tools.lifecycle import (
                 LIFECYCLE_EVENT_PRE_TOOL_USE,
                 LifecycleEvent,
                 fire_lifecycle_event,
@@ -441,7 +441,7 @@ def execute_action_dispatch(
                         exc=exc,
                     )
             try:
-                from openminion.services.agent.lifecycle import (
+                from openminion.modules.brain.tools.lifecycle import (
                     LIFECYCLE_EVENT_POST_TOOL_USE,
                     LifecycleEvent,
                     fire_lifecycle_event,

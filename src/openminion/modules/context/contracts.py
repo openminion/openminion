@@ -18,6 +18,33 @@ CONTEXT_CONTRACT_VERSION = "v1"
 SESSION_CONTRACT_VERSION = "v1"
 MEMORY_CONTRACT_VERSION = "v1"
 BRAIN_CONTRACT_VERSION = "v1"
+POST_RESET_BASELINE_VERSION = "v1"
+
+CONTRACT_REGISTRY: dict[str, str] = {
+    "context": CONTEXT_CONTRACT_VERSION,
+    "session": SESSION_CONTRACT_VERSION,
+    "memory": MEMORY_CONTRACT_VERSION,
+    "brain": BRAIN_CONTRACT_VERSION,
+}
+
+
+def check_contract_registry_health(
+    registry: dict[str, str] | None = None,
+    *,
+    expected_version: str = POST_RESET_BASELINE_VERSION,
+) -> dict[str, object]:
+    inspected = dict(CONTRACT_REGISTRY if registry is None else registry)
+    mismatches = {
+        name: version
+        for name, version in inspected.items()
+        if version != expected_version
+    }
+    return {
+        "aligned": not mismatches,
+        "expected_version": expected_version,
+        "registry": inspected,
+        "mismatches": mismatches,
+    }
 
 
 @runtime_checkable

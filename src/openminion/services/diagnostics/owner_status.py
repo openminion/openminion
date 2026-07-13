@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
-from openminion.api.runtime import APIRuntime
 from openminion.base.config.core import resolve_default_agent_id
+from openminion.services.runtime.interfaces import RuntimeFacade
 from openminion.services.runtime.run_status import (
     RUN_STATE_COMPLETED,
     RUN_STATE_FAILED,
@@ -26,7 +26,7 @@ _ACTIVE_RUN_STATES = frozenset(
 def build_owner_status(
     config_path: Optional[str],
     *,
-    runtime: Optional[APIRuntime] = None,
+    runtime: RuntimeFacade,
     session_limit: int = 20,
     run_limit_per_session: int = 20,
     window_hours: int = 24,
@@ -34,40 +34,34 @@ def build_owner_status(
     safe_session_limit = _clamp_int(session_limit, minimum=1, maximum=500)
     safe_run_limit = _clamp_int(run_limit_per_session, minimum=1, maximum=500)
     safe_window_hours = _clamp_int(window_hours, minimum=1, maximum=24 * 14)
-    own_runtime = runtime is None
-    active_runtime = runtime or APIRuntime.from_config_path(config_path)
-    try:
-        now = datetime.now(timezone.utc)
-        window_start = now - timedelta(hours=safe_window_hours)
-        provider_name, default_channel = _default_owner_bindings(active_runtime)
-        sessions = active_runtime.sessions.list_sessions(
-            limit=safe_session_limit,
-            newest_first=True,
-        )
-        run_summary = _summarize_owner_runs(
-            active_runtime,
-            sessions=sessions,
-            safe_run_limit=safe_run_limit,
-            window_start=window_start,
-        )
-        return _owner_status_payload(
-            now=now,
-            window_start=window_start,
-            safe_window_hours=safe_window_hours,
-            safe_session_limit=safe_session_limit,
-            safe_run_limit=safe_run_limit,
-            sessions_total=active_runtime.sessions.count_sessions(),
-            sessions=sessions,
-            provider_name=provider_name,
-            default_channel=default_channel,
-            **run_summary,
-        )
-    finally:
-        if own_runtime:
-            active_runtime.close()
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(hours=safe_window_hours)
+    provider_name, default_channel = _default_owner_bindings(runtime)
+    sessions = runtime.sessions.list_sessions(
+        limit=safe_session_limit,
+        newest_first=True,
+    )
+    run_summary = _summarize_owner_runs(
+        runtime,
+        sessions=sessions,
+        safe_run_limit=safe_run_limit,
+        window_start=window_start,
+    )
+    return _owner_status_payload(
+        now=now,
+        window_start=window_start,
+        safe_window_hours=safe_window_hours,
+        safe_session_limit=safe_session_limit,
+        safe_run_limit=safe_run_limit,
+        sessions_total=runtime.sessions.count_sessions(),
+        sessions=sessions,
+        provider_name=provider_name,
+        default_channel=default_channel,
+        **run_summary,
+    )
 
 
-def _default_owner_bindings(active_runtime: APIRuntime) -> tuple[str, str]:
+def _default_owner_bindings(active_runtime: RuntimeFacade) -> tuple[str, str]:
     default_agent_id = resolve_default_agent_id(active_runtime.config)
     default_profile = active_runtime.config.agents[default_agent_id]
     provider_name = (default_profile.provider or "echo").strip().lower() or "echo"
@@ -76,7 +70,7 @@ def _default_owner_bindings(active_runtime: APIRuntime) -> tuple[str, str]:
 
 
 def _summarize_owner_runs(
-    active_runtime: APIRuntime,
+    active_runtime: RuntimeFacade,
     *,
     sessions,
     safe_run_limit: int,
@@ -116,7 +110,7 @@ def _summarize_owner_runs(
 
 
 def _summarize_session_runs(
-    active_runtime: APIRuntime,
+    active_runtime: RuntimeFacade,
     *,
     session,
     safe_run_limit: int,

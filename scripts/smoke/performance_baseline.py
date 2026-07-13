@@ -23,7 +23,7 @@ from typing import Any
 from uuid import uuid4
 
 from openminion.base.types import Message
-from openminion.services.context.budget import (
+from openminion.modules.context.budget import (
     ContextBudgetConfig,
     assemble_budgeted_context,
 )

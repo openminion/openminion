@@ -8,8 +8,7 @@ from openminion.base.config import ConfigManager
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.artifact.refs import create_default_artifactctl
-from openminion.services.agent.hooks import HookRegistry
-from openminion.services.runtime.contracts.manifest import HookManifest
+from openminion.services.runtime.plugins import PluginManifest, PluginRegistry
 from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.tool import ToolRegistry
@@ -67,9 +66,11 @@ from openminion.base.config.action_policy import map_action_policy_mode
 from openminion.modules.policy.runtime.action_policy import (
     policy_config_from_action_policy,
 )
-from openminion.services.runtime.daytona.client import DaytonaClient
-from openminion.services.runtime.daytona.config import DaytonaConfig
-from openminion.services.runtime.daytona.runner import DaytonaRunner
+from openminion.modules.runtime.sandboxes.daytona import (
+    DaytonaClient,
+    DaytonaConfig,
+    DaytonaRunner,
+)
 from openminion.services.runtime.errors import (
     PluginActivationError,
     RuntimeBootstrapError,
@@ -410,7 +411,7 @@ def enforce_plugin_activation_policy(
     *,
     security_policy: SecurityPolicyEngine,
     agent_id: str,
-    manifest: HookManifest,
+    manifest: PluginManifest,
 ) -> None:
     trust_decision = evaluate_plugin_trust_policy(
         trust_tier=manifest.trust_tier,
@@ -621,7 +622,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         resolve_runner_options,
     )
     from openminion.services.brain.factory.vector import init_vector_adapter
-    from openminion.services.tool.exposure import get_model_exposure_specs
+    from openminion.modules.tool.exposure import get_model_exposure_specs
     from openminion.modules.brain.schemas import AgentProfile
 
     config = service._config
@@ -907,7 +908,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
 def build_agent_runtime_service(
     *,
     config: OpenMinionConfig,
-    plugins: HookRegistry,
+    plugins: PluginRegistry,
     provider: object,
     llm_runtime: object | None = None,
     logger: logging.Logger,

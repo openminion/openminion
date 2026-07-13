@@ -10,7 +10,7 @@ from openminion.modules.task.constants import (
     TASK_INTERNAL_PAUSE_REASON_KEY,
     TASK_REASON_SCHEDULE_INTERVAL_TOO_SHORT,
 )
-from openminion.services.cron.scheduling import to_iso_utc, utc_now
+from openminion.modules.task.scheduling.schedule import to_iso_utc, utc_now
 
 
 @pytest.fixture

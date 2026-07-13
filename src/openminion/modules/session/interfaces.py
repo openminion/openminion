@@ -1,6 +1,6 @@
 from typing import Any, Protocol, runtime_checkable
 
-from openminion.services.cron.interfaces import (
+from openminion.modules.task.scheduling.interfaces import (
     CRON_INTERFACE_VERSION,
     validate_cron_store_protocol,
 )

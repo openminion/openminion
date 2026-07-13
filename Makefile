@@ -29,6 +29,7 @@ VALIDATE_PATTERN_MODULES := \
 	validate.data_root_defaults \
 	validate.logging_control_plane \
 	validate.contract_literals \
+	validate.execution_complexity \
 	validate.helper_duplicates \
 	validate.config_constants \
 	validate.max_file_loc \
@@ -76,6 +77,7 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/data_root_defaults \
 	validate/logging_control_plane \
 	validate/contract_literals \
+	validate/execution_complexity \
 	validate/helper_duplicates \
 	validate/config_constants \
 	validate/max_file_loc \

@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from openminion.services.agent.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
+from openminion.modules.context.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.config import resolve_services_roots
 from openminion.modules.prompting.context_blocks import (
     GROUNDING_BLOCK_HEADER,

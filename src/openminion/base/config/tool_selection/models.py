@@ -50,6 +50,49 @@ _DEFAULT_RUNTIME_NO_FALLBACK_ON: tuple[str, ...] = (
 )
 
 
+def _normalized_fallback_tokens(
+    values: list[str], defaults: tuple[str, ...]
+) -> list[str]:
+    tokens = (str(item or "").strip().lower() for item in (values or defaults))
+    return list(dict.fromkeys(item for item in tokens if item))
+
+
+def _merge_capability(
+    canonical_caps: dict[str, CapabilityBinding],
+    *,
+    mode: str,
+    category: str,
+    primary: str,
+    fallback_tools: list[str],
+) -> None:
+    canonical = str(category or "").strip()
+    if not canonical:
+        return
+    primary_token = str(primary or "").strip()
+    fallback_tokens = list(
+        dict.fromkeys(str(item).strip() for item in fallback_tools if str(item).strip())
+    )
+    existing = canonical_caps.get(canonical)
+    if existing is None:
+        if not primary_token and mode in ("deterministic", "typed"):
+            raise ConfigError(f"Capability {canonical!r} requires a primary tool.")
+        canonical_caps[canonical] = CapabilityBinding(primary_token, fallback_tokens)
+        return
+    if not existing.primary and primary_token:
+        existing.primary = primary_token
+    elif (
+        primary_token
+        and primary_token != existing.primary
+        and primary_token not in existing.fallback_tools
+    ):
+        existing.fallback_tools.append(primary_token)
+    existing.fallback_tools.extend(
+        item
+        for item in fallback_tokens
+        if item != existing.primary and item not in existing.fallback_tools
+    )
+
+
 @dataclass
 class ToolSelectionConfig:
     mode: str = "typed"
@@ -74,58 +117,21 @@ class ToolSelectionConfig:
     def __post_init__(self) -> None:
         canonical_caps: dict[str, CapabilityBinding] = {}
 
-        def _merge_capability(
-            *, category: str, primary: str, fallback_tools: list[str]
-        ) -> None:
-            canonical = str(category or "").strip()
-            if not canonical:
-                return
-
-            primary_token = str(primary or "").strip()
-            fallback_tokens = [
-                str(item).strip()
-                for item in (fallback_tools or [])
-                if str(item).strip()
-            ]
-
-            existing = canonical_caps.get(canonical)
-            if existing is None:
-                if not primary_token and self.mode in ("deterministic", "typed"):
-                    raise ConfigError(
-                        f"Capability category {canonical!r} must have a primary tool."
-                    )
-                canonical_caps[canonical] = CapabilityBinding(
-                    primary=primary_token,
-                    fallback_tools=list(dict.fromkeys(fallback_tokens)),
-                )
-                return
-
-            if not existing.primary and primary_token:
-                existing.primary = primary_token
-            elif (
-                primary_token and existing.primary and primary_token != existing.primary
-            ):
-                if primary_token not in existing.fallback_tools:
-                    existing.fallback_tools.append(primary_token)
-
-            for item in fallback_tokens:
-                if item == existing.primary:
-                    continue
-                if item not in existing.fallback_tools:
-                    existing.fallback_tools.append(item)
-
-        for category, capability in list(self.capabilities.items()):
+        capability_sources = [
+            (category, capability.primary, capability.fallback_tools)
+            for category, capability in self.capabilities.items()
+        ]
+        capability_sources.extend(
+            (category, primary, self.bindings_fallback.get(category, []))
+            for category, primary in self.bindings.items()
+        )
+        for category, primary, fallback_tools in capability_sources:
             _merge_capability(
+                canonical_caps,
+                mode=self.mode,
                 category=category,
-                primary=str(capability.primary or ""),
-                fallback_tools=list(capability.fallback_tools or []),
-            )
-
-        for category, primary in list(self.bindings.items()):
-            _merge_capability(
-                category=category,
-                primary=str(primary or ""),
-                fallback_tools=list(self.bindings_fallback.get(category, [])),
+                primary=primary,
+                fallback_tools=list(fallback_tools or []),
             )
 
         self.capabilities = dict(sorted(canonical_caps.items()))
@@ -150,34 +156,24 @@ class ToolSelectionConfig:
                     "Invalid runtime binding id in tool_selection.runtime_bindings: "
                     f"{binding_id!r}. Expected format 'runtime.<category>.<operation>'."
                 )
-            primary = str(getattr(binding, "primary", "") or "").strip()
-            fallback_tools = [
-                str(item).strip()
-                for item in (getattr(binding, "fallback_tools", []) or [])
-                if str(item).strip()
-            ]
+            fallback_tools = _normalized_fallback_tokens(
+                getattr(binding, "fallback_tools", []) or [], ()
+            )
             canonical_runtime_bindings[binding_id] = CapabilityBinding(
-                primary=primary,
+                primary=str(getattr(binding, "primary", "") or "").strip(),
                 fallback_tools=list(dict.fromkeys(fallback_tools)),
             )
         self.runtime_bindings = dict(sorted(canonical_runtime_bindings.items()))
 
         self.mode = _normalize_tool_selection_mode(self.mode)
         self.schema_exposure = _normalize_schema_exposure(self.schema_exposure)
-        self.runtime_binding_selection_strategy = (
-            _normalize_runtime_binding_selection_strategy(
-                self.runtime_binding_selection_strategy
-            )
+        normalize_strategy = _normalize_runtime_binding_selection_strategy
+        self.runtime_binding_selection_strategy = normalize_strategy(
+            self.runtime_binding_selection_strategy
         )
-        fallback_on = [
-            str(item or "").strip().lower()
-            for item in (self.runtime_fallback_on or _DEFAULT_RUNTIME_FALLBACK_ON)
-            if str(item or "").strip()
-        ]
-        no_fallback_on = [
-            str(item or "").strip().lower()
-            for item in (self.runtime_no_fallback_on or _DEFAULT_RUNTIME_NO_FALLBACK_ON)
-            if str(item or "").strip()
-        ]
-        self.runtime_fallback_on = list(dict.fromkeys(fallback_on))
-        self.runtime_no_fallback_on = list(dict.fromkeys(no_fallback_on))
+        self.runtime_fallback_on = _normalized_fallback_tokens(
+            self.runtime_fallback_on, _DEFAULT_RUNTIME_FALLBACK_ON
+        )
+        self.runtime_no_fallback_on = _normalized_fallback_tokens(
+            self.runtime_no_fallback_on, _DEFAULT_RUNTIME_NO_FALLBACK_ON
+        )

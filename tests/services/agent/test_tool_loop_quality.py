@@ -8,7 +8,8 @@ from openminion.base.types import Message
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.agent.execution.executor import TurnExecutor
+from openminion.services.agent.execution.composition import build_service_port
+from openminion.services.agent.execution.runtime import ExecutorRuntime
 from openminion.services.agent.execution.loop_quality import (
     GUARD_ACTION_FINALIZE_FROM_PRIOR_RESULT,
     GUARD_ACTION_OBSERVE_ONLY,
@@ -140,10 +141,12 @@ def test_executor_observes_without_suppressing_legitimate_calls() -> None:
         _logger=None,
         _home_root=None,
     )
-    executor = TurnExecutor(service=service, runtime=runtime)
+    runtime_ops = ExecutorRuntime(
+        service_port=build_service_port(service), runtime=runtime
+    )
 
     batch, security_events, denied = asyncio.run(
-        executor.execute_tool_calls(
+        runtime_ops.execute_tool_calls(
             [
                 _call("command -v nasm", call_id="one"),
                 _call("command -v nasm", call_id="two"),

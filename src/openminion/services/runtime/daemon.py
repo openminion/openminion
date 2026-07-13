@@ -30,7 +30,7 @@ from openminion.services.runtime.cron.delivery import CronDeliveryBridge
 from openminion.services.runtime.cron.executor import CronTurnExecutor
 
 if False:  # pragma: no cover
-    from openminion.api.runtime import APIRuntime
+    from openminion.services.runtime.interfaces import RuntimeFacade
 
 
 _DAEMON_LOGGER = get_logger("daemon")
@@ -41,7 +41,7 @@ _CRONCTL_LOGGER = get_logger("cronctl")
 
 
 class _LifecycleTelemetryBridge:
-    def __init__(self, runtime: "APIRuntime") -> None:
+    def __init__(self, runtime: "RuntimeFacade") -> None:
         self._runtime = runtime
         # reuse the runtime's pre-built TelemetryService so the
         existing = getattr(runtime, "telemetry_service", None)
@@ -110,7 +110,7 @@ class _LifecycleTelemetryBridge:
         )
 
 
-def build_runtime_manager(runtime: "APIRuntime") -> Any:
+def build_runtime_manager(runtime: "RuntimeFacade") -> Any:
     lifecycle_bridge = _LifecycleTelemetryBridge(runtime)
     runtime._lifecycle_event_bridge = lifecycle_bridge
 
@@ -144,7 +144,7 @@ def build_turn_request(payload: dict[str, Any], *, default_agent_id: str) -> Any
 
 def attach_cron_scheduler(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     daemon_id: str,
     daemon_component_id: str = "primary",
     daemon_pid: int | None = None,
@@ -256,7 +256,7 @@ def attach_cron_scheduler(
 
 def execute_turn(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     request: Any,
     emit_chunk: Any,
     cancel_event: Any,

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 from pydantic import BaseModel
 
-from openminion.services.tool.schema import ToolSchemaService
+from openminion.modules.tool.schema_service import ToolSchemaService
 
 
 def test_build_prompt_tool_schemas_preserves_registry_order_without_query_ranking() -> (

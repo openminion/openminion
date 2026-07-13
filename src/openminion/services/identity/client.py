@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from openminion.services.agent.identity import IdentityBundle, load_identity_bundle
+from openminion.modules.identity import IdentityBundle, load_identity_bundle
 
 from openminion.modules.context.schemas import IdentitySnippet
 

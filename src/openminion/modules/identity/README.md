@@ -30,6 +30,7 @@ that govern how much identity material each turn-purpose receives.
 Re-exported from `openminion.modules.identity`:
 
 - `AgentProfile`, `IdentitySnippet`
+- `IdentityBundle`, `IdentityDocument`, `load_identity_bundle`
 - `IdentityCtl`, `IdentityCtlInterface`
 - Stores: `InMemoryIdentityStore`, `SQLiteIdentityStore`
 - Versioning: `IDENTITY_INTERFACE_VERSION`,

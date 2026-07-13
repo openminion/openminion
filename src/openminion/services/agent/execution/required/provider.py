@@ -6,8 +6,7 @@ from openminion.modules.llm.providers.base import (
     ProviderResponse,
 )
 
-from ..dependencies import ExecutorDeps
-from .state import RequiredLaneState, _PhaseResult
+from .state import RequiredLaneConfig, RequiredLaneState, _PhaseResult
 
 if TYPE_CHECKING:
     from .runner import RequiredLaneRunner
@@ -17,9 +16,7 @@ async def phase_provider_call(
     runner: "RequiredLaneRunner",
     *,
     state: RequiredLaneState,
-    intent_category: str,
-    required_tool_lane: bool,
-    tool_call_strategy: str,
+    config: RequiredLaneConfig,
 ) -> _PhaseResult:
     tool_to_try = str(state.tool_to_try or "")
     spec = runner.service_port.get_spec_for_tool(tool_to_try)
@@ -31,11 +28,11 @@ async def phase_provider_call(
         tool_choice="required" if spec else "auto",
     )
     response = await runner.runtime_ops.call_provider(
-        request, tool_call_strategy=tool_call_strategy
+        request, tool_call_strategy=config.tool_call_strategy
     )
     required_tool_retry_attempted = bool(state.required_tool_retry_attempted)
     if (
-        required_tool_lane
+        config.required_tool_lane
         and not response.tool_calls
         and not required_tool_retry_attempted
         and spec is not None
@@ -55,13 +52,13 @@ async def phase_provider_call(
             metadata={
                 "required_tool_retry": "true",
                 "required_tool_name": tool_to_try,
-                "required_category": str(intent_category or "none"),
+                "required_category": str(config.intent_category or "none"),
             },
         )
         try:
             retry_response = await runner.runtime_ops.call_provider(
                 retry_request,
-                tool_call_strategy=tool_call_strategy,
+                tool_call_strategy=config.tool_call_strategy,
             )
         except ProviderError as exc:
             logger = runner.service_port.logger
@@ -94,17 +91,14 @@ async def phase_recover_no_tool_calls(
     runner: "RequiredLaneRunner",
     *,
     state: RequiredLaneState,
-    deps: ExecutorDeps,
-    intent_category: str,
-    fallback_chain: list[str],
-    allow_runtime_direct_fallback: bool,
+    config: RequiredLaneConfig,
 ) -> _PhaseResult:
     response = state.response
     if response is None or response.tool_calls:
         return _PhaseResult()
 
     all_attempts = list(state.all_attempts or [])
-    del deps, intent_category, fallback_chain, allow_runtime_direct_fallback
+    del runner, config
     return _PhaseResult(
         action="break",
         state_updates={

@@ -330,14 +330,14 @@ def _enforce_safety_and_policy(
     return safety_decision, policy_decision, validated_args
 
 
-def _maybe_autostart_sidecar_for_spec(spec: Any, env_owner: Any) -> None:
+def _maybe_autostart_sidecar_for_spec(
+    spec: Any, env_owner: Any, registry: ToolRegistry
+) -> None:
     """If spec carries a sidecar, ensure autostart and raise on failure/disabled."""
     if not (isinstance(spec, ToolSpec) and getattr(spec, "sidecar", None)):
         return
     try:
-        from openminion.services.lifecycle.sidecars import ensure_sidecar_autostart
-
-        autostart = ensure_sidecar_autostart(
+        autostart = registry.ensure_sidecar_autostart(
             name=str(spec.sidecar),
             config_path=env_owner.get(OPENMINION_CONFIG_PATH_ENV, "") or None,
             runtime_env=env_owner.snapshot(),
@@ -555,7 +555,7 @@ def execute_call_payload(
                 data={"dry_run": True},
             ), 0
 
-        _maybe_autostart_sidecar_for_spec(spec, env_owner)
+        _maybe_autostart_sidecar_for_spec(spec, env_owner, reg)
 
         home_root = resolve_home_root_fn()
         data_root = resolve_data_root_fn(

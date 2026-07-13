@@ -44,7 +44,7 @@ def _normalize_allow_fallback(
     if raw_value is None:
         return None
     if isinstance(raw_value, (bool, int, float, str)):
-        return _as_bool(raw_value, False)
+        return bool(_as_bool(raw_value, False))
     raise ConfigError(f"{field_path} must be a boolean when provided.")
 
 

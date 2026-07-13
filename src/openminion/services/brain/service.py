@@ -12,7 +12,7 @@ from openminion.base.config import (
 from openminion.base.config import ConfigManager
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.env import EnvironmentConfig
-from openminion.services.agent.hooks import HookRegistry
+from openminion.services.runtime.plugins import PluginRegistry
 from openminion.services.agent import AgentService
 from openminion.services.agent.memory import (  # noqa: F401  (re-export for test patches + canonical runner_metadata resolution)
     build_memory_policy_snapshot,
@@ -200,7 +200,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
     def __init__(
         self,
         config: OpenMinionConfig,
-        plugins: HookRegistry,
+        plugins: PluginRegistry,
         provider: object,
         logger: logging.Logger,
         tools: ToolRegistry | None = None,

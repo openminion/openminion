@@ -1,12 +1,6 @@
 from typing import Any
 
-from ..ports import (
-    RuntimeOpsPort,
-    TurnFlowServicePort,
-    resolve_runtime_context,
-    resolve_runtime_ops,
-    resolve_service_port,
-)
+from ..ports import RuntimeOpsPort, TurnFlowServicePort
 from .loop import handle_unforced_tool_calls as run_unforced_tool_loop
 
 
@@ -14,35 +8,25 @@ class UnforcedLaneRunner:
     def __init__(
         self,
         *,
-        service_port: TurnFlowServicePort | None = None,
-        runtime: Any | None = None,
-        runtime_ops: RuntimeOpsPort | None = None,
+        service_port: TurnFlowServicePort,
+        runtime: Any,
+        runtime_ops: RuntimeOpsPort,
     ) -> None:
-        if service_port is not None:
-            self._service_port = service_port
-        if runtime is not None:
-            self._runtime = runtime
-        if runtime_ops is not None:
-            self._runtime_ops = runtime_ops
+        self._service_port = service_port
+        self._runtime = runtime
+        self._runtime_ops = runtime_ops
 
     @property
     def service_port(self) -> TurnFlowServicePort:
-        return resolve_service_port(self)
+        return self._service_port
 
     @property
     def runtime(self) -> Any:
-        return resolve_runtime_context(self)
+        return self._runtime
 
     @property
     def runtime_ops(self) -> RuntimeOpsPort:
-        return resolve_runtime_ops(self)
+        return self._runtime_ops
 
     async def handle_unforced_tool_calls(self, *args: Any, **kwargs: Any) -> Any:
         return await run_unforced_tool_loop(self, *args, **kwargs)
-
-
-class UnforcedLaneMixin(UnforcedLaneRunner):
-    pass
-
-
-__all__ = ["UnforcedLaneMixin", "UnforcedLaneRunner"]

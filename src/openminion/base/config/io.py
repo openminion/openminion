@@ -24,28 +24,28 @@ def resolve_config_path(config_path: str | None, home_root: Path | None = None) 
 
         return (Path.cwd() / config_p).resolve()
 
-    effective_home_root = home_root
-    if effective_home_root is None:
+    if home_root is None:
         env_config = EnvironmentConfig.from_sources()
         env_home = env_config.openminion_home.strip()
         if env_home:
-            effective_home_root = Path(env_home).expanduser()
+            home_root = Path(env_home).expanduser()
 
-    config_root = _resolve_config_root(effective_home_root)
-    return (config_root / DEFAULT_CONFIG_FILENAME).resolve()
+    config_root = _resolve_config_root(home_root)
+    return (config_root / str(DEFAULT_CONFIG_FILENAME)).resolve()
 
 
 def _resolve_config_root(home_root: Path | None) -> Path:
     env_config = EnvironmentConfig.from_sources()
+    config_dir = Path(DEFAULT_CONFIG_DIR)
     env_root = env_config.openminion_config_root.strip()
     if env_root:
         candidate = Path(env_root).expanduser()
         if not candidate.is_absolute() and home_root:
             candidate = home_root / candidate
-        return candidate.resolve()
+        return Path(candidate).resolve()
     if home_root:
-        return (home_root / DEFAULT_CONFIG_DIR).resolve()
-    return (Path.home() / DEFAULT_CONFIG_DIR).resolve()
+        return (home_root / config_dir).resolve()
+    return (Path.home() / config_dir).resolve()
 
 
 def load_config(

@@ -562,7 +562,7 @@ def test_act_adaptive_circular_pattern_returns_truthful_waiting_user_result() ->
     assert result.action_result.error.code == "act_adaptive_circular_pattern"
 
 
-def test_act_adaptive_circular_pattern_forces_answer_only_finalization() -> None:
+def test_act_adaptive_changed_tool_arguments_reach_normal_finalization() -> None:
     llm_client = _FakeLLMClient(
         responses=[
             LLMResponse(
@@ -643,7 +643,7 @@ def test_act_adaptive_circular_pattern_forces_answer_only_finalization() -> None
     assert result.working_state.status == "done"
     assert "no more tool calls are needed" in str(result.message or "").lower()
     assert len(llm_client.calls) == 4
-    assert llm_client.calls[-1]["overrides"]["tool_choice"] == "none"
+    assert llm_client.calls[-1]["overrides"]["tool_choice"] == "auto"
 
 
 def test_act_adaptive_correction_budget_exhausted_returns_truthful_waiting_user_result() -> (

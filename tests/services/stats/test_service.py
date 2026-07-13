@@ -18,6 +18,28 @@ from openminion.services.stats import (
 )
 
 
+def test_service_stats_surface_reexports_canonical_owners() -> None:
+    from openminion.cli.status.stats import (
+        format_run_stats_footer as canonical_format,
+    )
+    from openminion.modules.telemetry.usage import (
+        RunStats as canonical_run_stats,
+        StatsService as canonical_service,
+        TokenUsageRecord as canonical_record,
+    )
+    from openminion.services.stats import (
+        RunStats as compatibility_run_stats,
+        StatsService as compatibility_service,
+        TokenUsageRecord as compatibility_record,
+        format_run_stats_footer as compatibility_format,
+    )
+
+    assert compatibility_run_stats is canonical_run_stats
+    assert compatibility_service is canonical_service
+    assert compatibility_record is canonical_record
+    assert compatibility_format is canonical_format
+
+
 @pytest.fixture()
 def store(tmp_path: Path) -> SQLiteSessionStore:
     session_store = SQLiteSessionStore(tmp_path / "stats.db")

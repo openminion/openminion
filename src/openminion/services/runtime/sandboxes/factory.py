@@ -1,9 +1,11 @@
 """Sandbox adapter factory."""
 
-from openminion.services.runtime.sandboxes.contracts import SandboxAdapter
-from openminion.services.runtime.sandboxes.e2b import E2BSandboxAdapter
-from openminion.services.runtime.sandboxes.modal import ModalSandboxAdapter
-from openminion.services.runtime.sandboxes.pyodide import PyodideSandboxAdapter
+from openminion.modules.runtime.sandboxes import (
+    E2BSandboxAdapter,
+    ModalSandboxAdapter,
+    PyodideSandboxAdapter,
+    SandboxAdapter,
+)
 
 _REGISTRY = {
     "e2b": E2BSandboxAdapter,

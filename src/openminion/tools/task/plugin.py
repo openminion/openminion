@@ -4,7 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 from openminion.modules.brain.runtime.goal.policy import authorize_goal_action
-from openminion.services.cron.scheduling import (
+from openminion.modules.task.scheduling.schedule import (
     normalize_schedule,
     parse_iso_datetime,
     utc_now,

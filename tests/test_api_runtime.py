@@ -18,7 +18,7 @@ from openminion.api.queries.sessions import list_session_messages
 from openminion.api.turns import run_turn
 from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
-from openminion.services.tool.exposure import get_model_exposure_specs
+from openminion.modules.tool.exposure import get_model_exposure_specs
 from tests.helpers import (
     extract_runtime_info_from_agent_service,
     extract_runtime_info_from_api_runtime,

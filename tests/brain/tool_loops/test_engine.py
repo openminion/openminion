@@ -7325,11 +7325,16 @@ def test_general_profile_forces_answer_only_finalization_after_tool_budget_denia
                 approved_command=SimpleNamespace(),
                 action_result=ActionResult(
                     command_id=new_uuid(),
-                    status="blocked",
+                    status="failed",
                     summary="tool_budget_calls_exceeded",
                     error=ActionError(
-                        code="BUDGET_EXCEEDED",
+                        code="tool_budget_calls_exceeded",
                         message="tool_budget_calls_exceeded",
+                        details={
+                            "max_calls_per_tool": 8,
+                            "tool_calls": 8,
+                            "tool_name": "search.dispatch",
+                        },
                     ),
                 ),
             ),
@@ -7644,7 +7649,7 @@ def test_budget_hint_injected_at_most_once() -> None:
     assert all_budget_hint_messages >= 1
 
 
-def test_three_identical_tool_sequences_trigger_circular_pattern() -> None:
+def test_repeated_tool_names_with_changed_arguments_do_not_stop_the_loop() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7676,6 +7681,13 @@ def test_three_identical_tool_sequences_trigger_circular_pattern() -> None:
                     ToolCall(id="c3", name="file.read", arguments={"path": "c.py"})
                 ],
                 finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finish_reason="stop",
             ),
         ]
     )
@@ -7712,10 +7724,11 @@ def test_three_identical_tool_sequences_trigger_circular_pattern() -> None:
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "done"
 
 
-def test_circular_pattern_finalization_uses_compact_reserved_answer_call() -> None:
+def test_duplicate_pattern_finalization_uses_compact_evidence_fallback() -> None:
     large_output = "x" * 5000
     runtime = _FakeRuntime(
         responses=[
@@ -7735,7 +7748,7 @@ def test_circular_pattern_finalization_uses_compact_reserved_answer_call() -> No
                 model="fake-model",
                 output_text="",
                 tool_calls=[
-                    ToolCall(id="c2", name="file.read", arguments={"path": "b.py"})
+                    ToolCall(id="c2", name="file.read", arguments={"path": "a.py"})
                 ],
                 finish_reason="tool_calls",
             ),
@@ -7745,7 +7758,7 @@ def test_circular_pattern_finalization_uses_compact_reserved_answer_call() -> No
                 model="fake-model",
                 output_text="",
                 tool_calls=[
-                    ToolCall(id="c3", name="file.read", arguments={"path": "c.py"})
+                    ToolCall(id="c3", name="file.read", arguments={"path": "a.py"})
                 ],
                 finish_reason="tool_calls",
             ),
@@ -7806,8 +7819,9 @@ def test_circular_pattern_finalization_uses_compact_reserved_answer_call() -> No
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text == "Final answer from compact evidence."
-    assert len(runtime.calls) == 4
+    assert "Successful tool evidence" in outcome.final_text
+    assert "file.read: read a.py" in outcome.final_text
+    assert len(runtime.calls) == 3
     final_messages = runtime.calls[-1]["messages"]
     assert len(final_messages) == 2
     assert "read and summarize" in final_messages[0].content

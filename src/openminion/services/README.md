@@ -12,13 +12,12 @@ module layer into runnable system behavior.
 
 ### Same-name orchestration peers
 
-Four service subpackages pair with a same-named feature area in
+Three service subpackages pair with a same-named feature area in
 `openminion.modules` and handle that area's runtime integration:
 
 - `brain/`
 - `context/`
 - `identity/`
-- `tool/`
 
 Changes in these paired owners must keep the module/service split explicit:
 `modules/<name>/` owns domain contracts, schemas, storage-facing engines, and
@@ -29,22 +28,21 @@ before it lands.
 
 ### Runtime concern packages
 
-Eight service subpackages are standalone runtime concerns with no
+Six service subpackages are standalone runtime concerns with no
 `modules/` peer:
 
 - `agent/`
-- `channel/`
 - `cron/`
 - `gateway/`
 - `health/`
 - `runtime/`
-- `security/`
 - `supervision/`
 
 `services/` does not mirror `modules/` one-to-one. Module-only owners such as
 `llm/`, `memory/`, `session/`, `storage/`, and `skill/` stay in the modules
-layer. Runtime glue like `services/integration/skill_harness.py` is not a
-subsystem peer of `modules/skill/`.
+layer. Policy, tool-selection, channel-policy, and stats behavior lives under
+its canonical module owner. Remaining service paths for those areas are
+compatibility imports or runtime wiring, not parallel feature owners.
 
 ### Grouped helper packages
 
@@ -52,9 +50,11 @@ Smaller support owners that are not standalone subsystem peers are grouped by
 runtime role:
 
 - `bootstrap/`: startup config bootstrap, onboarding, data-root migration, and shared path helpers
-- `lifecycle/`: turn orchestration, self-improvement, and sidecar lifecycle management
+- `lifecycle/`: compatibility imports for ingress, brain improvement, and runtime sidecars
 - `diagnostics/`: debug registry and owner-status reporting
-- `integration/`: cross-module verification and vector-sync bridges
+
+The former `integration/` bucket is dissolved: skill diagnostics belongs to
+`modules/skill`, and vector synchronization belongs to `modules/storage`.
 
 Only `config.py` and `constants.py` remain as root-level `.py` files.
 

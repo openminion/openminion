@@ -1,7 +1,7 @@
 from openminion.services.context.adapter import (
     ContextCtlGatewayAdapter,
 )
-from openminion.services.context.budget import (
+from openminion.modules.context.budget import (
     ContextBudgetConfig,
     assemble_budgeted_context,
 )
@@ -9,7 +9,7 @@ from openminion.services.context.session import (
     SessionContextService,
     resolve_session_archive_root,
 )
-from openminion.services.context.cleanup import SessionCleanupUtility
+from openminion.cli.commands.context_cleanup import SessionCleanupUtility
 
 __all__ = [
     "ContextCtlGatewayAdapter",

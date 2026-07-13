@@ -11,11 +11,11 @@ from uuid import uuid4
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
-from openminion.services.context.budget import (
+from openminion.modules.context.budget import (
     ContextBudgetConfig,
     assemble_budgeted_context,
 )
-from openminion.services.context.summary_engine import (
+from openminion.modules.context.summary.engine import (
     DEFAULT_SESSION_SUMMARY_ENGINE,
     SessionSummaryEngine,
     SummaryTurn,

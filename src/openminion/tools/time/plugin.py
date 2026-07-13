@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from openminion.services.cron.scheduling import compute_next_due
+from openminion.modules.task.scheduling.schedule import compute_next_due
 from openminion.modules.tool.runtime.environment import (
     agent_id_from_context as _agent_id_from_context,
 )

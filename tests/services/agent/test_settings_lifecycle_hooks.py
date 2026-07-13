@@ -10,8 +10,8 @@ from openminion.base.config.settings import (
     SETTINGS_FILENAME,
     SettingsResolver,
 )
-from openminion.services.agent.hooks import HookContext
-from openminion.services.agent.lifecycle import (
+from openminion.services.runtime.plugins import PluginContext
+from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_POST_TOOL_USE,
     LIFECYCLE_EVENT_PRE_TOOL_USE,
     LifecycleEvent,
@@ -31,8 +31,8 @@ def _write_settings(workspace: Path, payload: object) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _hook_context() -> HookContext:
-    return HookContext(config=None, logger=logging.getLogger("test.settings_hooks"))  # type: ignore[arg-type]
+def _hook_context() -> PluginContext:
+    return PluginContext(config=None, logger=logging.getLogger("test.settings_hooks"))  # type: ignore[arg-type]
 
 
 def test_settings_lifecycle_hook_runs_matching_command(tmp_path: Path) -> None:

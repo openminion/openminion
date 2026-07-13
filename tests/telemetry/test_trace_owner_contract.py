@@ -11,6 +11,7 @@ from openminion.modules.telemetry.trace.layout import (
     build_trace_file_path,
     resolve_trace_root,
 )
+from openminion.modules.telemetry.trace.metadata import merge_trace_metadata
 
 
 def test_resolve_trace_root_prefers_explicit_trace_requests_dir(
@@ -71,6 +72,12 @@ def test_build_trace_file_path_uses_agent_and_run_layout(tmp_path: Path) -> None
     assert (
         relative == "llm/agent.alpha/1712345678-project-session/step03-call03-http.json"
     )
+
+
+def test_agent_metadata_compatibility_surface_is_canonical() -> None:
+    from openminion.services.agent.telemetry import merge_metadata
+
+    assert merge_metadata is merge_trace_metadata
 
 
 def test_write_structured_trace_merges_nested_dicts_and_keeps_existing_keys(

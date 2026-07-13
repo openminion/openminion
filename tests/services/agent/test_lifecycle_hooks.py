@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from openminion.services.agent.hooks import Hook, HookContext
-from openminion.services.agent.lifecycle import (
+from openminion.services.runtime.plugins import Plugin, PluginContext
+from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_ON_ERROR,
     LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
     LIFECYCLE_EVENT_POST_TOOL_USE,
@@ -108,7 +108,7 @@ def test_register_and_fire_dispatches_per_event_type() -> None:
     reg.register(
         LIFECYCLE_EVENT_POST_TOOL_USE, lambda e, c: received_post.append(e.tool_name)
     )
-    ctx = HookContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
+    ctx = PluginContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
     reg.fire(
         LifecycleEvent(event_type=LIFECYCLE_EVENT_PRE_TOOL_USE, tool_name="bash"), ctx
     )
@@ -121,7 +121,7 @@ def test_register_and_fire_dispatches_per_event_type() -> None:
 
 def test_fire_event_with_no_registered_hooks_is_noop() -> None:
     reg = LifecycleHookRegistry()
-    ctx = HookContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
+    ctx = PluginContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
     reg.fire(LifecycleEvent(event_type=LIFECYCLE_EVENT_PRE_TOOL_USE), ctx)
 
 
@@ -129,7 +129,7 @@ def test_fire_empty_event_type_drops_silently() -> None:
     reg = LifecycleHookRegistry()
     received: list[Any] = []
     reg.register(LIFECYCLE_EVENT_PRE_TOOL_USE, lambda e, c: received.append(e))
-    ctx = HookContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
+    ctx = PluginContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
     reg.fire(LifecycleEvent(event_type=""), ctx)
     assert received == []
 
@@ -146,7 +146,7 @@ def test_misbehaving_hook_does_not_break_other_hooks(caplog) -> None:
 
     reg.register(LIFECYCLE_EVENT_PRE_TOOL_USE, _bad_hook)
     reg.register(LIFECYCLE_EVENT_PRE_TOOL_USE, _good_hook)
-    ctx = HookContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
+    ctx = PluginContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
     with caplog.at_level(logging.ERROR):
         reg.fire(
             LifecycleEvent(event_type=LIFECYCLE_EVENT_PRE_TOOL_USE, tool_name="bash"),
@@ -190,7 +190,7 @@ def test_hook_return_value_is_ignored_v1() -> None:
 
     reg.register(LIFECYCLE_EVENT_PRE_TOOL_USE, _hook_that_returns_block)
     reg.register(LIFECYCLE_EVENT_PRE_TOOL_USE, _hook_that_returns_mutated)
-    ctx = HookContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
+    ctx = PluginContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
     reg.fire(
         LifecycleEvent(event_type=LIFECYCLE_EVENT_PRE_TOOL_USE, tool_name="bash"), ctx
     )
@@ -233,12 +233,12 @@ def test_reset_default_lifecycle_registry_clears_state() -> None:
 
 
 def test_message_hook_class_behavior_unchanged() -> None:
-    hook = Hook()
-    assert hook.name == "hook"
+    hook = Plugin()
+    assert hook.name == "plugin"
     assert hook.inbound_hook_mode == "mutating"
     assert hook.outbound_hook_mode == "mutating"
     msg = SimpleNamespace(body="hello", channel="x", target="y", metadata={})
-    ctx = HookContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
+    ctx = PluginContext(config=None, logger=logging.getLogger("test"))  # type: ignore[arg-type]
     assert hook.on_message(msg, ctx) is msg
 
 

@@ -29,7 +29,7 @@ from openminion.services.gateway.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
 from openminion.base.config.settings import SettingsResolver
-from openminion.services.agent.lifecycle import register_settings_lifecycle_hooks
+from openminion.modules.brain.tools.lifecycle import register_settings_lifecycle_hooks
 from .controls import RuntimeControlsMixin
 from .mcp import RuntimeMCPMixin
 from .messages import (

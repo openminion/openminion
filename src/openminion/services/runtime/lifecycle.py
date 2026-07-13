@@ -8,11 +8,12 @@ from openminion.base.channel import ChannelRegistry, ConsoleChannel
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.paths import resolve_data_root, resolve_home_root
-from openminion.services.agent.hooks import HookContext
 from openminion.services.runtime.catalog import ExtensionCatalog
-from openminion.services.agent.hooks import (
-    HookRegistry,
-    build_default_hook_registry_with_activation_guard,
+from openminion.services.runtime.composition import OpenMinionRuntime
+from openminion.services.runtime.plugins import (
+    PluginContext,
+    PluginRegistry,
+    build_default_plugin_registry_with_activation_guard,
 )
 from openminion.modules.llm.providers import (
     ProviderRegistry,
@@ -25,12 +26,13 @@ from openminion.services.security.policy import SecurityPolicyEngine
 from openminion.services.lifecycle.sidecars import (
     SidecarManager,
     default_sidecar_manager,
+    ensure_sidecar_autostart,
 )
 from openminion.services.security.policy import (
     SecurityPolicyContext,
     default_internal_actor,
 )
-from openminion.services.tool.exposure import get_visible_tool_specs_and_dispatch_map
+from openminion.modules.tool.exposure import get_visible_tool_specs_and_dispatch_map
 
 ExtensionEventSink = Callable[[str, dict[str, Any]], None]
 
@@ -39,8 +41,8 @@ ExtensionEventSink = Callable[[str, dict[str, Any]], None]
 class ExtensionRuntime:
     catalog: ExtensionCatalog
     channels: ChannelRegistry
-    plugins: HookRegistry
-    plugin_context: HookContext
+    plugins: PluginRegistry
+    plugin_context: PluginContext
     tools: ToolRegistry
     providers: ProviderRegistry
     provider_statuses: list[dict[str, Any]]
@@ -115,14 +117,15 @@ class LifecycleService:
             logger=self._logger.getChild("channels"),
         )
         plugin_logger = self._logger.getChild("plugins")
-        plugins = build_default_hook_registry_with_activation_guard(
+        plugins = build_default_plugin_registry_with_activation_guard(
             config=self._config,
             logger=plugin_logger,
             on_before_activate=on_before_activate,
         )
-        plugin_context = HookContext(config=self._config, logger=plugin_logger)
+        plugin_context = PluginContext(config=self._config, logger=plugin_logger)
 
         tools = build_default_tool_registry(config=self._config.runtime, strict=False)
+        tools.bind_sidecar_autostart(ensure_sidecar_autostart)
         plugins.register_tool_extensions(tools, plugin_context)
 
         providers = ProviderRegistry()
@@ -318,6 +321,38 @@ def build_channel_registry(
     return registry
 
 
+def _controlplane_runtime_factory(
+    *, home_root: Path, data_root: Path
+) -> Callable[[str | None], OpenMinionRuntime]:
+    def build(config_path: str | None) -> OpenMinionRuntime:
+        return OpenMinionRuntime.from_config_path(
+            config_path,
+            home_root=str(home_root),
+            data_root=str(data_root),
+        )
+
+    return build
+
+
+def _build_controlplane_brain(
+    *, cp_cfg: Any, home_root: Path, data_root: Path, echo_brain: Any, client: Any
+) -> Any:
+    if not cp_cfg.openminion_enabled:
+        return echo_brain()
+    return client(
+        config_path=cp_cfg.openminion_config_path,
+        home_root=str(home_root),
+        data_root=str(data_root),
+        runtime_factory=_controlplane_runtime_factory(
+            home_root=home_root,
+            data_root=data_root,
+        ),
+        channel=cp_cfg.openminion_channel,
+        target=cp_cfg.openminion_target,
+        deliver=cp_cfg.openminion_deliver,
+    )
+
+
 def _build_telegram_adapter(
     *,
     config: OpenMinionConfig,
@@ -404,7 +439,6 @@ def _build_telegram_adapter(
     )
     if hasattr(store, "backfill_pairings_to_principals"):
         store.backfill_pairings_to_principals(status=PRINCIPAL_BINDING_STATUS_ACTIVE)
-    # CPD-04 follow-on: when the controlplane store is SQLite-backed, install
     if isinstance(store, SQLiteControlPlaneStore):
         wizard_db_path = cp_db_path.parent / "wizard.db"
         wizard_db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -422,17 +456,12 @@ def _build_telegram_adapter(
         auth=auth,
         audit_logger=audit_logger,
     )
-    brain = (
-        EchoBrain()
-        if not cp_cfg.openminion_enabled
-        else OpenMinionBrainClient(
-            config_path=cp_cfg.openminion_config_path,
-            home_root=str(home_root),
-            data_root=str(data_root),
-            channel=cp_cfg.openminion_channel,
-            target=cp_cfg.openminion_target,
-            deliver=cp_cfg.openminion_deliver,
-        )
+    brain = _build_controlplane_brain(
+        cp_cfg=cp_cfg,
+        home_root=home_root,
+        data_root=data_root,
+        echo_brain=EchoBrain,
+        client=OpenMinionBrainClient,
     )
     runtime = ControlPlaneDispatcher(
         store=store,
@@ -626,17 +655,12 @@ def _build_slack_adapter(
         auth=auth,
         audit_logger=audit_logger,
     )
-    brain = (
-        EchoBrain()
-        if not cp_cfg.openminion_enabled
-        else OpenMinionBrainClient(
-            config_path=cp_cfg.openminion_config_path,
-            home_root=str(home_root),
-            data_root=str(data_root),
-            channel=cp_cfg.openminion_channel,
-            target=cp_cfg.openminion_target,
-            deliver=cp_cfg.openminion_deliver,
-        )
+    brain = _build_controlplane_brain(
+        cp_cfg=cp_cfg,
+        home_root=home_root,
+        data_root=data_root,
+        echo_brain=EchoBrain,
+        client=OpenMinionBrainClient,
     )
     runtime = ControlPlaneDispatcher(
         store=store,
@@ -704,7 +728,7 @@ def _load_tool_plugin_statuses() -> list[dict[str, Any]]:
 
 
 def _plugin_statuses(
-    catalog: ExtensionCatalog, registry: HookRegistry
+    catalog: ExtensionCatalog, registry: PluginRegistry
 ) -> list[dict[str, Any]]:
     loaded_ids = set(registry.manifest_ids())
     loaded_names = set(registry.names())

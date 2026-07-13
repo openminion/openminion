@@ -1,8 +1,7 @@
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from openminion.base.types import Message
 
-from .composition import build_service_port
 from .ports import TurnFlowServicePort
 from .state import ToolPlan
 
@@ -31,12 +30,6 @@ def _infer_forced_tools_from_message(
                 return [token]
 
     return []
-
-
-def _service_port(service_or_port: Any) -> TurnFlowServicePort:
-    if isinstance(service_or_port, TurnFlowServicePort):
-        return service_or_port
-    return build_service_port(service_or_port)
 
 
 def _resolve_explicit_forced_tools(
@@ -102,7 +95,7 @@ def _resolve_capability_tools(
 
 
 def build_tool_plan(
-    service_or_port: Any,
+    service_port: TurnFlowServicePort,
     *,
     inbound: Message,
     user_message: str,
@@ -111,7 +104,6 @@ def build_tool_plan(
     canonical_tool_name: Canonicalize,
     canonical_tool_chain: CanonicalizeChain,
 ) -> ToolPlan:
-    service_port = _service_port(service_or_port)
     updated_user_message = str(user_message or "")
     effective_forced_tools = list(forced_tools or [])
     if not effective_forced_tools:

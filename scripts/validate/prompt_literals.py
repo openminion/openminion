@@ -59,7 +59,7 @@ _ALLOWED_DOMAIN_OWNED = {
     "modules/memory/runtime/consolidation/merge.py": "memory consolidation prompt is memory-runtime owned",
     "services/agent/execution/prompts.py": "agent execution retry prompts are domain-owned",
     "modules/memory/runtime/extraction/records.py": "memory exact-value guidance is memory-extraction owned",
-    "services/lifecycle/prompts.py": "sidecar approval prompts are operator UX, not LLM prompts",
+    "services/runtime/sidecars/prompts.py": "sidecar approval prompts are operator UX, not LLM prompts",
 }
 
 

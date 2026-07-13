@@ -39,30 +39,27 @@ def resolve_generated_root(home_root: str | Path | None = None) -> Path:
     generated_root = (data_root / _BASE_GENERATED_RUNTIME_DIRNAME).resolve(strict=False)
 
     configured = os.getenv(OPENMINION_GENERATED_ROOT_ENV, "").strip()
+    candidate = generated_root
     if configured:
         candidate = Path(configured).expanduser()
         if not candidate.is_absolute():
             candidate = generated_root / candidate
-        else:
-            if resolve_data_root_enforcement_mode() == "soft":
-                try:
-                    candidate.relative_to(generated_root)
-                except ValueError:
-                    rewritten = generated_root / (
-                        candidate.name or _BASE_GENERATED_RUNTIME_DIRNAME
-                    )
-                    warnings.warn(
-                        f"generated_root '{candidate}' rewritten to '{rewritten}' under data_root/{_BASE_GENERATED_RUNTIME_DIRNAME}",
-                        RuntimeWarning,
-                    )
-                    candidate = rewritten
-        return ensure_under_data_root(candidate, generated_root, label="generated_root")
-
-    return ensure_under_data_root(
-        generated_root,
-        generated_root,
-        label="generated_root",
-    )
+        elif resolve_data_root_enforcement_mode() == "soft":
+            try:
+                candidate.relative_to(generated_root)
+            except ValueError:
+                rewritten = generated_root / (
+                    candidate.name or _BASE_GENERATED_RUNTIME_DIRNAME
+                )
+                warnings.warn(
+                    f"generated_root '{candidate}' rewritten to '{rewritten}' "
+                    f"under data_root/{_BASE_GENERATED_RUNTIME_DIRNAME}",
+                    RuntimeWarning,
+                )
+                candidate = rewritten
+    resolved = ensure_under_data_root(candidate, generated_root, label="generated_root")
+    assert isinstance(resolved, Path)
+    return resolved
 
 
 def resolve_generated_config_path(

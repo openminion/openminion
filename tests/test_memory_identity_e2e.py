@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 try:
-    importlib.import_module("openminion.services.agent.identity")
+    importlib.import_module("openminion.modules.identity")
     importlib.import_module("openminion.api.runtime")
     importlib.import_module("openminion.base.config")
     from openminion.services.diagnostics.debug import DebugStatus

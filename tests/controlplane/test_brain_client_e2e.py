@@ -14,6 +14,7 @@ from openminion.modules.controlplane.commands.registry import CommandRegistry
 from openminion.modules.controlplane.runtime.dispatcher import ControlPlaneDispatcher
 from openminion.modules.controlplane.contracts.models import InboundMessage
 from openminion.modules.controlplane.adapters.client import (
+    OpenMinionIntegrationError,
     OpenMinionBrainClient,
 )
 from openminion.modules.controlplane.runtime.router import Router
@@ -26,6 +27,11 @@ class _StubMessage:
     channel: str = "console"
     target: str = "controlplane"
     metadata: dict[str, Any] | None = None
+
+
+def test_openminion_brain_client_requires_explicit_runtime_factory() -> None:
+    with pytest.raises(OpenMinionIntegrationError, match="explicit runtime_factory"):
+        OpenMinionBrainClient()
 
 
 class _StubGateway:
