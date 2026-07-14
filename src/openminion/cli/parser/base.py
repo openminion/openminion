@@ -69,6 +69,9 @@ COMMAND_SPECS = (
     CommandSpec(
         "status", "openminion.cli.commands.status", "Inspect run/task lifecycle status"
     ),
+    CommandSpec(
+        "tasks", "openminion.cli.commands.tasks", "Task inventory and controls"
+    ),
     CommandSpec("export", "openminion.cli.commands.export", "Export commands"),
     CommandSpec("focus", "openminion.cli.commands.focus", "Launch the focus shell"),
     CommandSpec("setup", "openminion.cli.commands.setup", "Configure OpenMinion"),

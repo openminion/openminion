@@ -484,3 +484,19 @@ async def test_slash_animation_status_use_save_reset_and_error(monkeypatch) -> N
             screen._handle_command("/animation reset")
             await pilot.pause()
             assert screen._animation_label() == "openminion:braille"
+
+
+@pytest.mark.asyncio
+async def test_slash_tasks_shows_task_inventory() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command("/tasks")
+            await pilot.pause()
+            body = _last_system_body(screen.query_one(FocusTranscript))
+
+            assert "Tasks" in body

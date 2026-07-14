@@ -18,6 +18,7 @@ def test_terminal_and_rich_share_core_slash_vocabulary() -> None:
         "/sessions",
         "/context",
         "/memory",
+        "/tasks",
         "/skills",
         "/statusline",
         "/details",
@@ -40,3 +41,4 @@ def test_rich_metadata_preserves_known_aliases() -> None:
     assert "/quit" in aliases_by_primary["/exit"]
     assert "/tool" in aliases_by_primary["/tools"]
     assert "/session" in aliases_by_primary["/sessions"]
+    assert "/task" in aliases_by_primary["/tasks"]

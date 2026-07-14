@@ -19,6 +19,7 @@ from openminion.api.routes import (
     handle_runtime_request,
     handle_sessions_request,
     handle_skill_request,
+    handle_tasks_request,
     handle_tools_request,
     handle_turns_request,
 )
@@ -35,6 +36,7 @@ _ROUTE_HANDLERS = (
     handle_sessions_request,
     handle_memory_request,
     handle_skill_request,
+    handle_tasks_request,
     handle_admin_request,
 )
 

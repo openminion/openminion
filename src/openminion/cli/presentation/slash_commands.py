@@ -83,6 +83,9 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/memory", "Show memory inventory", "_slash_memory", "_slash_memory"
     ),
     SlashCommandMetadata(
+        "/tasks", "Show task inventory", "_slash_tasks", "_slash_tasks", ("/task",)
+    ),
+    SlashCommandMetadata(
         "/skills", "Show skill inventory", "_slash_skills", "_slash_skills"
     ),
     SlashCommandMetadata(

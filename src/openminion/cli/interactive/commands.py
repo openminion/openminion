@@ -189,7 +189,9 @@ class SlashCommandMixin:
             "/animation use <provider:preset>, "
             "/animation save <provider:preset>, /animation reset"
         )
-        chat.push_message(ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body))
+        chat.push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
+        )
 
     def _apply_animation_command(
         self,
@@ -394,6 +396,50 @@ class SlashCommandMixin:
         from openminion.cli.presentation.visible_parity import render_memory_report
 
         self._push_system_body(render_memory_report(self._runtime))
+
+    def _slash_tasks(self, args: str) -> None:
+        from openminion.modules.task.surface import (
+            build_task_surface,
+            resolve_task_surface_source,
+        )
+
+        surface = build_task_surface(resolve_task_surface_source(self._runtime))
+        task_id = str(args or "").strip()
+        if task_id:
+            task = surface.show_task(task_id)
+            if task is None:
+                self._push_system_body(f"Task not found: {task_id}")
+                return
+            lines = [
+                "Task",
+                "====",
+                f"id: {task.get('id')}",
+                f"title: {task.get('title')}",
+                f"status: {task.get('status')}",
+            ]
+            if task.get("due_at"):
+                lines.append(f"due: {task.get('due_at')}")
+            self._push_system_body("\n".join(lines))
+            return
+
+        payload = surface.inventory()
+        lines = ["Tasks", "====="]
+        tasks = list(payload.get("tasks", []))
+        if not tasks:
+            lines.append("No tasks found.")
+        for task in tasks[:20]:
+            lines.append(
+                f"[{task.get('status', 'PENDING')}] {task.get('id')}: {task.get('title')}"
+            )
+        pending = list(payload.get("pending_actions", []))
+        if pending:
+            lines.append("")
+            lines.append("Pending actions:")
+            for action in pending[:20]:
+                lines.append(
+                    f"- {action.get('decision_id')}: task={action.get('task_id') or '-'}"
+                )
+        self._push_system_body("\n".join(lines))
 
     def _slash_skills(self, _args: str) -> None:
         from openminion.cli.presentation.visible_parity import render_skills_report
