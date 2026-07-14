@@ -198,15 +198,21 @@ The default `openminion` invocation is the recommended interactive surface:
 3. `openminion run` is the explicit one-shot command for scripts and JSON.
 4. `openminion focus` is the named form of the same interactive product.
 5. `openminion chat` and `openminion tui` are hidden compatibility aliases.
-5. Each agent turn shows a `⏺` marker, verb-rotating thinking spinner,
+6. Each agent turn shows a `⏺` marker, verb-rotating thinking spinner,
    colored `●` tool-call markers, and syntax-highlighted code blocks.
-6. `--plain-spinner` drops the verb rotation but keeps the elapsed counter and
-   `esc to interrupt` hint. The same behavior is available through
-   `OPENMINION_FOCUS_PLAIN_SPINNER=1` or `NO_COLOR=1`.
-7. Tool blocks longer than 6 lines are truncated to keep scrollback readable:
+7. `--progress minimal` drops moving frames while preserving bounded status
+   text, and `--progress off` suppresses in-flight chrome. `--plain-spinner`,
+   `OPENMINION_FOCUS_PLAIN_SPINNER=1`, and `NO_COLOR=1` remain compatibility
+   paths for reduced motion.
+8. Activity animation defaults to `openminion:braille`. Install the optional
+   Unicode catalog with `python -m pip install "openminion[animations]"`, then
+   run `openminion focus --animation-provider unicode --animation helix` or use
+   `/animation list`, `/animation use unicode:helix`, and `/animation save
+   unicode:helix` inside Focus.
+9. Tool blocks longer than 6 lines are truncated to keep scrollback readable:
    `/expand` reprints the latest block, `/expand 2` selects the second latest,
    and `/expand 0` lists all truncated blocks.
-8. Tool-block verbosity has three levels:
+10. Tool-block verbosity has three levels:
    - `--verbosity quiet` hides tool blocks but keeps an end-of-turn hidden-call
      summary.
    - `--verbosity normal` is the default: 6-line cap plus `/expand`.
@@ -219,16 +225,17 @@ The default `openminion` invocation is the recommended interactive surface:
 
    For persistent preferences, create `<DATA_ROOT>/focus_prefs.toml` (usually
    `~/.openminion/focus_prefs.toml`) with flat keys such as
-   `verbosity = "quiet"` or `progress = "off"`. Precedence is CLI flag → env →
+   `verbosity = "quiet"`, `progress = "off"`, `animation_provider =
+   "unicode"`, or `animation = "helix"`. Precedence is CLI flag → env →
    preferences file → default.
-9. Edit and Write tool calls render inline unified diffs. The same verbosity
+11. Edit and Write tool calls render inline unified diffs. The same verbosity
    ladder applies: quiet hides, normal truncates, verbose shows up to 200 lines,
    and `/expand` always shows the full diff.
-10. Live tool-execution narration prints a yellow `● Running Bash(ls -la)` line
+12. Live tool-execution narration prints a yellow `● Running Bash(ls -la)` line
     while a tool is active, then renders the final tool block below it. Quiet
     mode suppresses narration but still counts the call in the end-of-turn
     summary.
-11. Focus slash commands include `/clear`, `/compact`, `/cost`,
+13. Focus slash commands include `/animation`, `/clear`, `/compact`, `/cost`,
     `/dashboard`, `/exit`, `/expand`, `/help`, `/init`, `/mcp`, `/model`,
     `/new`, `/normal`, `/quiet`, `/quit`, `/readonly`, `/resume`, `/sessions`,
     `/status`, `/tools`, and `/verbose`.

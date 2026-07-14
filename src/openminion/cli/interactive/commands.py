@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from argparse import Namespace
 import contextlib
 import io
 from typing import Any, cast
 
 from textual.css.query import QueryError
 
+from openminion.cli.presentation.animation import (
+    AnimationRegistry,
+    AnimationSelectionError,
+    AnimationSpecError,
+    default_animation_registry,
+    parse_animation_token,
+    resolve_focus_animation,
+)
 from openminion.cli.tui.project_context import (
     resolve_project_context,
     write_init_template,
@@ -26,6 +35,7 @@ from openminion.cli.presentation.queue import (
     queue_listing,
 )
 from openminion.cli.presentation.slash_commands import rich_slash_command_registry
+from openminion.cli.ux.verbosity import write_focus_preferences
 from openminion.services.runtime.turn_input import TurnInputQueueStatus
 
 from .widgets import FocusTranscript, PermissionsOverlay
@@ -102,6 +112,120 @@ class SlashCommandMixin:
                 kind=MessageKind.SYSTEM,
                 sender="system",
                 body=body or "Theme information unavailable.",
+            )
+        )
+
+    def _slash_animation(self, args: str) -> None:
+        parts = str(args or "").strip().split()
+        sub = parts[0].lower() if parts else ""
+        chat = self.query_one(FocusTranscript)
+
+        if not sub:
+            self._push_animation_status(chat)
+            return
+        if sub == "list":
+            self._push_animation_list(chat, default_animation_registry())
+            return
+        if sub == "reset":
+            self._reset_animation(chat)
+            return
+        if sub not in {"use", "save"} or len(parts) < 2:
+            self._push_animation_usage(chat)
+            return
+        self._apply_animation_command(sub, parts[1], chat)
+
+    def _push_animation_status(self, chat: FocusTranscript) -> None:
+        resolution = self._animation_resolution
+        spec = resolution.spec
+        lines = [
+            "Animation settings:",
+            f"  active     {spec.provider_id}:{spec.name}",
+            f"  interval   {spec.interval_ms}ms",
+            f"  source     {resolution.source}",
+            f"  progress   {self._progress}",
+        ]
+        if resolution.is_fallback:
+            lines.append(f"  fallback   {resolution.fallback_reason}")
+        chat.push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body="\n".join(lines))
+        )
+
+    def _push_animation_list(
+        self,
+        chat: FocusTranscript,
+        registry: AnimationRegistry,
+    ) -> None:
+        lines = ["Available animations:"]
+        for provider_id in registry.provider_ids(discover=True):
+            try:
+                names = registry.names(provider_id, discover=False)
+            except AnimationSpecError as exc:
+                lines.append(f"  {provider_id}: unavailable ({exc})")
+                continue
+            for name in names:
+                lines.append(f"  {provider_id}:{name}")
+        for diagnostic in registry.diagnostics:
+            lines.append(f"  ! {diagnostic.render()}")
+        chat.push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body="\n".join(lines))
+        )
+
+    def _reset_animation(self, chat: FocusTranscript) -> None:
+        path = write_focus_preferences({"animation_provider": None, "animation": None})
+        self._apply_animation_resolution(
+            resolve_focus_animation(Namespace(animation_provider=None, animation=None))
+        )
+        chat.push_message(
+            ChatMessage(
+                kind=MessageKind.SYSTEM,
+                sender="system",
+                body=f"animation reset to {self._animation_label()} ({path})",
+            )
+        )
+
+    def _push_animation_usage(self, chat: FocusTranscript) -> None:
+        body = (
+            "usage: /animation, /animation list, "
+            "/animation use <provider:preset>, "
+            "/animation save <provider:preset>, /animation reset"
+        )
+        chat.push_message(ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body))
+
+    def _apply_animation_command(
+        self,
+        subcommand: str,
+        token: str,
+        chat: FocusTranscript,
+    ) -> None:
+        provider_id, name = parse_animation_token(token)
+        try:
+            resolution = resolve_focus_animation(
+                Namespace(animation_provider=provider_id, animation=name)
+            )
+        except AnimationSelectionError as exc:
+            chat.push_message(
+                ChatMessage(
+                    kind=MessageKind.SYSTEM,
+                    sender="system",
+                    body=f"/animation: {exc}",
+                )
+            )
+            return
+        self._apply_animation_resolution(resolution)
+        action = "animation"
+        if subcommand == "save":
+            path = write_focus_preferences(
+                {
+                    "animation_provider": resolution.spec.provider_id,
+                    "animation": resolution.spec.name,
+                }
+            )
+            action = f"animation saved to {path}"
+        chat.push_message(
+            ChatMessage(
+                kind=MessageKind.SYSTEM,
+                sender="system",
+                body=f"{action} → {self._animation_label()}",
             )
         )
 

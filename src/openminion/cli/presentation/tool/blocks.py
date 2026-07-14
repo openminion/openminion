@@ -5,9 +5,11 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.css.query import QueryError
 from textual.reactive import reactive
+from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Label, Static
 
+from openminion.cli.presentation.animation import AnimationSpec
 from openminion.cli.status.tool_calls import (
     format_tool_fallback_marker,
     format_tool_provenance_marker,
@@ -78,11 +80,17 @@ class ToolBlockWidget(Widget):
         *,
         pending: bool = False,
         verbosity: VerbosityLevel = "normal",
+        animation: AnimationSpec | None = None,
+        progress: str = "full",
         **kwargs,
     ) -> None:
         super().__init__(classes="focus-tool-block", **kwargs)
         self._tool_event = tool_event
         self._pending = bool(pending)
+        self._animation = animation
+        self._progress = progress if progress in ("full", "minimal", "off") else "full"
+        self._animation_frame = 0
+        self._animation_timer: Timer | None = None
         if verbosity in ("quiet", "normal", "verbose"):
             # type: ignore[assignment]
             self.verbosity = verbosity
@@ -93,6 +101,7 @@ class ToolBlockWidget(Widget):
         yield Static(self._body_renderable(), classes="focus-tool-block-body")
 
     def on_mount(self) -> None:
+        self._sync_animation_timer()
         self._refresh_widgets()
 
     def action_toggle(self) -> None:
@@ -113,6 +122,14 @@ class ToolBlockWidget(Widget):
             self._pending = bool(pending)
         if prev_pending and not self._pending:
             self.collapsed = self._default_collapsed_for_state()
+        self._sync_animation_timer()
+        self._refresh_widgets()
+
+    def update_animation(self, animation: AnimationSpec, *, progress: str) -> None:
+        self._animation = animation
+        self._progress = progress if progress in ("full", "minimal", "off") else "full"
+        self._animation_frame = 0
+        self._sync_animation_timer()
         self._refresh_widgets()
 
     def _default_collapsed_for_state(self) -> bool:
@@ -125,11 +142,37 @@ class ToolBlockWidget(Widget):
 
     def _exit_glyph(self) -> str:
         if self._pending:
-            return self.EXIT_GLYPH_PENDING
+            return self._pending_glyph()
         exit_code = self._tool_event.exit_code
         if exit_code is not None and exit_code != 0:
             return self.EXIT_GLYPH_FAIL
         return self.EXIT_GLYPH_OK
+
+    def _pending_glyph(self) -> str:
+        if self._progress == "off":
+            return ""
+        if self._progress == "minimal":
+            return self.EXIT_GLYPH_PENDING
+        frames = self._animation.frames if self._animation is not None else ()
+        if not frames:
+            return self.EXIT_GLYPH_PENDING
+        return frames[self._animation_frame % len(frames)]
+
+    def _sync_animation_timer(self) -> None:
+        if self._animation_timer is not None:
+            self._animation_timer.stop()
+            self._animation_timer = None
+        if not self._pending or self._progress != "full" or self._animation is None:
+            return
+        interval = self._animation.interval_ms / 1000
+        self._animation_timer = self.set_interval(interval, self._tick_animation)
+
+    def _tick_animation(self) -> None:
+        frames = self._animation.frames if self._animation is not None else ()
+        if not frames:
+            return
+        self._animation_frame = (self._animation_frame + 1) % len(frames)
+        self._refresh_widgets()
 
     def _refresh_widgets(self) -> None:
         try:

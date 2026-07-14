@@ -2,7 +2,7 @@ import argparse
 import sys
 import tomllib
 from pathlib import Path
-from typing import Literal, cast
+from typing import Mapping, Literal, cast
 
 VerbosityLevel = Literal["quiet", "normal", "verbose"]
 ProgressLevel = Literal["full", "minimal", "off"]
@@ -12,7 +12,12 @@ _PROGRESS_VALUES: tuple[str, ...] = ("full", "minimal", "off")
 _TRUTHY_VALUES: tuple[str, ...] = ("1", "true", "yes", "on")
 
 _PREFS_FILE_BASENAME = "focus_prefs.toml"
-_PREFS_RECOGNIZED_KEYS: tuple[str, ...] = ("verbosity", "progress")
+_PREFS_RECOGNIZED_KEYS: tuple[str, ...] = (
+    "verbosity",
+    "progress",
+    "animation_provider",
+    "animation",
+)
 
 
 def _read_env_value(key: str) -> str:
@@ -60,6 +65,31 @@ def _read_preferences_file() -> dict[str, str]:
         if isinstance(value, str):
             result[key] = value.strip().lower()
     return result
+
+
+def read_focus_preferences() -> dict[str, str]:
+    """Return recognized focus preferences from the shared preference file."""
+
+    return _read_preferences_file()
+
+
+def write_focus_preferences(updates: Mapping[str, str | None]) -> Path:
+    """Persist recognized focus preferences while preserving other known keys."""
+
+    path = _resolve_preferences_file_path()
+    prefs = _read_preferences_file()
+    for key, value in updates.items():
+        if key not in _PREFS_RECOGNIZED_KEYS:
+            continue
+        normalized = str(value or "").strip().lower()
+        if normalized:
+            prefs[key] = normalized
+        else:
+            prefs.pop(key, None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f'{key} = "{prefs[key]}"' for key in _PREFS_RECOGNIZED_KEYS if key in prefs]
+    path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+    return path
 
 
 def _normalize_choice(value: object, allowed: tuple[str, ...]) -> str | None:

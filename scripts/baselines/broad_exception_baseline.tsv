@@ -473,3 +473,4 @@ src/openminion/tools/weather/plugin.py	2	0	current broad-handler baseline; ratch
 src/openminion/tools/weather/providers/openmeteo/plugin.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/providers/openmeteo/runtime.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/tools/weather/providers/weatherapi/provider.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/cli/presentation/animation/registry.py	3	0	third-party provider and entry-point boundary; broad failures become typed animation diagnostics

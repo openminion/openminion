@@ -22,6 +22,10 @@ from openminion.cli.presentation import (
     format_progress_label,
     tool_call_body,
 )
+from openminion.cli.presentation.animation import (
+    AnimationResolution,
+    default_animation_registry,
+)
 from openminion.cli.tui.screen import CommandPaletteScreen
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.tui.widgets import (
@@ -108,6 +112,8 @@ class FocusScreen(
         requested_agent: str | None = None,
         requested_session: str | None = None,
         verbosity: str = "normal",
+        progress: str = "full",
+        animation: AnimationResolution | None = None,
     ) -> None:
         super().__init__()
         self._runtime = runtime
@@ -116,6 +122,12 @@ class FocusScreen(
         self._requested_session = str(requested_session or "").strip() or None
         self._verbosity: str = (
             verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
+        )
+        self._progress: str = progress if progress in ("full", "minimal", "off") else "full"
+        self._animation_resolution = animation or default_animation_registry().resolve(
+            "openminion",
+            "braille",
+            source="default",
         )
         self._tool_widgets: dict[str, object] = {}
         self._active_turn: Any | None = None
@@ -140,8 +152,16 @@ class FocusScreen(
         with Vertical(id="focus-root"):
             with Vertical(id="focus-screen-main"):
                 yield ChatSearchBar(id="focus-search-bar")
-                yield FocusTranscript(verbosity=self._verbosity)
-                yield ThinkingIndicator(id="focus-thinking")
+                yield FocusTranscript(
+                    verbosity=self._verbosity,
+                    animation=self._animation_resolution.spec,
+                    progress=self._progress,
+                )
+                yield ThinkingIndicator(
+                    animation=self._animation_resolution.spec,
+                    progress=self._progress,
+                    id="focus-thinking",
+                )
                 yield FocusDebugPane()
                 yield SlashCommandOverlay()
                 yield FileMentionOverlay()
@@ -269,6 +289,23 @@ class FocusScreen(
             return get_active_theme_name()
         except (QueryError, AttributeError):
             return "dark"
+
+    def _animation_label(self) -> str:
+        spec = self._animation_resolution.spec
+        return f"{spec.provider_id}:{spec.name}"
+
+    def _apply_animation_resolution(self, resolution: AnimationResolution) -> None:
+        self._animation_resolution = resolution
+        try:
+            indicator = self.query_one(ThinkingIndicator)
+            indicator.update_animation(resolution.spec, progress=self._progress)
+        except (QueryError, AttributeError):
+            pass
+        try:
+            transcript = self.query_one(FocusTranscript)
+            transcript.set_animation(resolution.spec, progress=self._progress)
+        except (QueryError, AttributeError):
+            pass
 
     def on_focus_composer_submitted(self, event: FocusComposer.Submitted) -> None:
         text = str(event.text or "").strip()
@@ -668,6 +705,8 @@ class FocusScreen(
                     call_id=call_id,
                     event=tool_event,
                     pending=True,
+                    animation=self._animation_resolution.spec,
+                    progress=self._progress,
                 )
                 chat.call_after_refresh(lambda: chat.scroll_end(animate=False))
             else:
@@ -691,6 +730,8 @@ class FocusScreen(
                     call_id=call_id,
                     event=tool_event,
                     pending=False,
+                    animation=self._animation_resolution.spec,
+                    progress=self._progress,
                 )
                 chat.call_after_refresh(lambda: chat.scroll_end(animate=False))
             else:

@@ -36,6 +36,12 @@ def _resolve_focus_verbosity(args: argparse.Namespace) -> str:
     return resolve_verbosity(args)
 
 
+def _resolve_focus_progress(args: argparse.Namespace) -> str:
+    from openminion.cli.ux.verbosity import resolve_progress
+
+    return resolve_progress(args, default="full")
+
+
 def _handle_focus_onboarding_gate(
     args: argparse.Namespace,
 ) -> tuple[int | None, argparse.Namespace]:
@@ -147,6 +153,7 @@ def _launch_textual_focus(
 ) -> int:
     from openminion.cli.tui.project_context import resolve_project_context
     from openminion.cli.interactive import FocusApp
+    from openminion.cli.presentation.animation import resolve_focus_animation
     from openminion.cli.tui.providers import OpenMinionRuntime
 
     focus_runtime = OpenMinionRuntime(
@@ -160,6 +167,7 @@ def _launch_textual_focus(
     if not bool(getattr(args, "no_context", False)):
         focus_runtime.set_project_context(resolve_project_context(working_dir))
     resolved_theme = _resolve_focus_theme(args)
+    animation = resolve_focus_animation(args)
     FocusApp(
         runtime=focus_runtime,
         working_dir=working_dir,
@@ -167,6 +175,8 @@ def _launch_textual_focus(
         session=str(getattr(args, "session", "") or "").strip() or None,
         theme=resolved_theme,
         verbosity=_resolve_focus_verbosity(args),
+        progress=_resolve_focus_progress(args),
+        animation=animation,
     ).run()
     return 0
 
@@ -268,6 +278,16 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--no-update-check",
         action="store_true",
         help="Disable the cached startup update-available notification.",
+    )
+    focus.add_argument(
+        "--animation-provider",
+        default=None,
+        help="Activity animation provider id (default: openminion).",
+    )
+    focus.add_argument(
+        "--animation",
+        default=None,
+        help="Activity animation preset, or provider:preset shorthand.",
     )
     backend = focus.add_mutually_exclusive_group()
     backend.add_argument(

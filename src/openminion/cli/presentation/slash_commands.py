@@ -59,6 +59,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "_slash_theme",
     ),
     SlashCommandMetadata(
+        "/animation",
+        "Show, switch, save, or reset activity animation",
+        None,
+        "_slash_animation",
+    ),
+    SlashCommandMetadata(
         "/tools", "Show available tools", "_slash_tools", "_slash_tools", ("/tool",)
     ),
     SlashCommandMetadata(

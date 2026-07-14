@@ -19,6 +19,7 @@ from openminion.cli.presentation.messages import (
     render_system_text,
     render_user_text,
 )
+from openminion.cli.presentation.animation import AnimationSpec
 from openminion.cli.presentation.tool.blocks import VerbosityLevel
 
 from .tool_block import ToolBlockWidget
@@ -58,6 +59,8 @@ class FocusMessageWidget(Widget):
         message: ChatMessage,
         *,
         verbosity: VerbosityLevel = "normal",
+        animation: AnimationSpec | None = None,
+        progress: str = "full",
     ) -> None:
         super().__init__(
             classes=f"focus-message --{message.kind.value}",
@@ -67,6 +70,8 @@ class FocusMessageWidget(Widget):
         self._streaming: _StreamingState | None = None
         self._search_query = ""
         self._verbosity: VerbosityLevel = verbosity
+        self._animation = animation
+        self._progress = progress if progress in ("full", "minimal", "off") else "full"
 
     @staticmethod
     def _safe_id(msg_id: str) -> str | None:
@@ -86,6 +91,8 @@ class FocusMessageWidget(Widget):
                 msg.tool_event,
                 pending=msg.tool_result is None,
                 verbosity=self._verbosity,
+                animation=self._animation,
+                progress=self._progress,
                 id=f"{self.id or 'msg'}-tool-block",
             )
             return
@@ -177,6 +184,8 @@ class FocusMessageWidget(Widget):
         call_id: str,
         event: ToolEvent,
         pending: bool,
+        animation: AnimationSpec | None = None,
+        progress: str | None = None,
     ) -> ToolBlockWidget:
         """Create or update one inline tool block for this message."""
         block_id = self._tool_block_dom_id(call_id or event.call_id or event.tool_name)
@@ -187,6 +196,8 @@ class FocusMessageWidget(Widget):
                 event,
                 pending=pending,
                 verbosity=self._verbosity,
+                animation=animation or self._animation,
+                progress=progress or self._progress,
                 id=block_id,
             )
             self.mount(block)
@@ -213,6 +224,21 @@ class FocusMessageWidget(Widget):
         try:
             for block in self.query(ToolBlockWidget):
                 block.verbosity = verbosity  # triggers watch_verbosity
+        except QueryError:
+            pass
+
+    def apply_animation(
+        self,
+        animation: AnimationSpec,
+        *,
+        progress: str,
+    ) -> None:
+        self._animation = animation
+        self._progress = progress if progress in ("full", "minimal", "off") else "full"
+        try:
+            for block in self.query(ToolBlockWidget):
+                if getattr(block, "_pending", False):
+                    block.update_animation(animation, progress=self._progress)
         except QueryError:
             pass
 
@@ -248,11 +274,15 @@ class TurnHandle:
         call_id: str,
         event: ToolEvent,
         pending: bool,
+        animation: AnimationSpec | None = None,
+        progress: str | None = None,
     ) -> ToolBlockWidget:
         return self._widget.upsert_tool_block(
             call_id=call_id,
             event=event,
             pending=pending,
+            animation=animation,
+            progress=progress,
         )
 
     def complete(self, final_text: str | None = None) -> None:
@@ -272,6 +302,8 @@ class FocusTranscript(ScrollableContainer):
     def __init__(self, **kwargs) -> None:
         # launch-time verbosity (passed via the CUC-defined
         verbosity_kwarg = kwargs.pop("verbosity", "normal")
+        animation_kwarg = kwargs.pop("animation", None)
+        progress_kwarg = kwargs.pop("progress", "full")
         super().__init__(id=kwargs.pop("id", "focus-transcript"), **kwargs)
         self._messages: list[ChatMessage] = []
         self._search_query = ""
@@ -280,6 +312,12 @@ class FocusTranscript(ScrollableContainer):
             verbosity_kwarg
             if verbosity_kwarg in ("quiet", "normal", "verbose")
             else "normal"
+        )
+        self._animation: AnimationSpec | None = (
+            animation_kwarg if isinstance(animation_kwarg, AnimationSpec) else None
+        )
+        self._progress = (
+            progress_kwarg if progress_kwarg in ("full", "minimal", "off") else "full"
         )
 
     @property
@@ -297,12 +335,26 @@ class FocusTranscript(ScrollableContainer):
         except QueryError:
             pass
 
+    def set_animation(self, animation: AnimationSpec, *, progress: str) -> None:
+        self._animation = animation
+        self._progress = progress if progress in ("full", "minimal", "off") else "full"
+        try:
+            for widget in self.query(FocusMessageWidget):
+                widget.apply_animation(animation, progress=self._progress)
+        except QueryError:
+            pass
+
     def push_message(self, message: ChatMessage) -> FocusMessageWidget:
         """Append a message and return the rendered widget."""
         previous = self._messages[-1] if self._messages else None
         message.show_header = self._starts_new_group(previous, message)
         self._messages.append(message)
-        widget = FocusMessageWidget(message, verbosity=self._verbosity)
+        widget = FocusMessageWidget(
+            message,
+            verbosity=self._verbosity,
+            animation=self._animation,
+            progress=self._progress,
+        )
         if not message.show_header and message.kind in {
             MessageKind.USER,
             MessageKind.AGENT,
@@ -330,7 +382,14 @@ class FocusTranscript(ScrollableContainer):
         self.clear_messages()
         for msg in messages:
             self._messages.append(msg)
-            self.mount(FocusMessageWidget(msg, verbosity=self._verbosity))
+            self.mount(
+                FocusMessageWidget(
+                    msg,
+                    verbosity=self._verbosity,
+                    animation=self._animation,
+                    progress=self._progress,
+                )
+            )
         self.call_after_refresh(lambda: self.scroll_end(animate=False))
 
     def clear_messages(self) -> None:

@@ -5,6 +5,7 @@ from pathlib import Path
 from textual.app import App
 
 from openminion.cli.parser.contracts import ensure_cli_component_compatibility
+from openminion.cli.presentation.animation import AnimationResolution
 from openminion.cli.theme import DARK, Theme
 from openminion.cli.theme.textual_adapter import (
     theme_variables_dict,
@@ -79,6 +80,8 @@ class FocusApp(App):
         onboarding_request: dict | None = None,
         theme: Theme | None = None,
         verbosity: str = "normal",
+        progress: str = "full",
+        animation: AnimationResolution | None = None,
     ) -> None:
         self._active_theme: Theme = theme if isinstance(theme, Theme) else DARK
         super().__init__()
@@ -95,6 +98,8 @@ class FocusApp(App):
         self._verbosity: str = (
             verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
         )
+        self._progress: str = progress if progress in ("full", "minimal", "off") else "full"
+        self._animation = animation
 
     @property
     def active_theme(self) -> Theme:
@@ -143,5 +148,7 @@ class FocusApp(App):
                 requested_agent=self._agent,
                 requested_session=self._session,
                 verbosity=self._verbosity,
+                progress=self._progress,
+                animation=self._animation,
             )
         )

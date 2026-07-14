@@ -23,6 +23,39 @@ Interactive use forwards to Textual Focus; piped chat input forwards to the
 one-shot owner. Unsupported legacy flags fail with migration help instead of
 silently changing behavior.
 
+## Focus activity animation
+
+Focus activity animation is presentation chrome, not runtime semantics.
+OpenMinion always ships `openminion:braille` as the built-in default. Optional
+providers can be selected only through the presentation-local animation
+registry, and provider payloads are raw frames plus timing.
+
+Useful commands:
+
+```bash
+openminion focus --animation-provider unicode --animation helix
+```
+
+Inside Focus:
+
+```text
+/animation
+/animation list
+/animation use unicode:helix
+/animation save unicode:helix
+/animation reset
+```
+
+Install the optional Unicode catalog with:
+
+```bash
+python -m pip install "openminion[animations]"
+```
+
+Theme colors, backgrounds, labels, progress level, and reduced-motion behavior
+remain owned by OpenMinion. `--progress minimal` and `--progress off` override
+any selected provider.
+
 ## Dashboard migration
 
 The dashboard is deprecated but retained until the release gate below is

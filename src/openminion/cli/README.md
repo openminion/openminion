@@ -21,6 +21,11 @@ Grouped helpers:
 - `identity/` — identity resolution at the CLI boundary
 - `transport/` — daemon and in-process runtime transport helpers
 - `presentation/` — ANSI styling and output formatting helpers
+- `presentation/animation/` — activity frame/timing provider validation,
+  built-in fallback, optional provider discovery, and Focus animation
+  resolution
+- `interactive/` — canonical Textual Focus app, widgets, slash commands, and
+  overlays
 
 Compatibility note:
 - CLC moved grouped helpers out of the `cli/` root, but `openminion.cli.<module>` compatibility imports remain supported through `openminion.cli.__init__` aliases so older public imports keep resolving without reintroducing flat root files.

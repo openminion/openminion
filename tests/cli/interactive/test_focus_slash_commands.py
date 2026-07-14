@@ -447,3 +447,40 @@ async def test_slash_theme_save_persists_to_data_root() -> None:
             chat = screen.query_one(FocusTranscript)
             body = _last_system_body(chat)
             assert "theme saved to" in body.lower(), body
+
+
+@pytest.mark.asyncio
+async def test_slash_animation_status_use_save_reset_and_error(monkeypatch) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setenv("OPENMINION_DATA_ROOT", tmp)
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+            chat = screen.query_one(FocusTranscript)
+
+            screen._handle_command("/animation")
+            await pilot.pause()
+            assert "active     openminion:braille" in _last_system_body(chat)
+
+            screen._handle_command("/animation use openminion:braille")
+            await pilot.pause()
+            assert "animation → openminion:braille" in _last_system_body(chat)
+
+            screen._handle_command("/animation save openminion:braille")
+            await pilot.pause()
+            persisted = Path(tmp) / "focus_prefs.toml"
+            assert 'animation_provider = "openminion"' in persisted.read_text(
+                encoding="utf-8"
+            )
+            assert "animation saved to" in _last_system_body(chat)
+
+            screen._handle_command("/animation use missing:spinner")
+            await pilot.pause()
+            assert "/animation:" in _last_system_body(chat)
+            assert screen._animation_label() == "openminion:braille"
+
+            screen._handle_command("/animation reset")
+            await pilot.pause()
+            assert screen._animation_label() == "openminion:braille"

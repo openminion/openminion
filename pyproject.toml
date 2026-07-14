@@ -49,6 +49,9 @@ Documentation = "https://www.openminion.com/docs"
 Changelog = "https://github.com/OpenMinion/openminion/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+animations = [
+  "unicode-animatio>=0.0.2",
+]
 remote = [
   "asyncssh>=2.14,<3",
 ]

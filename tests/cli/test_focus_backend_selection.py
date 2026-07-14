@@ -54,6 +54,14 @@ def test_focus_subparser_registers_rich_and_terminal_flags() -> None:
     parsed_no_flag = parser.parse_args(["focus"])
     assert parsed_no_flag.rich is False
     assert parsed_no_flag.terminal is False
+    assert parsed_no_flag.animation_provider is None
+    assert parsed_no_flag.animation is None
+
+    parsed_animation = parser.parse_args(
+        ["focus", "--animation-provider", "unicode", "--animation", "helix"]
+    )
+    assert parsed_animation.animation_provider == "unicode"
+    assert parsed_animation.animation == "helix"
 
 
 def test_legacy_terminal_flag_returns_migration_error(monkeypatch, capsys) -> None:

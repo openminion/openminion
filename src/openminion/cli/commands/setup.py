@@ -214,13 +214,18 @@ def _print_post_setup_tips() -> None:
         "`cat prompt.md | openminion` for one-shot mode.",
         "Each turn renders with a `⏺` marker, a verb-rotating "
         "thinking spinner, colored `●` tool-call markers, and "
-        "syntax-highlighted code blocks. Pass `--plain-spinner` "
-        "(or set `OPENMINION_FOCUS_PLAIN_SPINNER=1` / `NO_COLOR=1`) "
-        "to drop the verb rotation but keep the elapsed counter. "
+        "syntax-highlighted code blocks. Use `--progress minimal` "
+        "or `--progress off` for reduced motion; `--plain-spinner`, "
+        "`OPENMINION_FOCUS_PLAIN_SPINNER=1`, and `NO_COLOR=1` "
+        "remain compatibility paths. "
         "Tool blocks longer than 6 lines are truncated; type "
         "`/expand` to re-print the most recent one in full "
         "(`/expand 2` for the second-most-recent, `/expand 0` for a "
         "list).",
+        "Activity animation defaults to `openminion:braille`. Install "
+        "`openminion[animations]` to enable `unicode-animatio`, then "
+        "launch with `--animation-provider unicode --animation helix` "
+        "or switch live with `/animation use unicode:helix`.",
         "Tool-block verbosity is configurable: `--verbosity quiet` "
         "hides tool blocks (an end-of-turn summary still shows "
         "what ran); `--verbosity normal` is the default; "
@@ -236,7 +241,8 @@ def _print_post_setup_tips() -> None:
         "shows up to 200 lines inline.",
         "Persistent preferences: create "
         "`<DATA_ROOT>/focus_prefs.toml` with flat keys "
-        '`verbosity = "quiet"` and/or `progress = "off"` to '
+        '`verbosity = "quiet"`, `progress = "off"`, '
+        '`animation_provider = "unicode"`, and/or `animation = "helix"` to '
         "set per-user defaults. Slash overrides + CLI flag + env "
         "vars still win when set.",
         "Tool calls narrate live: a yellow `●` marker prints "
