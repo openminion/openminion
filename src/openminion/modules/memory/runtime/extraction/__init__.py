@@ -1,4 +1,3 @@
-from .antonyms import ensure_default_antonym_config, load_antonym_pairs
 from .records import (
     ExplicitDurableFactProjection,
     _content_text,
@@ -27,8 +26,6 @@ __all__ = [
     "_normalize_line",
     "_normalize_scope",
     "_tokenize_text",
-    "ensure_default_antonym_config",
     "explicit_durable_fact_projection_from_content",
     "explicit_memory_type_from_content",
-    "load_antonym_pairs",
 ]

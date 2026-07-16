@@ -395,6 +395,8 @@ class BackendMemoryStoreAdapter(MemoryStore):
 
 
 def adapt_backend_to_store(backend: KnowledgeBackend) -> MemoryStore:
+    if isinstance(backend, BuiltinKnowledgeBackend):
+        return backend.store
     return BackendMemoryStoreAdapter(backend)
 
 

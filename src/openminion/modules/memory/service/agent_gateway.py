@@ -10,12 +10,6 @@ from openminion.modules.memory.runtime.config_values import (
     coerce_float,
     coerce_int,
 )
-from openminion.modules.memory.runtime.extraction.antonyms import (
-    ensure_default_antonym_config,
-)
-from openminion.modules.memory.runtime.extraction.constants import (
-    MEMORY_ANTONYMS_FILENAME,
-)
 from openminion.modules.memory.runtime.learning import LearningMixin
 from openminion.modules.memory.runtime.retrieval_pipeline import (
     RetrievalPipeline,
@@ -25,7 +19,6 @@ from openminion.modules.memory.runtime.session_lifecycle import SessionLifecycle
 from openminion.modules.memory.runtime.turn_recording import TurnRecordingMixin
 
 __all__ = [
-    "MEMORY_ANTONYMS_FILENAME",
     "LearningMixin",
     "RetrievalPipeline",
     "SessionLifecycleMixin",
@@ -37,5 +30,4 @@ __all__ = [
     "coerce_float",
     "coerce_int",
     "build_empty_meta",
-    "ensure_default_antonym_config",
 ]

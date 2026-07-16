@@ -293,10 +293,8 @@ class TurnRecordingMixin:
         )
         self._generation += 1
 
-        # lexical retrieval-feedback classifier
         self._last_retrieved_items.pop(session_id, None)
 
-        # the `_record_candidate_turn_signals(user_message=...)`
         self._promote_mature_candidates(
             session_id,
             user_message=user_message,
@@ -305,7 +303,6 @@ class TurnRecordingMixin:
         if self._candidate_learning_readiness_enabled:
             self._gc_candidates()
         if self._auto_extract_enabled:
-            # AFE (brain-owned auto-fact extraction) reports real counts via
             facts_auto_extracted = 0
         notify_count = facts_auto_extracted if self._auto_extract_notify else 0
 

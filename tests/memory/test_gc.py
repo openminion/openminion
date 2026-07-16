@@ -113,6 +113,84 @@ class TestGC(unittest.TestCase):
         # 'old' is deleted=1 but 'new' has supersedes_id='old', so it should NOT be purged
         self.assertEqual(result.deleted_records, 0)
 
+    def test_gc_purges_deleted_supersession_chain_and_dependent_rows(self):
+        old = make_record("old", deleted=True)
+        new = make_record("new", deleted=True)
+        self.store.put(old)
+        self.store.put(new)
+        with self.store._connect() as conn:
+            conn.execute(
+                "UPDATE memory_records SET superseded_by_id='new' WHERE id='old'"
+            )
+            conn.execute("UPDATE memory_records SET supersedes_id='old' WHERE id='new'")
+            conn.execute(
+                """
+                INSERT INTO memory_tier_transitions(
+                    transition_id, record_id, scope, record_type, from_tier,
+                    to_tier, transition_reason, transition_at, access_count, meta_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "transition-new",
+                    "new",
+                    "session:s1",
+                    "fact",
+                    "working",
+                    "archival",
+                    "test",
+                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    0,
+                    "{}",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO memory_relations(
+                    relation_id, source_record_id, target_record_id,
+                    relation_type, meta_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "relation-chain",
+                    "old",
+                    "new",
+                    "supports",
+                    "{}",
+                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                ),
+            )
+
+        result = run_gc(self.store)
+
+        self.assertEqual(result.deleted_records, 2)
+        with self.store._connect() as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM memory_tier_transitions").fetchone()[
+                    0
+                ],
+                0,
+            )
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM memory_relations").fetchone()[0],
+                0,
+            )
+
+    def test_gc_preserves_records_referenced_by_active_superseded_by_link(self):
+        replacement = make_record("replacement", deleted=True)
+        active = make_record("active")
+        self.store.put(replacement)
+        self.store.put(active)
+        with self.store._connect() as conn:
+            conn.execute(
+                "UPDATE memory_records SET superseded_by_id='replacement' "
+                "WHERE id='active'"
+            )
+
+        result = run_gc(self.store)
+
+        self.assertEqual(result.deleted_records, 0)
+        self.assertIsNotNone(self.store.get("replacement"))
+
     def test_gc_purges_rejected_and_promoted_candidates(self):
         c_proposed = MemoryCandidate(
             candidate_id="c0",
