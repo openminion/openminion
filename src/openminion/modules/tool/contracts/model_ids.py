@@ -42,16 +42,26 @@ MODEL_IP_PUBLIC = "ip.public"
 MODEL_IP_LOCAL = "ip.local"
 MODEL_BROWSER = "browser"
 
+MODEL_OPS_TARGET_LIST = "ops.target.list"
+MODEL_OPS_TARGET_INSPECT = "ops.target.inspect"
+MODEL_OPS_HOST_SNAPSHOT = "ops.host.snapshot"
+MODEL_OPS_SERVICE_INSPECT = "ops.service.inspect"
+MODEL_OPS_LOGS_QUERY = "ops.logs.query"
+MODEL_OPS_NETWORK_INSPECT = "ops.network.inspect"
+MODEL_OPS_COMMAND_OBSERVE = "ops.command.observe"
+MODEL_OPS_JOB_INSPECT = "ops.job.inspect"
+MODEL_OPS_JOB_CANCEL = "ops.job.cancel"
+
 OPS_MODEL_TOOL_IDS: tuple[str, ...] = (
-    "ops.target.list",
-    "ops.target.inspect",
-    "ops.host.snapshot",
-    "ops.service.inspect",
-    "ops.logs.query",
-    "ops.network.inspect",
-    "ops.command.observe",
-    "ops.job.inspect",
-    "ops.job.cancel",
+    MODEL_OPS_TARGET_LIST,
+    MODEL_OPS_TARGET_INSPECT,
+    MODEL_OPS_HOST_SNAPSHOT,
+    MODEL_OPS_SERVICE_INSPECT,
+    MODEL_OPS_LOGS_QUERY,
+    MODEL_OPS_NETWORK_INSPECT,
+    MODEL_OPS_COMMAND_OBSERVE,
+    MODEL_OPS_JOB_INSPECT,
+    MODEL_OPS_JOB_CANCEL,
 )
 
 MODEL_GWS_CALL = "gws.call"

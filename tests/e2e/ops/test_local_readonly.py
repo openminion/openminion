@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from openminion.modules.system_operations.interfaces import OutputSink
-from openminion.modules.system_operations.registry import TargetRegistry
-from openminion.modules.system_operations.schemas import (
+from openminion.tools.ops.interfaces import OutputSink
+from openminion.tools.ops.registry import TargetRegistry
+from openminion.tools.ops.contracts import (
     OperationRequest,
     OperationTarget,
     TransportFacts,
     TransportReadResult,
     TransportResult,
 )
-from openminion.modules.system_operations.service import (
-    SystemOperationsService,
-    local_operations_service,
+from openminion.tools.ops.service import (
+    OpsService,
+    local_ops_service,
 )
 
 
@@ -61,7 +61,7 @@ class ScenarioTransport:
         return None
 
 
-def _scenario_service(results: dict[str, TransportResult]) -> SystemOperationsService:
+def _scenario_service(results: dict[str, TransportResult]) -> OpsService:
     targets = TargetRegistry()
     targets.register(
         OperationTarget(
@@ -71,22 +71,22 @@ def _scenario_service(results: dict[str, TransportResult]) -> SystemOperationsSe
             environment="fixture",
         )
     )
-    return SystemOperationsService(
+    return OpsService(
         targets=targets,
         transports={"local": ScenarioTransport(results)},
     )
 
 
 @pytest.mark.e2e
-def test_local_readonly_pack_produces_target_bound_evidence() -> None:
-    service = local_operations_service()
+def test_local_readonly_ops_tool_produces_target_bound_evidence() -> None:
+    service = local_ops_service()
     evidence = service.observe(
         OperationRequest(
             operation_id="local-readonly-e2e",
             target_id="local",
             profile_id="host.snapshot",
             expected_target_revision=1,
-            session_id="system-operations-e2e",
+            session_id="ops-e2e",
             tool_id="ops.host.snapshot",
         )
     )
@@ -94,13 +94,13 @@ def test_local_readonly_pack_produces_target_bound_evidence() -> None:
     assert evidence.claim_status == "observed"
     assert evidence.target_id == "local"
     assert evidence.target_revision == 1
-    assert evidence.session_id == "system-operations-e2e"
+    assert evidence.session_id == "ops-e2e"
     assert service.inspect_evidence(evidence.evidence_id) == evidence
 
 
 @pytest.mark.e2e
-def test_local_readonly_pack_refuses_unknown_and_mutating_profiles() -> None:
-    service = local_operations_service()
+def test_local_readonly_ops_refuses_unknown_and_mutating_profiles() -> None:
+    service = local_ops_service()
 
     for profile_id in ("shell.anything", "service.restart", "file.deploy"):
         with pytest.raises(ValueError, match="unknown operation profile"):
@@ -170,7 +170,7 @@ def test_local_readonly_matrix_preserves_explicit_claim_statuses() -> None:
 @pytest.mark.parametrize("parameter", ["command", "argv", "executable", "sudo"])
 def test_local_readonly_matrix_rejects_direct_command_injection(parameter: str) -> None:
     with pytest.raises(ValueError, match="unknown parameters"):
-        local_operations_service().observe(
+        local_ops_service().observe(
             OperationRequest(
                 operation_id=f"reject-{parameter}",
                 target_id="local",

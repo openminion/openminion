@@ -9,6 +9,7 @@ from openminion.modules.llm.providers.base import (
 )
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
+from openminion.modules.tool.exposure import apply_model_exposure
 from openminion.services.security.policy import ToolBudgetState
 
 from ..telemetry import trace_provider_request, trace_provider_response
@@ -52,6 +53,7 @@ class ExecutorRuntime:
                 "trace_label": label,
             }
         )
+        apply_model_exposure(request, self._service_port.tools)
         trace_args = {
             "label": label,
             "provider_name": str(
@@ -74,10 +76,10 @@ class ExecutorRuntime:
     @staticmethod
     def _collect_batch_output(batch: ToolExecutionBatch) -> str:
         outputs = [
-            result.content or str(result.data)
+            (result.content or str(result.data))
             if result.ok
             else f"Error: {result.error}"
-            for result in list(batch.results or [])
+            for result in batch.results or []
         ]
         return "\n".join(outputs).strip() or "Tool executed."
 
@@ -173,6 +175,4 @@ class ExecutorRuntime:
         )
 
 
-ExecutorRuntimeMixin = ExecutorRuntime
-
-__all__ = ["ExecutorRuntime", "ExecutorRuntimeMixin"]
+__all__ = ["ExecutorRuntime"]

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from openminion.base.time import utc_now_iso
 
-from .schemas import ClaimStatus, EvidenceRecord, OperationRequest, TransportResult
+from .contracts import ClaimStatus, EvidenceRecord, OperationRequest, TransportResult
 
 
 def build_evidence(
@@ -47,7 +47,6 @@ def build_evidence(
         target_revision=target_revision,
         transport=transport,
         profile_id=request.profile_id,
-        pack_id=request.pack_id,
         skill_id=request.skill_id,
         tool_id=request.tool_id,
         claim_status=status,

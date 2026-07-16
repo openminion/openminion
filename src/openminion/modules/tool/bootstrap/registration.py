@@ -37,6 +37,30 @@ class _ManifestCandidateValidationError(RuntimeError):
     """Raised when manifest runtime candidates do not map to registered tools."""
 
 
+_TOOL_PACKAGE_MODULE_ID_COMPATIBILITY = {
+    "reaction": "reactions",
+    "todo": "plan",
+}
+
+
+def _validate_tool_package_module_id(module_name: str, module_id: str) -> None:
+    prefix = "openminion.tools."
+    if not module_name.startswith(prefix):
+        return
+    package_path = module_name[len(prefix) :].split(".")
+    if len(package_path) != 1:
+        return
+    package_leaf = package_path[0]
+    if package_leaf.startswith("_"):
+        return
+    expected = _TOOL_PACKAGE_MODULE_ID_COMPATIBILITY.get(package_leaf, package_leaf)
+    if module_id != expected:
+        raise TypeError(  # allow-bare-raise: registrar package/module contract guard
+            f"Module {module_name} REGISTRAR.module_id={module_id!r} must match "
+            f"package owner {expected!r}"
+        )
+
+
 def _require_registrar_protocol(
     *,
     module_name: str,
@@ -60,6 +84,7 @@ def _require_registrar_protocol(
             f"Module {module_name} ({label}) REGISTRAR.module_id must be a non-empty "
             "string"
         )
+    _validate_tool_package_module_id(module_name, module_id)
 
     if not hasattr(registrar, "is_provider_only"):
         raise TypeError(  # allow-bare-raise: defensive type guard on plugin REGISTRAR shape

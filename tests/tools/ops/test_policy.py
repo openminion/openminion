@@ -3,11 +3,11 @@ from datetime import timedelta
 import pytest
 
 from openminion.base.time import utc_now
-from openminion.modules.system_operations.policy import (
+from openminion.tools.ops.policy import (
     BreakGlassGrant,
     decide_operation_policy,
 )
-from openminion.modules.system_operations.schemas import OperationTarget
+from openminion.tools.ops.contracts import OperationTarget
 
 
 @pytest.fixture

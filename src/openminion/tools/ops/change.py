@@ -6,7 +6,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from .schemas import ChangePlan
+from .contracts import ChangePlan
 
 
 def file_digest(path: Path) -> str:

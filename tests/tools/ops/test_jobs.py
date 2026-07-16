@@ -3,8 +3,8 @@ from datetime import timedelta
 import pytest
 
 from openminion.base.time import utc_now
-from openminion.modules.system_operations.jobs import OperationJobStore
-from openminion.modules.system_operations.schemas import OperationRequest
+from openminion.tools.ops.jobs import OperationJobStore
+from openminion.tools.ops.contracts import OperationRequest
 
 
 def _request(operation_id: str, **overrides: object) -> OperationRequest:

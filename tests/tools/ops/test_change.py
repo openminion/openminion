@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from openminion.modules.system_operations.change import apply_local_change, file_digest
-from openminion.modules.system_operations.schemas import ChangePlan
+from openminion.tools.ops.change import apply_local_change, file_digest
+from openminion.tools.ops.contracts import ChangePlan
 
 
 def _plan(path: Path, content: str = "after") -> ChangePlan:
@@ -57,7 +57,7 @@ def test_change_rolls_back_failed_verification(tmp_path) -> None:
 def test_change_reports_rollback_failure(tmp_path, monkeypatch) -> None:
     path = tmp_path / "service.conf"
     path.write_text("before", encoding="utf-8")
-    from openminion.modules.system_operations import change
+    from openminion.tools.ops import change
 
     replace = change._replace  # noqa: SLF001 - fixture injects rollback failure
     calls = 0

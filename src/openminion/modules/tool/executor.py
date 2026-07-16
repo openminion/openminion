@@ -225,6 +225,29 @@ def _unknown_tool_result(
     )
 
 
+def _hidden_tool_result(
+    *,
+    call: ProviderToolCall,
+    decision: Any,
+) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        tool_name=str(call.name or "").strip() or "unknown",
+        ok=False,
+        content="",
+        verified=False,
+        error="tool is not active in the current exposure profile",
+        call_id=call.id,
+        source=call.source,
+        data={
+            "error_code": "tool_exposure_denied",
+            "reason_code": decision.reason_code or "profile_inactive",
+            "profile_id": str(getattr(decision, "profile_id", "") or ""),
+            "activation_id": str(getattr(decision, "activation_id", "") or ""),
+            "target_id": str(getattr(decision, "target_id", "") or ""),
+        },
+    )
+
+
 def _normalized_depends_on(call: ProviderToolCall) -> list[str]:
     raw_depends_on = getattr(call, "depends_on", []) or []
     if isinstance(raw_depends_on, str):
@@ -265,6 +288,7 @@ def _stamp_execution_facts(
             "approval_denied",
             "confirm_required",
             "require_approval",
+            "tool_exposure_denied",
         }:
             result.state = "denied"
         else:
@@ -393,6 +417,35 @@ def execute_single_call(
             started_at=started_at,
         )
 
+    from openminion.modules.tool.exposure import exposure_scope
+
+    exposure_service = registry.exposure_service
+    scope = exposure_scope(
+        context.metadata if isinstance(context.metadata, Mapping) else None
+    )
+    decision = exposure_service.decide(
+        resolution.model_tool_id or raw_tool_name,
+        **scope,
+    )
+    if decision.state != "visible":
+        exposure_service.record_refusal(decision, **scope)
+        result = _hidden_tool_result(call=call, decision=decision)
+        _emit_tool_execution_counter(
+            context,
+            counter_name="tool_exposure_refused",
+            status="denied",
+            extra={
+                "tool_name": result.tool_name,
+                "profile_id": decision.profile_id,
+                "reason_code": decision.reason_code or "profile_inactive",
+            },
+        )
+        return _stamp_and_emit_tool_result(
+            context,
+            result=result,
+            started_at=started_at,
+        )
+
     fallback_chain = reorder_runtime_chain(
         runtime_binding_id=resolution.runtime_binding_id,
         default_chain=tuple(resolution.runtime_fallback_chain),
@@ -507,6 +560,12 @@ def execute_single_call(
             )
         )
         enriched_data.update(_tool_contract_metadata(tool))
+        if decision.profile_id:
+            enriched_data["tool_exposure"] = {
+                "profile_id": decision.profile_id,
+                "activation_id": decision.activation_id,
+                "target_id": decision.target_id,
+            }
         last_result = ToolExecutionResult(
             tool_name=runtime_tool_name or resolution.runtime_tool_name or "unknown",
             ok=bool(executed.ok),
@@ -538,6 +597,7 @@ def execute_single_call(
             ),
             started_at=started_at,
         )
+    exposure_service.record_invocation(decision, **scope)
     return _stamp_and_emit_tool_result(
         context,
         result=last_result,

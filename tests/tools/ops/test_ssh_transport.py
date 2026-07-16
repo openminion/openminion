@@ -10,12 +10,12 @@ import pytest
 from pydantic import ValidationError
 
 from openminion.modules.runtime.credentials import CredentialRef
-from openminion.modules.system_operations.schemas import (
+from openminion.tools.ops.contracts import (
     EndpointTrust,
     OperationTarget,
     TransportResult,
 )
-from openminion.modules.system_operations.transports import SshTransport
+from openminion.tools.ops.transports import SshTransport
 
 
 def _target() -> OperationTarget:
@@ -27,7 +27,7 @@ def _target() -> OperationTarget:
         credential_ref=CredentialRef(
             credential_id="remote",
             scope_kind="tool_family",
-            scope_id="system_operations",
+            scope_id="ops",
             source_kind="env",
             env_name="OPS_PASSWORD",
             rotation_policy="static",
@@ -72,6 +72,7 @@ def test_ssh_transport_uses_pinned_key_and_closed_argv(monkeypatch) -> None:
     assert result.stdout == "Linux\n"
     assert captured["address"] == "ops.example.test"
     assert captured["password"] == "password"
+    assert captured["client_keys"] is None
     assert captured["known_hosts"] == (["parsed:ssh-ed25519 fixture-key"], [], [])
     assert captured["command"] == "printf %s 'hello world'"
     assert captured["closed"] is True

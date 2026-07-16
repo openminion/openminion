@@ -23,6 +23,7 @@ from .contracts import (
     error_route_result,
     exception_route_result,
     json_body_required_route_result,
+    query_value,
 )
 
 
@@ -50,6 +51,122 @@ def _handle_list_tools(ctx: APIRouteContext) -> RouteResult:
         return RouteResult(
             status=HTTPStatus.OK,
             payload={"ok": True, "tools": v1_tool_specs(active_runtime)},
+        )
+
+    return _with_runtime(ctx, _build)
+
+
+def _exposure_scope(body: dict | None) -> dict[str, str]:
+    values = body or {}
+    return {
+        "session_id": str(values.get("session_id", "") or "").strip(),
+        "task_id": str(values.get("task_id", "") or "").strip(),
+        "target_id": str(values.get("target_id", "") or "").strip(),
+    }
+
+
+def _string_tuple(body: dict, name: str) -> tuple[str, ...]:
+    raw = body.get(name, ())
+    values = (raw,) if isinstance(raw, str) else tuple(raw or ())
+    return tuple(value for item in values if (value := str(item or "").strip()))
+
+
+def _handle_exposure_status(
+    ctx: APIRouteContext,
+    *,
+    query: str | None,
+) -> RouteResult:
+    def _build(active_runtime) -> RouteResult:
+        return RouteResult(
+            status=HTTPStatus.OK,
+            payload={
+                "ok": True,
+                "exposure": active_runtime.tool_exposure_status(
+                    session_id=query_value(query, "session_id") or "",
+                    task_id=query_value(query, "task_id") or "",
+                    target_id=query_value(query, "target_id") or "",
+                ),
+            },
+        )
+
+    return _with_runtime(ctx, _build)
+
+
+def _handle_exposure_activate(
+    ctx: APIRouteContext,
+    *,
+    path: str,
+    body: dict | None,
+) -> RouteResult:
+    def _build(active_runtime) -> RouteResult:
+        if body is None:
+            return json_body_required_route_result(path=path)
+        profile_id = str(body.get("profile_id", "") or "").strip()
+        scope = _exposure_scope(body)
+        if not profile_id or not scope["session_id"]:
+            return error_route_result(
+                HTTPStatus.BAD_REQUEST,
+                code="invalid_request",
+                message="profile_id and session_id are required",
+                details={"path": path},
+                retryable=False,
+            )
+        try:
+            activation = active_runtime.activate_tool_profile(
+                profile_id,
+                **scope,
+                target_kind=str(body.get("target_kind", "") or "").strip(),
+                credential_scopes=_string_tuple(body, "credential_scopes"),
+                dependencies=_string_tuple(body, "dependencies"),
+                approved=bool(body.get("approved", False)),
+                ttl_seconds=(
+                    float(body["ttl_seconds"])
+                    if body.get("ttl_seconds") is not None
+                    else None
+                ),
+                activation_reason=str(body.get("activation_reason", "") or "").strip(),
+                approved_by=str(body.get("approved_by", "") or "").strip(),
+                policy_source=str(body.get("policy_source", "") or "").strip(),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            return exception_route_result(
+                HTTPStatus.BAD_REQUEST,
+                code="tool_exposure_activation_denied",
+                exc=exc,
+                details={"profile_id": profile_id},
+                retryable=False,
+            )
+        return RouteResult(
+            status=HTTPStatus.OK,
+            payload={"ok": True, "activation": activation},
+        )
+
+    return _with_runtime(ctx, _build)
+
+
+def _handle_exposure_deactivate(
+    ctx: APIRouteContext,
+    *,
+    path: str,
+    body: dict | None,
+) -> RouteResult:
+    def _build(active_runtime) -> RouteResult:
+        if body is None:
+            return json_body_required_route_result(path=path)
+        profile_id = str(body.get("profile_id", "") or "").strip()
+        scope = _exposure_scope(body)
+        if not profile_id or not scope["session_id"]:
+            return error_route_result(
+                HTTPStatus.BAD_REQUEST,
+                code="invalid_request",
+                message="profile_id and session_id are required",
+                details={"path": path},
+                retryable=False,
+            )
+        deactivated = active_runtime.deactivate_tool_profile(profile_id, **scope)
+        return RouteResult(
+            status=HTTPStatus.OK,
+            payload={"ok": True, "deactivated": deactivated},
         )
 
     return _with_runtime(ctx, _build)
@@ -128,9 +245,17 @@ def handle_request(
     body: dict | None,
     query: str | None,
 ) -> RouteResult | None:
-    del query
     if method_name == "GET" and path == "/v1/tools":
         return _handle_list_tools(ctx)
+
+    if method_name == "GET" and path == "/v1/tools/exposure":
+        return _handle_exposure_status(ctx, query=query)
+
+    if method_name == "POST" and path == "/v1/tools/exposure/activate":
+        return _handle_exposure_activate(ctx, path=path, body=body)
+
+    if method_name == "POST" and path == "/v1/tools/exposure/deactivate":
+        return _handle_exposure_deactivate(ctx, path=path, body=body)
 
     if (
         method_name == "GET"

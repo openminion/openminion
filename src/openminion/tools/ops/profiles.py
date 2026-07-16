@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from .schemas import OperationRequest, TargetPlatform
+from .contracts import OperationRequest, TargetPlatform
 
 ProfileBuilder = Callable[
     [Mapping[str, str | int | bool], TargetPlatform], tuple[str, ...]
@@ -22,7 +22,7 @@ def _host_snapshot(
     return ("uname", "-a")
 
 
-def _service(
+def _service_inspect_argv(
     parameters: Mapping[str, str | int | bool], target_platform: TargetPlatform
 ) -> tuple[str, ...]:
     service = _required(parameters, "service")
@@ -78,7 +78,7 @@ def _processes(
 
 PROFILE_BUILDERS: dict[str, ProfileBuilder] = {
     "host.snapshot": _host_snapshot,
-    "service.inspect": _service,
+    "service.inspect": _service_inspect_argv,
     "logs.query": _logs,
     "network.inspect": _network,
     "disk.usage": _disk,

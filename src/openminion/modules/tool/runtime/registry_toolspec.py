@@ -118,12 +118,13 @@ def execute_tool_spec_call(
             },
         )
 
+    metadata = _normalized_workspace_metadata(context.metadata)
     workspace = resolve_workspace(context=context)
     run_root = resolve_run_root(workspace=workspace, context=context)
     policy_payload = copy.deepcopy(DEFAULT_POLICY)
     policy_payload["workspace_root"] = str(workspace)
-    policy_payload["context_metadata"] = dict(context.metadata or {})
-    agent_id = str((context.metadata or {}).get("agent_id", "")).strip()
+    policy_payload["context_metadata"] = metadata
+    agent_id = str(metadata.get("agent_id", "")).strip()
     if agent_id:
         policy_payload["agent_id"] = agent_id
     runtime_ctx = RuntimeContext(
@@ -135,7 +136,7 @@ def execute_tool_spec_call(
         env=EnvironmentConfig.from_sources(
             runtime_env=resolve_runtime_env(context=context),
         ),
-        repositories=build_runtime_repositories(context_metadata=context.metadata),
+        repositories=build_runtime_repositories(context_metadata=metadata),
         artifactctl=resolve_artifactctl(),
         memory_service=context.memory_service,
         sandbox_runner=context.sandbox_runner,
@@ -143,7 +144,7 @@ def execute_tool_spec_call(
         a2a_delegate_api=context.a2a_delegate_api,
     )
     runtime_ctx.session_id = str(context.session_id or "").strip() or None
-    runtime_ctx.trace_id = str((context.metadata or {}).get("trace_id", "")).strip()
+    runtime_ctx.trace_id = str(metadata.get("trace_id", "")).strip()
     runtime_ctx.agent_id = agent_id or None
     runtime_ctx.tool_name = tool_name
 
@@ -287,7 +288,8 @@ def invoke_tool_spec_handler(
 
 
 def resolve_workspace(*, context: ToolExecutionContext) -> Path:
-    raw = str((context.metadata or {}).get("workspace_root", "")).strip()
+    metadata = _normalized_workspace_metadata(context.metadata)
+    raw = str(metadata.get("workspace_root", "")).strip()
     if raw:
         candidate = Path(raw).expanduser()
     else:
@@ -296,6 +298,17 @@ def resolve_workspace(*, context: ToolExecutionContext) -> Path:
         return candidate.resolve(strict=False)
     except Exception:
         return Path(os.getcwd()).resolve(strict=False)
+
+
+def _normalized_workspace_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+    normalized = dict(metadata or {})
+    raw_root = str(normalized.get("workspace_root", "") or "").strip()
+    raw_working_dir = str(normalized.get("working_dir", "") or "").strip()
+    if not raw_root and raw_working_dir:
+        normalized["workspace_root"] = raw_working_dir
+    if not str(normalized.get("cwd", "") or "").strip() and raw_working_dir:
+        normalized["cwd"] = raw_working_dir
+    return normalized
 
 
 def _model_alias_map(args_model: Any) -> dict[str, str]:

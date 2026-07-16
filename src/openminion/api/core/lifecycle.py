@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from contextlib import suppress
+from collections.abc import Callable
+import weakref
 
 
 def _call(resource: object | None, method: str, **kwargs: object) -> None:
@@ -10,6 +12,29 @@ def _call(resource: object | None, method: str, **kwargs: object) -> None:
     if callable(callback):
         with suppress(Exception):
             callback(**kwargs)
+
+
+def initialize_runtime_components(
+    runtime: object,
+    *,
+    tool_exposure_event_sink: Callable[[dict[str, object]], None],
+) -> weakref.finalize:
+    runtime_tools = getattr(runtime, "tools", None)
+    exposure_service = getattr(runtime_tools, "exposure_service", None)
+    exposure_service.bind_event_sink(tool_exposure_event_sink)
+    return weakref.finalize(
+        runtime,
+        close_runtime_components,
+        retrieve_ctl=getattr(runtime, "retrieve_ctl", None),
+        action_policy=getattr(runtime, "action_policy", None),
+        runtime_manager=getattr(runtime, "runtime_manager", None),
+        lifecycle_bridge=getattr(runtime, "_lifecycle_event_bridge", None),
+        tools=runtime_tools,
+        runtime_storage=getattr(runtime, "runtime_storage", None),
+        sandbox_runner=getattr(runtime, "sandbox_runner", None),
+        authored_tools=getattr(runtime, "authored_tools", None),
+        telemetry_service=getattr(runtime, "telemetry_service", None),
+    )
 
 
 def close_runtime_components(

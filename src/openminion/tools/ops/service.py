@@ -9,7 +9,7 @@ from .jobs import OperationJobStore
 from .policy import OperationPolicyDecision, decide_operation_policy
 from .profiles import build_argv
 from .registry import TargetRegistry
-from .schemas import (
+from .contracts import (
     EvidenceRecord,
     JobStatus,
     OperationJob,
@@ -20,7 +20,7 @@ from .schemas import (
 from .transports import ContainerTransport, LocalTransport
 
 
-class SystemOperationsService:
+class OpsService:
     def __init__(
         self,
         *,
@@ -151,7 +151,7 @@ class SystemOperationsService:
         return self.evidence.list(target_id=target_id, session_id=session_id)
 
 
-def local_operations_service() -> SystemOperationsService:
+def local_ops_service() -> OpsService:
     targets = TargetRegistry()
     local_platform: TargetPlatform = (
         "darwin" if platform.system() == "Darwin" else "linux"
@@ -159,4 +159,4 @@ def local_operations_service() -> SystemOperationsService:
     targets.register(
         OperationTarget(target_id="local", kind="local", platform=local_platform)
     )
-    return SystemOperationsService(targets=targets)
+    return OpsService(targets=targets)

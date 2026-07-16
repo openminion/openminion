@@ -58,6 +58,7 @@ from openminion.modules.tool.base import (
 from openminion.modules.tool.errors import ToolRuntimeError
 
 if TYPE_CHECKING:
+    from openminion.modules.tool.exposure import ToolExposureService
     from openminion.tools.mcp.interfaces import MCPFleetHandle
     from openminion.modules.tool.runtime import RuntimeContext
 
@@ -71,12 +72,22 @@ Scope = Literal["READ_ONLY", "WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"]
 
 class ToolRegistry:
     def __init__(self, tools: Iterable[Tool] | None = None) -> None:
+        from openminion.modules.tool.exposure import (
+            ToolExposureService,
+            default_exposure_profiles,
+        )
+
         self._tools: Dict[str, Any] = {}
         self._category_index: Dict[str, Set[str]] = {}
         self._sidecar_autostart: Callable[..., dict[str, Any]] | None = None
         self.mcp_manager: MCPFleetHandle | None = None
+        self._exposure_service = ToolExposureService(default_exposure_profiles())
         for tool in tools or []:
             self.register(tool)
+
+    @property
+    def exposure_service(self) -> "ToolExposureService":
+        return self._exposure_service
 
     def register(self, tool: Any) -> None:
         _catalog_register_tool(self, tool)

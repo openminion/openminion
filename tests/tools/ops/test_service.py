@@ -2,20 +2,15 @@ import threading
 
 import pytest
 
-from openminion.modules.capability_pack.resolver import activate_pack
-from openminion.modules.system_operations.manifest import (
-    READ_ONLY_TOOLS,
-    read_only_manifest,
-)
-from openminion.modules.system_operations.registry import TargetRegistry
-from openminion.modules.system_operations.schemas import (
+from openminion.tools.ops.registry import TargetRegistry
+from openminion.tools.ops.contracts import (
     OperationRequest,
     OperationTarget,
     TransportResult,
 )
-from openminion.modules.system_operations.service import (
-    SystemOperationsService,
-    local_operations_service,
+from openminion.tools.ops.service import (
+    OpsService,
+    local_ops_service,
 )
 
 
@@ -68,13 +63,13 @@ def _request(**overrides: object) -> OperationRequest:
 
 
 def test_service_observes_closed_profile() -> None:
-    evidence = local_operations_service().observe(_request())
+    evidence = local_ops_service().observe(_request())
     assert evidence.claim_status == "observed"
     assert evidence.output_digest
 
 
 def test_service_rejects_stale_target_and_unknown_profile() -> None:
-    service = local_operations_service()
+    service = local_ops_service()
     with pytest.raises(ValueError, match="target revision changed"):
         service.observe(_request(expected_target_revision=2))
     with pytest.raises(ValueError, match="unknown operation profile"):
@@ -82,7 +77,7 @@ def test_service_rejects_stale_target_and_unknown_profile() -> None:
 
 
 def test_jobs_are_idempotent_and_cancellable() -> None:
-    service = local_operations_service()
+    service = local_ops_service()
     request = _request(idempotency_key="same-observation")
     first = service.submit(request)
     second = service.submit(request)
@@ -98,7 +93,7 @@ def test_service_clamps_timeout_to_target_limit() -> None:
     targets = TargetRegistry(
         (OperationTarget(target_id="bounded", kind="local", timeout_seconds=2),)
     )
-    service = SystemOperationsService(
+    service = OpsService(
         targets=targets,
         transports={"local": transport},
     )
@@ -118,7 +113,7 @@ def test_service_clamps_timeout_to_target_limit() -> None:
 
 def test_job_cancellation_reaches_active_transport() -> None:
     transport = _RecordingTransport(block=True)
-    service = SystemOperationsService(
+    service = OpsService(
         targets=TargetRegistry((OperationTarget(target_id="local", kind="local"),)),
         transports={"local": transport},
     )
@@ -144,15 +139,3 @@ def test_job_cancellation_reaches_active_transport() -> None:
     assert transport.cancelled.is_set()
     assert cancelled.status == "cancelled"
     assert service.inspect_job(running.job_id).status == "cancelled"
-
-
-def test_read_only_manifest_narrows_tools_and_is_domain_neutral() -> None:
-    manifest = read_only_manifest()
-    active = activate_pack(
-        manifest,
-        session_id="session-1",
-        available_tools=READ_ONLY_TOOLS,
-        available_skills=("ops-linux-diagnostics", "ops-incident-handoff"),
-    )
-    assert active.visible_tools == tuple(sorted(READ_ONLY_TOOLS))
-    assert active.pack_id == "ops-linux-readonly"

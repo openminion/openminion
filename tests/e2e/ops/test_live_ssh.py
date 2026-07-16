@@ -6,16 +6,16 @@ from pathlib import Path
 import pytest
 
 from openminion.modules.runtime.credentials import CredentialRef
-from openminion.modules.system_operations.evidence import EvidenceStore
-from openminion.modules.system_operations.jobs import OperationJobStore
-from openminion.modules.system_operations.registry import TargetRegistry
-from openminion.modules.system_operations.schemas import (
+from openminion.tools.ops.evidence import EvidenceStore
+from openminion.tools.ops.jobs import OperationJobStore
+from openminion.tools.ops.registry import TargetRegistry
+from openminion.tools.ops.contracts import (
     EndpointTrust,
     OperationRequest,
     OperationTarget,
 )
-from openminion.modules.system_operations.service import SystemOperationsService
-from openminion.modules.system_operations.transports import SshTransport
+from openminion.tools.ops.service import OpsService
+from openminion.tools.ops.transports import SshTransport
 
 
 @pytest.mark.e2e
@@ -43,7 +43,7 @@ def test_live_ssh_readonly_smoke(tmp_path: Path) -> None:
         credential_ref=CredentialRef(
             credential_id="live-ssh",
             scope_kind="tool_family",
-            scope_id="system_operations",
+            scope_id="ops",
             source_kind="env",
             env_name="OPENMINION_OPS_SSH_PASSWORD",
             rotation_policy="static",
@@ -55,7 +55,7 @@ def test_live_ssh_readonly_smoke(tmp_path: Path) -> None:
     targets.register(target)
     jobs_path = tmp_path / "jobs.db"
     evidence_path = tmp_path / "evidence.db"
-    service = SystemOperationsService(
+    service = OpsService(
         targets=targets,
         transports={
             "ssh": SshTransport(

@@ -7,7 +7,7 @@ from pydantic import Field
 
 from openminion.base.time import utc_now
 
-from .schemas import OperationRisk, OperationTarget, StrictModel
+from .contracts import OperationRisk, OperationTarget, StrictModel
 
 PolicyOutcome = Literal["allow", "ask", "deny"]
 
@@ -52,7 +52,7 @@ def decide_operation_policy(
     if privileged:
         return OperationPolicyDecision(
             outcome="deny",
-            reason="privileged operations are outside the bounded pack",
+            reason="privileged operations are outside the bounded ops profile",
         )
     if risk == "read":
         return OperationPolicyDecision(outcome="allow", reason="read-only observation")

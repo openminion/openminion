@@ -1,4 +1,14 @@
+from collections.abc import Callable
+from typing import Protocol
+
 from openminion.modules.tool import PLUGIN_CONTRACT_VERSION
+
+from .contracts import (
+    OperationTarget,
+    TransportFacts,
+    TransportReadResult,
+    TransportResult,
+)
 
 OPS_PLUGIN_INTERFACE_VERSION = PLUGIN_CONTRACT_VERSION
 
@@ -23,3 +33,34 @@ ALL_OPS_TOOLS = (
     TOOL_OPS_JOB_INSPECT,
     TOOL_OPS_JOB_CANCEL,
 )
+
+OutputSink = Callable[[str, str], None]
+
+
+class TargetTransport(Protocol):
+    def connect(self, target: OperationTarget) -> TransportFacts: ...
+
+    def inspect(self, target: OperationTarget) -> TransportFacts: ...
+
+    def run(
+        self,
+        target: OperationTarget,
+        argv: tuple[str, ...],
+        *,
+        timeout_seconds: float,
+        operation_id: str = "",
+        output_sink: OutputSink | None = None,
+    ) -> TransportResult: ...
+
+    def read(
+        self,
+        target: OperationTarget,
+        path: str,
+        *,
+        max_bytes: int,
+        timeout_seconds: float,
+    ) -> TransportReadResult: ...
+
+    def cancel(self, operation_id: str) -> bool: ...
+
+    def close(self) -> None: ...

@@ -5,13 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Optional
-import weakref
 
 from openminion.base.config import EnvironmentConfig, RunProfileOverrides
 from openminion.modules.llm import RuntimeLLMHandle
 
 from openminion.api.core.bootstrap import RuntimeBootstrapMixin
-from openminion.api.core.lifecycle import close_runtime_components
+from openminion.api.core.exposure import RuntimeToolExposureMixin
+from openminion.api.core.lifecycle import (
+    close_runtime_components,
+    initialize_runtime_components,
+)
 from openminion.api.core.profiles import RuntimeProfilesMixin
 
 _CANONICAL_TURN_PATH = (
@@ -28,7 +31,7 @@ _DISABLE_SECURITY_POLICY_ENV = "OPENMINION_DISABLE_SECURITY_POLICY"
 
 
 @dataclass
-class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin):
+class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposureMixin):
     @staticmethod
     def _security_policy_disabled(runtime_env: object) -> bool:
         return EnvironmentConfig.from_sources(runtime_env=runtime_env).get_bool(
@@ -36,18 +39,9 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin):
         )
 
     def __post_init__(self) -> None:
-        self._finalizer = weakref.finalize(
+        self._finalizer = initialize_runtime_components(
             self,
-            close_runtime_components,
-            retrieve_ctl=getattr(self, "retrieve_ctl", None),
-            action_policy=getattr(self, "action_policy", None),
-            runtime_manager=getattr(self, "runtime_manager", None),
-            lifecycle_bridge=getattr(self, "_lifecycle_event_bridge", None),
-            tools=getattr(self, "tools", None),
-            runtime_storage=getattr(self, "runtime_storage", None),
-            sandbox_runner=getattr(self, "sandbox_runner", None),
-            authored_tools=getattr(self, "authored_tools", None),
-            telemetry_service=getattr(self, "telemetry_service", None),
+            tool_exposure_event_sink=self._emit_tool_exposure_event,
         )
 
     @property

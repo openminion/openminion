@@ -66,6 +66,7 @@ def execute_tool_run(
         authored_tools_api=getattr(runtime, "authored_tools", None),
         metadata={
             "trace_id": request_id,
+            "session_id": session.id,
             "origin": "api.v1.tools.run",
             "runtime_env": dict(
                 getattr(

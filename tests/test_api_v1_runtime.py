@@ -5,6 +5,7 @@ from pathlib import Path
 from tests._csc_fixtures import _csc_install_default_agent
 
 
+from openminion.api.runtime import APIRuntime
 from openminion.api.server import dispatch_request
 from openminion.base.config import OpenMinionConfig, save_config
 
@@ -68,6 +69,67 @@ class APIV1RuntimeTests(unittest.TestCase):
             self.assertTrue(run_payload["trace_id"])
             self.assertTrue(run_payload["artifact_refs"])
             self.assertEqual(run_payload["tool"]["name"], "weather")
+
+    def test_v1_tool_exposure_status_activate_and_deactivate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["OPENMINION_DATA_ROOT"] = str(Path(tmp) / ".openminion")
+            config_path = _write_echo_config(Path(tmp))
+            runtime = APIRuntime.from_config_path(str(config_path))
+            try:
+                status_code, status_payload = dispatch_request(
+                    "GET",
+                    "/v1/tools/exposure",
+                    str(config_path),
+                    query="session_id=exposure-session",
+                    runtime=runtime,
+                )
+                self.assertEqual(int(status_code), 200)
+                self.assertTrue(status_payload["ok"])
+                profiles = {
+                    item["profile_id"]: item
+                    for item in status_payload["exposure"]["profiles"]
+                }
+                self.assertTrue(profiles["ops_minimal"]["active"])
+                self.assertFalse(profiles["ops_job_control"]["active"])
+
+                activate_code, activate_payload = dispatch_request(
+                    "POST",
+                    "/v1/tools/exposure/activate",
+                    str(config_path),
+                    body={
+                        "profile_id": "ops_job_control",
+                        "session_id": "exposure-session",
+                        "approved": True,
+                        "activation_reason": "operator request",
+                        "approved_by": "operator-1",
+                        "policy_source": "api-policy",
+                    },
+                    runtime=runtime,
+                )
+                self.assertEqual(int(activate_code), 200)
+                self.assertTrue(activate_payload["activation"]["audit_id"])
+                self.assertEqual(
+                    activate_payload["activation"]["activation_reason"],
+                    "operator request",
+                )
+                self.assertEqual(
+                    activate_payload["activation"]["approved_by"], "operator-1"
+                )
+
+                deactivate_code, deactivate_payload = dispatch_request(
+                    "POST",
+                    "/v1/tools/exposure/deactivate",
+                    str(config_path),
+                    body={
+                        "profile_id": "ops_job_control",
+                        "session_id": "exposure-session",
+                    },
+                    runtime=runtime,
+                )
+                self.assertEqual(int(deactivate_code), 200)
+                self.assertTrue(deactivate_payload["deactivated"])
+            finally:
+                runtime.close()
 
     def test_v1_runtime_capabilities_and_posture(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

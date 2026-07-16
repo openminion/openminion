@@ -134,7 +134,7 @@ class RuntimeConfig:
     thinking_policy: ThinkingRuntimePolicyConfig | None = None
     modes: dict[str, ModeRuntimePolicyConfig] = field(default_factory=dict)
     plugins: PluginRuntimePolicyConfig | None = None
-    system_operations: dict[str, object] = field(default_factory=dict)
+    ops: dict[str, object] = field(default_factory=dict)
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     mcp_publish: MCPPublishConfig = field(default_factory=MCPPublishConfig)
     mcp_sampling_mode: str = "disabled"

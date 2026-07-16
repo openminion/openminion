@@ -204,7 +204,7 @@ def _runtime_special_values(payload: dict[str, Any]) -> dict[str, Any]:
         "plugins": coerce_plugin_runtime_policy_config(
             payload.get("plugins"), field_path="system.runtime.plugins"
         ),
-        "system_operations": dict(payload.get("system_operations", {})),
+        "ops": dict(payload.get("ops", {})),
         "mcp_servers": coerce_mcp_server_configs(payload.get("mcp_servers")),
         "mcp_publish": coerce_mcp_publish_config(payload.get("mcp_publish")),
         "mcp_sampling_mode": normalize_mcp_sampling_mode(
@@ -221,8 +221,8 @@ def _runtime_special_values(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _build_runtime_config(effective_runtime_payload: dict[str, Any]) -> RuntimeConfig:
     _reject_legacy_runtime_shape(effective_runtime_payload)
-    if not isinstance(effective_runtime_payload.get("system_operations", {}), dict):
-        raise ConfigError("'runtime.system_operations' must be an object")
+    if not isinstance(effective_runtime_payload.get("ops", {}), dict):
+        raise ConfigError("'runtime.ops' must be an object")
     runtime_kwargs: dict[str, Any] = {
         key: str(effective_runtime_payload.get(key, default))
         for key, default in _STRING_DEFAULTS
@@ -280,7 +280,7 @@ def _runtime_config_to_payload(config: RuntimeConfig) -> dict[str, Any]:
             ),
             "tool_selection": _config_value_to_payload(config.tool_selection),
             "tools": tool_runtime_config_to_dict(config.tools),
-            "system_operations": _config_value_to_payload(config.system_operations),
+            "ops": _config_value_to_payload(config.ops),
             "mcp_servers": [
                 _mcp_server_to_payload(item)
                 for item in coerce_mcp_server_configs(config.mcp_servers)
@@ -323,7 +323,7 @@ def _system_runtime_mirror(config: RuntimeConfig) -> dict[str, Any]:
         "thinking_policy": thinking_runtime_policy_to_dict(config.thinking_policy),
         "modes": mode_runtime_policy_to_dict(config.modes),
         "plugins": plugin_runtime_policy_to_dict(config.plugins),
-        "system_operations": _config_value_to_payload(config.system_operations),
+        "ops": _config_value_to_payload(config.ops),
     }
     brain_mirror: dict[str, Any] = {}
     if config.has_tool_schema_shortlisting_enabled:

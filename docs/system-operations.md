@@ -1,9 +1,10 @@
-# System Operations
+# Ops Tools
 
-The system-operations module provides bounded local, container, and optional
-SSH observations through the `ops-linux-readonly` capability pack.
+The `tools/ops` family provides bounded local, container, and optional SSH
+observations. `ops` is the broad system-operations domain; SSH is only one
+transport backend.
 
-The read-only pack exposes nine tools:
+The tool family exposes nine tools:
 
 - `ops.target.list`
 - `ops.target.inspect`
@@ -27,7 +28,12 @@ trust are not assumed.
 
 Write-safe changes use a separate approval path with an allowed root, stale
 state check, atomic replacement, postcondition verification, and rollback.
-They are not part of the read-only pack.
+They are not part of the read-only observation surface.
+
+Built-in ops guidance is injected by tool-family ownership rather than a
+separate capability-pack framework. Optional skills can add deeper workflows
+such as Linux diagnostics or incident handoff, but the base safety rules stay
+with `tools/ops`.
 
 ## Opt-in SSH smoke
 
@@ -41,11 +47,11 @@ OPENMINION_OPS_SSH_USER=openminion-smoke \
 OPENMINION_OPS_SSH_HOST_KEY='ssh-ed25519 AAAA...' \
 OPENMINION_OPS_SSH_PASSWORD='...' \
 .venv/bin/python3.11 -m pytest -q \
-  tests/e2e/system_operations/test_live_ssh.py
+  tests/e2e/ops/test_live_ssh.py
 ```
 
-The smoke submits the closed `host.snapshot` profile through the normal
-service, durable-job, evidence, and pinned-key transport path. It never accepts
-an arbitrary remote command. After the run, revoke or rotate the dedicated
+The smoke submits the closed `host.snapshot` profile through the normal service,
+durable-job, evidence, and pinned-key transport path. It never accepts an
+arbitrary remote command. After the run, revoke or rotate the dedicated
 credential and remove its temporary target entry. Do not reuse production
 credentials for this check.

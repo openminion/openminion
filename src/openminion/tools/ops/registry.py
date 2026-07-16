@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from .schemas import OperationTarget
+from .contracts import OperationTarget
 
 
 class TargetRegistry:
@@ -34,5 +34,5 @@ class TargetRegistry:
 def registry_from_config(config: Mapping[str, Any]) -> TargetRegistry:
     raw_targets = config.get("targets", ())
     if not isinstance(raw_targets, (list, tuple)):
-        raise TypeError("runtime.system_operations.targets must be a list")
+        raise TypeError("runtime.ops.targets must be a list")
     return TargetRegistry(OperationTarget.model_validate(item) for item in raw_targets)

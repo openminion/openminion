@@ -9,7 +9,7 @@ from typing import cast
 
 from openminion.base.time import utc_now, utc_now_iso
 
-from .schemas import JobStatus, OperationJob, OperationRequest
+from .contracts import JobStatus, OperationJob, OperationRequest
 
 
 class OperationJobStore:

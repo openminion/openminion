@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.runtime.registry_toolspec import execute_tool_spec_call
@@ -37,6 +38,22 @@ class _ConfirmRequiredTool:
         return {"ok": True, "content": "confirmed"}
 
 
+class _EchoWorkspaceTool:
+    name = "test.echo_workspace"
+    args_model = dict
+
+    @staticmethod
+    def handler(arguments, ctx):
+        del arguments
+        return {
+            "ok": True,
+            "data": {
+                "workspace_root": ctx.policy.raw.get("workspace_root"),
+                "cwd": ctx.policy.raw.get("context_metadata", {}).get("cwd"),
+            },
+        }
+
+
 def _context(tmp_path, runtime_env):
     return ToolExecutionContext(
         channel="console",
@@ -66,6 +83,29 @@ def test_execute_tool_spec_call_uses_runtime_env_from_metadata_mapping(
 
     assert result.ok is True
     assert result.data["value"] == "runtime"
+
+
+def test_execute_tool_spec_call_normalizes_working_dir_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+    working_dir = tmp_path / "focus-wd"
+    working_dir.mkdir()
+
+    result = execute_tool_spec_call(
+        tool=_EchoWorkspaceTool(),
+        arguments={},
+        context=ToolExecutionContext(
+            channel="console",
+            target="tests",
+            session_id="session-working-dir",
+            metadata={"working_dir": str(working_dir)},
+        ),
+    )
+
+    assert result.ok is True
+    expected = str(Path(working_dir).resolve())
+    assert result.data["workspace_root"] == expected
+    assert result.data["cwd"] == str(working_dir)
 
 
 def test_execute_tool_spec_call_runtime_env_allows_json_metadata_payload(

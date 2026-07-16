@@ -1,7 +1,7 @@
 import pytest
 
-from openminion.modules.system_operations.evidence import EvidenceStore, build_evidence
-from openminion.modules.system_operations.schemas import (
+from openminion.tools.ops.evidence import EvidenceStore, build_evidence
+from openminion.tools.ops.contracts import (
     OperationRequest,
     TransportResult,
 )

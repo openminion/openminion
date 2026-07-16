@@ -13,7 +13,7 @@ from openminion.modules.runtime.credentials import CredentialRef
 from openminion.modules.runtime.sync import run_async_compat
 
 from .interfaces import OutputSink
-from .schemas import (
+from .contracts import (
     OperationTarget,
     TargetPlatform,
     TransportFacts,
@@ -308,18 +308,16 @@ class SshTransport:
     ) -> TransportResult:
         if target.kind != "ssh" or target.credential_ref is None:
             raise ValueError("ssh transport requires an ssh target")
-        return cast(
-            TransportResult,
-            run_async_compat(
-                self._run_async(
-                    target,
-                    argv,
-                    timeout_seconds=timeout_seconds,
-                    operation_id=operation_id,
-                    output_sink=output_sink,
-                )
-            ),
+        result: TransportResult = run_async_compat(
+            self._run_async(
+                target,
+                argv,
+                timeout_seconds=timeout_seconds,
+                operation_id=operation_id,
+                output_sink=output_sink,
+            )
         )
+        return result
 
     async def _run_async(
         self,
@@ -337,17 +335,22 @@ class SshTransport:
                 "SSH operations require the optional 'remote' dependency"
             ) from exc
         self._validate_target(target)
+        assert target.credential_ref is not None
         credential = self._credential_reader(target.credential_ref)
         known_hosts: object = target.endpoint_trust.known_hosts_path or None
         if target.endpoint_trust.host_key:
             host_key = asyncssh.import_public_key(target.endpoint_trust.host_key)
             known_hosts = ([host_key], [], [])
-        connection: _SshConnection = await asyncssh.connect(
-            target.address,
-            port=target.port,
-            username=target.username or None,
-            password=credential,
-            known_hosts=known_hosts,
+        connection = cast(
+            _SshConnection,
+            await asyncssh.connect(
+                target.address,
+                port=target.port,
+                username=target.username or None,
+                password=credential,
+                client_keys=None,
+                known_hosts=known_hosts,
+            ),
         )
         if operation_id:
             with self._lock:

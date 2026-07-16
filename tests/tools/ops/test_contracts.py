@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from openminion.modules.runtime.credentials import CredentialRef
-from openminion.modules.system_operations import (
+from openminion.tools.ops import (
     BreakGlassGrant,
     EndpointTrust,
     OperationRequest,
@@ -17,7 +17,7 @@ from openminion.modules.system_operations import (
     build_evidence,
     decide_operation_policy,
 )
-from openminion.modules.system_operations.api import target_view
+from openminion.tools.ops.api import target_view
 from openminion.base.time import utc_now
 
 
@@ -34,7 +34,7 @@ def test_target_contract_requires_kind_specific_fields() -> None:
         credential_ref=CredentialRef(
             credential_id="ops-ssh",
             scope_kind="tool_family",
-            scope_id="system_operations",
+            scope_id="ops",
             source_kind="env",
             env_name="OPENMINION_OPS_SSH_PASSWORD",
             rotation_policy="static",
@@ -58,7 +58,7 @@ def test_public_target_view_redacts_credentials_and_trust_material() -> None:
         credential_ref=CredentialRef(
             credential_id="ops-ssh",
             scope_kind="tool_family",
-            scope_id="system_operations",
+            scope_id="ops",
             source_kind="env",
             env_name="OPENMINION_OPS_SSH_PASSWORD",
             rotation_policy="static",

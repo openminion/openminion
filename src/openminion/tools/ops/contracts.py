@@ -35,7 +35,7 @@ class OperationTarget(StrictModel):
     container: str = ""
     credential_ref: CredentialRef | None = None
     endpoint_trust: EndpointTrust = EndpointTrust()
-    policy_profile: str = "ops-linux-readonly"
+    policy_profile: str = "ops-readonly"
     capabilities: tuple[str, ...] = ()
     workspace_scopes: tuple[str, ...] = ()
     log_scopes: tuple[str, ...] = ()
@@ -64,11 +64,9 @@ class OperationTarget(StrictModel):
             if (
                 credential is None
                 or credential.scope_kind != "tool_family"
-                or credential.scope_id != "system_operations"
+                or credential.scope_id != "ops"
             ):
-                raise ValueError(
-                    "ssh credentials must use the system_operations tool-family scope"
-                )
+                raise ValueError("ssh credentials must use the ops tool-family scope")
         return self
 
 
@@ -94,7 +92,6 @@ class OperationRequest(StrictModel):
     idempotency_key: str = ""
     expected_target_revision: int | None = Field(default=None, ge=1)
     session_id: str = ""
-    pack_id: str = "ops-linux-readonly"
     skill_id: str = ""
     tool_id: str = ""
 
@@ -117,7 +114,6 @@ class EvidenceRecord(StrictModel):
     target_revision: int = 0
     transport: str = ""
     profile_id: str
-    pack_id: str = ""
     skill_id: str = ""
     tool_id: str = ""
     claim_status: ClaimStatus

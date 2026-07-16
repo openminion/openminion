@@ -3,9 +3,10 @@ from __future__ import annotations
 import importlib.util
 from typing import Any
 
-from .manifest import read_only_manifest
-from .schemas import OperationTarget
-from .service import SystemOperationsService
+from .contracts import OperationTarget
+from .guidance import OPS_GUIDANCE_ID
+from .interfaces import ALL_OPS_TOOLS
+from .service import OpsService
 
 
 def target_view(target: OperationTarget) -> dict[str, Any]:
@@ -34,9 +35,8 @@ def target_view(target: OperationTarget) -> dict[str, Any]:
     }
 
 
-def operator_state(service: SystemOperationsService) -> dict[str, Any]:
+def operator_state(service: OpsService) -> dict[str, Any]:
     """Return the shared operator view used by CLI, API, and TUI adapters."""
-    manifest = read_only_manifest()
     targets = service.list_targets()
     disabled = {
         target.target_id: "install the 'remote' extra to enable SSH operations"
@@ -46,10 +46,10 @@ def operator_state(service: SystemOperationsService) -> dict[str, Any]:
     return {
         "ok": True,
         "data": {
-            "pack": {
-                "id": manifest.pack_id,
-                "tools": [tool.tool_id for tool in manifest.tools],
-                "skills": [skill.skill_id for skill in manifest.skills],
+            "tool_family": {
+                "id": "ops",
+                "tools": list(ALL_OPS_TOOLS),
+                "guidance": OPS_GUIDANCE_ID,
             },
             "targets": [target_view(target) for target in targets],
             "jobs": [job.model_dump(mode="json") for job in service.jobs.list()],
@@ -62,21 +62,21 @@ def operator_state(service: SystemOperationsService) -> dict[str, Any]:
     }
 
 
-def target_list(service: SystemOperationsService) -> dict[str, Any]:
+def target_list(service: OpsService) -> dict[str, Any]:
     return {
         "ok": True,
         "data": [target_view(item) for item in service.list_targets()],
     }
 
 
-def target_inspect(service: SystemOperationsService, target_id: str) -> dict[str, Any]:
+def target_inspect(service: OpsService, target_id: str) -> dict[str, Any]:
     return {
         "ok": True,
         "data": target_view(service.inspect_target(target_id)),
     }
 
 
-def job_inspect(service: SystemOperationsService, job_id: str) -> dict[str, Any]:
+def job_inspect(service: OpsService, job_id: str) -> dict[str, Any]:
     return {
         "ok": True,
         "data": service.inspect_job(job_id).model_dump(mode="json"),
@@ -84,7 +84,7 @@ def job_inspect(service: SystemOperationsService, job_id: str) -> dict[str, Any]
 
 
 def evidence_list(
-    service: SystemOperationsService,
+    service: OpsService,
     *,
     target_id: str = "",
     session_id: str = "",

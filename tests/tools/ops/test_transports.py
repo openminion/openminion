@@ -4,7 +4,7 @@ import threading
 import time
 import uuid
 
-from openminion.modules.system_operations import (
+from openminion.tools.ops import (
     ContainerTransport,
     LocalTransport,
     OperationTarget,
@@ -88,7 +88,7 @@ def test_container_transport_builds_runtime_argv(monkeypatch) -> None:
         return object()
 
     monkeypatch.setattr(
-        "openminion.modules.system_operations.transports._run",
+        "openminion.tools.ops.transports._run",
         fake_run,
     )
     result = ContainerTransport("podman").run(
