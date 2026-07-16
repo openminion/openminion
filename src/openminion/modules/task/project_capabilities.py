@@ -10,9 +10,8 @@ from openminion.modules.task.autonomy import now_ms
 GAP_ASSESSMENT_REF = (
     "docs/specs/openminion-capability-surface-gap-assessment-2026-07-03-spec.md"
 )
-CPACK_SPEC_REF = "docs/specs/openminion-capability-pack-framework-2026-07-02-spec.md"
-CPACK_TRACKER_REF = (
-    "docs/trackers/wip/openminion-capability-pack-framework-2026-07-02-tracker.md"
+DOMAIN_WORKFLOW_REF = (
+    "docs/specs/openminion-long-horizon-project-worker-v3-2026-07-03-spec.md"
 )
 
 
@@ -75,8 +74,7 @@ class ProjectCapabilityMatrix(_StrictCapabilityModel):
     generated_at_ms: int = Field(default_factory=now_ms, ge=0)
     evidence_refs: tuple[str, ...] = (
         GAP_ASSESSMENT_REF,
-        CPACK_SPEC_REF,
-        CPACK_TRACKER_REF,
+        DOMAIN_WORKFLOW_REF,
     )
 
     def row_for(self, area: ProjectCapabilityArea) -> ProjectCapabilityRow:
@@ -169,7 +167,7 @@ _DEFAULT_PILOT_AREAS = frozenset(
     }
 )
 
-_CPACK_OWNED_AREAS = frozenset(
+_DOMAIN_WORKFLOW_AREAS = frozenset(
     {
         ProjectCapabilityArea.GOOGLE_WORKSPACE,
         ProjectCapabilityArea.EMAIL,
@@ -203,7 +201,11 @@ def build_project_capability_matrix(
                 validation_plan=_capability_validation_plan(area, needed),
                 blocker=_capability_blocker(area, support, needed),
                 alternate_plan=_capability_alternate_plan(area, support, needed),
-                defer_owner="CPACK" if area in _CPACK_OWNED_AREAS else None,
+                defer_owner=(
+                    "tool-skill-domain-owner"
+                    if area in _DOMAIN_WORKFLOW_AREAS
+                    else None
+                ),
                 risk=truth,
             )
         )
@@ -264,7 +266,7 @@ def _capability_disposition(
         return ProjectCapabilityDisposition.NOT_REQUIRED_FOR_PILOT
     if support == ProjectCapabilitySupport.SUPPORTED:
         return ProjectCapabilityDisposition.AVAILABLE
-    if area in _CPACK_OWNED_AREAS:
+    if area in _DOMAIN_WORKFLOW_AREAS:
         return ProjectCapabilityDisposition.DEFER_OWNED
     if support == ProjectCapabilitySupport.MISSING:
         return ProjectCapabilityDisposition.BLOCKER
@@ -274,15 +276,15 @@ def _capability_disposition(
 def _capability_owner_ref(area: ProjectCapabilityArea) -> str:
     if area in _GAP_ASSESSMENT_ROWS:
         return GAP_ASSESSMENT_REF
-    if area in _CPACK_OWNED_AREAS:
-        return CPACK_TRACKER_REF
+    if area in _DOMAIN_WORKFLOW_AREAS:
+        return DOMAIN_WORKFLOW_REF
     return "openminion.modules.task.project_capabilities"
 
 
 def _capability_evidence_refs(area: ProjectCapabilityArea) -> tuple[str, ...]:
     refs = [GAP_ASSESSMENT_REF] if area in _GAP_ASSESSMENT_ROWS else []
-    if area in _CPACK_OWNED_AREAS:
-        refs.extend((CPACK_SPEC_REF, CPACK_TRACKER_REF))
+    if area in _DOMAIN_WORKFLOW_AREAS:
+        refs.append(DOMAIN_WORKFLOW_REF)
     if not refs:
         refs.append(
             "docs/specs/openminion-long-horizon-project-worker-v3-2026-07-03-spec.md"
@@ -296,8 +298,8 @@ def _capability_validation_plan(
 ) -> str:
     if not needed_for_pilot:
         return "Do not probe in this pilot; preserve explicit not-required disposition."
-    if area in _CPACK_OWNED_AREAS:
-        return "Route reusable workflow packaging to CPACK before live product claims."
+    if area in _DOMAIN_WORKFLOW_AREAS:
+        return "Route reusable workflows to concrete tool and skill owners before live product claims."
     if area in _GAP_ASSESSMENT_ROWS:
         return "Use the capability gap assessment as baseline evidence and run a focused local probe only when this pilot needs it."
     return "Run focused local project-worker validation and attach evidence to the project report."
@@ -320,8 +322,8 @@ def _capability_alternate_plan(
 ) -> str | None:
     if not needed_for_pilot or support == ProjectCapabilitySupport.SUPPORTED:
         return None
-    if area in _CPACK_OWNED_AREAS:
-        return "Use fixture/local proof or defer to CPACK-owned domain packaging."
+    if area in _DOMAIN_WORKFLOW_AREAS:
+        return "Use fixture/local proof or defer to the concrete tool and skill owner."
     if area == ProjectCapabilityArea.DESKTOP_APPS:
         return "Use file or Google Workspace workflows instead of native GUI control."
     if area == ProjectCapabilityArea.TTS:
@@ -332,8 +334,7 @@ def _capability_alternate_plan(
 
 
 __all__ = (
-    "CPACK_SPEC_REF",
-    "CPACK_TRACKER_REF",
+    "DOMAIN_WORKFLOW_REF",
     "GAP_ASSESSMENT_REF",
     "ProjectCapabilityArea",
     "ProjectCapabilityDisposition",

@@ -304,7 +304,7 @@ class OnboardingStatusService:
                 provider_name=provider_name,
             )
         reason = (
-            "Echo provider is demo-only. Use `chat --demo` or rerun "
+            "Echo provider is demo-only. Use `openminion --demo` or rerun "
             "`openminion setup` to pick a real provider."
         )
         return self._config_error_status(

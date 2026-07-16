@@ -258,6 +258,41 @@ def test_run_turn_accepts_and_forwards_approval_callback() -> None:
     assert response.text == "done"
 
 
+def test_run_turn_bridges_async_approval_into_sync_execution() -> None:
+    bridge = DummyBridge()
+    bridge._logger = SimpleNamespace(info=lambda *args, **kwargs: None)  # type: ignore[attr-defined]
+    message = Message(channel="console", target="focus", body="hello")
+    runner = SimpleNamespace()
+    callback_calls: list[tuple[str, dict[str, str], str]] = []
+
+    async def approval_callback(tool_name, args, approval_id):
+        await asyncio.sleep(0)
+        callback_calls.append((tool_name, args, approval_id))
+        return True
+
+    async def _prepare_turn(**_kwargs):
+        return runner, "brain-session-1", "req-1", "turn-1", 0.0
+
+    def _execute_turn(**kwargs):
+        callback = kwargs["approval_callback"]
+        assert callback("file.write", {"path": "probe.txt"}, "approval-1") is True
+        return SimpleNamespace(message="done")
+
+    async def _postprocess_turn(**_kwargs):
+        return AgentResponse(text="done", channel="console", target="focus")
+
+    bridge._prepare_turn = _prepare_turn  # type: ignore[attr-defined]
+    bridge._execute_turn = _execute_turn  # type: ignore[attr-defined]
+    bridge._postprocess_turn = _postprocess_turn  # type: ignore[attr-defined]
+
+    response = asyncio.run(
+        bridge.run_turn(message, approval_callback=approval_callback)
+    )
+
+    assert callback_calls == [("file.write", {"path": "probe.txt"}, "approval-1")]
+    assert response.text == "done"
+
+
 def test_inject_resume_task_hints_attaches_memory_consolidation_module_state() -> None:
     bridge = DummyBridge()
     runner = _DummyRunner({"module_state": {}})

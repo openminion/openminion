@@ -27,7 +27,6 @@ The following subsystems are standalone domain owners with no `services/` peer:
 
 - `a2a/`
 - `artifact/`
-- `capability_pack/`
 - `controlplane/`
 - `llm/`
 - `memory/`
@@ -39,7 +38,6 @@ The following subsystems are standalone domain owners with no `services/` peer:
 - `session/`
 - `skill/`
 - `storage/`
-- `system_operations/`
 - `task/`
 - `telemetry/`
 

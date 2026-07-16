@@ -148,3 +148,15 @@ def test_unset_workspace_root_falls_back_to_cwd_via_resolve_workspace() -> None:
     assert DEFAULT_POLICY["workspace_root"] == "~/openminion_tool_runs", (
         "DEFAULT_POLICY default value preserved unchanged by WRCO"
     )
+
+
+def test_resolve_workspace_honors_working_dir_metadata_fallback() -> None:
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    working_dir = "/tmp/example/focus-working-dir"
+
+    ctx = SimpleNamespace(metadata={"working_dir": working_dir})
+    workspace = resolve_workspace(context=ctx)
+
+    assert str(workspace) == str(Path(working_dir).resolve())
