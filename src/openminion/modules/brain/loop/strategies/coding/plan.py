@@ -39,6 +39,7 @@ class CodingPlan(BaseModel):
     open_issues: list[str] = Field(default_factory=list)
     subtasks: list[CodingSubtask] = Field(default_factory=list)
     verifier_goal: Goal | None = None
+    requires_file_change: bool = False
 
     @model_validator(mode="after")
     def _validate_plan(self) -> "CodingPlan":
@@ -73,14 +74,21 @@ class CodingPlan(BaseModel):
         return self
 
     @classmethod
-    def fallback(cls, goal: str) -> "CodingPlan":
+    def fallback(
+        cls,
+        goal: str,
+        *,
+        include_verify: bool = False,
+        requires_file_change: bool = False,
+    ) -> "CodingPlan":
+        phases = [CodingPhase(name="implement", status="active")]
+        if include_verify:
+            phases.append(CodingPhase(name="verify"))
         return cls(
             goal=str(goal or "").strip() or "Complete the coding task.",
-            phases=[
-                CodingPhase(name="implement", status="active"),
-                CodingPhase(name="verify"),
-            ],
+            phases=phases,
             current_phase="implement",
+            requires_file_change=requires_file_change,
         )
 
     def current_phase_entry(self) -> CodingPhase:

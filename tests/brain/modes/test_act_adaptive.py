@@ -2526,6 +2526,12 @@ def test_act_adaptive_unexecutable_detector_rejects_tool_transcript_prose() -> N
     )
 
 
+def test_act_adaptive_unexecutable_detector_rejects_file_write_args() -> None:
+    assert ActLoopMode()._seeded_final_text_is_unexecutable_tool_envelope(
+        '{"path": "/tmp/demo/pyproject.toml", "content": "[project]\\nname = \\"x\\""}'
+    )
+
+
 def test_act_adaptive_seeded_entry_tool_unexecutable_final_text_reopens_autonomous() -> (
     None
 ):
@@ -2539,6 +2545,10 @@ def test_act_adaptive_seeded_entry_tool_unexecutable_final_text_reopens_autonomo
                 termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
                 state=AdaptiveToolLoopState(),
                 allowed_tools=frozenset({"file.read", "file.write", "web.search"}),
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The model attempted to finalize with tool-shaped text.",
+                },
                 final_text=(
                     "I can see the duplicate pyproject sections. Let me run "
                     "verification now.\n```json\n"
@@ -2566,6 +2576,7 @@ def test_act_adaptive_seeded_entry_tool_unexecutable_final_text_reopens_autonomo
     )
     ctx, _ = _ctx(_FakeLLMClient(), _FakeCommandExecutor(), services=services)
     ctx.decision.reason_code = "entry_tool_call"
+    ctx.state.status = BRAIN_STATE_WAITING_USER
     ctx.state.last_user_input = (
         "Research sources, update the package, and return SOURCES."
     )

@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 from typing import Any
 
 from openminion.modules.brain.constants import (
@@ -65,6 +66,49 @@ _RESERVE_TERMINATION_REASONS = frozenset(
         ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
     }
 )
+
+
+def _mutating_result_path(item: dict[str, Any]) -> str | None:
+    for mapping in _mutating_result_mappings(item):
+        for key in ("path", "file_path", "final_path", "target", "target_path"):
+            value = mapping.get(key)
+            if value is None:
+                continue
+            rendered = str(value).strip()
+            if rendered:
+                return rendered
+    return None
+
+
+def _mutating_result_mappings(item: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    mappings: list[dict[str, Any]] = [item]
+    for key in ("data", "outputs", "result", "payload"):
+        value = item.get(key)
+        if isinstance(value, dict):
+            mappings.append(value)
+    return tuple(mappings)
+
+
+def _workspace_roots_for_mutating_result(runner: Any) -> tuple[Path, ...]:
+    scratchpad = getattr(getattr(runner, "_loop_state", None), "scratchpad", {}) or {}
+    roots: list[Path] = []
+    for key in (
+        "coding.workspace_root",
+        "coding.cwd",
+        "workspace_root",
+        "cwd",
+        "tool.workspace_root",
+    ):
+        value = scratchpad.get(key)
+        if value is None:
+            continue
+        rendered = str(value).strip()
+        if not rendered:
+            continue
+        root = Path(rendered).expanduser()
+        if root not in roots:
+            roots.append(root)
+    return tuple(roots)
 
 
 class CodingReserveMixin:
@@ -259,9 +303,21 @@ class CodingReserveMixin:
             tool_name = str(item.get("tool_name", "") or "").strip()
             if tool_name not in _MUTATING_FILE_TOOLS:
                 continue
-            if bool(item.get("ok")):
+            if bool(item.get("ok")) and self._mutating_result_has_durable_path(item):
                 return True
         return False
+
+    def _mutating_result_has_durable_path(self: Any, item: dict[str, Any]) -> bool:
+        raw_path = _mutating_result_path(item)
+        if raw_path is None:
+            return True
+        path = Path(raw_path).expanduser()
+        if path.is_absolute():
+            return path.exists()
+        roots = _workspace_roots_for_mutating_result(self)
+        if not roots:
+            return True
+        return any((root / path).exists() for root in roots)
 
     def _allowed_tools_for_current_phase(
         self: Any,

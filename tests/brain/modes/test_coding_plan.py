@@ -31,6 +31,66 @@ def test_coding_plan_accepts_ordered_phase_prefix() -> None:
         "verify",
     ]
     assert plan.current_phase_entry().name == "explore"
+    assert plan.requires_file_change is False
+
+
+def test_coding_plan_is_read_only_compatible_by_default() -> None:
+    plan = CodingPlan(
+        goal="Explain the CLI",
+        phases=[CodingPhase(name="implement", status="active")],
+        current_phase="implement",
+    )
+
+    assert plan.requires_file_change is False
+
+
+def test_coding_fallback_is_read_only_compatible_by_default() -> None:
+    plan = CodingPlan.fallback("Explain the CLI")
+
+    assert plan.requires_file_change is False
+
+
+def test_coding_plan_does_not_infer_contracts_from_goal_text() -> None:
+    plan = CodingPlan(
+        goal="Build a tiny CLI project under this folder.",
+        phases=[CodingPhase(name="implement", status="active")],
+        current_phase="implement",
+    )
+
+    assert plan.requires_file_change is False
+
+
+def test_coding_payload_requires_explicit_file_change_contract() -> None:
+    plan = coding_plan_from_payload(
+        {
+            "goal": "Inspect first.",
+            "phases": [{"name": "implement", "status": "active"}],
+            "current_phase": "implement",
+        },
+        goal="Create a tiny Python module and test.",
+    )
+
+    assert plan.requires_file_change is False
+
+
+def test_coding_payload_keeps_read_only_goal_read_only() -> None:
+    plan = coding_plan_from_payload(
+        {
+            "goal": "Explain this package.",
+            "phases": [{"name": "implement", "status": "active"}],
+            "current_phase": "implement",
+            "requires_file_change": False,
+        },
+        goal="Explain this package.",
+    )
+
+    assert plan.requires_file_change is False
+
+
+def test_coding_fallback_can_require_file_change() -> None:
+    plan = CodingPlan.fallback("Build a CLI", requires_file_change=True)
+
+    assert plan.requires_file_change is True
 
 
 def test_coding_plan_rejects_invalid_phase_order() -> None:
@@ -100,5 +160,5 @@ def test_coding_plan_from_payload_falls_back_on_invalid_payload() -> None:
 
     assert plan.goal == "Do work"
     assert plan.current_phase == "implement"
-    assert [phase.name for phase in plan.phases] == ["implement", "verify"]
+    assert [phase.name for phase in plan.phases] == ["implement"]
     assert plan.verifier_goal is None

@@ -227,8 +227,11 @@ class BrainRunner:
         approval_callback: Any | None = None,
         trigger: str = "user_input",
     ) -> StepOutput:
-        del approval_callback
         previous_callback = self._progress_callback
+        approval_setter = getattr(self.tool_api, "set_approval_callback", None)
+        previous_approval_callback = (
+            approval_setter(approval_callback) if callable(approval_setter) else None
+        )
         effective_trace_id = str(trace_id or "").strip() or new_uuid()
         self._trace_id = effective_trace_id
         if (
@@ -294,6 +297,8 @@ class BrainRunner:
             self._telemetry_turn_active = False
             if progress_callback is not None:
                 self._progress_callback = previous_callback
+            if callable(approval_setter):
+                approval_setter(previous_approval_callback)
 
     def step(
         self,

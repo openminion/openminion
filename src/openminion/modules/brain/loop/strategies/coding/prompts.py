@@ -2,9 +2,11 @@
 
 _CODING_PLAN_SYSTEM_INTRO = (
     "Return a JSON CodingPlan with fields goal, phases, current_phase, "
-    "scratchpad, completed_steps, open_issues, subtasks, and optional "
-    "verifier_goal. Use phases in order explore -> plan -> implement -> "
-    "verify, or return a single implement phase."
+    "scratchpad, completed_steps, open_issues, subtasks, requires_file_change, "
+    "and optional verifier_goal. Set requires_file_change true when the task "
+    "must create, edit, or patch workspace files; leave it false only for "
+    "explicitly read-only analysis. Use phases in order explore -> plan -> "
+    "implement -> verify, or return a single implement phase."
 )
 
 _CODING_PLAN_VERIFIER_GUIDANCE = (

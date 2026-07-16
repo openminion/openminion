@@ -184,11 +184,12 @@ class GapDPrepareTurnProgressCallbackTests(unittest.TestCase):
             source,
             "run_turn should still delegate prep to _prepare_turn.",
         )
-        # _execute_turn still receives the callback (unchanged from pre-PPL-07).
-        execute_region_start = source.find("self._execute_turn(")
-        self.assertGreaterEqual(execute_region_start, 0)
-        execute_region = source[execute_region_start : execute_region_start + 600]
-        self.assertIn("progress_callback=progress_callback", execute_region)
+        self.assertIn(
+            '"progress_callback": progress_callback',
+            source,
+            "run_turn must preserve the callback in the shared execute arguments.",
+        )
+        self.assertIn("self._execute_turn(**execute_kwargs)", source)
         # _prepare_turn now ALSO receives the callback.
         prepare_region_start = source.find("self._prepare_turn(")
         self.assertGreaterEqual(prepare_region_start, 0)
@@ -297,14 +298,13 @@ class GapBContinuationCallbackForwardedTests(unittest.TestCase):
             "refactors.",
         )
 
-    def test_continuation_approval_callback_is_not_forwarded(self) -> None:
+    def test_continuation_runner_run_forwards_approval_callback(self) -> None:
         kwargs_region = self._continuation_call_site_kwargs()
-        self.assertNotIn(
+        self.assertIn(
             "approval_callback=approval_callback",
             kwargs_region,
-            "Autonomous continuation turns must not prompt for "
-            "approval; `approval_callback` is intentionally omitted. "
-            "See continuation.py comment at the call site.",
+            "Autonomous continuation turns must preserve the interactive "
+            "approval owner so approved work can finish in the same turn.",
         )
 
 

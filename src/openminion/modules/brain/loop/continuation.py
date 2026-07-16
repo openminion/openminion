@@ -417,6 +417,7 @@ def run_with_autonomous_continuation(
             capability_category=None,
             trigger="plan_continuation",
             progress_callback=progress_callback,
+            approval_callback=approval_callback,
         )
     return result
 

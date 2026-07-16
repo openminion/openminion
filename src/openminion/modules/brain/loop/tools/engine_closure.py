@@ -104,7 +104,7 @@ class AdaptiveLoopRunnerClosureMixin:
                 for item in tool_calls
                 if str(getattr(item, "name", "") or "").strip()
             }
-            has_alternative_tool = len(self.active_tool_names) <= 5 and bool(
+            has_alternative_tool = bool(
                 set(self.active_tool_names) - repeated_tool_names
             )
             if eligible_facts is not None and not has_alternative_tool:

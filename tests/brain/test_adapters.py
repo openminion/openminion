@@ -659,6 +659,89 @@ class ToolAdapterTests(unittest.TestCase):
                 str(focused),
             )
 
+    def test_tool_workspace_binding_preserves_cwd_inside_workspace(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.services.brain.post_execution.mixin import (
+            _bind_tool_workspace_root,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            nested = workspace / "feature"
+            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
+
+            _bind_tool_workspace_root(
+                adapter,
+                {"workspace_root": str(workspace), "cwd": str(nested)},
+            )
+
+            self.assertEqual(
+                adapter.policy.raw["context_metadata"]["cwd"],
+                str(nested),
+            )
+
+    def test_tool_workspace_binding_uses_cwd_when_workspace_root_missing(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.services.brain.post_execution.mixin import (
+            _bind_tool_workspace_root,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp) / "focused"
+            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
+
+            _bind_tool_workspace_root(adapter, {"cwd": str(cwd)})
+
+            self.assertEqual(adapter.workspace_root, cwd)
+            self.assertEqual(adapter.policy.raw["workspace_root"], str(cwd))
+            self.assertEqual(adapter.policy.raw["context_metadata"]["cwd"], str(cwd))
+
+    def test_tool_workspace_binding_ignores_cwd_outside_workspace(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.services.brain.post_execution.mixin import (
+            _bind_tool_workspace_root,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            outside = Path(tmp) / "outside"
+            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
+
+            _bind_tool_workspace_root(
+                adapter,
+                {"workspace_root": str(workspace), "cwd": str(outside)},
+            )
+
+            self.assertNotIn("cwd", adapter.policy.raw["context_metadata"])
+
+    def test_turn_tool_binding_preserves_cwd_without_security_policy(self) -> None:
+        from openminion.base.types import Message
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.services.brain.post_execution import BrainBridgeTurnMixin
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "workspace"
+            cwd = workspace / "feature"
+            adapter = ToolAdapter(workspace_root=Path(tmp) / "parent")
+            bridge = BrainBridgeTurnMixin()
+            bridge._security_policy = None
+
+            bridge._bind_tool_policy_adapter(
+                runner=SimpleNamespace(tool_api=adapter),
+                message=Message(
+                    channel="cli",
+                    target="session-1",
+                    body="write files",
+                    metadata={"workspace_root": str(workspace), "cwd": str(cwd)},
+                ),
+                session_id="session-1",
+                request_id="request-1",
+            )
+
+            self.assertEqual(adapter.workspace_root, workspace)
+            self.assertEqual(adapter.policy.raw["workspace_root"], str(workspace))
+            self.assertEqual(adapter.policy.raw["context_metadata"]["cwd"], str(cwd))
+
 
 class A2AAndPolicyAdapterTests(unittest.TestCase):
     def test_local_a2a_adapter(self) -> None:
@@ -3299,6 +3382,67 @@ class RealToolAndArtifactAdapterTests(unittest.TestCase):
         self.assertEqual(res["status"], "success")
         self.assertEqual(res["summary"], "ok-from-runtime-tool")
         self.assertEqual(res["outputs"]["result"], "ok")
+
+    def test_os_adapter_runtime_registry_tools_receive_workspace_metadata(
+        self,
+    ) -> None:
+        try:
+            from openminion.modules.brain.adapters.tool import ToolAdapter
+            from openminion.modules.tool.base import Tool, ToolExecutionResult
+            from openminion.modules.tool.runtime.policy import Policy
+        except ImportError:
+            self.skipTest("openminion runtime tools not installed")
+
+        captured_metadata: dict[str, object] = {}
+
+        class _FakeTool(Tool):
+            name = "fake_tool"
+            description = "fake tool for adapter metadata compatibility"
+            parameters = {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            }
+
+            def execute(self, arguments, context):
+                del arguments
+                captured_metadata.update(context.metadata)
+                return ToolExecutionResult(
+                    tool_name=self.name,
+                    ok=True,
+                    content="ok",
+                    verified=True,
+                    data={"result": "ok"},
+                )
+
+        class _RuntimeRegistry:
+            def __init__(self) -> None:
+                self._tools = {"fake_tool": _FakeTool()}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cwd = root / "project"
+            cwd.mkdir()
+            adapter = ToolAdapter(
+                workspace_root=root,
+                runtime_registry=_RuntimeRegistry(),
+                policy=Policy(
+                    raw={
+                        "workspace_root": str(root),
+                        "context_metadata": {"cwd": str(cwd)},
+                    }
+                ),
+            )
+            res = adapter.execute(
+                command={"tool_name": "fake_tool", "args": {}},
+                session_id="s1",
+                trace_id="t1",
+            )
+
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(captured_metadata["workspace_root"], str(root))
+        self.assertEqual(captured_metadata["cwd"], str(cwd))
+        self.assertEqual(captured_metadata["agent_id"], adapter.agent_id)
 
     def test_os_adapter_reuses_prebuilt_runtime_registry(self) -> None:
         try:

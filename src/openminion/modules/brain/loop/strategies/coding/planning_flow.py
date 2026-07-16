@@ -230,6 +230,9 @@ class CodingPlanningMixin:
         ]
         self._loop_state.scratchpad["coding.current_phase"] = plan.current_phase
         self._loop_state.scratchpad["coding.open_issues_count"] = len(plan.open_issues)
+        self._loop_state.scratchpad["coding.requires_file_change"] = bool(
+            plan.requires_file_change
+        )
 
     def _sync_plan_telemetry(self: Any) -> None:
         if self._coding_plan is None:
@@ -239,6 +242,9 @@ class CodingPlanningMixin:
         )
         self._loop_state.scratchpad["coding.open_issues_count"] = len(
             self._coding_plan.open_issues
+        )
+        self._loop_state.scratchpad["coding.requires_file_change"] = bool(
+            self._coding_plan.requires_file_change
         )
 
     def _emit_phase_status(self: Any, ctx: ExecutionContext) -> None:

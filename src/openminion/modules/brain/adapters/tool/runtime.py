@@ -1,5 +1,6 @@
 import copy
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -108,6 +109,9 @@ class ToolAdapter:
         policy_from_none = policy is None
         self.policy = self._coerce_policy(policy)
         self.policy_adapter = policy_adapter
+        self._approval_callback: Callable[[str, dict[str, Any], str], bool] | None = (
+            None
+        )
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
         self.agent_profile = agent_profile
@@ -194,6 +198,63 @@ class ToolAdapter:
             return Policy(raw=merged)
         raise ValueError(
             f"policy_mismatch: Unsupported policy type: {type(policy).__name__}"
+        )
+
+    def set_approval_callback(
+        self,
+        callback: Callable[[str, dict[str, Any], str], bool] | None,
+    ) -> Callable[[str, dict[str, Any], str], bool] | None:
+        previous = self._approval_callback
+        self._approval_callback = callback if callable(callback) else None
+        return previous
+
+    def _replay_inline_approval(
+        self,
+        *,
+        command: dict[str, Any],
+        tool_name: str,
+        args: dict[str, Any],
+        approval_id: str,
+        session_id: str,
+        trace_id: str,
+        start_time: float,
+    ) -> dict[str, Any] | None:
+        callback = self._approval_callback
+        if callback is None:
+            return None
+        try:
+            approved = bool(callback(tool_name, dict(args), approval_id))
+        except Exception as exc:
+            return _error_envelope(
+                status=BRAIN_STATE_ERROR,
+                summary="Tool approval failed",
+                code="POLICY_DENIED",
+                message=str(exc) or "Tool approval failed",
+                latency_ms=int((time.monotonic() - start_time) * 1000),
+                details={"reason": "approval_callback_failed"},
+            )
+        if not approved:
+            return _error_envelope(
+                status=BRAIN_STATE_ERROR,
+                summary="Tool execution denied by operator",
+                code="POLICY_DENIED",
+                message="Tool execution denied by operator.",
+                latency_ms=int((time.monotonic() - start_time) * 1000),
+                details={"reason": "operator_denied"},
+            )
+
+        inputs = command.get("inputs")
+        replay_inputs = dict(inputs) if isinstance(inputs, Mapping) else {}
+        replay_inputs.update(
+            {
+                "confirmation_grant_id": approval_id,
+                "confirmation_source": "policy_replay",
+            }
+        )
+        return self.execute(
+            command={**command, "inputs": replay_inputs},
+            session_id=session_id,
+            trace_id=trace_id,
         )
 
     @staticmethod
@@ -312,17 +373,50 @@ class ToolAdapter:
             if isinstance(runtime_tool, ToolSpec):
                 spec = runtime_tool
                 runtime_tool = None
+
+        policy_for_run = self.policy
+        if runtime_message_ref is not None:
+            policy_raw = copy.deepcopy(getattr(self.policy, "raw", {}) or {})
+            tools_cfg = policy_raw.setdefault("tools", {})
+            if isinstance(tools_cfg, dict):
+                reactions_cfg = tools_cfg.setdefault("reactions", {})
+                if isinstance(reactions_cfg, dict):
+                    reactions_cfg["runtime_message_ref"] = runtime_message_ref
+            policy_for_run = Policy(raw=policy_raw)
+        policy_raw = getattr(policy_for_run, "raw", None)
+        if isinstance(policy_raw, Mapping):
+            policy_raw["agent_id"] = self.agent_id
+            _merge_orchestration_context_metadata(policy_raw, orchestration_metadata)
+            context_metadata = policy_raw.get("context_metadata")
+            if isinstance(context_metadata, Mapping):
+                if not isinstance(context_metadata, dict):
+                    context_metadata = dict(context_metadata)
+                    policy_raw["context_metadata"] = context_metadata
+                context_metadata.setdefault("agent_id", self.agent_id)
             else:
-                return self._execute_openminion_runtime_tool(
-                    tool=runtime_tool,
-                    tool_name=tool_name,
-                    args=args,
-                    session_id=session_id,
-                    trace_id=trace_id,
-                    start_time=start_time,
-                    orchestration_metadata=orchestration_metadata,
-                    replay_confirmation_metadata=replay_confirmation_metadata,
+                context_metadata = {"agent_id": self.agent_id}
+                policy_raw["context_metadata"] = context_metadata
+            if isinstance(replay_confirmation_metadata, Mapping):
+                context_metadata.update(
+                    {
+                        key: value
+                        for key, value in replay_confirmation_metadata.items()
+                        if str(value or "").strip()
+                    }
                 )
+
+        if runtime_tool is not None:
+            return self._execute_openminion_runtime_tool(
+                tool=runtime_tool,
+                tool_name=tool_name,
+                args=args,
+                session_id=session_id,
+                trace_id=trace_id,
+                start_time=start_time,
+                policy=policy_for_run,
+                orchestration_metadata=orchestration_metadata,
+                replay_confirmation_metadata=replay_confirmation_metadata,
+            )
 
         if not isinstance(spec, ToolSpec):
             handler = getattr(spec, "handler", None)
@@ -367,14 +461,14 @@ class ToolAdapter:
         try:
             home_root = resolve_home_root()
             env_owner = resolve_environment_config(
-                runtime_env=_runtime_env_from_policy(self.policy)
+                runtime_env=_runtime_env_from_policy(policy_for_run)
             )
             data_root = resolve_data_root(
                 home_root,
                 data_root=env_owner.get("OPENMINION_DATA_ROOT", ""),
             )
             run_root = create_run_root(
-                self.policy, run_id, root_override=data_root / "tool-runs"
+                policy_for_run, run_id, root_override=data_root / "tool-runs"
             )
         except Exception as exc:
             return _error_envelope(
@@ -384,37 +478,6 @@ class ToolAdapter:
                 message=str(exc),
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
-
-        policy_for_run = self.policy
-        if runtime_message_ref is not None:
-            policy_raw = copy.deepcopy(getattr(self.policy, "raw", {}) or {})
-            tools_cfg = policy_raw.setdefault("tools", {})
-            if isinstance(tools_cfg, dict):
-                reactions_cfg = tools_cfg.setdefault("reactions", {})
-                if isinstance(reactions_cfg, dict):
-                    reactions_cfg["runtime_message_ref"] = runtime_message_ref
-            policy_for_run = Policy(raw=policy_raw)
-        policy_raw = getattr(policy_for_run, "raw", None)
-        if isinstance(policy_raw, Mapping):
-            policy_raw["agent_id"] = self.agent_id
-            _merge_orchestration_context_metadata(policy_raw, orchestration_metadata)
-            context_metadata = policy_raw.get("context_metadata")
-            if isinstance(context_metadata, Mapping):
-                if not isinstance(context_metadata, dict):
-                    context_metadata = dict(context_metadata)
-                    policy_raw["context_metadata"] = context_metadata
-                context_metadata.setdefault("agent_id", self.agent_id)
-            else:
-                context_metadata = {"agent_id": self.agent_id}
-                policy_raw["context_metadata"] = context_metadata
-            if isinstance(replay_confirmation_metadata, Mapping):
-                context_metadata.update(
-                    {
-                        key: value
-                        for key, value in replay_confirmation_metadata.items()
-                        if str(value or "").strip()
-                    }
-                )
 
         effective_workspace_root = self._effective_workspace_root(policy_for_run)
         replay_confirmed = bool(replay_confirmation_metadata)
@@ -428,6 +491,18 @@ class ToolAdapter:
             and not replay_confirmed
             and permission_mode != "bypass"
         ):
+            approval_id = new_run_id()
+            replay = self._replay_inline_approval(
+                command=command,
+                tool_name=tool_name,
+                args=args,
+                approval_id=approval_id,
+                session_id=session_id,
+                trace_id=trace_id,
+                start_time=start_time,
+            )
+            if replay is not None:
+                return replay
             return _error_envelope(
                 status=BRAIN_ACTION_STATUS_NEEDS_USER,
                 summary="Background watch write authorization requires approval.",
@@ -439,7 +514,7 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
                 details={
                     "requires_confirm": True,
-                    "approval_id": new_run_id(),
+                    "approval_id": approval_id,
                     "choices": ["allow_once", "allow_session", "deny"],
                     "reason": "background_write_authorization_requested",
                     "tool_name": tool_name,
@@ -543,12 +618,24 @@ class ToolAdapter:
                     else str(policy_decision.code or "POLICY_DENIED")
                 )
                 if requires_confirm:
-                    details.setdefault("approval_id", new_run_id())
+                    approval_id = str(details.get("approval_id", "") or new_run_id())
+                    details.setdefault("approval_id", approval_id)
                     details.setdefault(
                         "choices",
                         ["allow_once", "allow_session", "deny"],
                     )
                     details.setdefault("reason", "policy_confirmation_required")
+                    replay = self._replay_inline_approval(
+                        command=command,
+                        tool_name=tool_name,
+                        args=validated_args,
+                        approval_id=approval_id,
+                        session_id=session_id,
+                        trace_id=trace_id,
+                        start_time=start_time,
+                    )
+                    if replay is not None:
+                        return replay
                 return _error_envelope(
                     status=status,
                     summary=str(
@@ -623,6 +710,20 @@ class ToolAdapter:
 
         except ToolRuntimeError as exc:
             requires_confirm = _is_confirm_required_code(exc.code)
+            if requires_confirm and not replay_confirmed:
+                details = dict(exc.details or {})
+                approval_id = str(details.get("approval_id", "") or new_run_id())
+                replay = self._replay_inline_approval(
+                    command=command,
+                    tool_name=tool_name,
+                    args=validated_args,
+                    approval_id=approval_id,
+                    session_id=session_id,
+                    trace_id=trace_id,
+                    start_time=start_time,
+                )
+                if replay is not None:
+                    return replay
             return _error_envelope(
                 status=(
                     BRAIN_ACTION_STATUS_NEEDS_USER
@@ -653,6 +754,7 @@ class ToolAdapter:
         session_id: str,
         trace_id: str,
         start_time: float,
+        policy: Policy | None = None,
         orchestration_metadata: Mapping[str, Any] | None = None,
         replay_confirmation_metadata: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
@@ -667,20 +769,31 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
 
-        metadata = {
-            "agent_id": self.agent_id,
-            "trace_id": trace_id,
-            "runtime_env": _runtime_env_from_policy(self.policy),
-            **(
-                {"orchestration": dict(orchestration_metadata)}
-                if isinstance(orchestration_metadata, Mapping)
-                and orchestration_metadata
-                else {}
-            ),
-            **build_runtime_tool_routing_metadata(
-                resolve_runtime_tool_config(self.policy)
-            ),
-        }
+        effective_policy = policy or self.policy
+        policy_raw = getattr(effective_policy, "raw", {}) or {}
+        context_metadata = policy_raw.get("context_metadata")
+        metadata = (
+            dict(context_metadata) if isinstance(context_metadata, Mapping) else {}
+        )
+        workspace_root = str(policy_raw.get("workspace_root", "") or "").strip()
+        if workspace_root:
+            metadata.setdefault("workspace_root", workspace_root)
+        metadata.update(
+            {
+                "agent_id": self.agent_id,
+                "trace_id": trace_id,
+                "runtime_env": _runtime_env_from_policy(effective_policy),
+                **(
+                    {"orchestration": dict(orchestration_metadata)}
+                    if isinstance(orchestration_metadata, Mapping)
+                    and orchestration_metadata
+                    else {}
+                ),
+                **build_runtime_tool_routing_metadata(
+                    resolve_runtime_tool_config(effective_policy)
+                ),
+            }
+        )
         if isinstance(replay_confirmation_metadata, Mapping):
             metadata.update(
                 {
@@ -731,6 +844,19 @@ class ToolAdapter:
             if isinstance(raw_details, Mapping):
                 error_details = dict(raw_details)
         requires_confirm = _is_confirm_required_code(error_code)
+        if requires_confirm and not replay_confirmation_metadata:
+            approval_id = str(error_details.get("approval_id", "") or new_run_id())
+            replay = self._replay_inline_approval(
+                command={"tool_name": tool_name, "args": args},
+                tool_name=tool_name,
+                args=args,
+                approval_id=approval_id,
+                session_id=session_id,
+                trace_id=trace_id,
+                start_time=start_time,
+            )
+            if replay is not None:
+                return replay
         response: dict[str, Any] = {
             "status": (
                 BRAIN_ACTION_STATUS_SUCCESS

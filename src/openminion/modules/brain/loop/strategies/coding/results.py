@@ -22,6 +22,10 @@ from openminion.modules.brain.execution.loop_contracts import (
 )
 from openminion.modules.brain.execution.closure import final_close_message
 from openminion.modules.brain.schemas import ActionResult, new_uuid
+from openminion.modules.brain.loop.tools.postprocess.rules import (
+    _looks_like_unexecutable_tool_payload_text,
+)
+from openminion.modules.llm.schemas import Message
 
 from .contracts import (
     CODING_TERM_BUDGET_EXHAUSTED,
@@ -78,6 +82,16 @@ def _result_from_outcome(
                 build_error_result=build_error_result,
                 build_blocked_result=build_blocked_result,
             )
+        missing_write_result = _maybe_gate_missing_required_write(
+            runner,
+            ctx,
+            loop=loop,
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
+            final_text=outcome.final_text or "",
+        )
+        if missing_write_result is not None:
+            return missing_write_result
         return _exit_final_text(
             runner,
             ctx,
@@ -187,6 +201,16 @@ def _result_from_outcome(
             else build_error_result(message, "coding_tool_failure"),
         )
     if outcome.termination_reason == ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS:
+        missing_write_result = _maybe_gate_missing_required_write(
+            runner,
+            ctx,
+            loop=loop,
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
+            final_text=getattr(outcome, "final_text", "") or "",
+        )
+        if missing_write_result is not None:
+            return missing_write_result
         message = (
             "[act:coding] repeated identical tool calls detected without reaching a "
             "final answer. Consider narrowing the scope or continuing in a follow-up turn."
@@ -202,6 +226,16 @@ def _result_from_outcome(
             build_blocked_result=build_blocked_result,
         )
     if outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN:
+        missing_write_result = _maybe_gate_missing_required_write(
+            runner,
+            ctx,
+            loop=loop,
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
+            final_text=getattr(outcome, "final_text", "") or "",
+        )
+        if missing_write_result is not None:
+            return missing_write_result
         message = (
             "[act:coding] repeated the same tool pattern without making progress. "
             "Continue in a follow-up turn with a narrower implementation step."
@@ -217,6 +251,16 @@ def _result_from_outcome(
             build_blocked_result=build_blocked_result,
         )
     if outcome.termination_reason == CODING_TERM_ITERATION_CAP:
+        missing_write_result = _maybe_gate_missing_required_write(
+            runner,
+            ctx,
+            loop=loop,
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
+            final_text=getattr(outcome, "final_text", "") or "",
+        )
+        if missing_write_result is not None:
+            return missing_write_result
         message = (
             "[act:coding] reached maximum iterations without a final answer. "
             "Consider narrowing the scope or continuing in a follow-up turn."
@@ -238,6 +282,72 @@ def _result_from_outcome(
         message=message,
         action_result=build_error_result(message, "coding_loop_error"),
     )
+
+
+def _maybe_gate_missing_required_write(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    loop: Any,
+    allowed_tools: frozenset[str],
+    build_blocked_result,
+    final_text: str = "",
+) -> ExecutionResult | None:
+    if not runner._coding_plan_requires_file_change():
+        return None
+    if runner._has_successful_mutating_file_result():
+        return None
+
+    failure_summary = (
+        "Coding plan requires a mutating implementation step before final "
+        "answer, but no successful file.write or code.patch result was recorded."
+    )
+    if runner._coding_plan is not None:
+        runner._coding_plan.current_phase = "implement"
+        runner._coding_plan.record_open_issue(failure_summary)
+    attempt = runner._record_verify_gate_block(
+        ctx,
+        failure_summary=failure_summary,
+        reason="missing_implementation_write",
+        required_tool="file.write or code.patch",
+    )
+    if attempt >= runner._max_self_corrections:
+        loop.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
+        runner._sync_plan_telemetry()
+        runner._emit_phase_status(ctx)
+        runner._sync_coding_module_state(ctx)
+        return _exit_autonomous_blocked(
+            runner,
+            ctx,
+            reason_code=CODING_TERM_VERIFY_CAP_EXCEEDED,
+            failure_summary=failure_summary,
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
+        )
+
+    if runner._coding_plan is not None:
+        runner._sync_plan_telemetry()
+    if _looks_like_unexecutable_tool_payload_text(final_text):
+        retry_message = (
+            "Stay in implement. Do not print JSON tool payloads, path/content "
+            "objects, or file contents as prose. Call `file.write` or "
+            "`code.patch` as an actual tool with the target path and content, "
+            "then verify from disk before returning a final answer."
+        )
+    else:
+        retry_message = (
+            "Stay in implement and use a mutating implementation tool "
+            "(`file.write` or `code.patch`) before returning a final answer."
+        )
+    loop.messages.append(
+        Message(
+            role="user",
+            content=retry_message,
+        )
+    )
+    runner._emit_phase_status(ctx)
+    runner._sync_coding_module_state(ctx)
+    return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
 
 
 def _salvage_final_answer_after_disallowed_writer(

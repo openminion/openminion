@@ -120,7 +120,8 @@ def _build_tool_specs(
         "file.find": "Search for files matching a pattern.",
         "file.write": (
             "Write or overwrite a file and create parent directories "
-            "automatically; use this to scaffold new project files and folders."
+            "automatically; call this tool with path and content to scaffold "
+            "project files. Do not print JSON path/content payloads as prose."
         ),
         "code.patch": "Apply a unified-diff patch to a file.",
         "code.grep": "Search workspace text with structured grep results.",

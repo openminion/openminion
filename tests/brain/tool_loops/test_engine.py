@@ -5807,6 +5807,65 @@ def test_engine_allows_one_duplicate_tool_batch_retry_before_stopping() -> None:
     )
 
 
+def test_engine_keeps_duplicate_read_open_when_other_tools_remain() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-1", name="file.read", arguments={"path": "a.py"})
+                ],
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-2", name="file.read", arguments={"path": "a.py"})
+                ],
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done after considering alternatives",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(),
+                action_result=ActionResult(
+                    command_id=new_uuid(), status="success", summary="read a"
+                ),
+            )
+        ],
+    )
+    tools = frozenset(
+        {"file.read", "file.write", "file.find", "exec.run", "git.diff", "git.status"}
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=tools),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="inspect and edit")],
+        tool_specs=_tool_specs(*sorted(tools)),
+    )
+
+    assert outcome.final_text == "done after considering alternatives"
+    assert len(runtime.calls) == 3
+    assert runtime.calls[2]["tool_choice"] == "auto"
+
+
 def test_engine_keeps_retryable_duplicate_batch_on_normal_tool_path() -> None:
     duplicate_runtime = _FakeRuntime(
         responses=[

@@ -99,6 +99,35 @@ def execute_coding_profile(ctx: ExecutionContext) -> ExecutionResult:
     return _configured_coding_profile_runner(ctx).execute(ctx)
 
 
+def _first_non_empty_string(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _context_workspace_hint(ctx: ExecutionContext) -> str:
+    state = getattr(ctx, "state", None)
+    decision = getattr(ctx, "decision", None)
+    options = getattr(ctx, "options", None)
+    return _first_non_empty_string(
+        getattr(ctx, "workspace_root", None),
+        getattr(ctx, "cwd", None),
+        getattr(ctx, "workdir", None),
+        getattr(state, "workspace_root", None),
+        getattr(state, "cwd", None),
+        getattr(state, "workdir", None),
+        getattr(state, "working_directory", None),
+        getattr(decision, "workspace_root", None),
+        getattr(decision, "cwd", None),
+        getattr(decision, "workdir", None),
+        getattr(options, "workspace_root", None),
+        getattr(options, "cwd", None),
+        getattr(options, "workdir", None),
+    )
+
+
 class CodingProfileRunner(
     CodingReserveMixin,
     CodingResumeMixin,
@@ -304,6 +333,7 @@ class CodingProfileRunner(
                 self._coding_plan = CodingPlan.fallback(
                     str(ctx.state.goal or ctx.user_input or "")
                 )
+            self._sync_coding_context(ctx)
         else:
             self._loop_state = CodingLoopState()
             self._last_verifier_candidate_payload = None
@@ -329,6 +359,7 @@ class CodingProfileRunner(
                     runtime=runtime,
                     model=model,
                 )
+            self._sync_coding_context(ctx)
             self._sync_coding_module_state(ctx)
         seeded_replay_result = self._consume_seeded_confirmation_replay(ctx)
         if seeded_replay_result is not None:
@@ -553,6 +584,15 @@ class CodingProfileRunner(
         # that still monkeypatch coding.handler.invoke_decision_direct.
         _subtasks_module.invoke_decision_direct = invoke_decision_direct
         _subtasks_dispatch_if_needed(self, ctx)
+
+    def _sync_coding_context(self, ctx: ExecutionContext) -> None:
+        workspace_hint = _context_workspace_hint(ctx)
+        if workspace_hint:
+            self._loop_state.scratchpad["coding.cwd"] = workspace_hint
+        if self._coding_plan is not None:
+            self._loop_state.scratchpad["coding.requires_file_change"] = bool(
+                self._coding_plan.requires_file_change
+            )
 
     def _as_adaptive_state(self, loop_state: CodingLoopState) -> AdaptiveToolLoopState:
         return AdaptiveToolLoopState(
