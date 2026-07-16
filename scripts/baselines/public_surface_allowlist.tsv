@@ -26,7 +26,6 @@ cli/commands/tools.py	openminion.modules.llm.providers.base
 cli/commands/tools.py	openminion.modules.tool.runtime.routing
 cli/identity/sync.py	openminion.modules.identity.runtime.service
 cli/identity/sync.py	openminion.modules.identity.storage
-cli/tui/providers/memory.py	openminion.modules.memory.storage.base
 modules/a2a/storage/store.py	openminion.modules.storage.runtime.module_store
 modules/artifact/storage/store.py	openminion.modules.storage.runtime.module_store
 modules/brain/adapters/context/bridges/memory.py	openminion.modules.memory.runtime.scope

@@ -219,7 +219,7 @@ def _build_onboarding_capabilities(
             {
                 "id": "demo_mode",
                 "label": "Explicit demo mode",
-                "reason": "Available later via `openminion chat --demo` or `openminion setup`.",
+                "reason": "Available later via bare `openminion` or `openminion setup`.",
             }
         )
     return configured_now, available_later

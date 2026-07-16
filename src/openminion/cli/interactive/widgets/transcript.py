@@ -31,7 +31,7 @@ _BOUNDED_FALLBACK_THRESHOLD_S = 0.05
 
 @dataclass
 class _StreamingState:
-    """Per-message streaming state owned by `FocusMessageWidget`."""
+    """Per-message streaming state owned by the message widget."""
 
     started_at: float
     visible: bool = True
@@ -39,7 +39,7 @@ class _StreamingState:
 
 
 class FocusMessageWidget(Widget):
-    """Focus-native single-message renderer."""
+    """Interactive CLI single-message renderer."""
 
     DEFAULT_CSS = """
     FocusMessageWidget { height: auto; padding: 0 1; }
@@ -295,7 +295,7 @@ class TurnHandle:
 
 
 class FocusTranscript(ScrollableContainer):
-    """Scrolling conversation surface owned by the focus shell."""
+    """Scrolling conversation surface owned by the interactive CLI."""
 
     can_focus = True
 

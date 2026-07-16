@@ -10,8 +10,7 @@ from openminion.cli.interactive.widgets import (
     ToolApprovalWidget,
     ToolBlockWidget,
 )
-from openminion.cli.tui.widgets import ChatMessage
-from openminion.cli.tui.widgets.chat import MessageKind, ToolEvent
+from openminion.cli.presentation.models import ToolEvent
 
 
 class _ApprovalHarness(App[None]):
@@ -51,22 +50,6 @@ def test_focus_header_shortens_home_relative_paths() -> None:
 
     raw = str(Path.home() / "repos" / "focus-mode")
     assert shorten_working_dir(raw) == "~/repos/focus-mode"
-
-
-def test_chat_message_accepts_tool_event() -> None:
-    message = ChatMessage(
-        kind=MessageKind.TOOL,
-        sender="tool:file.read",
-        body="tests/test_focus.py",
-        tool_event=ToolEvent(
-            tool_name="file.read",
-            args={"path": "tests/test_focus.py"},
-            content="line 1",
-        ),
-    )
-
-    assert message.tool_event is not None
-    assert message.tool_event.tool_name == "file.read"
 
 
 @pytest.mark.asyncio

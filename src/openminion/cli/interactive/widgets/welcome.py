@@ -26,7 +26,7 @@ def build_welcome_message(
     theme_label = str(theme_name or "").strip().lower() or "dark"
 
     lines = [
-        f"OpenMinion focus — single-agent shell  v{__version__}",
+        f"OpenMinion CLI - single-agent interactive shell  v{__version__}",
         f"  cwd: {cwd_short}",
         f"  agent: {agent_name}   model: {runtime_label}   theme: {theme_label}",
         "",

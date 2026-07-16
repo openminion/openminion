@@ -35,7 +35,7 @@ def test_build_welcome_message_includes_required_fields() -> None:
     assert msg.kind == MessageKind.SYSTEM
     assert msg.show_header is False
     body = msg.body
-    assert "OpenMinion focus" in body
+    assert "OpenMinion CLI" in body
     assert __version__ in body
     assert "example-dir" in body
     assert "agent:" in body
@@ -77,7 +77,7 @@ async def test_fresh_session_uses_fiu_greeter_mount_path() -> None:
             assert first.kind == MessageKind.SYSTEM
             assert first.body.startswith("OpenMinion\nHow can I help today?")
             assert "Try:" in first.body
-            assert "OpenMinion focus — single-agent shell" not in first.body
+            assert "OpenMinion CLI - single-agent interactive shell" not in first.body
             assert callable(build_welcome_message)
 
 
@@ -109,6 +109,6 @@ async def test_resumed_session_skips_welcome_banner() -> None:
             chat = app.screen.query_one(FocusTranscript)
             bodies = [m.body for m in chat._messages]
             assert any("prior message" in b for b in bodies)
-            assert not any("OpenMinion focus" in b for b in bodies), (
+            assert not any("OpenMinion CLI" in b for b in bodies), (
                 "resumed session must not double-render the welcome banner"
             )

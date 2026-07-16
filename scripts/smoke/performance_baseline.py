@@ -263,7 +263,6 @@ def _focus_help_command(options: RunOptions) -> list[str]:
         str(options.workspace_root),
         "--data-root",
         str(options.workspace_root / ".openminion"),
-        "focus",
         "--help",
     ]
 
@@ -433,7 +432,7 @@ def _measure_focus_startup(
         try:
             completed = _run_subprocess(command, options=options, data_root=data_root)
             metrics["phase_timings_ms"] = {"subprocess_exit_code": completed.returncode}
-            prompt_ready = "focused single-agent shell" in completed.stdout.lower()
+            prompt_ready = "bare `openminion` opens the textual interactive cli" in completed.stdout.lower()
             metrics["prompt_ready_marker"] = prompt_ready
             if not prompt_ready or completed.returncode != 0:
                 metrics["stderr_tail"] = completed.stderr[-500:]
@@ -450,7 +449,7 @@ def _measure_focus_startup(
             metrics["importtime_top_modules"] = import_report["top_cumulative"]
             metrics["importtime_module_families"] = import_report["module_families"]
             notes = [
-                "Startup command uses `openminion focus --help` as a non-interactive prompt-readiness proxy.",
+                "Startup command uses bare `openminion --help` as a non-interactive prompt-readiness proxy.",
                 "RSS fields measure the harness process; child process max RSS is not portable in this runner.",
             ]
             if import_report["raw_artifact"]:

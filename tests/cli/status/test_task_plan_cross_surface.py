@@ -9,7 +9,6 @@ from openminion.cli.status.activity_ledger import (
 )
 from openminion.cli.interactive.screen import FocusScreen
 from openminion.cli.presentation.models import MessageKind
-from openminion.cli.tui.tabs.chat import ChatTab
 
 
 _FULL_PLAN_PAYLOAD = {
@@ -61,20 +60,6 @@ def test_focus_rich_pushes_durable_plan_row() -> None:
     assert msg.kind == MessageKind.SYSTEM
     assert "Plan" in msg.body
     assert "[x] lint" in msg.body
-
-
-def test_dashboard_chat_tab_pushes_durable_plan_row() -> None:
-    tab = object.__new__(ChatTab)
-    pushed: list = []
-    app = MagicMock()
-    app.call_from_thread = lambda fn, *args, **kwargs: fn(*args, **kwargs)
-    chat = SimpleNamespace(push_message=lambda msg: pushed.append(msg))
-    result = tab._dashboard_push_activity_row(app, chat, _FULL_PLAN_PAYLOAD)
-    assert result is True
-    assert len(pushed) == 1
-    msg = pushed[0]
-    assert msg.kind == MessageKind.SYSTEM
-    assert "Plan" in msg.body
 
 
 def test_runtime_emission_of_task_plan_events_is_documented_followup() -> None:

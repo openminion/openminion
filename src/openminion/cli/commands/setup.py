@@ -180,10 +180,10 @@ def _run_setup_doctor(*, config_path: Path) -> int:
     )
 
 
-def _launch_post_setup_focus(args, *, config_path: Path) -> int:
-    from openminion.cli.commands.focus import run_focus
+def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
+    from openminion.cli.commands.interactive import run_interactive
 
-    focus_args = SimpleNamespace(
+    interactive_args = SimpleNamespace(
         config=str(config_path),
         home_root=getattr(args, "home_root", None),
         data_root=getattr(args, "data_root", None),
@@ -194,10 +194,10 @@ def _launch_post_setup_focus(args, *, config_path: Path) -> int:
         no_interactive=False,
         no_context=False,
         no_update_check=False,
-        rich=True,
+        rich=False,
         terminal=False,
     )
-    return int(run_focus(focus_args) or 0)
+    return int(run_interactive(interactive_args) or 0)
 
 
 def _resolve_runtime_helper(name: str) -> Any:
@@ -207,10 +207,8 @@ def _resolve_runtime_helper(name: str) -> Any:
 
 def _print_post_setup_tips() -> None:
     paragraphs = (
-        "Tip: run `openminion` to start a focus shell that flows in "
-        "your terminal (scroll up to re-read past turns). Use "
-        "`openminion focus --rich` for the Textual shell with the "
-        "full overlay set, or pipe a prompt via "
+        "Tip: run `openminion` to start the interactive terminal. "
+        "Scroll up to re-read past turns, or pipe a prompt via "
         "`cat prompt.md | openminion` for one-shot mode.",
         "Each turn renders with a `⏺` marker, a verb-rotating "
         "thinking spinner, colored `●` tool-call markers, and "
@@ -251,7 +249,7 @@ def _print_post_setup_tips() -> None:
         "prints on completion. Quiet mode hides both but still "
         "shows the end-of-turn hidden-count summary.",
         "Project context: drop `OPENMINION.md` (or `AGENTS.md` / "
-        "`CLAUDE.md`) at your project root; the focus shell loads "
+        "`CLAUDE.md`) at your project root; the terminal loads "
         "it at startup so the agent has project-specific context "
         "every session. Bootstrap one with `/init`.",
         "Switch models mid-session with `/model <provider>` (e.g. "
@@ -269,8 +267,8 @@ def _print_post_setup_tips() -> None:
         "and `openminion agent` (CUC). Same env vars: "
         "`OPENMINION_VERBOSITY` and `OPENMINION_PROGRESS`. "
         "Piped contexts auto-detect to `--progress off`.",
-        "`openminion chat` is a compatibility alias. Use bare `openminion` "
-        "or `openminion focus` for interactive work, and `openminion run` "
+        "Legacy interactive subcommands are compatibility aliases. Use bare "
+        "`openminion` for interactive work, and `openminion run` "
         "for scripted one-shot execution.",
     )
     for paragraph in paragraphs:
@@ -303,8 +301,8 @@ def run_setup(args) -> int:
         _print_post_setup_tips()
         return 0
 
-    print("Setup validation passed. Entering Focus...")
-    return _resolve_runtime_helper("_launch_post_setup_focus")(
+    print("Setup validation passed. Entering OpenMinion...")
+    return _resolve_runtime_helper("_launch_post_setup_interactive")(
         args, config_path=saved_path
     )
 
@@ -319,7 +317,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--no-focus",
         dest="no_chat",
         action="store_true",
-        help="Configure and validate only; do not launch Focus afterwards",
+        help="Configure and validate only; do not launch the interactive CLI afterward",
     )
     setup.add_argument(
         "--agent",

@@ -31,7 +31,10 @@ def test_live_focus_complex_scenarios(
         prompt=scenario.prompt.format(scratch_dir=scratch_dir),
     )
     active_probe = (
-        focus_probe.for_workdir(scratch_dir)
+        focus_probe.for_workdir(
+            scratch_dir,
+            include_project_context=scenario.include_project_context,
+        )
         if scenario.use_scratch_workspace
         else focus_probe
     )
@@ -43,3 +46,8 @@ def test_live_focus_complex_scenarios(
             write_transcript(root, scenario.scenario_id, session.transcript)
             raise
         write_transcript(root, scenario.scenario_id, transcript)
+    if scenario.use_scratch_workspace:
+        generated_files = [path for path in scratch_dir.rglob("*") if path.is_file()]
+        assert generated_files, (
+            f"{scenario.scenario_id} did not create files under {scratch_dir}"
+        )

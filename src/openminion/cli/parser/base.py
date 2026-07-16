@@ -31,11 +31,11 @@ COMMAND_SPECS = (
     CommandSpec(
         "channel", "openminion.cli.commands.channel", "Channel setup and operations"
     ),
-    CommandSpec("chat", "openminion.cli.commands.chat", "Interactive chat client"),
+    CommandSpec("chat", "openminion.cli.commands.chat", argparse.SUPPRESS),
     CommandSpec(
         "dashboard",
         "openminion.cli.commands.tui",
-        "Launch the deprecated monitoring dashboard during migration",
+        argparse.SUPPRESS,
     ),
     CommandSpec("tui", "openminion.cli.commands.tui", argparse.SUPPRESS),
     CommandSpec("sessions", "openminion.cli.commands.sessions", "Session operations"),
@@ -73,7 +73,7 @@ COMMAND_SPECS = (
         "tasks", "openminion.cli.commands.tasks", "Task inventory and controls"
     ),
     CommandSpec("export", "openminion.cli.commands.export", "Export commands"),
-    CommandSpec("focus", "openminion.cli.commands.focus", "Launch the focus shell"),
+    CommandSpec("focus", "openminion.cli.commands.interactive", argparse.SUPPRESS),
     CommandSpec("setup", "openminion.cli.commands.setup", "Configure OpenMinion"),
     CommandSpec(
         "storage", "openminion.cli.commands.storage", "Shared storage-core operations"
@@ -202,7 +202,8 @@ def build_parser(*, selected_command: str | None = None) -> argparse.ArgumentPar
         prog="openminion",
         description=(
             "Python-first OpenMinion runtime. Bare `openminion` opens the "
-            "Textual Focus shell; piped input and `openminion run` execute "
+            "interactive CLI with its default terminal renderer; piped input and "
+            "`openminion run` execute "
             "one-shot requests."
         ),
         allow_abbrev=False,
@@ -250,6 +251,20 @@ def build_parser(*, selected_command: str | None = None) -> argparse.ArgumentPar
             "Enable legacy unsandboxed exec tool hosts (gateway/node) for this process. "
             "Equivalent to setting OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC=1."
         ),
+    )
+    from openminion.cli.parser.flags import add_interactive_session_flags
+
+    add_interactive_session_flags(parser)
+    backend = parser.add_mutually_exclusive_group()
+    backend.add_argument(
+        "--rich",
+        action="store_true",
+        help="Use the optional Textual renderer instead of the default terminal renderer.",
+    )
+    backend.add_argument(
+        "--terminal",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
 
     subparsers = parser.add_subparsers(dest="command")

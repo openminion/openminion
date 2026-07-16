@@ -218,18 +218,6 @@ def test_status_from_payload_passes_through_phase_status() -> None:
 # ── Cross-shell adoption proof ────────────────────────────────────────────────
 
 
-def test_dashboard_chat_uses_shared_status_controller() -> None:
-    import inspect
-
-    from openminion.cli.tui.tabs.chat import ChatTab
-
-    src = inspect.getsource(ChatTab)
-    assert "PhaseStatusController" in src, (
-        "Dashboard ChatTab must consume `PhaseStatusController`; "
-        "a thin label-only path has regressed the shared-owner contract."
-    )
-
-
 def test_focus_screen_uses_shared_status_controller() -> None:
     import inspect
 
@@ -241,7 +229,7 @@ def test_focus_screen_uses_shared_status_controller() -> None:
         "shared status owner is no longer being invoked."
     )
     assert "_status_controller" in src, (
-        "Focus shell must hold a per-turn `_status_controller` so dedup "
+        "The interactive CLI must hold a per-turn `_status_controller` so dedup "
         "and elapsed tracking match chat CLI."
     )
 
@@ -257,8 +245,9 @@ _SHARED_STATUS_MODULES = [
 ]
 
 _FORBIDDEN_PREFIXES = (
-    "openminion.cli.chat.",
-    "openminion.cli.tui.",
+    "openminion.cli.interactive.",
+    "openminion.cli.commands.chat.",
+    "openminion.cli.commands.tui.",
 )
 
 

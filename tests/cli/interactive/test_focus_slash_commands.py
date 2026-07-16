@@ -207,9 +207,15 @@ async def test_shift_tab_action_opens_permissions_menu_instead_of_cycling() -> N
 
 
 @pytest.mark.asyncio
-async def test_slash_copy_routes_through_action_copy_last_agent() -> None:
+async def test_slash_copy_routes_through_action_copy_last_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from openminion.cli.presentation.models import ChatMessage
 
+    monkeypatch.setattr(
+        "openminion.cli.interactive.actions.copy_to_clipboard",
+        lambda _text: True,
+    )
     with tempfile.TemporaryDirectory() as tmp:
         app = _make_app(tmp)
         async with app.run_test() as pilot:

@@ -13,7 +13,7 @@
   · <a href="https://www.openminion.com">Website</a>
   · <a href="https://www.openminion.com/docs">Docs</a>
   · <a href="#quick-start">Quick Start</a>
-  · <a href="#focus-shell">Focus Shell</a>
+  · <a href="#interactive-cli">Interactive CLI</a>
   · <a href="https://x.com/OpenMinion">X</a>
 </p>
 
@@ -59,7 +59,7 @@ and should be treated as a scam.
 
 - Runtime core: one local runtime with explicit brain, memory, tool, channel,
   and service ownership boundaries
-- User surfaces: focus shell, CLI commands, runtime admin, diagnostics, export,
+- User surfaces: interactive CLI, runtime admin, diagnostics, export,
   and session-aware operator workflows
 - Extension surfaces: package-owned tool hosting, plugin loading, MCP
   integration, and skill loading
@@ -95,15 +95,15 @@ python -m openminion tools list
 python -m openminion doctor --check-turn --json
 ```
 
-If you want the interactive surface next, launch the default focus shell:
+If you want the interactive surface next, launch the default interactive CLI:
 
 ```bash
 python -m openminion
 ```
 
-The legacy dashboard remains available only as a deprecated migration surface.
-See [`docs/terminal-surfaces.md`](docs/terminal-surfaces.md) for its replacement
-map and release gate.
+Legacy interactive command names remain as hidden compatibility aliases for a
+bounded migration window. See
+[`docs/terminal-surfaces.md`](docs/terminal-surfaces.md) for the route map.
 
 ## Contributor setup
 
@@ -188,31 +188,33 @@ Tool package note:
   source-tree layout for contributors who need to go deeper than the public
   facade.
 
-## Focus shell
+## Interactive CLI
 
 The default `openminion` invocation is the recommended interactive surface:
 
-1. `openminion` launches Textual Focus on a TTY.
+1. `openminion` launches the interactive CLI with the default terminal renderer on a TTY.
+   `openminion --rich` explicitly opts into the Textual shell.
 2. `cat prompt.md | openminion` runs one stdin-backed turn and exits without
-   mounting Textual.
+   mounting either interactive renderer.
 3. `openminion run` is the explicit one-shot command for scripts and JSON.
-4. `openminion focus` is the named form of the same interactive product.
-5. `openminion chat` and `openminion tui` are hidden compatibility aliases.
-6. Each agent turn shows a `⏺` marker, verb-rotating thinking spinner,
+4. `openminion focus`, `openminion chat`, and `openminion tui` are hidden
+   compatibility aliases; `openminion dashboard` is a bounded retirement
+   tombstone. None owns a separate interactive implementation.
+5. Each agent turn shows a `⏺` marker, verb-rotating thinking spinner,
    colored `●` tool-call markers, and syntax-highlighted code blocks.
-7. `--progress minimal` drops moving frames while preserving bounded status
+6. `--progress minimal` drops moving frames while preserving bounded status
    text, and `--progress off` suppresses in-flight chrome. `--plain-spinner`,
    `OPENMINION_FOCUS_PLAIN_SPINNER=1`, and `NO_COLOR=1` remain compatibility
    paths for reduced motion.
-8. Activity animation defaults to `openminion:braille`. Install the optional
+7. Activity animation defaults to `openminion:braille`. Install the optional
    Unicode catalog with `python -m pip install "openminion[animations]"`, then
-   run `openminion focus --animation-provider unicode --animation helix` or use
+   run `openminion --animation-provider unicode --animation helix` or use
    `/animation list`, `/animation use unicode:helix`, and `/animation save
-   unicode:helix` inside Focus.
-9. Tool blocks longer than 6 lines are truncated to keep scrollback readable:
+   unicode:helix` inside the interactive CLI.
+8. Tool blocks longer than 6 lines are truncated to keep scrollback readable:
    `/expand` reprints the latest block, `/expand 2` selects the second latest,
    and `/expand 0` lists all truncated blocks.
-10. Tool-block verbosity has three levels:
+9. Tool-block verbosity has three levels:
    - `--verbosity quiet` hides tool blocks but keeps an end-of-turn hidden-call
      summary.
    - `--verbosity normal` is the default: 6-line cap plus `/expand`.
@@ -228,15 +230,15 @@ The default `openminion` invocation is the recommended interactive surface:
    `verbosity = "quiet"`, `progress = "off"`, `animation_provider =
    "unicode"`, or `animation = "helix"`. Precedence is CLI flag → env →
    preferences file → default.
-11. Edit and Write tool calls render inline unified diffs. The same verbosity
+10. Edit and Write tool calls render inline unified diffs. The same verbosity
    ladder applies: quiet hides, normal truncates, verbose shows up to 200 lines,
    and `/expand` always shows the full diff.
-12. Live tool-execution narration prints a yellow `● Running Bash(ls -la)` line
+11. Live tool-execution narration prints a yellow `● Running Bash(ls -la)` line
     while a tool is active, then renders the final tool block below it. Quiet
     mode suppresses narration but still counts the call in the end-of-turn
     summary.
-13. Focus slash commands include `/animation`, `/clear`, `/compact`, `/cost`,
-    `/dashboard`, `/exit`, `/expand`, `/help`, `/init`, `/mcp`, `/model`,
+12. Interactive slash commands include `/animation`, `/clear`, `/compact`,
+    `/cost`, `/exit`, `/expand`, `/help`, `/init`, `/mcp`, `/model`,
     `/new`, `/normal`, `/quiet`, `/quit`, `/readonly`, `/resume`, `/sessions`,
     `/status`, `/tools`, and `/verbose`.
 
@@ -249,21 +251,22 @@ The default `openminion` invocation is the recommended interactive surface:
 
 ## Compatibility aliases
 
-`openminion chat` and `openminion tui` print a migration notice and forward to
-the canonical owner. They do not retain separate interactive implementations.
-Piped chat input forwards to one-shot execution; unsupported old flags fail
+`openminion focus`, `openminion chat`, and `openminion tui` print a migration
+notice and forward to the canonical owner. They do not retain separate
+interactive implementations.
+Piped compatibility-alias input forwards to one-shot execution; unsupported old flags fail
 with migration help. Notice suppression is available through
 `OPENMINION_CHAT_NO_DEPRECATION=1` and
 `OPENMINION_TUI_NO_DEPRECATION=1`.
 
-`openminion dashboard` remains a deprecated compatibility surface pending a
-separate post-release deletion approval. Its migration map, privacy rules, and
-release gate are documented in
+The retired `openminion dashboard` command only prints a migration map; it does
+not launch an interactive runtime. Dashboard functions are available through
+the canonical CLI, resource commands, and typed APIs listed in
 [`docs/terminal-surfaces.md`](docs/terminal-surfaces.md).
 
 ## Cross-surface UX flags
 
-These apply uniformly to focus, gateway, run, and agent surfaces:
+These apply uniformly to the interactive CLI, gateway, run, and agent surfaces:
 
 1. `--verbosity {quiet,normal,verbose}` controls tool-block fidelity:
    - `quiet` hides tool blocks;
@@ -283,19 +286,19 @@ These apply uniformly to focus, gateway, run, and agent surfaces:
 6. `NO_COLOR=1` follows the universal convention by mapping to
    `--progress minimal`.
 7. Compatibility aliases do not own separate rendering or progress behavior;
-   interactive aliases use the same Textual Focus implementation.
+   they forward to the default terminal renderer unless `--rich` explicitly selects Textual.
 
 ## Shared logging conventions
 
 1. `gateway run --quiet` suppresses INFO logs for cleaner output.
 2. Override log level without editing config: `OPENMINION_LOG_LEVEL=WARNING`.
 3. Keep logs visually secondary in TTY (dim logs); force with `OPENMINION_LOG_COLOR=1`, disable with `OPENMINION_LOG_COLOR=0` or `NO_COLOR=1`.
-4. Disable chat colors with `NO_COLOR=1` or `OPENMINION_COLOR=0`; force with `OPENMINION_COLOR=1`.
+4. Disable CLI colors with `NO_COLOR=1` or `OPENMINION_COLOR=0`; force with `OPENMINION_COLOR=1`.
 
-## Chat vs gateway loop
+## Interactive CLI vs gateway loop
 
 1. `gateway run` is a runtime/operator path with explicit channel/target/once/idempotency controls.
-2. Use `openminion` (focus shell) for conversational UX; use `gateway run` for operational testing and deterministic runtime controls.
+2. Use bare `openminion` for conversational UX; use `gateway run` for operational testing and deterministic runtime controls.
 3. For any UI integration or plugin, use gateway ingress (`/v1/turn*` or
    `GatewayService.run_once`) rather than direct agent-service calls. The
    repository UI gateway contract documents that boundary.

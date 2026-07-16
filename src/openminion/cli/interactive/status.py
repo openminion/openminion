@@ -168,7 +168,7 @@ class FocusLabelsMixin:
 
 class FocusRuntimeStateMixin:
     def _refresh_header(self, *, status_mode: str | None = None) -> None:
-        """Refresh the focus status line header fields."""
+        """Refresh the interactive status line header fields."""
         try:
             line = self.query_one(FocusStatusLine)
         except QueryError:

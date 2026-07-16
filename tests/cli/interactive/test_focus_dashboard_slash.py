@@ -32,22 +32,12 @@ async def test_dashboard_slash_registered_with_help_text(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_dashboard_slash_attempts_push_or_surfaces_inline_message(
+async def test_dashboard_slash_surfaces_retirement_notice(
     tmp_path: Path,
 ) -> None:
     app = _make_app(str(tmp_path))
     async with app.run_test() as pilot:
         await pilot.pause()
-        pushed: list[object] = []
-
-        real_push = app.push_screen
-
-        def _capture_push(screen):
-            pushed.append(screen)
-            return real_push(screen)
-
-        app.push_screen = _capture_push  # type: ignore[method-assign]
-
         assert isinstance(app.screen, FocusScreen)
         focus_screen = app.screen
         focus_screen._slash_dashboard("")
@@ -57,44 +47,7 @@ async def test_dashboard_slash_attempts_push_or_surfaces_inline_message(
         inline_messages = [
             m
             for m in chat._messages
-            if m.kind == MessageKind.SYSTEM and "Dashboard" in m.body
+            if m.kind == MessageKind.SYSTEM and "dashboard was retired" in m.body
         ]
-        assert (len(pushed) == 1) ^ (len(inline_messages) == 1), (
-            f"expected exactly one of (push, inline message); got "
-            f"pushed={len(pushed)} inline={len(inline_messages)}"
-        )
-
-
-@pytest.mark.asyncio
-async def test_dashboard_slash_surfaces_error_inline_on_import_failure(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    app = _make_app(str(tmp_path))
-    async with app.run_test() as pilot:
-        await pilot.pause()
-
-        import builtins
-
-        real_import = builtins.__import__
-
-        def _fail_import(name, *args, **kwargs):
-            if name == "openminion.cli.tui.screen":
-                raise ImportError("dashboard module simulated missing")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", _fail_import)
-
-        assert isinstance(app.screen, FocusScreen)
-        app.screen._slash_dashboard("")
-        await pilot.pause()
-
-        chat = app.screen.query_one(FocusTranscript)
-        system_msgs = [
-            m
-            for m in chat._messages
-            if m.kind == MessageKind.SYSTEM and "Dashboard unavailable" in m.body
-        ]
-        assert system_msgs, (
-            "expected an inline system message when dashboard import fails"
-        )
+        assert len(inline_messages) == 1
+        assert "openminion status" in inline_messages[0].body

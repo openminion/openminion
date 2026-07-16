@@ -117,7 +117,7 @@ def _load_baseline() -> set[str]:
 def _write_baseline(violations: list[Violation]) -> None:
     header = (
         "# Pinned baseline of accepted forbidden-import violations\n"
-        "# in the focus shell. Managed by\n"
+        "# in the interactive CLI. Managed by\n"
         "# `scripts/validate/focus/widget_isolation.py`.\n"
         "# This list should shrink as native widgets replace shared ones.\n"
         "# The validator fails\n"
@@ -161,7 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         print(
-            "(not in baseline) detected — focus shell must own its body widgets:",
+            "(not in baseline) detected — the interactive CLI must own its body widgets:",
             file=sys.stderr,
         )
         for entry in new_violations:

@@ -6,7 +6,7 @@ from typing import Iterator
 
 import pytest
 
-from openminion.cli.commands.focus import _resolve_focus_verbosity
+from openminion.cli.commands.interactive import _resolve_focus_verbosity
 
 
 @pytest.fixture
@@ -102,7 +102,7 @@ def test_empty_env_no_warning(
 
 
 def test_argparse_flag_choices_registered() -> None:
-    from openminion.cli.commands.focus import register
+    from openminion.cli.commands.interactive import register
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
@@ -114,7 +114,7 @@ def test_argparse_flag_choices_registered() -> None:
 
 
 def test_argparse_flag_default_none() -> None:
-    from openminion.cli.commands.focus import register
+    from openminion.cli.commands.interactive import register
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
@@ -124,7 +124,7 @@ def test_argparse_flag_default_none() -> None:
 
 
 def test_argparse_invalid_choice_rejected() -> None:
-    from openminion.cli.commands.focus import register
+    from openminion.cli.commands.interactive import register
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from argparse import Namespace
 import contextlib
 import io
+import shlex
 from typing import Any, cast
 
 from textual.css.query import QueryError
@@ -15,7 +16,7 @@ from openminion.cli.presentation.animation import (
     parse_animation_token,
     resolve_focus_animation,
 )
-from openminion.cli.tui.project_context import (
+from openminion.cli.interactive.project_context import (
     resolve_project_context,
     write_init_template,
 )
@@ -76,8 +77,79 @@ class SlashCommandMixin:
     def _slash_clear(self, _args: str) -> None:
         self.action_clear_screen()
 
-    def _slash_tools(self, _args: str) -> None:
-        self.action_show_tools()
+    def _slash_tools(self, args: str) -> None:
+        text = "/tools" if not str(args or "").strip() else f"/tools {args.strip()}"
+        body = self._tools_command_body(text)
+        self.query_one(FocusTranscript).push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
+        )
+
+    def _tools_command_body(self, text: str) -> str:
+        try:
+            parts = shlex.split(text)
+        except ValueError as exc:
+            return f"Invalid /tools command: {exc}"
+        action = parts[1].lower() if len(parts) > 1 else "status"
+        if action == "list":
+            tools = self._runtime.list_tools()
+            return (
+                "\n".join(
+                    f"{'✓' if enabled else '✗'}  {name}" for name, enabled in tools
+                )
+                or "(none)"
+            )
+        if action == "status":
+            snapshot = self._runtime.tool_exposure_status()
+            rows = [
+                "  ".join(
+                    (
+                        "active" if profile.get("active") else "hidden",
+                        str(profile.get("profile_id", "")),
+                        f"({profile.get('tier', '')})",
+                    )
+                )
+                for profile in snapshot.get("profiles", [])
+            ]
+            return "Tool exposure profiles:\n" + ("\n".join(rows) or "(none)")
+        if action not in {"activate", "deactivate"} or len(parts) < 3:
+            return (
+                "Usage: /tools [status|list]\n"
+                "       /tools activate <profile> [key=value ...]\n"
+                "       /tools deactivate <profile> [target=<id>]"
+            )
+        profile_id = parts[2]
+        try:
+            options = dict(token.split("=", 1) for token in parts[3:])
+        except ValueError:
+            return "Tool profile options must use key=value syntax."
+        target_id = options.get("target", "")
+        if action == "deactivate":
+            changed = self._runtime.deactivate_tool_profile(
+                profile_id,
+                target_id=target_id,
+            )
+            return f"{'Deactivated' if changed else 'Not active'}: {profile_id}"
+        approved = options.get("approved", "").lower() in {"1", "true", "yes"}
+        try:
+            activation = self._runtime.activate_tool_profile(
+                profile_id,
+                target_id=target_id,
+                target_kind=options.get("target_kind", ""),
+                credential_scopes=self._option_tokens(options.get("credential", "")),
+                dependencies=self._option_tokens(options.get("dependency", "")),
+                approved=approved,
+                ttl_seconds=(float(options["ttl"]) if options.get("ttl") else None),
+                activation_reason=options.get("reason", ""),
+                approved_by=options.get("approved_by", ""),
+                policy_source=options.get("policy_source", ""),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            return f"Activation denied: {exc}"
+        return f"Activated: {activation['profile_id']} ({activation['audit_id']})"
+
+    @staticmethod
+    def _option_tokens(value: str) -> tuple[str, ...]:
+        return tuple(token.strip() for token in value.split(",") if token.strip())
 
     def _slash_mcp(self, _args: str) -> None:
         body_getter = getattr(self._runtime, "mcp_status_report", None)
@@ -271,117 +343,6 @@ class SlashCommandMixin:
         except (QueryError, AttributeError):
             pass
 
-    def _slash_model(self, args: str) -> None:
-        """Show or switch the current provider/model."""
-        provider = self._runtime_provider_name() or "(unknown)"
-        model = self._runtime_model_name() or "(unknown)"
-        arg = str(args or "").strip()
-        if not arg:
-            lister = getattr(self._runtime, "list_models", None)
-            rows: list[tuple[str, str, bool]] = []
-            if callable(lister):
-                try:
-                    rows = list(lister() or [])
-                except Exception:
-                    rows = []
-            lines = [
-                f"current    {provider}/{model}" if model else f"current    {provider}"
-            ]
-            if rows:
-                lines.append("")
-                lines.append("configured providers:")
-                for name, configured_model, is_active in rows:
-                    marker = "◆" if is_active else " "
-                    lines.append(
-                        f"  {marker} {name:<12} {configured_model or '(none)'}"
-                    )
-                lines.append("")
-                lines.append(
-                    "Switch with `/model <provider>` or "
-                    "`/model <provider>/<model>` (session-scoped)."
-                )
-            else:
-                lines.append("(no providers configured)")
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body="\n".join(lines),
-                )
-            )
-            return
-        switcher = getattr(self._runtime, "switch_model", None)
-        if not callable(switcher):
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body="(/model: runtime does not expose switch_model)",
-                )
-            )
-            return
-        try:
-            new_provider, new_model = switcher(arg)
-        except ValueError as exc:
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=f"/model: {exc}",
-                )
-            )
-            return
-        label = (
-            f"{new_provider}/{new_model}"
-            if new_model
-            else (new_provider or "(default)")
-        )
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=f"model → {label} (session-scoped; restart reverts)",
-            )
-        )
-
-    def _slash_cost(self, _args: str) -> None:
-        """Print current session token / cost usage."""
-        snapshot_getter = getattr(self._runtime, "token_usage_snapshot", None)
-        snap = None
-        if callable(snapshot_getter):
-            try:
-                snap = snapshot_getter()
-            except (AttributeError, TypeError, ValueError):
-                snap = None
-        if snap is None or not getattr(snap, "has_any_usage", False):
-            body = "No token / cost usage data available for this session."
-        else:
-            session_total = getattr(snap, "session_total_tokens", None)
-            turn_total = getattr(snap, "turn_total_tokens", None)
-            context_used = getattr(snap, "context_used_tokens", None)
-            context_limit = getattr(snap, "context_limit_tokens", None)
-            cost_usd = getattr(snap, "cost_usd", None)
-            lines = ["Session usage:"]
-            if session_total is not None:
-                lines.append(f"  session tokens   {session_total}")
-            if turn_total is not None:
-                lines.append(f"  last turn        {turn_total}")
-            if context_used is not None and context_limit:
-                pct = snap.context_pct
-                pct_str = f"  ({pct}%)" if pct is not None else ""
-                lines.append(
-                    f"  context window   {context_used}/{context_limit}{pct_str}"
-                )
-            if cost_usd is not None:
-                try:
-                    lines.append(f"  estimated cost   ${float(cost_usd):.4f}")
-                except (TypeError, ValueError):
-                    pass
-            body = "\n".join(lines)
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
-        )
-
     def _push_system_body(self, body: str) -> None:
         self.query_one(FocusTranscript).push_message(
             ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
@@ -398,48 +359,9 @@ class SlashCommandMixin:
         self._push_system_body(render_memory_report(self._runtime))
 
     def _slash_tasks(self, args: str) -> None:
-        from openminion.modules.task.surface import (
-            build_task_surface,
-            resolve_task_surface_source,
-        )
+        from openminion.cli.presentation.visible_parity import render_tasks_report
 
-        surface = build_task_surface(resolve_task_surface_source(self._runtime))
-        task_id = str(args or "").strip()
-        if task_id:
-            task = surface.show_task(task_id)
-            if task is None:
-                self._push_system_body(f"Task not found: {task_id}")
-                return
-            lines = [
-                "Task",
-                "====",
-                f"id: {task.get('id')}",
-                f"title: {task.get('title')}",
-                f"status: {task.get('status')}",
-            ]
-            if task.get("due_at"):
-                lines.append(f"due: {task.get('due_at')}")
-            self._push_system_body("\n".join(lines))
-            return
-
-        payload = surface.inventory()
-        lines = ["Tasks", "====="]
-        tasks = list(payload.get("tasks", []))
-        if not tasks:
-            lines.append("No tasks found.")
-        for task in tasks[:20]:
-            lines.append(
-                f"[{task.get('status', 'PENDING')}] {task.get('id')}: {task.get('title')}"
-            )
-        pending = list(payload.get("pending_actions", []))
-        if pending:
-            lines.append("")
-            lines.append("Pending actions:")
-            for action in pending[:20]:
-                lines.append(
-                    f"- {action.get('decision_id')}: task={action.get('task_id') or '-'}"
-                )
-        self._push_system_body("\n".join(lines))
+        self._push_system_body(render_tasks_report(self._runtime, args))
 
     def _slash_skills(self, _args: str) -> None:
         from openminion.cli.presentation.visible_parity import render_skills_report
@@ -534,7 +456,7 @@ class SlashCommandMixin:
             pass
 
     def _slash_diff(self, args: str) -> None:
-        """Show the current git diff in the focus transcript."""
+        """Show the current git diff in the interactive transcript."""
 
         from openminion.cli.presentation.git.diff import render_git_diff
 
@@ -808,46 +730,12 @@ class SlashCommandMixin:
         from openminion.cli.status.surface import record_surface_event
 
         notice = dashboard_deprecation_message()
-        if notice:
-            self._push_system_body(notice)
-            record_surface_event(
-                self._runtime,
-                surface="dashboard",
-                action="deprecation",
-            )
+        self._push_system_body(notice)
         record_surface_event(
             self._runtime,
             surface="dashboard",
-            action="launch",
+            action="deprecation",
         )
-        try:
-            from openminion.cli.tui.screen import MainScreen
-        except ImportError as exc:  # pragma: no cover
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=(
-                        f"Dashboard unavailable: {exc}. Stay in Focus or "
-                        "run `openminion dashboard` from another terminal."
-                    ),
-                )
-            )
-            return
-        try:
-            self.app.push_screen(MainScreen(runtime=self._runtime))
-        except Exception as exc:
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=(
-                        f"Dashboard side-trip not available in this "
-                        f"context ({exc}). Use `openminion dashboard` from "
-                        "another terminal for the full dashboard view."
-                    ),
-                )
-            )
 
     def _slash_copy(self, _args: str) -> None:
         """Mirror the Ctrl+Y copy action for terminals that capture the key."""
@@ -871,103 +759,8 @@ class SlashCommandMixin:
 
     def _slash_editor(self, _args: str) -> None:
         self._push_system_body(
-            "External-editor composition is not bound in rich focus yet. "
+            "External-editor composition is not bound in the rich renderer yet. "
             "Use multiline input, paste content, or @-mention files."
-        )
-
-    def _slash_agent(self, args: str) -> None:
-        """List agents or switch to one by id."""
-        chat = self.query_one(FocusTranscript)
-        runtime = self._runtime
-        target = args.strip()
-        try:
-            agents = list(runtime.list_agents() or [])
-        except Exception as exc:
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=f"Could not list agents: {exc}",
-                )
-            )
-            return
-        active_id = str(getattr(runtime, "agent_id", "") or "").strip()
-        if not target:
-            if not agents:
-                chat.push_message(
-                    ChatMessage(
-                        kind=MessageKind.SYSTEM,
-                        sender="system",
-                        body="No agents registered.",
-                    )
-                )
-                return
-            lines = ["Agents:"]
-            for entry in agents:
-                aid = str(getattr(entry, "id", entry)).strip() or "?"
-                marker = "● " if aid == active_id else "  "
-                lines.append(f"  {marker}{aid}")
-            lines.append("")
-            lines.append("Use `/agent <id>` to switch.")
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body="\n".join(lines),
-                )
-            )
-            return
-        known = {str(getattr(entry, "id", entry)).strip() for entry in agents}
-        if target not in known:
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=(
-                        f"Unknown agent: {target!r}. "
-                        f"Use bare `/agent` to list registered agents."
-                    ),
-                )
-            )
-            return
-        try:
-            runtime.switch_agent(target)
-        except Exception as exc:
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=f"Could not switch agent: {exc}",
-                )
-            )
-            return
-        self._tool_widgets.clear()
-        chat.clear_messages()
-        if not bool(getattr(runtime, "is_bound", False)):
-            try:
-                creator = getattr(runtime, "create_new_session", None)
-                if callable(creator):
-                    creator()
-            except Exception as exc:
-                self._refresh_header()
-                chat.push_message(
-                    ChatMessage(
-                        kind=MessageKind.SYSTEM,
-                        sender="system",
-                        body=(
-                            f"Switched to agent {target}, but could not "
-                            f"create a new session: {exc}"
-                        ),
-                    )
-                )
-                return
-        self._refresh_header()
-        chat.push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=f"Switched to agent {target}.",
-            )
         )
 
     def _slash_help(self, _args: str) -> None:

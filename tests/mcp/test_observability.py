@@ -8,7 +8,7 @@ import pytest
 from openminion.api.queries.runtime_reports import _build_mcp_section
 from openminion.base.config.mcp import MCPServerConfig
 from openminion.base.config.runtime import RuntimeConfig
-from openminion.cli.tui.mcp_status import MCPServerStatusRow, render_mcp_status_report
+from openminion.cli.interactive.mcp_status import MCPServerStatusRow, render_mcp_status_report
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.tools.mcp.manager import MCPFleetManager, MCPServerSession

@@ -24,14 +24,14 @@ from openminion.cli.interactive.widgets import (
     ToolBlockWidget,
     ToolsOverlay,
 )
-from openminion.cli.tui.providers.runtime import OpenMinionRuntime
-from openminion.cli.tui.widgets import ChatMessage, ChatSearchBar
+from openminion.cli.interactive.runtime import OpenMinionRuntime
+from openminion.cli.interactive.search import ChatSearchBar
 from openminion.cli.interactive.widgets import (
     FocusComposer,
     FocusMessageWidget,
     FocusTranscript,
 )
-from openminion.cli.presentation.models import MessageKind
+from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.services.bootstrap.onboarding import (
     OnboardingAction,
     OnboardingState,
@@ -485,7 +485,7 @@ def _ready_onboarding_status() -> OnboardingStatus:
 
 
 def test_focus_parser_registers_options_and_handler() -> None:
-    from openminion.cli.commands.focus import run_focus
+    from openminion.cli.commands.interactive import run_interactive
     from openminion.cli.parser.base import build_parser
 
     parser = build_parser()
@@ -498,7 +498,7 @@ def test_focus_parser_registers_options_and_handler() -> None:
     assert args.session == "focus-1"
     assert args.dir == "/tmp/work"
     assert args.no_interactive is False
-    assert args.handler is run_focus
+    assert args.handler is run_interactive
     assert args.needs_app is False
 
 
@@ -552,6 +552,7 @@ async def test_openminion_runtime_focus_deferred_binding_and_send_message_forwar
     assert call["inbound_metadata"]["workspace_root"] == str(
         Path("/tmp/focus-project").resolve()
     )
+    assert call["inbound_metadata"]["cwd"] == str(Path("/tmp/focus-project").resolve())
 
 
 @pytest.mark.asyncio
@@ -575,6 +576,9 @@ async def test_openminion_runtime_focus_working_dir_overrides_stale_workspace_ro
 
     call = rt.resolve_gateway("alpha").calls[-1]
     assert call["inbound_metadata"]["workspace_root"] == str(
+        Path("/tmp/focus-project/openminion").resolve()
+    )
+    assert call["inbound_metadata"]["cwd"] == str(
         Path("/tmp/focus-project/openminion").resolve()
     )
 
@@ -974,6 +978,44 @@ async def test_focus_screen_tool_approval_flow_renders_tool_block() -> None:
 
 
 @pytest.mark.asyncio
+async def test_focus_screen_typed_session_approval_is_not_queued() -> None:
+    runtime = _FocusRuntimeDouble(
+        working_dir="/tmp/focus-typed-approval",
+        session_id="focus-typed-approval",
+        history_by_session={"focus-typed-approval": []},
+        approval_tool=True,
+    )
+    app = FocusApp(runtime=runtime, working_dir=runtime.working_dir)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("run pwd"))
+        for _ in range(20):
+            await pilot.pause()
+            if list(app.screen.query(ToolApprovalWidget)):
+                break
+
+        assert app.screen.query_one(ToolApprovalWidget)
+        app.screen.on_focus_composer_submitted(FocusComposer.Submitted("session"))
+
+        for _ in range(30):
+            await pilot.pause()
+            if runtime.last_approval_result is True and not app.screen._busy:
+                break
+
+        messages = app.screen.query_one(FocusTranscript)._messages
+        assert runtime.last_approval_result is True
+        assert app.screen._queued_count() == 0
+        assert "exec.run" in app.screen._session_grants
+        assert not any(
+            message.kind == MessageKind.USER and message.body == "session"
+            for message in messages
+        )
+
+
+@pytest.mark.asyncio
 async def test_focus_screen_shortcuts_cover_search_debug_tools_sessions_and_new_session() -> (
     None
 ):
@@ -1065,13 +1107,15 @@ async def test_focus_escape_prompts_before_exit_and_can_cancel() -> None:
         assert isinstance(app.screen, FocusScreen)
 
 
-def test_run_focus_live_wires_shared_runtime_and_closes(monkeypatch) -> None:
+def test_run_interactive_live_wires_shared_runtime_and_closes(monkeypatch) -> None:
     # this test exercises the Textual --rich path which now
     # has a non-TTY guard. Pytest stdin/stdout aren't TTYs, so mock
     # them True to clear the guard before reaching the FocusApp stub.
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-    focus_command = importlib.import_module("openminion.cli.commands.focus")
+    interactive_command = importlib.import_module(
+        "openminion.cli.commands.interactive"
+    )
     from openminion.api.runtime import APIRuntime
 
     captured: dict[str, Any] = {}
@@ -1097,7 +1141,7 @@ def test_run_focus_live_wires_shared_runtime_and_closes(monkeypatch) -> None:
             return None
 
     monkeypatch.setattr(
-        "openminion.cli.commands.tui._inspect_tui_onboarding",
+        "openminion.cli.commands.interactive._inspect_interactive_onboarding",
         lambda args: _ready_onboarding_status(),
     )
     monkeypatch.setattr(
@@ -1106,7 +1150,7 @@ def test_run_focus_live_wires_shared_runtime_and_closes(monkeypatch) -> None:
         staticmethod(lambda *args, **kwargs: _FakeApiRuntime()),
     )
     monkeypatch.setattr(
-        "openminion.cli.tui.providers.OpenMinionRuntime", _FakeFocusRuntime
+        "openminion.cli.interactive.runtime.OpenMinionRuntime", _FakeFocusRuntime
     )
     monkeypatch.setattr("openminion.cli.interactive.FocusApp", _FakeApp)
 
@@ -1122,7 +1166,7 @@ def test_run_focus_live_wires_shared_runtime_and_closes(monkeypatch) -> None:
         rich=True,
     )
 
-    assert focus_command.run_focus(args) == 0
+    assert interactive_command.run_interactive(args) == 0
     assert captured["runtime_kwargs"]["target"] == "focus"
     assert captured["runtime_kwargs"]["agent_id"] == "alpha"
     assert captured["runtime_kwargs"]["session_id"] == "focus-explicit"
@@ -1133,16 +1177,18 @@ def test_run_focus_live_wires_shared_runtime_and_closes(monkeypatch) -> None:
     assert closed == [True]
 
 
-def test_run_focus_missing_config_launches_inline_setup(monkeypatch) -> None:
+def test_run_interactive_missing_config_launches_inline_setup(monkeypatch) -> None:
     # clear the non-TTY guard so the --rich path proceeds.
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-    focus_command = importlib.import_module("openminion.cli.commands.focus")
+    interactive_command = importlib.import_module(
+        "openminion.cli.commands.interactive"
+    )
 
     captured: dict[str, Any] = {}
 
     monkeypatch.setattr(
-        "openminion.cli.commands.tui._inspect_tui_onboarding",
+        "openminion.cli.commands.interactive._inspect_interactive_onboarding",
         lambda args: OnboardingStatus(
             state=OnboardingState.MISSING_CONFIG,
             action=OnboardingAction.LAUNCH_SETUP,
@@ -1154,7 +1200,7 @@ def test_run_focus_missing_config_launches_inline_setup(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(
-        "openminion.cli.commands.tui._run_inline_setup_for_tui",
+        "openminion.cli.commands.interactive._run_inline_setup",
         lambda args: 0,
     )
 
@@ -1181,7 +1227,7 @@ def test_run_focus_missing_config_launches_inline_setup(monkeypatch) -> None:
         staticmethod(lambda *args, **kwargs: _FakeRuntime()),
     )
     monkeypatch.setattr(
-        "openminion.cli.tui.providers.OpenMinionRuntime", _FakeFocusRuntime
+        "openminion.cli.interactive.runtime.OpenMinionRuntime", _FakeFocusRuntime
     )
     monkeypatch.setattr("openminion.cli.interactive.FocusApp", _FakeApp)
 
@@ -1198,20 +1244,22 @@ def test_run_focus_missing_config_launches_inline_setup(monkeypatch) -> None:
         rich=True,
     )
 
-    assert focus_command.run_focus(args) == 0
+    assert interactive_command.run_interactive(args) == 0
     assert captured["runtime_kwargs"]["target"] == "focus"
     assert captured["app_kwargs"]["session"] is None
     assert captured["closed"] is True
 
 
-def test_run_focus_missing_config_interactive_uses_inline_setup(monkeypatch) -> None:
+def test_run_interactive_missing_config_uses_inline_setup(monkeypatch) -> None:
     # clear the non-TTY guard so the --rich path proceeds.
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-    focus_command = importlib.import_module("openminion.cli.commands.focus")
+    interactive_command = importlib.import_module(
+        "openminion.cli.commands.interactive"
+    )
 
     monkeypatch.setattr(
-        "openminion.cli.commands.tui._inspect_tui_onboarding",
+        "openminion.cli.commands.interactive._inspect_interactive_onboarding",
         lambda args: OnboardingStatus(
             state=OnboardingState.MISSING_CONFIG,
             action=OnboardingAction.LAUNCH_SETUP,
@@ -1224,11 +1272,11 @@ def test_run_focus_missing_config_interactive_uses_inline_setup(monkeypatch) -> 
     )
     setup_calls: list[object] = []
     monkeypatch.setattr(
-        "openminion.cli.commands.tui._run_inline_setup_for_tui",
+        "openminion.cli.commands.interactive._run_inline_setup",
         lambda args: setup_calls.append(args) or 0,
     )
     monkeypatch.setattr(
-        "openminion.cli.commands.tui._silence_logging_for_tui",
+        "openminion.cli.commands.interactive._silence_logging_for_interactive",
         lambda args: None,
     )
 
@@ -1255,7 +1303,7 @@ def test_run_focus_missing_config_interactive_uses_inline_setup(monkeypatch) -> 
         staticmethod(lambda *args, **kwargs: _FakeRuntime()),
     )
     monkeypatch.setattr(
-        "openminion.cli.tui.providers.OpenMinionRuntime", _FakeFocusRuntime
+        "openminion.cli.interactive.runtime.OpenMinionRuntime", _FakeFocusRuntime
     )
     monkeypatch.setattr("openminion.cli.interactive.FocusApp", _FakeApp)
 
@@ -1271,5 +1319,5 @@ def test_run_focus_missing_config_interactive_uses_inline_setup(monkeypatch) -> 
         # keep this test on the Textual path it patches.
         rich=True,
     )
-    assert focus_command.run_focus(args) == 0
+    assert interactive_command.run_interactive(args) == 0
     assert len(setup_calls) == 1

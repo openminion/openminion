@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from tests.e2e.tui.focus.harness import FocusProbe
@@ -32,11 +34,16 @@ def test_focus_pty_submits_after_composer_is_ready(
     focus_probe: FocusProbe,
     tmp_path,
 ) -> None:
-    marker = "TSUR_PTY_SUBMIT_OK"
+    marker = "Command not found:"
     with focus_probe.session() as session:
         focus_probe.wait_ready(session)
-        session.type_line(f"!echo {marker}")
-        transcript = session.wait_for(marker, timeout=60)
+        command = "!tsur-missing-command"
+        offset = len(session.transcript)
+        session.send(command)
+        session.wait_for_after(re.escape(command), offset=offset, timeout=10)
+        submit_offset = len(session.transcript)
+        session.send("\r")
+        transcript = session.wait_for_after(marker, offset=submit_offset, timeout=60)
         write_transcript(artifact_root(tmp_path), "local-submit", transcript)
 
 
@@ -53,3 +60,24 @@ def test_focus_runner_exposes_tracker_suite_names() -> None:
         "regression",
         "deep",
     }
+
+
+def test_focus_probe_can_disable_project_context(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    clean_probe = focus_probe.for_workdir(
+        tmp_path,
+        include_project_context=False,
+    )
+
+    assert "--no-context" in clean_probe.command()
+    assert "--no-context" not in focus_probe.command()
+
+
+def test_focus_probe_uses_test_scoped_session(focus_probe: FocusProbe) -> None:
+    command = focus_probe.command()
+
+    session_flag = command.index("--session")
+    assert command[session_flag + 1] == focus_probe.session_id
+    assert focus_probe.session_id.startswith("focus-e2e-")

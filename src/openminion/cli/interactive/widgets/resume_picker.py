@@ -5,7 +5,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Label, Static
 
-from openminion.cli.tui.widgets.session_picker import (
+from openminion.cli.interactive.widgets.session_picker import (
     SessionPickerModal,
     _NewSessionRow,
     _PickerRow,

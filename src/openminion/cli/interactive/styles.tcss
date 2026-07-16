@@ -72,9 +72,8 @@ FocusStatusLine {
     display: none;
 }
 
-/* Focus-only widgets. `.focus-tool-block*` rules live in the shared
- * `styles.tcss` so dashboard TUI also styles the shared ToolBlockWidget
- * when `ChatMessage.tool_event` is present. */
+/* Rich-renderer widgets. The internal `.focus-*` selectors remain stable
+ * compatibility identifiers for existing themes and tests. */
 
 .focus-inline-prompt,
 .focus-approval {

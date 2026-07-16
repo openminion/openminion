@@ -18,7 +18,6 @@ from openminion.cli.status import PhaseStatusController
 from openminion.cli.presentation import (
     ThinkingIndicator,
     build_tool_event_from_progress,
-    copy_to_clipboard,
     format_progress_label,
     tool_call_body,
 )
@@ -26,14 +25,11 @@ from openminion.cli.presentation.animation import (
     AnimationResolution,
     default_animation_registry,
 )
-from openminion.cli.tui.screen import CommandPaletteScreen
 from openminion.cli.presentation.models import ChatMessage, MessageKind
-from openminion.cli.tui.widgets import (
-    ChatSearchBar,
-)
 from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
 
 from .files import build_file_index
+from .search import ChatSearchBar
 from .tokens import cursor_offset_for_text_area
 from .input import InputStateMixin
 from .turn_queue import FocusTurnQueueMixin
@@ -41,6 +37,8 @@ from .shell import FocusShellMixin
 from .status import FocusLabelsMixin, FocusRuntimeStateMixin
 from .overlay import FocusOverlayInteractionMixin
 from .commands import SlashCommandMixin
+from .actions import FocusActionMixin
+from .runtime.commands import RuntimeCommandMixin
 from .widgets.debug_pane import FocusDebugPane
 from .widgets.inline_choice import _InlineChoiceWidget
 from .widgets import (
@@ -48,21 +46,9 @@ from .widgets import (
     FocusComposer,
     FocusStatusLine,
     FocusTranscript,
-    SessionOverlay,
     SlashCommandOverlay,
     ToolApprovalWidget,
-    ToolsOverlay,
 )
-
-_FOCUS_PALETTE_ENTRIES = [
-    ("/new", "Start a new focus session", "cmd-new"),
-    ("/clear", "Clear the visible transcript", "cmd-clear"),
-    ("/tools", "Show available tools", "cmd-tools"),
-    ("/sessions", "Show recent sessions", "cmd-sessions"),
-    ("/status", "Show focus runtime status", "cmd-status"),
-    ("/debug", "Toggle debug pane", "cmd-debug"),
-    ("/exit", "Quit focus mode", "cmd-exit"),
-]
 
 
 def _format_response_time(elapsed_seconds: float) -> str:
@@ -78,6 +64,8 @@ def _format_response_time(elapsed_seconds: float) -> str:
 
 class FocusScreen(
     SlashCommandMixin,
+    RuntimeCommandMixin,
+    FocusActionMixin,
     FocusShellMixin,
     FocusOverlayInteractionMixin,
     InputStateMixin,
@@ -123,7 +111,9 @@ class FocusScreen(
         self._verbosity: str = (
             verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
         )
-        self._progress: str = progress if progress in ("full", "minimal", "off") else "full"
+        self._progress: str = (
+            progress if progress in ("full", "minimal", "off") else "full"
+        )
         self._animation_resolution = animation or default_animation_registry().resolve(
             "openminion",
             "braille",
@@ -201,7 +191,7 @@ class FocusScreen(
         self._tick_thinking_elapsed()
 
     def _tick_thinking_elapsed(self) -> None:
-        """Refresh the focus ThinkingIndicator elapsed time."""
+        """Refresh the interactive thinking indicator elapsed time."""
         try:
             indicator = self.query_one(ThinkingIndicator)
         except (QueryError, AttributeError):
@@ -278,7 +268,7 @@ class FocusScreen(
         self._update_debug_snapshot()
 
     def _active_theme_name(self) -> str:
-        """Return the active theme name for focus mode."""
+        """Return the active interactive CLI theme name."""
         active = getattr(self.app, "active_theme", None)
         name = getattr(active, "name", "") if active is not None else ""
         if name:
@@ -319,6 +309,8 @@ class FocusScreen(
             getattr(self._runtime, "is_bound", False)
         ):
             return
+        if self._submit_active_approval_text(text):
+            return
         if text.startswith("/"):
             self._handle_command(text)
             return
@@ -343,6 +335,39 @@ class FocusScreen(
             self._queue_turn(text)
             return
         self._start_turn_worker(text)
+
+    @staticmethod
+    def _approval_decision_from_text(text: str) -> str | None:
+        """Map typed approval replies to the inline approval decision contract."""
+        normalized = " ".join(str(text or "").strip().lower().split())
+        if not normalized:
+            return None
+        if normalized in {"yes", "y", "allow", "approve", "a", "once", "allow once"}:
+            return "approve"
+        if normalized in {
+            "session",
+            "s",
+            "always",
+            "all",
+            "allow all",
+            "allow session",
+            "session allow",
+        }:
+            return "allow_all"
+        if normalized in {"no", "n", "deny", "d", "cancel"}:
+            return "deny"
+        return None
+
+    def _submit_active_approval_text(self, text: str) -> bool:
+        """Resolve active approval prompts before busy-state typeahead queueing."""
+        approval_future = self._approval_future
+        if approval_future is None or approval_future.done():
+            return False
+        decision = self._approval_decision_from_text(text)
+        if decision is None:
+            return False
+        approval_future.set_result(decision)
+        return True
 
     def on_input_changed(self, event) -> None:  # type: ignore[no-untyped-def]
         """Update overlays for single-line input changes."""
@@ -369,7 +394,7 @@ class FocusScreen(
         self._push_input_state("typing" if value.strip() else "empty")
 
     def _push_input_state(self, input_state: str) -> None:
-        """Push the current input-state hint onto FocusStatusLine."""
+        """Push the current input-state hint onto the status line."""
         if self._busy:
             return
         try:
@@ -406,7 +431,10 @@ class FocusScreen(
             async for chunk in self._runtime.send_message(
                 text,
                 progress_callback=self._handle_progress_event,
-                inbound_metadata={"workspace_root": self._working_dir},
+                inbound_metadata={
+                    "workspace_root": self._working_dir,
+                    "cwd": self._working_dir,
+                },
                 approval_callback=self._approval_callback,
             ):
                 token = str(chunk or "")
@@ -839,143 +867,3 @@ class FocusScreen(
     ) -> None:
         if self._prompt_future is not None and not self._prompt_future.done():
             self._prompt_future.set_result(event.choice)
-
-    def action_command_palette(self) -> None:
-        def _on_result(result: str | None) -> None:
-            if result == "cmd-new":
-                self.action_new_session()
-            elif result == "cmd-clear":
-                self.action_clear_screen()
-            elif result == "cmd-tools":
-                self.action_show_tools()
-            elif result == "cmd-sessions":
-                self.action_show_sessions()
-            elif result == "cmd-status":
-                self._handle_command("/status")
-            elif result == "cmd-debug":
-                self.action_toggle_debug()
-            elif result == "cmd-exit":
-                self.run_worker(self._confirm_exit(), exclusive=False)
-
-        self.app.push_screen(
-            CommandPaletteScreen(entries=_FOCUS_PALETTE_ENTRIES), _on_result
-        )
-
-    def action_toggle_search(self) -> None:
-        search = self.query_one(ChatSearchBar)
-        if search.display:
-            search.hide()
-            self.query_one(FocusComposer).focus_input()
-        else:
-            search.show()
-
-    def on_chat_search_bar_search_changed(
-        self, event: ChatSearchBar.SearchChanged
-    ) -> None:
-        self.query_one(FocusTranscript).filter_messages(event.query)
-
-    def on_chat_search_bar_search_closed(
-        self, event: ChatSearchBar.SearchClosed
-    ) -> None:
-        del event
-        self.query_one(FocusComposer).focus_input()
-
-    def action_copy_last_agent(self) -> None:
-        """Focus `Ctrl+Y`: copy selected chat row, or latest as fallback."""
-
-        chat = self.query_one(FocusTranscript)
-        notice = "Copied selected message."
-        text = chat.copy_selected_message()
-        if not text:
-            text = chat.copy_last_copyable_message()
-            notice = "Copied latest message."
-        if not text:
-            return
-        if copy_to_clipboard(text):
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=notice,
-                )
-            )
-        else:
-            chat.push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body="Clipboard not available on this platform.",
-                )
-            )
-
-    def action_new_session(self) -> None:
-        session_id = self._runtime.create_new_session()
-        self.query_one(FocusTranscript).set_messages([])
-        self._tool_widgets.clear()
-        self._session_grants.clear()
-        self._load_history()
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=f"New focus session {session_id}",
-            )
-        )
-
-    def action_show_tools(self) -> None:
-        self.app.push_screen(ToolsOverlay(list(self._runtime.list_tools())))
-
-    def action_show_sessions(self) -> None:
-        sessions = list(
-            getattr(self._runtime, "list_directory_sessions", lambda **_: [])()
-        )
-
-        def _on_pick(session_id: str | None) -> None:
-            if not session_id:
-                return
-            self._runtime.bind_session(session_id)
-            self._load_history()
-
-        self.app.push_screen(SessionOverlay(sessions), _on_pick)
-
-    def action_clear_screen(self) -> None:
-        self.query_one(FocusTranscript).clear_messages()
-
-    def action_toggle_debug(self) -> None:
-        self.query_one(FocusDebugPane).toggle()
-
-    def action_toggle_multiline(self) -> None:
-        self.query_one(FocusComposer).toggle_multiline()
-
-    def action_interrupt_turn(self) -> None:
-        if not self._busy:
-            return
-        self.run_worker(self._confirm_interrupt(), exclusive=False)
-
-    def action_cancel_and_run_next(self) -> None:
-        if not self._busy:
-            return
-        self.run_worker(self._cancel_current_and_run_next(), exclusive=False)
-
-    def action_handle_escape(self) -> None:
-        file_overlay = self._file_overlay()
-        if file_overlay is not None and file_overlay.visible:
-            file_overlay.visible = False
-            return
-        overlay = self._slash_overlay()
-        if overlay is not None and overlay.visible:
-            overlay.visible = False
-            return
-        search = self.query_one(ChatSearchBar)
-        if search.display:
-            search.hide()
-            return
-        if self._busy:
-            self.run_worker(self._interrupt_current_turn(), exclusive=False)
-            return
-        self.run_worker(self._confirm_exit(), exclusive=False)
-
-    async def _confirm_exit(self) -> None:
-        should_exit = await self._ask_inline("Exit focus mode?", kind="exit")
-        if should_exit:
-            self.app.exit()

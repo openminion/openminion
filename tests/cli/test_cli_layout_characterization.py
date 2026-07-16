@@ -39,7 +39,6 @@ EXPECTED_GROUP_DIRS = {
     "presentation",
     "status",
     "transport",
-    "tui",
 }
 
 

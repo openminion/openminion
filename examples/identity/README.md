@@ -20,9 +20,9 @@ PYTHONPATH=src .venv/bin/python3.11 -m openminion identity show <profile-id>
 PYTHONPATH=src .venv/bin/python3.11 -m openminion identity render <profile-id> --purpose act --max-tokens 180
 ```
 
-## Chat CLI controls
+## Interactive CLI controls
 
-Inside `openminion chat`:
+Inside bare `openminion`:
 
 ```text
 /identity list

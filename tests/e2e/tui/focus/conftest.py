@@ -8,6 +8,7 @@ import pytest
 
 from tests.e2e.tui.focus.harness import FocusProbe
 from tests.e2e.tui.focus.harness.artifacts import artifact_root
+from tests.e2e.tui.focus.harness.probe import focus_session_id
 
 
 @pytest.fixture(scope="session")
@@ -68,6 +69,7 @@ def focus_probe(
         config_path=minimax_config_path,
         agent_id=minimax_agent_id,
         workdir=openminion_root,
+        session_id=focus_session_id(data_root=data_root, node_name=node_name),
     )
 
 

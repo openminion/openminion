@@ -82,9 +82,9 @@ For package-release or integration-owner validation, use:
 2. `tests/e2e/runners/` for committed end-to-end runners
 3. the maintainer workflow docs for broader integration and tracking flows
 
-## TUI focus PTY smoke
+## Interactive CLI PTY smoke
 
-The terminal focus shell has a reusable PTY-based E2E harness under
+The interactive CLI has a reusable PTY-based E2E harness under
 `tests/e2e/tui/focus/`. It is intended for maintainer and contributor
 validation of the interactive surface a person actually uses: launch, prompt
 readiness, slash commands, live turns, tool turns, and opt-in complex workflows.
@@ -108,7 +108,7 @@ flows, and an isolated code edit/diff/validation/rollback journey. Live MiniMax
 smoke remains separate evidence for provider behavior and must not replace this
 deterministic gate.
 
-Run live MiniMax focus smoke when a compatible config and credentials are
+Run live MiniMax interactive CLI smoke when a compatible config and credentials are
 available:
 
 ```bash

@@ -65,7 +65,7 @@ def test_notice_text_has_expected_substrings(
     assert captured.out == ""
     out = captured.err
     assert "compatibility alias" in out
-    assert "openminion focus" in out
+    assert "openminion" in out
     assert "OPENMINION_CHAT_NO_DEPRECATION" in out
 
 

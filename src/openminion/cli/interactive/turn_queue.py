@@ -1,4 +1,4 @@
-"""Focus client adoption of the shared runtime turn-input queue."""
+"""Interactive CLI adoption of the shared runtime turn-input queue."""
 
 from __future__ import annotations
 

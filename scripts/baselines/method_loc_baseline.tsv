@@ -5,9 +5,6 @@ src/openminion/cli/commands/daemon.py	_start_daemon	101	current over-threshold m
 src/openminion/cli/commands/status/__init__.py	run_status	101	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/status/activity_ledger.py	activity_from_progress_payload	111	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/status/activity_ledger.py	format_activity_line	101	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/cli/tui/providers/runtime/__init__.py	OpenMinionRuntime.send_message	154	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/cli/tui/tabs/chat/commands.py	ChatCommandMixin._handle_command	212	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/cli/tui/tabs/thirdbrain/tab.py	ThirdBrainTab.compose	161	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/daemon.py	run_server	149	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/adapters/a2a/runtime.py	A2actlAdapter.call	127	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/adapters/context/bridges/session.py	BridgeSessionClient._to_session_slice	150	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -224,3 +221,4 @@ src/openminion/tools/task/routine/dispatcher.py	GitHubPrReviewHandler.post_turn	
 src/openminion/tools/weather/providers/openmeteo/plugin.py	_request_json	112	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/weather/providers/openmeteo/plugin.py	_run_weather_lookup	237	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/tools/weather/providers/weatherapi/provider.py	WeatherApiProvider.lookup	114	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/cli/interactive/runtime/__init__.py	OpenMinionRuntime.send_message	154	moved unchanged from cli/tui/providers/runtime; ratchet downward via LCPA/HRDS precision lanes

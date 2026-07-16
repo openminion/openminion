@@ -8,7 +8,7 @@ _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _CRASH_MARKERS = (
     "Traceback (most recent call last)",
     "Fatal Python error",
-    "openminion focus: error",
+    "openminion: error",
 )
 
 _RAW_TOOL_MARKERS = (
@@ -33,9 +33,21 @@ def turn_output_text(transcript: str, prompt: str) -> str:
     visible = visible_text(transcript)
     prompt = prompt.strip()
     if prompt:
-        prompt_index = visible.rfind(prompt)
-        if prompt_index >= 0:
-            return visible[prompt_index + len(prompt) :]
+        output_frames: list[str] = []
+        prompt_seen = False
+        normalized_prompt = " ".join(prompt.split())
+        for frame in visible.split("\f"):
+            normalized_frame = " ".join(frame.split())
+            prompt_index = normalized_frame.find(normalized_prompt)
+            if prompt_index >= 0:
+                prompt_seen = True
+                output_frames.append(
+                    normalized_frame[prompt_index + len(normalized_prompt) :]
+                )
+            elif prompt_seen:
+                output_frames.append(normalized_frame)
+        if prompt_seen:
+            return "\n".join(output_frames)
     prompt_index = visible.rfind("❯")
     if prompt_index >= 0:
         line_end = visible.find("\n", prompt_index)
@@ -52,10 +64,12 @@ def assert_no_terminal_crash(transcript: str) -> None:
 
 def assert_focus_turn_completed(transcript: str) -> None:
     visible = visible_text(transcript)
-    assert _DONE_RE.search(visible), visible[-2000:]
+    done_matches = list(_DONE_RE.finditer(visible))
+    assert done_matches, visible[-2000:]
     assert_no_terminal_crash(visible)
+    after_final_done = visible[done_matches[-1].end() :]
     for marker in _INCOMPLETE_TURN_MARKERS:
-        assert marker not in visible, marker
+        assert marker not in after_final_done, marker
 
 
 def assert_expected_markers(

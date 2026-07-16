@@ -91,6 +91,48 @@ def render_skills_report(runtime: Any) -> str:
     return "\n".join(lines)
 
 
+def render_tasks_report(runtime: Any, task_id: str = "") -> str:
+    from openminion.modules.task.surface import (
+        build_task_surface,
+        resolve_task_surface_source,
+    )
+
+    surface = build_task_surface(resolve_task_surface_source(runtime))
+    selected_id = str(task_id or "").strip()
+    if selected_id:
+        task = surface.show_task(selected_id)
+        if task is None:
+            return f"Task not found: {selected_id}"
+        lines = [
+            "Task",
+            "====",
+            f"id: {task.get('id')}",
+            f"title: {task.get('title')}",
+            f"status: {task.get('status')}",
+        ]
+        if task.get("due_at"):
+            lines.append(f"due: {task.get('due_at')}")
+        return "\n".join(lines)
+
+    payload = surface.inventory()
+    lines = ["Tasks", "====="]
+    tasks = list(payload.get("tasks", []))
+    if not tasks:
+        lines.append("No tasks found.")
+    for task in tasks[:20]:
+        lines.append(
+            f"[{task.get('status', 'PENDING')}] {task.get('id')}: {task.get('title')}"
+        )
+    pending = list(payload.get("pending_actions", []))
+    if pending:
+        lines.extend(("", "Pending actions:"))
+        for action in pending[:20]:
+            lines.append(
+                f"- {action.get('decision_id')}: task={action.get('task_id') or '-'}"
+            )
+    return "\n".join(lines)
+
+
 def handle_effort_command(runtime: Any, arg: str) -> str:
     value = str(arg or "").strip().lower()
     getter = getattr(runtime, "effort_level", "")
@@ -221,5 +263,6 @@ __all__ = [
     "render_context_report",
     "render_memory_report",
     "render_skills_report",
+    "render_tasks_report",
     "statusline_label",
 ]

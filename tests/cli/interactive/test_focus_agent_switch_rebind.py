@@ -126,7 +126,7 @@ async def test_slash_agent_rebinds_when_real_adapter_clears_session() -> None:
             )
             session_id = str(getattr(runtime, "session_id", "") or "").strip()
             assert session_id, (
-                "after switch, focus shell must rebind via initialize-session "
+                "after switch, the interactive CLI must rebind via initialize-session "
                 "flow so session_id is non-empty"
             )
 

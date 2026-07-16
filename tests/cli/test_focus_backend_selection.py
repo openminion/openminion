@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from openminion.cli.commands.focus import _legacy_terminal_requested
+from openminion.cli.commands.interactive import _resolve_interactive_backend
 
 
 def _args(**overrides) -> SimpleNamespace:
@@ -14,35 +14,44 @@ def _args(**overrides) -> SimpleNamespace:
 
 
 @pytest.mark.parametrize(
-    ("env_value", "terminal_flag", "expected"),
+    ("env_value", "terminal_flag", "rich_flag", "expected"),
     [
-        (None, False, False),
-        ("textual", False, False),
-        ("garbage", False, False),
-        ("terminal", False, True),
-        ("flow", False, True),
-        ("terminal-flow", False, True),
-        (None, True, True),
+        (None, False, False, "terminal"),
+        ("textual", False, False, "textual"),
+        ("rich", False, False, "textual"),
+        ("garbage", False, False, "terminal"),
+        ("terminal", False, False, "terminal"),
+        ("flow", False, False, "terminal"),
+        ("terminal-flow", False, False, "terminal"),
+        (None, True, False, "terminal"),
+        (None, False, True, "textual"),
     ],
 )
-def test_legacy_terminal_request_detection(
-    monkeypatch, env_value: str | None, terminal_flag: bool, expected: bool
+def test_interactive_backend_resolution(
+    monkeypatch,
+    env_value: str | None,
+    terminal_flag: bool,
+    rich_flag: bool,
+    expected: str,
 ) -> None:
     if env_value is None:
         monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
     else:
         monkeypatch.setenv("OPENMINION_FOCUS_BACKEND", env_value)
-    assert _legacy_terminal_requested(_args(terminal=terminal_flag)) is expected
+    assert (
+        _resolve_interactive_backend(_args(terminal=terminal_flag, rich=rich_flag))
+        == expected
+    )
 
 
-def test_focus_subparser_registers_rich_and_terminal_flags() -> None:
+def test_focus_alias_registers_legacy_backend_flags() -> None:
     import argparse
 
-    from openminion.cli.commands import focus as focus_cmd
+    from openminion.cli.commands import interactive as interactive_cmd
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
-    focus_cmd.register(subparsers)
+    interactive_cmd.register(subparsers)
     parsed = parser.parse_args(["focus", "--rich"])
     assert parsed.rich is True
     assert parsed.terminal is False
@@ -64,20 +73,126 @@ def test_focus_subparser_registers_rich_and_terminal_flags() -> None:
     assert parsed_animation.animation == "helix"
 
 
-def test_legacy_terminal_flag_returns_migration_error(monkeypatch, capsys) -> None:
-    from openminion.cli.commands import focus as focus_cmd
+def test_default_backend_launches_terminal_flow_without_textual_tty_gate(
+    monkeypatch,
+) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
 
     monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
-    assert focus_cmd.run_focus(_args(terminal=True)) == 2
-    assert "legacy terminal-flow renderer has been retired" in capsys.readouterr().err
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_inspect_interactive_onboarding",
+        lambda args: SimpleNamespace(action=None),
+    )
+    monkeypatch.setattr(
+        interactive_cmd, "_silence_logging_for_interactive", lambda _args: ""
+    )
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_enforce_textual_tty_requirement",
+        lambda: pytest.fail("terminal-flow must not use the Textual TTY gate"),
+    )
+    launched: list[str] = []
+    monkeypatch.setattr(
+        interactive_cmd,
+        "_launch_terminal_focus",
+        lambda _args, _runtime, *, working_dir: launched.append(working_dir) or 0,
+    )
+    monkeypatch.setattr(
+        "openminion.api.runtime.APIRuntime.from_config_path",
+        classmethod(lambda cls, *a, **kw: SimpleNamespace(close=lambda: None)),
+    )
+    monkeypatch.setattr(
+        "openminion.cli.status.surface.record_surface_event",
+        lambda *args, **kwargs: None,
+    )
+
+    args = SimpleNamespace(
+        rich=False,
+        config=None,
+        home_root=None,
+        data_root=None,
+        agent=None,
+        session=None,
+        dir=".",
+        no_interactive=False,
+        no_context=False,
+        no_update_check=True,
+        theme=None,
+        terminal=False,
+    )
+    assert interactive_cmd.run_interactive(args) == 0
+    assert len(launched) == 1
+
+
+def test_terminal_focus_starts_fresh_unless_session_is_requested(monkeypatch) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
+
+    created: list[str] = []
+    constructor_calls: list[dict[str, object]] = []
+
+    class _Runtime:
+        def __init__(self, _runtime, **kwargs) -> None:
+            constructor_calls.append(dict(kwargs))
+
+        def create_new_session(self) -> str:
+            created.append("focus-new")
+            return "focus-new"
+
+        def set_project_context(self, _context) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "openminion.cli.interactive.runtime.OpenMinionRuntime", _Runtime
+    )
+    monkeypatch.setattr(
+        "openminion.cli.interactive.terminal.run_terminal_focus",
+        lambda *_args, **_kwargs: 0,
+    )
+
+    base_args = dict(
+        agent="minimax-m2-7",
+        no_context=True,
+        plain_spinner=False,
+        verbosity="normal",
+        no_update_check=True,
+    )
+    interactive_cmd._launch_terminal_focus(
+        SimpleNamespace(session=None, **base_args),
+        object(),
+        working_dir="/tmp/project",
+    )
+    interactive_cmd._launch_terminal_focus(
+        SimpleNamespace(session="focus-existing", **base_args),
+        object(),
+        working_dir="/tmp/project",
+    )
+
+    assert created == ["focus-new"]
+    assert constructor_calls == [
+        {
+            "target": "focus",
+            "agent_id": "minimax-m2-7",
+            "working_dir": "/tmp/project",
+            "bind_immediately": False,
+            "session_id": None,
+        },
+        {
+            "target": "focus",
+            "agent_id": "minimax-m2-7",
+            "working_dir": "/tmp/project",
+            "bind_immediately": False,
+            "session_id": "focus-existing",
+        },
+    ]
 
 
 def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
-    from openminion.cli.commands import focus as focus_cmd
+    from openminion.cli.commands import interactive as interactive_cmd
 
     monkeypatch.setattr(
-        focus_cmd,
-        "_inspect_tui_onboarding",
+        interactive_cmd,
+        "_inspect_interactive_onboarding",
         lambda args: SimpleNamespace(action=None),
     )
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
@@ -95,7 +210,7 @@ def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
         theme=None,
         terminal=False,
     )
-    rc = focus_cmd.run_focus(args)
+    rc = interactive_cmd.run_interactive(args)
     assert rc == 2
     captured = capsys.readouterr()
     assert "requires an interactive terminal" in captured.err
@@ -103,11 +218,11 @@ def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
 
 
 def test_rich_with_tty_does_not_short_circuit(monkeypatch) -> None:
-    from openminion.cli.commands import focus as focus_cmd
+    from openminion.cli.commands import interactive as interactive_cmd
 
     monkeypatch.setattr(
-        focus_cmd,
-        "_inspect_tui_onboarding",
+        interactive_cmd,
+        "_inspect_interactive_onboarding",
         lambda args: SimpleNamespace(action=None),
     )
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -119,7 +234,7 @@ def test_rich_with_tty_does_not_short_circuit(monkeypatch) -> None:
         silenced["called"] = True
         return None
 
-    monkeypatch.setattr(focus_cmd, "_silence_logging_for_tui", _silence)
+    monkeypatch.setattr(interactive_cmd, "_silence_logging_for_interactive", _silence)
     monkeypatch.setattr(
         "openminion.api.runtime.APIRuntime.from_config_path",
         classmethod(lambda cls, *a, **kw: SimpleNamespace(close=lambda: None)),
@@ -139,10 +254,10 @@ def test_rich_with_tty_does_not_short_circuit(monkeypatch) -> None:
         terminal=False,
     )
     try:
-        focus_cmd.run_focus(args)
+        interactive_cmd.run_interactive(args)
     except Exception:
         pass
     assert silenced["called"] is True, (
-        "with TTY available, --rich path must reach _silence_logging_for_tui; "
+        "with TTY available, --rich path must reach interactive logging setup; "
         "the non-TTY guard must NOT short-circuit"
     )

@@ -52,8 +52,11 @@ presentation-local owners include:
    diagnostics.
 2. `cli/presentation/theme.py` and `cli/theme/` — renderer colors, theme
    persistence, and theme application.
-3. `cli/interactive/` — canonical Textual Focus app, slash commands, overlays,
-   transcript widgets, and status/tool rendering.
+3. `cli/interactive/` — shared interactive ownership for the default terminal
+   renderer and the
+   opt-in Textual renderer, including slash commands and runtime adapters.
+4. `cli/interactive/terminal/` — default interactive shell, transcript,
+   composer, status, and tool rendering.
 
 Animation providers return raw frame strings and timing only. Foreground
 colors, backgrounds, labels, progress policy, and accessibility remain owned by

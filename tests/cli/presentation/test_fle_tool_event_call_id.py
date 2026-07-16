@@ -65,7 +65,7 @@ def test_existing_tool_event_callers_unchanged() -> None:
 
 
 def _make_runtime_with_minimal_init():
-    from openminion.cli.tui.providers.runtime import OpenMinionRuntime
+    from openminion.cli.interactive.runtime import OpenMinionRuntime
 
     rt = OpenMinionRuntime.__new__(OpenMinionRuntime)
     rt._working_dir = "/tmp"  # required by _display_path

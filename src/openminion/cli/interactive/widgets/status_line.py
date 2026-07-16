@@ -53,7 +53,7 @@ def classify_context_severity(
 
 
 class FocusStatusLine(Widget):
-    """Dynamic status line that mirrors the focus shell's runtime state."""
+    """Dynamic status line that mirrors the interactive runtime state."""
 
     DEFAULT_CSS = "FocusStatusLine { height: 1; }"
 

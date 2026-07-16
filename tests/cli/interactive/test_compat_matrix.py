@@ -7,9 +7,8 @@ import pytest
 
 
 OPENMINION_ROOT = Path(__file__).resolve().parents[3]  # …/openminion/
-FOCUS_SCREEN = (
-    OPENMINION_ROOT / "src" / "openminion" / "cli" / "interactive" / "screen.py"
-)
+FOCUS_ROOT = OPENMINION_ROOT / "src" / "openminion" / "cli" / "interactive"
+FOCUS_OWNERS = (FOCUS_ROOT / "screen.py", FOCUS_ROOT / "actions.py")
 
 
 EXPECTED_CAT1_METHODS: set[tuple[str, str]] = set()
@@ -24,15 +23,14 @@ EXPECTED_CAT3_HANDLERS: set[str] = {
     "on_chat_search_bar_search_closed",
 }
 
-EXPECTED_CAT4_IMPORTS: set[str] = {
-    "ChatSearchBar",
-}
+EXPECTED_CAT4_IMPORTS: set[str] = set()
 
 
 @pytest.fixture(scope="module")
 def screen_source() -> str:
-    assert FOCUS_SCREEN.is_file(), f"canonical Focus screen missing at {FOCUS_SCREEN}"
-    return FOCUS_SCREEN.read_text(encoding="utf-8")
+    missing = [path for path in FOCUS_OWNERS if not path.is_file()]
+    assert not missing, f"canonical Focus screen owners missing: {missing}"
+    return "\n".join(path.read_text(encoding="utf-8") for path in FOCUS_OWNERS)
 
 
 def _grep_cat1_methods(source: str) -> set[tuple[str, str]]:
@@ -76,7 +74,7 @@ def test_cat1_method_calls_match_matrix(screen_source: str) -> None:
     assert found == EXPECTED_CAT1_METHODS, (
         f"Cat-1 matrix drift — expected={EXPECTED_CAT1_METHODS}, "
         f"found={found}. Post-FNS-04 zero forbidden-widget query_one "
-        f"calls should remain in interactive/screen.py."
+        f"calls should remain absent from the interactive screen owners."
     )
 
 
@@ -108,6 +106,6 @@ def test_cat4_imports_match_matrix(screen_source: str) -> None:
     found = _grep_cat4_imports(screen_source)
     assert found == EXPECTED_CAT4_IMPORTS, (
         f"Cat-4 matrix drift — expected={EXPECTED_CAT4_IMPORTS}, "
-        f"found={found}. If FNS-04 has landed this set should shrink "
-        f"to just `ChatSearchBar`."
+        f"found={found}. Canonical interactive widgets must not import "
+        f"from the retired dashboard namespace."
     )

@@ -10,10 +10,10 @@ Top-level settings:
 - `constants.py`
 
 Subpackages:
-- `chat/` — interactive chat REPL and prompt/session UX
 - `commands/` — subcommand handlers bound by the parser
+- `interactive/` — shared interactive CLI and opt-in Textual runtime ownership
+- `interactive/terminal/` — default terminal shell and renderer
 - `status/` — status-line rendering helpers
-- `tui/` — full-screen Textual UI
 
 Grouped helpers:
 - `bootstrap/` — CLI-specific config resolution and path setup
@@ -22,10 +22,7 @@ Grouped helpers:
 - `transport/` — daemon and in-process runtime transport helpers
 - `presentation/` — ANSI styling and output formatting helpers
 - `presentation/animation/` — activity frame/timing provider validation,
-  built-in fallback, optional provider discovery, and Focus animation
+  built-in fallback, optional provider discovery, and interactive animation
   resolution
-- `interactive/` — canonical Textual Focus app, widgets, slash commands, and
-  overlays
-
 Compatibility note:
 - CLC moved grouped helpers out of the `cli/` root, but `openminion.cli.<module>` compatibility imports remain supported through `openminion.cli.__init__` aliases so older public imports keep resolving without reintroducing flat root files.

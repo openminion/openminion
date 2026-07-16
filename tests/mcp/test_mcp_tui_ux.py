@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from openminion.cli.tui.mcp_status import (
+from openminion.cli.interactive.mcp_status import (
     MCPServerStatusRow,
     build_mcp_reference,
     render_mcp_status_report,
 )
-from openminion.cli.tui.providers.runtime import OpenMinionRuntime
+from openminion.cli.interactive.runtime import OpenMinionRuntime
 from openminion.tools.mcp.schemas import (
     MCPListedPrompt,
     MCPListedResource,

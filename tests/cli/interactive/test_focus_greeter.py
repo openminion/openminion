@@ -132,7 +132,7 @@ async def test_fresh_session_renders_greeter_not_welcome_banner() -> None:
             assert first.kind == MessageKind.SYSTEM
             assert first.body.startswith("OpenMinion\nHow can I help today?")
             assert "Try:" in first.body
-            assert "OpenMinion focus — single-agent shell" not in first.body
+            assert "OpenMinion CLI - single-agent interactive shell" not in first.body
 
 
 @pytest.mark.asyncio

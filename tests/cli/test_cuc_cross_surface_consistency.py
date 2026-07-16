@@ -26,7 +26,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 def _build_parser():
     from openminion.cli.commands.agent import register as agent_register
-    from openminion.cli.commands.focus import register as focus_register
+    from openminion.cli.commands.interactive import register as focus_register
     from openminion.cli.commands.gateway import register as gateway_register
     from openminion.cli.commands.run import register as run_register
 

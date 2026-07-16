@@ -54,7 +54,7 @@ def _read_preferences_file() -> dict[str, str]:
             data = tomllib.load(fh)
     except (OSError, tomllib.TOMLDecodeError) as exc:
         print(
-            f"openminion: failed to read focus preferences from {path}: "
+            f"openminion: failed to read CLI preferences from {path}: "
             f"{exc}. Falling back to defaults.",
             file=sys.stderr,
         )
@@ -68,13 +68,13 @@ def _read_preferences_file() -> dict[str, str]:
 
 
 def read_focus_preferences() -> dict[str, str]:
-    """Return recognized focus preferences from the shared preference file."""
+    """Return recognized CLI preferences from the shared preference file."""
 
     return _read_preferences_file()
 
 
 def write_focus_preferences(updates: Mapping[str, str | None]) -> Path:
-    """Persist recognized focus preferences while preserving other known keys."""
+    """Persist recognized CLI preferences while preserving other known keys."""
 
     path = _resolve_preferences_file_path()
     prefs = _read_preferences_file()

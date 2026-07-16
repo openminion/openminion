@@ -28,8 +28,9 @@ This directory holds the public package documentation for standalone
   package-owned CLI, API, gateway, and Python-library surfaces and their
   intended use.
 - [`terminal-surfaces.md`](terminal-surfaces.md) records the canonical terminal
-  product, compatibility aliases, dashboard migration map, and retirement
-  gates.
+  product, compatibility aliases, and retired-dashboard replacement map.
+- [`system-operations.md`](system-operations.md) records the `tools/ops`
+  family, transport backends, evidence rules, and opt-in SSH smoke.
 - [`testing-and-validation.md`](testing-and-validation.md)
   records the package-local smoke flow, validation gates, and public
   first-user checks.

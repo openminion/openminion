@@ -124,7 +124,7 @@ def test_mcp_completion_tui_runtime_query_path_returns_values() -> None:
     tools = type("Tools", (), {"mcp_manager": manager})()
     runtime = type("Runtime", (), {"tools": tools})()
 
-    from openminion.cli.tui.providers.runtime import OpenMinionRuntime
+    from openminion.cli.interactive.runtime import OpenMinionRuntime
 
     provider = object.__new__(OpenMinionRuntime)
     provider._rt = runtime  # noqa: SLF001

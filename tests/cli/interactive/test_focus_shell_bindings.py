@@ -9,8 +9,8 @@ from openminion.cli.status import TokenUsageSnapshot
 from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
 from openminion.cli.interactive.status import FocusRuntimeStateMixin
 from openminion.cli.interactive.screen import FocusDebugPane, FocusScreen
-from openminion.cli.tui.screen import CommandPaletteScreen
-from openminion.cli.tui.widgets import ChatSearchBar
+from openminion.cli.interactive.palette import CommandPaletteScreen
+from openminion.cli.interactive.search import ChatSearchBar
 from openminion.cli.interactive.widgets import FocusTranscript
 from openminion.cli.interactive.widgets.composer import _FocusComposerInput as ChatInput
 

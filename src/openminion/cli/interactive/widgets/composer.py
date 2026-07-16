@@ -8,7 +8,7 @@ from textual.widget import Widget
 from textual.widgets import Input, Label, TextArea
 
 from openminion.cli.ux.input_normalization import normalize_multiline_input_text
-from openminion.cli.tui.widgets.keys import (
+from openminion.cli.interactive.widgets.keys import (
     is_bare_space_key,
     is_space_key,
     stop_key_event,
@@ -78,7 +78,7 @@ class _FocusComposerEditor(TextArea):
 
 
 class FocusComposer(Widget):
-    """Focus-native bottom input area."""
+    """Interactive CLI bottom input area."""
 
     PLACEHOLDER_FRESH = "Ask anything · @ to mention a file · / for commands"
     PLACEHOLDER_RESUMED = "Reply, or / for commands · ↑ for history"

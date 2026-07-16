@@ -24,8 +24,8 @@ _UNSUPPORTED_OPTIONS = {
 }
 
 _NOTICE_TEXT = (
-    "openminion chat is a compatibility alias; use bare `openminion` or "
-    "`openminion focus` for interactive work. Suppress this notice with "
+    "openminion chat is a compatibility alias; use bare `openminion` for "
+    "interactive work. Suppress this notice with "
     "OPENMINION_CHAT_NO_DEPRECATION=1."
 )
 
@@ -40,7 +40,7 @@ def _unsupported_option(args: argparse.Namespace) -> str:
 def _print_migration_error(option: str) -> int:
     print(
         f"openminion chat: {option} is not supported by the compatibility "
-        "alias. Use bare `openminion` or `openminion focus`; use "
+        "alias. Use bare `openminion`; use "
         "`openminion run` for scripted one-shot execution.",
         file=sys.stderr,
     )
@@ -48,10 +48,10 @@ def _print_migration_error(option: str) -> int:
 
 
 def _run_interactive_alias(args: argparse.Namespace) -> int:
-    from openminion.cli.commands.focus import run_focus
+    from openminion.cli.commands.interactive import run_interactive
 
     return int(
-        run_focus(
+        run_interactive(
             SimpleNamespace(
                 config=getattr(args, "config", None),
                 home_root=getattr(args, "home_root", None),
@@ -63,7 +63,7 @@ def _run_interactive_alias(args: argparse.Namespace) -> int:
                 no_interactive=bool(getattr(args, "no_interactive", False)),
                 no_context=False,
                 no_update_check=False,
-                rich=True,
+                rich=False,
                 terminal=False,
                 surface="chat",
                 deprecation_notice_shown=bool(

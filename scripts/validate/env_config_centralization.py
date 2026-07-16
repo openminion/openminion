@@ -29,7 +29,7 @@ ALLOWED_FROM_SOURCES_FILES = {
     Path("src/openminion/base/config/io.py"),
     Path("src/openminion/base/config/manager.py"),
     Path("src/openminion/base/config/paths.py"),
-    Path("src/openminion/cli/commands/focus.py"),
+    Path("src/openminion/cli/commands/interactive.py"),
     Path("src/openminion/cli/ux/deprecation.py"),
     Path("src/openminion/cli/ux/verbosity.py"),
     Path("src/openminion/cli/main.py"),

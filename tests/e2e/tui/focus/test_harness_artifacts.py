@@ -11,9 +11,10 @@ def test_artifact_root_defaults_to_workspace_tmp(monkeypatch, tmp_path: Path) ->
     root = artifact_root(tmp_path)
 
     assert root == (
-        Path(__file__).resolve().parents[5]
-        / "workspace-tmp"
-        / "openminion-tui-focus-e2e"
-        / tmp_path.name
-    )
+            Path(__file__).resolve().parents[5]
+            / "workspace-tmp"
+            / "openminion-tui-focus-e2e"
+            / tmp_path.parent.name
+            / tmp_path.name
+        )
     assert root.is_dir()

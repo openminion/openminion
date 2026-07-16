@@ -158,7 +158,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/dashboard",
-        "Open the monitoring dashboard for chats, sessions, agents, and tools",
+        "Show dashboard retirement and replacement commands",
         "_slash_dashboard",
         "_slash_dashboard",
     ),
@@ -166,7 +166,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/help", "Show this help", "_slash_help", "_slash_help", ("/",)
     ),
     SlashCommandMetadata(
-        "/exit", "Exit the focus shell", "_slash_exit", "_slash_exit", ("/quit",)
+        "/exit", "Exit the interactive CLI", "_slash_exit", "_slash_exit", ("/quit",)
     ),
 )
 
