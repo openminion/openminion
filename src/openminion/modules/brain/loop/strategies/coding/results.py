@@ -200,7 +200,11 @@ def _result_from_outcome(
             if outcome.action_result is not None
             else build_error_result(message, "coding_tool_failure"),
         )
-    if outcome.termination_reason == ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS:
+    if outcome.termination_reason in {
+        ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+        ADAPTIVE_TERM_CIRCULAR_PATTERN,
+        CODING_TERM_ITERATION_CAP,
+    }:
         missing_write_result = _maybe_gate_missing_required_write(
             runner,
             ctx,
@@ -211,6 +215,7 @@ def _result_from_outcome(
         )
         if missing_write_result is not None:
             return missing_write_result
+    if outcome.termination_reason == ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS:
         message = (
             "[act:coding] repeated identical tool calls detected without reaching a "
             "final answer. Consider narrowing the scope or continuing in a follow-up turn."
@@ -226,16 +231,6 @@ def _result_from_outcome(
             build_blocked_result=build_blocked_result,
         )
     if outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN:
-        missing_write_result = _maybe_gate_missing_required_write(
-            runner,
-            ctx,
-            loop=loop,
-            allowed_tools=allowed_tools,
-            build_blocked_result=build_blocked_result,
-            final_text=getattr(outcome, "final_text", "") or "",
-        )
-        if missing_write_result is not None:
-            return missing_write_result
         message = (
             "[act:coding] repeated the same tool pattern without making progress. "
             "Continue in a follow-up turn with a narrower implementation step."
@@ -251,16 +246,6 @@ def _result_from_outcome(
             build_blocked_result=build_blocked_result,
         )
     if outcome.termination_reason == CODING_TERM_ITERATION_CAP:
-        missing_write_result = _maybe_gate_missing_required_write(
-            runner,
-            ctx,
-            loop=loop,
-            allowed_tools=allowed_tools,
-            build_blocked_result=build_blocked_result,
-            final_text=getattr(outcome, "final_text", "") or "",
-        )
-        if missing_write_result is not None:
-            return missing_write_result
         message = (
             "[act:coding] reached maximum iterations without a final answer. "
             "Consider narrowing the scope or continuing in a follow-up turn."
