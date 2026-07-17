@@ -56,7 +56,7 @@ def _handle_list_tools(ctx: APIRouteContext) -> RouteResult:
     return _with_runtime(ctx, _build)
 
 
-def _exposure_scope(body: dict | None) -> dict[str, str]:
+def _exposure_scope(body: dict[str, object] | None) -> dict[str, str]:
     values = body or {}
     return {
         "session_id": str(values.get("session_id", "") or "").strip(),

@@ -50,6 +50,7 @@ from .renderers import (
     _switch_theme,
     _switch_theme_variant,
 )
+from .sessions import resume_session, show_dashboard_retirement, start_new_session
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -526,6 +527,56 @@ def _handle_visible_parity_slash(
         )
 
 
+async def _handle_session_slash(
+    cmd: str,
+    text: str,
+    *,
+    runtime: Any,
+    console: Console,
+    transcript: TerminalTranscript,
+    overlay: TerminalOverlayPresenter,
+    working_dir: str,
+) -> bool:
+    if cmd == "/clear":
+        transcript.clear_messages()
+    elif cmd == "/init":
+        _run_init_command(
+            runtime=runtime,
+            console=console,
+            overlay=overlay,
+            working_dir=working_dir,
+        )
+    elif cmd == "/new":
+        start_new_session(runtime=runtime, console=console, transcript=transcript)
+    elif cmd == "/dashboard":
+        await show_dashboard_retirement(
+            runtime=runtime, console=console, transcript=transcript
+        )
+    elif cmd == "/diff":
+        _handle_slash_diff(
+            text,
+            transcript=transcript,
+            console=console,
+            working_dir=working_dir,
+        )
+    elif cmd == "/expand":
+        _handle_slash_expand(text, transcript=transcript, console=console)
+    elif cmd == "/sessions":
+        _render_sessions_list(runtime=runtime, console=console)
+    elif cmd == "/resume":
+        resume_session(
+            runtime=runtime,
+            console=console,
+            transcript=transcript,
+            overlay=overlay,
+        )
+    elif cmd == "/status":
+        _render_status_block(runtime=runtime, console=console, working_dir=working_dir)
+    else:
+        return False
+    return True
+
+
 async def _handle_slash(
     text: str,
     *,
@@ -545,51 +596,15 @@ async def _handle_slash(
     if cmd in ("/", "/help"):
         _print_slash_help(console)
         return False
-    if cmd == "/clear":
-        transcript.clear_messages()
-        return False
-    if cmd == "/init":
-        _run_init_command(
-            runtime=runtime,
-            console=console,
-            overlay=overlay,
-            working_dir=working_dir,
-        )
-        return False
-    if cmd == "/new":
-        _start_new_focus_session(
-            runtime=runtime, console=console, transcript=transcript
-        )
-        return False
-    if cmd == "/dashboard":
-        await _open_dashboard_side_trip(
-            runtime=runtime, console=console, transcript=transcript
-        )
-        return False
-    if cmd == "/diff":
-        _handle_slash_diff(
-            text,
-            transcript=transcript,
-            console=console,
-            working_dir=working_dir,
-        )
-        return False
-    if cmd == "/expand":
-        _handle_slash_expand(text, transcript=transcript, console=console)
-        return False
-    if cmd == "/sessions":
-        _render_sessions_list(runtime=runtime, console=console)
-        return False
-    if cmd == "/resume":
-        _resume_focus_session(
-            runtime=runtime,
-            console=console,
-            transcript=transcript,
-            overlay=overlay,
-        )
-        return False
-    if cmd == "/status":
-        _render_status_block(runtime=runtime, console=console, working_dir=working_dir)
+    if await _handle_session_slash(
+        cmd,
+        text,
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+        overlay=overlay,
+        working_dir=working_dir,
+    ):
         return False
     if cmd in (
         "/context",
@@ -646,6 +661,26 @@ async def _handle_slash(
     if cmd == "/compact":
         _handle_slash_compact(runtime=runtime, console=console)
         return False
+    if _handle_shell_preference_slash(
+        cmd,
+        text,
+        runtime=runtime,
+        console=console,
+        transcript=transcript,
+    ):
+        return False
+    _print_unknown_slash_notice(cmd, console)
+    return False
+
+
+def _handle_shell_preference_slash(
+    cmd: str,
+    text: str,
+    *,
+    runtime: Any,
+    console: Console,
+    transcript: TerminalTranscript,
+) -> bool:
     if cmd == "/queue":
         console.print(
             Text(
@@ -653,120 +688,17 @@ async def _handle_slash(
                 style=_MUTED_ITALIC_STYLE,
             )
         )
-        return False
-    if cmd in ("/quiet", "/verbose", "/normal"):
+    elif cmd in ("/quiet", "/verbose", "/normal"):
         _handle_slash_verbosity(cmd, transcript=transcript, console=console)
-        return False
-    if cmd == "/details":
+    elif cmd == "/details":
         _handle_slash_details(text, transcript=transcript, console=console)
-        return False
-    if cmd == "/export":
+    elif cmd == "/export":
         _handle_slash_export(runtime=runtime, console=console)
-        return False
-    if cmd == "/editor":
+    elif cmd == "/editor":
         _handle_slash_editor(console)
-        return False
-    _print_unknown_slash_notice(cmd, console)
-    return False
-
-
-def _start_new_focus_session(
-    *,
-    runtime: Any,
-    console: Console,
-    transcript: TerminalTranscript,
-) -> None:
-    creator = getattr(runtime, "create_new_session", None)
-    if not callable(creator):
-        console.print(
-            Text(
-                "(runtime does not expose create_new_session)",
-                style=_MUTED_STYLE,
-            )
-        )
-        return
-    try:
-        session_id = str(creator() or "").strip()
-    except Exception as exc:
-        console.print(Text(f"(could not start new session: {exc})", style=_ERR_STYLE))
-        return
-    transcript.clear_messages()
-    if session_id:
-        console.print(
-            Text(f"(started new session: {session_id})", style=_MUTED_ITALIC_STYLE)
-        )
     else:
-        console.print(Text("(started new session)", style=_MUTED_ITALIC_STYLE))
-
-
-def _resume_focus_session(
-    *,
-    runtime: Any,
-    console: Console,
-    transcript: TerminalTranscript,
-    overlay: TerminalOverlayPresenter,
-) -> None:
-    lister = getattr(runtime, "list_directory_sessions", None)
-    binder = getattr(runtime, "bind_session", None)
-    history_getter = getattr(runtime, "get_current_history", None)
-    if not callable(lister) or not callable(binder) or not callable(history_getter):
-        console.print(
-            Text(
-                "(runtime does not expose resume session helpers)",
-                style=_MUTED_STYLE,
-            )
-        )
-        return
-    try:
-        sessions = list(lister(limit=50) or [])
-    except Exception as exc:
-        console.print(Text(f"(could not list sessions: {exc})", style=_ERR_STYLE))
-        return
-    non_empty = [
-        item for item in sessions if int(getattr(item, "message_count", 0) or 0) > 0
-    ]
-    if not non_empty:
-        console.print(
-            Text(
-                "No prior sessions with messages found in this directory. "
-                "Use `/new` to start one.",
-                style=_MUTED_ITALIC_STYLE,
-            )
-        )
-        return
-    chosen = overlay.present_resume_picker(non_empty)
-    chosen_id = str(chosen or "").strip()
-    if not chosen_id:
-        return
-    try:
-        binder(chosen_id)
-        history = list(history_getter() or [])
-    except Exception as exc:
-        console.print(Text(f"(could not resume session: {exc})", style=_ERR_STYLE))
-        return
-    transcript.set_messages(history)
-    console.print(Text(f"(resumed session: {chosen_id})", style=_MUTED_ITALIC_STYLE))
-
-
-async def _open_dashboard_side_trip(
-    *,
-    runtime: Any,
-    console: Console,
-    transcript: TerminalTranscript,
-) -> None:
-    """Show the canonical replacement commands for the retired dashboard."""
-    del console
-    from openminion.cli.commands.tui import dashboard_deprecation_message
-    from openminion.cli.status.surface import record_surface_event
-
-    transcript.push_message(
-        ChatMessage(
-            kind=MessageKind.SYSTEM,
-            sender="system",
-            body=dashboard_deprecation_message(),
-        )
-    )
-    record_surface_event(runtime, surface="dashboard", action="deprecation")
+        return False
+    return True
 
 
 async def _run_shell_escape(

@@ -121,7 +121,6 @@ from .iteration.helpers import (
     _build_tool_failure_recovery_message,
     _count_substantive_non_control_tool_results,
     _explicit_calendar_years,
-    _loop_has_non_success_tool_result,
     _loop_tool_result_payloads,
     _repair_stale_exact_date_search_args,
     _requires_typed_finalization_contract,
@@ -129,6 +128,7 @@ from .iteration.helpers import (
     _stale_exact_date_query_reason,
     _tool_result_payload_from_action,
 )
+from .evidence import _loop_has_non_success_tool_result
 from .dispatch import _tool_request_result  # noqa: F401
 from .duplicate_batch import (  # noqa: F401
     _action_result_has_retry_or_poll_signal,

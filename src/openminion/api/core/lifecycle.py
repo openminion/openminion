@@ -4,7 +4,22 @@ from __future__ import annotations
 
 from contextlib import suppress
 from collections.abc import Callable
+from typing import Protocol, cast
 import weakref
+
+
+class RuntimeFinalizer(Protocol):
+    @property
+    def alive(self) -> bool: ...
+
+    def detach(self) -> object: ...
+
+
+class _ExposureService(Protocol):
+    def bind_event_sink(
+        self,
+        sink: Callable[[dict[str, object]], None],
+    ) -> None: ...
 
 
 def _call(resource: object | None, method: str, **kwargs: object) -> None:
@@ -18,9 +33,12 @@ def initialize_runtime_components(
     runtime: object,
     *,
     tool_exposure_event_sink: Callable[[dict[str, object]], None],
-) -> weakref.finalize:
+) -> RuntimeFinalizer:
     runtime_tools = getattr(runtime, "tools", None)
-    exposure_service = getattr(runtime_tools, "exposure_service", None)
+    exposure_service = cast(
+        _ExposureService,
+        getattr(runtime_tools, "exposure_service", None),
+    )
     exposure_service.bind_event_sink(tool_exposure_event_sink)
     return weakref.finalize(
         runtime,

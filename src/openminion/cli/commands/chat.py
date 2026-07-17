@@ -5,7 +5,10 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+from openminion.api.turns import run_turn as _api_run_turn
 from openminion.cli.ux.deprecation import print_deprecation_notice
+
+run_turn = _api_run_turn
 
 
 _UNSUPPORTED_OPTIONS = {

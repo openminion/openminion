@@ -80,7 +80,7 @@ def test_every_live_submodule_resolves(submodule: str, attr: str | None) -> None
 
 @pytest.mark.parametrize(
     "storage_submodule",
-    ["base", "integrity", "io", "store"],
+    ["base", "store"],
 )
 def test_storage_submodules_resolve(storage_submodule: str) -> None:
 

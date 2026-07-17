@@ -144,13 +144,22 @@ class APIRuntimeTests(unittest.TestCase):
             def close(self) -> None:
                 order.append(f"{self._name}.close")
 
+        class FakeExposureService:
+            def bind_event_sink(self, sink: object) -> None:
+                self.event_sink = sink
+
         runtime._closed = False
         runtime.retrieve_ctl = FakeClosable("retrieve_ctl")
         runtime.action_policy = FakeClosable("action_policy")
         runtime.runtime_manager = FakeManager()
         runtime.runtime_storage = FakeClosable("runtime_storage")
         runtime.tools = type(
-            "FakeTools", (), {"mcp_manager": FakeClosable("mcp_manager")}
+            "FakeTools",
+            (),
+            {
+                "exposure_service": FakeExposureService(),
+                "mcp_manager": FakeClosable("mcp_manager"),
+            },
         )()
 
         APIRuntime.__post_init__(runtime)

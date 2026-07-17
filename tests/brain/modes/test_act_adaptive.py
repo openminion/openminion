@@ -600,6 +600,10 @@ def test_act_adaptive_changed_tool_arguments_reach_normal_finalization() -> None
                 provider="fake",
                 model="fake-model",
                 output_text="The files share the same structure and no more tool calls are needed.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "All three distinct file reads were compared.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -2942,6 +2946,10 @@ def test_act_adaptive_seeded_confirmation_replay_lost_reason_policy_denial_uses_
                 provider="fake",
                 model="fake-model",
                 output_text="Recovered with file.find guidance.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The structured recovery tool completed the request.",
+                },
                 finish_reason="stop",
             ),
             LLMResponse(
@@ -3199,10 +3207,17 @@ def test_act_adaptive_forces_answer_only_closure_after_successful_duplicate_batc
     assert [call.args["path"] for call in executor.calls] == ["."]
     assert len(llm_client.calls) == 2
     assert llm_client.calls[1]["overrides"]["tool_choice"] == "none"
+    closure_messages = llm_client.calls[1]["messages"]
     assert any(
-        "already completed successfully" in str(getattr(message, "content", "") or "")
-        for message in llm_client.calls[1]["messages"]
+        "repeated an identical successful tool batch"
+        in str(getattr(message, "content", "") or "")
+        for message in closure_messages
         if getattr(message, "role", "") == "system"
+    )
+    assert any(
+        "listed repo root" in str(getattr(message, "content", "") or "")
+        for message in closure_messages
+        if getattr(message, "role", "") == "user"
     )
 
 

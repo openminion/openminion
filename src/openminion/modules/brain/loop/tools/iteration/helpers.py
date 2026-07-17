@@ -29,7 +29,6 @@ from ..budget_control import _general_profile_name
 from ..direct_tool import _direct_tool_turn_active
 from ..evidence import (
     _count_substantive_non_control_tool_results,
-    _loop_has_non_success_tool_result,
     _loop_tool_result_payloads,
 )
 
@@ -166,7 +165,7 @@ def _requires_typed_finalization_contract(
         for item in _loop_tool_result_payloads(loop_state)
         if str(item.get("tool_name", "") or "").strip()
     }
-    if _general_profile_name(profile) and _loop_has_non_success_tool_result(loop_state):
+    if _general_profile_name(profile) and not direct_tool_turn_active:
         return True
     if (
         not coding_profile

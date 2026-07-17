@@ -1,10 +1,8 @@
 import datetime
 import json
-from dataclasses import dataclass
 from typing import Any
 
 from openminion.base.time import utc_now as _utc_now
-from openminion.modules.artifact.refs import remove_reference_edges
 from openminion.modules.memory.config import (
     MEMORY_GC_SUMMARY_COMPRESS_AFTER_DAYS,
     MEMORY_GC_SUMMARY_COMPRESS_MAX_CHARS,
@@ -15,6 +13,12 @@ from openminion.modules.memory.storage.base import MemoryStore
 from openminion.modules.memory.storage.postgres.sql import _build_search_text
 from openminion.modules.memory.storage.postgres.store import (
     PostgresMemoryStore,
+)
+from openminion.modules.memory.runtime.purge import (
+    GCResult,
+    decode_evidence_ref_values as _decode_evidence_ref_values,
+    purge_soft_deleted,
+    remove_artifact_refs as _remove_artifact_refs,
 )
 
 
@@ -29,29 +33,6 @@ def _parse_when(value: str | None) -> datetime.datetime | None:
 
 def _delete_fts_entry(conn, record_id: str) -> None:  # type: ignore[no-untyped-def]
     conn.execute("DELETE FROM memory_fts WHERE id = ?", (record_id,))
-
-
-def _decode_evidence_ref_values(raw_json: str | None) -> list[Any]:
-    payload = json.loads(str(raw_json or "[]"))
-    if isinstance(payload, list):
-        return payload
-    return []
-
-
-def _remove_artifact_refs(
-    store: MemoryStore,
-    *,
-    owner_id: str,
-    ref_values: list[Any],
-) -> None:
-    if not ref_values:
-        return
-    remove_reference_edges(
-        artifactctl=store._resolve_artifactctl(),
-        owner_type="memory",
-        owner_id=owner_id,
-        ref_values=ref_values,
-    )
 
 
 def _soft_delete_record(
@@ -118,17 +99,6 @@ def _shorten_summary_text(text: str, *, max_chars: int) -> str:
                 normalized = first
                 break
     return normalized[:max_chars].strip()
-
-
-@dataclass
-class GCResult:
-    deleted_records: int = 0
-    deleted_candidates: int = 0
-    cleaned_fts_rows: int = 0
-    cleaned_entity_rows: int = 0
-    decayed_records: int = 0
-    capacity_evicted_records: int = 0
-    compressed_summaries: int = 0
 
 
 def apply_confidence_decay(
@@ -683,274 +653,6 @@ def evict_stale_insights(
     for record_id, ref_values in removed_edges:
         _remove_artifact_refs(store, owner_id=record_id, ref_values=ref_values)
     return evicted
-
-
-def purge_soft_deleted(
-    store: MemoryStore,
-    batch_size: int = 500,
-) -> GCResult:
-    now = _utc_now().isoformat()
-    result = GCResult()
-
-    if isinstance(store, PostgresMemoryStore):
-        from sqlalchemy import bindparam, text
-
-        with store.gc_connection() as conn:
-            removed_record_edges: list[tuple[str, list[Any]]] = []
-            candidate_rows = []
-            dead_rows = (
-                conn.execute(
-                    text(
-                        """
-                    SELECT id, evidence_json
-                    FROM memory_records
-                    WHERE is_deleted = TRUE
-                      AND id NOT IN (
-                          SELECT supersedes_id FROM memory_records
-                          WHERE supersedes_id IS NOT NULL AND is_deleted = FALSE
-                      )
-                      AND id NOT IN (
-                          SELECT superseded_by_id FROM memory_records
-                          WHERE superseded_by_id IS NOT NULL AND is_deleted = FALSE
-                      )
-                    LIMIT :batch_size
-                    """
-                    ),
-                    {"batch_size": int(batch_size)},
-                )
-                .mappings()
-                .all()
-            )
-            expired_rows = (
-                conn.execute(
-                    text(
-                        """
-                    SELECT id, evidence_json
-                    FROM memory_records
-                    WHERE expires_at IS NOT NULL AND expires_at < :now AND is_deleted = FALSE
-                      AND id NOT IN (
-                          SELECT supersedes_id FROM memory_records
-                          WHERE supersedes_id IS NOT NULL AND is_deleted = FALSE
-                      )
-                      AND id NOT IN (
-                          SELECT superseded_by_id FROM memory_records
-                          WHERE superseded_by_id IS NOT NULL AND is_deleted = FALSE
-                      )
-                    LIMIT :batch_size
-                    """
-                    ),
-                    {"now": now, "batch_size": int(batch_size)},
-                )
-                .mappings()
-                .all()
-            )
-            purgeable = {str(row["id"]): row for row in dead_rows}
-            for row in expired_rows:
-                purgeable.setdefault(str(row["id"]), row)
-            record_ids = tuple(purgeable)
-            removed_record_edges = [
-                (rid, _decode_evidence_ref_values(row.get("evidence_json")))
-                for rid, row in purgeable.items()
-            ]
-
-            if record_ids:
-                records_param = bindparam("record_ids", expanding=True)
-                records = {"record_ids": record_ids}
-                for column in ("supersedes_id", "superseded_by_id"):
-                    conn.execute(
-                        text(
-                            f"""
-                            UPDATE memory_records
-                               SET {column} = NULL
-                             WHERE (is_deleted = TRUE OR id IN :record_ids)
-                               AND {column} IN :record_ids
-                            """
-                        ).bindparams(records_param),
-                        records,
-                    )
-                conn.execute(
-                    text(
-                        "DELETE FROM memory_tier_transitions "
-                        "WHERE record_id IN :record_ids"
-                    ).bindparams(records_param),
-                    records,
-                )
-                conn.execute(
-                    text(
-                        "DELETE FROM memory_relations "
-                        "WHERE source_record_id IN :record_ids "
-                        "OR target_record_id IN :record_ids"
-                    ).bindparams(records_param),
-                    records,
-                )
-                result.cleaned_entity_rows += (
-                    conn.execute(
-                        text(
-                            "DELETE FROM memory_entities WHERE record_id IN :record_ids"
-                        ).bindparams(records_param),
-                        records,
-                    ).rowcount
-                    or 0
-                )
-                result.deleted_records += (
-                    conn.execute(
-                        text(
-                            "DELETE FROM memory_records WHERE id IN :record_ids"
-                        ).bindparams(records_param),
-                        records,
-                    ).rowcount
-                    or 0
-                )
-
-            candidate_query = text(
-                "SELECT candidate_id, evidence_json FROM memory_candidates "
-                "WHERE status IN ('rejected', 'promoted')"
-            )
-            candidate_rows = conn.execute(candidate_query).mappings().all()
-            delete_candidates = text(
-                "DELETE FROM memory_candidates WHERE status IN ('rejected', 'promoted')"
-            )
-            result.deleted_candidates = int(
-                conn.execute(delete_candidates).rowcount or 0
-            )
-
-        for owner_id, ref_values in removed_record_edges:
-            _remove_artifact_refs(store, owner_id=owner_id, ref_values=ref_values)
-        for row in candidate_rows:
-            _remove_artifact_refs(
-                store,
-                owner_id=str(row["candidate_id"]),
-                ref_values=_decode_evidence_ref_values(row.get("evidence_json")),
-            )
-        return result
-
-    with store._connect() as conn:
-        conn.execute("BEGIN")
-        removed_record_edges: list[tuple[str, list[Any]]] = []
-        removed_candidate_edges: list[tuple[str, list[Any]]] = []
-        try:
-            cursor = conn.execute(
-                """
-                SELECT id FROM memory_records
-                WHERE is_deleted=1
-                  AND id NOT IN (
-                      SELECT supersedes_id FROM memory_records
-                      WHERE supersedes_id IS NOT NULL AND is_deleted=0
-                  )
-                  AND id NOT IN (
-                      SELECT superseded_by_id FROM memory_records
-                      WHERE superseded_by_id IS NOT NULL AND is_deleted=0
-                  )
-                LIMIT ?
-                """,
-                (batch_size,),
-            )
-            dead_ids = [row["id"] for row in cursor.fetchall()]
-
-            cursor = conn.execute(
-                """
-                SELECT id FROM memory_records
-                WHERE expires_at IS NOT NULL AND expires_at < ? AND is_deleted=0
-                  AND id NOT IN (
-                      SELECT supersedes_id FROM memory_records
-                      WHERE supersedes_id IS NOT NULL AND is_deleted=0
-                  )
-                  AND id NOT IN (
-                      SELECT superseded_by_id FROM memory_records
-                      WHERE superseded_by_id IS NOT NULL AND is_deleted=0
-                  )
-                LIMIT ?
-                """,
-                (now, batch_size),
-            )
-            expired_ids = [row["id"] for row in cursor.fetchall()]
-
-            all_purgeable = list(dict.fromkeys(dead_ids + expired_ids))
-
-            if all_purgeable:
-                conn.execute(
-                    "CREATE TEMP TABLE memory_gc_purge_ids (id TEXT PRIMARY KEY)"
-                )
-                conn.executemany(
-                    "INSERT INTO memory_gc_purge_ids(id) VALUES (?)",
-                    [(record_id,) for record_id in all_purgeable],
-                )
-                rows = conn.execute(
-                    "SELECT id, evidence_json FROM memory_records "
-                    "WHERE id IN (SELECT id FROM memory_gc_purge_ids)"
-                ).fetchall()
-                removed_record_edges = [
-                    (
-                        str(row["id"]),
-                        _decode_evidence_ref_values(row["evidence_json"]),
-                    )
-                    for row in rows
-                ]
-                for column in ("supersedes_id", "superseded_by_id"):
-                    conn.execute(
-                        f"""
-                        UPDATE memory_records
-                           SET {column} = NULL
-                         WHERE (is_deleted = 1 OR
-                                id IN (SELECT id FROM memory_gc_purge_ids))
-                           AND {column} IN (SELECT id FROM memory_gc_purge_ids)
-                        """
-                    )
-                conn.execute(
-                    "DELETE FROM memory_tier_transitions "
-                    "WHERE record_id IN (SELECT id FROM memory_gc_purge_ids)"
-                )
-                conn.execute(
-                    "DELETE FROM memory_relations WHERE source_record_id IN "
-                    "(SELECT id FROM memory_gc_purge_ids) OR target_record_id IN "
-                    "(SELECT id FROM memory_gc_purge_ids)"
-                )
-                cursor = conn.execute(
-                    "DELETE FROM memory_fts "
-                    "WHERE id IN (SELECT id FROM memory_gc_purge_ids)"
-                )
-                result.cleaned_fts_rows += max(0, cursor.rowcount)
-                cursor = conn.execute(
-                    "DELETE FROM memory_entities "
-                    "WHERE record_id IN (SELECT id FROM memory_gc_purge_ids)"
-                )
-                result.cleaned_entity_rows += max(0, cursor.rowcount)
-                cursor = conn.execute(
-                    "DELETE FROM memory_records "
-                    "WHERE id IN (SELECT id FROM memory_gc_purge_ids)"
-                )
-                result.deleted_records += max(0, cursor.rowcount)
-                conn.execute("DROP TABLE memory_gc_purge_ids")
-
-            candidate_rows = conn.execute(
-                "SELECT candidate_id, evidence_json FROM memory_candidates "
-                "WHERE status IN ('rejected', 'promoted')"
-            ).fetchall()
-            removed_candidate_edges = [
-                (
-                    str(row["candidate_id"]),
-                    _decode_evidence_ref_values(row["evidence_json"]),
-                )
-                for row in candidate_rows
-            ]
-            cursor = conn.execute(
-                "DELETE FROM memory_candidates WHERE status IN ('rejected', 'promoted')"
-            )
-            result.deleted_candidates = cursor.rowcount
-
-            conn.execute("COMMIT")
-        except Exception:
-            try:
-                conn.execute("ROLLBACK")
-            except Exception:
-                pass
-            raise
-
-    for owner_id, ref_values in removed_record_edges:
-        _remove_artifact_refs(store, owner_id=owner_id, ref_values=ref_values)
-    for owner_id, ref_values in removed_candidate_edges:
-        _remove_artifact_refs(store, owner_id=owner_id, ref_values=ref_values)
-    return result
 
 
 def run_gc(

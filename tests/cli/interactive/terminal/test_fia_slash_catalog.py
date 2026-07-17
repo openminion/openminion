@@ -11,6 +11,10 @@ from openminion.cli.interactive.terminal.shell import (
     _SLASH_COMMANDS,
     _handle_slash,
 )
+from openminion.cli.interactive.terminal.shell.actions import (
+    _handle_session_slash,
+    _handle_shell_preference_slash,
+)
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
 
@@ -20,13 +24,18 @@ class _StubOverlay:
 
 
 def _extract_implemented_slashes() -> set[str]:
-    src = inspect.getsource(_handle_slash)
-    tree = ast.parse(src)
     implemented: set[str] = set()
 
-    for node in ast.walk(tree):
-        # Match: `if cmd == "/foo":`
-        if isinstance(node, ast.Compare):
+    dispatchers = (
+        _handle_slash,
+        _handle_session_slash,
+        _handle_shell_preference_slash,
+    )
+    for dispatcher in dispatchers:
+        tree = ast.parse(inspect.getsource(dispatcher))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
             if (
                 isinstance(node.left, ast.Name)
                 and node.left.id == "cmd"
@@ -38,7 +47,6 @@ def _extract_implemented_slashes() -> set[str]:
                 and node.comparators[0].value.startswith("/")
             ):
                 implemented.add(node.comparators[0].value)
-            # Match: `if cmd in ("/foo", "/bar"):`
             if (
                 isinstance(node.left, ast.Name)
                 and node.left.id == "cmd"
@@ -47,13 +55,13 @@ def _extract_implemented_slashes() -> set[str]:
                 and len(node.comparators) == 1
                 and isinstance(node.comparators[0], (ast.Tuple, ast.List, ast.Set))
             ):
-                for elt in node.comparators[0].elts:
-                    if (
-                        isinstance(elt, ast.Constant)
-                        and isinstance(elt.value, str)
-                        and elt.value.startswith("/")
-                    ):
-                        implemented.add(elt.value)
+                implemented.update(
+                    elt.value
+                    for elt in node.comparators[0].elts
+                    if isinstance(elt, ast.Constant)
+                    and isinstance(elt.value, str)
+                    and elt.value.startswith("/")
+                )
 
     return implemented
 

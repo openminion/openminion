@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+import logging
 from typing import Any
 
 from prompt_toolkit import PromptSession
@@ -19,6 +20,7 @@ from prompt_toolkit.styles import Style
 from openminion.cli.ux.input_normalization import normalize_multiline_input_text
 
 
+_LOGGER = logging.getLogger(__name__)
 _PROMPT_FRESH = "❯ "
 _PROMPT_RESUMED = "↳ "
 _PROMPT_DISABLED = "… "
@@ -41,7 +43,7 @@ def _call_safely(callback: object) -> None:
     try:
         callback()
     except Exception:
-        pass
+        _LOGGER.debug("terminal callback failed", exc_info=True)
 
 
 class _ClickableCompletionMenuControl(CompletionsMenuControl):
@@ -97,6 +99,7 @@ def _install_clickable_completion_menu(session: PromptSession[str]) -> None:
     try:
         visit(session.layout.container)
     except Exception:
+        _LOGGER.debug("completion menu customization failed", exc_info=True)
         return
 
 
@@ -271,7 +274,7 @@ class TerminalComposer:
         try:
             buffer.start_completion(select_first=False)
         except Exception:
-            pass
+            _LOGGER.debug("completion refresh failed", exc_info=True)
 
     def _apply_pasted_text(self, text: str, *, buffer) -> None:
         text = normalize_multiline_input_text(text)

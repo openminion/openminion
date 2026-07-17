@@ -51,8 +51,16 @@ src/openminion/cli/interactive/turn_queue.py	1	1	moved unchanged from cli/tui/fo
 src/openminion/cli/interactive/widgets/mention_overlay.py	1	0	moved unchanged from cli/tui/focus; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/widgets/slash_overlay.py	1	0	moved unchanged from cli/tui/focus; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/runtime/__init__.py	3	0	moved unchanged from cli/tui/providers/runtime; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/cli/interactive/runtime/commands.py	4	0	interactive command boundary converts extension and session failures into operator-visible results
 src/openminion/cli/interactive/runtime/controls.py	4	1	moved unchanged from cli/tui/providers/runtime; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/interactive/runtime/mcp.py	2	0	moved unchanged from cli/tui/providers/runtime; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/cli/interactive/terminal/composer.py	3	0	prompt-toolkit completion and input boundary logs fallback diagnostics without terminating the interactive shell
+src/openminion/cli/interactive/terminal/shell/__init__.py	6	0	terminal lifecycle boundary logs optional integration and teardown failures while preserving stable shell behavior
+src/openminion/cli/interactive/terminal/shell/actions.py	4	0	operator command boundary renders recoverable service and extension failures instead of crashing the shell
+src/openminion/cli/interactive/terminal/shell/sessions.py	3	0	session command boundary renders recoverable service failures instead of crashing the shell
+src/openminion/cli/interactive/terminal/shell/renderers.py	5	0	terminal renderer boundary preserves transcript usability when optional rich rendering fails
+src/openminion/cli/interactive/terminal/streaming.py	1	0	streaming boundary falls back to non-streaming output when a provider stream fails
+src/openminion/cli/interactive/terminal/transcript.py	1	0	transcript export boundary reports serialization failures without losing the active session
 src/openminion/cli/presentation/tool/blocks.py	1	1	moved unchanged from cli/tui/presentation; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/presentation/visible_parity.py	4	0	moved unchanged from cli/tui/presentation; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/daemon.py	7	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -242,7 +250,8 @@ src/openminion/modules/memory/runtime/candidate_lifecycle.py	3	1	current broad-h
 src/openminion/modules/memory/runtime/consolidation/eligibility.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/consolidation/extract.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/consolidation/merge.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/memory/runtime/gc.py	6	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/memory/runtime/gc.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/memory/runtime/purge.py	2	1	transaction rollback boundary preserves the original purge failure
 src/openminion/modules/memory/runtime/remote_transport.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/staging.py	4	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/service/queries.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -312,7 +321,8 @@ src/openminion/modules/tool/bootstrap/runtime_build.py	1	0	current broad-handler
 src/openminion/modules/tool/cli/runtime.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/dispatch.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/executor.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/tool/exposure.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/tool/exposure/__init__.py	5	0	package compatibility boundary adapts optional exposure providers and legacy manager protocols
+src/openminion/modules/tool/exposure/service.py	1	0	exposure extension boundary isolates provider callback failures from core registry state
 src/openminion/modules/tool/family/events.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/family/runtime.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/registry/__init__.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

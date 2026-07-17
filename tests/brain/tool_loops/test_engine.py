@@ -5601,7 +5601,7 @@ def test_engine_requires_typed_finalization_after_failed_tool_work() -> None:
     )
 
 
-def test_engine_does_not_require_typed_finalization_after_light_tool_work() -> None:
+def test_engine_requires_typed_finalization_after_multiple_research_calls() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -5635,6 +5635,10 @@ def test_engine_does_not_require_typed_finalization_after_light_tool_work() -> N
                 provider="fake",
                 model="fake-model",
                 output_text="Here is a concise researched answer from two light lookups.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The requested research is complete.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -5683,7 +5687,12 @@ def test_engine_does_not_require_typed_finalization_after_light_tool_work() -> N
         outcome.final_text
         == "Here is a concise researched answer from two light lookups."
     )
-    assert outcome.finalization_status is None
+    assert outcome.finalization_status == {
+        "status": "final_answer",
+        "reasoning": "The requested research is complete.",
+        "remaining_work": "",
+        "blocking_reason": "",
+    }
     assert len(runtime.calls) == 3
 
 
@@ -5807,7 +5816,7 @@ def test_engine_allows_one_duplicate_tool_batch_retry_before_stopping() -> None:
     )
 
 
-def test_engine_keeps_duplicate_read_open_when_other_tools_remain() -> None:
+def test_engine_closes_duplicate_read_when_other_tools_remain() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -5863,7 +5872,7 @@ def test_engine_keeps_duplicate_read_open_when_other_tools_remain() -> None:
 
     assert outcome.final_text == "done after considering alternatives"
     assert len(runtime.calls) == 3
-    assert runtime.calls[2]["tool_choice"] == "auto"
+    assert runtime.calls[2]["tool_choice"] == "none"
 
 
 def test_engine_keeps_retryable_duplicate_batch_on_normal_tool_path() -> None:

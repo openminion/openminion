@@ -185,6 +185,32 @@ class ActLoopFinalizationMixin:
             judgment=judgment,
         ), blocked_action
 
+    def _stage_self_compaction_result(
+        self: Any,
+        ctx: ExecutionContext,
+        *,
+        runtime: Any | None,
+        model: str,
+        final_text: str,
+        telemetry_payload: dict[str, Any],
+    ) -> None:
+        if runtime is None:
+            return
+        result = self._maybe_run_self_compaction(
+            ctx,
+            runtime=runtime,
+            model=model,
+            final_text=final_text,
+        )
+        if result is None:
+            return
+        telemetry_payload["self_compaction.applied"] = bool(result.applied)
+        telemetry_payload["self_compaction.reason_code"] = result.reason_code
+        if result.summary_text:
+            telemetry_payload["session_work_summary"] = result.summary_text
+        if result.audit_payload:
+            telemetry_payload["self_compaction.audit"] = dict(result.audit_payload)
+
     def _finalize_success(
         self: Any,
         ctx: ExecutionContext,
@@ -198,22 +224,6 @@ class ActLoopFinalizationMixin:
             profile=SimpleNamespace(profile_name=loop_outcome.profile_name),
             loop_state=loop_outcome.state,
         )
-        if requires_typed_finalization and not isinstance(
-            loop_outcome.finalization_status, dict
-        ):
-            message = (
-                "General act work ended without the required typed "
-                "finalization_status contract."
-            )
-            return ExecutionResult(
-                status=BRAIN_STATE_ERROR,
-                working_state=ctx.state,
-                message=message,
-                action_result=_build_error_result(
-                    message,
-                    "act_finalization_contract_missing",
-                ),
-            )
         completed_ids, remaining_ids = _sync_adaptive_intent_tracking(
             ctx=ctx,
             loop_state=loop_outcome.state,
@@ -389,29 +399,13 @@ class ActLoopFinalizationMixin:
             errors = list(consolidation_result.get("errors", []) or [])
             if errors:
                 telemetry_payload["memory_consolidation.errors"] = errors
-        self_compaction_result = None
-        if runtime is not None:
-            self_compaction_result = self._maybe_run_self_compaction(
-                ctx,
-                runtime=runtime,
-                model=model,
-                final_text=final_text,
-            )
-        if self_compaction_result is not None:
-            telemetry_payload["self_compaction.applied"] = bool(
-                self_compaction_result.applied
-            )
-            telemetry_payload["self_compaction.reason_code"] = (
-                self_compaction_result.reason_code
-            )
-            if self_compaction_result.summary_text:
-                telemetry_payload["session_work_summary"] = (
-                    self_compaction_result.summary_text
-                )
-            if self_compaction_result.audit_payload:
-                telemetry_payload["self_compaction.audit"] = dict(
-                    self_compaction_result.audit_payload
-                )
+        self._stage_self_compaction_result(
+            ctx,
+            runtime=runtime,
+            model=model,
+            final_text=final_text,
+            telemetry_payload=telemetry_payload,
+        )
         final_action = ActionResult(
             command_id=new_uuid(),
             status="success",
@@ -443,6 +437,24 @@ class ActLoopFinalizationMixin:
             closure_final_answer = str(
                 getattr(judgment, "final_answer", "") or ""
             ).strip()
+        if (
+            requires_typed_finalization
+            and not isinstance(loop_outcome.finalization_status, dict)
+            and not closure_final_answer
+        ):
+            message = (
+                "General act work ended without the required typed "
+                "finalization_status contract."
+            )
+            return ExecutionResult(
+                status=BRAIN_STATE_ERROR,
+                working_state=ctx.state,
+                message=message,
+                action_result=_build_error_result(
+                    message,
+                    "act_finalization_contract_missing",
+                ),
+            )
         bad_final_text = self._seeded_final_text_is_unexecutable_tool_envelope(
             final_text
         ) or self._seeded_final_text_is_unexecutable_tool_envelope(closure_final_answer)

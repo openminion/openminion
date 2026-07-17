@@ -322,45 +322,7 @@ class ToolAdapter:
         ):
             args["message"] = runtime_message_ref
 
-        spec = None
-        runtime_tool = None
-
-        def _assign_registry_entry(entry: Any) -> bool:
-            nonlocal spec, runtime_tool
-            if entry is None:
-                return False
-            if hasattr(entry, "execute") and not hasattr(entry, "handler"):
-                runtime_tool = entry
-                return True
-            if spec is None:
-                spec = entry
-            return True
-
-        if hasattr(self.registry, "get"):
-            try:
-                spec = self.registry.get(tool_name)
-            except KeyError:
-                spec = None
-        if spec is None:
-            tools_dict = getattr(self.registry, "_tools", None)
-            if isinstance(tools_dict, Mapping):
-                found = _assign_registry_entry(tools_dict.get(tool_name))
-                if not found:
-                    resolution = resolve_binding_for_call(
-                        raw_tool_name=tool_name,
-                        available_tool_names=tuple(tools_dict.keys()),
-                    )
-                    if resolution is not None and resolution.runtime_tool_name:
-                        resolved_name = str(resolution.runtime_tool_name).strip()
-                        if resolved_name:
-                            if _assign_registry_entry(tools_dict.get(resolved_name)):
-                                tool_name = resolved_name
-        elif (
-            runtime_tool is None
-            and hasattr(spec, "execute")
-            and not hasattr(spec, "handler")
-        ):
-            runtime_tool = spec
+        tool_name, spec, runtime_tool = self._resolve_registry_tool(tool_name)
 
         if spec is None and runtime_tool is None:
             return _error_envelope(
@@ -650,64 +612,14 @@ class ToolAdapter:
                 validated_args = dict(policy_decision.modified_args)
 
         try:
-            data = spec.handler(validated_args, ctx)
-            if isinstance(data, Mapping) and "status" in data:
-                inner_status = str(data.get("status", BRAIN_STATE_ERROR))
-            elif isinstance(data, Mapping) and isinstance(data.get("ok"), bool):
-                inner_status = "ok" if bool(data.get("ok")) else BRAIN_STATE_ERROR
-            else:
-                inner_status = "ok"
-            status = (
-                BRAIN_ACTION_STATUS_SUCCESS
-                if inner_status in ("ok", BRAIN_JOB_STATUS_RUNNING)
-                else BRAIN_STATE_ERROR
+            return self._run_tool_spec(
+                spec=spec,
+                validated_args=validated_args,
+                context=ctx,
+                start_time=start_time,
+                background_write_authorized=background_write_authorized,
+                tool_name=tool_name,
             )
-
-            summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)
-
-            artifact_refs = []
-            for art in ctx.artifacts:
-                ref = preferred_artifact_ref(art)
-                if ref:
-                    artifact_refs.append({"ref": ref, "role": "output"})
-
-            result = {
-                "status": status,
-                "summary": summary,
-                "outputs": data,
-                "artifact_refs": artifact_refs,
-                "memory_refs": [],
-                "metrics": {
-                    "latency_ms": int((time.monotonic() - start_time) * 1000),
-                    "tokens_used": 0,
-                    "cost_estimate": 0.0,
-                },
-            }
-            if background_write_authorized:
-                result["outputs"] = dict(result["outputs"])
-                result["outputs"]["background_watch_write_authorized"] = True
-                result["outputs"]["background_watch_write_tool"] = tool_name
-            if status != "success":
-                error_payload = {}
-                if isinstance(data, Mapping):
-                    raw_error = data.get("error")
-                    if isinstance(raw_error, Mapping):
-                        error_payload = {
-                            "code": str(raw_error.get("code", "") or "EXEC_ERROR"),
-                            "message": str(
-                                raw_error.get("message", "") or summary
-                            ).strip(),
-                        }
-                    elif raw_error:
-                        error_payload = {
-                            "code": "EXEC_ERROR",
-                            "message": str(raw_error).strip(),
-                        }
-                if not error_payload:
-                    error_payload = {"code": "EXEC_ERROR", "message": summary}
-                result["error"] = error_payload
-            return result
-
         except ToolRuntimeError as exc:
             requires_confirm = _is_confirm_required_code(exc.code)
             if requires_confirm and not replay_confirmed:
@@ -745,6 +657,101 @@ class ToolAdapter:
                 latency_ms=int((time.monotonic() - start_time) * 1000),
             )
 
+    def _resolve_registry_tool(self, tool_name: str) -> tuple[str, Any, Any]:
+        spec = None
+        runtime_tool = None
+
+        def assign(entry: Any) -> bool:
+            nonlocal spec, runtime_tool
+            if entry is None:
+                return False
+            if hasattr(entry, "execute") and not hasattr(entry, "handler"):
+                runtime_tool = entry
+            elif spec is None:
+                spec = entry
+            return True
+
+        if hasattr(self.registry, "get"):
+            try:
+                spec = self.registry.get(tool_name)
+            except KeyError:
+                pass
+        if spec is None:
+            tools = getattr(self.registry, "_tools", None)
+            if isinstance(tools, Mapping) and not assign(tools.get(tool_name)):
+                resolution = resolve_binding_for_call(
+                    raw_tool_name=tool_name,
+                    available_tool_names=tuple(tools),
+                )
+                resolved_name = str(
+                    getattr(resolution, "runtime_tool_name", "") or ""
+                ).strip()
+                if resolved_name and assign(tools.get(resolved_name)):
+                    tool_name = resolved_name
+        elif hasattr(spec, "execute") and not hasattr(spec, "handler"):
+            runtime_tool = spec
+        return tool_name, spec, runtime_tool
+
+    @staticmethod
+    def _run_tool_spec(
+        *,
+        spec: ToolSpec,
+        validated_args: dict[str, Any],
+        context: RuntimeContext,
+        start_time: float,
+        background_write_authorized: bool,
+        tool_name: str,
+    ) -> dict[str, Any]:
+        data = spec.handler(validated_args, context)
+        if isinstance(data, Mapping) and "status" in data:
+            inner_status = str(data.get("status", BRAIN_STATE_ERROR))
+        elif isinstance(data, Mapping) and isinstance(data.get("ok"), bool):
+            inner_status = "ok" if data["ok"] else BRAIN_STATE_ERROR
+        else:
+            inner_status = "ok"
+        status = (
+            BRAIN_ACTION_STATUS_SUCCESS
+            if inner_status in ("ok", BRAIN_JOB_STATUS_RUNNING)
+            else BRAIN_STATE_ERROR
+        )
+        summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)
+        artifact_refs = [
+            {"ref": ref, "role": "output"}
+            for artifact in context.artifacts
+            if (ref := preferred_artifact_ref(artifact))
+        ]
+        result = {
+            "status": status,
+            "summary": summary,
+            "outputs": data,
+            "artifact_refs": artifact_refs,
+            "memory_refs": [],
+            "metrics": {
+                "latency_ms": int((time.monotonic() - start_time) * 1000),
+                "tokens_used": 0,
+                "cost_estimate": 0.0,
+            },
+        }
+        if background_write_authorized:
+            result["outputs"] = dict(result["outputs"])
+            result["outputs"].update(
+                background_watch_write_authorized=True,
+                background_watch_write_tool=tool_name,
+            )
+        if status != BRAIN_ACTION_STATUS_SUCCESS:
+            raw_error = data.get("error") if isinstance(data, Mapping) else None
+            if isinstance(raw_error, Mapping):
+                error = {
+                    "code": str(raw_error.get("code", "") or "EXEC_ERROR"),
+                    "message": str(raw_error.get("message", "") or summary).strip(),
+                }
+            elif raw_error:
+                error = {"code": "EXEC_ERROR", "message": str(raw_error).strip()}
+            else:
+                error = {"code": "EXEC_ERROR", "message": summary}
+            result["error"] = error
+        return result
+
     def _execute_openminion_runtime_tool(
         self,
         *,
@@ -760,7 +767,7 @@ class ToolAdapter:
     ) -> dict[str, Any]:
         try:
             from openminion.modules.tool import ToolExecutionContext
-        except Exception as exc:
+        except ImportError as exc:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
                 summary="Tool runtime unavailable",
@@ -770,43 +777,13 @@ class ToolAdapter:
             )
 
         effective_policy = policy or self.policy
-        policy_raw = getattr(effective_policy, "raw", {}) or {}
-        context_metadata = policy_raw.get("context_metadata")
-        metadata = (
-            dict(context_metadata) if isinstance(context_metadata, Mapping) else {}
-        )
-        workspace_root = str(policy_raw.get("workspace_root", "") or "").strip()
-        if workspace_root:
-            metadata.setdefault("workspace_root", workspace_root)
-        metadata.update(
-            {
-                "agent_id": self.agent_id,
-                "trace_id": trace_id,
-                "runtime_env": _runtime_env_from_policy(effective_policy),
-                **(
-                    {"orchestration": dict(orchestration_metadata)}
-                    if isinstance(orchestration_metadata, Mapping)
-                    and orchestration_metadata
-                    else {}
-                ),
-                **build_runtime_tool_routing_metadata(
-                    resolve_runtime_tool_config(effective_policy)
-                ),
-            }
-        )
-        if isinstance(replay_confirmation_metadata, Mapping):
-            metadata.update(
-                {
-                    key: value
-                    for key, value in replay_confirmation_metadata.items()
-                    if str(value or "").strip()
-                }
-            )
-        context = ToolExecutionContext(
-            channel="console",
-            target=session_id or "session",
+        context = self._runtime_tool_context(
+            context_type=ToolExecutionContext,
+            policy=effective_policy,
             session_id=session_id,
-            metadata=metadata,
+            trace_id=trace_id,
+            orchestration_metadata=orchestration_metadata,
+            replay_confirmation_metadata=replay_confirmation_metadata,
         )
         try:
             result = tool.execute(arguments=args, context=context)
@@ -889,3 +866,44 @@ class ToolAdapter:
                 "details": error_details,
             }
         return response
+
+    def _runtime_tool_context(
+        self,
+        *,
+        context_type: Any,
+        policy: Policy,
+        session_id: str,
+        trace_id: str,
+        orchestration_metadata: Mapping[str, Any] | None,
+        replay_confirmation_metadata: Mapping[str, str] | None,
+    ) -> Any:
+        policy_raw = getattr(policy, "raw", {}) or {}
+        raw_metadata = policy_raw.get("context_metadata")
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+        workspace_root = str(policy_raw.get("workspace_root", "") or "").strip()
+        if workspace_root:
+            metadata.setdefault("workspace_root", workspace_root)
+        metadata.update(
+            agent_id=self.agent_id,
+            trace_id=trace_id,
+            runtime_env=_runtime_env_from_policy(policy),
+        )
+        if orchestration_metadata:
+            metadata["orchestration"] = dict(orchestration_metadata)
+        metadata.update(
+            build_runtime_tool_routing_metadata(resolve_runtime_tool_config(policy))
+        )
+        if replay_confirmation_metadata:
+            metadata.update(
+                {
+                    key: value
+                    for key, value in replay_confirmation_metadata.items()
+                    if str(value or "").strip()
+                }
+            )
+        return context_type(
+            channel="console",
+            target=session_id or "session",
+            session_id=session_id,
+            metadata=metadata,
+        )

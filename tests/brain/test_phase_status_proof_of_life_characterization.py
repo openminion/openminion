@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ast
 import inspect
+import textwrap
 import unittest
 
 from openminion.modules.brain.diagnostics.status import (
@@ -179,29 +181,34 @@ class GapDPrepareTurnProgressCallbackTests(unittest.TestCase):
         from openminion.services.brain.post_execution import mixin as mixin_module
 
         source = inspect.getsource(mixin_module.BrainBridgeTurnMixin.run_turn)
-        self.assertIn(
-            "await self._prepare_turn(",
-            source,
-            "run_turn should still delegate prep to _prepare_turn.",
+        calls = [
+            node
+            for node in ast.walk(ast.parse(textwrap.dedent(source)))
+            if isinstance(node, ast.Call)
+        ]
+        prepare_call = next(
+            call
+            for call in calls
+            if isinstance(call.func, ast.Attribute)
+            and call.func.attr == "_prepare_turn"
         )
-        self.assertIn(
-            '"progress_callback": progress_callback',
-            source,
-            "run_turn must preserve the callback in the shared execute arguments.",
+        execute_call = next(
+            call
+            for call in calls
+            if isinstance(call.func, ast.Attribute)
+            and call.func.attr == "to_thread"
+            and call.args
+            and isinstance(call.args[0], ast.Attribute)
+            and call.args[0].attr == "_execute_turn"
         )
-        self.assertIn("self._execute_turn(**execute_kwargs)", source)
-        # _prepare_turn now ALSO receives the callback.
-        prepare_region_start = source.find("self._prepare_turn(")
-        self.assertGreaterEqual(prepare_region_start, 0)
-        # Grab a generous window for the multi-line kwargs block.
-        prepare_region = source[prepare_region_start : prepare_region_start + 1200]
-        self.assertIn(
-            "progress_callback=progress_callback",
-            prepare_region,
-            "Gap D fix (PPL-07): `run_turn` must forward "
-            "`progress_callback` into `_prepare_turn`. Pre-PPL-07 only "
-            "`_execute_turn` received it.",
-        )
+        for call in (prepare_call, execute_call):
+            callback_keyword = next(
+                keyword
+                for keyword in call.keywords
+                if keyword.arg == "progress_callback"
+            )
+            self.assertIsInstance(callback_keyword.value, ast.Name)
+            self.assertEqual(callback_keyword.value.id, "progress_callback")
 
     def test_prepare_turn_emits_at_entry_and_sub_steps(self) -> None:
         from openminion.services.brain.post_execution import mixin as mixin_module

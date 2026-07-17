@@ -21,7 +21,7 @@ class APIRouteContext:
 @dataclass(frozen=True)
 class RouteResult:
     status: HTTPStatus
-    payload: dict
+    payload: dict[str, Any]
     session_id: Optional[str] = None
     run_id: Optional[str] = None
 

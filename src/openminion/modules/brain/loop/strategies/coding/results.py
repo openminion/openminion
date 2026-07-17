@@ -41,6 +41,74 @@ from .contracts import (
 )
 
 
+def _direct_termination_result(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    outcome: Any,
+    allowed_tools: frozenset[str],
+    build_error_result,
+    build_blocked_result,
+) -> ExecutionResult | None:
+    loop = runner._loop_state
+    if outcome.termination_reason == CODING_TERM_NEEDS_USER:
+        runner._finalize_checkpoint(ctx, terminal=False, cursor=loop.iteration)
+        message = (
+            str(getattr(ctx.state, "post_action_user_message", "") or "").strip()
+            or getattr(outcome.action_result, "summary", "")
+            or "Approval required."
+        )
+        return ExecutionResult.from_step_output(
+            ctx.respond(
+                message=message,
+                status=BRAIN_STATE_WAITING_USER,
+                action_result=outcome.action_result,
+            )
+        )
+    if outcome.termination_reason == CODING_TERM_JOB_PENDING:
+        runner._finalize_checkpoint(ctx, terminal=False, cursor=loop.iteration)
+        return ExecutionResult(
+            status=BRAIN_STATE_JOB_PENDING,
+            working_state=ctx.state,
+            message="[act:coding] async job pending; resume on next turn.",
+            action_result=outcome.action_result,
+        )
+    if outcome.termination_reason == CODING_TERM_DISALLOWED_TOOL:
+        salvaged_final_text = _salvage_final_answer_after_disallowed_writer(
+            runner, outcome=outcome
+        )
+        if salvaged_final_text is not None:
+            return _exit_final_text(
+                runner,
+                ctx,
+                loop,
+                salvaged_final_text,
+                allowed_tools,
+                build_blocked_result=build_blocked_result,
+            )
+        if _maybe_continue_after_verify_disallowed_tool(
+            runner, ctx, loop=loop, outcome=outcome
+        ):
+            runner._sync_coding_module_state(ctx)
+            return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
+        message = outcome.error_message or "Coding mode requested a disallowed tool."
+        return ExecutionResult(
+            status=BRAIN_STATE_ERROR,
+            working_state=ctx.state,
+            message=message,
+            action_result=build_blocked_result(message, "coding_disallowed_tool"),
+        )
+    if outcome.termination_reason == CODING_TERM_LLM_ERROR:
+        message = outcome.error_message or "Coding LLM call failed."
+        return ExecutionResult(
+            status=BRAIN_STATE_ERROR,
+            working_state=ctx.state,
+            message=f"[act:coding] LLM error: {message}",
+            action_result=build_error_result(message, "coding_llm_error"),
+        )
+    return None
+
+
 def _result_from_outcome(
     runner: Any,
     ctx: ExecutionContext,
@@ -108,65 +176,16 @@ def _result_from_outcome(
             allowed_tools,
             build_blocked_result=build_blocked_result,
         )
-    if outcome.termination_reason == CODING_TERM_NEEDS_USER:
-        runner._finalize_checkpoint(ctx, terminal=False, cursor=loop.iteration)
-        message = (
-            str(getattr(ctx.state, "post_action_user_message", "") or "").strip()
-            or getattr(outcome.action_result, "summary", "")
-            or "Approval required."
-        )
-        return ExecutionResult.from_step_output(
-            ctx.respond(
-                message=message,
-                status=BRAIN_STATE_WAITING_USER,
-                action_result=outcome.action_result,
-            )
-        )
-    if outcome.termination_reason == CODING_TERM_JOB_PENDING:
-        runner._finalize_checkpoint(ctx, terminal=False, cursor=loop.iteration)
-        return ExecutionResult(
-            status=BRAIN_STATE_JOB_PENDING,
-            working_state=ctx.state,
-            message="[act:coding] async job pending; resume on next turn.",
-            action_result=outcome.action_result,
-        )
-    if outcome.termination_reason == CODING_TERM_DISALLOWED_TOOL:
-        salvaged_final_text = _salvage_final_answer_after_disallowed_writer(
-            runner,
-            outcome=outcome,
-        )
-        if salvaged_final_text is not None:
-            return _exit_final_text(
-                runner,
-                ctx,
-                loop,
-                salvaged_final_text,
-                allowed_tools,
-                build_blocked_result=build_blocked_result,
-            )
-        if _maybe_continue_after_verify_disallowed_tool(
-            runner,
-            ctx,
-            loop=loop,
-            outcome=outcome,
-        ):
-            runner._sync_coding_module_state(ctx)
-            return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
-        message = outcome.error_message or "Coding mode requested a disallowed tool."
-        return ExecutionResult(
-            status=BRAIN_STATE_ERROR,
-            working_state=ctx.state,
-            message=message,
-            action_result=build_blocked_result(message, "coding_disallowed_tool"),
-        )
-    if outcome.termination_reason == CODING_TERM_LLM_ERROR:
-        message = outcome.error_message or "Coding LLM call failed."
-        return ExecutionResult(
-            status=BRAIN_STATE_ERROR,
-            working_state=ctx.state,
-            message=f"[act:coding] LLM error: {message}",
-            action_result=build_error_result(message, "coding_llm_error"),
-        )
+    direct_result = _direct_termination_result(
+        runner,
+        ctx,
+        outcome=outcome,
+        allowed_tools=allowed_tools,
+        build_error_result=build_error_result,
+        build_blocked_result=build_blocked_result,
+    )
+    if direct_result is not None:
+        return direct_result
     if outcome.termination_reason in {
         ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
         CODING_TERM_TOOL_FAILURE,

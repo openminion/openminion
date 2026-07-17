@@ -56,6 +56,9 @@ remote = [
   "asyncssh>=2.14,<3",
 ]
 dev = [
+  # Package-integration tests exercise optional sibling package surfaces while
+  # remaining skippable in a minimal runtime installation.
+  "graphfakos>=0.0.1",
   "pre-commit>=4,<5",
   # FTF-11: pyte is a pure-Python terminal emulator used by
   # FTF-13's PTY scrollback test to capture the post-exit
@@ -162,6 +165,7 @@ markers = [
   "benchmark: explicit benchmark / regression harness tests",
   "memory_eval: lightweight memory evaluation scenarios",
   "memory_eval_benchmark: slower memory evaluation benchmark scenarios",
+  "package_integration: requires optional package-integration dependencies",
   "telegram_live: hits real api.telegram.org; skipped unless TELEGRAM_BOT_TOKEN + TELEGRAM_LIVE_CHAT_ID set",
   "slack_live: hits real Slack APIs; skipped unless SLACK_BOT_TOKEN + SLACK_APP_TOKEN + SLACK_TEST_CHANNEL set",
 ]

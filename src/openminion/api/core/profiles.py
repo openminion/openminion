@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from sqlite3 import Connection
 from threading import RLock
 from types import SimpleNamespace
 from typing import Any, Optional, cast
@@ -46,6 +47,7 @@ from .infrastructure import (
     build_runtime_llm_handle,
     scoped_tools_for_agent,
 )
+from .lifecycle import RuntimeFinalizer
 
 
 @dataclass
@@ -58,7 +60,7 @@ class RuntimeProfilesMixin:
     memory_root: Path
     tool_workspace_root: Path | None
     runtime_storage: RuntimeStorageContext
-    storage_connection: object
+    storage_connection: Connection
     telemetry_service: TelemetryService
     sessions: SessionStore
     idempotency: IdempotencyStore
@@ -97,7 +99,7 @@ class RuntimeProfilesMixin:
     _runtime_mode: str = field(default="brain", init=False, repr=False)
     _brain_bridge_active: bool = field(default=False, init=False, repr=False)
     _last_bridge_fallback_reason: str = field(default="", init=False, repr=False)
-    _finalizer: Any | None = field(default=None, init=False, repr=False)
+    _finalizer: RuntimeFinalizer | None = field(default=None, init=False, repr=False)
 
     @staticmethod
     def _bind_runtime_handle(agent_service: object, runtime: object) -> None:

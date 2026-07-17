@@ -4,6 +4,7 @@ import asyncio
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 import os
 import sys
 from pathlib import Path
@@ -53,13 +54,13 @@ from .startup import (
 from .actions import (
     _copy_to_clipboard,
     _handle_slash,
-    _open_dashboard_side_trip as _open_dashboard_side_trip,
     _push_greeter,
     _run_shell_escape,
     _runtime_permission_mode,
     _cycle_permission_mode,
     _SLASH_COMMANDS,
 )
+from .sessions import show_dashboard_retirement
 from .renderers import (
     _render_cost_snapshot as _render_cost_snapshot,
     _render_mcp_status as _render_mcp_status,
@@ -73,6 +74,9 @@ from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.slash_commands import slash_help_rows
 from openminion.cli.presentation.visible_parity import statusline_label
 
+_open_dashboard_side_trip = show_dashboard_retirement
+
+_LOGGER = logging.getLogger(__name__)
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
 _INFO_BOLD_STYLE = token_rich_style(StyleToken.INFO, bold=True)
@@ -801,7 +805,7 @@ def _route_durable_activity_event(
             transcript.push_activity_event(event)
             return True
     except Exception:
-        pass
+        _LOGGER.debug("activity event routing failed", exc_info=True)
     return False
 
 
@@ -963,13 +967,13 @@ async def _run_agent_turn(
         try:
             handle.complete(final_text=reply)
         except Exception:
-            pass
+            _LOGGER.debug("turn handle cancellation cleanup failed", exc_info=True)
         raise
     except Exception as exc:
         try:
             handle.complete(final_text=reply)
         except Exception:
-            pass
+            _LOGGER.debug("turn handle failure cleanup failed", exc_info=True)
         transcript.push_message(
             ChatMessage(kind=MessageKind.ERROR, sender="error", body=str(exc))
         )

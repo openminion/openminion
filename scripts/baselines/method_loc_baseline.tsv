@@ -30,7 +30,6 @@ src/openminion/modules/brain/loop/adaptive/seeded.py	ActLoopSeededMixin._finaliz
 src/openminion/modules/brain/loop/orchestration.py	decide	627	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/proactive_entrypoint.py	maybe_schedule_idle_tick	116	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/recursive/generation.py	generate	418	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/loop/strategies/coding/handler.py	CodingProfileRunner._execute_coding_loop	244	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/strategies/coding/results.py	_result_from_outcome	201	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/strategies/coding/verification_flow.py	CodingVerificationMixin._maybe_finalize_verify_phase_with_verifier	109	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/loop/strategies/research/handler.py	ResearchMode._execute_search_iteration	137	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -122,7 +121,6 @@ src/openminion/modules/memory/runtime/consolidation/merge.py	apply_merge_decisio
 src/openminion/modules/memory/runtime/gc.py	apply_confidence_decay	162	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/gc.py	compress_old_summaries	179	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/gc.py	enforce_scope_capacity	117	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/memory/runtime/gc.py	purge_soft_deleted	197	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/staging.py	stage_extracted_candidates	147	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/service/queries.py	MemoryServiceQueryMixin.search_semantic	137	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/storage/sqlite/write.py	promote_candidate	123	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
@@ -171,7 +169,6 @@ src/openminion/modules/tool/executor.py	execute_single_call	203	current over-thr
 src/openminion/modules/tool/runtime/context.py	RuntimeContext.write_artifact	109	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/runtime/manager.py	ToolRegistryManager.compile	167	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/runtime/plugin.py	ToolRuntime.invoke	109	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/tool/runtime/registry_toolspec.py	execute_tool_spec_call	221	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/tool/schema_service.py	ToolSchemaService.collect_execution_tool_schemas	147	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/retrieval_pipeline.py	RetrievalPipeline.rank_and_format	110	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/session_lifecycle.py	SessionLifecycleMixin._format_session_summaries	248	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

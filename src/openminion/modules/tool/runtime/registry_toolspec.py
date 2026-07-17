@@ -28,83 +28,69 @@ def _context_confirm_requested(context: ToolExecutionContext) -> bool:
     return bool(grant_id) and source == _POLICY_REPLAY_SOURCE
 
 
-def execute_tool_spec_call(
+def _validated_tool_arguments(
     *,
-    tool: Any,
+    tool_name: str,
+    args_model: Any,
     arguments: Mapping[str, Any],
     context: ToolExecutionContext,
-) -> ToolExecutionResult:
-    from openminion.modules.tool.errors import ToolRuntimeError
-    from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy
-    from openminion.modules.tool.runtime import (
-        RuntimeContext,
-        build_runtime_repositories,
-    )
-
-    # Lazy import to break tool -> brain -> tool circular import (CQRC-161).
+) -> dict[str, Any] | ToolExecutionResult:
     from openminion.modules.brain.runtime.recovery import (
         TCRPContext,
         TCRPRetryBudget,
         validate_payload,
     )
 
-    tool_name = str(getattr(tool, "name", "")).strip() or "unknown"
-    args_model = getattr(tool, "args_model", dict)
-    validated_args: dict[str, Any]
     try:
-        if hasattr(args_model, "model_validate"):
-            validation = validate_payload(
-                repair_structured_tool_arguments(
-                    dict(arguments),
-                    channel_name=f"tool_spec:{tool_name}.args",
-                    alias_map=_model_alias_map(args_model),
-                ),
-                model=args_model,
-                ctx=TCRPContext(
-                    channel_name=f"tool_spec:{tool_name}.args",
-                    session_id=str(context.session_id or "").strip(),
-                    agent_id=str((context.metadata or {}).get("agent_id", "") or ""),
-                    trace_id=str((context.metadata or {}).get("trace_id", "") or ""),
-                ),
-                retry_budget=TCRPRetryBudget(
-                    channel_name=f"tool_spec:{tool_name}.args",
-                    max_retries=0,
-                ),
-            )
-            if validation.structured_payload is None:
-                message = "Invalid tool arguments."
-                if validation.validation_errors:
-                    message = (
-                        f"Invalid tool arguments: "
-                        f"{validation.validation_errors[0].field_path} "
-                        f"{validation.validation_errors[0].error_code.value}"
-                    )
-                return ToolExecutionResult(
-                    tool_name=tool_name,
-                    ok=False,
-                    content="",
-                    verified=False,
-                    error=message,
-                    data={
-                        "error_code": "invalid_arguments",
-                        "reason_code": "tool_arg_validation_failed",
-                        "tcrp.validation_errors": [
-                            item.model_dump(mode="json")
-                            for item in validation.validation_errors
-                        ],
-                    },
+        if not hasattr(args_model, "model_validate"):
+            return dict(arguments)
+        validation = validate_payload(
+            repair_structured_tool_arguments(
+                dict(arguments),
+                channel_name=f"tool_spec:{tool_name}.args",
+                alias_map=_model_alias_map(args_model),
+            ),
+            model=args_model,
+            ctx=TCRPContext(
+                channel_name=f"tool_spec:{tool_name}.args",
+                session_id=str(context.session_id or "").strip(),
+                agent_id=str((context.metadata or {}).get("agent_id", "") or ""),
+                trace_id=str((context.metadata or {}).get("trace_id", "") or ""),
+            ),
+            retry_budget=TCRPRetryBudget(
+                channel_name=f"tool_spec:{tool_name}.args",
+                max_retries=0,
+            ),
+        )
+        if validation.structured_payload is None:
+            message = "Invalid tool arguments."
+            if validation.validation_errors:
+                first_error = validation.validation_errors[0]
+                message = (
+                    f"Invalid tool arguments: {first_error.field_path} "
+                    f"{first_error.error_code.value}"
                 )
-            parsed = validation.structured_payload
-            if hasattr(parsed, "model_dump"):
-                validated_args = parsed.model_dump(exclude_none=True)
-            elif isinstance(parsed, Mapping):
-                validated_args = dict(parsed)
-            else:
-                validated_args = dict(arguments)
-        elif args_model is dict or args_model is None:
-            validated_args = dict(arguments)
-        else:
-            validated_args = dict(arguments)
+            return ToolExecutionResult(
+                tool_name=tool_name,
+                ok=False,
+                content="",
+                verified=False,
+                error=message,
+                data={
+                    "error_code": "invalid_arguments",
+                    "reason_code": "tool_arg_validation_failed",
+                    "tcrp.validation_errors": [
+                        item.model_dump(mode="json")
+                        for item in validation.validation_errors
+                    ],
+                },
+            )
+        parsed = validation.structured_payload
+        if hasattr(parsed, "model_dump"):
+            return parsed.model_dump(exclude_none=True)
+        if isinstance(parsed, Mapping):
+            return dict(parsed)
+        return dict(arguments)
     except Exception as exc:
         return ToolExecutionResult(
             tool_name=tool_name,
@@ -118,24 +104,35 @@ def execute_tool_spec_call(
             },
         )
 
+
+def _build_tool_runtime_context(
+    *,
+    tool: Any,
+    tool_name: str,
+    context: ToolExecutionContext,
+) -> Any:
+    from openminion.modules.tool.runtime import RuntimeContext, build_runtime_repositories
+    from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy
+
     metadata = _normalized_workspace_metadata(context.metadata)
     workspace = resolve_workspace(context=context)
-    run_root = resolve_run_root(workspace=workspace, context=context)
     policy_payload = copy.deepcopy(DEFAULT_POLICY)
-    policy_payload["workspace_root"] = str(workspace)
-    policy_payload["context_metadata"] = metadata
+    policy_payload.update(
+        {
+            "workspace_root": str(workspace),
+            "context_metadata": metadata,
+        }
+    )
     agent_id = str(metadata.get("agent_id", "")).strip()
     if agent_id:
         policy_payload["agent_id"] = agent_id
     runtime_ctx = RuntimeContext(
         policy=Policy(raw=policy_payload),
         workspace=workspace,
-        run_root=run_root,
+        run_root=resolve_run_root(workspace=workspace, context=context),
         scope=resolve_tool_scope(tool=tool),
         confirm=_context_confirm_requested(context),
-        env=EnvironmentConfig.from_sources(
-            runtime_env=resolve_runtime_env(context=context),
-        ),
+        env=EnvironmentConfig.from_sources(runtime_env=resolve_runtime_env(context=context)),
         repositories=build_runtime_repositories(context_metadata=metadata),
         artifactctl=resolve_artifactctl(),
         memory_service=context.memory_service,
@@ -147,6 +144,90 @@ def execute_tool_spec_call(
     runtime_ctx.trace_id = str(metadata.get("trace_id", "")).strip()
     runtime_ctx.agent_id = agent_id or None
     runtime_ctx.tool_name = tool_name
+    return runtime_ctx
+
+
+def _tool_result_from_payload(*, tool_name: str, payload: Any) -> ToolExecutionResult:
+    payload_dict = dict(payload) if isinstance(payload, Mapping) else {
+        "ok": True,
+        "data": {"result": payload},
+    }
+    ok_field = payload_dict.get("ok")
+    if ok_field is None:
+        status = str(payload_dict.get("status", "") or "").strip().lower()
+        raw_error = payload_dict.get("error")
+        if isinstance(raw_error, Mapping):
+            error_present = bool(raw_error.get("message") or raw_error.get("code"))
+        else:
+            error_present = bool(raw_error)
+        ok = status not in {"error", "denied", "timeout"} and not error_present
+    else:
+        ok = bool(ok_field)
+    verified = bool(payload_dict.get("verified", ok))
+    content = str(payload_dict.get("content", "") or "")
+    raw_source = payload_dict.get("source", "")
+    source = (
+        str(raw_source.get("provider_id", "") or "").strip()
+        if isinstance(raw_source, Mapping)
+        else str(raw_source or "").strip()
+    )
+    raw_error = payload_dict.get("error")
+    error_message = (
+        str(raw_error.get("message") or raw_error.get("code") or "")
+        if isinstance(raw_error, Mapping)
+        else str(raw_error or "")
+    )
+    data_field = payload_dict.get("data")
+    if isinstance(data_field, Mapping):
+        data = dict(data_field)
+    else:
+        data = {
+            key: value
+            for key, value in payload_dict.items()
+            if key not in {"ok", "verified", "content", "error", "source"}
+        }
+    data = strip_tool_result_noise(data)
+    if not content and data:
+        try:
+            content = json.dumps(data, sort_keys=True, default=str)
+        except Exception:
+            content = str(data)
+    if ok and source:
+        content = with_source_footer(content, source)
+    return ToolExecutionResult(
+        tool_name=tool_name,
+        ok=ok,
+        content=content,
+        verified=verified,
+        error=error_message,
+        data=data,
+        source=source,
+    )
+
+
+def execute_tool_spec_call(
+    *,
+    tool: Any,
+    arguments: Mapping[str, Any],
+    context: ToolExecutionContext,
+) -> ToolExecutionResult:
+    from openminion.modules.tool.errors import ToolRuntimeError
+
+    tool_name = str(getattr(tool, "name", "")).strip() or "unknown"
+    args_model = getattr(tool, "args_model", dict)
+    validated_args = _validated_tool_arguments(
+        tool_name=tool_name,
+        args_model=args_model,
+        arguments=arguments,
+        context=context,
+    )
+    if isinstance(validated_args, ToolExecutionResult):
+        return validated_args
+    runtime_ctx = _build_tool_runtime_context(
+        tool=tool,
+        tool_name=tool_name,
+        context=context,
+    )
 
     handler = getattr(tool, "handler", None)
     if not callable(handler):
@@ -184,72 +265,7 @@ def execute_tool_spec_call(
             data={},
         )
 
-    if isinstance(payload, Mapping):
-        payload_dict = dict(payload)
-    else:
-        payload_dict = {"ok": True, "data": {"result": payload}}
-
-    ok_field = payload_dict.get("ok")
-    if ok_field is None:
-        status_field = str(payload_dict.get("status", "") or "").strip().lower()
-        error_field = payload_dict.get("error")
-        if isinstance(error_field, Mapping):
-            error_present = bool(error_field.get("message") or error_field.get("code"))
-        else:
-            error_present = bool(error_field)
-        if status_field in {"error", "denied", "timeout"}:
-            ok = False
-        else:
-            ok = not error_present
-    else:
-        ok = bool(ok_field)
-    verified = bool(payload_dict.get("verified", ok))
-    content = str(payload_dict.get("content", "") or "")
-    raw_source = payload_dict.get("source", "")
-    if isinstance(raw_source, Mapping):
-        # Some tools (weather) carry source as a structured sub-dict; the
-        # provider id is the structural identifier the footer needs.
-        source = str(raw_source.get("provider_id", "") or "").strip()
-    else:
-        source = str(raw_source or "").strip()
-
-    raw_error = payload_dict.get("error")
-    if isinstance(raw_error, Mapping):
-        error_message = str(raw_error.get("message") or raw_error.get("code") or "")
-    else:
-        error_message = str(raw_error or "")
-
-    data: dict[str, Any] = {}
-    data_field = payload_dict.get("data")
-    if isinstance(data_field, Mapping):
-        data = dict(data_field)
-    else:
-        for key, value in payload_dict.items():
-            if key in {"ok", "verified", "content", "error", "source"}:
-                continue
-            data[key] = value
-
-    data = strip_tool_result_noise(data)
-
-    if not content and data:
-        try:
-            content = json.dumps(data, sort_keys=True, default=str)
-        except Exception:
-            content = str(data)
-
-    # TGFC: append `source=<provider>` structural footer when execution
-    if ok and source:
-        content = with_source_footer(content, source)
-
-    return ToolExecutionResult(
-        tool_name=tool_name,
-        ok=ok,
-        content=content,
-        verified=verified,
-        error=error_message,
-        data=data,
-        source=source,
-    )
+    return _tool_result_from_payload(tool_name=tool_name, payload=payload)
 
 
 def invoke_tool_spec_handler(
