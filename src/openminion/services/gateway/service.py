@@ -11,8 +11,8 @@ from openminion.base.channel import ChannelRegistry
 from openminion.base.types import Message
 from openminion.base.user_io import UserIO
 from openminion.services.agent import AgentService
-from openminion.services.channel.authenticity import ChannelAuthenticityPolicy
-from openminion.services.runtime.run_status import append_run_state_event
+from openminion.modules.controlplane.channels.authenticity import ChannelAuthenticityPolicy
+from openminion.modules.task.run import append_run_state_event
 from openminion.services.context.session import SessionContextService
 from openminion.services.gateway.config import (
     resolve_memory_capsule_strategy,
@@ -33,7 +33,7 @@ from openminion.services.gateway.turn.runtime import (
     _message_to_cache,
     _request_hash,
 )
-from openminion.services.security.policy import SecurityPolicyEngine
+from openminion.modules.policy import SecurityPolicyEngine
 from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
 from openminion.modules.storage.runtime.retrieval_service import RetrievalService
 from openminion.modules.storage.runtime.session_store import SessionStore

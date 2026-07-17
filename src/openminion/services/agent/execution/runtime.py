@@ -10,7 +10,7 @@ from openminion.modules.llm.providers.base import (
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.modules.tool.exposure import apply_model_exposure
-from openminion.services.security.policy import ToolBudgetState
+from openminion.modules.policy import ToolBudgetState
 
 from ..telemetry import trace_provider_request, trace_provider_response
 from .policy import build_policy_adapter, filter_allowed_tool_calls
@@ -90,7 +90,7 @@ class ExecutorRuntime:
         tool_budget_state: ToolBudgetState | None,
         context_metadata_overrides: Mapping[str, Any] | None = None,
     ) -> tuple[ToolExecutionBatch, list[dict[str, str]], bool]:
-        from openminion.services.security.blast_radius.wiring import (
+        from openminion.modules.policy.adapters.composition import (
             SEAM_AGENT_EXECUTOR_RUNTIME,
             build_default_composition_boundary_adapter,
         )

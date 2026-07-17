@@ -4,7 +4,7 @@ from openminion.base.types import AgentResponse
 from openminion.modules.llm.providers.base import ProviderResponse
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.constants import NO_PROGRESS_FAILURE_THRESHOLD
-from openminion.services.security.policy import ToolBudgetState
+from openminion.modules.policy import ToolBudgetState
 
 from ..dependencies import ExecutorDeps
 from ..followup import recover_text_tool_calls

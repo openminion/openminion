@@ -5,21 +5,31 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from .contracts import (
+    TOKEN_TOTAL_SOURCES,
+    TOKEN_USAGE_SCHEMA_VERSION,
+    TOTAL_SOURCE_DERIVED,
+    TOTAL_SOURCE_PROVIDER,
+)
 from .types import coerce_non_negative_int
 
+SURFACE_LLM_TOTAL = "llm_total"
 SURFACE_LLM_PROMPT = "llm_prompt"
 SURFACE_LLM_OUTPUT = "llm_output"
 SURFACE_LLM_CACHE_READ = "llm_cache_read"
 SURFACE_LLM_CACHE_WRITE = "llm_cache_write"
+SURFACE_LLM_CACHE_DIAGNOSTIC = "llm_cache_diagnostic"
 SURFACE_CONTEXT_PACK = "context_pack"
 SURFACE_CONTEXT_BUCKET = "context_bucket"
 
 TOKEN_USAGE_SURFACES = frozenset(
     {
+        SURFACE_LLM_TOTAL,
         SURFACE_LLM_PROMPT,
         SURFACE_LLM_OUTPUT,
         SURFACE_LLM_CACHE_READ,
         SURFACE_LLM_CACHE_WRITE,
+        SURFACE_LLM_CACHE_DIAGNOSTIC,
         SURFACE_CONTEXT_PACK,
         SURFACE_CONTEXT_BUCKET,
     }
@@ -42,9 +52,11 @@ _CACHE_WRITE_TOKEN_KEYS = (
     "cache_creation_tokens",
     "cache_creation_input_tokens",
 )
+_TOTAL_TOKEN_KEYS = ("total_tokens", "total_tokens_used")
 _ESTIMATED_TOKEN_KEYS = ("estimated_tokens", "used_tokens", "total_used_tokens")
 _CAP_TOKEN_KEYS = ("cap_tokens", "total_cap_tokens")
 _TOKEN_FIELD_NAMES = (
+    "total_tokens",
     "input_tokens",
     "output_tokens",
     "cache_read_tokens",
@@ -75,6 +87,78 @@ def _event_text(event: Mapping[str, Any], key: str) -> str:
     return str(event.get(key, "") or "").strip()
 
 
+def _first_event_text(event: Mapping[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = _event_text(event, key)
+        if value:
+            return value
+    return ""
+
+
+def _optional_event_sequence(event: Mapping[str, Any]) -> int | None:
+    if "seq" not in event or event.get("seq") is None:
+        return None
+    try:
+        return max(0, int(event["seq"]))
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_bool(payload: Mapping[str, Any], key: str) -> bool | None:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    return None
+
+
+@dataclass(frozen=True)
+class TokenUsageEventRef:
+    sequence: int | None = None
+    observed_at: str = ""
+    event_type: str = ""
+    event_id: str = ""
+
+    def as_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if self.sequence is not None:
+            payload["sequence"] = self.sequence
+        if self.observed_at:
+            payload["observed_at"] = self.observed_at
+        if self.event_type:
+            payload["event_type"] = self.event_type
+        if self.event_id:
+            payload["event_id"] = self.event_id
+        return payload
+
+
+def event_ref_from_session_event(event: Mapping[str, Any]) -> TokenUsageEventRef:
+    return TokenUsageEventRef(
+        sequence=_optional_event_sequence(event),
+        observed_at=_first_event_text(event, ("timestamp", "created_at", "ts")),
+        event_type=_event_text(event, "event_type"),
+        event_id=_first_event_text(event, ("event_id", "id")),
+    )
+
+
+def sort_session_events(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    def _key(item: tuple[int, dict[str, Any]]) -> tuple[Any, ...]:
+        index, event = item
+        ref = event_ref_from_session_event(event)
+        if ref.sequence is not None:
+            return (0, ref.sequence, ref.observed_at, ref.event_id, index)
+        if ref.observed_at:
+            return (1, ref.observed_at, ref.event_id, index)
+        if ref.event_id:
+            return (2, ref.event_id, index)
+        return (3, index)
+
+    return [event for _, event in sorted(enumerate(events), key=_key)]
+
+
 @dataclass(frozen=True)
 class TokenUsageRecord:
     session_id: str
@@ -88,6 +172,10 @@ class TokenUsageRecord:
     bucket: str = ""
     source_event_type: str = ""
     source_event_id: str = ""
+    source_event_sequence: int | None = None
+    observed_at: str = ""
+    total_tokens: int = 0
+    total_source: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -98,6 +186,9 @@ class TokenUsageRecord:
     original_ref: str = ""
     policy: str = ""
     estimated: bool = False
+    prompt_cache_key: str = ""
+    static_prefix_hash: str = ""
+    cache_hit: bool | None = None
 
     def __post_init__(self) -> None:
         for field_name in _TOKEN_FIELD_NAMES:
@@ -106,12 +197,19 @@ class TokenUsageRecord:
                 field_name,
                 coerce_non_negative_int(getattr(self, field_name)),
             )
+        normalized_source = str(self.total_source or "").strip()
+        object.__setattr__(
+            self,
+            "total_source",
+            normalized_source if normalized_source in TOKEN_TOTAL_SOURCES else "",
+        )
 
     @property
     def has_tokens(self) -> bool:
         return any(
             (
                 self.input_tokens,
+                self.total_tokens,
                 self.output_tokens,
                 self.cache_read_tokens,
                 self.cache_write_tokens,
@@ -133,6 +231,10 @@ class TokenUsageRecord:
             "bucket": self.bucket,
             "source_event_type": self.source_event_type,
             "source_event_id": self.source_event_id,
+            "source_event_sequence": self.source_event_sequence,
+            "observed_at": self.observed_at,
+            "total_tokens": self.total_tokens,
+            "total_source": self.total_source,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "cache_read_tokens": self.cache_read_tokens,
@@ -143,6 +245,9 @@ class TokenUsageRecord:
             "original_ref": self.original_ref,
             "policy": self.policy,
             "estimated": self.estimated,
+            "prompt_cache_key": self.prompt_cache_key,
+            "static_prefix_hash": self.static_prefix_hash,
+            "cache_hit": self.cache_hit,
         }
 
 
@@ -151,6 +256,20 @@ class TokenUsageSummary:
     session_id: str
     run_id: str = ""
     records: tuple[TokenUsageRecord, ...] = ()
+    complete: bool = True
+    source_event_count: int = 0
+    events_scanned: int = 0
+    event_limit: int | None = None
+    first_source_event: TokenUsageEventRef | None = None
+    last_source_event: TokenUsageEventRef | None = None
+
+    @property
+    def total_provider_tokens(self) -> int:
+        return sum(
+            record.total_tokens
+            for record in self.records
+            if record.surface == SURFACE_LLM_TOTAL
+        )
 
     @property
     def total_input_tokens(self) -> int:
@@ -162,11 +281,23 @@ class TokenUsageSummary:
 
     @property
     def total_cache_read_tokens(self) -> int:
-        return sum(record.cache_read_tokens for record in self.records)
+        return sum(
+            record.cache_read_tokens
+            for record in self.records
+            if record.surface == SURFACE_LLM_CACHE_READ
+        )
 
     @property
     def total_cache_write_tokens(self) -> int:
-        return sum(record.cache_write_tokens for record in self.records)
+        return sum(
+            record.cache_write_tokens
+            for record in self.records
+            if record.surface == SURFACE_LLM_CACHE_WRITE
+        )
+
+    @property
+    def records_emitted(self) -> int:
+        return len(self.records)
 
     @property
     def total_estimated_tokens(self) -> int:
@@ -193,10 +324,25 @@ class TokenUsageSummary:
 
     def as_payload(self) -> dict[str, Any]:
         return {
+            "schema_version": TOKEN_USAGE_SCHEMA_VERSION,
             "session_id": self.session_id,
             "run_id": self.run_id,
+            "complete": self.complete,
+            "source_event_count": self.source_event_count,
+            "records_emitted": self.records_emitted,
+            "events_scanned": self.events_scanned,
+            "event_limit": self.event_limit,
+            "source_event_range": {
+                "first": self.first_source_event.as_payload()
+                if self.first_source_event is not None
+                else None,
+                "last": self.last_source_event.as_payload()
+                if self.last_source_event is not None
+                else None,
+            },
             "records": [record.as_payload() for record in self.records],
             "totals": {
+                "provider_tokens": self.total_provider_tokens,
                 "input_tokens": self.total_input_tokens,
                 "output_tokens": self.total_output_tokens,
                 "cache_read_tokens": self.total_cache_read_tokens,
@@ -238,16 +384,30 @@ def _records_from_llm_completed(
     if not isinstance(usage, Mapping):
         return ()
     base = _base_record(event, payload, session_id=session_id)
+    input_tokens = _first_token_int(usage, _INPUT_TOKEN_KEYS)
+    output_tokens = _first_token_int(usage, _OUTPUT_TOKEN_KEYS)
+    total_is_provider_reported = any(key in usage for key in _TOTAL_TOKEN_KEYS)
+    total_tokens = _first_token_int(usage, _TOTAL_TOKEN_KEYS)
+    if not total_is_provider_reported:
+        total_tokens = input_tokens + output_tokens
     records = (
         _record_with_tokens(
             base,
+            surface=SURFACE_LLM_TOTAL,
+            total_tokens=total_tokens,
+            total_source=TOTAL_SOURCE_PROVIDER
+            if total_is_provider_reported
+            else TOTAL_SOURCE_DERIVED,
+        ),
+        _record_with_tokens(
+            base,
             surface=SURFACE_LLM_PROMPT,
-            input_tokens=_first_token_int(usage, _INPUT_TOKEN_KEYS),
+            input_tokens=input_tokens,
         ),
         _record_with_tokens(
             base,
             surface=SURFACE_LLM_OUTPUT,
-            output_tokens=_first_token_int(usage, _OUTPUT_TOKEN_KEYS),
+            output_tokens=output_tokens,
         ),
         _record_with_tokens(
             base,
@@ -313,7 +473,7 @@ def _records_from_cache_metrics(
     return (
         _record_with_tokens(
             _base_record(event, payload, session_id=session_id),
-            surface=SURFACE_LLM_CACHE_READ,
+            surface=SURFACE_LLM_CACHE_DIAGNOSTIC,
             cache_read_tokens=cached_tokens,
         ),
     )
@@ -334,7 +494,12 @@ def _base_record(
         provider=_text(payload, "provider"),
         model=_text(payload, "model"),
         source_event_type=_event_text(event, "event_type"),
-        source_event_id=_event_text(event, "event_id"),
+        source_event_id=_first_event_text(event, ("event_id", "id")),
+        source_event_sequence=_optional_event_sequence(event),
+        observed_at=_first_event_text(event, ("timestamp", "created_at", "ts")),
+        prompt_cache_key=_text(payload, "prompt_cache_key"),
+        static_prefix_hash=_text(payload, "static_prefix_hash"),
+        cache_hit=_optional_bool(payload, "cache_hit"),
     )
 
 
@@ -343,6 +508,8 @@ def _record_with_tokens(
     *,
     surface: str,
     bucket: str = "",
+    total_tokens: int = 0,
+    total_source: str = "",
     input_tokens: int = 0,
     output_tokens: int = 0,
     cache_read_tokens: int = 0,
@@ -357,6 +524,8 @@ def _record_with_tokens(
         base,
         surface=surface,
         bucket=bucket,
+        total_tokens=total_tokens,
+        total_source=total_source,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
@@ -395,7 +564,8 @@ def _iter_bucket_payloads(
 
 def _record_total(record: TokenUsageRecord) -> int:
     return (
-        record.input_tokens
+        record.total_tokens
+        + record.input_tokens
         + record.output_tokens
         + record.cache_read_tokens
         + record.cache_write_tokens

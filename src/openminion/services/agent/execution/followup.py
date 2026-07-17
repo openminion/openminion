@@ -7,7 +7,7 @@ from openminion.modules.llm.contracts import (
     ProviderToolSpec,
     extract_fallback_tool_calls_from_text_with_metadata,
 )
-from openminion.services.tool.exposure import get_allowed_model_tool_names
+from openminion.modules.tool.exposure import get_allowed_model_tool_names
 
 
 def _provider_specs(tools: Any) -> list[Any]:

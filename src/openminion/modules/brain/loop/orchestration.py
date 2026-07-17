@@ -691,6 +691,7 @@ def decide(
         {
             "llm_call_id": llm_call_id,
             "purpose": "entry",
+            "provider": str(getattr(response, "provider", "") or "").strip(),
             "model": model,
             "prompt_context_id": context.get("prompt_context_id"),
             "usage": usage_payload,

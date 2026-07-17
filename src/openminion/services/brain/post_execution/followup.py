@@ -399,6 +399,10 @@ async def _follow_up_after_tool(
         payload={
             "llm_call_id": llm_call_id,
             "purpose": "respond_followup",
+            "provider": str(
+                getattr(follow_up, "provider", "")
+                or getattr(self._provider, "name", "provider")
+            ).strip(),
             "model": str(
                 follow_up_model or getattr(self._provider, "name", "provider")
             ),

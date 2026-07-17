@@ -51,6 +51,21 @@ def test_get_replay_events_filters_and_ranges(store: SQLiteSessionStore) -> None
     assert filtered[0]["event_type"] == "tool.request"
 
 
+def test_cache_metrics_is_a_known_canonical_event(store: SQLiteSessionStore) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="pv1"
+    )
+
+    event_id = store.emit_canonical_event(
+        session_id,
+        "llm.cache.metrics",
+        {"cached_tokens": 4, "prompt_cache_key": "cache-key"},
+    )
+
+    event = next(item for item in store.get_events(session_id) if item["event_id"] == event_id)
+    assert "_warnings" not in event["payload"]
+
+
 def test_get_resume_state_includes_context_and_clarify_events(
     store: SQLiteSessionStore,
 ) -> None:

@@ -19,7 +19,7 @@ from .prompts import (
     PINCHTAB_AUTOSTART_PROMPT,
     build_sidecar_policy_prompt,
 )
-from openminion.services.security.policy import (
+from openminion.modules.policy import (
     DECISION_ALLOW,
     DECISION_REQUIRE_APPROVAL,
     RISK_LOW,

@@ -9,11 +9,11 @@ from openminion.base.config.env import resolve_environment_config
 from openminion.cli.bootstrap.loader import load_config
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.services.lifecycle.sidecars import (
+from openminion.services.runtime.sidecars import (
     SidecarManager,
     default_sidecar_manager,
 )
-from openminion.services.security.policy import (
+from openminion.modules.policy import (
     SecurityPolicyContext,
     SecurityPolicyEngine,
     ToolBudgetPolicy,

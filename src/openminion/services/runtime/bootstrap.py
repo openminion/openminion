@@ -49,7 +49,7 @@ from openminion.services.context.session import (
     resolve_session_archive_root,
 )
 from openminion.modules.brain.paths import resolve_brain_runtime_db_path
-from openminion.services.security.policy import (
+from openminion.modules.policy import (
     DECISION_ALLOW,
     SecurityPolicyAction,
     SecurityPolicyCheck,

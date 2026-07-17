@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.services.runtime.interfaces import RuntimeFacade
-from openminion.services.runtime.run_status import (
+from openminion.modules.task.run import (
     RUN_STATE_COMPLETED,
     RUN_STATE_FAILED,
     RUN_STATE_QUEUED,

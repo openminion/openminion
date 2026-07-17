@@ -1,4 +1,4 @@
-from openminion.services.channel.authenticity import (
+from openminion.modules.controlplane.channels.authenticity import (
     ChannelAuthenticityPolicy,
     build_channel_authenticity_policy,
 )

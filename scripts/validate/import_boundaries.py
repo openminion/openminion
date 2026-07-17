@@ -28,6 +28,8 @@ FORBIDDEN_MODULE_IMPORTS = [
 FORBIDDEN_SERVICE_IMPORTS = [
     re.compile(r"^\s*from\s+openminion\.api\.", re.MULTILINE),
     re.compile(r"^\s*import\s+openminion\.api\.", re.MULTILINE),
+    re.compile(r"^\s*from\s+openminion\.cli\.", re.MULTILINE),
+    re.compile(r"^\s*import\s+openminion\.cli\.", re.MULTILINE),
 ]
 FORBIDDEN_BASE_CONFIG_LOAD = [
     re.compile(
@@ -83,7 +85,7 @@ def main() -> int:
     hits.extend(scan_base())
     if hits:
         emit_plain_findings(
-            "Forbidden imports detected (modules -> services/api/base config load or services -> api):",
+            "Forbidden imports detected (modules -> services/api/base config load or services -> api/cli):",
             hits,
         )
         return 1

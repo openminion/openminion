@@ -66,6 +66,23 @@ def test_validator_rejects_type_only_and_lazy_service_to_api_imports(
     assert len(hits) == 2
 
 
+def test_validator_rejects_type_only_and_lazy_service_to_cli_imports(
+    tmp_path: pathlib.Path,
+):
+    test_file = tmp_path / "service_probe.py"
+    test_file.write_text(
+        "if TYPE_CHECKING:\n"
+        "    from openminion.cli.main import main\n"
+        "def load():\n"
+        "    import openminion.cli.commands.context_cleanup\n",
+        encoding="utf-8",
+    )
+
+    hits = _validator.scan_file(test_file, layer="services")
+
+    assert len(hits) == 2
+
+
 def test_validator_accepts_canonical_dependency_directions(tmp_path: pathlib.Path):
     module_file = tmp_path / "module_ok.py"
     module_file.write_text(

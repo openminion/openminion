@@ -22,6 +22,7 @@ def run_status(args) -> int:
         run_tools_status,
     )
     from .self import run_self_status
+    from .tokens import run_tokens_status
 
     handler = {
         "tools": run_tools_status,
@@ -31,6 +32,7 @@ def run_status(args) -> int:
         "identity": run_identity_status,
         "action-policy": run_action_policy_status,
         "extensions": run_extensions_status,
+        "tokens": run_tokens_status,
     }.get(args.status_command)
     if handler is not None:
         return handler(args, config=config)
@@ -53,7 +55,7 @@ def run_status(args) -> int:
 
     from openminion.modules.storage.runtime.context import build_runtime_storage
     from openminion.modules.storage.runtime.sqlite import resolve_database_path
-    from openminion.services.runtime.run_status import (
+    from openminion.modules.task.run import (
         list_session_run_events,
         list_session_runs,
     )
@@ -104,7 +106,7 @@ def run_status(args) -> int:
             return 0
 
         raise RuntimeError(
-            "Unknown status command. Use `status runs`, `status run-events`, `status owner`, `status identity`, `status tools`, `status capabilities`, `status runtime`, `status notes`, or `status action-policy`."
+            "Unknown status command. Use `status runs`, `status run-events`, `status tokens`, `status owner`, `status identity`, `status tools`, `status capabilities`, `status runtime`, `status notes`, or `status action-policy`."
         )
     finally:
         runtime_storage.close()
@@ -252,6 +254,23 @@ def _register_status_run_events_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
+def _register_status_tokens_subcommand(status_subcommands) -> None:
+    parser = status_subcommands.add_parser(
+        "tokens",
+        help="Inspect token usage for a session or run",
+    )
+    parser.add_argument("--session-id", required=True, help="Session identifier")
+    parser.add_argument("--run-id", default="", help="Optional run identifier")
+    parser.add_argument(
+        "--event-limit",
+        type=int,
+        default=None,
+        help="Optional positive event-read limit",
+    )
+    add_json_output_flag(parser)
+    parser.set_defaults(handler=run_status, needs_app=False)
+
+
 def _register_status_notes_subcommand(status_subcommands) -> None:
     parser = status_subcommands.add_parser(
         "notes",
@@ -383,6 +402,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     _register_status_runs_subcommand(status_subcommands)
     _register_status_run_events_subcommand(status_subcommands)
+    _register_status_tokens_subcommand(status_subcommands)
     _register_status_notes_subcommand(status_subcommands)
     _register_status_identity_subcommand(status_subcommands)
     _register_status_onboarding_subcommand(status_subcommands)

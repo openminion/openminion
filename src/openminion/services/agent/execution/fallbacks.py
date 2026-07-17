@@ -189,7 +189,7 @@ class AgentToolFallbacksMixin:
         if tool_selection is not None:
             for key, value in tool_selection.runtime_binding_policy_metadata().items():
                 tool_metadata.setdefault(key, value)
-        from openminion.services.security.blast_radius.wiring import (
+        from openminion.modules.policy.adapters.composition import (
             SEAM_AGENT_TOOL_FALLBACKS,
             build_default_composition_boundary_adapter,
         )

@@ -8,7 +8,7 @@ from openminion.services.agent.execution.finalization import (
     finalization_status_termination_reason,
 )
 from openminion.services.agent.constants import TERMINATION_REASON_LOOP_NO_PROGRESS
-from openminion.services.security.policy import ToolBudgetState
+from openminion.modules.policy import ToolBudgetState
 
 from ..dependencies import ExecutorDeps
 from ..response import tool_calls_payload

@@ -32,7 +32,7 @@ from .records import (
 )
 
 _REGISTRY_MANAGER_WARMED = False
-_LOG = logging.getLogger("openminion.services.tool.selection")
+_LOG = logging.getLogger("openminion.modules.tool.selection")
 create_validation_error, stub_to_provider_spec = (
     _create_validation_error,
     _stub_to_provider_spec,

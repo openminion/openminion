@@ -245,7 +245,7 @@ async def post_execution_argument_retry_result(
         and state.ctx is not None
     ):
         if getattr(state.ctx, "blast_radius_adapter", None) is None:
-            from openminion.services.security.blast_radius.wiring import (
+            from openminion.modules.policy.adapters.composition import (
                 SEAM_AGENT_REQUIRED_LANE_RETRY,
                 build_default_composition_boundary_adapter,
             )

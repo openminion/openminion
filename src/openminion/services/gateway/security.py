@@ -2,13 +2,13 @@ import json
 import logging
 
 from openminion.base.redaction import redact_mapping
-from openminion.services.channel.authenticity import (
+from openminion.modules.controlplane.channels.authenticity import (
     ChannelAuthenticityDecision,
     ChannelAuthenticityEvidence,
     ChannelAuthenticityPolicy,
     evaluate_inbound_authenticity,
 )
-from openminion.services.security.policy import (
+from openminion.modules.policy import (
     DECISION_ALLOW,
     DECISION_REQUIRE_APPROVAL,
     SecurityPolicyAction,

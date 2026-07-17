@@ -4,7 +4,7 @@ from typing import Any, Mapping
 from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.security.policy import ToolBudgetState
+from openminion.modules.policy import ToolBudgetState
 
 from ..state import RequiredLaneOutcome
 

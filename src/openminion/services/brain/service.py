@@ -17,7 +17,7 @@ from openminion.services.agent import AgentService
 from openminion.services.agent.memory import (  # noqa: F401  (re-export for test patches + canonical runner_metadata resolution)
     build_memory_policy_snapshot,
 )
-from openminion.services.security.policy import SecurityPolicyEngine
+from openminion.modules.policy import SecurityPolicyEngine
 from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 from openminion.modules.tool import ToolRegistry
 

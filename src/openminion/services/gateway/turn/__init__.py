@@ -15,7 +15,7 @@ from openminion.services.gateway.turn.flow import (
 from openminion.services.gateway.turn.route_classification import (
     classify_setup_cost_route,
 )
-from openminion.services.runtime.run_status import (
+from openminion.modules.task.run import (
     RUN_STATE_COMPLETED,
     RUN_STATE_FAILED,
     RUN_STATE_RUNNING,

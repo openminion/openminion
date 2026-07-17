@@ -50,7 +50,7 @@ from .snapshot import (
 from .types import HealthCheck
 from openminion.services.runtime.lifecycle import LifecycleService
 from openminion.services.runtime.interfaces import RuntimeFacade
-from openminion.services.security.policy import SecurityPolicyEngine, ToolBudgetPolicy
+from openminion.modules.policy import SecurityPolicyEngine, ToolBudgetPolicy
 
 _HEALTH_LOG = logging.getLogger("openminion.health")
 

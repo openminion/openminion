@@ -15,11 +15,11 @@ from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.refs import (
     tool_result_artifact_refs as _tool_result_artifact_refs,
 )
-from openminion.services.security.blast_radius.wiring import (
+from openminion.modules.policy.adapters.composition import (
     SEAM_CLI_TOOLS,
     build_default_composition_boundary_adapter,
 )
-from openminion.services.tool.selection import ToolSelectionService
+from openminion.modules.tool.selection import ToolSelectionService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 
 

@@ -22,6 +22,8 @@ cli/commands/status/action_policy.py	openminion.modules.session.storage.sqlite_s
 cli/commands/status/action_policy.py	openminion.modules.storage.runtime.sqlite
 cli/commands/status/identity.py	openminion.modules.identity.runtime.service
 cli/commands/status/identity.py	openminion.modules.identity.storage.store
+cli/commands/status/tokens.py	openminion.modules.session.runtime.factory
+cli/commands/status/tokens.py	openminion.modules.storage.runtime.sqlite
 cli/commands/tools.py	openminion.modules.llm.providers.base
 cli/commands/tools.py	openminion.modules.tool.runtime.routing
 cli/identity/sync.py	openminion.modules.identity.runtime.service
@@ -137,7 +139,6 @@ services/brain/adapters/run_verification.py	openminion.modules.brain.runtime.ver
 services/brain/adapters/run_verification.py	openminion.modules.storage.runtime.session_store
 modules/policy/adapters/blast_radius.py	openminion.modules.tool.runtime.blast_radius
 modules/policy/adapters/composition.py	openminion.modules.tool.runtime.blast_radius
-modules/telemetry/usage/service.py	openminion.modules.storage.runtime.session_store
 tools/agent/plugin.py	openminion.modules.tool.runtime
 tools/agent/plugin.py	openminion.modules.tool.runtime.environment
 tools/browser/__init__.py	openminion.modules.tool.runtime.registrar

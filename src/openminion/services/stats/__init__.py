@@ -1,7 +1,3 @@
-from openminion.cli.status.stats import (
-    format_run_stats_footer,
-    format_session_stats_summary,
-)
 from openminion.modules.telemetry.usage import (
     RunStats,
     RunStatsSummary,
@@ -10,6 +6,8 @@ from openminion.modules.telemetry.usage import (
     TokenUsageRecord,
     TokenUsageSummary,
     ToolCallCount,
+    format_run_stats_footer,
+    format_session_stats_summary,
     summary_to_json_payload,
 )
 

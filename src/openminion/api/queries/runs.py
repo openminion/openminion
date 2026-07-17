@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.runtime import APIRuntime
-from openminion.services.runtime.run_status import (
+from openminion.modules.task.run import (
     list_session_run_events,
     list_session_runs,
 )

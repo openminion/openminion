@@ -35,7 +35,7 @@ from openminion.services.gateway.turn.runtime import (
     _response_has_tool_activity,
 )
 from openminion.services.gateway.turn.lifecycle import _GatewayTurnLifecycleOps
-from openminion.services.runtime.run_status import (
+from openminion.modules.task.run import (
     ATTACH_ROLE_OBSERVER,
     ATTACH_ROLE_WRITER,
     RUN_STATE_COMPLETED,
@@ -51,8 +51,8 @@ from openminion.services.runtime.run_status import (
     resolve_thread_lifecycle,
     resolve_thread_routing_decision,
 )
-from openminion.services.security.policy import RISK_LOW
-from openminion.services.stats import RunStats
+from openminion.modules.policy import RISK_LOW
+from openminion.modules.telemetry.usage import RunStats
 
 
 def _human_participant_id(

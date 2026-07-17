@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 
 from openminion.api.runtime import APIRuntime
 from openminion.modules.brain.diagnostics.status import PhaseStatus
-import openminion.services.lifecycle.request_orchestrator as _request_orchestrator
+import openminion.services.runtime.ingress.orchestrator as _request_orchestrator
 
 TurnRequestError = _request_orchestrator.TurnRequestError
 TurnTimeoutError = _request_orchestrator.TurnTimeoutError

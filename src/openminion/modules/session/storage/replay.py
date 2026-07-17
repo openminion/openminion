@@ -13,6 +13,7 @@ _KNOWN_CANONICAL_EVENT_TYPES = {
     "llm.call.completed",
     "llm.call.failed",
     "llm.call.empty_response_accepted",
+    "llm.cache.metrics",
     "tool.request",
     "tool.completed",
     "tool.error",

@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from openminion.services.security.policy import ToolBudgetState
+from openminion.modules.policy import ToolBudgetState
 
 from ..dependencies import ExecutorDeps
 from ..ports import RuntimeOpsPort, TurnFlowServicePort

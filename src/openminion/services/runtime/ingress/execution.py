@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import Any, Awaitable, Callable
 
 from openminion.base.config import RunProfileOverrides
-from openminion.services.stats import RunStats
+from openminion.modules.telemetry.usage import RunStats
 from openminion.services.runtime.turn_router import TurnRouter
 
 from .gateway_call import _run_coro_sync

@@ -15,7 +15,7 @@ from openminion.services.runtime.manager import (
     TurnTelemetry,
 )
 from openminion.services.runtime.settings import ManagerConfig, RuntimeConfig
-from openminion.services.runtime.run_status import RunStatus
+from openminion.modules.task.run import RunStatus
 from openminion.services.runtime.turn_input import (
     TurnInputIntent,
     TurnInputQueue,

@@ -131,12 +131,14 @@ def test_run_token_usage_normalizes_llm_surfaces_from_events(
         "llm_output": 5,
         "llm_cache_read": 3,
         "llm_cache_write": 2,
+        "llm_total": 17,
     }
     assert {record.surface for record in summary.records} == {
         "llm_prompt",
         "llm_output",
         "llm_cache_read",
         "llm_cache_write",
+        "llm_total",
     }
     assert all(record.llm_call_id == "call-1" for record in summary.records)
 

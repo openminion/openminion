@@ -20,7 +20,7 @@ from openminion.services.agent.execution.followup import (
     available_follow_up_tools,
     recover_text_tool_calls,
 )
-from openminion.services.security.policy import ToolBudgetState
+from openminion.modules.policy import ToolBudgetState
 from ..prompts import (
     build_denied_tool_recovery_hint,
     build_duplicate_tool_replan_feedback,

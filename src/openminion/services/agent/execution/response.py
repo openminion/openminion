@@ -3,7 +3,7 @@ from dataclasses import replace
 from typing import Any
 
 from openminion.base.types import AgentResponse, Message
-from openminion.services.agent.hooks import HookContext
+from openminion.services.runtime.plugins.hooks import PluginContext as HookContext
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionResult
 

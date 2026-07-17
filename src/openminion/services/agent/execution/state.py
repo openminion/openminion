@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from openminion.base.types import Message
-from openminion.services.agent.hooks import HookContext
+from openminion.services.runtime.plugins.hooks import PluginContext as HookContext
 from openminion.modules.llm.providers.base import ProviderHistoryMessage
 
 

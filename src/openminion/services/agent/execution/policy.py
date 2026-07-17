@@ -5,13 +5,13 @@ from typing import Any
 
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.tool.base import ToolExecutionResult
-from openminion.services.security.policy import (
+from openminion.modules.policy import (
     DECISION_REQUIRE_APPROVAL,
     SecurityPolicyContext,
     ToolBudgetState,
     default_internal_actor,
 )
-from openminion.services.security.tool_execution import (
+from openminion.modules.policy.adapters.tool import (
     build_execution_boundary_policy_adapter,
 )
 

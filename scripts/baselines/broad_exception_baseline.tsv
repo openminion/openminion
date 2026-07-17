@@ -370,7 +370,7 @@ src/openminion/services/brain/post_execution/reset.py	6	0	current broad-handler 
 src/openminion/services/brain/post_execution/usage.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/service.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/context/adapter.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/commands/context_cleanup.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/session/diagnostics/cleanup.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/context/session.py	8	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/runtime/cron_delivery.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/cron/scheduler.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

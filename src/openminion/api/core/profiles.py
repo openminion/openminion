@@ -40,7 +40,7 @@ from openminion.services.runtime.bootstrap import (
 from openminion.services.runtime.plugins import PluginRegistry
 from openminion.services.runtime.turn_input import TurnInputQueue
 from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
-from openminion.services.security.policy import SecurityPolicyEngine
+from openminion.modules.policy import SecurityPolicyEngine
 
 from .infrastructure import (
     bind_mcp_sampling_executor,

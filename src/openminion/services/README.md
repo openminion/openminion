@@ -28,11 +28,13 @@ before it lands.
 
 ### Runtime concern packages
 
-Six service subpackages are standalone runtime concerns with no
+Eight service subpackages are standalone runtime concerns with no
 `modules/` peer:
 
 - `agent/`
+- `bootstrap/`
 - `cron/`
+- `diagnostics/`
 - `gateway/`
 - `health/`
 - `runtime/`
@@ -44,14 +46,19 @@ layer. Policy, tool-selection, channel-policy, and stats behavior lives under
 its canonical module owner. Remaining service paths for those areas are
 compatibility imports or runtime wiring, not parallel feature owners.
 
-### Grouped helper packages
+### Compatibility-only packages
 
-Smaller support owners that are not standalone subsystem peers are grouped by
-runtime role:
+These packages accept no new behavior and exist only to preserve old import
+paths during staged migrations:
 
-- `bootstrap/`: startup config bootstrap, onboarding, data-root migration, and shared path helpers
-- `lifecycle/`: compatibility imports for ingress, brain improvement, and runtime sidecars
-- `diagnostics/`: debug registry and owner-status reporting
+- `channel/`
+- `lifecycle/`
+- `stats/`
+- `tool/`
+
+`security/` is transitional: its policy, tool-execution, blast-radius, and
+validation paths are compatibility imports, while the service-owned validation
+composition now lives under `diagnostics/security.py`.
 
 The former `integration/` bucket is dissolved: skill diagnostics belongs to
 `modules/skill`, and vector synchronization belongs to `modules/storage`.

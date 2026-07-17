@@ -6,8 +6,8 @@ from typing import Any, List, Optional
 from openminion.base.types import AgentResponse, Message
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
 from openminion.modules.llm.providers.base import ProviderRequest
-from openminion.services.security.policy import ToolBudgetState
-from openminion.services.agent.hooks import HookContext
+from openminion.modules.policy import ToolBudgetState
+from openminion.services.runtime.plugins.hooks import PluginContext as HookContext
 
 from ..context import build_context
 from ..context.history import _provider_tool_call_strategy

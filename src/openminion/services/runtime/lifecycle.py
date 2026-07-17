@@ -22,13 +22,13 @@ from openminion.modules.llm.providers import (
 )
 from openminion.modules.tool import ToolRegistry, build_default_tool_registry
 from openminion.modules.tool.runtime.plugins import load_plugins as load_tool_plugins
-from openminion.services.security.policy import SecurityPolicyEngine
-from openminion.services.lifecycle.sidecars import (
+from openminion.modules.policy import SecurityPolicyEngine
+from openminion.services.runtime.sidecars import (
     SidecarManager,
     default_sidecar_manager,
     ensure_sidecar_autostart,
 )
-from openminion.services.security.policy import (
+from openminion.modules.policy import (
     SecurityPolicyContext,
     default_internal_actor,
 )

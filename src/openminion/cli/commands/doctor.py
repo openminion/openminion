@@ -36,7 +36,7 @@ from openminion.services.health.probes import (
     probe_runtime_bootstrap,
     probe_storage_ready,
 )
-from openminion.services.security.validate import (
+from openminion.services.diagnostics.security import (
     SEVERITY_CRITICAL,
     SEVERITY_INFO,
     SEVERITY_WARN,

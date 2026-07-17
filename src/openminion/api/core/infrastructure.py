@@ -40,7 +40,7 @@ from openminion.services.runtime.bootstrap import (
 )
 from openminion.services.runtime.env import apply_runtime_environment
 from openminion.services.runtime.lifecycle import LifecycleService
-from openminion.services.security.policy import SecurityPolicyEngine, ToolBudgetPolicy
+from openminion.modules.policy import SecurityPolicyEngine, ToolBudgetPolicy
 
 
 @dataclass(frozen=True)

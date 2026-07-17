@@ -9,7 +9,7 @@ from openminion.services.context.session import (
     SessionContextService,
     resolve_session_archive_root,
 )
-from openminion.cli.commands.context_cleanup import SessionCleanupUtility
+from openminion.modules.session.diagnostics.cleanup import SessionCleanupUtility
 
 __all__ = [
     "ContextCtlGatewayAdapter",

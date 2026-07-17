@@ -2151,6 +2151,7 @@ def test_follow_up_after_tool_preserves_typed_cache_usage_in_completed_event() -
         "cached_tokens": 5,
         "cache_creation_tokens": 3,
     }
+    assert completed["payload"]["provider"] == "fake-provider"
 
 
 def test_postprocess_turn_attaches_clarify_request_metadata() -> None:

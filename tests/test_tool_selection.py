@@ -380,7 +380,7 @@ class TestCategoryRouting:
         )
         specs = basic_registry.provider_specs()
         service._is_write_exec_tool = lambda _tool_name: None  # type: ignore[method-assign]
-        with caplog.at_level("DEBUG", logger="openminion.services.tool.selection"):
+        with caplog.at_level("DEBUG", logger="openminion.modules.tool.selection"):
             outcome = service._apply_identity_tool_filter(
                 specs,
                 {"tool_use": "read_only"},
@@ -469,8 +469,8 @@ class TestRegistrySpecsObservability:
         service._registry = _BrokenRegistry()  # type: ignore[assignment]
 
         with (
-            caplog.at_level("WARNING", logger="openminion.services.tool.exposure"),
-            caplog.at_level("WARNING", logger="openminion.services.tool.selection"),
+            caplog.at_level("WARNING", logger="openminion.modules.tool.exposure"),
+            caplog.at_level("WARNING", logger="openminion.modules.tool.selection"),
         ):
             specs = service._registry_specs()
 

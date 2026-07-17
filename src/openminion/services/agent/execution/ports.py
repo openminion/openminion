@@ -10,7 +10,7 @@ from openminion.modules.llm.providers.base import (
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.security.policy import ToolBudgetState
+from openminion.modules.policy import ToolBudgetState
 
 
 class TurnFlowServicePort(Protocol):

@@ -3,8 +3,8 @@ from typing import Any, Callable, Optional
 
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.services.gateway.turn.runtime import _correlation_payload
-from openminion.services.runtime.run_status import Run, append_lifecycle_event
-from openminion.services.runtime.verifier_binding import bind_run_terminal_event
+from openminion.modules.task.run import Run, append_lifecycle_event
+from openminion.services.brain.adapters.run_verification import bind_run_terminal_event
 
 
 class _GatewayTurnLifecycleOps:

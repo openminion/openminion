@@ -3,8 +3,8 @@ from typing import Any
 
 from openminion.base.types import AgentResponse, Message
 from openminion.services.constants import MEMORY_CAPSULE_STRATEGY_OFF
-from openminion.services.channel.authenticity import ChannelAuthenticityDecision
-from openminion.services.runtime.run_status import ThreadLifecycleProjection
+from openminion.modules.controlplane.channels.authenticity import ChannelAuthenticityDecision
+from openminion.modules.task.run import ThreadLifecycleProjection
 
 
 @dataclass(frozen=True)
