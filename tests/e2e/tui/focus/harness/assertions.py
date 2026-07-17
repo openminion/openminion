@@ -21,6 +21,7 @@ _RAW_TOOL_MARKERS = (
 _INCOMPLETE_TURN_MARKERS = (
     "Policy confirmation required.",
     "Reply exactly yes to confirm",
+    "[y]es / [N]o / [a]lways:",
     "without reaching a final answer",
 )
 

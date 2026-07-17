@@ -19,8 +19,15 @@ _COMPOSER_READY_RE = re.compile(
     r"Ask anything|Reply, or / for commands|input:\s*(?:send|queue next) message|"
     r"(?:^|\n)\s*❯\s*\Z"
 )
-_INLINE_APPROVAL_RE = re.compile(
+_CONTENT_COMPOSER_RE = re.compile(
+    r"Ask anything|Reply, or / for commands"
+)
+_LEGACY_INLINE_APPROVAL_RE = re.compile(
     r"\[A\]\s*Allow once\s+\[S\]\s*Session allow\s+\[D\]\s*Deny"
+)
+_COMPACT_INLINE_APPROVAL_RE = re.compile(
+    r"\[y\]es\s*/\s*\[N\]o\s*/\s*\[a\]lways:",
+    re.IGNORECASE,
 )
 _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _APPROVAL_PROMPT_PATTERN = (
@@ -87,7 +94,86 @@ def approval_prompt_needs_reply(transcript: str, *, offset: int) -> bool:
 
 
 def active_approval_visible(screen_text: str) -> bool:
-    return approval_prompt_needs_reply(screen_text, offset=0)
+    return (
+        inline_approval_menu(screen_text) is not None
+        or approval_prompt_needs_reply(screen_text, offset=0)
+    )
+
+
+def inline_approval_menu(screen_text: str) -> str | None:
+    compact_matches = [
+        match
+        for match in _COMPACT_INLINE_APPROVAL_RE.finditer(screen_text)
+        if not _compact_approval_answered(screen_text, match=match)
+    ]
+    if compact_matches and not _interactive_surface_follows(
+        screen_text, offset=compact_matches[-1].end()
+    ):
+        return "compact"
+    legacy_matches = list(_LEGACY_INLINE_APPROVAL_RE.finditer(screen_text))
+    if legacy_matches and not _interactive_surface_follows(
+        screen_text, offset=legacy_matches[-1].end()
+    ):
+        return "legacy"
+    return None
+
+
+def _compact_approval_answered(
+    screen_text: str,
+    *,
+    match: re.Match[str],
+) -> bool:
+    trailing = screen_text[match.end() :]
+    return re.match(
+        r"[ \t]*(?:y|yes|a|always|n|no)[ \t]*\n",
+        trailing,
+        re.IGNORECASE,
+    ) is not None
+
+
+def inline_approval_fingerprint(screen_text: str) -> str | None:
+    """Identify the active approval generation without relying on redraw count."""
+    menu = inline_approval_menu(screen_text)
+    if menu is None:
+        return None
+    pattern = (
+        _COMPACT_INLINE_APPROVAL_RE
+        if menu == "compact"
+        else _LEGACY_INLINE_APPROVAL_RE
+    )
+    matches = list(pattern.finditer(screen_text))
+    prefix = screen_text[: matches[-1].start()]
+    prompt_lines = [line.strip() for line in prefix.splitlines() if line.strip()]
+    prompt = prompt_lines[-1] if prompt_lines else ""
+    prompt = _COMPACT_INLINE_APPROVAL_RE.sub("", prompt).strip()
+    prompt = _LEGACY_INLINE_APPROVAL_RE.sub("", prompt).strip()
+    return f"{menu}:{prompt}"
+
+
+def _interactive_surface_follows(screen_text: str, *, offset: int) -> bool:
+    trailing = screen_text[offset:]
+    return bool(
+        _CONTENT_COMPOSER_RE.search(trailing)
+        or _DONE_RE.search(trailing)
+        or _COMPACT_INLINE_APPROVAL_RE.search(trailing)
+        or _LEGACY_INLINE_APPROVAL_RE.search(trailing)
+        or re.search(r"(?:^|\n)\s*(?:❯\s*)?●\s", trailing)
+    )
+
+
+def inline_approval_key(screen_text: str, reply: str) -> str:
+    menu = inline_approval_menu(screen_text)
+    decision = str(reply or "").strip().lower()
+    keys = {
+        "compact": {"yes": "y", "session": "a", "no": "n"},
+        "legacy": {"yes": "a", "session": "s", "no": "d"},
+    }
+    key = keys.get(menu or "", {}).get(decision)
+    if key is None:
+        raise AssertionError(
+            f"unsupported approval reply {reply!r} for {menu or 'unknown'} menu"
+        )
+    return key
 
 
 def active_turn_busy(screen_text: str) -> bool:
@@ -104,10 +190,10 @@ def composer_echo_probe(text: str) -> str:
 def screen_after_submission(screen_text: str, submission_probe: str) -> str | None:
     """Return screen content rendered after the latest submitted input."""
     trimmed_probe = submission_probe.rstrip(_TRAILING_PUNCTUATION)
-    words = trimmed_probe.split()
-    if not words:
+    characters = [character for character in trimmed_probe if not character.isspace()]
+    if not characters:
         return None
-    pattern_text = r"\s+".join(re.escape(word) for word in words)
+    pattern_text = r"\s*".join(re.escape(character) for character in characters)
     punctuation = submission_probe[len(trimmed_probe) :]
     if punctuation:
         pattern_text += rf"(?:\s*{re.escape(punctuation)})?"
@@ -283,20 +369,27 @@ class FocusProbe:
 
     @staticmethod
     def _submit_inline_approval(session: PtySession, reply: str) -> None:
-        decision = str(reply or "").strip().lower()
-        key = {"yes": "a", "session": "s", "no": "d"}.get(decision)
-        if key is None:
-            raise AssertionError(f"unsupported approval reply: {reply!r}")
         approval_screen = session.screen_text
-        session.send(key)
+        approval_fingerprint = inline_approval_fingerprint(approval_screen)
+        menu = inline_approval_menu(approval_screen)
+        key = inline_approval_key(approval_screen, reply)
+        if menu == "compact":
+            session.send(f"{key}\r")
+        else:
+            session.send(key)
         deadline = time.monotonic() + 5.0
+        clear_polls = 0
         while time.monotonic() < deadline:
             screen_text = session.screen_text
-            if (
-                screen_text != approval_screen
-                and _INLINE_APPROVAL_RE.search(screen_text) is None
-            ):
-                return
+            current_fingerprint = inline_approval_fingerprint(screen_text)
+            if current_fingerprint is None:
+                clear_polls += 1
+                if clear_polls >= 3:
+                    return
+            else:
+                clear_polls = 0
+                if current_fingerprint != approval_fingerprint:
+                    return
             time.sleep(0.05)
         raise AssertionError(
             f"Focus inline approval did not resolve\n{session.screen_text[-2000:]}"
@@ -318,9 +411,7 @@ class FocusProbe:
                 offset=event_offset,
             )
             approval_visible = active_approval_visible(screen_text)
-            inline_approval_visible = (
-                _INLINE_APPROVAL_RE.search(screen_text) is not None
-            )
+            inline_approval_visible = inline_approval_menu(screen_text) is not None
             if inline_approval_visible:
                 assert scenario.requires_approval, transcript[-2000:]
                 approvals += 1

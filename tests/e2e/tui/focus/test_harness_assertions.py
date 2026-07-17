@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 import pytest
 from pyte.screens import Char
 
@@ -9,10 +12,14 @@ from tests.e2e.tui.focus.harness.assertions import (
     turn_output_text,
 )
 from tests.e2e.tui.focus.harness.probe import (
+    FocusProbe,
     active_approval_visible,
     active_turn_busy,
     approval_prompt_needs_reply,
     composer_echo_probe,
+    inline_approval_fingerprint,
+    inline_approval_key,
+    inline_approval_menu,
     latest_approval_prompt,
     latest_done_event,
     latest_turn_event,
@@ -73,6 +80,19 @@ def test_screen_after_submission_accepts_terminal_wrapping() -> None:
         )
         == "\nAnalyzing request...\n"
     )
+
+
+def test_screen_after_submission_accepts_mid_word_terminal_wrapping() -> None:
+    screen = (
+        "> finish with files changed and validation resu\n"
+        "  lt, and remaining follow-ups.\n"
+        "Analyzing request...\n"
+    )
+
+    assert screen_after_submission(
+        screen,
+        "files changed and validation result, and remaining follow-ups.",
+    ) == "\nAnalyzing request...\n"
 
 
 def test_screen_after_submission_requires_rendered_input() -> None:
@@ -259,6 +279,130 @@ def test_active_approval_visible_accepts_allow_once_prompt() -> None:
     )
 
     assert active_approval_visible(screen)
+
+
+@pytest.mark.parametrize(
+    ("screen", "menu"),
+    (
+        ("[A] Allow once   [S] Session allow   [D] Deny", "legacy"),
+        ("[y]es / [N]o / [a]lways:", "compact"),
+    ),
+)
+def test_inline_approval_menu_supports_both_focus_surfaces(
+    screen: str,
+    menu: str,
+) -> None:
+    assert inline_approval_menu(screen) == menu
+    assert active_approval_visible(screen)
+
+
+@pytest.mark.parametrize(
+    "screen",
+    [
+        "[y]es / [N]o / [a]lways:\n❯ Ask anything",
+        "[y]es / [N]o / [a]lways:\n● file.write(example.py)",
+        "[y]es / [N]o / [a]lways: a\n❯ ● file.write(example.py)",
+        "[y]es / [N]o / [a]lways: a\nFIRST:a",
+        "[A] Allow once [S] Session allow [D] Deny\nDone in 2s",
+    ],
+)
+def test_inline_approval_menu_ignores_historical_prompts(screen: str) -> None:
+    assert inline_approval_menu(screen) is None
+    assert not active_approval_visible(screen)
+
+
+def test_inline_approval_menu_ignores_persistent_input_footer() -> None:
+    screen = (
+        "Approval required for 5 queued writes\n"
+        "[y]es / [N]o / [a]lways:\n"
+        "input: queue next message"
+    )
+
+    assert inline_approval_menu(screen) == "compact"
+    assert active_approval_visible(screen)
+
+
+def test_inline_approval_menu_accepts_active_prompt_with_bare_cursor() -> None:
+    screen = (
+        "Approval required: file.write(module.py)\n"
+        "[y]es / [N]o / [a]lways:\n"
+        "❯"
+    )
+
+    assert inline_approval_menu(screen) == "compact"
+    assert active_approval_visible(screen)
+
+
+def test_inline_approval_menu_uses_latest_overlapping_prompt() -> None:
+    screen = (
+        "[y]es / [N]o / [a]lways: Approval required: file.write(wc.py)\n"
+        "[y]es / [N]o / [a]lways:"
+    )
+
+    assert inline_approval_menu(screen) == "compact"
+    assert inline_approval_fingerprint(screen) == "compact:Approval required: file.write(wc.py)"
+
+
+@pytest.mark.parametrize(
+    ("screen", "reply", "key"),
+    (
+        ("[A] Allow once [S] Session allow [D] Deny", "yes", "a"),
+        ("[A] Allow once [S] Session allow [D] Deny", "session", "s"),
+        ("[A] Allow once [S] Session allow [D] Deny", "no", "d"),
+        ("[y]es / [N]o / [a]lways:", "yes", "y"),
+        ("[y]es / [N]o / [a]lways:", "session", "a"),
+        ("[y]es / [N]o / [a]lways:", "no", "n"),
+    ),
+)
+def test_inline_approval_key_matches_the_visible_menu(
+    screen: str,
+    reply: str,
+    key: str,
+) -> None:
+    assert inline_approval_key(screen, reply) == key
+
+
+def test_inline_approval_fingerprint_distinguishes_consecutive_targets() -> None:
+    readme = "Approval required: file.write(README.md)\n[y]es / [N]o / [a]lways:"
+    module = "Approval required: file.write(module.py)\n[y]es / [N]o / [a]lways:"
+
+    assert inline_approval_fingerprint(readme) != inline_approval_fingerprint(module)
+
+
+def test_compact_approval_submission_handles_consecutive_prompts(
+    tmp_path: Path,
+) -> None:
+    script = """
+import asyncio
+from prompt_toolkit import PromptSession
+
+async def main():
+    session = PromptSession()
+    first = await session.prompt_async(
+        'Approval required: file.write(README.md)\\n[y]es / [N]o / [a]lways: '
+    )
+    print(f'FIRST:{first}', flush=True)
+    second = await session.prompt_async(
+        'Approval required: file.write(module.py)\\n[y]es / [N]o / [a]lways: '
+    )
+    print(f'SECOND:{second}', flush=True)
+
+asyncio.run(main())
+"""
+    with PtySession(
+        argv=(sys.executable, "-c", script),
+        cwd=tmp_path,
+        rows=20,
+        cols=100,
+    ) as session:
+        session.wait_for_after(r"file\.write\(README\.md\)", offset=0, timeout=5)
+        FocusProbe._submit_inline_approval(session, "session")
+        session.wait_for_after(r"file\.write\(module\.py\)", offset=0, timeout=5)
+        FocusProbe._submit_inline_approval(session, "session")
+        transcript = session.wait_for_after(r"SECOND:a", offset=0, timeout=5)
+
+    assert "FIRST:a" in transcript
+    assert "FIRST:aa" not in transcript
 
 
 def test_active_turn_busy_accepts_current_responding_footer() -> None:
