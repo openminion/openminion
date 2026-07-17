@@ -6,6 +6,12 @@ from types import SimpleNamespace
 import pytest
 
 from openminion.api.runtime import APIRuntime
+from openminion.modules.tool.contracts import (
+    ALL_MODEL_TOOL_IDS_SET,
+    DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET,
+    MODEL_CONTROL_TOOL_IDS,
+    PROFILE_GATED_MODEL_TOOL_IDS_SET,
+)
 from openminion.modules.llm.providers.base import ProviderToolSpec
 from openminion.modules.tool.registry import ToolSpec
 from openminion.modules.tool import build_default_tool_registry
@@ -15,7 +21,7 @@ from openminion.modules.tool.exposure import (
     ToolExposureProfile,
     ToolExposureService,
     ToolRiskAnnotations,
-    default_exposure_profiles,
+    apply_model_exposure,
     get_allowed_model_tool_names,
     get_model_exposure_specs,
     get_visible_tool_specs_and_dispatch_map,
@@ -156,12 +162,124 @@ def test_default_exposure_keeps_read_only_ops_visible_and_job_cancel_hidden() ->
     )
 
 
-def test_specialized_families_require_profiles_without_hiding_legacy_tools() -> None:
-    service = ToolExposureService(default_exposure_profiles())
+def test_default_exposure_hides_legacy_plan_compatibility_tools() -> None:
+    registry = build_default_tool_registry()
+    names = {spec.name for spec in get_model_exposure_specs(registry)}
 
-    assert service.decide("legacy.fixture.inspect").state == "visible"
+    assert "plan.set" not in names
+    assert "todo.write" not in names
+    assert registry.exposure_service.profile("legacy_session_plan") is not None
+
+
+def test_legacy_plan_tools_are_visible_only_after_explicit_activation() -> None:
+    registry = build_default_tool_registry()
+    registry.exposure_service.activate(
+        "legacy_session_plan",
+        session_id="compat-session",
+    )
+
+    names = {
+        spec.name
+        for spec in get_model_exposure_specs(
+            registry,
+            metadata={"session_id": "compat-session"},
+        )
+    }
+
+    assert "plan.set" in names
+    assert "todo.write" in names
+
+
+def test_unclassified_tools_require_profiles_without_hiding_baseline_or_mcp() -> None:
+    service = ToolExposureService()
+
+    assert service.decide("web.fetch").state == "visible"
+    assert service.decide("mcp.fixture.inspect").state == "visible"
+    hidden_controls = {
+        name
+        for name in MODEL_CONTROL_TOOL_IDS
+        if service.decide(name).state != "visible"
+    }
+    assert hidden_controls == set()
+    assert service.decide("legacy.fixture.inspect").state == "hidden"
+    assert service.decide("cluster.future.inspect").state == "hidden"
     assert service.decide("k8s.future.inspect").state == "hidden"
     assert service.decide("cloud.future.inspect").reason_code == "profile_inactive"
+
+
+def test_request_exposure_preserves_control_tools_and_hides_unknown_tools() -> None:
+    request = SimpleNamespace(
+        tools=[_spec("plan"), _spec("cluster.future.inspect")],
+        metadata={},
+        system_prompt="system",
+    )
+    registry = SimpleNamespace(exposure_service=ToolExposureService())
+
+    apply_model_exposure(request, registry)
+
+    assert [spec.name for spec in request.tools] == ["plan"]
+
+
+def test_control_tool_classification_matches_brain_contracts() -> None:
+    from openminion.modules.brain.loop.entry import (
+        ENTRY_CLARIFY_TOOL_NAME,
+        ENTRY_CODING_TOOL_NAME,
+        ENTRY_DECOMPOSE_TOOL_NAME,
+        ENTRY_RESEARCH_TOOL_NAME,
+    )
+    from openminion.modules.brain.loop.tools.plan_control import PLAN_TOOL_NAME
+    from openminion.modules.brain.loop.tools.shortlisting import (
+        TOOL_REQUEST_TOOL_NAME,
+    )
+    from openminion.modules.brain.runtime.review.observation import REVIEW_TOOL_NAME
+
+    assert MODEL_CONTROL_TOOL_IDS == frozenset(
+        {
+            ENTRY_CLARIFY_TOOL_NAME,
+            ENTRY_CODING_TOOL_NAME,
+            ENTRY_DECOMPOSE_TOOL_NAME,
+            ENTRY_RESEARCH_TOOL_NAME,
+            PLAN_TOOL_NAME,
+            REVIEW_TOOL_NAME,
+            TOOL_REQUEST_TOOL_NAME,
+        }
+    )
+
+
+def test_canonical_tool_ids_have_complete_exposure_classification() -> None:
+    assert MODEL_CONTROL_TOOL_IDS.isdisjoint(ALL_MODEL_TOOL_IDS_SET)
+    assert DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET.isdisjoint(
+        PROFILE_GATED_MODEL_TOOL_IDS_SET
+    )
+    assert (
+        DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET | PROFILE_GATED_MODEL_TOOL_IDS_SET
+        == ALL_MODEL_TOOL_IDS_SET
+    )
+
+
+def test_profile_registration_is_idempotent_but_rejects_conflicts() -> None:
+    profile = ToolExposureProfile(
+        profile_id="optional",
+        title="Optional",
+        summary="Optional inspection.",
+        tool_names=frozenset({"optional.inspect"}),
+    )
+    service = ToolExposureService()
+
+    service.register_profiles((profile,))
+    service.register_profiles((profile,))
+
+    with pytest.raises(ToolRuntimeError, match="different exposure profiles"):
+        service.register_profiles(
+            (
+                ToolExposureProfile(
+                    profile_id="optional",
+                    title="Optional changed",
+                    summary="Conflicting owner.",
+                    tool_names=frozenset({"optional.changed"}),
+                ),
+            )
+        )
 
 
 def test_activation_enforces_prerequisites_and_scope() -> None:
@@ -398,6 +516,26 @@ def test_hidden_tool_is_refused_before_handler_execution() -> None:
         and event["tool_name"] == "ops.job.cancel"
         for event in registry.exposure_service.events
     )
+
+
+def test_legacy_plan_tool_is_refused_before_handler_execution() -> None:
+    registry = build_default_tool_registry()
+    result = execute_single_call(
+        registry,
+        call=ProviderToolCall(name="plan.list", arguments={}, id="call-plan"),
+        context=ToolExecutionContext(
+            channel="test",
+            target="test",
+            session_id="session-a",
+            metadata={"session_id": "session-a", "tool_call_origin": "model"},
+        ),
+        available_tool_names=tuple(registry._tools),
+        runtime_binding_policies=None,
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "tool_exposure_denied"
+    assert result.data["profile_id"] == "legacy_session_plan"
 
 
 def test_apply_profile_requires_explicit_approval() -> None:

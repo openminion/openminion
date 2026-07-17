@@ -29,6 +29,7 @@ from openminion.cli.presentation.queue import (
     queue_run_next_notice,
     queued_message_notice,
 )
+from openminion.modules.runtime.sync import run_async_compat
 from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
 
 from ..composer import TerminalComposer
@@ -207,7 +208,7 @@ def run_terminal_focus(
 ) -> int:
     """Synchronous entry point. Wraps the async loop."""
     try:
-        return asyncio.run(
+        return run_async_compat(
             _run_terminal_focus_async(
                 runtime,
                 working_dir=working_dir or str(Path.cwd().resolve(strict=False)),

@@ -10,6 +10,8 @@ from openminion.modules.tool.contracts.manifest import (
     RuntimeBindingDef,
     ToolBindingManifest,
 )
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.exposure import ToolExposureProfile
 from openminion.modules.tool.framework import (
     GeneratedRegistrar,
     ToolDecl,
@@ -230,6 +232,39 @@ class BuildRegistrarTests(unittest.TestCase):
         self.assertEqual(manifest.module_id, "fixture")
         self.assertEqual(len(manifest.model_tools), 3)
         self.assertEqual(len(manifest.runtime_bindings), 3)
+
+    def test_register_adds_family_owned_exposure_profiles(self) -> None:
+        profile = ToolExposureProfile(
+            profile_id="fixture_alpha",
+            title="Fixture alpha",
+            summary="Expose alpha for a focused fixture.",
+            tool_names=frozenset({"fixture.alpha"}),
+        )
+        family = ToolFamilySpec(
+            module_id="profiled_fixture",
+            tools=(FIXTURE_FAMILY.tools[0],),
+            exposure_profiles=(profile,),
+        )
+        registry = ToolRegistry([])
+
+        build_registrar(family).register(registry, ctx=None)
+
+        self.assertEqual(registry.exposure_service.profile("fixture_alpha"), profile)
+
+    def test_family_profile_cannot_claim_another_family_tool(self) -> None:
+        profile = ToolExposureProfile(
+            profile_id="external",
+            title="External",
+            summary="Invalid external ownership.",
+            tool_names=frozenset({"other.read"}),
+        )
+
+        with self.assertRaises(ToolRuntimeError):
+            ToolFamilySpec(
+                module_id="fixture",
+                tools=(FIXTURE_FAMILY.tools[0],),
+                exposure_profiles=(profile,),
+            )
 
 
 class ProviderOnlyFamilyTests(unittest.TestCase):

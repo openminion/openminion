@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from openminion.modules.tool.exposure import ToolExposureProfile, ToolRiskAnnotations
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
 from .args import (
@@ -33,11 +34,57 @@ from .plugin import (
     _target_list,
 )
 
+_OPS_READ_TOOLS = frozenset(
+    {
+        TOOL_OPS_COMMAND_OBSERVE,
+        TOOL_OPS_HOST_SNAPSHOT,
+        TOOL_OPS_JOB_INSPECT,
+        TOOL_OPS_LOGS_QUERY,
+        TOOL_OPS_NETWORK_INSPECT,
+        TOOL_OPS_SERVICE_INSPECT,
+        TOOL_OPS_TARGET_INSPECT,
+        TOOL_OPS_TARGET_LIST,
+    }
+)
+
 
 OPS_FAMILY = ToolFamilySpec(
     module_id="ops",
     min_scope_default="READ_ONLY",
     common_tags=("plugin", "ops"),
+    exposure_profiles=(
+        ToolExposureProfile(
+            profile_id="ops_minimal",
+            title="System operations",
+            summary="Read-only host, service, log, network, target, and job inspection.",
+            tool_names=_OPS_READ_TOOLS,
+            evidence_expectations=("cite target and evidence ids",),
+            stop_rules=(
+                "stop when evidence is incomplete or target identity is unclear",
+            ),
+            guidance_names=(
+                "ops-linux-diagnostics",
+                "ops-incident-handoff",
+                "ops.safety.v1",
+            ),
+            default_active=True,
+        ),
+        ToolExposureProfile(
+            profile_id="ops_job_control",
+            title="Operations job control",
+            summary="Cancel a durable operations job after explicit activation and approval.",
+            tool_names=frozenset({TOOL_OPS_JOB_CANCEL}),
+            risk=ToolRiskAnnotations(
+                tier="apply",
+                requires_approval=True,
+                mutates_state=True,
+            ),
+            evidence_expectations=("record job and approval ids",),
+            stop_rules=("stop when approval or job identity is missing",),
+            guidance_names=("ops.safety.v1",),
+            activation_hint="Activate only for an approved operations job-control task.",
+        ),
+    ),
     tools=(
         ToolDecl(
             TOOL_OPS_TARGET_LIST,

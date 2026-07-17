@@ -72,16 +72,13 @@ Scope = Literal["READ_ONLY", "WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"]
 
 class ToolRegistry:
     def __init__(self, tools: Iterable[Tool] | None = None) -> None:
-        from openminion.modules.tool.exposure import (
-            ToolExposureService,
-            default_exposure_profiles,
-        )
+        from openminion.modules.tool.exposure import ToolExposureService
 
         self._tools: Dict[str, Any] = {}
         self._category_index: Dict[str, Set[str]] = {}
         self._sidecar_autostart: Callable[..., dict[str, Any]] | None = None
         self.mcp_manager: MCPFleetHandle | None = None
-        self._exposure_service = ToolExposureService(default_exposure_profiles())
+        self._exposure_service = ToolExposureService()
         for tool in tools or []:
             self.register(tool)
 

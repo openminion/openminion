@@ -1,7 +1,9 @@
 """Declarative framework for tool-family registration surfaces."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from pydantic import BaseModel
 
@@ -11,10 +13,14 @@ from openminion.modules.tool.contracts.manifest import (
     ToolBindingManifest,
 )
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
+from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime.registrar import (
     ToolModuleRegistrar,
     ToolRegisterContext,
 )
+
+if TYPE_CHECKING:
+    from openminion.modules.tool.exposure import ToolExposureProfile
 
 
 Handler = Callable[[dict[str, Any], Any], Any]
@@ -48,6 +54,24 @@ class ToolFamilySpec:
     common_capabilities: tuple[str, ...] = ()
     is_provider_only: bool = False
     provider_registration: Callable[[], None] | None = None
+    exposure_profiles: tuple[ToolExposureProfile, ...] = ()
+
+    def __post_init__(self) -> None:
+        tool_names = {tool.name for tool in self.tools}
+        external_names = sorted(
+            {
+                name
+                for profile in self.exposure_profiles
+                for name in profile.tool_names
+                if name not in tool_names
+            }
+        )
+        if external_names:
+            raise ToolRuntimeError(
+                "INVALID_ARGUMENT",
+                "tool-family exposure profiles can only reference family tools",
+                {"module_id": self.module_id, "tool_names": external_names},
+            )
 
 
 def derive_model_tool_id(tool_name: str) -> str:
@@ -132,6 +156,7 @@ class GeneratedRegistrar:
         ctx: ToolRegisterContext | None = None,
     ) -> None:
         del ctx
+        registry.exposure_service.register_profiles(self._family.exposure_profiles)
         for spec in derive_tool_specs(self._family):
             registry.add(spec)
         if self._family.provider_registration is not None:

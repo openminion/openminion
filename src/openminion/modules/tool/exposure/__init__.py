@@ -13,7 +13,7 @@ from .contracts import (
     ToolExposureSession,
     ToolRiskAnnotations,
 )
-from .defaults import default_exposure_profiles, requires_explicit_exposure_profile
+from .defaults import requires_explicit_exposure_profile
 from .service import ToolExposureService, exposure_scope
 
 _LOG = logging.getLogger(__name__)
@@ -224,7 +224,6 @@ __all__ = [
     "ToolExposureSession",
     "ToolRiskAnnotations",
     "apply_model_exposure",
-    "default_exposure_profiles",
     "exposure_scope",
     "get_allowed_model_tool_names",
     "get_model_exposure_specs",

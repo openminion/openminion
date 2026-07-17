@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Iterable, Literal
 
 from prompt_toolkit import PromptSession
@@ -9,6 +8,7 @@ from rich.text import Text
 
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
+from openminion.modules.runtime.sync import run_async_compat
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 
@@ -26,7 +26,7 @@ class TerminalOverlayPresenter:
         self._session = prompt_session or PromptSession()
 
     def present_resume_picker(self, sessions: Iterable[Any]) -> str | None:
-        return asyncio.run(self._present_resume_picker_async(sessions))
+        return run_async_compat(self._present_resume_picker_async(sessions))
 
     async def _present_resume_picker_async(self, sessions: Iterable[Any]) -> str | None:
         items = list(sessions)
@@ -55,7 +55,7 @@ class TerminalOverlayPresenter:
         return _session_id(items[idx - 1])
 
     def present_approval(self, prompt: str) -> Literal["allow", "deny", "always"]:
-        return asyncio.run(self.present_approval_async(prompt))
+        return run_async_compat(self.present_approval_async(prompt))
 
     async def present_approval_async(
         self, prompt: str
@@ -73,7 +73,7 @@ class TerminalOverlayPresenter:
         return "deny"
 
     def present_completion(self, message: str) -> str:
-        return asyncio.run(self._present_completion_async(message))
+        return run_async_compat(self._present_completion_async(message))
 
     async def _present_completion_async(self, message: str) -> str:
         self._console.print(Text(message))
@@ -84,7 +84,7 @@ class TerminalOverlayPresenter:
         return str(text or "").strip()
 
     def present_confirm(self, prompt: str, *, default: bool = False) -> bool:
-        return asyncio.run(self.present_confirm_async(prompt, default=default))
+        return run_async_compat(self.present_confirm_async(prompt, default=default))
 
     async def present_confirm_async(
         self, prompt: str, *, default: bool = False

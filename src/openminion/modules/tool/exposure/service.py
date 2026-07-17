@@ -39,18 +39,37 @@ class ToolExposureService:
     """Own explicit, scoped exposure decisions without interpreting user prose."""
 
     def __init__(self, profiles: Iterable[ToolExposureProfile] = ()) -> None:
-        profile_list = tuple(profiles)
-        self._profiles = {profile.profile_id: profile for profile in profile_list}
-        if len(self._profiles) != len(profile_list):
-            raise ToolRuntimeError(
-                "INVALID_ARGUMENT", "profile_id values must be unique"
-            )
+        self._profiles: dict[str, ToolExposureProfile] = {}
         self._activations: dict[tuple[str, str, str, str], ToolExposureSession] = {}
         self._events: deque[dict[str, Any]] = deque(
             maxlen=TOOL_EXPOSURE_EVENT_HISTORY_LIMIT
         )
         self._event_sink: Callable[[dict[str, Any]], None] | None = None
         self._lock = RLock()
+        self.register_profiles(profiles)
+
+    def register_profiles(self, profiles: Iterable[ToolExposureProfile]) -> None:
+        incoming: dict[str, ToolExposureProfile] = {}
+        for profile in profiles:
+            if profile.profile_id in incoming:
+                raise ToolRuntimeError(
+                    "INVALID_ARGUMENT", "profile_id values must be unique"
+                )
+            incoming[profile.profile_id] = profile
+        with self._lock:
+            conflicts = [
+                profile_id
+                for profile_id, profile in incoming.items()
+                if profile_id in self._profiles
+                and self._profiles[profile_id] != profile
+            ]
+            if conflicts:
+                raise ToolRuntimeError(
+                    "INVALID_ARGUMENT",
+                    "profile_id values already own different exposure profiles",
+                    {"profile_ids": sorted(conflicts)},
+                )
+            self._profiles.update(incoming)
 
     def bind_event_sink(
         self,
@@ -61,7 +80,10 @@ class ToolExposureService:
 
     @property
     def profiles(self) -> tuple[ToolExposureProfile, ...]:
-        return tuple(sorted(self._profiles.values(), key=lambda item: item.profile_id))
+        with self._lock:
+            return tuple(
+                sorted(self._profiles.values(), key=lambda item: item.profile_id)
+            )
 
     @property
     def events(self) -> tuple[dict[str, Any], ...]:
@@ -69,7 +91,8 @@ class ToolExposureService:
             return tuple(dict(event) for event in self._events)
 
     def profile(self, profile_id: str) -> ToolExposureProfile | None:
-        return self._profiles.get(str(profile_id or "").strip())
+        with self._lock:
+            return self._profiles.get(str(profile_id or "").strip())
 
     def activate(
         self,
