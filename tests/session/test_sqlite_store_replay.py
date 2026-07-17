@@ -62,7 +62,9 @@ def test_cache_metrics_is_a_known_canonical_event(store: SQLiteSessionStore) -> 
         {"cached_tokens": 4, "prompt_cache_key": "cache-key"},
     )
 
-    event = next(item for item in store.get_events(session_id) if item["event_id"] == event_id)
+    event = next(
+        item for item in store.get_events(session_id) if item["event_id"] == event_id
+    )
     assert "_warnings" not in event["payload"]
 
 

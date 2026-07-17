@@ -200,7 +200,9 @@ def test_run_context_correlation_uses_call_id_not_cache_key(tmp_path: Path) -> N
         assert summary is not None
         assert summary.source_event_count == 2
         assert summary.total_estimated_tokens == 20
-        assert all(record.surface != "llm_cache_diagnostic" for record in summary.records)
+        assert all(
+            record.surface != "llm_cache_diagnostic" for record in summary.records
+        )
         assert {record.llm_call_id for record in summary.records} == {"call-1"}
     finally:
         store.close()

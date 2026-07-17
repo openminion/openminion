@@ -164,9 +164,7 @@ def _normalize_session_event(event: Any) -> dict[str, Any]:
         ),
         "event_type": str(getattr(event, "event_type", "") or ""),
         "timestamp": str(
-            getattr(event, "timestamp", None)
-            or getattr(event, "created_at", "")
-            or ""
+            getattr(event, "timestamp", None) or getattr(event, "created_at", "") or ""
         ),
         "payload": getattr(event, "payload", {}) or {},
         "trace_id": str(getattr(event, "trace_id", "") or ""),

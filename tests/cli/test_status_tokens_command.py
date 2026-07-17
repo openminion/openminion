@@ -189,6 +189,4 @@ def test_session_store_factory_uses_configured_record_backend(
 
     assert result is sentinel
     assert captured["config"].record_backend == "record.postgres"
-    assert captured["config"].record_backend_options["url"].startswith(
-        "postgresql://"
-    )
+    assert captured["config"].record_backend_options["url"].startswith("postgresql://")

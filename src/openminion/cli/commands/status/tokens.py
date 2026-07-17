@@ -3,17 +3,22 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from openminion.base.config import OpenMinionConfig
 from openminion.cli.config import load_cli_manager
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.modules.session.runtime.factory import build_module_session_store
 from openminion.modules.storage.engine import StorageEngineConfig
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
-from openminion.modules.telemetry.usage import StatsService, summary_to_json_payload
+from openminion.modules.telemetry.usage import (
+    StatsService,
+    TokenUsageSummary,
+    summary_to_json_payload,
+)
 from openminion.modules.telemetry.usage.token_usage import TokenUsageRecord
 
 
-def _build_session_store(args: Any, config: Any):
+def _build_session_store(args: Any, config: OpenMinionConfig) -> Any:
     manager = load_cli_manager(args.config)
     storage_path = resolve_database_path(config.storage.path, env=manager.env)
     session_path = resolve_brain_sessions_db_path(storage_path=storage_path)
@@ -42,7 +47,7 @@ def _record_tokens(record: TokenUsageRecord) -> int:
     )
 
 
-def _format_summary(summary) -> str:
+def _format_summary(summary: TokenUsageSummary) -> str:
     run_label = f" run={summary.run_id}" if summary.run_id else ""
     lines = [
         "status tokens: "
@@ -77,7 +82,7 @@ def _format_summary(summary) -> str:
     return "\n".join(lines)
 
 
-def run_tokens_status(args: Any, *, config: Any) -> int:
+def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
     session_id = str(args.session_id or "").strip()
     run_id = str(args.run_id or "").strip()
     event_limit = args.event_limit
