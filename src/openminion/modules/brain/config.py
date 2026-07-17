@@ -11,20 +11,19 @@ from openminion.base.config import OpenMinionConfig
 from openminion.base.config.core import resolve_default_agent_id
 
 from .meta.schemas import MetaConfig as MetaRuntimeConfig, VerificationMode
-from .schemas import (
+from .schemas.agent import (
     AdaptiveBudgetConfig,
     AgentBudgets,
     AgentDefaults,
     AgentProfile,
     AutoFactExtractionConfig,
     BudgetTelemetryConfig,
-    BrainMode,
-    ClarifyPolicy,
     LLMProfiles,
     OutcomeAttributionConfig,
     ProactiveAutonomousEntrypointConfig,
     SuccessMemoryConfig,
 )
+from .schemas.state import BrainMode, ClarifyPolicy
 from .constants import (
     DEFAULT_CONFIG_FILENAMES,
     DEFAULT_INTEGRATED_CONFIG_SUBDIR,
