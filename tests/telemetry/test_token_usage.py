@@ -117,16 +117,16 @@ def test_bounded_read_reports_incomplete_without_projecting_sentinel(
 
         summary = StatsService(store).get_session_token_usage(
             session_id,
-            event_limit=2,
+            event_limit=3,
         )
 
         assert summary.complete is False
-        assert summary.event_limit == 2
-        assert summary.events_scanned == 3
+        assert summary.event_limit == 3
+        assert summary.events_scanned == 4
         assert summary.source_event_count == 2
         assert summary.first_source_event is not None
         assert summary.last_source_event is not None
-        assert summary.last_source_event.sequence == 2
+        assert summary.last_source_event.sequence == 3
     finally:
         store.close()
 
