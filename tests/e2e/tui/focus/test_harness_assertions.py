@@ -38,6 +38,14 @@ def test_composer_echo_probe_uses_visible_tail_for_long_input() -> None:
     assert "beginning" not in probe
 
 
+def test_screen_after_submission_allows_wrapped_trailing_punctuation() -> None:
+    screen = "> finish with the exact label result\nAnalyzing request...\n"
+
+    assert screen_after_submission(screen, "finish with the exact label result.") == (
+        "\nAnalyzing request...\n"
+    )
+
+
 def test_screen_after_submission_excludes_stale_completion() -> None:
     screen = "Done in 22s\n> session\nAnalyzing request...\n"
 

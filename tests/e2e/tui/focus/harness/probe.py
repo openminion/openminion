@@ -40,6 +40,7 @@ _ACTIVE_TURN_STATUS_RE = re.compile(
     re.IGNORECASE,
 )
 _COMPOSER_ECHO_PROBE_LENGTH = 48
+_TRAILING_PUNCTUATION = ".,;:!?"
 
 
 def _visible_offset(text: str, *, offset: int) -> int:
@@ -102,10 +103,15 @@ def composer_echo_probe(text: str) -> str:
 
 def screen_after_submission(screen_text: str, submission_probe: str) -> str | None:
     """Return screen content rendered after the latest submitted input."""
-    words = submission_probe.split()
+    trimmed_probe = submission_probe.rstrip(_TRAILING_PUNCTUATION)
+    words = trimmed_probe.split()
     if not words:
         return None
-    pattern = re.compile(r"\s+".join(re.escape(word) for word in words))
+    pattern_text = r"\s+".join(re.escape(word) for word in words)
+    punctuation = submission_probe[len(trimmed_probe) :]
+    if punctuation:
+        pattern_text += rf"(?:\s*{re.escape(punctuation)})?"
+    pattern = re.compile(pattern_text)
     matches = list(pattern.finditer(screen_text))
     if not matches:
         return None
@@ -250,7 +256,7 @@ class FocusProbe:
         echo_probe = composer_echo_probe(text)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            if echo_probe in session.screen_text:
+            if screen_after_submission(session.screen_text, echo_probe) is not None:
                 composer_screen = session.screen_text
                 session.send("\r")
                 break
