@@ -15,9 +15,6 @@ from openminion.modules.telemetry.trace.phase_timing import (
 from openminion.modules.telemetry.events.catalog import CHAT_PHASE_TIMING
 
 
-# --- closed-set vocabulary regression ---
-
-
 def test_chat_phases_closed_set_matches_contract():
 
     assert set(CHAT_PHASES) == {
@@ -49,9 +46,6 @@ def test_chat_phases_closed_set_matches_contract():
 def test_event_type_registered_in_catalog():
 
     assert CHAT_PHASE_TIMING == "chat.phase_timing"
-
-
-# --- ChatPhaseTimingPayload schema ---
 
 
 def test_payload_is_frozen():
@@ -92,14 +86,12 @@ def test_payload_as_dict_contains_all_phase_keys_and_load_bearing_metrics():
         cold_start=True, total_turn_ms=100, time_to_first_text_ms=20
     )
     d = payload.as_dict()
-    # separate in evidence.
     assert d["cold_start"] is True
     assert d["total_turn_ms"] == 100
     assert d["time_to_first_text_ms"] == 20
     for phase in CHAT_PHASES:
         assert f"{phase}_ms" in d
         assert d[f"{phase}_ms"] == 0
-    # phases_instrumented honesty surface
     assert d["phases_instrumented"] == []
 
 
@@ -109,9 +101,6 @@ def test_payload_as_dict_renders_none_ttft_as_null():
         cold_start=False, total_turn_ms=50, time_to_first_text_ms=None
     )
     assert payload.as_dict()["time_to_first_text_ms"] is None
-
-
-# --- ChatPhaseTimer behavior ---
 
 
 def test_timer_records_per_phase_elapsed():
@@ -135,9 +124,7 @@ def test_timer_uninstrumented_phases_report_zero_in_phases_instrumented_list():
     with timer.phase("provider_round_trip"):
         pass
     payload = timer.build_payload()
-    # provider_round_trip was entered → instrumented
     assert "provider_round_trip" in payload.phases_instrumented
-    # runtime_bootstrap was not entered → not instrumented (but field is 0)
     assert "runtime_bootstrap" not in payload.phases_instrumented
     assert payload.runtime_bootstrap_ms == 0
 

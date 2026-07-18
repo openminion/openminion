@@ -57,11 +57,9 @@ def test_streaming_turn_lands_in_pyte_screen_post_exit() -> None:
 
     def _run(console):
         transcript = TerminalTranscript(console)
-        # Push the user message.
         transcript.push_message(
             ChatMessage(kind=MessageKind.USER, sender="you", body="hello world")
         )
-        # Run an agent turn.
         runtime = _StubRuntime("the assistant response")
         asyncio.run(
             _run_agent_turn(
@@ -100,9 +98,7 @@ def test_no_alt_screen_escape_emitted() -> None:
     )
     text_writer.flush()
     raw = buffer.getvalue()
-    # Alt-screen on
     assert b"\x1b[?1049h" not in raw
-    # Alt-screen off (would also be present if on was)
     assert b"\x1b[?1049l" not in raw
 
 

@@ -43,7 +43,6 @@ def _state(*, pending_confirmation: bool = False) -> WorkingState:
     return state
 
 
-# ExecutionResult.kind default + propagation through to/from StepOutput.
 
 
 def test_execution_result_default_kind_is_assistant() -> None:
@@ -106,7 +105,6 @@ def test_execution_result_from_step_output_default_when_missing() -> None:
     assert result.kind == RESPOND_KIND_ASSISTANT
 
 
-# _result_from_needs_user structural routing.
 
 
 def _build_needs_user_helper():
@@ -156,7 +154,6 @@ def test_result_from_needs_user_status_is_waiting_user() -> None:
     assert result.status == BRAIN_STATE_WAITING_USER
 
 
-# ExecutionContext.respond + ModeServices.respond_with_meta accept kind.
 
 
 def test_execution_context_respond_threads_kind_to_services() -> None:
@@ -189,7 +186,6 @@ def test_mode_services_impl_respond_with_meta_accepts_kind() -> None:
     assert sig.parameters["kind"].default == RESPOND_KIND_ASSISTANT
 
 
-# No prose/keyword heuristic — guard against future drift.
 
 
 def test_result_from_needs_user_uses_only_structural_state_signal() -> None:
@@ -225,7 +221,6 @@ def test_result_from_needs_user_uses_only_structural_state_signal() -> None:
             )
 
 
-# Module-level integration smoke: kind constant + import surfaces.
 
 
 def test_loop_contracts_kind_field_pinned_at_dataclass() -> None:

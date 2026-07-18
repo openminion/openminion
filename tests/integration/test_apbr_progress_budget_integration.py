@@ -14,7 +14,6 @@ from openminion.modules.brain.schemas.autonomy.progress import (
 
 
 def test_apbr_end_to_end_turn_simulation() -> None:
-
     ceilings = SbspBudgetCeilings(
         max_iterations=50,
         max_tool_calls=200,
@@ -111,17 +110,14 @@ def test_apbr_end_to_end_turn_simulation() -> None:
     assert "wall_clock_seconds" in trigger_5.blocked_axes
 
     assert extension_decisions == [True, True, False, False]
-    # Exactly one checkpoint emitted across the simulation (turn 1).
     assert len(checkpoints) == 1
     assert checkpoints[0].turn_index == 1
-    # Watchdog fired exactly once (turn 4).
     fired = [k for k in watchdog_fires if k]
     assert len(fired) == 1
     assert "circular_repeat" in fired[0]
 
 
 def test_apbr_all_four_watchdog_paths_fail_closed_at_thresholds() -> None:
-
     config = NoProgressWatchdogConfig(
         circular_repeat_threshold=3,
         repeated_identical_shape_failure_threshold=3,
@@ -129,7 +125,6 @@ def test_apbr_all_four_watchdog_paths_fail_closed_at_thresholds() -> None:
         research_returning_identical_evidence_threshold=2,
     )
 
-    # Each axis at its threshold fires exactly the expected kind.
     axis_to_counter = {
         "circular_repeat": NoProgressWatchdogCounters(circular_repeat_count=3),
         "repeated_identical_shape_failure": NoProgressWatchdogCounters(
@@ -149,7 +144,6 @@ def test_apbr_all_four_watchdog_paths_fail_closed_at_thresholds() -> None:
 
 
 def test_apbr_budget_extension_respects_all_four_axes() -> None:
-
     progress = compose_progress_signal(turn_index=1, new_typed_record_delta=1)
     axis_scenarios = [
         (

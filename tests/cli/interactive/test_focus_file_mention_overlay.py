@@ -73,7 +73,6 @@ async def test_selected_returns_highlighted_relative_path() -> None:
         )
         await pilot.pause()
 
-        # Initial highlight is row 0.
         assert overlay.selected() == "a.py"
         overlay.move_highlight(1)
         await pilot.pause()
@@ -99,11 +98,9 @@ async def test_move_highlight_wraps_at_boundaries() -> None:
         assert overlay.highlighted_index == 0
         overlay.move_highlight(-1)
         await pilot.pause()
-        # Wrap to last row.
         assert overlay.highlighted_index == 1
         overlay.move_highlight(1)
         await pilot.pause()
-        # Wrap back to row 0.
         assert overlay.highlighted_index == 0
 
 
@@ -161,7 +158,6 @@ async def test_query_resets_highlight_to_zero() -> None:
         await pilot.pause()
         assert overlay.highlighted_index == 2
 
-        # New query — highlight resets to 0.
         overlay.query = "@beta"
         await pilot.pause()
         assert overlay.highlighted_index == 0

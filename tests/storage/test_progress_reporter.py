@@ -35,11 +35,9 @@ def test_tqdm_reporter_force_starts_bar_when_tqdm_available() -> None:
     reporter = TqdmProgressReporter(force=True)
     assert isinstance(reporter, ProgressReporter)
     reporter.on_start(total=3, label="forced")
-    # Bar should be instantiated when force=True bypasses TTY detection.
     assert reporter._bar is not None  # noqa: SLF001
     reporter.on_progress(advance=1, message="row")
     reporter.on_end(success=True)
-    # After on_end the bar handle is cleared.
     assert reporter._bar is None  # noqa: SLF001
 
 

@@ -3,9 +3,6 @@ from __future__ import annotations
 import importlib
 
 
-# Symbols re-exported at ``import openminion``. ISAP-02 ships the minimum
-# surface (APIRuntime + OpenMinionConfig); the rest grow in as later tasks
-# close.
 EXPECTED_OPENMINION_PUBLIC = {
     "APIRuntime",
     "Agent",
@@ -19,9 +16,6 @@ EXPECTED_OPENMINION_PUBLIC = {
     "tool",  # ISAP-11
 }
 
-# Symbols re-exported at ``import openminion.api``. ``dispatch_request`` is
-# pre-existing; ``APIRuntime`` is added by ISAP-02; the ``Agent`` triplet is
-# added by ISAP-10; ``Handoff`` + ``subagent`` are added by ISAP-14/15.
 EXPECTED_OPENMINION_API_PUBLIC = {
     "APIRuntime",
     "Agent",

@@ -36,7 +36,6 @@ def _make_runtime() -> OpenMinionRuntime:
     return rt
 
 
-# ── State + toggle ───────────────────────────────────────────────
 
 
 def test_read_only_mode_default_false() -> None:
@@ -127,7 +126,6 @@ def test_set_permission_mode_rejects_unknown_mode() -> None:
         raise AssertionError("expected ValueError")
 
 
-# ── Slash catalog ────────────────────────────────────────────────
 
 
 def test_readonly_in_slash_catalog() -> None:
@@ -138,7 +136,6 @@ def test_permissions_in_slash_catalog() -> None:
     assert "/permissions" in _SLASH_COMMANDS
 
 
-# ── /readonly dispatch ───────────────────────────────────────────
 
 
 def _dispatch(runtime, text: str) -> str:
@@ -198,7 +195,6 @@ def test_readonly_unknown_arg_surfaces_error() -> None:
     rt = _make_runtime()
     out = _dispatch(rt, "/readonly garbage")
     assert "unknown arg" in out
-    # State unchanged on invalid arg.
     assert rt.read_only_mode is False
 
 

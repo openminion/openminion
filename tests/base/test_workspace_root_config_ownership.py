@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import os
+from pathlib import Path
+from types import SimpleNamespace
 
 from openminion.base.config.parser import openminion_config_from_dict
 from openminion.modules.tool.runtime.policy import DEFAULT_POLICY
@@ -45,14 +48,11 @@ def test_parser_preserves_workspace_root_at_named_json_location() -> None:
 
 
 def test_workspace_root_config_value_reaches_policy_raw_top_level() -> None:
-    from pathlib import Path
-
     configured_path = "/tmp/example/workspace_root"
     config = openminion_config_from_dict(
         _config_with_runtime({"tool_workspace_root": configured_path})
     )
 
-    # Step 1: config field populates APIRuntime.tool_workspace_root analog
     runtime_workspace_root = (
         Path(config.runtime.tool_workspace_root).expanduser()
         if config.runtime.tool_workspace_root
@@ -60,7 +60,6 @@ def test_workspace_root_config_value_reaches_policy_raw_top_level() -> None:
     )
     assert runtime_workspace_root is not None
 
-    # Step 2: ingress lifts into inbound_metadata
     metadata = apply_workspace_root(
         inbound_metadata=None,
         runtime_workspace_root=runtime_workspace_root,
@@ -71,16 +70,12 @@ def test_workspace_root_config_value_reaches_policy_raw_top_level() -> None:
         f"got {metadata!r}"
     )
 
-    # Step 3: resolve_workspace reads from metadata
-    from types import SimpleNamespace
-
     ctx = SimpleNamespace(metadata=dict(metadata))
     workspace = resolve_workspace(context=ctx)
     assert str(workspace) == str(runtime_workspace_root.resolve()), (
         "resolve_workspace must round-trip the configured value"
     )
 
-    # Step 4: policy_payload top-level assignment (registry_toolspec.py:117 pattern)
     policy_payload = copy.deepcopy(DEFAULT_POLICY)
     policy_payload["workspace_root"] = str(workspace)
     assert policy_payload["workspace_root"] == str(runtime_workspace_root.resolve()), (
@@ -90,9 +85,6 @@ def test_workspace_root_config_value_reaches_policy_raw_top_level() -> None:
 
 
 def test_resolve_workspace_honors_config_over_cwd_fallback() -> None:
-    from pathlib import Path
-    from types import SimpleNamespace
-
     configured_path = "/tmp/example/workspace_root"
     config = openminion_config_from_dict(
         _config_with_runtime({"tool_workspace_root": configured_path})
@@ -103,20 +95,13 @@ def test_resolve_workspace_honors_config_over_cwd_fallback() -> None:
     )
     ctx = SimpleNamespace(metadata=dict(metadata or {}))
     workspace = resolve_workspace(context=ctx)
-    # Configured value wins over the cwd fallback
     assert str(workspace) == str(runtime_workspace_root.resolve())
-    import os
-
     assert str(workspace) != str(Path(os.getcwd()).resolve()), (
         "resolved workspace must be the configured value, not cwd"
     )
 
 
 def test_unset_workspace_root_falls_back_to_cwd_via_resolve_workspace() -> None:
-    from pathlib import Path
-    from types import SimpleNamespace
-    import os
-
     config = openminion_config_from_dict(_config_with_runtime({"log_level": "INFO"}))
     assert config.runtime.tool_workspace_root == "", (
         "unset field must default to empty string per RuntimeConfig default"
@@ -137,23 +122,18 @@ def test_unset_workspace_root_falls_back_to_cwd_via_resolve_workspace() -> None:
         "when tool_workspace_root is None, ingress must NOT write to inbound_metadata"
     )
 
-    # Falls back to cwd
     ctx = SimpleNamespace(metadata={})
     workspace = resolve_workspace(context=ctx)
     assert str(workspace) == str(Path(os.getcwd()).resolve()), (
         "unset field → resolve_workspace falls back to cwd (pre-WRCO behavior preserved)"
     )
 
-    # DEFAULT_POLICY's workspace_root value remains as the typed default for the field
     assert DEFAULT_POLICY["workspace_root"] == "~/openminion_tool_runs", (
         "DEFAULT_POLICY default value preserved unchanged by WRCO"
     )
 
 
 def test_resolve_workspace_honors_working_dir_metadata_fallback() -> None:
-    from pathlib import Path
-    from types import SimpleNamespace
-
     working_dir = "/tmp/example/focus-working-dir"
 
     ctx = SimpleNamespace(metadata={"working_dir": working_dir})

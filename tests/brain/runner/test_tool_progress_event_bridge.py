@@ -20,7 +20,6 @@ def _capture_events() -> tuple[BrainRunner, list[dict[str, Any]]]:
 
 def test_emit_tool_progress_event_is_noop_when_no_callback() -> None:
     runner = _make_minimal_runner()
-    # Should not raise even when nothing is listening.
     runner._emit_tool_progress_event(
         kind="tool_started",
         tool_name="bash",

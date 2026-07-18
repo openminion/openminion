@@ -61,13 +61,9 @@ def test_walker_skips_each_default_ignored_directory() -> None:
 def test_walker_respects_max_depth() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        # depth-0 file
         _touch(root / "lvl0.py")
-        # depth-1 file
         _touch(root / "a" / "lvl1.py")
-        # depth-2 file
         _touch(root / "a" / "b" / "lvl2.py")
-        # depth-3 file (should be excluded with max_depth=2)
         _touch(root / "a" / "b" / "c" / "lvl3.py")
 
         index = build_file_index(root, max_depth=2)
@@ -107,7 +103,6 @@ def test_walker_caps_total_results_at_max_files() -> None:
 def test_walker_returns_empty_for_missing_or_non_directory() -> None:
     assert build_file_index("/this/path/does/not/exist/anywhere") == []
     with tempfile.NamedTemporaryFile() as tmp_file:
-        # Pointing at a file (not a directory) returns [].
         assert build_file_index(tmp_file.name) == []
 
 
@@ -153,7 +148,6 @@ def test_walker_skips_symlinks() -> None:
             index = build_file_index(root)
             relatives = [rel for rel, _abs in index]
             assert "inside.py" in relatives
-            # The symlink itself must not appear.
             assert "outside_link" not in relatives
         finally:
             import shutil

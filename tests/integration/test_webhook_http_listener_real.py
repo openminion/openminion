@@ -44,7 +44,6 @@ class WebhookHTTPListenerRealTests(unittest.TestCase):
     def setUp(self) -> None:
         self.secret = "wh-test-secret"
         self.runner = _RecordingRunner(expected_secret=self.secret)
-        # Use port=0 → kernel assigns. Read bound_port for the client.
         self.listener = WebhookHTTPListener(
             host="127.0.0.1",
             port=0,
@@ -52,8 +51,7 @@ class WebhookHTTPListenerRealTests(unittest.TestCase):
             runner=self.runner,
         )
         self.listener.start()
-        # Tiny settle so accept thread is ready (serve_forever spawns
-        # quickly but this is belt-and-braces for slow CI hosts).
+        # Wait for the listener thread before sending requests.
         deadline = time.time() + 1.0
         while time.time() < deadline:
             try:
@@ -155,7 +153,6 @@ class WebhookHTTPListenerRealTests(unittest.TestCase):
         self.assertEqual(len(self.runner.calls), 0)
 
     def test_malformed_json_returns_400(self) -> None:
-        # Construct request with non-JSON body to exercise the 400 path.
         conn = HTTPConnection("127.0.0.1", self.listener.bound_port, timeout=2.0)
         try:
             conn.request(
@@ -181,7 +178,6 @@ class WebhookListenerPortContentionTests(unittest.TestCase):
     def test_distinct_ports(self) -> None:
         runner_a = _RecordingRunner(expected_secret="a")
         runner_b = _RecordingRunner(expected_secret="b")
-        # Two ephemeral binds — the kernel guarantees distinct ports.
         listener_a = WebhookHTTPListener(
             host="127.0.0.1",
             port=0,

@@ -45,11 +45,9 @@ def test_expand_after_truncated_block_shows_full_body() -> None:
     pre_len = len(buf.getvalue())
     t.expand_block(1)
     expanded_output = buf.getvalue()[pre_len:]
-    # All 30 lines visible.
     assert "Bash-line 1" in expanded_output
     assert "Bash-line 15" in expanded_output
     assert "Bash-line 30" in expanded_output
-    # No truncation summary in the expanded re-render.
     assert "/expand" not in expanded_output
     assert "… +" not in expanded_output
 
@@ -80,7 +78,6 @@ def test_expand_index_2_returns_second_most_recent() -> None:
     pre_len = len(buf.getvalue())
     t.expand_block(2)
     output = buf.getvalue()[pre_len:]
-    # Index 2 is the OLDER (First) block.
     assert "First-line 1" in output
     # Second's body should NOT appear in this single expand call.
     # (It might appear earlier in the buffer from the original
@@ -96,7 +93,6 @@ def test_expand_index_0_lists_all_truncated_blocks() -> None:
     t.expand_block(0)
     output = buf.getvalue()[pre_len:]
     assert "Truncated tool blocks" in output
-    # Most-recent-first: Read is index 1, Bash is index 2.
     assert "1." in output
     assert "Read" in output
     assert "2." in output
@@ -144,7 +140,6 @@ def test_truncated_blocks_only_grow_on_actual_truncation() -> None:
     _push_long_tool(t, tool_name="Long", lines=20)
     _push_long_tool(t, tool_name="AlsoShort", lines=4)
     _push_long_tool(t, tool_name="LongAgain", lines=15)
-    # Only Long + LongAgain (>6 lines each) tracked.
     assert len(t._truncated_blocks) == 2
     names = [e.tool_name for e in t._truncated_blocks]
     assert "Long" in names

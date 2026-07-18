@@ -30,7 +30,6 @@ def _last_system_body(chat: FocusTranscript) -> str:
     return ""
 
 
-# ── /help registry coverage ──────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -68,7 +67,6 @@ async def test_help_lists_every_registered_command_including_fcpp_06_additions()
         assert cmd in body, f"`{cmd}` missing from /help cheat-sheet"
 
 
-# ── /model ───────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -87,7 +85,6 @@ async def test_model_command_renders_provider_and_model() -> None:
     assert "current" in body.lower()
 
 
-# ── /cost ────────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -187,7 +184,6 @@ async def test_mcp_command_renders_status_report() -> None:
     assert "fixture" in body
 
 
-# ── /compact ─────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -245,7 +241,6 @@ async def test_compact_command_surfaces_bounded_failure_on_exception() -> None:
     assert "explosion" in body
 
 
-# ── /resume ──────────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

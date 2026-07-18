@@ -49,13 +49,9 @@ def test_unwrap_final_answer_envelope_accepts_each_allowed_status(
 
 
 def test_unwrap_final_answer_envelope_preserves_nonmatching_json() -> None:
-    # Plain prose body must never be unwrapped.
     assert unwrap_final_answer_envelope("It is 68°F in Austin.") is None
-    # JSON array (not object) is not in scope.
     assert unwrap_final_answer_envelope('["final_answer", "summary"]') is None
-    # JSON primitive (string-of-string) is not in scope.
     assert unwrap_final_answer_envelope('"final_answer"') is None
-    # Body that contains a JSON object embedded inside prose is not in scope.
     assert (
         unwrap_final_answer_envelope(
             'Sure! {"status":"final_answer","summary":"x","output":"y"}'
@@ -69,12 +65,10 @@ def test_unwrap_final_answer_envelope_preserves_matching_status_with_empty_outpu
 ):
     body = json.dumps({"status": "final_answer", "summary": "ok", "output": "   "})
 
-    # Output is required to be non-empty after strip(); preserve body.
     assert unwrap_final_answer_envelope(body) is None
 
 
 def test_unwrap_final_answer_envelope_preserves_extra_keys() -> None:
-    # Extra keys disqualify under the exact-schema rule.
     body = json.dumps(
         {
             "status": "final_answer",
@@ -88,7 +82,6 @@ def test_unwrap_final_answer_envelope_preserves_extra_keys() -> None:
 
 
 def test_unwrap_final_answer_envelope_preserves_missing_keys() -> None:
-    # Missing `summary` disqualifies.
     body = json.dumps({"status": "final_answer", "output": "answer"})
 
     assert unwrap_final_answer_envelope(body) is None
@@ -101,11 +94,9 @@ def test_unwrap_final_answer_envelope_preserves_unknown_status() -> None:
 
 
 def test_unwrap_final_answer_envelope_rejects_non_string_fields() -> None:
-    # Non-string `summary` disqualifies.
     body = json.dumps({"status": "final_answer", "summary": 42, "output": "answer"})
     assert unwrap_final_answer_envelope(body) is None
 
-    # Non-string `output` disqualifies.
     body = json.dumps(
         {
             "status": "final_answer",

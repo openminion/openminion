@@ -166,7 +166,6 @@ def test_post_disable_sets_status_deprecated(cfg_path: str) -> None:
     assert result.payload["disabled"]["new_status"] == "deprecated"
     assert result.payload["disabled"]["reason"] == "operator http test"
 
-    # And it surfaces via the deprecated status filter.
     listed = handle_request(
         _ctx(cfg_path),
         method_name="GET",
@@ -199,7 +198,6 @@ def test_router_fallthrough_returns_none_for_wrong_method(
     cfg_path: str,
 ) -> None:
     skill_id = _ingest_demo(cfg_path)
-    # PUT is not a supported method for the skill detail route.
     assert (
         handle_request(
             _ctx(cfg_path),

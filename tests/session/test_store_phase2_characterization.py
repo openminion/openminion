@@ -49,7 +49,6 @@ def test_construction_with_memory_path_succeeds() -> None:
     try:
         assert store.database_path == Path(":memory:")
         assert store._hybrid_store is not None
-        # Ephemeral temp_root is allocated for in-memory mode.
         assert store._temp_root is not None
     finally:
         store.close()
@@ -72,7 +71,6 @@ def test_construction_idempotent_on_existing_db(tmp_path: Path) -> None:
 
 
 def test_record_store_schema_bootstrap_is_idempotent(store: SQLiteSessionStore) -> None:
-    # Re-running schema bootstrap must not raise nor corrupt existing rows.
     session_id = store.create_session(initial_agent_id="agent.a", profile_version="pv1")
     store._bootstrap_record_store_schema()
     store._bootstrap_record_store_schema()

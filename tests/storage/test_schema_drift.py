@@ -32,7 +32,6 @@ def test_derive_expected_schema_covers_default_migrations() -> None:
     schema = derive_expected_schema()
     assert schema.head_version == max(m.version for m in DEFAULT_MIGRATIONS)
     table_names = {t.name for t in schema.tables}
-    # Migrations ledger excluded; user tables present
     assert "migrations" not in table_names
     assert {"sessions", "messages", "events", "memory_records"}.issubset(table_names)
 
@@ -211,15 +210,12 @@ def test_schema_drift_report_as_dict_is_serializable(tmp_path: Path) -> None:
     assert payload["expected_head_version"] == expected.head_version
     assert isinstance(payload["findings"], list)
 
-    # Every finding round-trips to a plain dict (closed-enum kind string).
     for entry in payload["findings"]:
         assert set(entry.keys()) == {"kind", "table", "column", "expected", "observed"}
         SchemaDriftKind(entry["kind"])  # raises if not a closed-enum value
 
 
 def test_detect_schema_drift_with_custom_migration_subset() -> None:
-    # Verify the derive_expected_schema helper accepts a Sequence[Migration]
-    # so callers can pin a smaller schema for unit testing.
     only_first: tuple[Migration, ...] = DEFAULT_MIGRATIONS[:1]
     schema = derive_expected_schema(only_first)
     assert schema.head_version == only_first[-1].version

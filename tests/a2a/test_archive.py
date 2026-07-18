@@ -223,10 +223,8 @@ def test_archive_file_inserts_rows_into_postgres(tmp_path: Path) -> None:
         inserted = archive.archive_file(day_file)
         assert inserted == 2
 
-        # Read back via the archive's own typed query method.
         results = archive.query_archive({"limit": 10})
         assert {r.msg_id for r in results} == {"msg-1", "msg-2"}
-        # error_only filter narrows.
         errs = archive.query_archive({"error_only": True})
         assert [r.msg_id for r in errs] == ["msg-2"]
     finally:

@@ -28,7 +28,6 @@ def _node(
     )
 
 
-# --- GoalHierarchyNode.from_record_content ---------------------------------
 
 
 def test_from_record_content_projects_full_declared_goal_content() -> None:
@@ -83,7 +82,6 @@ def test_from_record_content_falls_back_on_corrupt_literals() -> None:
     assert node.action_type == "suggest"
 
 
-# --- project_records_to_nodes (bridge) -------------------------------------
 
 
 def test_project_records_to_nodes_accepts_objects_with_content_attr() -> None:
@@ -119,7 +117,6 @@ def test_project_records_to_nodes_dedups_on_goal_id() -> None:
     assert nodes[0].depth == 0  # first occurrence wins
 
 
-# --- list_child_goals ------------------------------------------------------
 
 
 def test_list_child_goals_returns_only_matching_parent() -> None:
@@ -139,7 +136,6 @@ def test_list_child_goals_empty_for_unknown_or_blank_parent() -> None:
     assert list_child_goals(nodes, "g-not-here") == []
 
 
-# --- get_goal_ancestors ----------------------------------------------------
 
 
 def test_get_goal_ancestors_returns_root_to_direct_parent_order() -> None:
@@ -181,7 +177,6 @@ def test_get_goal_ancestors_respects_max_depth_bound() -> None:
     assert [n.goal_id for n in ancestors] == ["g-3", "g-4"]
 
 
-# --- list_descendant_goals -------------------------------------------------
 
 
 def test_list_descendant_goals_bfs_order() -> None:
@@ -215,7 +210,6 @@ def test_list_descendant_goals_respects_max_depth() -> None:
     assert [n.goal_id for n in descendants] == ["g-1", "g-2"]
 
 
-# --- compute_structural_depth ----------------------------------------------
 
 
 def test_compute_structural_depth_matches_persisted_for_well_formed_chain() -> None:
@@ -240,7 +234,6 @@ def test_compute_structural_depth_handles_cycle_without_inflating() -> None:
     assert compute_structural_depth(nodes, "g-a") == 1
 
 
-# --- contract bridge to GoalDeclaration ------------------------------------
 
 
 def test_goal_declaration_round_trips_through_goal_hierarchy_node() -> None:

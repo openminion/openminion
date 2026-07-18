@@ -96,8 +96,7 @@ def test_model_name_mismatch_is_flagged(audit_mod, tmp_path) -> None:
         "    x: int = 0\n"
     )
     rel_path = "src/openminion_fixture/models.py"
-    # `extra="allow"` lands on the line containing `ConfigDict(...)` =
-    # the 5th line of the file (1-indexed): "    model_config = ConfigDict(..."
+    # ConfigDict is on line 4 of the fixture.
     line_no = 4
     allowlist_body = f"{rel_path}\t{line_no}\tWrongName\tmismatch-test\n"
     src_root, allowlist = _write_fixture(tmp_path, py, allowlist_body)
@@ -112,9 +111,6 @@ def test_model_name_mismatch_is_flagged(audit_mod, tmp_path) -> None:
     assert "model_name_mismatch" in codes
 
 
-# I-08 demo: strict-mode model rejects unknown fields.
-
-
 def test_extra_forbid_pattern_rejects_unknown_field() -> None:
     from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -122,10 +118,8 @@ def test_extra_forbid_pattern_rejects_unknown_field() -> None:
         model_config = ConfigDict(extra="forbid")
         x: int = 0
 
-    # Valid known field round-trips.
     instance = _StrictDemo.model_validate({"x": 7})
     assert instance.x == 7
 
-    # Unknown field is rejected (the load-bearing assertion).
     with pytest.raises(ValidationError):
         _StrictDemo.model_validate({"x": 7, "rogue": "bad"})

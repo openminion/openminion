@@ -80,8 +80,6 @@ def test_canonical_path_constructs_real_runtime_context(
     received = recording_provider.received_ctx
     assert received != "<not-called>"
     assert received is not None
-    # RuntimeContext carries policy / scope / agent_id / session_id /
-    # tool_name attributes (set by `execute_tool_spec_call`).
     assert hasattr(received, "policy")
     assert hasattr(received, "scope")
     assert hasattr(received, "tool_name")

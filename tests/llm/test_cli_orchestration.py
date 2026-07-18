@@ -82,7 +82,7 @@ class RouteResolveTests(unittest.TestCase):
                 },
             }
         )
-        route = resolve_route(policy, "plan")  # no 'plan' purpose
+        route = resolve_route(policy, "plan")
         self.assertEqual(route.profile_id, "stub-fast")
 
     def test_raises_invalid_argument_when_no_route(self) -> None:
@@ -164,7 +164,6 @@ class EnsembleCallTests(unittest.TestCase):
         result = _run_sync(
             orchestrator.call_for_agent("test-agent", "plan", request, policy)
         )
-        # Single route returns EnsembleResult with candidates
         self.assertIsInstance(result, (CandidateResponse, EnsembleResult))
         if isinstance(result, EnsembleResult):
             self.assertGreater(len(result.candidates), 0)

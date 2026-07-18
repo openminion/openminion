@@ -16,7 +16,6 @@ from openminion.modules.brain.runtime.research import (
 )
 
 
-# --- Builders --------------------------------------------------------------
 
 
 def test_build_research_step_normalizes_text() -> None:
@@ -55,7 +54,6 @@ def test_build_citation_requires_nonempty_citation_id_and_finding_ref() -> None:
         build_citation(citation_id="cit-1", finding_ref="")
 
 
-# --- verify_claim: structural verdicts ------------------------------------
 
 
 def _claim(*, required: list[str] | None = None) -> Claim:
@@ -148,7 +146,6 @@ def test_verify_claim_status_set_is_closed() -> None:
         assert result.status in closed_set
 
 
-# --- Research composition view --------------------------------------------
 
 
 def test_build_research_composition_combines_typed_pieces() -> None:
@@ -193,7 +190,6 @@ def test_build_research_composition_clamps_negative_counts_to_zero() -> None:
     assert composition.evidence_refs_count == 0
 
 
-# --- Anti-LLM discipline regressions --------------------------------------
 
 
 def test_schemas_do_not_expose_credibility_or_style_fields() -> None:

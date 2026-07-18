@@ -39,7 +39,6 @@ def _make_real_record(
 
 def test_e2e_smoke_memory_query_to_decision_to_telemetry_to_summary():
 
-    # Surface 1: real shipped MemoryRecord shape.
     records = [
         _make_real_record(record_id="r-mem-1", confidence=0.92),
         _make_real_record(record_id="r-mem-2", confidence=0.75),
@@ -51,7 +50,6 @@ def test_e2e_smoke_memory_query_to_decision_to_telemetry_to_summary():
         ),
     ]
 
-    # Surface 2: consultation across the recall result set.
     decisions = consult_recall_decisions(records, now=NOW)
     assert len(decisions) == 4
     assert decisions[0].source == "memory"
@@ -61,22 +59,16 @@ def test_e2e_smoke_memory_query_to_decision_to_telemetry_to_summary():
     assert decisions[3].source == "recompute"
     assert decisions[3].reason == "recompute_record_invalidated"
 
-    # Surface 3: telemetry stamped to canonical events.
     logger = _SmokeLogger()
     stamp_recall_decision(decisions, logger=logger)
     assert len(logger.events) == 4
     assert all(e[0] == "rvrh_recall_decision" for e in logger.events)
-    # Telemetry carries the per-record id for operator drill-down.
     record_ids = {e[1].get("record_id") for e in logger.events}
     assert record_ids == {"r-mem-1", "r-mem-2", "r-low", "r-stale"}
 
-    # Surface 4: operator-facing summary histogram.
     histogram = summarize_decisions(decisions)
     assert histogram == {"memory": 2, "context": 0, "recompute": 2}
 
-    # Surface 5: empty result yields a single context-fallback decision +
-    # one telemetry event. Exercises the no-record branch the brain hits
-    # when the retrieval result is empty.
     empty_decisions = consult_recall_decisions([], now=NOW)
     assert len(empty_decisions) == 1
     assert empty_decisions[0].source == "context"

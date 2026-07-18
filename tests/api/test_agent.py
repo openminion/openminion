@@ -94,8 +94,6 @@ def test_agent_run_stream_invokes_on_delta_callback() -> None:
     agent = Agent(runtime=runtime)
     result = agent.run_stream("hello", on_delta=lambda d: captured.append(d))
     assert result.output == "streamed"
-    # The progress_callback must have been threaded through (even if the fake
-    # runtime never invokes it — the wiring is what we assert here).
     assert runtime.last_progress_callback is not None
 
 
@@ -115,15 +113,12 @@ def test_agent_serializes_pydantic_input() -> None:
 
     agent = Agent(runtime=runtime)
     agent.run(_Input(topic="MCP", depth=2))
-    # Payload message must be the JSON-serialized model.
     body = runtime.last_payload["message"]
     assert "MCP" in body and "depth" in body
 
 
 def test_agent_close_releases_owned_runtime() -> None:
     runtime = _FakeRuntime()
-    # When we pass a runtime in, the agent does NOT own it — close should be
-    # a no-op on the supplied runtime.
     agent = Agent(runtime=runtime)
     agent.close()
     assert runtime.closed is False

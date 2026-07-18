@@ -18,7 +18,6 @@ def _make_transcript_and_console() -> tuple[TerminalTranscript, io.StringIO]:
     return TerminalTranscript(console, verbosity="normal"), buf
 
 
-# ---- TerminalTurnHandle active-tool state ---------------------------
 
 
 def test_handle_set_active_tool_records_state() -> None:
@@ -77,22 +76,17 @@ def test_handle_render_includes_running_block_when_active() -> None:
         started_at=time.monotonic(),
     )
     rendered = handle._render(force_no_status=True)
-    # When active, the render is a Group containing the running block
-    # and the body row.
     assert isinstance(rendered, Group)
 
 
 def test_handle_render_excludes_running_block_when_cleared() -> None:
     handle = TerminalTurnHandle(Console(file=io.StringIO()))
-    # No active tool — render is just the body row (Text), not a Group.
     rendered = handle._render(force_no_status=True)
-    # The body-only render path returns a Text (the body_row).
     from rich.text import Text
 
     assert isinstance(rendered, Text)
 
 
-# ---- Transcript wiring ----------------------------------------------
 
 
 def test_transcript_routes_tool_started_to_active_handle() -> None:
@@ -102,7 +96,6 @@ def test_transcript_routes_tool_started_to_active_handle() -> None:
         transcript.handle_tool_started(
             {"call_id": "c1", "tool_name": "bash", "args": {"command": "ls"}}
         )
-        # The handle owns active-tool state while the transcript gets a durable row.
         assert handle.has_active_tool() is True
         out = buf.getvalue()
         assert "Running" in out
@@ -154,9 +147,7 @@ def test_transcript_quiet_mode_skips_handle_and_scrollback() -> None:
         transcript.handle_tool_started(
             {"call_id": "c3", "tool_name": "bash", "args": {"command": "ls"}}
         )
-        # Handle not mounted; scrollback empty.
         assert handle.has_active_tool() is False
-        # Hidden counter incremented.
         assert transcript._hidden_tool_count == 1
     finally:
         handle.complete(final_text="done")
@@ -197,7 +188,6 @@ def test_handle_render_elapsed_grows_over_time() -> None:
         args={},
         started_at=started_at,
     )
-    # Force two renders with a small delay between them.
     buf1 = io.StringIO()
     Console(file=buf1, force_terminal=False, width=120, no_color=True).print(
         handle._render(force_no_status=True)
@@ -211,7 +201,6 @@ def test_handle_render_elapsed_grows_over_time() -> None:
     assert "Running" in buf2.getvalue()
 
 
-# ---- FLE / FDR / FTV regression preservation ------------------------
 
 
 def test_handle_tool_started_idempotent_on_duplicate_call_id() -> None:
@@ -221,7 +210,6 @@ def test_handle_tool_started_idempotent_on_duplicate_call_id() -> None:
         transcript.handle_tool_started(
             {"call_id": "c1", "tool_name": "bash", "args": {}}
         )
-        # Reset active-tool state on handle so we can detect re-mount.
         handle.clear_active_tool()
         transcript.handle_tool_started(
             {"call_id": "c1", "tool_name": "bash", "args": {}}

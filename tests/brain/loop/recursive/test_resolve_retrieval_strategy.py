@@ -19,9 +19,6 @@ def _resolve(
     )
 
 
-# Explicit RLMConstraints.retrieval_strategy pass-through
-
-
 def test_explicit_constraint_contextual() -> None:
     assert (
         _resolve(constraints=RLMConstraints(retrieval_strategy="contextual"))
@@ -40,9 +37,6 @@ def test_explicit_constraint_longrag_doc_group() -> None:
     )
 
 
-# Auto path: always contextual, regardless of query/purpose text
-
-
 def test_auto_constraints_returns_contextual() -> None:
     assert (
         _resolve(constraints=RLMConstraints(retrieval_strategy="auto")) == "contextual"
@@ -51,9 +45,6 @@ def test_auto_constraints_returns_contextual() -> None:
 
 def test_no_constraints_returns_contextual() -> None:
     assert _resolve(constraints=None) == "contextual"
-
-
-# RQHC-03 negative regressions: query keywords must NOT classify
 
 
 def test_auto_query_keyword_research_multi_hop_no_longer_routes_to_raptor() -> None:

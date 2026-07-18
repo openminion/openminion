@@ -30,7 +30,6 @@ class TestBundleProvenanceRoundTrip(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmpdir.name)
-        # Fresh recorder so each test is isolated.
         self._original_recorder = default_provenance_recorder()
         self._recorder = MemoryProvenanceRecorder()
         set_default_provenance_recorder(self._recorder)
@@ -251,5 +250,4 @@ class TestBundleProvenanceRoundTrip(unittest.TestCase):
         )
         self.assertTrue(result.applied)
         self.assertIn("provenance_traces", result.skipped_sections)
-        # Recorder must NOT have the trace — candidate mode is staging only.
         self.assertIsNone(fresh_recorder.get_turn_trace(session_id="s1", turn_id="t1"))

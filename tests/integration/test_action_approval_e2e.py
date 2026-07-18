@@ -37,9 +37,6 @@ def _criteria_for_git_reset_hard():
     return registry.get("git", "reset_hard")
 
 
-# --- VGD-01 protocol + ApprovalVerdict ---
-
-
 def test_approval_verdict_is_frozen():
     verdict = ApprovalVerdict(decision="approve", rationale="ok")
     import pytest
@@ -56,9 +53,6 @@ def test_approval_criteria_is_frozen_and_carries_text():
     assert criteria.criteria_text == "rules"
 
 
-# --- VGD-04 criteria registry ---
-
-
 def test_default_criteria_registry_loads_all_four_ngt04_criteria():
     registry = default_criteria_registry()
     for action in ("reset_hard", "branch_force_delete", "stash_drop", "stash_clear"):
@@ -70,9 +64,6 @@ def test_default_criteria_registry_loads_all_four_ngt04_criteria():
 def test_registry_returns_none_for_unknown_action():
     registry = ApprovalCriteriaRegistry()
     assert registry.get("git", "totally_made_up") is None
-
-
-# --- VGD-02 LLM verifier impl ---
 
 
 def test_llm_returns_typed_approve_verdict():
@@ -143,11 +134,7 @@ def test_llm_normalizes_invalid_decision_to_escalate():
     assert verdict.decision == "escalate"
 
 
-# --- VGD-03 + VGD-05 gate helper + config ---
-
-
 def test_gate_disabled_short_circuits_to_approve():
-
     class _UnusedVerifier:
         def verify(self, **kwargs):  # pragma: no cover - must not be called
             raise AssertionError("verifier called when gate disabled")
@@ -178,9 +165,6 @@ def test_gate_with_missing_criteria_escalates():
     )
     assert verdict.decision == "escalate"
     assert verdict.rationale == "missing_approval_criteria"
-
-
-# --- VGD-06 three-branch integration ---
 
 
 def test_three_branch_gate_flow_against_stub_verifier_approve():

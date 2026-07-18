@@ -121,7 +121,6 @@ def test_unknown_event_type_drops_silently() -> None:
 
 def test_no_runner_drops_silently() -> None:
     ctx = SimpleNamespace(_runner=None, state=SimpleNamespace(), session_api=None)
-    # Must not raise.
     _emit_task_plan_progress_event(
         ctx,
         event_type="task_plan.step_completed",
@@ -132,7 +131,6 @@ def test_no_runner_drops_silently() -> None:
 def test_no_progress_callback_drops_silently() -> None:
     runner = SimpleNamespace(_progress_callback=None, session_api=None)
     ctx = SimpleNamespace(_runner=runner, state=SimpleNamespace())
-    # Must not raise.
     _emit_task_plan_progress_event(
         ctx,
         event_type="task_plan.declared",
@@ -146,7 +144,6 @@ def test_callback_exception_is_swallowed() -> None:
 
     runner = SimpleNamespace(_progress_callback=_crashy, session_api=None)
     ctx = SimpleNamespace(_runner=runner, state=SimpleNamespace())
-    # Must not raise.
     _emit_task_plan_progress_event(
         ctx,
         event_type="task_plan.declared",

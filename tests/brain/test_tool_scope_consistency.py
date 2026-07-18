@@ -98,7 +98,6 @@ def _runner_with_tools(tmp_path: Path, specs: list[ToolSpec]) -> BrainRunner:
     )
 
 
-# Characterization: available_tool_names returns consistent results
 
 
 def test_available_tool_names_returns_registered_tools(tmp_path: Path) -> None:
@@ -119,13 +118,11 @@ def test_available_tool_names_consistent_across_calls(tmp_path: Path) -> None:
     runner = _runner_with_tools(tmp_path, [_web_search_spec(), _time_spec()])
     first_call = available_tool_names(runner)
     second_call = available_tool_names(runner)
-    # Both calls should return identical results — no accidental mutation
     assert first_call == second_call
 
 
 def test_available_tool_names_with_list_tools_method(tmp_path: Path) -> None:
     runner = _runner_with_tools(tmp_path, [])
-    # Inject a list_tools stub
     runner.tool_api.list_tools = lambda: [  # type: ignore[assignment]
         {"name": "web.search"},
         {"name": "time"},
@@ -135,7 +132,6 @@ def test_available_tool_names_with_list_tools_method(tmp_path: Path) -> None:
     assert "time" in names
 
 
-# resolve_forced_tool_name is consistent with available_tool_names
 
 
 def test_forced_tool_visible_single_path_also_resolves_in_multi_lane_context(
@@ -203,7 +199,6 @@ def test_tool_scope_consistent_regardless_of_single_or_multi_context(
             capability_category=None,
         )
 
-    # Tool resolution must be the same regardless of how many tools are available
     assert single_status == multi_status, (
         f"Tool scope inconsistency: single-tool status={single_status!r} "
         f"vs multi-tool status={multi_status!r}"
@@ -214,7 +209,6 @@ def test_tool_scope_consistent_regardless_of_single_or_multi_context(
     )
 
 
-# TURR-03 negative-path: truly unavailable tools still fail clearly
 
 
 def test_truly_unavailable_tool_fails_clearly_in_any_context(
@@ -230,7 +224,6 @@ def test_truly_unavailable_tool_fails_clearly_in_any_context(
             forced_tools=["nonexistent.tool.xyz"],
             capability_category=None,
         )
-    # Must fail with a clear error, not silently return None without a reason
     assert status == "forced_tool_unavailable", (
         f"Expected 'forced_tool_unavailable' but got: {status!r}"
     )
@@ -244,7 +237,6 @@ def test_truly_unavailable_capability_fails_clearly(tmp_path: Path) -> None:
         "_collect_runtime_tool_schemas",
         return_value=[{"name": "web.search"}],
     ):
-        # Request a weather capability when only web.search is available
         tool_name, status = runner._resolve_forced_tool_name(
             forced_tools=None,
             capability_category="weather",
