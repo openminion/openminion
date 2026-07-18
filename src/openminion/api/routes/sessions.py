@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote
 
 from openminion.api.operations.context_traces import maybe_handle_context_traces_request
+from openminion.api.operations.session_shares import maybe_handle_session_shares_request
 from openminion.api.operations.events import handle_append_session_event
 from openminion.api.operations.session_continuations import (
     handle_apply_continuation,
@@ -18,7 +19,6 @@ from openminion.api.queries.sessions import (
     SessionQueryError,
     list_session_messages,
 )
-
 from .contracts import (
     APIRouteContext,
     RouteResult,
@@ -35,7 +35,6 @@ _CONTINUATIONS_RE = re.compile(r"(?:/v1)?/sessions/([^/]+)/continuations")
 _CONTINUATION_APPLY_RE = re.compile(
     r"(?:/v1)?/sessions/([^/]+)/continuations/([^/]+)/apply"
 )
-
 
 def _parse_limit(
     *,
@@ -191,6 +190,15 @@ def handle_request(
     body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
+    share_result = maybe_handle_session_shares_request(
+        ctx,
+        method_name=method_name,
+        path=path,
+        body=body,
+        query=query,
+    )
+    if share_result is not None:
+        return share_result
     if (
         method_name == "POST"
         and (apply_route := _CONTINUATION_APPLY_RE.fullmatch(path)) is not None

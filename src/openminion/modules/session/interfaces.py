@@ -8,6 +8,16 @@ from openminion.modules.task.scheduling.interfaces import (
 SESSION_INTERFACE_VERSION = "v1"
 SESSION_REPOSITORY_INTERFACE_VERSION = CRON_INTERFACE_VERSION
 SESSION_CONTINUATION_SCHEMA_VERSION = "session_continuation.v1"
+SESSION_TURN_LEASE_SCHEMA_VERSION = "session_turn_lease.v1"
+SESSION_SHARE_SCHEMA_VERSION = "session_share.v1"
+SESSION_SHARE_PROJECTION_VERSION = "session_share_projection.v1"
+SESSION_RETENTION_PLAN_VERSION = "session_retention_plan.v1"
+SESSION_RETENTION_HOLD_VERSION = "session_retention_hold.v1"
+SESSION_ENCRYPTION_SCHEMA_VERSION = "session_encryption.v1"
+SESSION_ENCRYPTION_MIGRATION_VERSION = "session_encryption_migration.v1"
+SESSION_BRANCH_DIFF_SCHEMA_VERSION = "session_branch_diff.v1"
+SESSION_BRANCH_CARRY_FORWARD_SCHEMA_VERSION = "session_branch_carry_forward.v1"
+SESSION_TURN_BUSY_CODE = "SESSION_TURN_BUSY"
 
 if TYPE_CHECKING:
     from .schemas import (
@@ -43,6 +53,42 @@ class SessionStoreAPI(Protocol):
     def get_slice(
         self, session_id: str, purpose: str, limits: Any = None
     ) -> dict[str, Any]: ...
+
+    def acquire_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        request_id: str,
+        ttl_s: int = 60,
+        now_iso: str | None = None,
+    ) -> Any: ...
+
+    def renew_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        fence_token: int,
+        ttl_s: int = 60,
+        now_iso: str | None = None,
+    ) -> bool: ...
+
+    def release_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        fence_token: int,
+        now_iso: str | None = None,
+    ) -> bool: ...
+
+    def assert_session_turn_fence(
+        self,
+        session_id: str,
+        *,
+        fence_token: int,
+    ) -> None: ...
 
 
 @runtime_checkable
@@ -92,6 +138,10 @@ _REQUIRED_MEMBERS: dict[str, tuple[str, ...]] = {
         "put_working_state",
         "get_latest_working_state",
         "get_slice",
+        "acquire_session_turn_lease",
+        "renew_session_turn_lease",
+        "release_session_turn_lease",
+        "assert_session_turn_fence",
     ),
     "context_client": (
         "contract_version",

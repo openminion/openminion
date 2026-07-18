@@ -177,6 +177,23 @@ EVENT_SOURCED_SCHEMA: tuple[str, ...] = (
       FOREIGN KEY(session_id) REFERENCES sessions(session_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS session_turn_leases (
+      session_id        TEXT PRIMARY KEY,
+      owner             TEXT NOT NULL,
+      request_id        TEXT NOT NULL,
+      fence_token       INTEGER NOT NULL,
+      acquired_at       TEXT NOT NULL,
+      renewed_at        TEXT NOT NULL,
+      expires_at        TEXT NOT NULL,
+      released_at       TEXT,
+      FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_turn_leases_expires
+    ON session_turn_leases(expires_at)
+    """,
 )
 
 SESSION_CONTINUATION_SCHEMA: tuple[str, ...] = (
@@ -188,6 +205,52 @@ SESSION_CONTINUATION_SCHEMA: tuple[str, ...] = (
     CREATE UNIQUE INDEX IF NOT EXISTS idx_session_continuation_single_apply
       ON session_events(parent_event_id)
       WHERE event_type = 'session.continuation.applied'
+    """,
+)
+
+SESSION_SHARING_SCHEMA: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS session_shares (
+      share_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_hint TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      projection_policy_json TEXT NOT NULL DEFAULT '{}',
+      meta_json TEXT NOT NULL DEFAULT '{}',
+      schema_version TEXT NOT NULL DEFAULT 'session_share.v1',
+      FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_shares_session
+    ON session_shares(session_id, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_shares_expiry
+    ON session_shares(expires_at)
+    """,
+)
+
+SESSION_RETENTION_SCHEMA: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS session_retention_holds (
+      hold_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      actor_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      released_at TEXT,
+      schema_version TEXT NOT NULL DEFAULT 'session_retention_hold.v1',
+      FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_retention_holds_session
+    ON session_retention_holds(session_id, released_at)
     """,
 )
 
