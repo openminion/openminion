@@ -22,7 +22,7 @@ FRAMEWORK_ROOT = Path(__file__).resolve().parents[4]
 OPENMINION_ROOT = FRAMEWORK_ROOT / "openminion"
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-_READY_PROMPT_RE = re.compile(r"(?:^|\n)\[[^\]\n]+\]\s+you>\s*$")
+_READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
 _CONFIRMATION_REQUIRED_RE = re.compile(r"Policy confirmation required\.", re.IGNORECASE)
 _TIMEOUT_EXIT_CODE = 124
 _PROBE_STATUS_PREFIX = "[probe-status]"
