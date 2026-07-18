@@ -5,14 +5,14 @@ from pathlib import Path
 
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.storage.runtime.session_store.models import EventRecord
-from openminion.modules.telemetry.usage.service import StatsService
-from openminion.modules.telemetry.usage.token_usage import (
+from openminion.modules.telemetry.usage import (
+    StatsService,
     TokenUsageEventRef,
     TokenUsageRecord,
     TokenUsageSummary,
-    records_from_session_event,
     summary_to_json_payload,
 )
+from openminion.modules.telemetry.usage.token_usage import records_from_session_event
 
 _FIXTURE_PATH = (
     Path(__file__).parent
@@ -76,6 +76,31 @@ def test_missing_provider_total_is_marked_derived() -> None:
     total = next(record for record in records if record.surface == "llm_total")
     assert total.total_tokens == 10
     assert total.total_source == "derived"
+
+
+def test_usage_aliases_skip_present_but_invalid_values() -> None:
+    records = records_from_session_event(
+        {
+            "event_type": "llm.call.completed",
+            "payload": {
+                "usage": {
+                    "input_tokens": None,
+                    "prompt_tokens": 8,
+                    "output_tokens": "invalid",
+                    "completion_tokens": 2,
+                    "cache_read_tokens": None,
+                    "cached_tokens": 3,
+                }
+            },
+        },
+        session_id="session-1",
+    )
+
+    summary = TokenUsageSummary(session_id="session-1", records=records)
+    assert summary.total_input_tokens == 8
+    assert summary.total_output_tokens == 2
+    assert summary.total_cache_read_tokens == 3
+    assert summary.total_provider_tokens == 10
 
 
 def test_context_manifest_preserves_opaque_cache_correlation() -> None:
@@ -247,3 +272,42 @@ def test_json_export_matches_shared_v1_fixture() -> None:
 
     expected = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
     assert summary_to_json_payload(summary) == expected
+
+
+def test_export_models_normalize_json_boundary_values() -> None:
+    source = TokenUsageEventRef(
+        sequence="4",
+        observed_at=" 2026-07-17T12:00:00+00:00 ",
+        event_type=" llm.call.completed ",
+    )
+    record = TokenUsageRecord(
+        session_id=" session-1 ",
+        provider=7,
+        surface=" llm_prompt ",
+        input_tokens="5",
+        total_source="unknown",
+        cache_hit=1,
+    )
+    payload = summary_to_json_payload(
+        TokenUsageSummary(
+            session_id=" session-1 ",
+            records=[record],
+            source_event_count="1",
+            events_scanned="2",
+            first_source_event=source,
+            last_source_event=source,
+        )
+    )
+
+    assert payload["session_id"] == "session-1"
+    assert payload["source_event_count"] == 1
+    assert payload["source_event_range"]["first"] == {
+        "sequence": 4,
+        "observed_at": "2026-07-17T12:00:00+00:00",
+        "event_type": "llm.call.completed",
+    }
+    assert payload["records"][0]["provider"] == "7"
+    assert payload["records"][0]["surface"] == "llm_prompt"
+    assert payload["records"][0]["total_source"] == ""
+    assert payload["records"][0]["cache_hit"] is None
+    assert json.loads(json.dumps(payload)) == payload

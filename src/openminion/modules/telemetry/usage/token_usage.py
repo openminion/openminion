@@ -10,6 +10,10 @@ from .contracts import (
     TOKEN_USAGE_SCHEMA_VERSION,
     TOTAL_SOURCE_DERIVED,
     TOTAL_SOURCE_PROVIDER,
+    TokenTotalSource,
+    TokenUsageEventRefPayload,
+    TokenUsageExportPayload,
+    TokenUsageRecordPayload,
 )
 from .types import coerce_non_negative_int
 
@@ -65,13 +69,49 @@ _TOKEN_FIELD_NAMES = (
     "cap_tokens",
     "saved_tokens",
 )
+_RECORD_TEXT_FIELD_NAMES = (
+    "session_id",
+    "run_id",
+    "turn_id",
+    "llm_call_id",
+    "prompt_context_id",
+    "provider",
+    "model",
+    "surface",
+    "bucket",
+    "source_event_type",
+    "source_event_id",
+    "observed_at",
+    "original_ref",
+    "policy",
+    "prompt_cache_key",
+    "static_prefix_hash",
+)
 
 
 def _first_token_int(payload: Mapping[str, Any], keys: tuple[str, ...]) -> int:
     for key in keys:
-        if key in payload:
-            return coerce_non_negative_int(payload.get(key))
+        if key not in payload or payload.get(key) is None:
+            continue
+        try:
+            return max(0, int(payload[key]))
+        except (TypeError, ValueError):
+            continue
     return 0
+
+
+def _optional_non_negative_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_positive_int(value: Any) -> int | None:
+    normalized = _optional_non_negative_int(value)
+    return normalized if normalized is not None and normalized > 0 else None
 
 
 def _text(payload: Mapping[str, Any], key: str) -> str:
@@ -98,10 +138,7 @@ def _first_event_text(event: Mapping[str, Any], keys: tuple[str, ...]) -> str:
 def _optional_event_sequence(event: Mapping[str, Any]) -> int | None:
     if "seq" not in event or event.get("seq") is None:
         return None
-    try:
-        return max(0, int(event["seq"]))
-    except (TypeError, ValueError):
-        return None
+    return _optional_non_negative_int(event["seq"])
 
 
 def _optional_bool(payload: Mapping[str, Any], key: str) -> bool | None:
@@ -120,8 +157,21 @@ class TokenUsageEventRef:
     event_type: str = ""
     event_id: str = ""
 
-    def as_payload(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {}
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "sequence",
+            _optional_non_negative_int(self.sequence),
+        )
+        for field_name in ("observed_at", "event_type", "event_id"):
+            object.__setattr__(
+                self,
+                field_name,
+                str(getattr(self, field_name) or "").strip(),
+            )
+
+    def as_payload(self) -> TokenUsageEventRefPayload:
+        payload: TokenUsageEventRefPayload = {}
         if self.sequence is not None:
             payload["sequence"] = self.sequence
         if self.observed_at:
@@ -175,7 +225,7 @@ class TokenUsageRecord:
     source_event_sequence: int | None = None
     observed_at: str = ""
     total_tokens: int = 0
-    total_source: str = ""
+    total_source: TokenTotalSource = ""
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -191,6 +241,12 @@ class TokenUsageRecord:
     cache_hit: bool | None = None
 
     def __post_init__(self) -> None:
+        for field_name in _RECORD_TEXT_FIELD_NAMES:
+            object.__setattr__(
+                self,
+                field_name,
+                str(getattr(self, field_name) or "").strip(),
+            )
         for field_name in _TOKEN_FIELD_NAMES:
             object.__setattr__(
                 self,
@@ -202,6 +258,21 @@ class TokenUsageRecord:
             self,
             "total_source",
             normalized_source if normalized_source in TOKEN_TOTAL_SOURCES else "",
+        )
+        object.__setattr__(
+            self,
+            "source_event_sequence",
+            _optional_non_negative_int(self.source_event_sequence),
+        )
+        object.__setattr__(
+            self,
+            "estimated",
+            self.estimated if isinstance(self.estimated, bool) else False,
+        )
+        object.__setattr__(
+            self,
+            "cache_hit",
+            self.cache_hit if isinstance(self.cache_hit, bool) else None,
         )
 
     @property
@@ -218,7 +289,7 @@ class TokenUsageRecord:
             )
         )
 
-    def as_payload(self) -> dict[str, Any]:
+    def as_payload(self) -> TokenUsageRecordPayload:
         return {
             "session_id": self.session_id,
             "run_id": self.run_id,
@@ -262,6 +333,27 @@ class TokenUsageSummary:
     event_limit: int | None = None
     first_source_event: TokenUsageEventRef | None = None
     last_source_event: TokenUsageEventRef | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "session_id", str(self.session_id or "").strip())
+        object.__setattr__(self, "run_id", str(self.run_id or "").strip())
+        object.__setattr__(self, "records", tuple(self.records))
+        for field_name in ("source_event_count", "events_scanned"):
+            object.__setattr__(
+                self,
+                field_name,
+                coerce_non_negative_int(getattr(self, field_name)),
+            )
+        object.__setattr__(
+            self,
+            "event_limit",
+            _optional_positive_int(self.event_limit),
+        )
+        object.__setattr__(
+            self,
+            "complete",
+            self.complete if isinstance(self.complete, bool) else False,
+        )
 
     @property
     def total_provider_tokens(self) -> int:
@@ -322,7 +414,7 @@ class TokenUsageSummary:
                 totals[record.bucket] += record.estimated_tokens
         return dict(totals)
 
-    def as_payload(self) -> dict[str, Any]:
+    def as_payload(self) -> TokenUsageExportPayload:
         return {
             "schema_version": TOKEN_USAGE_SCHEMA_VERSION,
             "session_id": self.session_id,
@@ -370,7 +462,7 @@ def records_from_session_event(
     return ()
 
 
-def summary_to_json_payload(summary: TokenUsageSummary) -> dict[str, Any]:
+def summary_to_json_payload(summary: TokenUsageSummary) -> TokenUsageExportPayload:
     return summary.as_payload()
 
 
@@ -509,7 +601,7 @@ def _record_with_tokens(
     surface: str,
     bucket: str = "",
     total_tokens: int = 0,
-    total_source: str = "",
+    total_source: TokenTotalSource = "",
     input_tokens: int = 0,
     output_tokens: int = 0,
     cache_read_tokens: int = 0,

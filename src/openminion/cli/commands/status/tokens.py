@@ -12,10 +12,10 @@ from openminion.modules.storage.engine import StorageEngineConfig
 from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.telemetry.usage import (
     StatsService,
+    TokenUsageRecord,
     TokenUsageSummary,
     summary_to_json_payload,
 )
-from openminion.modules.telemetry.usage.token_usage import TokenUsageRecord
 
 
 def _build_session_store(args: Any, config: OpenMinionConfig) -> Any:
