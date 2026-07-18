@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from os import PathLike
 from pathlib import Path
 from typing import Any, cast
 
@@ -31,8 +32,12 @@ from .infrastructure import (
 )
 
 
-def _resolve_root(value: str | None) -> Path | None:
-    return Path(value).expanduser().resolve() if value and value.strip() else None
+def _resolve_root(value: str | PathLike[str] | None) -> Path | None:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return Path(value).expanduser().resolve()
 
 
 def build_default_runtime_stack(
@@ -161,8 +166,8 @@ class RuntimeBootstrapMixin:
         cls,
         config_path: str | None,
         *,
-        home_root: str | None = None,
-        data_root: str | None = None,
+        home_root: str | PathLike[str] | None = None,
+        data_root: str | PathLike[str] | None = None,
         run_profile_overrides: RunProfileOverrides | None = None,
         logging_mode: str = "default",
     ) -> Any:
