@@ -75,6 +75,10 @@ _KNOWN_CANONICAL_EVENT_TYPES = {
     "budget.user_declined",
     "budget.user_timeout",
     "budget.high_watermark",
+    "session.continuation.packet_created",
+    "session.continuation.applied",
+    "session.continuation.rejected",
+    "session.continuation.expired",
 }
 
 

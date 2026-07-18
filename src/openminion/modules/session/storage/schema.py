@@ -179,6 +179,18 @@ EVENT_SOURCED_SCHEMA: tuple[str, ...] = (
     """,
 )
 
+SESSION_CONTINUATION_SCHEMA: tuple[str, ...] = (
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_events_parent_type
+      ON session_events(parent_event_id, event_type)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_session_continuation_single_apply
+      ON session_events(parent_event_id)
+      WHERE event_type = 'session.continuation.applied'
+    """,
+)
+
 CRON_SCHEMA: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS cron_jobs (

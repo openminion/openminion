@@ -161,6 +161,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
         if finalizer is not None and finalizer.alive:
             finalizer.detach()
         close_runtime_components(
+            channel_supervisor=getattr(self, "channel_supervisor", None),
             retrieve_ctl=getattr(self, "retrieve_ctl", None),
             action_policy=getattr(self, "action_policy", None),
             runtime_manager=getattr(self, "runtime_manager", None),

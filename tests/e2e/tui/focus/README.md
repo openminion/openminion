@@ -22,6 +22,12 @@ Run a single suite:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py progress-visibility
 ```
 
+Run the deterministic high-level request handoff suite:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py hlpe
+```
+
 Run the deterministic Tier A release journey gate:
 
 ```bash
@@ -91,6 +97,7 @@ Suite names:
 - `long-running`: live long-running research/coding prompts.
 - `soak`: live goal-style long coding and research-to-code loops.
 - `queued-input`: focused queued-input/status tests without live credentials.
+- `hlpe`: deterministic high-level request readiness/status matrix without live credentials.
 - `progress-visibility`: progress/status rendering tests without live credentials.
 - `tier-a`: deterministic bounded coding-harness release journeys.
 - `regression`: broad local Focus, presentation, and status regression suite.

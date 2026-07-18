@@ -26,11 +26,13 @@ from openminion.cli.transport.daemon_client import (
     resolve_daemon_endpoint,
 )
 from openminion.modules.controlplane.config import (
+    ControlPlaneConfig,
     from_base_config as controlplane_from_base_config,
     load_config as load_controlplane_config,
 )
 from openminion.modules.controlplane.channels.telegram.bot_api import TelegramBotAPI
 from openminion.modules.controlplane.channels.telegram.config import (
+    TelegramChannelConfig,
     from_base_config as telegram_from_base_config,
     load_config as load_telegram_config,
 )
@@ -78,6 +80,23 @@ class TelegramCandidate:
     chat_type: str
     username: str
     display_name: str
+
+
+@dataclass
+class _ForegroundChannelRuntime:
+    runner: Any
+    supervisor: Any
+    registry: Any
+    outbox_worker: Any | None = None
+
+    def start(self, stop_event: threading.Event | None = None) -> None:
+        event = stop_event or threading.Event()
+        self.supervisor.start()
+        while not event.is_set():
+            event.wait(0.2)
+
+    def stop(self) -> None:
+        self.supervisor.stop()
 
 
 def run_channel(args: argparse.Namespace) -> int:
@@ -194,24 +213,28 @@ def telegram_pair(args: argparse.Namespace) -> int:
 
 def telegram_run(args: argparse.Namespace) -> int:
     print(RUNNER_ONLINE_MESSAGE)
-    runner = _build_unified_telegram_runner(getattr(args, "config", None))
+    foreground = _build_unified_telegram_runtime(getattr(args, "config", None))
+    runner = foreground.runner
     if bool(getattr(args, "once", False)):
-        run_once = getattr(runner, "run_once", None)
-        if not callable(run_once):
-            raise SystemExit("--once is only supported in polling mode")
-        run_once()
+        try:
+            run_once = getattr(runner, "run_once", None)
+            if not callable(run_once):
+                raise SystemExit("--once is only supported in polling mode")
+            run_once()
+            if foreground.outbox_worker is not None:
+                foreground.outbox_worker.run_once()
+        finally:
+            foreground.stop()
         return 0
 
     stop = threading.Event()
     try:
-        runner.start(stop_event=stop)
+        foreground.start(stop_event=stop)
     except KeyboardInterrupt:
         stop.set()
     finally:
         stop.set()
-        stop_runner = getattr(runner, "stop", None)
-        if callable(stop_runner):
-            stop_runner()
+        foreground.stop()
     return 0
 
 
@@ -491,22 +514,41 @@ def _discover_telegram_candidate(
 ) -> TelegramCandidate | None:
     cfg = _load_telegram_channel_config(config_path)
     api = TelegramBotAPI(cfg.bot_token)
-    print("Send a message to your Telegram bot now. Waiting for an update...")
-    deadline = time.time() + max(0, int(timeout_seconds))
-    while True:
-        updates = api.get_updates(
-            offset=None,
-            timeout=min(2, max(0, timeout_seconds)),
-            limit=10,
-            allowed_updates=["message", "edited_message"],
-        )
-        for update in updates:
-            candidate = _candidate_from_update(update)
-            if candidate is not None:
-                return candidate
-        if time.time() >= deadline:
-            return None
-        time.sleep(0.2)
+    store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
+    account_id = _telegram_account_id(api)
+    lease = store.acquire_polling_lease(
+        account_id=account_id,
+        command="openminion channel telegram identify",
+        stale_after_seconds=30,
+    )
+    if not lease.acquired:
+        raise RuntimeError(lease.diagnostic())
+    try:
+        print("Send a message to your Telegram bot now. Waiting for an update...")
+        deadline = time.time() + max(0, int(timeout_seconds))
+        while True:
+            store.heartbeat_polling_lease(account_id=account_id)
+            updates = api.get_updates(
+                offset=None,
+                timeout=min(2, max(0, timeout_seconds)),
+                limit=10,
+                allowed_updates=["message", "edited_message"],
+            )
+            for update in updates:
+                candidate = _candidate_from_update(update)
+                if candidate is not None:
+                    return candidate
+            if time.time() >= deadline:
+                return None
+            time.sleep(0.2)
+    finally:
+        store.release_polling_lease(account_id=account_id)
+
+
+def _telegram_account_id(api: TelegramBotAPI) -> str:
+    me = api.get_me()
+    bot_id = str(me.get("id") or "").strip()
+    return f"telegram-bot:{bot_id}" if bot_id else "default"
 
 
 def _candidate_from_update(update: dict[str, Any]) -> TelegramCandidate | None:
@@ -566,7 +608,7 @@ def _parse_scopes(raw: str | None) -> list[str]:
     return [scope for item in raw.split(",") if (scope := item.strip())]
 
 
-def _load_telegram_channel_config(config_path: str | None):
+def _load_telegram_channel_config(config_path: str | None) -> TelegramChannelConfig:
     base = load_cli_config(config_path)
     if "telegram" in dict(getattr(base, "channels", {}) or {}):
         roots = resolve_cli_roots(config_path=config_path)
@@ -578,7 +620,7 @@ def _load_telegram_channel_config(config_path: str | None):
     return load_telegram_config(config_path, env=_env_snapshot()).telegram
 
 
-def _load_controlplane_config(config_path: str | None):
+def _load_controlplane_config(config_path: str | None) -> ControlPlaneConfig:
     base = load_cli_config(config_path)
     if "controlplane" in dict(getattr(base, "channels", {}) or {}):
         roots = resolve_cli_roots(config_path=config_path)
@@ -590,36 +632,106 @@ def _load_controlplane_config(config_path: str | None):
     return load_controlplane_config(config_path, env=_env_snapshot())
 
 
-def _build_unified_telegram_runner(config_path: str | None):
-    from openminion.services.runtime.lifecycle import (
-        build_channel_registry as lifecycle_build_channel_registry,
-    )
+def _build_unified_telegram_runner(
+    config_path: str | None,
+) -> Any:
+    return _build_unified_telegram_runtime(config_path).runner
 
+
+def _build_unified_telegram_runtime(
+    config_path: str | None,
+) -> _ForegroundChannelRuntime:
     base = load_cli_config(config_path)
     roots = resolve_cli_roots(config_path=config_path)
-    registry = lifecycle_build_channel_registry(
-        config=base,
+    return _build_unified_telegram_runtime_from_base(
+        base=base,
         home_root=roots.home_root,
         data_root=roots.data_root,
-        logger=logging.getLogger("openminion.cli.channel.telegram"),
+        logger_name="openminion.cli.channel.telegram",
     )
-    return registry.get("telegram")
 
 
-def build_unified_slack_runner(config_path: str | None):
+def _build_unified_telegram_runtime_from_base(
+    *,
+    base: Any,
+    home_root: Path,
+    data_root: Path,
+    logger_name: str,
+) -> _ForegroundChannelRuntime:
     from openminion.services.runtime.lifecycle import (
         build_channel_registry as lifecycle_build_channel_registry,
     )
+    from openminion.services.runtime.channel_supervisor import ChannelRuntimeSupervisor
+
+    registry, components = lifecycle_build_channel_registry(
+        config=base,
+        home_root=home_root,
+        data_root=data_root,
+        logger=logging.getLogger(logger_name),
+    )
+    if components is None:
+        raise RuntimeError("telegram channel requires controlplane runtime components")
+    return _ForegroundChannelRuntime(
+        runner=registry.get("telegram"),
+        registry=registry,
+        outbox_worker=components.outbox_worker,
+        supervisor=ChannelRuntimeSupervisor(
+            channels=registry,
+            outbox_worker=components.outbox_worker,
+            close_runtime=components.close,
+            logger=logging.getLogger(f"{logger_name}.supervisor"),
+            channel_ids=["telegram"],
+        ),
+    )
+
+
+def _build_controlplane_components_from_base(
+    *,
+    base: Any,
+    home_root: Path,
+    data_root: Path,
+    logger_name: str,
+) -> Any:
+    from openminion.services.runtime.controlplane import (
+        build_controlplane_runtime_components,
+    )
+
+    return build_controlplane_runtime_components(
+        config=base,
+        home_root=home_root,
+        data_root=data_root,
+        logger=logging.getLogger(logger_name),
+    )
+
+
+def build_unified_slack_runner(config_path: str | None) -> _ForegroundChannelRuntime:
+    from openminion.services.runtime.lifecycle import (
+        build_channel_registry as lifecycle_build_channel_registry,
+    )
+    from openminion.services.runtime.channel_supervisor import ChannelRuntimeSupervisor
 
     base = load_cli_config(config_path)
     roots = resolve_cli_roots(config_path=config_path)
-    registry = lifecycle_build_channel_registry(
+    registry, components = lifecycle_build_channel_registry(
         config=base,
         home_root=roots.home_root,
         data_root=roots.data_root,
         logger=logging.getLogger("openminion.cli.channel.slack"),
     )
-    return registry.get("slack")
+    if components is None:
+        raise RuntimeError("slack channel requires controlplane runtime components")
+    return _ForegroundChannelRuntime(
+        runner=registry.get("slack"),
+        registry=registry,
+        outbox_worker=components.outbox_worker,
+        supervisor=ChannelRuntimeSupervisor(
+            channels=registry,
+            outbox_worker=components.outbox_worker,
+            close_runtime=components.close,
+            logger=logging.getLogger("openminion.cli.channel.slack.supervisor"),
+            channel_ids=["slack"],
+        ),
+    )
 
 
 def _env_snapshot() -> dict[str, str]:

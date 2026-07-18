@@ -1,7 +1,10 @@
 import hashlib
 import json
+import os
 import re
 import secrets
+import time
+from dataclasses import dataclass
 from datetime import datetime
 
 from openminion.base.time import utc_now_iso as _now_iso
@@ -21,6 +24,41 @@ _TOKEN_ALLOWED_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 def _now_ts() -> int:
     return int(datetime.fromisoformat(_now_iso()).timestamp())
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+_PROCESS_START_MARKER = f"{os.getpid()}:{time.monotonic_ns()}"
+
+
+@dataclass(frozen=True)
+class PollingLease:
+    acquired: bool
+    account_id: str
+    owner_pid: int | None = None
+    owner_command: str | None = None
+    reason: str | None = None
+
+    def diagnostic(self) -> str:
+        if self.acquired:
+            return "telegram polling lease acquired"
+        owner = f"pid={self.owner_pid}" if self.owner_pid else "pid=unknown"
+        command = self.owner_command or "unknown"
+        return (
+            "Telegram polling is already owned locally "
+            f"({owner}, command={command}). "
+            "Stop that runner or use `openminion channel telegram status`."
+        )
 
 
 def _token_hash(token: str, *, pepper: str | None) -> str:
@@ -96,6 +134,15 @@ class TelegramPollStateStore(BaseModuleSQLiteStore, TelegramPollStateStoreBase):
                     updated_at_ts INTEGER NOT NULL,
                     PRIMARY KEY(chat_id, topic_id)
                 );
+
+                CREATE TABLE IF NOT EXISTS telegram_polling_leases (
+                    account_id TEXT PRIMARY KEY,
+                    owner_pid INTEGER NOT NULL,
+                    process_start_marker TEXT NOT NULL,
+                    command TEXT NOT NULL,
+                    acquired_at_ts INTEGER NOT NULL,
+                    heartbeat_at_ts INTEGER NOT NULL
+                );
                 """
             )
 
@@ -129,6 +176,97 @@ class TelegramPollStateStore(BaseModuleSQLiteStore, TelegramPollStateStoreBase):
                     updated_at=excluded.updated_at
                 """,
                 (account_id, int(update_id), _now_iso()),
+            )
+
+    def acquire_polling_lease(
+        self,
+        *,
+        account_id: str,
+        command: str,
+        stale_after_seconds: int = 120,
+    ) -> PollingLease:
+        normalized_account = str(account_id or "").strip()
+        if not normalized_account:
+            raise ValueError("account_id is required for telegram polling lease")
+        now_ts = _now_ts()
+        pid = os.getpid()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                """
+                SELECT owner_pid, process_start_marker, command, heartbeat_at_ts
+                FROM telegram_polling_leases
+                WHERE account_id = ?
+                """,
+                (normalized_account,),
+            ).fetchone()
+            if row is not None:
+                owner_pid = int(row["owner_pid"])
+                owner_marker = str(row["process_start_marker"] or "")
+                heartbeat_at = int(row["heartbeat_at_ts"] or 0)
+                owned_by_this_process = (
+                    owner_pid == pid and owner_marker == _PROCESS_START_MARKER
+                )
+                stale = now_ts - heartbeat_at > max(1, int(stale_after_seconds))
+                if not owned_by_this_process and not stale and _pid_is_alive(owner_pid):
+                    return PollingLease(
+                        acquired=False,
+                        account_id=normalized_account,
+                        owner_pid=owner_pid,
+                        owner_command=str(row["command"] or ""),
+                        reason="live_owner",
+                    )
+            self._conn.execute(
+                """
+                INSERT INTO telegram_polling_leases(
+                    account_id,
+                    owner_pid,
+                    process_start_marker,
+                    command,
+                    acquired_at_ts,
+                    heartbeat_at_ts
+                ) VALUES (?,?,?,?,?,?)
+                ON CONFLICT(account_id) DO UPDATE SET
+                    owner_pid=excluded.owner_pid,
+                    process_start_marker=excluded.process_start_marker,
+                    command=excluded.command,
+                    acquired_at_ts=excluded.acquired_at_ts,
+                    heartbeat_at_ts=excluded.heartbeat_at_ts
+                """,
+                (
+                    normalized_account,
+                    pid,
+                    _PROCESS_START_MARKER,
+                    str(command or "telegram").strip() or "telegram",
+                    now_ts,
+                    now_ts,
+                ),
+            )
+        return PollingLease(acquired=True, account_id=normalized_account)
+
+    def heartbeat_polling_lease(self, *, account_id: str) -> bool:
+        with self._lock, self._conn:
+            cur = self._conn.execute(
+                """
+                UPDATE telegram_polling_leases
+                SET heartbeat_at_ts = ?
+                WHERE account_id = ?
+                  AND owner_pid = ?
+                  AND process_start_marker = ?
+                """,
+                (_now_ts(), account_id, os.getpid(), _PROCESS_START_MARKER),
+            )
+        return cur.rowcount > 0
+
+    def release_polling_lease(self, *, account_id: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                DELETE FROM telegram_polling_leases
+                WHERE account_id = ?
+                  AND owner_pid = ?
+                  AND process_start_marker = ?
+                """,
+                (account_id, os.getpid(), _PROCESS_START_MARKER),
             )
 
     def issue_pair_token(

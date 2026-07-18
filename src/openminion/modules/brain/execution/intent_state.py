@@ -241,6 +241,7 @@ def record_decision_metadata(
         state.decision_success_criteria = {}
         state.decision_feasibility_state = {}
         state.decision_feasibility_report = None
+        state.request_readiness = None
         state.adaptive_satisfied_intent_ids = []
         state.last_adaptive_revision_checkpoint = None
         state.intent_execution_states = []
@@ -251,6 +252,12 @@ def record_decision_metadata(
     decision_reason = str(getattr(decision, "reason_code", "") or "").strip()
     is_continuation_reason = decision_reason in _CONTINUATION_DECISION_REASON_CODES
     state.decision_reason_code = decision_reason
+    request_readiness = getattr(decision, "request_readiness", None)
+    state.request_readiness = (
+        request_readiness.model_copy(deep=True)
+        if request_readiness is not None
+        else None
+    )
     state.decision_capability_category = (
         str(capability_category or "").strip().lower() or None
     )

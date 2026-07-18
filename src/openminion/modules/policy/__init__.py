@@ -36,6 +36,7 @@ from .runtime.security import (
     default_internal_actor,
     derive_plugin_activation_risk,
     evaluate_plugin_trust_policy,
+    is_local_gateway_host,
 )
 from .runtime.service import PolicyCtl
 from .runtime.untrusted_content import (
@@ -81,6 +82,7 @@ __all__ = (
     "default_internal_actor",
     "derive_plugin_activation_risk",
     "evaluate_plugin_trust_policy",
+    "is_local_gateway_host",
     "safe_tag",
     "sanitize_args",
     "sanitize_untrusted_content",

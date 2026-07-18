@@ -215,24 +215,19 @@ def test_durable_pipeline_full_flow(tmp_path: Path) -> None:
         first_sent = chain_types.index("cp.delivery.sent")
         assert first_enqueued < first_failed < first_sent, chain_types
 
-        stop_event = threading.Event()
-        runner._start_outbox_worker(stop_event)
-        thread = runner._outbox_thread
+        supervisor = runtime.channel_supervisor
+        assert supervisor is not None
+        supervisor.start()
+        thread = supervisor._outbox_thread
         assert thread is not None and thread.is_alive()
 
-        time.sleep(0.05)
-        assert thread.is_alive()
-
-        stop_event.set()
         join_started = time.monotonic()
-        runner.stop()
+        supervisor.stop()
         join_elapsed = time.monotonic() - join_started
         assert join_elapsed < 5.0, (
-            f"runner.stop() took {join_elapsed:.2f}s — exceeded 5s budget"
+            f"supervisor.stop() took {join_elapsed:.2f}s — exceeded 5s budget"
         )
-        # ``_stop_outbox_worker`` clears the attribute on success.
-        assert runner._outbox_thread is None
-        # Thread is no longer alive.
+        assert supervisor._outbox_thread is None
         assert not thread.is_alive()
     finally:
         # _close_runtime closes the store + brain client; calling

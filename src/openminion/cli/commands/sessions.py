@@ -7,6 +7,95 @@ from typing import Any
 from openminion.api.runtime import APIRuntime
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
+from openminion.modules.session.schemas import ContinuationError
+
+
+def run_sessions_continue(args) -> int:
+    source_session_id = str(getattr(args, "source_session_id", "") or "").strip()
+    target_session_id = str(getattr(args, "target_session", "") or "").strip()
+    agent_id = str(getattr(args, "agent", "") or "").strip()
+    dry_run = bool(getattr(args, "dry_run", False))
+    output_json = bool(getattr(args, "output_json", False))
+    if not source_session_id or not agent_id:
+        print(
+            "openminion sessions continue: source session and --agent are required",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        runtime = APIRuntime.from_config_path(
+            getattr(args, "config", None),
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
+        from openminion.api.operations.session_continuations import (
+            resolve_session_continuation_store,
+        )
+        from openminion.modules.session import SessionContinuationService
+        from openminion.modules.session.diagnostics.continuation import (
+            continuation_telemetry_sink,
+        )
+
+        store = resolve_session_continuation_store(runtime)
+        owned_store = getattr(runtime, "session_continuation_store", None) is None
+        service = SessionContinuationService(
+            store,
+            telemetry_sink=continuation_telemetry_sink(
+                runtime,
+                session_id=source_session_id,
+            ),
+        )
+        if dry_run:
+            payload: dict[str, Any] = {
+                "status": "previewed",
+                "preview": service.preview(
+                    source_session_id,
+                    target_agent_id=agent_id,
+                    expires_in_seconds=int(getattr(args, "expires_in_seconds", 86_400)),
+                ).model_dump(mode="json"),
+            }
+        else:
+            if not target_session_id:
+                target_session_id = store.create_session(initial_agent_id=agent_id)
+            built = service.create(
+                source_session_id,
+                target_agent_id=agent_id,
+                expires_in_seconds=int(getattr(args, "expires_in_seconds", 86_400)),
+            )
+            assert built.packet is not None
+            applied = service.apply(
+                target_session_id,
+                packet_id=built.packet.packet_id,
+            )
+            payload = {
+                "status": applied.status,
+                "packet": built.packet.model_dump(mode="json"),
+                "apply": applied.model_dump(mode="json"),
+            }
+    except (ContinuationError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        print(f"openminion sessions continue: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if "store" in locals() and "owned_store" in locals() and owned_store:
+            store.close()
+        if "runtime" in locals():
+            runtime.close()
+
+    if output_json:
+        print_json_payload(payload)
+    elif dry_run:
+        preview_payload = payload["preview"]["payload"]
+        print(
+            "Continuation preview: "
+            f"source={source_session_id} agent={agent_id} "
+            f"refs={len(preview_payload.get('recent_event_refs', []))}"
+        )
+    else:
+        print(
+            f"Continued {source_session_id} into {target_session_id} "
+            f"({payload['status']})."
+        )
+    return 0
 
 
 def run_sessions_list(args) -> int:
@@ -227,3 +316,36 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Delete without prompting for confirmation",
     )
     sessions_delete_cmd.set_defaults(handler=run_sessions_delete, needs_app=False)
+
+    sessions_continue_cmd = sessions_subcommands.add_parser(
+        "continue",
+        help="Continue explicit source-session state into an empty target",
+    )
+    sessions_continue_cmd.add_argument("source_session_id", help="Source session id")
+    sessions_continue_cmd.add_argument(
+        "--target-session",
+        default=None,
+        help="Existing empty target session (created when omitted)",
+    )
+    sessions_continue_cmd.add_argument(
+        "--agent",
+        required=True,
+        help="Target agent id; must match the source agent in v1",
+    )
+    sessions_continue_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview eligibility and redaction without writing",
+    )
+    sessions_continue_cmd.add_argument(
+        "--expires-in-seconds",
+        type=int,
+        default=86_400,
+        help="Packet lifetime in seconds (default 86400, maximum 604800)",
+    )
+    add_json_output_flag(
+        sessions_continue_cmd,
+        dest="output_json",
+        help_text="Emit typed continuation JSON",
+    )
+    sessions_continue_cmd.set_defaults(handler=run_sessions_continue, needs_app=False)

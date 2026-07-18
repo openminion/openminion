@@ -35,14 +35,17 @@ def initialize_runtime_components(
     tool_exposure_event_sink: Callable[[dict[str, object]], None],
 ) -> RuntimeFinalizer:
     runtime_tools = getattr(runtime, "tools", None)
+    channel_supervisor = getattr(runtime, "channel_supervisor", None)
     exposure_service = cast(
         _ExposureService,
         getattr(runtime_tools, "exposure_service", None),
     )
     exposure_service.bind_event_sink(tool_exposure_event_sink)
+    _call(channel_supervisor, "start")
     return weakref.finalize(
         runtime,
         close_runtime_components,
+        channel_supervisor=channel_supervisor,
         retrieve_ctl=getattr(runtime, "retrieve_ctl", None),
         action_policy=getattr(runtime, "action_policy", None),
         runtime_manager=getattr(runtime, "runtime_manager", None),
@@ -57,6 +60,7 @@ def initialize_runtime_components(
 
 def close_runtime_components(
     *,
+    channel_supervisor: object | None = None,
     retrieve_ctl: object | None,
     action_policy: object | None,
     runtime_manager: object | None,
@@ -67,6 +71,7 @@ def close_runtime_components(
     authored_tools: object | None = None,
     telemetry_service: object | None = None,
 ) -> None:
+    _call(channel_supervisor, "stop")
     _call(retrieve_ctl, "close")
     _call(action_policy, "close")
     _call(runtime_manager, "shutdown", grace_s=2)

@@ -10,7 +10,7 @@ def test_lifecycle_registers_slack_only_when_enabled(tmp_path: Path) -> None:
     config.enabled_channels = ["console", "slack"]
     config.channels = {"slack": {"enabled": True, "botToken": "xoxb-test"}}
 
-    registry = build_channel_registry(
+    registry, components = build_channel_registry(
         config=config,
         home_root=tmp_path,
         data_root=tmp_path,
@@ -18,6 +18,7 @@ def test_lifecycle_registers_slack_only_when_enabled(tmp_path: Path) -> None:
     )
 
     assert "slack" in registry.names()
+    assert components is not None
 
 
 def test_catalog_reports_slack_metadata_without_live_client() -> None:

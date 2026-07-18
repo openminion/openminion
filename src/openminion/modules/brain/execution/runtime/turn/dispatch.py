@@ -13,6 +13,7 @@ from ....constants import (
     BRAIN_STATE_WAITING_USER,
 )
 from ....diagnostics.events import CanonicalEventLogger
+from ....diagnostics.telemetry import emit_request_readiness_operation
 from ....diagnostics.transitions import transition
 from ....loop.clarify import sync_llm_clarify_context_from_decision
 from ....loop.context.pending_turn import sync_pending_turn_context_from_decision
@@ -49,6 +50,14 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
                 getattr(runner, "profile", None)
             ),
         )
+        disabled_wait = _disabled_handoff_wait_response(
+            runner=runner,
+            state=state,
+            logger=logger,
+            user_input=context.effective_user_input,
+        )
+        if disabled_wait is not None:
+            return disabled_wait
         while True:
             if not request.skip_decide:
                 request.decision = _run_decide_phase(
@@ -119,6 +128,47 @@ def dispatch(*, runner: Any, state: Any, logger: CanonicalEventLogger, request: 
             user_input=context.effective_user_input,
             exc=exc,
         )
+
+
+def _disabled_handoff_wait_response(
+    *,
+    runner: Any,
+    state: Any,
+    logger: CanonicalEventLogger,
+    user_input: str | None,
+) -> Any | None:
+    if bool(getattr(getattr(runner, "options", None), "request_handoff_enabled", False)):
+        return None
+    if str(user_input or "").strip():
+        return None
+    readiness = getattr(state, "request_readiness", None)
+    readiness_state = str(getattr(readiness, "state", "") or "").strip()
+    if readiness_state not in {
+        "needs_user",
+        "needs_plan_review",
+        "needs_operation_approval",
+        "blocked",
+    }:
+        return None
+    logger.emit(
+        "brain.request_handoff.disabled_wait",
+        {"state": readiness_state},
+        trace_id=state.trace_id,
+        status="warning",
+    )
+    status = (
+        BRAIN_STATE_ERROR
+        if readiness_state == "blocked"
+        else BRAIN_STATE_WAITING_USER
+    )
+    return _runner_delegate(
+        "_respond_with_meta",
+        runner,
+        state=state,
+        logger=logger,
+        message="Request handoff is disabled for this in-flight waiting state.",
+        status=status,
+    )
 
 
 def _run_decide_phase(
@@ -437,6 +487,20 @@ def _record_accepted_decision(
             plan=decision_plan,
             capability_category=request.capability_category,
         )
+        try:
+            emit_request_readiness_operation(
+                telemetryctl=getattr(runner, "telemetryctl", None),
+                session_id=str(getattr(state, "session_id", "") or ""),
+                turn_id=str(getattr(state, "trace_id", "") or ""),
+                readiness=getattr(request.decision, "request_readiness", None),
+            )
+        except RuntimeError as exc:  # pragma: no cover - defensive telemetry guard
+            logger.emit(
+                "brain.request_readiness.telemetry_failed",
+                {"error_type": type(exc).__name__},
+                trace_id=getattr(state, "trace_id", None),
+                status="warning",
+            )
         sync_llm_clarify_context_from_decision(
             state=state,
             decision=request.decision,
@@ -552,7 +616,57 @@ def _invoke_and_finalize(
     ):
         result = result.model_copy(deep=True)
         result.working_state.pending_confirmation_command = None
+    replay_result = _normalize_confirmation_replay_result(
+        runner=runner,
+        state=state,
+        logger=logger,
+        result=result,
+        replay_reason_code=replay_reason_code,
+    )
+    if replay_result is not None:
+        return replay_result
     return result
+
+
+def _normalize_confirmation_replay_result(
+    *,
+    runner: Any,
+    state: Any,
+    logger: CanonicalEventLogger,
+    result: Any,
+    replay_reason_code: str,
+) -> Any | None:
+    if replay_reason_code != "confirmation_replay" or result.status != BRAIN_STATE_ACTIVE:
+        return None
+    action_result = getattr(result, "action_result", None)
+    outputs = getattr(action_result, "outputs", None)
+    outputs = outputs if isinstance(outputs, dict) else {}
+    completed_intent_ids = list(outputs.get("completed_intent_ids") or [])
+    remaining_intent_ids = list(outputs.get("remaining_intent_ids") or [])
+    if completed_intent_ids and not remaining_intent_ids:
+        return _runner_delegate(
+            "_respond_with_meta",
+            runner,
+            state=state,
+            logger=logger,
+            message=str(getattr(action_result, "summary", "") or "").strip() or None,
+            status=BRAIN_STATE_DONE,
+            action_result=action_result,
+        )
+    if not completed_intent_ids and not remaining_intent_ids:
+        return _runner_delegate(
+            "_respond_with_meta",
+            runner,
+            state=state,
+            logger=logger,
+            message=(
+                "The confirmed command finished, but I could not safely determine "
+                "the next step from the replay metadata. Please tell me how to continue."
+            ),
+            status=BRAIN_STATE_WAITING_USER,
+            action_result=action_result,
+        )
+    return None
 
 
 def _should_pause_for_checkpoint(

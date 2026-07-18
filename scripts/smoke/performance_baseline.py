@@ -13,10 +13,10 @@ import os
 from pathlib import Path
 import platform
 import pstats
+import shutil
 import statistics
 import subprocess
 import sys
-import tempfile
 import time
 import tracemalloc
 from typing import Any
@@ -29,6 +29,10 @@ from openminion.modules.context.budget import (
 )
 
 ARTIFACT_SCHEMA_VERSION = "pomv2.performance.v2"
+STARTUP_FIXTURE_REVISION = "focus-help-v2"
+SUT_BOUNDARY_SUBPROCESS = "sut_subprocess_only"
+SUT_BOUNDARY_IN_PROCESS = "sut_in_process_fixture"
+SUT_BOUNDARY_REPLAY = "sut_replay_fixture"
 LANE_ARTIFACT_DIR = "openminion-performance-observability-and-measurement-v2-2026-07-02"
 DEFAULT_SCENARIOS = (
     "cold_focus_startup",
@@ -36,6 +40,11 @@ DEFAULT_SCENARIOS = (
     "simple_turn",
     "local_status_tool_turn",
     "context_heavy_turn",
+    "deterministic_full_turn",
+    "provider_payload_serialization",
+    "telemetry_export_queue",
+    "terminal_render_burst",
+    "transcript_retention_growth",
     "coding_turn",
     "research_turn",
     "repeated_local_turns",
@@ -57,6 +66,7 @@ class ScenarioRun:
     provider_variance_class: str
     metrics: dict[str, Any]
     notes: list[str]
+    measurement_identity: dict[str, Any]
     ok: bool = True
     error: str | None = None
 
@@ -170,6 +180,35 @@ def _base_metrics() -> dict[str, Any]:
     }
 
 
+def _measurement_identity(
+    *,
+    scenario_id: str,
+    command: str,
+    measured_boundary: str,
+    fixture_revision: str,
+    options: RunOptions | None = None,
+    data_root: Path | None = None,
+) -> dict[str, Any]:
+    runtime_config = {
+        "python_executable": str(options.python) if options is not None else "",
+        "workspace_root": str(options.workspace_root) if options is not None else "",
+        "data_root": str(data_root) if data_root is not None else "",
+        "include_importtime": bool(options.include_importtime) if options else False,
+        "profile": bool(options.profile) if options else False,
+        "warmup_runs": int(options.warmup_runs) if options else 0,
+    }
+    return {
+        "artifact_schema_version": ARTIFACT_SCHEMA_VERSION,
+        "scenario_id": scenario_id,
+        "command": command,
+        "fixture_revision": fixture_revision,
+        "measured_boundary": measured_boundary,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "runtime_config": runtime_config,
+    }
+
+
 def _finish_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     rss_end = _current_rss_bytes()
     metrics["rss_end_bytes"] = rss_end
@@ -210,6 +249,7 @@ def _run_with_metrics(
     command: str,
     provider_variance_class: str,
     provider_profile: str = "none",
+    measurement_identity: dict[str, Any] | None = None,
     action: Callable[[dict[str, Any]], list[str]],
 ) -> ScenarioRun:
     tracemalloc.start()
@@ -219,26 +259,62 @@ def _run_with_metrics(
     notes: list[str] = []
     try:
         notes.extend(action(metrics))
-        metrics["wall_time_ns"] = _elapsed_ns(started_ns)
+        command_value = str(metrics.pop("_command_override", command))
+        identity_value = metrics.pop("_measurement_identity_override", None)
+        harness_wall_ns = _elapsed_ns(started_ns)
+        override_wall_ns = metrics.pop("_wall_time_ns_override", None)
+        metrics["wall_time_ns"] = (
+            int(override_wall_ns)
+            if isinstance(override_wall_ns, int)
+            else harness_wall_ns
+        )
+        metrics["harness_wall_time_ns"] = harness_wall_ns
         metrics["wall_time_ms"] = _ns_to_ms(int(metrics["wall_time_ns"]))
         return ScenarioRun(
             scenario_id=scenario_id,
-            command=command,
+            command=command_value,
             provider_profile=provider_profile,
             provider_variance_class=provider_variance_class,
             metrics=_finish_metrics(metrics),
             notes=notes,
+            measurement_identity=identity_value
+            if isinstance(identity_value, dict)
+            else measurement_identity
+            or _measurement_identity(
+                scenario_id=scenario_id,
+                command=command_value,
+                measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+                fixture_revision="adhoc",
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - baseline artifacts must record failure
-        metrics["wall_time_ns"] = _elapsed_ns(started_ns)
+        command_value = str(metrics.pop("_command_override", command))
+        identity_value = metrics.pop("_measurement_identity_override", None)
+        harness_wall_ns = _elapsed_ns(started_ns)
+        override_wall_ns = metrics.pop("_wall_time_ns_override", None)
+        metrics["wall_time_ns"] = (
+            int(override_wall_ns)
+            if isinstance(override_wall_ns, int)
+            else harness_wall_ns
+        )
+        metrics["harness_wall_time_ns"] = harness_wall_ns
         metrics["wall_time_ms"] = _ns_to_ms(int(metrics["wall_time_ns"]))
         return ScenarioRun(
             scenario_id=scenario_id,
-            command=command,
+            command=command_value,
             provider_profile=provider_profile,
             provider_variance_class=provider_variance_class,
             metrics=_finish_metrics(metrics),
             notes=notes,
+            measurement_identity=identity_value
+            if isinstance(identity_value, dict)
+            else measurement_identity
+            or _measurement_identity(
+                scenario_id=scenario_id,
+                command=command_value,
+                measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+                fixture_revision="adhoc",
+            ),
             ok=False,
             error=f"{type(exc).__name__}: {exc}",
         )
@@ -254,7 +330,7 @@ def _run_with_metrics(
         tracemalloc.stop()
 
 
-def _focus_help_command(options: RunOptions) -> list[str]:
+def _focus_help_command(options: RunOptions, *, data_root: Path) -> list[str]:
     return [
         str(options.python),
         "-m",
@@ -262,7 +338,8 @@ def _focus_help_command(options: RunOptions) -> list[str]:
         "--home-root",
         str(options.workspace_root),
         "--data-root",
-        str(options.workspace_root / ".openminion"),
+        str(data_root),
+        "focus",
         "--help",
     ]
 
@@ -417,54 +494,80 @@ def _capture_importtime(
 def _measure_focus_startup(
     *, scenario_id: str, options: RunOptions, cold: bool
 ) -> ScenarioRun:
-    command = _focus_help_command(options)
-
     def action(metrics: dict[str, Any]) -> list[str]:
         data_parent = options.output_root / "runtime-homes"
         data_parent.mkdir(parents=True, exist_ok=True)
         if cold:
-            temp_context = tempfile.TemporaryDirectory(dir=data_parent)
-            data_root = Path(temp_context.name) / ".openminion"
+            data_root = data_parent / "cold" / ".openminion"
+            if data_root.exists():
+                shutil.rmtree(data_root)
         else:
-            temp_context = None
             data_root = data_parent / "warm" / ".openminion"
         data_root.mkdir(parents=True, exist_ok=True)
-        try:
-            completed = _run_subprocess(command, options=options, data_root=data_root)
-            metrics["phase_timings_ms"] = {"subprocess_exit_code": completed.returncode}
-            prompt_ready = "bare `openminion` opens the textual interactive cli" in completed.stdout.lower()
-            metrics["prompt_ready_marker"] = prompt_ready
-            if not prompt_ready or completed.returncode != 0:
-                metrics["stderr_tail"] = completed.stderr[-500:]
-            import_report = _capture_importtime(
-                scenario_id=scenario_id,
-                command=command,
-                options=options,
-                data_root=data_root,
-            )
-            metrics["import_self_us"] = import_report["max_self_us"]
-            metrics["import_cumulative_us"] = import_report["max_cumulative_us"]
-            metrics["importtime_artifact"] = import_report["raw_artifact"]
-            metrics["importtime_summary_artifact"] = import_report["summary_artifact"]
-            metrics["importtime_top_modules"] = import_report["top_cumulative"]
-            metrics["importtime_module_families"] = import_report["module_families"]
-            notes = [
-                "Startup command uses bare `openminion --help` as a non-interactive prompt-readiness proxy.",
-                "RSS fields measure the harness process; child process max RSS is not portable in this runner.",
-            ]
-            if import_report["raw_artifact"]:
-                notes.append(
-                    f"Import-time stderr captured at {import_report['raw_artifact']}."
-                )
-            return notes
-        finally:
-            if temp_context is not None:
-                temp_context.cleanup()
+        command = _focus_help_command(options, data_root=data_root)
+        command_text = " ".join(command)
+        metrics["_command_override"] = command_text
+        metrics["_measurement_identity_override"] = _measurement_identity(
+            scenario_id=scenario_id,
+            command=command_text,
+            measured_boundary=SUT_BOUNDARY_SUBPROCESS,
+            fixture_revision=STARTUP_FIXTURE_REVISION,
+            options=options,
+            data_root=data_root,
+        )
+        metrics["startup_command"] = command
+        metrics["explicit_data_root"] = str(data_root)
+        metrics["measured_boundary"] = SUT_BOUNDARY_SUBPROCESS
+        sut_started_ns = time.perf_counter_ns()
+        completed = _run_subprocess(command, options=options, data_root=data_root)
+        metrics["_wall_time_ns_override"] = _elapsed_ns(sut_started_ns)
+        metrics["phase_timings_ms"] = {"subprocess_exit_code": completed.returncode}
+        prompt_ready = (
+            "compatibility alias for the openminion interactive cli"
+            in completed.stdout.lower()
+        )
+        metrics["prompt_ready_marker"] = prompt_ready
+        if not prompt_ready or completed.returncode != 0:
+            metrics["stderr_tail"] = completed.stderr[-500:]
+        import_report = _capture_importtime(
+            scenario_id=scenario_id,
+            command=command,
+            options=options,
+            data_root=data_root,
+        )
+        metrics["import_self_us"] = import_report["max_self_us"]
+        metrics["import_cumulative_us"] = import_report["max_cumulative_us"]
+        metrics["importtime_artifact"] = import_report["raw_artifact"]
+        metrics["importtime_summary_artifact"] = import_report["summary_artifact"]
+        metrics["importtime_top_modules"] = import_report["top_cumulative"]
+        metrics["importtime_module_families"] = import_report["module_families"]
+        notes = [
+            "Startup command uses `openminion focus --help` with a scenario-specific explicit data root.",
+            "Artifact wall time measures only the normal subprocess; import-time diagnostics are separate artifacts.",
+            "RSS fields measure the harness process; child process max RSS is not portable in this runner.",
+        ]
+        if import_report["raw_artifact"]:
+            notes.append(f"Import-time stderr captured at {import_report['raw_artifact']}.")
+        return notes
 
+    data_root_hint = (
+        options.output_root / "runtime-homes" / "cold" / ".openminion"
+        if cold
+        else options.output_root / "runtime-homes" / "warm" / ".openminion"
+    )
+    command_text = " ".join(_focus_help_command(options, data_root=data_root_hint))
     return _run_with_metrics(
         scenario_id=scenario_id,
-        command=" ".join(command),
+        command=command_text,
         provider_variance_class=LOCAL_VARIANCE,
+        measurement_identity=_measurement_identity(
+            scenario_id=scenario_id,
+            command=command_text,
+            measured_boundary=SUT_BOUNDARY_SUBPROCESS,
+            fixture_revision=STARTUP_FIXTURE_REVISION,
+            options=options,
+            data_root=data_root_hint,
+        ),
         action=action,
     )
 
@@ -632,6 +735,265 @@ def _measure_context_heavy_turn() -> ScenarioRun:
     )
 
 
+def _measure_deterministic_full_turn(options: RunOptions) -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from types import SimpleNamespace
+
+        from openminion.base.config import RunProfileOverrides
+        from openminion.modules.telemetry.schemas import TelemetryEvent
+        from openminion.modules.telemetry.service import TelemetryService
+        from openminion.services.runtime.ingress.execution import execute_runtime_turn
+        from openminion.services.runtime.ingress.types import RuntimeTurnRequest
+
+        phase_ns: dict[str, int] = {}
+        output_chunks: list[str] = []
+        data_root = options.output_root / ".openminion" / "deterministic-full-turn"
+        telemetry = TelemetryService(str(data_root / "telemetry.db"))
+
+        class _Sessions:
+            def get_session(self, session_id: str) -> None:
+                return None
+
+            def list_participants(self, session_id: str) -> list[str]:
+                return []
+
+        class _Runtime:
+            def __init__(self) -> None:
+                self.sessions = _Sessions()
+                self.config = SimpleNamespace(
+                    runtime=SimpleNamespace(process_mode="benchmark"),
+                    gateway=SimpleNamespace(api_turn_timeout_seconds=5),
+                )
+                self.telemetry_service = telemetry
+
+            def resolve_gateway(self, agent_name: str, **_: Any) -> Any:
+                return _Gateway(agent_name)
+
+        class _Gateway:
+            def __init__(self, agent_name: str) -> None:
+                self.agent_name = agent_name
+
+            async def run_once(self, **kwargs: Any) -> Any:
+                context_started = time.perf_counter_ns()
+                system = [
+                    Message(
+                        channel="system",
+                        target="deterministic-full-turn",
+                        body="Answer deterministically and keep local fixtures structured.",
+                    )
+                ]
+                history = [
+                    Message(
+                        channel="user",
+                        target="deterministic-full-turn",
+                        body=str(kwargs.get("message") or ""),
+                    )
+                ]
+                budgeted = assemble_budgeted_context(
+                    system_messages=system,
+                    history_messages=history,
+                    budget=ContextBudgetConfig(max_tokens=500, chars_per_token=4.0),
+                )
+                phase_ns["context_assembly_ns"] = _elapsed_ns(context_started)
+
+                tool_started = time.perf_counter_ns()
+                tool_payload = {
+                    "tool": "host.metrics",
+                    "platform": platform.system(),
+                    "python": platform.python_version(),
+                }
+                tool_json = json.dumps(tool_payload, sort_keys=True)
+                phase_ns["tool_execution_ns"] = _elapsed_ns(tool_started)
+
+                provider_started = time.perf_counter_ns()
+                prompt_text = "\n".join(str(message.body or "") for message in budgeted.messages)
+                response_text = (
+                    "Deterministic full-turn fixture complete: "
+                    f"{len(prompt_text)} prompt chars, {len(tool_json)} tool bytes."
+                )
+                phase_ns["provider_stub_round_trip_ns"] = _elapsed_ns(provider_started)
+
+                telemetry_started = time.perf_counter_ns()
+                for event_type, payload in (
+                    (
+                        "chat.phase_timing",
+                        {
+                            "route_class": "benchmark",
+                            "transport": "stub",
+                            "cold_start": False,
+                            "outcome": "ok",
+                            "total_turn_ms": 0,
+                            "time_to_first_text_ms": 0,
+                            "provider_round_trip_ms": _ns_to_ms(
+                                phase_ns["provider_stub_round_trip_ns"]
+                            ),
+                            "context_pack_build_ms": _ns_to_ms(
+                                phase_ns["context_assembly_ns"]
+                            ),
+                        },
+                    ),
+                    (
+                        "llm.call.completed",
+                        {
+                            "transport": "stub",
+                            "profile_kind": "stub",
+                            "outcome": "ok",
+                            "call_count": 1,
+                            "retry_count": 0,
+                            "request_bytes": len(prompt_text.encode("utf-8")),
+                            "response_bytes": len(response_text.encode("utf-8")),
+                            "input_tokens": _estimate_tokens(prompt_text),
+                            "output_tokens": _estimate_tokens(response_text),
+                            "cached_tokens": 0,
+                            "round_trip_ms": _ns_to_ms(
+                                phase_ns["provider_stub_round_trip_ns"]
+                            ),
+                        },
+                    ),
+                    (
+                        "tool.completed",
+                        {
+                            "tool_family": "host_metrics",
+                            "outcome": "ok",
+                            "call_count": 1,
+                            "duplicate_call_count": 0,
+                            "duration_ms": _ns_to_ms(phase_ns["tool_execution_ns"]),
+                        },
+                    ),
+                    (
+                        "storage.query",
+                        {
+                            "store_family": "telemetry",
+                            "operation": "insert_event",
+                            "criticality": "noncritical",
+                            "duration_ms": 0,
+                            "outcome": "ok",
+                        },
+                    ),
+                    (
+                        "telemetry.queue.stats",
+                        {
+                            "criticality": "noncritical",
+                            "outcome": "ok",
+                            "queue_depth": 0,
+                            "drops": 0,
+                            "flush_failures": 0,
+                            "flush_latency_ms": 0,
+                        },
+                    ),
+                    (
+                        "tui.render",
+                        {
+                            "view_family": "terminal",
+                            "render_chunk_ms": 0,
+                            "queue_pressure": 0,
+                            "retained_messages": 2,
+                            "outcome": "ok",
+                        },
+                    ),
+                ):
+                    telemetry.record_event_sync(
+                        TelemetryEvent(
+                            session_id=str(kwargs.get("session_id") or "pnt20"),
+                            turn_id=str(kwargs.get("request_id") or "turn"),
+                            event_type=event_type,
+                            data=payload,
+                        )
+                    )
+                phase_ns["telemetry_persist_ns"] = _elapsed_ns(telemetry_started)
+
+                terminal_started = time.perf_counter_ns()
+                output_chunks.append(response_text[:32])
+                output_chunks.append(response_text[32:])
+                phase_ns["terminal_delivery_ns"] = _elapsed_ns(terminal_started)
+                return SimpleNamespace(
+                    id=str(kwargs.get("request_id") or "turn"),
+                    channel=str(kwargs.get("channel") or "cli"),
+                    target=str(kwargs.get("target") or "terminal"),
+                    body=response_text,
+                    metadata={
+                        "session_id": str(kwargs.get("session_id") or "pnt20"),
+                        "model_call_count": 1,
+                        "tool_call_count": 1,
+                        "provider_profile": "stub",
+                    },
+                    stats=None,
+                )
+
+        request = RuntimeTurnRequest(
+            message="Run deterministic local status and summarize the result.",
+            agent_id="fixture-agent",
+            profile_agent_id="fixture-agent",
+            channel="cli",
+            target="terminal",
+            session_id="pnt20-full-turn",
+            request_id=f"turn-{uuid4().hex[:8]}",
+            timeout_seconds=5.0,
+            forced_tools=("host.metrics",),
+            deliver=True,
+            capability_category="benchmark",
+            idempotency_key="pnt20-full-turn",
+            inbound_metadata={"fixture_revision": "deterministic-full-turn-v1"},
+            run_profile_overrides=RunProfileOverrides(),
+        )
+        turn_started = time.perf_counter_ns()
+        result = execute_runtime_turn(
+            runtime=_Runtime(),
+            request=request,
+            run_gateway_once=lambda **kwargs: kwargs["gateway"].run_once(**kwargs),
+        )
+        phase_ns["runtime_ingress_ns"] = _elapsed_ns(turn_started)
+        telemetry.close_sync()
+
+        phase_ms = {
+            key.removesuffix("_ns") + "_ms": _ns_to_ms(value)
+            for key, value in phase_ns.items()
+        }
+        body = str(result.body or "")
+        metrics["time_to_first_visible_text_ms"] = 0 if output_chunks else None
+        metrics["phase_timings_ns"] = phase_ns
+        metrics["phase_timings_ms"] = phase_ms
+        metrics["provider_profile_kind"] = "stub"
+        metrics["model_call_count"] = int(result.metadata.get("model_call_count", 0))
+        metrics["provider_round_trip_ms"] = phase_ms["provider_stub_round_trip_ms"]
+        metrics["prompt_bytes"] = len(request.message.encode("utf-8"))
+        metrics["prompt_tokens_estimated"] = _estimate_tokens(request.message)
+        metrics["response_bytes"] = len(body.encode("utf-8"))
+        metrics["output_tokens_estimated"] = _estimate_tokens(body)
+        metrics["cached_tokens_estimated"] = 0
+        metrics["tool_call_count"] = int(result.metadata.get("tool_call_count", 0))
+        metrics["tool_family_metrics"] = [
+            {
+                "tool_family": "host_metrics",
+                "tool_schema_bytes": len("host.metrics".encode("utf-8")),
+                "tool_call_count": 1,
+            }
+        ]
+        metrics["storage_operation_count"] = 6
+        metrics["telemetry_queue_depth"] = 0
+        metrics["render_chunk_count"] = len(output_chunks)
+        metrics["retained_messages"] = 2
+        return [
+            "Complete deterministic turn fixture through runtime ingress, stub gateway, context assembly, tool-shaped work, telemetry persistence, and terminal-shaped delivery.",
+            "No provider credentials or network access are used; provider metrics describe the local stub boundary.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="deterministic_full_turn",
+        command="runtime_ingress_fixture:deterministic_full_turn",
+        provider_variance_class=LOCAL_VARIANCE,
+        provider_profile="stub",
+        measurement_identity=_measurement_identity(
+            scenario_id="deterministic_full_turn",
+            command="runtime_ingress_fixture:deterministic_full_turn",
+            measured_boundary=SUT_BOUNDARY_IN_PROCESS,
+            fixture_revision="deterministic-full-turn-v1",
+            options=options,
+        ),
+        action=action,
+    )
+
+
 def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
     def action(metrics: dict[str, Any]) -> list[str]:
         iteration_metrics: list[dict[str, int]] = []
@@ -682,6 +1044,226 @@ def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
     )
 
 
+def _measure_provider_payload_serialization() -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from openminion.modules.llm.providers.transport.payload import (
+            serialize_json_payload,
+        )
+
+        payload = {
+            "model": "fixture-model",
+            "messages": [
+                {"role": "system", "content": "Keep wire payloads stable."},
+                {"role": "user", "content": "Measure one serialized request body."},
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "host.metrics",
+                        "description": "Return host metrics.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        }
+        started_ns = time.perf_counter_ns()
+        serialized = serialize_json_payload(payload)
+        serialize_ns = _elapsed_ns(started_ns)
+        trace_started_ns = time.perf_counter_ns()
+        trace_body = serialized.body_json
+        trace_bytes = serialized.body_bytes
+        trace_reuse_ns = _elapsed_ns(trace_started_ns)
+        metrics["phase_timings_ns"] = {
+            "provider_payload_serialize_ns": serialize_ns,
+            "provider_payload_trace_reuse_ns": trace_reuse_ns,
+        }
+        metrics["phase_timings_ms"] = {
+            "provider_payload_serialize_ms": _ns_to_ms(serialize_ns),
+            "provider_payload_trace_reuse_ms": _ns_to_ms(trace_reuse_ns),
+        }
+        metrics["provider_payload_bytes"] = serialized.byte_count
+        metrics["duplicate_serialization_count"] = 0
+        metrics["request_body_reused_for_trace"] = bool(
+            trace_body and trace_bytes == trace_body.encode("utf-8")
+        )
+        metrics["prompt_bytes"] = serialized.byte_count
+        metrics["prompt_tokens_estimated"] = _estimate_tokens(serialized.body_json)
+        return [
+            "Provider payload fixture uses the shared serialized body consumed by HTTP, SSE, trace, and curl fallback owners.",
+            "No provider or network request is sent.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="provider_payload_serialization",
+        command="provider_transport_fixture:shared_json_payload",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _measure_terminal_render_burst() -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from rich.console import Console
+
+        from openminion.cli.interactive.terminal.streaming import TerminalTurnHandle
+
+        refresh_count = 0
+        first_refresh_after_chars: int | None = None
+        handle = TerminalTurnHandle(Console(file=io.StringIO(), force_terminal=False))
+
+        def _refresh() -> None:
+            nonlocal first_refresh_after_chars, refresh_count
+            refresh_count += 1
+            if first_refresh_after_chars is None:
+                first_refresh_after_chars = len(handle._buffer)  # type: ignore[attr-defined]
+
+        handle._refresh_live = _refresh  # type: ignore[method-assign]
+        chunks = ["a"] * 120
+        started_ns = time.perf_counter_ns()
+        for chunk in chunks:
+            handle.append_token(chunk)
+        render_ns = _elapsed_ns(started_ns)
+        metrics["time_to_first_visible_text_ms"] = 0 if first_refresh_after_chars == 1 else None
+        metrics["phase_timings_ns"] = {"terminal_render_burst_ns": render_ns}
+        metrics["phase_timings_ms"] = {"terminal_render_burst_ms": _ns_to_ms(render_ns)}
+        metrics["render_chunk_count"] = len(chunks)
+        metrics["render_refresh_count"] = refresh_count
+        metrics["coalesced_refresh_count"] = max(0, len(chunks) - refresh_count)
+        metrics["first_refresh_after_chars"] = first_refresh_after_chars
+        metrics["prompt_bytes"] = len("".join(chunks).encode("utf-8"))
+        metrics["prompt_tokens_estimated"] = _estimate_tokens("".join(chunks))
+        return [
+            "Render fixture appends a token burst through TerminalTurnHandle.",
+            "First token still forces an immediate refresh; later burst refreshes are coalesced by the handle.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="terminal_render_burst",
+        command="terminal_fixture:render_burst",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _measure_telemetry_export_queue() -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from openminion.base.config import OTELExporterConfig
+        from openminion.modules.telemetry.export.otel import (
+            OpenTelemetryTraceExporter,
+            RecordingOTELTraceSink,
+        )
+        from openminion.modules.telemetry.schemas import TelemetryEvent
+
+        event_count = 100
+        sink = RecordingOTELTraceSink()
+        exporter = OpenTelemetryTraceExporter(
+            OTELExporterConfig(
+                enabled=True,
+                endpoint="http://collector.local:4318",
+                noncritical_queue_capacity=event_count,
+                queue_flush_timeout_seconds=2.0,
+            ),
+            sink=sink,
+        )
+        enqueue_started_ns = time.perf_counter_ns()
+        accepted = 0
+        for index in range(event_count):
+            if exporter.export(
+                TelemetryEvent(
+                    session_id="pnt20",
+                    turn_id="queue",
+                    event_type="policy.applied",
+                    data={
+                        "trace_id": f"queue-{index}",
+                        "criticality": "noncritical",
+                        "value": index,
+                    },
+                )
+            ):
+                accepted += 1
+        enqueue_ns = _elapsed_ns(enqueue_started_ns)
+        flush_started_ns = time.perf_counter_ns()
+        exporter.close()
+        flush_ns = _elapsed_ns(flush_started_ns)
+        stats = exporter.queue_stats()
+        metrics["phase_timings_ns"] = {
+            "telemetry_queue_enqueue_ns": enqueue_ns,
+            "telemetry_queue_flush_ns": flush_ns,
+        }
+        metrics["phase_timings_ms"] = {
+            "telemetry_queue_enqueue_ms": _ns_to_ms(enqueue_ns),
+            "telemetry_queue_flush_ms": _ns_to_ms(flush_ns),
+        }
+        metrics["telemetry_events_enqueued"] = accepted
+        metrics["telemetry_events_exported"] = len(sink.records)
+        metrics["telemetry_queue_depth"] = stats["queue_depth"]
+        metrics["telemetry_queue_drops"] = stats["drops"]
+        metrics["telemetry_queue_flush_failures"] = stats["flush_failures"]
+        return [
+            "OTel export queue fixture enqueues noncritical events, flushes on close, and records drops/failures.",
+            "Telemetry storage durability is not changed by this fixture.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="telemetry_export_queue",
+        command="telemetry_fixture:noncritical_export_queue",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _measure_transcript_retention_growth() -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from rich.console import Console
+
+        from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+        from openminion.cli.presentation.models import ChatMessage, MessageKind
+
+        message_count = 1500
+        retention_limit = 200
+        transcript = TerminalTranscript(
+            Console(file=io.StringIO(), force_terminal=False),
+            max_retained_messages=retention_limit,
+        )
+        start_rss = _current_rss_bytes()
+        started_ns = time.perf_counter_ns()
+        for index in range(message_count):
+            transcript.push_message(
+                ChatMessage(
+                    kind=MessageKind.AGENT,
+                    sender="agent",
+                    body=f"retained message {index}",
+                ),
+                render=False,
+            )
+        retention_ns = _elapsed_ns(started_ns)
+        end_rss = _current_rss_bytes()
+        metrics["phase_timings_ns"] = {"transcript_retention_ns": retention_ns}
+        metrics["phase_timings_ms"] = {"transcript_retention_ms": _ns_to_ms(retention_ns)}
+        metrics["transcript_messages_seen"] = message_count
+        metrics["retained_messages"] = len(transcript._messages)
+        metrics["retention_limit"] = retention_limit
+        metrics["copy_last_ok"] = transcript.copy_last_copyable_message() == (
+            f"retained message {message_count - 1}"
+        )
+        metrics["rss_growth_bytes"] = end_rss - start_rss
+        metrics["rss_growth_per_message_bytes"] = int((end_rss - start_rss) / message_count)
+        metrics["prompt_bytes"] = message_count * len("retained message 0000")
+        metrics["prompt_tokens_estimated"] = _estimate_tokens("retained message" * message_count)
+        return [
+            "Transcript fixture pushes a long local session into the terminal transcript with an in-memory retention cap.",
+            "Durable session history is outside this fixture; it verifies the terminal working set and copy-last behavior only.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="transcript_retention_growth",
+        command="terminal_fixture:transcript_retention",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
 def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
     if scenario_id == "cold_focus_startup":
         return _measure_focus_startup(
@@ -701,6 +1283,16 @@ def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
         return _measure_local_status_tool_turn()
     if scenario_id == "context_heavy_turn":
         return _measure_context_heavy_turn()
+    if scenario_id == "deterministic_full_turn":
+        return _measure_deterministic_full_turn(options)
+    if scenario_id == "provider_payload_serialization":
+        return _measure_provider_payload_serialization()
+    if scenario_id == "telemetry_export_queue":
+        return _measure_telemetry_export_queue()
+    if scenario_id == "terminal_render_burst":
+        return _measure_terminal_render_burst()
+    if scenario_id == "transcript_retention_growth":
+        return _measure_transcript_retention_growth()
     if scenario_id == "coding_turn":
         return _measure_replay_turn(
             scenario_id,
@@ -816,6 +1408,17 @@ def _threshold_result(
             "reason": "no comparison baseline",
         }
     baseline_scenario = dict((baseline.get("scenarios") or {}).get(scenario_id) or {})
+    identity_errors = _comparison_identity_errors(
+        current.get("measurement_identity"),
+        baseline_scenario.get("measurement_identity"),
+    )
+    if identity_errors:
+        return {
+            "mode": threshold_mode,
+            "status": "ineligible",
+            "reason": "measurement identity mismatch",
+            "identity_errors": identity_errors,
+        }
     baseline_wall = dict(baseline_scenario.get("wall_time_ms") or {})
     baseline_median = baseline_wall.get("median")
     current_median = dict(current.get("wall_time_ms") or {}).get("median")
@@ -840,6 +1443,42 @@ def _threshold_result(
     }
 
 
+def _comparison_identity_errors(
+    current_identity: Any,
+    baseline_identity: Any,
+) -> list[str]:
+    if not isinstance(current_identity, dict) or not isinstance(baseline_identity, dict):
+        return ["missing measurement identity"]
+    errors: list[str] = []
+    for key in (
+        "artifact_schema_version",
+        "scenario_id",
+        "command",
+        "fixture_revision",
+        "measured_boundary",
+        "python_version",
+        "platform",
+    ):
+        if current_identity.get(key) != baseline_identity.get(key):
+            errors.append(key)
+    current_config = current_identity.get("runtime_config")
+    baseline_config = baseline_identity.get("runtime_config")
+    if not isinstance(current_config, dict) or not isinstance(baseline_config, dict):
+        errors.append("runtime_config")
+    else:
+        for key in (
+            "python_executable",
+            "workspace_root",
+            "data_root",
+            "include_importtime",
+            "profile",
+            "warmup_runs",
+        ):
+            if current_config.get(key) != baseline_config.get(key):
+                errors.append(f"runtime_config.{key}")
+    return errors
+
+
 def summarize_runs(
     runs: list[dict[str, Any]],
     *,
@@ -853,9 +1492,18 @@ def summarize_runs(
     scenarios: dict[str, Any] = {}
     for scenario_id, scenario_runs in sorted(by_scenario.items()):
         metrics = [dict(run.get("metrics") or {}) for run in scenario_runs]
+        sample_artifacts = [
+            str(run.get("artifact_path") or "")
+            for run in scenario_runs
+            if str(run.get("artifact_path") or "").strip()
+        ]
         scenarios[scenario_id] = {
             "count": len(scenario_runs),
             "ok_count": sum(1 for run in scenario_runs if run.get("ok")),
+            "measurement_identity": dict(
+                scenario_runs[0].get("measurement_identity") or {}
+            ),
+            "sample_artifacts": sample_artifacts,
             "provider_variance_class": scenario_runs[0].get(
                 "provider_variance_class", ""
             ),
@@ -934,6 +1582,7 @@ def _run_to_artifact(
         "command": run.command,
         "provider_profile": run.provider_profile,
         "provider_variance_class": run.provider_variance_class,
+        "measurement_identity": run.measurement_identity,
         "wall_ms": metrics.get("wall_time_ms"),
         "wall_ns": metrics.get("wall_time_ns"),
         "time_to_first_visible_text_ms": metrics.get("time_to_first_visible_text_ms"),
@@ -982,6 +1631,7 @@ def _write_run_artifact(artifact: dict[str, Any], output_root: Path) -> Path:
     runs_dir = output_root / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
     path = runs_dir / f"{artifact['run_id']}.json"
+    artifact["artifact_path"] = str(path)
     path.write_text(json.dumps(artifact, indent=2, sort_keys=True), encoding="utf-8")
     return path
 

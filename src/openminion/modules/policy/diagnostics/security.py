@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime.capability import resolve_plugin_runtime_policy
+from openminion.modules.policy.runtime.security import is_local_gateway_host
 
 SEVERITY_CRITICAL = "critical"
 SEVERITY_WARN = "warn"
@@ -578,8 +579,4 @@ def _check_execution_boundary_posture(
 
 
 def _is_external_gateway_host(host: str) -> bool:
-    normalized = (host or "").strip().lower()
-    if not normalized:
-        return False
-    local_values = {"127.0.0.1", "localhost", "::1"}
-    return normalized not in local_values
+    return not is_local_gateway_host(host)

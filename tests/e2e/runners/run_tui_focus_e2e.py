@@ -59,6 +59,7 @@ SUITES: dict[str, Suite] = {
         ),
         ("-k", "queued"),
     ),
+    "hlpe": Suite(("tests/e2e/tui/focus/test_live_high_level_request.py",)),
     "progress-visibility": Suite(
         (
             "tests/cli/status",

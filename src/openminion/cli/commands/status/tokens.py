@@ -4,35 +4,14 @@ from collections import defaultdict
 from typing import Any
 
 from openminion.base.config import OpenMinionConfig
-from openminion.cli.config import load_cli_manager
+from openminion.cli.commands.status.session_store import build_status_session_store
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.modules.brain.paths import resolve_brain_sessions_db_path
-from openminion.modules.session.runtime.factory import build_module_session_store
-from openminion.modules.storage.engine import StorageEngineConfig
-from openminion.modules.storage.runtime.sqlite import resolve_database_path
 from openminion.modules.telemetry.usage import (
     StatsService,
     TokenUsageRecord,
     TokenUsageSummary,
     summary_to_json_payload,
 )
-
-
-def _build_session_store(args: Any, config: OpenMinionConfig) -> Any:
-    manager = load_cli_manager(args.config)
-    storage_path = resolve_database_path(config.storage.path, env=manager.env)
-    session_path = resolve_brain_sessions_db_path(storage_path=storage_path)
-    return build_module_session_store(
-        config=StorageEngineConfig(
-            root_dir=session_path.parent,
-            sqlite_path=session_path,
-            fallback_root=session_path.parent,
-            record_backend=config.storage.record_backend(),
-            record_backend_options=config.storage.record_backend_options(),
-        ),
-        database_path=session_path,
-        env=manager.env,
-    )
 
 
 def _record_tokens(record: TokenUsageRecord) -> int:
@@ -89,7 +68,7 @@ def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
     if event_limit is not None and int(event_limit) <= 0:
         raise RuntimeError("--event-limit must be greater than zero")
 
-    store = _build_session_store(args, config)
+    store = build_status_session_store(args, config)
     try:
         if store.get_session(session_id) is None:
             raise RuntimeError(f"Session '{session_id}' was not found.")

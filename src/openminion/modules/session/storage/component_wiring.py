@@ -105,6 +105,7 @@ def build_store_components(
             total_turn_count_getter=event_store.get_total_turn_count,
             conversation_summary_getter=event_store.get_conversation_summary,
             active_task_plan_getter=event_store.get_active_task_plan,
+            continuation_projection_getter=event_store.get_latest_continuation_projection,
             pending_trailer_feedback_getter=event_store.get_pending_trailer_feedback,
             open_tasks_getter=slice_queries.derive_open_tasks,
             active_state_getter=state_store.get_active_state,

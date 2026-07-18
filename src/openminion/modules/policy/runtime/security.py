@@ -39,6 +39,12 @@ _PLUGIN_MUTATING_CAPABILITY_TOKENS = {
 }
 
 
+def is_local_gateway_host(host: str | None) -> bool:
+    """Return whether a gateway bind stays within the local trust boundary."""
+    normalized = str(host or "").strip().lower()
+    return not normalized or normalized in {"127.0.0.1", "localhost", "::1"}
+
+
 @dataclass(frozen=True)
 class SecurityPolicyActor:
     role: str

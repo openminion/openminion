@@ -42,6 +42,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "closure",
     "freshness",
     "goal_trajectory",
+    "memory_context_scorecard",
     "memory_effectiveness",
     "policy",
     "reporting",

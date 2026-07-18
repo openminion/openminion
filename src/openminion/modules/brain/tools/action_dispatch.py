@@ -8,6 +8,7 @@ from openminion.modules.brain.adapters.tool.permission_mode import (
     canonical_permission_mode,
     effective_permission_mode_for_tool,
     is_tool_blocked_by_readonly,
+    request_outcome_allows_tool,
 )
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_BLOCKED,
@@ -110,6 +111,29 @@ def _fire_subagent_stop_lifecycle(
         )
 
 
+def _request_outcome_blocked_result(
+    *, command_id: str, tool_name: str, requested_outcome: str
+) -> ActionResult:
+    return ActionResult(
+        command_id=command_id,
+        status="blocked",
+        summary=f"Tool {tool_name!r} blocked by request outcome {requested_outcome!r}",
+        error=ActionError(
+            code="REQUEST_OUTCOME_EFFECT_BLOCKED",
+            message=(
+                f"Cannot execute tool {tool_name!r} while requested_outcome is "
+                f"{requested_outcome!r}. Use an execute-ready request for "
+                "side-effecting tools."
+            ),
+            details={
+                "reason_code": "request_outcome_blocks_effect",
+                "tool_name": tool_name,
+                "requested_outcome": requested_outcome,
+            },
+        ),
+    )
+
+
 def execute_action_dispatch(
     runner: Any,
     *,
@@ -175,6 +199,25 @@ def execute_action_dispatch(
             permission_overrides=getattr(state, "permission_overrides", {}),
             tool_name=tool_name_for_gate,
         )
+        requested_outcome = str(
+            getattr(
+                getattr(state, "request_readiness", None),
+                "requested_outcome",
+                "",
+            )
+            or ""
+        ).strip()
+        if not request_outcome_allows_tool(
+            requested_outcome=requested_outcome,
+            tool_name=tool_name_for_gate,
+        ):
+            result = _request_outcome_blocked_result(
+                command_id=command.command_id,
+                tool_name=tool_name_for_gate,
+                requested_outcome=requested_outcome,
+            )
+            runner._remember_idempotency(state=state, command=command, result=result)
+            return result, None
         if permission_mode == "readonly":
             if is_tool_blocked_by_readonly(tool_name_for_gate):
                 return (

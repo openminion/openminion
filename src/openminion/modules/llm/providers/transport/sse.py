@@ -1,4 +1,3 @@
-import json
 import socket
 from typing import Any, Dict, Iterator, Mapping
 from urllib import error as urllib_error
@@ -7,6 +6,7 @@ from urllib import request as urllib_request
 from openminion.base.config.env import EnvironmentConfig
 from ...errors import LLMCtlError
 from .http import _safe_http_error_body, with_default_user_agent
+from .payload import serialize_json_payload
 from .trace import trace_http_json_request
 
 
@@ -25,16 +25,15 @@ def iter_sse_post_lines(
 
     The caller is responsible for parsing `data:` lines and emitting stream events.
     """
-    body_json = json.dumps(payload)
-    body = body_json.encode("utf-8")
+    serialized_payload = serialize_json_payload(payload)
     request_headers = with_default_user_agent(headers)
 
     trace_http_json_request(
         trace_metadata=trace_metadata,
         provider_name=provider_name,
         url=url,
-        body_json=body_json,
-        payload=payload,
+        body_json=serialized_payload.body_json,
+        payload=serialized_payload.payload,
         headers=request_headers,
         timeout_seconds=timeout_seconds,
         transport=transport,
@@ -43,7 +42,7 @@ def iter_sse_post_lines(
 
     req_obj = urllib_request.Request(
         url,
-        data=body,
+        data=serialized_payload.body_bytes,
         headers=request_headers,
         method="POST",
     )

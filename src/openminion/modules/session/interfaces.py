@@ -1,4 +1,4 @@
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from openminion.modules.task.scheduling.interfaces import (
     CRON_INTERFACE_VERSION,
@@ -7,6 +7,15 @@ from openminion.modules.task.scheduling.interfaces import (
 
 SESSION_INTERFACE_VERSION = "v1"
 SESSION_REPOSITORY_INTERFACE_VERSION = CRON_INTERFACE_VERSION
+SESSION_CONTINUATION_SCHEMA_VERSION = "session_continuation.v1"
+
+if TYPE_CHECKING:
+    from .schemas import (
+        ContinuationApplyResult,
+        ContinuationBuildResult,
+        ContinuationPreview,
+        SessionContinuationPacket,
+    )
 
 
 @runtime_checkable
@@ -43,6 +52,36 @@ class SessionContextClientAPI(Protocol):
     def get_slice(
         self, *, session_id: str, purpose: str, limits: dict[str, int]
     ) -> Any: ...
+
+
+@runtime_checkable
+class SessionContinuationAPI(Protocol):
+    """Explicit cross-session continuation without expanding SessionStoreAPI."""
+
+    def preview(
+        self,
+        source_session_id: str,
+        *,
+        target_agent_id: str,
+        expires_in_seconds: int = 86_400,
+    ) -> "ContinuationPreview": ...
+
+    def create(
+        self,
+        source_session_id: str,
+        *,
+        target_agent_id: str,
+        expires_in_seconds: int = 86_400,
+    ) -> "ContinuationBuildResult": ...
+
+    def get_packet(self, packet_id: str) -> "SessionContinuationPacket": ...
+
+    def apply(
+        self,
+        target_session_id: str,
+        *,
+        packet_id: str,
+    ) -> "ContinuationApplyResult": ...
 
 
 _REQUIRED_MEMBERS: dict[str, tuple[str, ...]] = {

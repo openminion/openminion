@@ -1,5 +1,14 @@
 from typing import Any, Callable
 
+from openminion.modules.context.schemas import (
+    ContextDecisionTraceV1,
+    ContextTracePersistenceReason,
+    ContextTracePersistenceResult,
+)
+from openminion.modules.telemetry.events.catalog import (
+    CONTEXT_MANIFEST_CREATED,
+    CONTEXT_MANIFEST_PERSISTENCE_FAILED,
+)
 from openminion.modules.telemetry.events.module import (
     emit_module_counter as _emit_module_counter_impl,
     emit_module_operation as _emit_module_operation_impl,
@@ -144,7 +153,7 @@ def emit_pack_manifest_event(
     pack: Any,
     cache_hit: bool,
     llm_call_id: str = "",
-) -> None:
+) -> ContextTracePersistenceResult:
     emit_canonical = getattr(sessctl, "emit_canonical_event", None)
     manifest = pack.context_manifest
     report = pack.token_budget_report
@@ -173,34 +182,86 @@ def emit_pack_manifest_event(
         payload["token_budget_buckets"] = token_budget_buckets
     if manifest and manifest.context_budget_tier is not None:
         payload["context_budget_tier"] = manifest.context_budget_tier
+    if manifest and manifest.decision_trace is not None:
+        payload["decision_trace"] = _decision_trace_payload_for_sink(
+            manifest.decision_trace,
+            sink="canonical_session_event",
+            reason_code="persisted_canonical",
+        )
 
     if callable(emit_canonical):
         try:
-            emit_canonical(
+            event_id = emit_canonical(
                 session_id=session_id,
-                event_type="context.manifest.created",
+                event_type=CONTEXT_MANIFEST_CREATED,
                 payload=payload,
                 actor_type="system",
                 actor_id=agent_id,
             )
-            return
+            return ContextTracePersistenceResult(
+                persisted=True,
+                event_id=str(event_id) if event_id is not None else None,
+                reason_code="persisted_canonical",
+                sink="canonical_session_event",
+            )
         except Exception:
             pass
 
     append_event = getattr(sessctl, "append_event", None)
     if not callable(append_event):
-        return
+        return ContextTracePersistenceResult(
+            persisted=False,
+            reason_code="no_persistence_sink",
+            sink="session_event",
+        )
 
     try:
-        append_event(
+        if manifest and manifest.decision_trace is not None:
+            payload["decision_trace"] = _decision_trace_payload_for_sink(
+                manifest.decision_trace,
+                sink="fallback_session_event",
+                reason_code="persisted_fallback",
+            )
+        event_id = append_event(
             session_id=session_id,
-            type="context.manifest.created",
+            type=CONTEXT_MANIFEST_CREATED,
             payload=payload,
             agent_id=agent_id,
             status="ok",
         )
+        return ContextTracePersistenceResult(
+            persisted=True,
+            event_id=str(event_id) if event_id is not None else None,
+            reason_code="persisted_fallback",
+            sink="fallback_session_event",
+        )
     except Exception:
-        pass
+        return ContextTracePersistenceResult(
+            persisted=False,
+            reason_code="fallback_failed",
+            sink="session_event",
+        )
+
+
+def _decision_trace_payload_for_sink(
+    trace: ContextDecisionTraceV1,
+    *,
+    sink: str,
+    reason_code: ContextTracePersistenceReason,
+) -> dict[str, Any]:
+    result = ContextTracePersistenceResult(
+        persisted=True,
+        reason_code=reason_code,
+        sink=sink,
+    )
+    return (
+        trace.with_persistence_result(result)
+        .bounded()
+        .model_dump(
+            mode="json",
+            exclude_none=True,
+        )
+    )
 
 
 def record_cache_metrics(
@@ -292,8 +353,8 @@ class ContextTelemetryBridge:
         pack: Any,
         cache_hit: bool,
         llm_call_id: str = "",
-    ) -> None:
-        emit_pack_manifest_event(
+    ) -> ContextTracePersistenceResult:
+        result = emit_pack_manifest_event(
             sessctl=self._sessctl,
             session_id=session_id,
             agent_id=agent_id,
@@ -301,6 +362,15 @@ class ContextTelemetryBridge:
             cache_hit=cache_hit,
             llm_call_id=llm_call_id,
         )
+        self._mark_pack_trace_persistence(pack, result)
+        if not result.persisted:
+            self._emit_context_manifest_persistence_failed(
+                session_id=session_id,
+                turn_id=llm_call_id,
+                pack=pack,
+                result=result,
+            )
+        return result
 
     def emit_pack_module_telemetry(
         self,
@@ -384,3 +454,42 @@ class ContextTelemetryBridge:
 
     def _run_telemetry_result(self, result: Any) -> bool:
         return _run_telemetry_result_impl(result, logger=self._logger)
+
+    def _mark_pack_trace_persistence(
+        self, pack: Any, result: ContextTracePersistenceResult
+    ) -> None:
+        manifest = getattr(pack, "context_manifest", None)
+        trace = getattr(manifest, "decision_trace", None)
+        if trace is None:
+            return
+        try:
+            manifest.decision_trace = trace.with_persistence_result(result)
+        except Exception:
+            self._logger.debug(
+                "context decision trace persistence status update failed",
+                exc_info=True,
+            )
+
+    def _emit_context_manifest_persistence_failed(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        pack: Any,
+        result: ContextTracePersistenceResult,
+    ) -> None:
+        payload = {
+            "reason_code": result.reason_code,
+            "sink": result.sink,
+            "pack_version": getattr(pack, "pack_version", ""),
+            "prompt_context_id": getattr(pack, "prompt_context_id", None),
+        }
+        self._emit_module_telemetry(
+            "emit_canonical_event",
+            session_id,
+            turn_id,
+            CONTEXT_MANIFEST_PERSISTENCE_FAILED,
+            payload,
+            actor_type="system",
+            status="degraded",
+        )

@@ -14,6 +14,7 @@ def run_status(args) -> int:
         return run_onboarding_status(args)
     config = _load_status_config(args.config)
     from .action_policy import run_action_policy_status
+    from .context_trace import run_context_trace_status
     from .identity import run_identity_status, run_self_improvement_status
     from .runtime import (
         run_capabilities_status,
@@ -33,6 +34,7 @@ def run_status(args) -> int:
         "action-policy": run_action_policy_status,
         "extensions": run_extensions_status,
         "tokens": run_tokens_status,
+        "context-trace": run_context_trace_status,
     }.get(args.status_command)
     if handler is not None:
         return handler(args, config=config)
@@ -53,15 +55,15 @@ def run_status(args) -> int:
         _print_owner_status(payload=payload, as_json=bool(args.json))
         return 0
 
+    return _run_session_storage_status(args, config=config)
+
+
+def _run_session_storage_status(args: Any, *, config: Any) -> int:
     from openminion.modules.storage.runtime.context import build_runtime_storage
     from openminion.modules.storage.runtime.sqlite import resolve_database_path
-    from openminion.modules.task.run import (
-        list_session_run_events,
-        list_session_runs,
-    )
+    from openminion.modules.task.run import list_session_run_events, list_session_runs
 
-    storage_path = resolve_database_path(config.storage.path)
-    runtime_storage = build_runtime_storage(storage_path)
+    runtime_storage = build_runtime_storage(resolve_database_path(config.storage.path))
     try:
         sessions = runtime_storage.sessions
         session = sessions.get_session(args.session_id)
@@ -271,6 +273,35 @@ def _register_status_tokens_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
+def _register_status_context_trace_subcommand(status_subcommands) -> None:
+    parser = status_subcommands.add_parser(
+        "context-trace",
+        help="Inspect persisted context decision traces for a session",
+    )
+    parser.add_argument(
+        "--session",
+        "--session-id",
+        dest="session_id",
+        required=True,
+        help="Session identifier",
+    )
+    parser.add_argument(
+        "--turn",
+        "--turn-id",
+        dest="turn_id",
+        default="",
+        help="Optional turn / LLM-call identifier",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Maximum traces to return (default: 50)",
+    )
+    add_json_output_flag(parser)
+    parser.set_defaults(handler=run_status, needs_app=False)
+
+
 def _register_status_notes_subcommand(status_subcommands) -> None:
     parser = status_subcommands.add_parser(
         "notes",
@@ -403,6 +434,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _register_status_runs_subcommand(status_subcommands)
     _register_status_run_events_subcommand(status_subcommands)
     _register_status_tokens_subcommand(status_subcommands)
+    _register_status_context_trace_subcommand(status_subcommands)
     _register_status_notes_subcommand(status_subcommands)
     _register_status_identity_subcommand(status_subcommands)
     _register_status_onboarding_subcommand(status_subcommands)

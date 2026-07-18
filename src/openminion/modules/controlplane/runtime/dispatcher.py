@@ -77,6 +77,7 @@ class ControlPlaneDispatcher:
     brain_client: BrainClient
     audit_logger: object | None = None
     outbound_sender: Callable[[dict[str, Any]], None] | None = None
+    identity_api: object | None = None
     env: EnvironmentConfig = field(default_factory=resolve_environment_config)
     _pending_clarify_by_session: dict[str, dict] = field(
         default_factory=dict, init=False

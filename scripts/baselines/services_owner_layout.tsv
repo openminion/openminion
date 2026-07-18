@@ -1,6 +1,6 @@
 scope	max_python_files	max_loc
-services	191	37194
+services	193	37507
 services/security	6	187
-services/stats	1	27
+services/stats	1	25
 services/tool	3	50
 services/runtime/plugins	8	913

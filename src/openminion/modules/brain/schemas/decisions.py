@@ -34,6 +34,21 @@ from .routing import (
 DecisionRoute = str
 RespondKind = Literal["answer", "clarify"]
 ActProfile = Literal["general", "coding", "research", "orchestrate"]
+RequestPosture = Literal["direct", "brief_plan", "review_before_act"]
+RequestedOutcome = Literal["answer_only", "plan_only", "review_only", "execute"]
+RequestReadinessState = Literal[
+    "ready",
+    "needs_user",
+    "needs_plan_review",
+    "needs_operation_approval",
+    "blocked",
+]
+RequestAssumptionSource = Literal[
+    "user",
+    "repository",
+    "existing_contract",
+    "reversible_default",
+]
 
 
 def _normalize_artifact_alias_payload(
@@ -182,6 +197,37 @@ class PendingTurnContext(BaseModel):
         raise ValueError(
             "pending_turn_context must include at least one non-empty field"
         )
+
+
+class RequestAssumption(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(..., min_length=1, max_length=500)
+    source: RequestAssumptionSource
+    reversible: bool
+    validation_trigger: str = Field(..., min_length=1, max_length=240)
+
+    @field_validator("text", "validation_trigger", mode="before")
+    @classmethod
+    def normalize_text(cls, value: Any) -> str:
+        return _normalize_stripped_text(value)
+
+
+class RequestReadiness(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    posture: RequestPosture
+    requested_outcome: RequestedOutcome
+    state: RequestReadinessState
+    assumptions: list[RequestAssumption] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def validate_readiness_shape(self) -> "RequestReadiness":
+        if self.state == "needs_plan_review" and self.posture != "review_before_act":
+            raise ValueError(
+                "needs_plan_review requires posture='review_before_act'"
+            )
+        return self
 
 
 class ConfidentComplete(BaseModel):
@@ -551,6 +597,13 @@ class _DecisionBase(BaseModel):
             "this turn leaves meaningful work in progress or awaits a missing detail."
         ),
     )
+    request_readiness: RequestReadiness | None = Field(
+        default=None,
+        description=(
+            "Optional typed high-level request handoff payload. Omitted payloads "
+            "preserve legacy routing; runtime must not infer replacements."
+        ),
+    )
     confident_complete: ConfidentComplete | None = Field(
         default=None,
         description=(
@@ -697,6 +750,14 @@ class _DecisionBase(BaseModel):
                 raise ValueError("question is required when respond_kind=clarify")
             if self.respond_kind == "answer" and not str(self.answer or "").strip():
                 raise ValueError("answer is required when respond_kind=answer")
+            if (
+                self.respond_kind == "clarify"
+                and self.request_readiness is not None
+                and self.request_readiness.state != "needs_user"
+            ):
+                raise ValueError(
+                    "respond_kind='clarify' requires request_readiness.state='needs_user'"
+                )
         elif self.route == "act":
             if (
                 self.execution_target is not None
@@ -710,6 +771,13 @@ class _DecisionBase(BaseModel):
                     "target_agent_id or target_capability is required when "
                     "execution_target.kind=delegated"
                 )
+        if (
+            self.request_readiness is not None
+            and self.request_readiness.requested_outcome == "execute"
+            and self.request_readiness.state == "ready"
+            and self.route != "act"
+        ):
+            raise ValueError("execute + ready decisions must route to act")
         return self
 
 
@@ -857,6 +925,12 @@ __all__ = [
     "DelegationResultSummary",
     "ExecutionTargetPayload",
     "normalize_decomposed_subtasks",
+    "RequestAssumption",
+    "RequestAssumptionSource",
+    "RequestedOutcome",
+    "RequestPosture",
+    "RequestReadiness",
+    "RequestReadinessState",
     "RespondDecision",
     "RespondKind",
 ]

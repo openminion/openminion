@@ -9,7 +9,6 @@ from .core import (
     append_evidence_and_turn_input_segments,
     append_prefix_and_mission_segments,
     append_recent_window_segments,
-    append_summary_segments,
     inject_context_drop_visibility_note,
     make_segment,
     map_turn_role,
@@ -18,6 +17,7 @@ from .core import (
     segments_to_messages,
 )
 from .core import normalize_mode_name  # pass-through
+from .summaries import append_summary_segments
 
 __all__ = [
     "_SegmentAssemblyRuntime",

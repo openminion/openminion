@@ -7,6 +7,7 @@ from openminion.modules.brain.adapters.tool.permission_mode import (
     canonical_permission_mode,
     effective_permission_mode_for_tool,
     is_tool_blocked_by_readonly,
+    request_outcome_allows_tool,
 )
 from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 
@@ -302,6 +303,29 @@ def _readonly_blocked_result(*, command_id: str, tool_name: str) -> ActionResult
     )
 
 
+def _request_outcome_blocked_result(
+    *, command_id: str, tool_name: str, requested_outcome: str
+) -> ActionResult:
+    return ActionResult(
+        command_id=command_id,
+        status="blocked",
+        summary=f"Tool {tool_name!r} blocked by request outcome {requested_outcome!r}",
+        error=ActionError(
+            code="REQUEST_OUTCOME_EFFECT_BLOCKED",
+            message=(
+                f"Cannot execute tool {tool_name!r} while requested_outcome is "
+                f"{requested_outcome!r}. Use an execute-ready request for "
+                "side-effecting tools."
+            ),
+            details={
+                "reason_code": "request_outcome_blocks_effect",
+                "tool_name": tool_name,
+                "requested_outcome": requested_outcome,
+            },
+        ),
+    )
+
+
 def _validation_failed_result(
     *,
     command_id: str,
@@ -353,6 +377,28 @@ def prepare_tool_dispatch(
         permission_overrides=getattr(state, "permission_overrides", {}),
         tool_name=tool_name,
     )
+    requested_outcome = str(
+        getattr(getattr(state, "request_readiness", None), "requested_outcome", "")
+        or ""
+    ).strip()
+    if not request_outcome_allows_tool(
+        requested_outcome=requested_outcome,
+        tool_name=tool_name,
+    ):
+        result = _request_outcome_blocked_result(
+            command_id=command.command_id,
+            tool_name=tool_name,
+            requested_outcome=requested_outcome,
+        )
+        runner._remember_idempotency(state=state, command=command, result=result)
+        return PrepareOutcome(
+            approved_command=command,
+            original_command=original_command,
+            command_id=command.command_id,
+            tool_name=tool_name,
+            disposition="request_outcome_blocked",
+            action_result=result,
+        )
     if permission_mode == "readonly" and is_tool_blocked_by_readonly(tool_name):
         result = _readonly_blocked_result(
             command_id=command.command_id,

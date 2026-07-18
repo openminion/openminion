@@ -32,6 +32,10 @@ class SessionSliceSource(Protocol):
 
     def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None: ...
 
+    def get_latest_continuation_projection(
+        self, session_id: str
+    ) -> dict[str, Any] | None: ...
+
     def get_pending_trailer_feedback(
         self, session_id: str
     ) -> dict[str, Any] | None: ...
@@ -66,6 +70,7 @@ class SessionSliceSourceAdapter:
     total_turn_count_getter: Callable[[str], int]
     conversation_summary_getter: Callable[..., str]
     active_task_plan_getter: Callable[[str], dict[str, Any] | None]
+    continuation_projection_getter: Callable[[str], dict[str, Any] | None]
     pending_trailer_feedback_getter: Callable[[str], dict[str, Any] | None]
     open_tasks_getter: Callable[..., list[dict[str, Any]]]
     active_state_getter: Callable[[str], dict[str, Any]]
@@ -102,6 +107,11 @@ class SessionSliceSourceAdapter:
 
     def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None:
         return self.active_task_plan_getter(session_id)
+
+    def get_latest_continuation_projection(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        return self.continuation_projection_getter(session_id)
 
     def get_pending_trailer_feedback(self, session_id: str) -> dict[str, Any] | None:
         return self.pending_trailer_feedback_getter(session_id)
@@ -161,6 +171,7 @@ class SliceStore:
             "get_total_turn_count",
             "get_conversation_summary",
             "get_active_task_plan",
+            "get_latest_continuation_projection",
             "get_pending_trailer_feedback",
             "derive_open_tasks",
             "get_active_state",
@@ -214,6 +225,7 @@ class SliceStore:
         )
         conversation_summary = self._source.get_conversation_summary(session_id)
         active_task_plan = self._source.get_active_task_plan(session_id)
+        continuation = self._source.get_latest_continuation_projection(session_id)
         pending_trailer_feedback = self._source.get_pending_trailer_feedback(session_id)
         open_tasks = (
             self._source.derive_open_tasks(
@@ -236,6 +248,7 @@ class SliceStore:
             "summary": summary,
             "conversation_summary": conversation_summary,
             "active_task_plan": active_task_plan,
+            "continuation": continuation,
             "pending_trailer_feedback": pending_trailer_feedback,
             "total_turn_count": total_turn_count,
             "recent_turns": recent_turns,
@@ -255,6 +268,7 @@ class SliceStore:
             "summary": summary,
             "conversation_summary": conversation_summary,
             "active_task_plan": active_task_plan,
+            "continuation": continuation,
             "pending_trailer_feedback": pending_trailer_feedback,
             "total_turn_count": total_turn_count,
             "recent_turns": recent_turns,

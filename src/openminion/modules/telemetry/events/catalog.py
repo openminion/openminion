@@ -30,6 +30,8 @@ SESSION_RESUMED = "session.resumed"
 SESSION_STALE = "session.stale"
 SESSION_STATUS_CHANGED = "session.status.changed"
 SESSION_SUMMARY_ENRICHED = "session.summary.enriched"
+SESSION_CONTINUATION_BUILD = "session.continuation.build"
+SESSION_CONTINUATION_APPLY = "session.continuation.apply"
 
 RESPONSE_ACKED = "response.acked"
 RESPONSE_DELIVERED = "response.delivered"
@@ -166,6 +168,7 @@ SECRET_REDACTED = "secret_redacted"
 SECURITY_WARNING = "security_warning"
 CONTEXT_MANIFEST = "context.manifest"
 CONTEXT_MANIFEST_CREATED = "context.manifest.created"
+CONTEXT_MANIFEST_PERSISTENCE_FAILED = "context.manifest.persistence_failed"
 CONTEXT_PACK = "context_pack"
 
 METRIC = "metric"
@@ -205,6 +208,8 @@ EVENT_TYPES: frozenset[str] = frozenset(
         SESSION_STALE,
         SESSION_STATUS_CHANGED,
         SESSION_SUMMARY_ENRICHED,
+        SESSION_CONTINUATION_BUILD,
+        SESSION_CONTINUATION_APPLY,
         RESPONSE_ACKED,
         RESPONSE_DELIVERED,
         RESPONSE_PERSISTED,
@@ -325,6 +330,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         SECURITY_WARNING,
         CONTEXT_MANIFEST,
         CONTEXT_MANIFEST_CREATED,
+        CONTEXT_MANIFEST_PERSISTENCE_FAILED,
         CONTEXT_PACK,
         METRIC,
         MESSAGE,
@@ -402,6 +408,8 @@ __all__ = [
     "SESSION_STALE",
     "SESSION_STATUS_CHANGED",
     "SESSION_SUMMARY_ENRICHED",
+    "SESSION_CONTINUATION_BUILD",
+    "SESSION_CONTINUATION_APPLY",
     "RESPONSE_ACKED",
     "RESPONSE_DELIVERED",
     "RESPONSE_PERSISTED",
@@ -516,6 +524,7 @@ __all__ = [
     "SECURITY_WARNING",
     "CONTEXT_MANIFEST",
     "CONTEXT_MANIFEST_CREATED",
+    "CONTEXT_MANIFEST_PERSISTENCE_FAILED",
     "CONTEXT_PACK",
     "METRIC",
     "MESSAGE",

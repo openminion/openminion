@@ -8,10 +8,8 @@ from types import SimpleNamespace
 import pytest
 
 from openminion.base.config import OpenMinionConfig
-from openminion.cli.commands.status.tokens import (
-    _build_session_store,
-    run_tokens_status,
-)
+from openminion.cli.commands.status.session_store import build_status_session_store
+from openminion.cli.commands.status.tokens import run_tokens_status
 from openminion.cli.parser.base import build_parser
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 
@@ -61,7 +59,7 @@ def test_status_tokens_json_is_raw_versioned_envelope(
         },
     )
     monkeypatch.setattr(
-        "openminion.cli.commands.status.tokens._build_session_store",
+        "openminion.cli.commands.status.tokens.build_status_session_store",
         lambda _args, _config: store,
     )
 
@@ -87,7 +85,7 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
         initial_agent_id="agent.main", profile_version="v1"
     )
     monkeypatch.setattr(
-        "openminion.cli.commands.status.tokens._build_session_store",
+        "openminion.cli.commands.status.tokens.build_status_session_store",
         lambda _args, _config: store,
     )
 
@@ -111,7 +109,7 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
             payload={"usage": {"input_tokens": value}},
         )
     monkeypatch.setattr(
-        "openminion.cli.commands.status.tokens._build_session_store",
+        "openminion.cli.commands.status.tokens.build_status_session_store",
         lambda _args, _config: store,
     )
 
@@ -141,7 +139,7 @@ def test_status_tokens_rejects_cross_session_run(
     run_id = store.create_run_record(run_session, run_type="llm", run_id="run-1")
     store.finish_run_record(run_id, status="completed")
     monkeypatch.setattr(
-        "openminion.cli.commands.status.tokens._build_session_store",
+        "openminion.cli.commands.status.tokens.build_status_session_store",
         lambda _args, _config: store,
     )
 
@@ -164,11 +162,15 @@ def test_session_store_factory_uses_configured_record_backend(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manager = SimpleNamespace(env={})
+    manager = SimpleNamespace(
+        env=SimpleNamespace(snapshot=lambda: {}),
+        home_root=tmp_path / "home",
+        data_root=tmp_path / "data",
+    )
     captured = {}
     sentinel = object()
     monkeypatch.setattr(
-        "openminion.cli.commands.status.tokens.load_cli_manager",
+        "openminion.cli.commands.status.session_store.load_cli_manager",
         lambda _path: manager,
     )
 
@@ -177,7 +179,7 @@ def test_session_store_factory_uses_configured_record_backend(
         return sentinel
 
     monkeypatch.setattr(
-        "openminion.cli.commands.status.tokens.build_module_session_store",
+        "openminion.cli.commands.status.session_store.build_module_session_store",
         _build,
     )
     config = OpenMinionConfig()
@@ -185,7 +187,7 @@ def test_session_store_factory_uses_configured_record_backend(
     config.storage.backend = "postgres"
     config.storage.postgres_url = "postgresql://example.invalid/openminion"
 
-    result = _build_session_store(Namespace(config=""), config)
+    result = build_status_session_store(Namespace(config=""), config)
 
     assert result is sentinel
     assert captured["config"].record_backend == "record.postgres"

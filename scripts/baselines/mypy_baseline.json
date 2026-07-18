@@ -1,6 +1,6 @@
 {
   "command": ".venv/bin/python3.11 -m mypy src/openminion --explicit-package-bases --hide-error-context --no-error-summary --show-error-codes",
-  "generated": "2026-05-31",
+  "generated": "2026-07-17",
   "monthly_burn_down_quota": {
     "api": -50,
     "cli": -50,
@@ -9,13 +9,13 @@
     "tools": -50
   },
   "package_errors": {
-    "api": 122,
-    "base": 9,
-    "cli": 845,
-    "modules": 2713,
+    "api": 125,
+    "base": 0,
+    "cli": 576,
+    "modules": 2717,
     "root": 1,
-    "services": 407,
+    "services": 373,
     "tools": 227
   },
-  "total_errors": 4324
+  "total_errors": 4019
 }

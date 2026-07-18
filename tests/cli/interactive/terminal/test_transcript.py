@@ -154,3 +154,17 @@ def test_drop_message_removes_from_list() -> None:
 def test_drop_message_returns_false_when_not_found() -> None:
     t, _ = _make_transcript()
     assert t.drop_message("nonexistent") is False
+
+
+def test_retained_messages_are_bounded_without_losing_latest_copyable() -> None:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=80)
+    t = TerminalTranscript(console, max_retained_messages=2)
+
+    t.push_message(ChatMessage(kind=MessageKind.USER, sender="you", body="first"))
+    t.push_message(ChatMessage(kind=MessageKind.AGENT, sender="agent", body="second"))
+    t.push_message(ChatMessage(kind=MessageKind.AGENT, sender="agent", body="third"))
+
+    assert [msg.body for msg in t._messages] == ["second", "third"]
+    assert t.copy_selected_message() == "third"
+    assert t.copy_last_copyable_message() == "third"

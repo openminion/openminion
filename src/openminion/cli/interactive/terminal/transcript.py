@@ -29,6 +29,7 @@ from .streaming import (
 )
 
 _ERROR_STYLE = token_rich_style(StyleToken.ERROR)
+DEFAULT_MAX_RETAINED_MESSAGES = 1000
 
 
 def get_app_or_none() -> Any | None:
@@ -61,6 +62,7 @@ class TerminalTranscript:
         plain_spinner: bool = False,
         verbosity: str = "normal",
         show_response_time: bool = True,
+        max_retained_messages: int | None = DEFAULT_MAX_RETAINED_MESSAGES,
     ) -> None:
         self._console = console
         self._messages: list[ChatMessage] = []
@@ -79,6 +81,11 @@ class TerminalTranscript:
         self._collapsed_tool_results: Counter[str] = Counter()
         self._active_handle: Any | None = None
         self._terminal_writer: Callable[[Callable[[], None]], Any] | None = None
+        self._max_retained_messages = (
+            int(max_retained_messages)
+            if max_retained_messages is not None and int(max_retained_messages) > 0
+            else None
+        )
 
     def set_terminal_writer(self, writer: Callable[[Callable[[], None]], Any]) -> None:
         self._terminal_writer = writer
@@ -103,6 +110,7 @@ class TerminalTranscript:
         kind = MessageKind.AGENT if role == "assistant" else MessageKind.USER
         message = ChatMessage(kind=kind, sender=role, body="")
         self._messages.append(message)
+        self._trim_retained_messages()
         self._selected_message_id = message.msg_id
         handle = TerminalTurnHandle(
             self._console,
@@ -121,7 +129,7 @@ class TerminalTranscript:
             if final_text is not None:
                 message.body = final_text
             else:
-                message.body = handle._buffer  # type: ignore[attr-defined]
+                message.body = handle._buffer
             original_complete(final_text)
             self._active_handle = None
             self._maybe_print_hidden_tool_summary()
@@ -130,13 +138,14 @@ class TerminalTranscript:
         handle.complete = _complete  # type: ignore[method-assign]
         return handle
 
-    def push_message(self, message: ChatMessage, *, render: bool = True):
+    def push_message(self, message: ChatMessage, *, render: bool = True) -> None:
         if message.kind == MessageKind.USER:
             self._hidden_tool_count = 0
             self._hidden_failed_count = 0
             self._reset_turn_tool_compaction()
         self._messages.append(message)
         self._selected_message_id = message.msg_id
+        self._trim_retained_messages()
         if render:
             self._render(message)
         if render and message.kind == MessageKind.AGENT:
@@ -245,6 +254,16 @@ class TerminalTranscript:
                 self._messages[-1].msg_id if self._messages else None
             )
         return True
+
+    def _trim_retained_messages(self) -> None:
+        limit = self._max_retained_messages
+        if limit is None or len(self._messages) <= limit:
+            return
+        self._messages = self._messages[-limit:]
+        if self._selected_message_id not in {msg.msg_id for msg in self._messages}:
+            self._selected_message_id = (
+                self._messages[-1].msg_id if self._messages else None
+            )
 
     def _render(self, message: ChatMessage) -> None:
         if message.kind == MessageKind.USER:

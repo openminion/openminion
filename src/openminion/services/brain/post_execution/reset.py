@@ -331,7 +331,7 @@ def _base_turn_reset_state(
     updated["active_workflow_name"] = None
     updated["active_workflow_kind"] = None
     updated["pending_llm_clarify_context"] = (
-        dict(pending_llm_clarify_context) if preserve_llm_clarify_context else None
+        dict(pending_llm_clarify_context) if preserve_llm_clarify_context and isinstance(pending_llm_clarify_context, dict) else None
     )
     pending_turn_context, pending_turn_context_stale_turns = (
         preserve_pending_turn_context_on_new_input(state_inline=state_inline)
@@ -397,6 +397,9 @@ def _apply_decision_state_reset(
     state_inline: dict[str, Any],
     preservation: _TurnResetPreservation,
 ) -> None:
+    if preservation.preserve_decision_state or preservation.preserve_pending_confirmation:
+        readiness = state_inline.get("request_readiness")
+        updated["request_readiness"] = readiness.copy() if isinstance(readiness, dict) else None
     if preservation.preserve_decision_state:
         updated["decision_sub_intents"] = list(
             state_inline.get("decision_sub_intents", []) or []
@@ -438,6 +441,8 @@ def _apply_decision_state_reset(
             state_inline.get("intent_execution_states", []) or []
         )
         return
+    if not preservation.preserve_pending_confirmation:
+        updated["request_readiness"] = None
     updated["decision_sub_intents"] = []
     updated["decision_sub_intent_refs"] = []
     updated["decision_rationale"] = ""
@@ -683,7 +688,7 @@ def _emit_confirmation_reset_preserved(
 
 
 def _reset_state_for_new_input(
-    self, *, runner: BrainRunner, session_id: str, user_input: str
+    self: Any, *, runner: BrainRunner, session_id: str, user_input: str
 ) -> None:
     if not str(user_input or "").strip():
         return

@@ -13,6 +13,8 @@ from ..schemas import (
     BuildPackRequest,
     CompressionSummary,
     ContextBudgets,
+    ContextDecisionRef,
+    ContextDecisionTraceV1,
     ContextManifest,
     ContextPack,
     ContextSegment,
@@ -156,6 +158,126 @@ def build_prompt_cache_key(
             }
         )
     return static_prefix_hash, prompt_cache_key
+
+
+def build_context_decision_trace(
+    *,
+    session_id: str,
+    turn_id: str | None,
+    llm_call_id: str | None,
+    prompt_context_id: str | None,
+    pack_version: str,
+    segments: list[ContextSegment],
+    decision_log: PackingDecisionLog,
+    token_budget_report: TokenBudgetReport,
+) -> ContextDecisionTraceV1:
+    segment_by_id = {segment.id: segment for segment in segments}
+    decisions: list[ContextDecisionRef] = []
+    recorded_segment_actions: set[tuple[str, str]] = set()
+    for segment in segments:
+        if not segment.content.strip():
+            continue
+        action = "pinned" if bool(segment.pinned) else "included"
+        decisions.append(
+            _decision_ref_for_segment(
+                segment,
+                action=action,
+                reason_code="pin_preserved" if segment.pinned else "selected",
+            )
+        )
+        recorded_segment_actions.add((segment.id, action))
+
+    for action in decision_log.actions:
+        for segment_id in action.segment_ids:
+            segment = segment_by_id.get(segment_id)
+            if segment is None:
+                decisions.append(
+                    ContextDecisionRef(
+                        segment_id=str(segment_id),
+                        bucket=str(action.bucket or ""),
+                        action=str(action.action or "unknown"),
+                        reason_code=str(action.reason_code or "unknown"),
+                        token_estimate=0,
+                        source="decision_log",
+                    )
+                )
+                continue
+            normalized_action = (
+                "truncated"
+                if str(action.action).startswith("shrink_")
+                else str(action.action or "unknown")
+            )
+            key = (segment.id, normalized_action)
+            if key in recorded_segment_actions:
+                continue
+            decisions.append(
+                _decision_ref_for_segment(
+                    segment,
+                    action=normalized_action,
+                    reason_code=str(action.reason_code or "unknown"),
+                    source="decision_log",
+                )
+            )
+            recorded_segment_actions.add(key)
+
+    missing_sources = []
+    if not any(segment.bucket == "retrieval" for segment in segments):
+        missing_sources.append("retrieval_unavailable")
+    if not any(segment.refs for segment in segments):
+        missing_sources.append("provenance_refs_unavailable")
+
+    trace = ContextDecisionTraceV1(
+        session_id=session_id,
+        turn_id=turn_id,
+        llm_call_id=llm_call_id,
+        prompt_context_id=prompt_context_id,
+        pack_version=pack_version,
+        decisions=decisions,
+        token_budget_report=token_budget_report,
+        retrieval_score_refs=_refs_for_bucket(segments, "retrieval"),
+        memory_provenance_refs=_refs_for_bucket(segments, "retrieval"),
+        summary_checkpoint_refs=_summary_checkpoint_refs(segments),
+        missing_sources=missing_sources,
+    )
+    return trace.bounded()
+
+
+def _decision_ref_for_segment(
+    segment: ContextSegment,
+    *,
+    action: str,
+    reason_code: str,
+    source: str = "typed_schema",
+) -> ContextDecisionRef:
+    digest = segment.content_hash or _content_hash(segment.content)
+    return ContextDecisionRef(
+        segment_id=segment.id,
+        bucket=segment.bucket,
+        action=action,
+        reason_code=reason_code,
+        token_estimate=max(0, int(segment.token_estimate or 0)),
+        content_digest=digest,
+        refs=list(segment.refs),
+        source=source,
+    )
+
+
+def _refs_for_bucket(segments: list[ContextSegment], bucket: str) -> list[str]:
+    refs: list[str] = []
+    for segment in segments:
+        if segment.bucket != bucket:
+            continue
+        refs.extend(str(ref) for ref in segment.refs if str(ref).strip())
+    return list(dict.fromkeys(refs))
+
+
+def _summary_checkpoint_refs(segments: list[ContextSegment]) -> list[str]:
+    refs: list[str] = []
+    for segment in segments:
+        if segment.bucket not in {"summaries", "conversation_summary", "task_digest"}:
+            continue
+        refs.extend(str(ref) for ref in segment.refs if str(ref).strip())
+    return list(dict.fromkeys(refs))
 
 
 def finalize_context_pack(
@@ -349,6 +471,16 @@ def finalize_context_pack(
             "live_state_overlay": request.live_state_overlay,
             "budgets": budgets.model_dump(),
         }
+    )
+    context_manifest.decision_trace = build_context_decision_trace(
+        session_id=request.session_id,
+        turn_id=llm_call_id,
+        llm_call_id=llm_call_id,
+        prompt_context_id=session_slice.prompt_context_id,
+        pack_version=pack_version,
+        segments=segments,
+        decision_log=decision_log,
+        token_budget_report=token_budget_report,
     )
 
     pack = ContextPack(

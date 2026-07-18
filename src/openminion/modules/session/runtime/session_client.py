@@ -9,6 +9,44 @@ from openminion.base.constants import STATE_KEY_ACTIVE
 _log = logging.getLogger(__name__)
 
 
+def _summary_fields(raw: dict[str, Any]) -> tuple[str, str | None]:
+    summary_raw = raw.get("summary") or {}
+    if isinstance(summary_raw, dict):
+        summary_short = str(
+            summary_raw.get("summary_short") or summary_raw.get("short") or ""
+        )
+        long_val = summary_raw.get("summary_long") or summary_raw.get("long")
+        return summary_short, str(long_val) if long_val else None
+    if isinstance(summary_raw, str):
+        return summary_raw, None
+    return "", None
+
+
+def _open_task_ids(raw: dict[str, Any]) -> list[str]:
+    open_tasks: list[str] = []
+    for task in raw.get("open_tasks", []):
+        if isinstance(task, str):
+            open_tasks.append(task)
+            continue
+        if isinstance(task, dict):
+            task_id = task.get("task_id") or task.get("job_id") or task.get("id", "")
+            if task_id:
+                open_tasks.append(str(task_id))
+    return open_tasks
+
+
+def _active_state(raw: dict[str, Any]) -> dict[str, Any] | None:
+    active_state_raw = raw.get(STATE_KEY_ACTIVE)
+    if isinstance(active_state_raw, dict) and active_state_raw:
+        return active_state_raw
+    return None
+
+
+def _optional_mapping(raw: dict[str, Any], key: str) -> dict[str, Any] | None:
+    value = raw.get(key)
+    return value if isinstance(value, dict) else None
+
+
 class SessctlSessionClient:
     """Adapt session-store slices into context `SessionSlice` models."""
 
@@ -27,21 +65,11 @@ class SessctlSessionClient:
             SessionSlice,
             SessionTurn,
             SessionToolEvent,
-        )  # type: ignore[import]
+        )
 
         raw: dict[str, Any] = self._store.get_slice(session_id, purpose, limits)
         slice_version = str(raw.get("slice_version", ""))
-        summary_raw = raw.get("summary") or {}
-        summary_short = ""
-        summary_long: str | None = None
-        if isinstance(summary_raw, dict):
-            summary_short = str(
-                summary_raw.get("summary_short") or summary_raw.get("short") or ""
-            )
-            long_val = summary_raw.get("summary_long") or summary_raw.get("long")
-            summary_long = str(long_val) if long_val else None
-        elif isinstance(summary_raw, str):
-            summary_short = summary_raw
+        summary_short, summary_long = _summary_fields(raw)
 
         recent_turns = [
             SessionTurn(
@@ -54,21 +82,6 @@ class SessctlSessionClient:
             for turn in raw.get("recent_turns", [])
             if isinstance(turn, dict)
         ]
-
-        open_tasks: list[str] = []
-        for task in raw.get("open_tasks", []):
-            if isinstance(task, str):
-                open_tasks.append(task)
-                continue
-            if isinstance(task, dict):
-                tid = task.get("task_id") or task.get("job_id") or task.get("id", "")
-                if tid:
-                    open_tasks.append(str(tid))
-
-        active_state: dict[str, Any] | None = None
-        active_state_raw = raw.get(STATE_KEY_ACTIVE)
-        if isinstance(active_state_raw, dict) and active_state_raw:
-            active_state = active_state_raw
 
         tool_events = [
             SessionToolEvent(
@@ -84,6 +97,7 @@ class SessctlSessionClient:
             for event in raw.get("recent_tool_events", [])
             if isinstance(event, dict)
         ]
+        open_tasks = _open_task_ids(raw)
 
         self._log.debug(
             "sessctl.get_slice: session_id=%s purpose=%s slice_version=%s "
@@ -102,16 +116,16 @@ class SessctlSessionClient:
             summary_short=summary_short,
             summary_long=summary_long,
             conversation_summary=str(raw.get("conversation_summary") or ""),
-            active_task_plan=raw.get("active_task_plan")
-            if isinstance(raw.get("active_task_plan"), dict)
-            else None,
-            pending_trailer_feedback=raw.get("pending_trailer_feedback")
-            if isinstance(raw.get("pending_trailer_feedback"), dict)
-            else None,
+            active_task_plan=_optional_mapping(raw, "active_task_plan"),
+            continuation=_optional_mapping(raw, "continuation"),
+            pending_trailer_feedback=_optional_mapping(
+                raw,
+                "pending_trailer_feedback",
+            ),
             total_turn_count=int(raw.get("total_turn_count") or len(recent_turns)),
             recent_turns=recent_turns,
             open_tasks=open_tasks,
-            active_state=active_state,
+            active_state=_active_state(raw),
             recent_tool_events=tool_events,
             archive_refs=[str(ref) for ref in raw.get("archive_refs", [])],
         )

@@ -144,6 +144,7 @@ def build_runtime_infrastructure(
         ),
         load_tool_plugins=False,
     )
+    _bind_channel_supervisor_telemetry(extension_runtime, telemetry_service)
     default_config = build_runtime_config(
         base_config,
         overrides=effective_run_profile_overrides,
@@ -172,8 +173,7 @@ def build_runtime_infrastructure(
         "logger": logger,
         "security_policy": security_policy,
         "agent_security_policy": agent_security_policy,
-        "channels": extension_runtime.channels,
-        "plugins": extension_runtime.plugins,
+        **_extension_runtime_components(extension_runtime),
         "default_config": default_config,
         "default_agent": default_agent,
         "llm_runtime": llm_runtime,
@@ -189,6 +189,22 @@ def build_runtime_infrastructure(
         ),
         "action_policy": action_policy,
         **support,
+    }
+
+
+def _bind_channel_supervisor_telemetry(
+    extension_runtime: Any,
+    telemetry_service: TelemetryService,
+) -> None:
+    if extension_runtime.channel_supervisor is not None:
+        extension_runtime.channel_supervisor.bind_telemetry_service(telemetry_service)
+
+
+def _extension_runtime_components(extension_runtime: Any) -> dict[str, object]:
+    return {
+        "channels": extension_runtime.channels,
+        "channel_supervisor": extension_runtime.channel_supervisor,
+        "plugins": extension_runtime.plugins,
     }
 
 

@@ -139,3 +139,32 @@ def test_http_json_post_success_emits_transport_timing(monkeypatch) -> None:
     assert extra["provider_round_trip_ms"] >= 0
     assert extra["parse_ms"] >= 0
     assert extra["total_ms"] >= 0
+
+
+def test_http_json_post_reuses_single_serialized_request_body(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def _ok(request_obj, *args, **kwargs):
+        del args, kwargs
+        seen["data"] = request_obj.data
+        return _FakeHTTPResponse({"ok": True})
+
+    def _trace_request(**kwargs):
+        seen["trace_body_json"] = kwargs["body_json"]
+        seen["trace_payload"] = kwargs["payload"]
+
+    monkeypatch.setattr(http_transport.urllib_request, "urlopen", _ok)
+    monkeypatch.setattr(http_transport, "trace_http_json_request", _trace_request)
+
+    payload = {"messages": [{"role": "user", "content": "hi"}]}
+    response = http_transport.http_json_post(
+        url="https://provider.example/v1",
+        payload=payload,
+        headers={},
+        timeout_seconds=1,
+        provider_name="provider",
+    )
+
+    assert response == {"ok": True}
+    assert seen["data"] == seen["trace_body_json"].encode("utf-8")
+    assert seen["trace_payload"] is payload

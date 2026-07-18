@@ -123,6 +123,7 @@ def finalize_runtime_instance(
         sessions=runtime_storage.sessions,
         idempotency=runtime_storage.idempotency,
         channels=infrastructure["channels"],
+        channel_supervisor=infrastructure.get("channel_supervisor"),
         plugins=infrastructure["plugins"],
         logger=infrastructure["logger"],
         provider=infrastructure["provider"],

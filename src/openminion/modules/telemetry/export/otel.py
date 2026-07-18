@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from openminion.base.config import OTELExporterConfig
 from ..schemas import TelemetryEvent
 from .performance_metrics import performance_metrics_for_event
+from .queueing import NoncriticalExportQueue
 
 _LOG = logging.getLogger(__name__)
 _PROSE_KEYS = frozenset(
@@ -47,6 +48,7 @@ _EVENT_CLASSIFICATION: dict[str, str] = {
     "storage.pool.stats": _CLASS_METRIC,
     "memory.scope_capacity.evicted": _CLASS_METRIC,
     "memory.soft_deleted.purged": _CLASS_METRIC,
+    "llm.call.completed": _CLASS_SPAN,
     # LLM cache metrics — point-in-time hit/miss observation. Treat
     # as gauge per the metric-kind table; operator may flip to counter via
     # _METRIC_KIND_BY_EVENT if the source semantics shift.
@@ -54,6 +56,7 @@ _EVENT_CLASSIFICATION: dict[str, str] = {
     "chat.phase_timing": _CLASS_SPAN,
     "module.stats": _CLASS_METRIC,
     "tui.render": _CLASS_METRIC,
+    "telemetry.queue.stats": _CLASS_METRIC,
     # Generic catchalls stay out of OTel emission; module.debug.failure remains
     # a log record so runtime failure diagnostics are still visible.
     "metric": _CLASS_EXCLUDED,
@@ -129,9 +132,7 @@ class ExportedOTELRecord:
     # end timestamp for paired-span emission. None for non-paired
     # spans and for non-span records.
     end_timestamp_ns: int | None = None
-    # OTel metric kind for metric records. Empty for non-metric
-    # records. Valid values: ``"gauge"`` (point-in-time observation) or
-    # ``"counter"`` (monotonic increment).
+    # OTel metric kind for metric records. Empty for non-metric records.
     metric_kind: str = ""
     # numeric value for metric records. Zero for non-metric records.
     metric_value: float = 0.0
@@ -222,11 +223,21 @@ class RecordingOTELTraceSink:
 
 
 class _OpenTelemetrySDKSink:
-    def __init__(self, *, tracer: Any, provider: Any) -> None:
+    def __init__(
+        self,
+        *,
+        tracer: Any,
+        trace_provider: Any,
+        meter: Any | None = None,
+        metric_provider: Any | None = None,
+    ) -> None:
         self._tracer = tracer
-        self._provider = provider
+        self._trace_provider = trace_provider
+        self._meter = meter
+        self._metric_provider = metric_provider
         self._root_spans: dict[str, Any] = {}
-        self._metric_warned = False
+        self._metric_instruments: dict[tuple[str, str], Any] = {}
+        self._gauge_values: dict[tuple[str, tuple[tuple[str, Any], ...]], float] = {}
 
     def emit_span(
         self,
@@ -270,14 +281,27 @@ class _OpenTelemetrySDKSink:
         attributes: dict[str, Any],
         timestamp_ns: int,
     ) -> None:
-        if not self._metric_warned:
-            _LOG.info(
-                "Metric emission (%s=%s) reached the SDK sink before the OTel "
-                "metrics provider is wired. Recording sink coverage is in place.",
-                metric_name,
-                value,
-            )
-            self._metric_warned = True
+        if self._meter is None:
+            return
+        instrument = self._metric_instrument(metric_name, metric_kind)
+        clean_attributes = dict(attributes)
+        if metric_kind == _KIND_HISTOGRAM:
+            instrument.record(float(value), clean_attributes)
+            return
+        if metric_kind == _KIND_COUNTER:
+            instrument.add(max(0.0, float(value)), clean_attributes)
+            return
+        if hasattr(instrument, "set"):
+            instrument.set(float(value), clean_attributes)
+            return
+        gauge_key = (
+            metric_name,
+            tuple(sorted((str(key), value) for key, value in clean_attributes.items())),
+        )
+        previous = self._gauge_values.get(gauge_key, 0.0)
+        current = float(value)
+        instrument.add(current - previous, clean_attributes)
+        self._gauge_values[gauge_key] = current
 
     def emit_event(
         self,
@@ -308,8 +332,11 @@ class _OpenTelemetrySDKSink:
             except Exception:  # noqa: BLE001
                 pass
             self._root_spans.pop(trace_key, None)
-        self._provider.force_flush()
-        self._provider.shutdown()
+        self._trace_provider.force_flush()
+        self._trace_provider.shutdown()
+        if self._metric_provider is not None:
+            self._metric_provider.force_flush()
+            self._metric_provider.shutdown()
 
     def _ensure_root_span(
         self,
@@ -334,6 +361,23 @@ class _OpenTelemetrySDKSink:
         self._root_spans[trace_key] = root
         return root
 
+    def _metric_instrument(self, metric_name: str, metric_kind: str) -> Any:
+        key = (metric_name, metric_kind)
+        instrument = self._metric_instruments.get(key)
+        if instrument is not None:
+            return instrument
+        assert self._meter is not None
+        if metric_kind == _KIND_HISTOGRAM:
+            instrument = self._meter.create_histogram(metric_name, unit="1")
+        elif metric_kind == _KIND_COUNTER:
+            instrument = self._meter.create_counter(metric_name, unit="1")
+        elif hasattr(self._meter, "create_gauge"):
+            instrument = self._meter.create_gauge(metric_name, unit="1")
+        else:
+            instrument = self._meter.create_up_down_counter(metric_name, unit="1")
+        self._metric_instruments[key] = instrument
+        return instrument
+
 
 def create_otel_trace_sink(
     config: OTELExporterConfig,
@@ -351,11 +395,19 @@ def create_otel_trace_sink(
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
                 OTLPSpanExporter,
             )
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+                OTLPMetricExporter,
+            )
         else:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
                 OTLPSpanExporter,
             )
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+                OTLPMetricExporter,
+            )
         from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
     except Exception as exc:  # noqa: BLE001
@@ -365,14 +417,26 @@ def create_otel_trace_sink(
     resource = Resource.create(
         {"service.name": str(config.service_name or "openminion")}
     )
-    provider = TracerProvider(resource=resource)
+    trace_provider = TracerProvider(resource=resource)
     headers = dict(getattr(config, "headers", {}) or {})
     exporter_kwargs: dict[str, Any] = {"endpoint": endpoint}
     if headers:
         exporter_kwargs["headers"] = headers
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(**exporter_kwargs)))
-    tracer = provider.get_tracer("openminion.telemetry.otel")
-    return _OpenTelemetrySDKSink(tracer=tracer, provider=provider)
+    trace_provider.add_span_processor(
+        BatchSpanProcessor(OTLPSpanExporter(**exporter_kwargs))
+    )
+    metric_reader = PeriodicExportingMetricReader(
+        OTLPMetricExporter(**exporter_kwargs)
+    )
+    metric_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+    tracer = trace_provider.get_tracer("openminion.telemetry.otel")
+    meter = metric_provider.get_meter("openminion.telemetry.performance")
+    return _OpenTelemetrySDKSink(
+        tracer=tracer,
+        trace_provider=trace_provider,
+        meter=meter,
+        metric_provider=metric_provider,
+    )
 
 
 class OpenTelemetryTraceExporter:
@@ -394,6 +458,19 @@ class OpenTelemetryTraceExporter:
                 logger=self._logger,
             )
         self._pending_paired_spans: dict[str, dict[str, Any]] = {}
+        self._export_queue = (
+            NoncriticalExportQueue(
+                capacity=int(
+                    getattr(self._config, "noncritical_queue_capacity", 1024) or 0
+                ),
+                flush_timeout_seconds=float(
+                    getattr(self._config, "queue_flush_timeout_seconds", 2.0) or 0.0
+                ),
+                export_now=self._export_now,
+            )
+            if self._sink is not None
+            else None
+        )
 
     _MAX_PENDING_PAIRED_SPANS = 1024
 
@@ -412,6 +489,31 @@ class OpenTelemetryTraceExporter:
         # generic catchalls (OTEL-02 §4.3 item 12) do not reach the sink.
         if _EVENT_CLASSIFICATION.get(event_type) == _CLASS_EXCLUDED:
             return False
+        if self._export_queue is not None and self._export_queue.should_queue(event):
+            return self._export_queue.enqueue(event)
+        return self._export_now(event, trace_key=trace_key, event_type=event_type)
+
+    def queue_stats(self) -> dict[str, int]:
+        if self._export_queue is None:
+            return {
+                "queue_capacity": 0,
+                "queue_depth": 0,
+                "drops": 0,
+                "flush_failures": 0,
+            }
+        return self._export_queue.stats()
+
+    def _export_now(
+        self,
+        event: TelemetryEvent,
+        *,
+        trace_key: str | None = None,
+        event_type: str | None = None,
+    ) -> bool:
+        if self._sink is None:
+            return False
+        trace_key = trace_key or _trace_key_for_event(event)
+        event_type = event_type or str(event.event_type or "").strip()
         timestamp_ns = _timestamp_ns(event.timestamp)
         attributes = _attributes_for_event(
             event,
@@ -583,12 +685,15 @@ class OpenTelemetryTraceExporter:
     def close(self) -> None:
         if self._sink is None:
             return
+        if self._export_queue is not None:
+            self._export_queue.close()
         try:
             self._sink.close()
         except Exception as exc:  # noqa: BLE001
             self._logger.warning("OpenTelemetry exporter shutdown failed: %s", exc)
         finally:
             self._sink = None
+            self._export_queue = None
             self._pending_paired_spans.clear()
 
 
@@ -838,6 +943,7 @@ _METRIC_KIND_BY_EVENT: dict[str, str] = {
     "llm.cache.metrics": _KIND_GAUGE,
     "module.stats": _KIND_GAUGE,
     "tui.render": _KIND_HISTOGRAM,
+    "telemetry.queue.stats": _KIND_GAUGE,
 }
 
 

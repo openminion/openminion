@@ -7,6 +7,10 @@ from typing import Any, Dict, List, Optional, Mapping
 
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.runtime import APIRuntime
+from openminion.modules.context.trace_inspection import (
+    ContextTraceLookupError,
+    list_context_traces,
+)
 
 
 @dataclass
@@ -113,5 +117,30 @@ def append_session_event(
                 "created_at": event.created_at,
             },
         }
+    finally:
+        close_api_runtime_if_owned(active_runtime, own_runtime=own_runtime)
+
+
+def list_session_context_traces(
+    config_path: Optional[str],
+    *,
+    session_id: str,
+    turn_id: str | None = None,
+    limit: int = 50,
+    runtime: Optional[APIRuntime] = None,
+) -> Dict[str, Any]:
+    active_runtime, own_runtime = resolve_api_runtime(
+        config_path=config_path,
+        runtime=runtime,
+    )
+    try:
+        return list_context_traces(
+            active_runtime.sessions,
+            session_id=session_id,
+            turn_id=turn_id,
+            limit=limit,
+        )
+    except ContextTraceLookupError as exc:
+        raise SessionQueryError(str(exc), code=exc.code) from exc
     finally:
         close_api_runtime_if_owned(active_runtime, own_runtime=own_runtime)

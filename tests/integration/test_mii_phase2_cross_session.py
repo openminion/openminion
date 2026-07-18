@@ -252,6 +252,11 @@ def test_mid_session_recall_surfaces_prior_session_summary_after_turn_zero(
             role="outbound",
             body="Okay, Postgres for the artifact store.",
         )
+        sessions.append_message(
+            session_id=storage_session.id,
+            role="inbound",
+            body="Who owns the backfill runbook?",
+        )
         session_context.on_session_close(session_id=storage_session.id)
 
         busy_session = sessions.resolve_session(
@@ -648,7 +653,7 @@ def test_plan_snapshot_promotes_and_surfaces_on_fresh_session(
         connection.close()
 
 
-def test_tool_outcome_candidate_promotes_and_surfaces_on_fresh_session(
+def test_negative_tool_outcome_candidate_stays_staged_and_suppressed(
     tmp_path: Path,
 ) -> None:
     state_dir = tmp_path / "state"
@@ -694,6 +699,8 @@ def test_tool_outcome_candidate_promotes_and_surfaces_on_fresh_session(
                 },
                 tags=["tool_outcome", "tool_family:web", "outcome:failure"],
                 confidence=0.9,
+                claim_key="tool_outcome:web.search:failure:provider_timeout",
+                source_class="tool_result",
                 meta={
                     "reconfirmation_count": 2,
                     "retrieval_hit_count": 3,
@@ -720,8 +727,10 @@ def test_tool_outcome_candidate_promotes_and_surfaces_on_fresh_session(
                 limit=10,
             )
         )
-        assert len(promoted) == 1
-        promoted_id = promoted[0].id
+        assert promoted == []
+        staged = memory_service.candidate_get("cand_tool_outcome")
+        assert staged.status == "proposed"
+        assert staged.meta["trust_gate_reason_code"] == "BELOW_TRUST_THRESHOLD"
 
         context_api = create_context_adapter(
             mode="auto",
@@ -737,9 +746,8 @@ def test_tool_outcome_candidate_promotes_and_surfaces_on_fresh_session(
         )
 
         assert pack.context_manifest is not None
-        # negative tool outcomes remain durable operational history
-        # but are suppressed from prompt context across sessions.
-        assert promoted_id not in pack.context_manifest.recalled_memory
+        # Negative outcomes remain staged operational evidence until their
+        # trust/readiness score clears promotion policy.
         rendered = "\n".join(segment.content for segment in pack.segments)
         assert "tool_outcome:web.search:failure:PROVIDER_TIMEOUT" not in rendered
     finally:
@@ -917,6 +925,8 @@ def test_tool_success_candidate_promotes_and_surfaces_on_fresh_session(
                 },
                 tags=["tool_outcome", "tool_family:web", "outcome:success"],
                 confidence=0.9,
+                claim_key="tool_outcome:web.fetch:success",
+                source_class="tool_result",
                 meta={
                     "reconfirmation_count": 2,
                     "retrieval_hit_count": 3,

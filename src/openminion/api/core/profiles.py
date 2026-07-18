@@ -65,6 +65,7 @@ class RuntimeProfilesMixin:
     sessions: SessionStore
     idempotency: IdempotencyStore
     channels: ChannelRegistry
+    channel_supervisor: object | None
     plugins: PluginRegistry
     logger: logging.Logger
     provider: object

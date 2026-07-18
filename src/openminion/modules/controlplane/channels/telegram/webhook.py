@@ -133,6 +133,7 @@ class TelegramWebhookRunner:
         self._outbox_worker = outbox_worker
         self._outbox_thread: threading.Thread | None = None
         self._outbox_stop_event: threading.Event | None = None
+        self._outbox_managed_by_supervisor = False
         self._rate_limiter = rate_limiter
         self._brain_client = brain_client
         if self._pairing is None and self._state_store is not None:
@@ -223,6 +224,8 @@ class TelegramWebhookRunner:
         return self._http_listener
 
     def _start_outbox_worker(self, stop_event: threading.Event | None) -> None:
+        if self._outbox_managed_by_supervisor:
+            return
         if self._outbox_worker is None:
             return
         if self._outbox_thread is not None and self._outbox_thread.is_alive():
@@ -240,6 +243,8 @@ class TelegramWebhookRunner:
         thread.start()
 
     def _stop_outbox_worker(self) -> None:
+        if self._outbox_managed_by_supervisor:
+            return
         thread = self._outbox_thread
         if thread is None:
             return
@@ -719,6 +724,8 @@ class TelegramWebhookRunner:
 
     def _close_brain_client(self) -> None:
         """CPD-06: best-effort close (parallel to polling.py)."""
+        if self._outbox_managed_by_supervisor:
+            return
         brain = self._brain_client
         if brain is None or not hasattr(brain, "close"):
             return

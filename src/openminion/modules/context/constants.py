@@ -43,6 +43,7 @@ BLOCK_PRIORITY: dict[str, str] = {
     "instructions": "P1",
     "dialogue": "P1",
     "summary": "P2",
+    "continuation": "P0",
     "active_state": "P2",
     "retrieval": "P2",
     "skills": "P2",
@@ -71,6 +72,9 @@ CONTEXT_DROP_VISIBILITY_BUCKET_LABELS: dict[str, str] = {
     CONTEXT_BUCKET_RECENT_WINDOW: "recent window",
 }
 CONTEXT_DROP_VISIBILITY_NOTE_MAX_CHARS = 360
+CONTEXT_DECISION_TRACE_VERSION = "context-decision.v1"
+CONTEXT_DECISION_TRACE_MAX_REFERENCES = 512
+CONTEXT_DECISION_TRACE_MAX_BYTES = 64 * 1024
 
 COMPACTION_REASON_OK = "OK"
 COMPACTION_REASON_BELOW_THRESHOLD = "BELOW_THRESHOLD"

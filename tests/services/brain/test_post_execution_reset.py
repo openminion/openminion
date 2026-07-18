@@ -104,6 +104,11 @@ def _state_with_pending(*, pending: Any = _PENDING_COMMAND) -> dict[str, Any]:
         "cursor": 0,
         "constraints": [],
         "decision_feasibility_state": {},
+        "request_readiness": {
+            "posture": "direct",
+            "requested_outcome": "execute",
+            "state": "needs_operation_approval",
+        },
         "awaiting_continuation_reply": False,
         "continuation_guard_command_signature": "",
     }
@@ -158,6 +163,7 @@ def test_pending_confirmation_preserved_on_parsed_affirm_or_deny(
         "awaiting_user_choice": False
     }
     assert written["pending_confirmation_feasibility_report"] == {"summary": "fine"}
+    assert written["request_readiness"]["state"] == "needs_operation_approval"
 
 
 def test_pending_confirmation_preserved_on_cancel_via_both_paths() -> None:
@@ -188,6 +194,7 @@ def test_pending_confirmation_wiped_on_unrelated_input(user_input: str) -> None:
     assert written["pending_confirmation_success_criteria"] == {}
     assert written["pending_confirmation_feasibility_state"] == {}
     assert written["pending_confirmation_feasibility_report"] is None
+    assert written["request_readiness"] is None
 
 
 def test_no_pending_command_baseline_is_no_op() -> None:

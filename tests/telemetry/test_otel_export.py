@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from threading import Event
 
 from openminion.base.config import OTELExporterConfig
 from openminion.modules.telemetry.export.otel import (
+    _OpenTelemetrySDKSink,
     OpenTelemetryTraceExporter,
     RecordingOTELTraceSink,
 )
@@ -32,13 +34,16 @@ def test_tool_event_emits_span_record() -> None:
     )
 
     assert exported is True
-    assert len(sink.records) == 1
-    record = sink.records[0]
+    record = next(item for item in sink.records if item.kind == "span")
     assert record.kind == "span"
     assert record.trace_key == "trace-1"
     assert record.name == "tool.completed"
     assert record.attributes["openminion.payload.tool_name"] == "web.search"
     assert "openminion.payload.summary" not in record.attributes
+    assert any(
+        item.kind == "metric" and item.name == "openminion_tool_calls_total"
+        for item in sink.records
+    )
 
 
 def test_non_tool_event_emits_root_event_and_filters_prose_by_default() -> None:
@@ -338,8 +343,12 @@ def test_paired_completion_without_started_falls_through_classification() -> Non
 
     exporter.export(_event("llm.call.completed", llm_call_id="orphan-call"))
 
-    assert len(sink.records) == 1
-    assert sink.records[0].kind == "event"
+    span = next(item for item in sink.records if item.kind == "span")
+    assert span.name == "llm.call.completed"
+    assert any(
+        item.kind == "metric" and item.name == "openminion_model_calls_total"
+        for item in sink.records
+    )
 
 
 def test_paired_started_without_pairing_id_falls_back_to_event() -> None:
@@ -366,9 +375,12 @@ def test_tool_prefix_still_routes_to_span_via_legacy_fast_path() -> None:
 
     exporter.export(_event("tool.run", tool_name="web.search"))
 
-    assert len(sink.records) == 1
-    assert sink.records[0].kind == "span"
-    assert sink.records[0].name == "tool.run"
+    span = next(item for item in sink.records if item.kind == "span")
+    assert span.name == "tool.run"
+    assert any(
+        item.kind == "metric" and item.name == "openminion_tool_calls_total"
+        for item in sink.records
+    )
 
 
 def test_unknown_event_type_falls_back_to_root_span_event() -> None:
@@ -386,10 +398,71 @@ def test_otel_exporter_config_carries_backend_and_headers_fields() -> None:
         endpoint="https://collector.example.com/v1/traces",
         backend="tempo",
         headers={"Authorization": "Bearer redacted"},
+        noncritical_queue_capacity=64,
+        queue_flush_timeout_seconds=1.5,
     )
 
     assert config.backend == "tempo"
     assert config.headers == {"Authorization": "Bearer redacted"}
+    assert config.noncritical_queue_capacity == 64
+    assert config.queue_flush_timeout_seconds == 1.5
+
+
+def test_noncritical_events_flush_from_bounded_export_queue_on_close() -> None:
+    sink = RecordingOTELTraceSink()
+    exporter = OpenTelemetryTraceExporter(
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=4,
+        ),
+        sink=sink,
+    )
+
+    exported = exporter.export(
+        _event("policy.applied", criticality="noncritical", value=1)
+    )
+
+    assert exported is True
+    exporter.close()
+    assert any(item.name == "policy.applied" for item in sink.records)
+
+
+class _BlockingOTELSink(RecordingOTELTraceSink):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = Event()
+        self.release = Event()
+
+    def emit_event(self, **kwargs) -> None:
+        self.started.set()
+        self.release.wait(timeout=1.0)
+        super().emit_event(**kwargs)
+
+
+def test_noncritical_export_queue_drops_when_capacity_is_full() -> None:
+    sink = _BlockingOTELSink()
+    exporter = OpenTelemetryTraceExporter(
+        OTELExporterConfig(
+            enabled=True,
+            endpoint="http://collector:4318",
+            noncritical_queue_capacity=1,
+            queue_flush_timeout_seconds=1.0,
+        ),
+        sink=sink,
+    )
+
+    assert exporter.export(_event("policy.applied", trace_id="trace-1", criticality="noncritical"))
+    sink.started.wait(timeout=1.0)
+    assert exporter.export(_event("policy.applied", trace_id="trace-2", criticality="noncritical"))
+    dropped = exporter.export(
+        _event("policy.applied", trace_id="trace-3", criticality="noncritical")
+    )
+
+    assert dropped is False
+    assert exporter.queue_stats()["drops"] == 1
+    sink.release.set()
+    exporter.close()
 
 
 def test_otel_04_every_catalog_event_resolves_to_a_valid_class() -> None:
@@ -603,6 +676,107 @@ def test_otel_04_llm_cache_metrics_routes_to_metric_gauge() -> None:
     assert record.metric_kind == "gauge"
 
 
+def test_model_provider_event_emits_required_performance_metrics() -> None:
+    exporter, sink = _make_exporter()
+
+    exported = exporter.export(
+        _event(
+            "llm.call.completed",
+            transport="http",
+            profile_kind="stub",
+            outcome="ok",
+            call_count=1,
+            retry_count=0,
+            request_bytes=120,
+            response_bytes=80,
+            input_tokens=30,
+            output_tokens=20,
+            cached_tokens=5,
+            round_trip_ms=12,
+            session_id="forbidden-session-label",
+            model="forbidden-model-label",
+        )
+    )
+
+    assert exported is True
+    metrics = [item for item in sink.records if item.kind == "metric"]
+    names = {item.name for item in metrics}
+    assert {
+        "openminion_model_calls_total",
+        "openminion_model_retries_total",
+        "openminion_model_request_bytes",
+        "openminion_model_response_bytes",
+        "openminion_model_input_tokens",
+        "openminion_model_output_tokens",
+        "openminion_model_cached_tokens",
+        "openminion_provider_round_trip_ms",
+    }.issubset(names)
+    for metric in metrics:
+        assert "session_id" not in metric.attributes
+        assert "model" not in metric.attributes
+        assert metric.attributes["transport"] == "http"
+
+
+def test_tool_event_emits_call_duplicate_and_duration_metrics() -> None:
+    exporter, sink = _make_exporter()
+
+    exported = exporter.export(
+        _event(
+            "tool.completed",
+            tool_family="host",
+            outcome="ok",
+            call_count=2,
+            duplicate_call_count=1,
+            duration_ms=4,
+            tool_input={"path": "forbidden"},
+        )
+    )
+
+    assert exported is True
+    metrics = [item for item in sink.records if item.kind == "metric"]
+    names = {item.name for item in metrics}
+    assert {
+        "openminion_tool_calls_total",
+        "openminion_tool_duplicate_calls_total",
+        "openminion_tool_duration_ms",
+    }.issubset(names)
+    for metric in metrics:
+        assert metric.attributes == {"tool_family": "host", "outcome": "ok"}
+
+
+def test_telemetry_queue_stats_emit_depth_drop_failure_metrics() -> None:
+    exporter, sink = _make_exporter()
+
+    exported = exporter.export(
+        _event(
+            "telemetry.queue.stats",
+            criticality="noncritical",
+            outcome="ok",
+            queue_depth=3,
+            drops=1,
+            flush_failures=2,
+            flush_latency_ms=5,
+        )
+    )
+
+    assert exported is True
+    metrics = [item for item in sink.records if item.kind == "metric"]
+    names = {item.name for item in metrics}
+    assert {
+        "openminion_telemetry_queue_depth",
+        "openminion_telemetry_queue_drops_total",
+        "openminion_telemetry_flush_failures_total",
+        "openminion_telemetry_flush_latency_ms",
+    }.issubset(names)
+    derived = [
+        item for item in metrics if item.name.startswith("openminion_telemetry_")
+    ]
+    assert all(
+        item.attributes == {"criticality": "noncritical", "outcome": "ok"}
+        for item in derived
+    )
+
+
 def test_disabled_exporter_noops_even_for_classified_events() -> None:
     sink = RecordingOTELTraceSink()
     exporter = OpenTelemetryTraceExporter(
@@ -623,3 +797,101 @@ def test_disabled_exporter_noops_even_for_classified_events() -> None:
         assert exported is False, f"{event_type} should noop when disabled"
 
     assert sink.records == []
+
+
+class _FakeInstrument:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float, dict[str, object]]] = []
+
+    def record(self, value: float, attributes: dict[str, object]) -> None:
+        self.calls.append(("record", value, dict(attributes)))
+
+    def add(self, value: float, attributes: dict[str, object]) -> None:
+        self.calls.append(("add", value, dict(attributes)))
+
+
+class _FakeMeter:
+    def __init__(self) -> None:
+        self.instruments: dict[tuple[str, str], _FakeInstrument] = {}
+
+    def create_histogram(self, name: str, unit: str) -> _FakeInstrument:
+        instrument = _FakeInstrument()
+        self.instruments[(name, "histogram")] = instrument
+        return instrument
+
+    def create_counter(self, name: str, unit: str) -> _FakeInstrument:
+        instrument = _FakeInstrument()
+        self.instruments[(name, "counter")] = instrument
+        return instrument
+
+    def create_up_down_counter(self, name: str, unit: str) -> _FakeInstrument:
+        instrument = _FakeInstrument()
+        self.instruments[(name, "gauge")] = instrument
+        return instrument
+
+
+class _FakeTracer:
+    pass
+
+
+class _FakeTraceProvider:
+    def force_flush(self) -> None:
+        return
+
+    def shutdown(self) -> None:
+        return
+
+
+def test_sdk_sink_emits_histogram_counter_and_gauge_metrics() -> None:
+    meter = _FakeMeter()
+    sink = _OpenTelemetrySDKSink(
+        tracer=_FakeTracer(),
+        trace_provider=_FakeTraceProvider(),
+        meter=meter,
+        metric_provider=_FakeTraceProvider(),
+    )
+
+    common = {
+        "trace_key": "trace-1",
+        "session_id": "session-1",
+        "turn_id": "turn-1",
+        "timestamp_ns": 100,
+    }
+    sink.emit_metric(
+        **common,
+        metric_name="openminion_turn_wall_ms",
+        metric_kind="histogram",
+        value=12.0,
+        attributes={"route_class": "runtime"},
+    )
+    sink.emit_metric(
+        **common,
+        metric_name="openminion_cache_hits_total",
+        metric_kind="counter",
+        value=2.0,
+        attributes={"cache_family": "llm"},
+    )
+    sink.emit_metric(
+        **common,
+        metric_name="openminion_process_rss_bytes",
+        metric_kind="gauge",
+        value=100.0,
+        attributes={"process_family": "runtime"},
+    )
+    sink.emit_metric(
+        **common,
+        metric_name="openminion_process_rss_bytes",
+        metric_kind="gauge",
+        value=110.0,
+        attributes={"process_family": "runtime"},
+    )
+
+    histogram = meter.instruments[("openminion_turn_wall_ms", "histogram")]
+    counter = meter.instruments[("openminion_cache_hits_total", "counter")]
+    gauge = meter.instruments[("openminion_process_rss_bytes", "gauge")]
+    assert histogram.calls == [("record", 12.0, {"route_class": "runtime"})]
+    assert counter.calls == [("add", 2.0, {"cache_family": "llm"})]
+    assert gauge.calls == [
+        ("add", 100.0, {"process_family": "runtime"}),
+        ("add", 10.0, {"process_family": "runtime"}),
+    ]

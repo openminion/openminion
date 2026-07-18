@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -148,14 +147,11 @@ def test_verb_table_is_only_place_verbs_are_spelled() -> None:
     canonical_file = src_root / "cli" / "presentation" / "tool" / "blocks.py"
     for verb in verbs:
         pattern = rf'["\']({re.escape(verb)})["\']'
-        result = subprocess.run(
-            ["grep", "-rlnE", pattern, str(src_root)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        compiled = re.compile(pattern)
         hits = [
-            Path(line) for line in result.stdout.strip().splitlines() if line.strip()
+            path
+            for path in src_root.rglob("*.py")
+            if compiled.search(path.read_text(encoding="utf-8"))
         ]
         assert canonical_file in hits, (
             f"verb {verb!r} missing as a string literal in canonical {canonical_file}"

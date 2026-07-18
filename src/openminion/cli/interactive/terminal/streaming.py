@@ -66,6 +66,7 @@ def _looks_like_unified_diff(text: str) -> bool:
 _STREAM_CURSOR = "▍"
 _LIVE_STATUS_HINT = "esc interrupts"
 _BOUNDED_FALLBACK_THRESHOLD_S = 0.05
+_TOKEN_REFRESH_COALESCE_S = 0.05
 _LIVE_REFRESH_PER_SECOND = 4
 _TOOL_BLOCK_TRUNCATE_LINES = 6
 _TOOL_BLOCK_VERBOSE_MAX_LINES = 200
@@ -111,6 +112,7 @@ class TerminalTurnHandle:
         self._inline_status_visible = False
         self._terminal_writer: Callable[[Callable[[], None]], Any] | None = None
         self._prompt_safe_mode = False
+        self._last_token_refresh_at = 0.0
 
     def set_terminal_writer(self, writer: Callable[[Callable[[], None]], Any]) -> None:
         self._terminal_writer = writer
@@ -201,10 +203,22 @@ class TerminalTurnHandle:
             return
         if not s:
             return
+        first_visible_text = not self._buffer and bool(str(s))
         if self._in_thinking_frame:
             self._in_thinking_frame = False
         self._buffer += s
-        self._refresh_live()
+        if self._should_refresh_token_append(first_visible_text=first_visible_text):
+            self._refresh_live()
+
+    def _should_refresh_token_append(self, *, first_visible_text: bool) -> bool:
+        now = time.monotonic()
+        if first_visible_text:
+            self._last_token_refresh_at = now
+            return True
+        if now - self._last_token_refresh_at < _TOKEN_REFRESH_COALESCE_S:
+            return False
+        self._last_token_refresh_at = now
+        return True
 
     def append_tool_block(self, event: ToolEvent) -> None:
         self.append_renderable(_render_tool_block(event))

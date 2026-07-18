@@ -3,6 +3,9 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
+PLAN_REVIEW_REQUESTED_EVENT = "brain.plan_review.requested"
+PLAN_REVIEW_RESOLVED_EVENT = "brain.plan_review.resolved"
+
 _EVENT_PREFIX_ACTOR: dict[str, str] = {
     "llm.": "agent",
     "tool.": "tool",
@@ -119,4 +122,10 @@ class CanonicalEventLogger:
         )
 
 
-__all__ = ["CanonicalEventLogger", "derive_actor_type", "derive_importance"]
+__all__ = [
+    "CanonicalEventLogger",
+    "PLAN_REVIEW_REQUESTED_EVENT",
+    "PLAN_REVIEW_RESOLVED_EVENT",
+    "derive_actor_type",
+    "derive_importance",
+]

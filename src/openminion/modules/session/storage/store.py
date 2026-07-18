@@ -685,6 +685,28 @@ class SQLiteSessionStore(SessionStore):
             limit=limit,
         )
 
+    def get_event_by_id(self, event_id: str) -> dict[str, Any] | None:
+        return self._event_store.get_event_by_id(event_id)
+
+    def get_events_by_parent_and_type(
+        self,
+        parent_event_id: str,
+        event_type: str,
+    ) -> list[dict[str, Any]]:
+        return self._event_store.get_events_by_parent_and_type(
+            parent_event_id,
+            event_type,
+        )
+
+    def get_total_turn_count(self, session_id: str) -> int:
+        return self._event_store.get_total_turn_count(session_id)
+
+    def get_active_task_plan(self, session_id: str) -> dict[str, Any] | None:
+        return self._event_store.get_active_task_plan(session_id)
+
+    def latest_event_seq(self, session_id: str) -> int:
+        return self._latest_event_seq(session_id)
+
     def get_recent_tool_events(
         self, session_id: str, limit: int
     ) -> list[dict[str, Any]]:

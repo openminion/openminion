@@ -13,6 +13,7 @@ from openminion.cli.interactive.terminal import shell as terminal_shell
 from openminion.cli.interactive.terminal.shell import _run_agent_turn
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
+from openminion.cli.interactive.terminal.streaming import TerminalTurnHandle
 from openminion.cli.presentation.models import MessageKind
 
 
@@ -131,6 +132,29 @@ def test_single_chunk_takes_bounded_fallback() -> None:
     )
     output = buf.getvalue()
     assert "one shot" in output
+
+
+def test_token_refresh_keeps_first_text_immediate_and_coalesces_bursts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    buf = io.StringIO()
+    handle = TerminalTurnHandle(Console(file=buf, force_terminal=False, width=80))
+    refreshes: list[str] = []
+    times = iter([1.0, 1.01, 1.02, 1.07])
+
+    monkeypatch.setattr(
+        "openminion.cli.interactive.terminal.streaming.time.monotonic",
+        lambda: next(times),
+    )
+    monkeypatch.setattr(handle, "_refresh_live", lambda: refreshes.append("refresh"))
+
+    handle.append_token("a")
+    handle.append_token("b")
+    handle.append_token("c")
+    handle.append_token("d")
+
+    assert handle._buffer == "abcd"
+    assert refreshes == ["refresh", "refresh"]
 
 
 def test_agent_turn_passes_terminal_approval_callback() -> None:

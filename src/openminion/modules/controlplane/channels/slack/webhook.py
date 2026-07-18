@@ -51,12 +51,13 @@ class SlackHttpEventsRunner:
         self._log = logger or logging.getLogger(__name__)
         self._store = store
         self._outbox_worker = outbox_worker
+        self._outbox_managed_by_supervisor = False
         self._bot_user_id = bot_user_id
 
     def start(self, stop_event: Any | None = None) -> None:
         # The HTTP server is owned by deployment glue. This adapter exposes the
         # signed request handler and keeps the worker lifecycle consistent.
-        if self._outbox_worker is not None:
+        if self._outbox_worker is not None and not self._outbox_managed_by_supervisor:
             self._outbox_worker.run_once()
         event = stop_event if stop_event is not None else threading.Event()
         while not event.is_set():
@@ -109,4 +110,4 @@ class SlackHttpEventsRunner:
         return {"status": 200, "body": ""}
 
     def health(self) -> dict[str, Any]:
-        return {"ok": True, "mode": "http"}
+        return {"ok": None, "mode": "http", "connected": None}

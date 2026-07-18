@@ -157,6 +157,50 @@ class EventStore:
         rows = self._rs.query_dicts(query, tuple(params))
         return [row_to_session_event(row) for row in rows]
 
+    def get_event_by_id(self, event_id: str) -> dict[str, Any] | None:
+        rows = self._rs.query_dicts(
+            """
+            SELECT event_id, session_id, seq, timestamp, event_type, actor_type, actor_id,
+                   trace_id, span_id, task_id, parent_event_id, payload_json, refs_json,
+                   importance, redaction
+            FROM session_events
+            WHERE event_id = ?
+            """,
+            (event_id,),
+        )
+        return row_to_session_event(rows[0]) if rows else None
+
+    def get_events_by_parent_and_type(
+        self,
+        parent_event_id: str,
+        event_type: str,
+    ) -> list[dict[str, Any]]:
+        rows = self._rs.query_dicts(
+            """
+            SELECT event_id, session_id, seq, timestamp, event_type, actor_type, actor_id,
+                   trace_id, span_id, task_id, parent_event_id, payload_json, refs_json,
+                   importance, redaction
+            FROM session_events
+            WHERE parent_event_id = ? AND event_type = ?
+            ORDER BY timestamp ASC, event_id ASC
+            """,
+            (parent_event_id, event_type),
+        )
+        return [row_to_session_event(row) for row in rows]
+
+    def get_latest_continuation_projection(
+        self,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        events = self.get_events(
+            session_id,
+            types=["session.continuation.applied"],
+        )
+        if not events:
+            return None
+        payload = events[-1].get("payload")
+        return dict(payload) if isinstance(payload, dict) else None
+
     def get_recent_tool_events(
         self, session_id: str, limit: int
     ) -> list[dict[str, Any]]:

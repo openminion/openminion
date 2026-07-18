@@ -155,7 +155,6 @@ def resolve_runner_options(
     )
 
     import openminion.services.brain.service as _bridge_module
-
     try:
         memory_policy_snapshot = _bridge_module.build_memory_policy_snapshot(
             config=config
@@ -171,9 +170,8 @@ def resolve_runner_options(
             exc,
         )
 
-    runtime_brain = getattr(getattr(config, "runtime", object()), "brain", None)
     runtime_tss_enabled = getattr(
-        runtime_brain,
+        getattr(getattr(config, "runtime", object()), "brain", None),
         "tool_schema_shortlisting_enabled",
         None,
     )
@@ -194,6 +192,7 @@ def resolve_runner_options(
         clarify_config=(
             brain_config.clarify if brain_config is not None else ClarifyConfig()
         ),
+        request_handoff_enabled=bool(getattr(getattr(brain_config, "request_handoff", None), "enabled", False)),
         complex_request_plan_policy=str(
             getattr(
                 getattr(config, "runtime", object()),
@@ -211,7 +210,6 @@ def resolve_runner_options(
             else TOOL_SCHEMA_SHORTLISTING_ENABLED
         ),
     )
-
     aib_config = (
         brain_config.adaptive_budget.model_copy(deep=True)
         if brain_config is not None
@@ -220,7 +218,6 @@ def resolve_runner_options(
     )
     if aib_config is not None:
         options.adaptive_budget_config = aib_config
-
     return options
 
 
