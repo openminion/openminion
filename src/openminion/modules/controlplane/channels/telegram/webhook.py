@@ -141,6 +141,7 @@ class TelegramWebhookRunner:
                 config=self._config.pairing,
                 store=self._state_store,
                 controlplane_store=_resolve_controlplane_pairing_store(self._runtime),
+                audit_logger=self._audit_logger,
                 logger=self._log,
             )
         self._auth_store = _resolve_controlplane_auth_store(self._runtime)

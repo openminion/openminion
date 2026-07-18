@@ -7,9 +7,14 @@ from pathlib import Path
 from openminion.modules.controlplane.config import (
     load_config as load_controlplane_config,
 )
+from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
 from openminion.modules.controlplane.channels.telegram.bot_api import TelegramBotAPI
-from openminion.modules.controlplane.channels.telegram.config import load_config
+from openminion.modules.controlplane.channels.telegram.config import (
+    TelegramChannelConfig,
+    load_config,
+)
 from openminion.modules.controlplane.channels.telegram.pairing import (
+    PairCreateResult,
     TelegramPairingService,
 )
 from openminion.modules.controlplane.channels.telegram.polling import (
@@ -194,23 +199,18 @@ def _load_unified_compat_config(config_path: str | None):
 
 
 def create_pair_token(args: argparse.Namespace) -> None:
-    cfg = load_config(args.config, env=dict(os.environ)).telegram
-    if not cfg.enabled:
-        raise SystemExit("channels.telegram.enabled is false")
-
-    if args.user_id is None and args.chat_id is None:
-        raise SystemExit("pair-create requires --user-id and/or --chat-id")
-
-    scopes = _parse_scopes(args.scopes) or list(cfg.pairing.default_scopes)
-    store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
-    pairing = TelegramPairingService(config=cfg.pairing, store=store)
-    issued = pairing.issue_token(
-        expected_user_id=args.user_id,
-        expected_chat_id=args.chat_id,
-        token_ttl_seconds=args.ttl_seconds or cfg.pairing.token_ttl_seconds,
-        scopes=scopes,
-        token=args.token,
-    )
+    scopes = _parse_scopes(args.scopes)
+    try:
+        cfg, issued = issue_pair_token_for_cli(
+            config_path=args.config,
+            user_id=args.user_id,
+            chat_id=args.chat_id,
+            ttl_seconds=args.ttl_seconds,
+            scopes=scopes,
+            token=args.token,
+        )
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
 
     expires_iso = datetime.fromtimestamp(
         issued.expires_at_ts, tz=timezone.utc
@@ -230,7 +230,42 @@ def create_pair_token(args: argparse.Namespace) -> None:
         except Exception:
             pass
 
-    store.close()
+
+def issue_pair_token_for_cli(
+    *,
+    config_path: str | None,
+    user_id: int | str | None,
+    chat_id: int | str | None,
+    ttl_seconds: int | None = None,
+    scopes: list[str] | None = None,
+    token: str | None = None,
+) -> tuple[TelegramChannelConfig, PairCreateResult]:
+    cfg = load_config(config_path, env=dict(os.environ)).telegram
+    if not cfg.enabled:
+        raise RuntimeError("channels.telegram.enabled is false")
+    if user_id is None and chat_id is None:
+        raise RuntimeError("pair-create requires --user-id and/or --chat-id")
+
+    store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
+    cp_cfg = load_controlplane_config(config_path, env=dict(os.environ))
+    cp_store = SQLiteControlPlaneStore(cp_cfg.sqlite_path, wal=cp_cfg.wal)
+    try:
+        pairing = TelegramPairingService(
+            config=cfg.pairing,
+            store=store,
+            controlplane_store=cp_store,
+        )
+        issued = pairing.issue_token(
+            expected_user_id=int(user_id) if user_id is not None else None,
+            expected_chat_id=int(chat_id) if chat_id is not None else None,
+            token_ttl_seconds=ttl_seconds or cfg.pairing.token_ttl_seconds,
+            scopes=scopes or list(cfg.pairing.default_scopes),
+            token=token,
+        )
+        return cfg, issued
+    finally:
+        cp_store.close()
+        store.close()
 
 
 def _parse_scopes(raw: str | None) -> list[str]:

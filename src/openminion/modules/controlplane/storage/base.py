@@ -207,6 +207,64 @@ class ControlplaneStore(ABC):
     @abstractmethod
     def get_outbox(self, outbox_id: str) -> dict[str, Any] | None: ...
 
+    # -- Pair-token storage ------------------------------------------------
+
+    @abstractmethod
+    def issue_pair_token(
+        self,
+        *,
+        channel: str,
+        expected_account_id: str | None,
+        expected_chat_key: str | None,
+        scopes: list[str],
+        token: str | None,
+        ttl_seconds: int,
+        hash_pepper: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def consume_pair_token(
+        self,
+        *,
+        channel: str,
+        token: str,
+        consumer_account_id: str,
+        consumer_chat_key: str,
+        hash_pepper: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    @abstractmethod
+    def count_recent_pair_attempts(
+        self, *, channel: str, account_id: str, since_ts: int
+    ) -> int: ...
+
+    @abstractmethod
+    def count_recent_pair_attempts_for_chat(
+        self, *, channel: str, chat_key: str, since_ts: int
+    ) -> int: ...
+
+    @abstractmethod
+    def record_pair_attempt(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        chat_key: str | None,
+        token: str,
+        outcome: str,
+        hash_pepper: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    @abstractmethod
+    def has_pair_channel_data(self, *, channel: str) -> bool: ...
+
+    @abstractmethod
+    def bulk_insert_pair_tokens(self, rows: Any) -> int: ...
+
+    @abstractmethod
+    def bulk_insert_pair_attempts(self, rows: Any) -> int: ...
+
     # -- Pairings / principals ---------------------------------------------
 
     @abstractmethod

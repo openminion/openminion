@@ -378,6 +378,8 @@ def _build_telegram_adapter(
     from openminion.modules.controlplane.channels.telegram.webhook import (
         TelegramWebhookRunner,
     )
+    from openminion.modules.controlplane.pairing import ControlPlanePairingStore
+    from openminion.modules.controlplane.pairing.migration import PairingMigrationJob
 
     tg_cfg = telegram_from_base_config(
         base_config=config,
@@ -396,6 +398,12 @@ def _build_telegram_adapter(
         reply_config=tg_cfg.reply,
     )
     state_store = TelegramPollStateStore(tg_cfg.polling.state_sqlite_path)
+    PairingMigrationJob(
+        legacy_store=state_store,
+        new_store=ControlPlanePairingStore(components.store),
+        audit_logger=components.audit_logger,
+        logger=logger,
+    ).run_once()
     runner_cls = (
         TelegramWebhookRunner if tg_cfg.mode == "webhook" else TelegramPollingRunner
     )

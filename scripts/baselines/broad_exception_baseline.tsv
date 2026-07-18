@@ -204,7 +204,6 @@ src/openminion/modules/controlplane/channels/telegram/bot_api.py	1	0	current bro
 src/openminion/modules/controlplane/channels/telegram/cli.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/telegram/debug_provider.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/telegram/listener.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/controlplane/channels/telegram/pairing.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/telegram/polling.py	8	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/telegram/reactions.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/telegram/runtime/helpers.py	8	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

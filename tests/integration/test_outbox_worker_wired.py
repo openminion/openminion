@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -214,17 +212,17 @@ def test_outbox_worker_thread_joins_cleanly_on_stop(tmp_path: Path) -> None:
     try:
         runner = runtime.channels.get("telegram")
         assert isinstance(runner, TelegramPollingRunner)
+        assert getattr(runner, "_outbox_managed_by_supervisor", False) is True
 
-        stop_event = threading.Event()
-        runner._start_outbox_worker(stop_event)
-        thread = runner._outbox_thread
+        supervisor = runtime.channel_supervisor
+        assert supervisor is not None, "lifecycle did not wire channel supervisor"
+
+        supervisor._start_outbox_worker()
+        thread = supervisor._outbox_thread
         assert thread is not None and thread.is_alive()
 
-        time.sleep(0.05)
-        assert thread.is_alive()
-
-        stop_event.set()
-        runner.stop()
+        supervisor._stop_event.set()
+        supervisor._stop_outbox_worker(timeout_seconds=2.0)
         if thread.is_alive():
             thread.join(timeout=2.0)
         assert not thread.is_alive(), "outbox worker thread did not stop in time"

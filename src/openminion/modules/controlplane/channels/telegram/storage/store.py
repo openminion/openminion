@@ -472,3 +472,26 @@ class TelegramPollStateStore(BaseModuleSQLiteStore, TelegramPollStateStoreBase):
                 (int(chat_id), min_ts),
             ).fetchone()
         return int(row["cnt"] if row else 0)
+
+    def iter_pair_tokens(self) -> list[dict[str, object]]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT token_hash, token_hint, created_at_ts, expires_at_ts,
+                       used_at_ts, expected_user_id, expected_chat_id, scopes_json
+                FROM telegram_pair_tokens
+                ORDER BY created_at_ts ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def iter_pair_attempts(self) -> list[dict[str, object]]:
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT attempted_at_ts, token_hash_prefix, user_id, chat_id, outcome
+                FROM telegram_pair_attempts
+                ORDER BY attempted_at_ts ASC, id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]

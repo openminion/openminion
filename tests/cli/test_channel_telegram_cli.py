@@ -298,8 +298,13 @@ def test_run_starts_unified_profile_runner(
 
     runner = _Runner()
     config_path = _write_profile(tmp_path)
+    foreground = SimpleNamespace(
+        runner=runner,
+        outbox_worker=None,
+        stop=lambda: None,
+    )
     monkeypatch.setattr(
-        channel, "_build_unified_telegram_runner", lambda _config_path: runner
+        channel, "_build_unified_telegram_runtime", lambda _config_path: foreground
     )
 
     rc = channel.telegram_run(SimpleNamespace(config=str(config_path), once=True))

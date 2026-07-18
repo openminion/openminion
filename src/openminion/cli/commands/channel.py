@@ -36,8 +36,8 @@ from openminion.modules.controlplane.channels.telegram.config import (
     from_base_config as telegram_from_base_config,
     load_config as load_telegram_config,
 )
-from openminion.modules.controlplane.channels.telegram.pairing import (
-    TelegramPairingService,
+from openminion.modules.controlplane.channels.telegram.cli import (
+    issue_pair_token_for_cli,
 )
 from openminion.modules.controlplane.channels.telegram.state import (
     TelegramPollStateStore,
@@ -281,17 +281,13 @@ def create_telegram_pair_token_for_cli(
     if user_id is None and chat_id is None:
         raise RuntimeError("pair-create requires --user-id and/or --chat-id")
     selected_scopes = scopes or list(cfg.pairing.default_scopes)
-    store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
-    try:
-        pairing = TelegramPairingService(config=cfg.pairing, store=store)
-        issued = pairing.issue_token(
-            expected_user_id=int(user_id) if user_id is not None else None,
-            expected_chat_id=int(chat_id) if chat_id is not None else None,
-            token_ttl_seconds=ttl_seconds or cfg.pairing.token_ttl_seconds,
-            scopes=selected_scopes,
-        )
-    finally:
-        store.close()
+    _issued_cfg, issued = issue_pair_token_for_cli(
+        config_path=config_path,
+        user_id=user_id,
+        chat_id=chat_id,
+        ttl_seconds=ttl_seconds or cfg.pairing.token_ttl_seconds,
+        scopes=selected_scopes,
+    )
     expires_iso = datetime.fromtimestamp(
         issued.expires_at_ts, tz=timezone.utc
     ).isoformat()
