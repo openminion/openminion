@@ -253,7 +253,10 @@ src/openminion/modules/memory/runtime/candidate_lifecycle.py	3	1	current broad-h
 src/openminion/modules/memory/runtime/consolidation/eligibility.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/consolidation/extract.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/consolidation/merge.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/memory/runtime/gc.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/memory/runtime/gc_capacity.py	1	0	current broad-handler baseline; transaction rollback boundary moved from gc.py by MRGC
+src/openminion/modules/memory/runtime/gc_confidence.py	1	0	current broad-handler baseline; transaction rollback boundary moved from gc.py by MRGC
+src/openminion/modules/memory/runtime/gc_insights.py	1	0	current broad-handler baseline; transaction rollback boundary moved from gc.py by MRGC
+src/openminion/modules/memory/runtime/gc_summaries.py	1	0	current broad-handler baseline; transaction rollback boundary moved from gc.py by MRGC
 src/openminion/modules/memory/runtime/identity_seeder.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/purge.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/memory/runtime/remote_transport.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

@@ -118,9 +118,6 @@ src/openminion/modules/memory/diagnostics/operability.py	compute_postgres_stats	
 src/openminion/modules/memory/portability/merger.py	MemoryMerger._import_direct_mode	165	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/consolidation/extract.py	extract_consolidation_payload	129	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/consolidation/merge.py	apply_merge_decisions_via_service	128	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/memory/runtime/gc.py	apply_confidence_decay	162	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/memory/runtime/gc.py	compress_old_summaries	179	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/memory/runtime/gc.py	enforce_scope_capacity	117	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/retrieval_pipeline.py	RetrievalPipeline.rank_and_format	110	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/session_lifecycle.py	SessionLifecycleMixin._format_session_summaries	248	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/memory/runtime/staging.py	stage_extracted_candidates	147	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
