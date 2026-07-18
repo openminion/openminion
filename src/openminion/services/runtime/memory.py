@@ -7,6 +7,7 @@ from openminion.modules.artifact.refs import create_default_artifactctl
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.modules.memory.backends import (
     BuiltinKnowledgeBackend,
+    KnowledgeBackend,
     NoneKnowledgeBackend,
     instantiate_backend,
     register_backend_factory,
@@ -162,17 +163,17 @@ def _build_memory_v2_gateway_adapter(
 
 
 def _register_memory_backend_factories(*, audited_store: Any) -> None:
-    def _build_sophiagraph_backend(**kwargs: Any):
+    def _build_sophiagraph_backend(**kwargs: Any) -> KnowledgeBackend:
         return BuiltinKnowledgeBackend(
             audited_store,
             export_snapshot_fn=_export_bundle_snapshot_placeholder,
             import_snapshot_fn=_import_bundle_snapshot_placeholder,
         )
 
-    def _build_none_backend(**kwargs: Any):
+    def _build_none_backend(**kwargs: Any) -> KnowledgeBackend:
         return NoneKnowledgeBackend()
 
-    def _build_external_backend(**kwargs: Any):
+    def _build_external_backend(**kwargs: Any) -> KnowledgeBackend:
         config = kwargs.get("config")
         provider = getattr(config, "external_adapter", None) or "<unset>"
         backend, _report = resolve_external_backend(
