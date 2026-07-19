@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -22,6 +23,8 @@ def build_terminal_approval_callback(
     pause_prompt: Callable[[], Any] | None = None,
     resume_prompt: Callable[[], None] | None = None,
 ) -> Callable[[str, dict[str, Any], Any], Any]:
+    approval_lock = asyncio.Lock()
+
     async def approval_callback(
         tool_name: str,
         args: dict[str, Any],
@@ -31,17 +34,20 @@ def build_terminal_approval_callback(
         normalized = str(tool_name or "").strip()
         if normalized and normalized in session_grants:
             return True
-        prompt = format_terminal_approval_prompt(normalized, dict(args or {}))
-        if callable(pause_prompt):
-            await pause_prompt()
-        try:
-            decision = await overlay.present_approval_async(prompt)
-        finally:
-            if callable(resume_prompt):
-                resume_prompt()
-        if decision == "always" and normalized:
-            session_grants.add(normalized)
-            return True
-        return decision == "allow"
+        async with approval_lock:
+            if normalized and normalized in session_grants:
+                return True
+            prompt = format_terminal_approval_prompt(normalized, dict(args or {}))
+            if callable(pause_prompt):
+                await pause_prompt()
+            try:
+                decision = await overlay.present_approval_async(prompt)
+            finally:
+                if callable(resume_prompt):
+                    resume_prompt()
+            if decision == "always" and normalized:
+                session_grants.add(normalized)
+                return True
+            return decision == "allow"
 
     return approval_callback

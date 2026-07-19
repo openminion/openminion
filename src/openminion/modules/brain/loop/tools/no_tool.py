@@ -29,6 +29,10 @@ from .postprocess.rules import (
     _looks_like_unexecutable_tool_payload_text,
     _raw_tool_payload_retry_allowed,
 )
+from .postprocess.mutation_closeout import (
+    MUTATING_FILE_CLOSEOUT_KEY,
+    mutating_file_evidence_fallback_text,
+)
 from .iteration.helpers import (
     _count_substantive_non_control_tool_results,
     _requires_typed_finalization_contract,
@@ -327,17 +331,27 @@ class AdaptiveLoopRunnerNoToolMixin:
         if (
             normalized_final_text
             and _looks_like_unexecutable_tool_payload_text(normalized_final_text)
-            and _raw_tool_payload_retry_allowed(
+        ):
+            if _raw_tool_payload_retry_allowed(
                 self.loop_state,
                 text=normalized_final_text,
-            )
-        ):
-            return self._retry_with_system_message(
-                "Your previous reply emitted raw tool markup, a raw tool-result "
-                "JSON envelope, or an unexecutable tool envelope. Use existing "
-                "tool results and return only the final plain-text answer.",
-                discard_assistant_text=normalized_final_text,
-            )
+            ):
+                return self._retry_with_system_message(
+                    "Your previous reply emitted raw tool markup, a raw tool-result "
+                    "JSON envelope, or an unexecutable tool envelope. Use existing "
+                    "tool results and return only the final plain-text answer.",
+                    discard_assistant_text=normalized_final_text,
+                )
+            if bool(self.loop_state.scratchpad.get(MUTATING_FILE_CLOSEOUT_KEY, False)):
+                fallback_final_text = mutating_file_evidence_fallback_text(
+                    self.loop_state
+                )
+                if fallback_final_text:
+                    self.loop_state.scratchpad[
+                        "mutating_file_closeout_used_evidence_fallback"
+                    ] = True
+                    final_text = fallback_final_text
+                    normalized_final_text = fallback_final_text
         if (
             normalized_final_text
             and _looks_like_structured_status_payload(normalized_final_text)

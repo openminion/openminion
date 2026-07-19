@@ -349,9 +349,9 @@ def test_inline_approval_menu_uses_latest_overlapping_prompt() -> None:
         ("[A] Allow once [S] Session allow [D] Deny", "yes", "a"),
         ("[A] Allow once [S] Session allow [D] Deny", "session", "s"),
         ("[A] Allow once [S] Session allow [D] Deny", "no", "d"),
-        ("[y]es / [N]o / [a]lways:", "yes", "y"),
-        ("[y]es / [N]o / [a]lways:", "session", "a"),
-        ("[y]es / [N]o / [a]lways:", "no", "n"),
+        ("[y]es / [N]o / [a]lways:", "yes", "yes"),
+        ("[y]es / [N]o / [a]lways:", "session", "always"),
+        ("[y]es / [N]o / [a]lways:", "no", "no"),
     ),
 )
 def test_inline_approval_key_matches_the_visible_menu(
@@ -399,10 +399,10 @@ asyncio.run(main())
         FocusProbe._submit_inline_approval(session, "session")
         session.wait_for_after(r"file\.write\(module\.py\)", offset=0, timeout=5)
         FocusProbe._submit_inline_approval(session, "session")
-        transcript = session.wait_for_after(r"SECOND:a", offset=0, timeout=5)
+        transcript = session.wait_for_after(r"SECOND:always", offset=0, timeout=5)
 
-    assert "FIRST:a" in transcript
-    assert "FIRST:aa" not in transcript
+    assert "FIRST:always" in transcript
+    assert "FIRST:alwaysalways" not in transcript
 
 
 def test_active_turn_busy_accepts_current_responding_footer() -> None:

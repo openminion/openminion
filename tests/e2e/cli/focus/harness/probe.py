@@ -131,6 +131,19 @@ def _compact_approval_answered(
     ) is not None
 
 
+def _compact_approval_submitted(
+    screen_text: str,
+    *,
+    match: re.Match[str],
+) -> bool:
+    trailing = screen_text[match.end() :]
+    return re.match(
+        r"[ \t]*(?:y|yes|a|always|n|no)[ \t]*(?:\n|\r\n)",
+        trailing,
+        re.IGNORECASE,
+    ) is not None
+
+
 def inline_approval_fingerprint(screen_text: str) -> str | None:
     """Identify the active approval generation without relying on redraw count."""
     menu = inline_approval_menu(screen_text)
@@ -165,7 +178,7 @@ def inline_approval_key(screen_text: str, reply: str) -> str:
     menu = inline_approval_menu(screen_text)
     decision = str(reply or "").strip().lower()
     keys = {
-        "compact": {"yes": "y", "session": "a", "no": "n"},
+        "compact": {"yes": "yes", "session": "always", "no": "no"},
         "legacy": {"yes": "a", "session": "s", "no": "d"},
     }
     key = keys.get(menu or "", {}).get(decision)
@@ -371,6 +384,32 @@ class FocusProbe:
         approval_screen = session.screen_text
         approval_fingerprint = inline_approval_fingerprint(approval_screen)
         menu = inline_approval_menu(approval_screen)
+        if menu == "compact":
+            stable_polls = 0
+            settle_deadline = time.monotonic() + 3.0
+            while time.monotonic() < settle_deadline:
+                time.sleep(0.05)
+                current_screen = session.screen_text
+                current_fingerprint = inline_approval_fingerprint(current_screen)
+                if "Approval required:" in str(current_fingerprint or ""):
+                    approval_screen = current_screen
+                    approval_fingerprint = current_fingerprint
+                    break
+                if current_screen == approval_screen:
+                    stable_polls += 1
+                    if (
+                        stable_polls >= 3
+                        and "Approval required:" in str(approval_fingerprint or "")
+                    ):
+                        break
+                else:
+                    approval_screen = current_screen
+                    approval_fingerprint = inline_approval_fingerprint(
+                        approval_screen
+                    )
+                    stable_polls = 0
+            approval_fingerprint = inline_approval_fingerprint(approval_screen)
+            menu = inline_approval_menu(approval_screen)
         key = inline_approval_key(approval_screen, reply)
         if menu == "compact":
             session.send(f"{key}\r")
@@ -382,6 +421,20 @@ class FocusProbe:
             screen_text = session.screen_text
             current_fingerprint = inline_approval_fingerprint(screen_text)
             if current_fingerprint is None:
+                if menu == "compact":
+                    compact_matches = list(
+                        _COMPACT_INLINE_APPROVAL_RE.finditer(screen_text)
+                    )
+                    if compact_matches and not _interactive_surface_follows(
+                        screen_text,
+                        offset=compact_matches[-1].end(),
+                    ) and not _compact_approval_submitted(
+                        screen_text,
+                        match=compact_matches[-1],
+                    ):
+                        clear_polls = 0
+                        time.sleep(0.05)
+                        continue
                 clear_polls += 1
                 if clear_polls >= 3:
                     return

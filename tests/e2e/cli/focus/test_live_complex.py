@@ -42,7 +42,7 @@ def test_live_focus_complex_scenarios(
         active_probe.wait_ready(session)
         try:
             transcript = active_probe.run_turn(session, scenario)
-        except Exception:
+        except BaseException:
             write_transcript(root, scenario.scenario_id, session.transcript)
             raise
         write_transcript(root, scenario.scenario_id, transcript)
