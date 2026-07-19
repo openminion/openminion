@@ -402,20 +402,54 @@ class GatewayService:
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
     ) -> Message:
-        return await self._turn_runner.run(
-            channel=channel,
-            target=target,
-            body=body,
-            session_id=session_id,
-            request_id=request_id,
-            inbound_metadata=inbound_metadata,
-            deliver=deliver,
-            forced_tools=forced_tools,
-            capability_category=capability_category,
-            typed_turn_intent=typed_turn_intent,
-            progress_callback=progress_callback,
-            approval_callback=approval_callback,
-        )
+        lease = None
+        session_value = str(session_id or "").strip()
+        acquire_lease = getattr(self._sessions, "acquire_session_turn_lease", None)
+        if session_value and not callable(acquire_lease):
+            self._logger.warning(
+                "session turn lease unavailable; explicit session turn proceeds "
+                "without same-session serialization session_id=%s",
+                session_value,
+            )
+        if session_value and callable(acquire_lease):
+            self._sessions.resolve_session(
+                agent_id=self._agent_id,
+                channel=channel,
+                target=target,
+                session_id=session_value,
+                metadata=inbound_metadata,
+            )
+            request_value = str(request_id or "").strip() or uuid4().hex
+            lease = acquire_lease(
+                session_value,
+                owner=f"gateway:{request_value}",
+                request_id=request_value,
+                ttl_s=60,
+            )
+        try:
+            return await self._turn_runner.run(
+                channel=channel,
+                target=target,
+                body=body,
+                session_id=session_id,
+                request_id=request_id,
+                inbound_metadata=inbound_metadata,
+                deliver=deliver,
+                forced_tools=forced_tools,
+                capability_category=capability_category,
+                typed_turn_intent=typed_turn_intent,
+                progress_callback=progress_callback,
+                approval_callback=approval_callback,
+            )
+        finally:
+            if lease is not None:
+                release_lease = getattr(self._sessions, "release_session_turn_lease", None)
+                if callable(release_lease):
+                    release_lease(
+                        session_value,
+                        owner=str(getattr(lease, "owner", "")),
+                        fence_token=int(getattr(lease, "fence_token", 0)),
+                    )
 
     async def run_once(
         self,
@@ -506,6 +540,7 @@ class GatewayService:
         state: str,
         current_step: str,
         payload: Optional[dict[str, Any]] = None,
+        session_turn_fence_token: int | None = None,
     ) -> None:
         try:
             append_run_state_event(
@@ -515,6 +550,7 @@ class GatewayService:
                 state=state,
                 current_step=current_step,
                 payload=payload,
+                session_turn_fence_token=session_turn_fence_token,
             )
         except Exception as exc:
             self._logger.warning(

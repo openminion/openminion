@@ -68,7 +68,7 @@ class _SlowCaptureProvider(LLMProvider):
 
     async def generate(self, request: ProviderRequest) -> ProviderResponse:
         self.requests.append(request)
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)
         return ProviderResponse(
             text=f"slow::{request.user_message}", model="slow-capture-model"
         )

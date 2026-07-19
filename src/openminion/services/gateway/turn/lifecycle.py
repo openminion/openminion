@@ -32,6 +32,7 @@ class _GatewayTurnLifecycleOps:
         thread_id: str | None,
         attach_id: str | None,
         payload: dict[str, str],
+        session_turn_fence_token: int | None = None,
     ) -> None:
         try:
             append_lifecycle_event(
@@ -42,6 +43,7 @@ class _GatewayTurnLifecycleOps:
                 thread_id=thread_id,
                 attach_id=attach_id,
                 payload=payload,
+                session_turn_fence_token=session_turn_fence_token,
             )
         except Exception as exc:
             self._logger.debug(
@@ -60,6 +62,7 @@ class _GatewayTurnLifecycleOps:
         thread_id: str | None,
         attach_id: str | None,
         payload: dict[str, str],
+        session_turn_fence_token: int | None = None,
     ) -> None:
         append_lifecycle_event(
             self._sessions,
@@ -69,6 +72,7 @@ class _GatewayTurnLifecycleOps:
             thread_id=thread_id,
             attach_id=attach_id,
             payload=payload,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
     def emit_terminal_run_state(
@@ -85,6 +89,7 @@ class _GatewayTurnLifecycleOps:
         typed_terminal_resolver: Optional[
             Callable[..., Optional[tuple[Any, ...]]]
         ] = None,
+        session_turn_fence_token: int | None = None,
     ) -> None:
         resolver = typed_terminal_resolver or self._typed_terminal_resolver
         if resolver is not None:
@@ -134,13 +139,16 @@ class _GatewayTurnLifecycleOps:
                             exc,
                         )
 
-        self._emit_run_state(
-            session_id=session_id,
-            run_id=run_id,
-            state=legacy_state,
-            current_step=current_step,
-            payload=payload,
-        )
+        kwargs: dict[str, Any] = {
+            "session_id": session_id,
+            "run_id": run_id,
+            "state": legacy_state,
+            "current_step": current_step,
+            "payload": payload,
+        }
+        if session_turn_fence_token is not None:
+            kwargs["session_turn_fence_token"] = session_turn_fence_token
+        self._emit_run_state(**kwargs)
 
     @staticmethod
     def corr_payload(

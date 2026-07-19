@@ -23,6 +23,99 @@ from openminion.modules.task.run import (
 
 
 class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
+    def _emit_agent_running_state(
+        self,
+        *,
+        routing: Any,
+        run_id: str,
+        lifecycle_payload: dict[str, str],
+        turn_context: Any,
+        setup_cost_route: Any,
+        session_turn_fence_token: int | None,
+    ) -> None:
+        self._emit_run_state(
+            session_id=routing.session.id,
+            run_id=run_id,
+            state=RUN_STATE_RUNNING,
+            current_step="agent.generate",
+            payload=self._lifecycle_ops.corr_payload(
+                normalized_request_id=routing.normalized_request_id,
+                lifecycle_payload=lifecycle_payload,
+                extra={
+                    "history_count": len(turn_context.history),
+                    "memory_capsule_strategy": self._memory_capsule_strategy,
+                    "memory_capsule_cache_hit": str(
+                        turn_context.capsule_cache_hit
+                    ).lower(),
+                    "memory_capsule_chars": len(turn_context.memory_context),
+                    "memory_dynamic_retrieval_enabled": str(
+                        self._memory_dynamic_retrieval_enabled
+                    ).lower(),
+                    "memory_dynamic_retrieval_chars": len(
+                        turn_context.memory_retrieval_context
+                    ),
+                    "setup_cost_route": setup_cost_route.label,
+                    "setup_cost_route_reason": setup_cost_route.reason,
+                },
+            ),
+            session_turn_fence_token=session_turn_fence_token,
+        )
+
+    def _complete_suppressed_idle_tick(
+        self,
+        *,
+        routing: Any,
+        run_id: str,
+        response: Any,
+        lifecycle_payload: dict[str, str],
+        typed_terminal_resolver: Callable[..., Any] | None,
+        session_turn_fence_token: int | None,
+    ) -> Message:
+        if hasattr(self._sessions, "finish_run_record"):
+            self._sessions.finish_run_record(
+                run_id,
+                status="completed",
+                input_tokens=0,
+                output_tokens=0,
+            )
+        outbound = self._suppressed_outbound_for_response(
+            routing=routing,
+            run_id=run_id,
+            response=response,
+        )
+        self._lifecycle_ops.emit_turn_event(
+            session_id=routing.session.id,
+            event_type="response.suppressed",
+            conversation_id=routing.conversation_id or None,
+            thread_id=routing.thread_id or None,
+            attach_id=routing.attach_id or None,
+            payload={
+                "run_id": run_id,
+                "reason": "pae_idle_tick_noop",
+            },
+            session_turn_fence_token=session_turn_fence_token,
+        )
+        self._lifecycle_ops.emit_terminal_run_state(
+            session_id=routing.session.id,
+            run_id=run_id,
+            legacy_state=RUN_STATE_COMPLETED,
+            current_step="turn.completed",
+            payload=self._lifecycle_ops.corr_payload(
+                normalized_request_id=routing.normalized_request_id,
+                lifecycle_payload=lifecycle_payload,
+                extra={
+                    "response_chars": 0,
+                    "suppressed": "pae_idle_tick_noop",
+                },
+            ),
+            conversation_id=routing.conversation_id or None,
+            thread_id=routing.thread_id or None,
+            attach_id=routing.attach_id or None,
+            typed_terminal_resolver=typed_terminal_resolver,
+            session_turn_fence_token=session_turn_fence_token,
+        )
+        return outbound
+
     async def run(
         self,
         *,
@@ -38,6 +131,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
         typed_turn_intent: TypedTurnIntent | None = None,
         progress_callback: Callable[[object], None] | None = None,
         approval_callback: Callable[..., Any] | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> Message:
         with active_chat_phase("gateway_routing"):
             routing = self._resolve_routing(
@@ -95,31 +189,13 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
             typed_turn_intent=typed_turn_intent,
         )
 
-        self._emit_run_state(
-            session_id=routing.session.id,
+        self._emit_agent_running_state(
+            routing=routing,
             run_id=run_id,
-            state=RUN_STATE_RUNNING,
-            current_step="agent.generate",
-            payload=self._lifecycle_ops.corr_payload(
-                normalized_request_id=routing.normalized_request_id,
-                lifecycle_payload=lifecycle_payload,
-                extra={
-                    "history_count": len(turn_context.history),
-                    "memory_capsule_strategy": self._memory_capsule_strategy,
-                    "memory_capsule_cache_hit": str(
-                        turn_context.capsule_cache_hit
-                    ).lower(),
-                    "memory_capsule_chars": len(turn_context.memory_context),
-                    "memory_dynamic_retrieval_enabled": str(
-                        self._memory_dynamic_retrieval_enabled
-                    ).lower(),
-                    "memory_dynamic_retrieval_chars": len(
-                        turn_context.memory_retrieval_context
-                    ),
-                    "setup_cost_route": setup_cost_route.label,
-                    "setup_cost_route_reason": setup_cost_route.reason,
-                },
-            ),
+            lifecycle_payload=lifecycle_payload,
+            turn_context=turn_context,
+            setup_cost_route=setup_cost_route,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
         try:
@@ -137,51 +213,18 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                     prior_transcript_available=turn_context.prior_transcript_available,
                     progress_callback=progress_callback,
                     approval_callback=approval_callback,
-                )
+                    session_turn_fence_token=session_turn_fence_token,
+            )
 
             if _response_is_pae_idle_tick_noop(response):
-                if hasattr(self._sessions, "finish_run_record"):
-                    self._sessions.finish_run_record(
-                        run_id,
-                        status="completed",
-                        input_tokens=0,
-                        output_tokens=0,
-                    )
-                outbound = self._suppressed_outbound_for_response(
+                return self._complete_suppressed_idle_tick(
                     routing=routing,
                     run_id=run_id,
                     response=response,
-                )
-                self._lifecycle_ops.emit_turn_event(
-                    session_id=routing.session.id,
-                    event_type="response.suppressed",
-                    conversation_id=routing.conversation_id or None,
-                    thread_id=routing.thread_id or None,
-                    attach_id=routing.attach_id or None,
-                    payload={
-                        "run_id": run_id,
-                        "reason": "pae_idle_tick_noop",
-                    },
-                )
-                self._lifecycle_ops.emit_terminal_run_state(
-                    session_id=routing.session.id,
-                    run_id=run_id,
-                    legacy_state=RUN_STATE_COMPLETED,
-                    current_step="turn.completed",
-                    payload=self._lifecycle_ops.corr_payload(
-                        normalized_request_id=routing.normalized_request_id,
-                        lifecycle_payload=lifecycle_payload,
-                        extra={
-                            "response_chars": 0,
-                            "suppressed": "pae_idle_tick_noop",
-                        },
-                    ),
-                    conversation_id=routing.conversation_id or None,
-                    thread_id=routing.thread_id or None,
-                    attach_id=routing.attach_id or None,
+                    lifecycle_payload=lifecycle_payload,
                     typed_terminal_resolver=typed_terminal_resolver,
+                    session_turn_fence_token=session_turn_fence_token,
                 )
-                return outbound
 
             with active_chat_phase("response_persistence"):
                 outbound, outbound_record = self._build_outbound_and_persist(
@@ -190,6 +233,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                     response=response,
                     memory_context_meta=turn_context.memory_context_meta,
                     memory_retrieval_meta=turn_context.memory_retrieval_meta,
+                    session_turn_fence_token=session_turn_fence_token,
                 )
 
             with active_chat_phase("memory_write"):
@@ -200,6 +244,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                     body=body,
                     run_id=run_id,
                     outbound=outbound,
+                    session_turn_fence_token=session_turn_fence_token,
                 )
 
             input_tokens, output_tokens = self._usage_totals_from_response(response)
@@ -243,6 +288,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                 thread_id=routing.thread_id or None,
                 attach_id=routing.attach_id or None,
                 typed_terminal_resolver=typed_terminal_resolver,
+                session_turn_fence_token=session_turn_fence_token,
             )
             self._logger.warning(
                 "gateway turn failed channel=%s target=%s session_id=%s run_id=%s request_id=%s error=%s",

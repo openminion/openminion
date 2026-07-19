@@ -226,6 +226,16 @@ def _handle_v1_turn(
             retry_after_ms=1000,
         )
     except RuntimeError as exc:
+        if getattr(exc, "code", "") == "SESSION_TURN_BUSY":
+            retry_after_ms = max(1000, int(getattr(exc, "retry_after_s", 1)) * 1000)
+            return error_route_result(
+                HTTPStatus.CONFLICT,
+                code="SESSION_TURN_BUSY",
+                message=str(exc),
+                details={"path": path, "retry_after_s": retry_after_ms // 1000},
+                retryable=True,
+                retry_after_ms=retry_after_ms,
+            )
         return error_route_result(
             HTTPStatus.SERVICE_UNAVAILABLE,
             code="runtime_unavailable",

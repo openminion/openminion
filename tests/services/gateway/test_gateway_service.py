@@ -754,6 +754,77 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         self.assertEqual(len(provider.requests), 1)
         self.assertEqual(len(sink.sent), 1)
 
+    def test_gateway_rejects_distinct_concurrent_explicit_session_turns(self) -> None:
+        provider = _SlowCaptureProvider()
+        gateway, sink = self._build_gateway(
+            provider=provider,
+            logger_name="openminion.tests.gateway.session_turn_lease",
+            agent_logger_name="openminion.tests.gateway.agent.session_turn_lease",
+        )
+        session_id = "session-turn-lease"
+
+        async def _run_concurrent():
+            return await asyncio.gather(
+                gateway.handle_message(
+                    channel="console",
+                    target="local-user",
+                    body="slow first",
+                    session_id=session_id,
+                    request_id="req-one",
+                ),
+                gateway.handle_message(
+                    channel="console",
+                    target="local-user",
+                    body="slow second",
+                    session_id=session_id,
+                    request_id="req-two",
+                ),
+                return_exceptions=True,
+            )
+
+        first, second = asyncio.run(_run_concurrent())
+        results = [first, second]
+        messages = [item for item in results if isinstance(item, Message)]
+        errors = [
+            item
+            for item in results
+            if getattr(item, "code", None) == "SESSION_TURN_BUSY"
+        ]
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(errors[0].code, "SESSION_TURN_BUSY")
+        self.assertEqual(len(provider.requests), 1)
+        self.assertEqual(len(sink.sent), 1)
+
+    def test_gateway_warns_when_explicit_session_turn_leases_are_unavailable(
+        self,
+    ) -> None:
+        gateway, _sink = self._build_gateway(
+            provider=self.provider,
+            logger_name="openminion.tests.gateway.session_turn_lease_disabled",
+            agent_logger_name="openminion.tests.gateway.agent.session_turn_lease_disabled",
+        )
+        setattr(self.sessions, "acquire_session_turn_lease", None)
+
+        with self.assertLogs(
+            "openminion.tests.gateway.session_turn_lease_disabled",
+            level="WARNING",
+        ) as captured:
+            asyncio.run(
+                gateway.handle_message(
+                    channel="console",
+                    target="local-user",
+                    body="lease unavailable",
+                    session_id="session-turn-lease-disabled",
+                    request_id="req-disabled",
+                )
+            )
+
+        assert any(
+            "session turn lease unavailable" in message
+            for message in captured.output
+        )
+
     def test_session_continuity_across_restart_with_explicit_session_id(self) -> None:
         explicit_session_id = "session-restart-1"
         asyncio.run(
