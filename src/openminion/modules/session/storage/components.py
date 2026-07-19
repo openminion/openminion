@@ -6,7 +6,14 @@ if TYPE_CHECKING:
     from .store import SQLiteSessionStore
 
 
-def create_snapshot(store: Any, session_id: str, seq_upto: int | None = None) -> str:
+def create_snapshot(
+    store: Any,
+    session_id: str,
+    seq_upto: int | None = None,
+    *,
+    session_turn_fence_token: int | None = None,
+) -> str:
+    store._assert_session_turn_fence_if_requested(session_id, session_turn_fence_token)
     return store._summary_store.create_snapshot(session_id, seq_upto=seq_upto)
 
 
@@ -153,6 +160,67 @@ def renew_cron_run_lease(
     )
 
 
+def acquire_session_turn_lease(
+    store: Any,
+    session_id: str,
+    *,
+    owner: str,
+    request_id: str,
+    ttl_s: int = 60,
+    now_iso: str | None = None,
+) -> Any:
+    return store._turn_lease_store.acquire(
+        session_id,
+        owner=owner,
+        request_id=request_id,
+        ttl_s=ttl_s,
+        now_iso=now_iso,
+    )
+
+
+def renew_session_turn_lease(
+    store: Any,
+    session_id: str,
+    *,
+    owner: str,
+    fence_token: int,
+    ttl_s: int = 60,
+    now_iso: str | None = None,
+) -> bool:
+    return store._turn_lease_store.renew(
+        session_id,
+        owner=owner,
+        fence_token=fence_token,
+        ttl_s=ttl_s,
+        now_iso=now_iso,
+    )
+
+
+def release_session_turn_lease(
+    store: Any,
+    session_id: str,
+    *,
+    owner: str,
+    fence_token: int,
+    now_iso: str | None = None,
+) -> bool:
+    return store._turn_lease_store.release(
+        session_id,
+        owner=owner,
+        fence_token=fence_token,
+        now_iso=now_iso,
+    )
+
+
+def assert_session_turn_fence(
+    store: Any,
+    session_id: str,
+    *,
+    fence_token: int,
+) -> None:
+    store._turn_lease_store.assert_fence(session_id, fence_token=fence_token)
+
+
 def finish_cron_run(
     store: Any,
     run_id: str,
@@ -184,7 +252,9 @@ def mark_cron_delivery_target(store: Any, run_id: str, *, target: str) -> bool:
 
 
 def storage_status(store: Any) -> dict[str, Any]:
-    return store._hybrid_store.status()
+    status = dict(store._hybrid_store.status())
+    status["session_turn_leases"] = store._turn_lease_store.status()
+    return status
 
 
 def reindex_sidecars(store: Any, *, since_ts: str | None = None) -> dict[str, Any]:
@@ -203,7 +273,9 @@ def create_prompt_context(
     checkpoint_id: str | None = None,
     prefix_hash: str | None = None,
     meta: dict[str, Any] | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> str:
+    store._assert_session_turn_fence_if_requested(session_id, session_turn_fence_token)
     return store._context_store.create_prompt_context(
         session_id,
         seed_bundle_id=seed_bundle_id,
@@ -218,7 +290,14 @@ def close_prompt_context(
     prompt_context_id: str,
     *,
     rollover_reason: str | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> None:
+    if session_turn_fence_token is not None:
+        session_id = store._session_id_for_prompt_context(prompt_context_id)
+        if session_id is not None:
+            store._assert_session_turn_fence_if_requested(
+                session_id, session_turn_fence_token
+            )
     store._context_store.close_prompt_context(
         prompt_context_id,
         rollover_reason=rollover_reason,
@@ -240,7 +319,9 @@ def save_compression_checkpoint(
     up_to_event_id: str | None = None,
     reason: str | None = None,
     meta: dict[str, Any] | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> str:
+    store._assert_session_turn_fence_if_requested(session_id, session_turn_fence_token)
     return store._context_store.save_compression_checkpoint(
         session_id,
         bundle_json,
@@ -265,7 +346,9 @@ def save_seed_bundle(
     budgets_json: str = "{}",
     up_to_event_id: str | None = None,
     meta: dict[str, Any] | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> str:
+    store._assert_session_turn_fence_if_requested(session_id, session_turn_fence_token)
     return store._context_store.save_seed_bundle(
         session_id,
         source_bundle_id,
@@ -291,7 +374,9 @@ def create_run_record(
     prompt_context_id: str | None = None,
     model_id: str | None = None,
     meta: dict[str, Any] | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> str:
+    store._assert_session_turn_fence_if_requested(session_id, session_turn_fence_token)
     return store.run_store.create_run_record(
         session_id,
         run_type,
@@ -309,7 +394,14 @@ def finish_run_record(
     status: str = "completed",
     input_tokens: int | None = None,
     output_tokens: int | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> None:
+    if session_turn_fence_token is not None:
+        session_id = store._session_id_for_run_record(run_id)
+        if session_id is not None:
+            store._assert_session_turn_fence_if_requested(
+                session_id, session_turn_fence_token
+            )
     store.run_store.finish_run_record(
         run_id,
         status=status,
@@ -324,7 +416,14 @@ def add_run_usage_delta(
     *,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    session_turn_fence_token: int | None = None,
 ) -> None:
+    if session_turn_fence_token is not None:
+        session_id = store._session_id_for_run_record(run_id)
+        if session_id is not None:
+            store._assert_session_turn_fence_if_requested(
+                session_id, session_turn_fence_token
+            )
     store.run_store.add_run_usage_delta(
         run_id,
         input_tokens=input_tokens,
@@ -352,7 +451,9 @@ def add_message_ref(
     content_ref: str | None = None,
     content_inline: str | None = None,
     meta: dict[str, Any] | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> str:
+    store._assert_session_turn_fence_if_requested(session_id, session_turn_fence_token)
     return store.run_store.add_message_ref(
         session_id,
         role,
@@ -364,7 +465,13 @@ def add_message_ref(
     )
 
 
-def update_derived_views(store: Any, session_id: str) -> dict[str, Any]:
+def update_derived_views(
+    store: Any,
+    session_id: str,
+    *,
+    session_turn_fence_token: int | None = None,
+) -> dict[str, Any]:
+    store._assert_session_turn_fence_if_requested(session_id, session_turn_fence_token)
     return store._summary_store.update_derived_views(session_id)
 
 
@@ -444,6 +551,7 @@ def get_resume_state(store: Any, session_id: str) -> dict[str, Any]:
 __all__ = [
     "_list_recent_archive_ref_lines",
     "acquire_cron_runs",
+    "acquire_session_turn_lease",
     "add_cron_job",
     "add_message_ref",
     "add_run_usage_delta",
@@ -472,10 +580,13 @@ __all__ = [
     "mark_cron_delivery_target",
     "reindex_sidecars",
     "renew_cron_run_lease",
+    "renew_session_turn_lease",
     "replace_cron_job_payload",
+    "release_session_turn_lease",
     "save_compression_checkpoint",
     "save_seed_bundle",
     "set_cron_job_enabled",
+    "assert_session_turn_fence",
     "storage_status",
     "trigger_cron_run",
     "update_derived_views",

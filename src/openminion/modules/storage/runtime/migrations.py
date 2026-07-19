@@ -328,6 +328,28 @@ DEFAULT_MIGRATIONS: Tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=10,
+        name="add_session_turn_leases",
+        statements=(
+            """
+            CREATE TABLE session_turn_leases (
+                session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+                owner TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                fence_token INTEGER NOT NULL,
+                acquired_at TEXT NOT NULL,
+                renewed_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                released_at TEXT DEFAULT NULL
+            )
+            """,
+            """
+            CREATE INDEX idx_session_turn_leases_expires
+            ON session_turn_leases(expires_at)
+            """,
+        ),
+    ),
 )
 
 

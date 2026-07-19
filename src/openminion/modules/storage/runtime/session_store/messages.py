@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from .backend import RuntimeSessionStoreBackend
@@ -15,8 +15,24 @@ from .rows import (
 
 
 class RuntimeSessionStoreMessages:
-    def __init__(self, backend: RuntimeSessionStoreBackend) -> None:
+    def __init__(
+        self,
+        backend: RuntimeSessionStoreBackend,
+        *,
+        assert_session_turn_fence: Callable[[str, int], None] | None = None,
+    ) -> None:
         self._backend = backend
+        self._assert_session_turn_fence = assert_session_turn_fence
+
+    def _assert_fence_if_requested(
+        self,
+        *,
+        session_id: str,
+        session_turn_fence_token: int | None,
+    ) -> None:
+        if session_turn_fence_token is None or self._assert_session_turn_fence is None:
+            return
+        self._assert_session_turn_fence(session_id, int(session_turn_fence_token))
 
     def append_message(
         self,
@@ -31,6 +47,7 @@ class RuntimeSessionStoreMessages:
         participant_id: str | None = None,
         participant_type: str | None = None,
         display_name: str | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> MessageRecord:
         now = utc_now_iso()
         message_id = uuid4().hex
@@ -55,6 +72,10 @@ class RuntimeSessionStoreMessages:
             payload_metadata.setdefault("attach_id", attach_value)
 
         with self._backend.transaction():
+            self._assert_fence_if_requested(
+                session_id=session_id,
+                session_turn_fence_token=session_turn_fence_token,
+            )
             self._backend.execute_count(
                 """
                 INSERT INTO messages(id, session_id, conversation_id, thread_id, attach_id, role, body, metadata_json, created_at)

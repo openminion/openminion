@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Callable
 from uuid import uuid4
 
 from ..pinned_context import (
@@ -21,8 +22,24 @@ from .rows import (
 
 
 class RuntimeSessionStoreContext:
-    def __init__(self, backend: RuntimeSessionStoreBackend) -> None:
+    def __init__(
+        self,
+        backend: RuntimeSessionStoreBackend,
+        *,
+        assert_session_turn_fence: Callable[[str, int], None] | None = None,
+    ) -> None:
         self._backend = backend
+        self._assert_session_turn_fence = assert_session_turn_fence
+
+    def _assert_fence_if_requested(
+        self,
+        *,
+        session_id: str,
+        session_turn_fence_token: int | None,
+    ) -> None:
+        if session_turn_fence_token is None or self._assert_session_turn_fence is None:
+            return
+        self._assert_session_turn_fence(session_id, int(session_turn_fence_token))
 
     def get_session_context(self, *, session_id: str) -> SessionContextRecord | None:
         row = self._backend.query_one(
@@ -166,6 +183,7 @@ class RuntimeSessionStoreContext:
         compacted_message_count: int | None = None,
         version: int | None = None,
         expected_version: int | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> SessionContextRecord:
         current = self.ensure_session_context(session_id=session_id)
         now = utc_now_iso()
@@ -181,23 +199,28 @@ class RuntimeSessionStoreContext:
             version=version,
         )
         if expected_version is not None:
-            updated = self._backend.execute_count(
-                """
-                UPDATE session_contexts
-                SET
-                    pinned_context = ?,
-                    summary_short = ?,
-                    rolling_summary = ?,
-                    compacted_until_rowid = ?,
-                    compacted_until_created_at = ?,
-                    compacted_until_message_id = ?,
-                    compacted_message_count = ?,
-                    version = ?,
-                    updated_at = ?
-                WHERE session_id = ? AND version = ?
-                """,
-                (*update_values, now, session_id, int(expected_version)),
-            )
+            with self._backend.transaction():
+                self._assert_fence_if_requested(
+                    session_id=session_id,
+                    session_turn_fence_token=session_turn_fence_token,
+                )
+                updated = self._backend.execute_count(
+                    """
+                    UPDATE session_contexts
+                    SET
+                        pinned_context = ?,
+                        summary_short = ?,
+                        rolling_summary = ?,
+                        compacted_until_rowid = ?,
+                        compacted_until_created_at = ?,
+                        compacted_until_message_id = ?,
+                        compacted_message_count = ?,
+                        version = ?,
+                        updated_at = ?
+                    WHERE session_id = ? AND version = ?
+                    """,
+                    (*update_values, now, session_id, int(expected_version)),
+                )
             if updated == 0:
                 refreshed = self.get_session_context(session_id=session_id)
                 if refreshed is None:
@@ -206,23 +229,28 @@ class RuntimeSessionStoreContext:
                     )
                 return refreshed
         else:
-            self._backend.execute_count(
-                """
-                UPDATE session_contexts
-                SET
-                    pinned_context = ?,
-                    summary_short = ?,
-                    rolling_summary = ?,
-                    compacted_until_rowid = ?,
-                    compacted_until_created_at = ?,
-                    compacted_until_message_id = ?,
-                    compacted_message_count = ?,
-                    version = ?,
-                    updated_at = ?
-                WHERE session_id = ?
-                """,
-                (*update_values, now, session_id),
-            )
+            with self._backend.transaction():
+                self._assert_fence_if_requested(
+                    session_id=session_id,
+                    session_turn_fence_token=session_turn_fence_token,
+                )
+                self._backend.execute_count(
+                    """
+                    UPDATE session_contexts
+                    SET
+                        pinned_context = ?,
+                        summary_short = ?,
+                        rolling_summary = ?,
+                        compacted_until_rowid = ?,
+                        compacted_until_created_at = ?,
+                        compacted_until_message_id = ?,
+                        compacted_message_count = ?,
+                        version = ?,
+                        updated_at = ?
+                    WHERE session_id = ?
+                    """,
+                    (*update_values, now, session_id),
+                )
         updated_row = self.get_session_context(session_id=session_id)
         if updated_row is None:
             raise RuntimeError(

@@ -20,6 +20,12 @@ def test_storage_status_reports_sqlite_health(store: SQLiteSessionStore) -> None
     assert "sqlite_ok" in status
     assert status["sqlite_ok"] is True
     assert "fallback_mode" in status
+    assert status["session_turn_leases"] == {
+        "schema_version": "session_turn_lease.v1",
+        "active_count": 0,
+        "expired_unreleased_count": 0,
+        "max_fence_token": 0,
+    }
 
 
 def test_reindex_sidecars_is_noop_without_sidecar_events(

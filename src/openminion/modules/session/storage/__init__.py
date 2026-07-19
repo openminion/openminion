@@ -7,6 +7,7 @@ from .cron_store import CronStore
 from .summaries import StateStore, SummaryStore
 from .context import ContextStore, RunStore
 from .slices import SliceStore
+from .turn_leases import SessionTurnBusyError, SessionTurnFenceError, SessionTurnLease
 
 __all__ = (
     "SessionStore",
@@ -20,4 +21,7 @@ __all__ = (
     "ContextStore",
     "RunStore",
     "SliceStore",
+    "SessionTurnBusyError",
+    "SessionTurnFenceError",
+    "SessionTurnLease",
 )

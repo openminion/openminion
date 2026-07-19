@@ -35,6 +35,7 @@ from .queries import (
 from .components import (
     _list_recent_archive_ref_lines as _list_recent_archive_ref_lines_facade,
     acquire_cron_runs as _acquire_cron_runs_facade,
+    acquire_session_turn_lease as _acquire_session_turn_lease_facade,
     add_cron_job as _add_cron_job_facade,
     add_message_ref as _add_message_ref_facade,
     add_run_usage_delta as _add_run_usage_delta_facade,
@@ -63,13 +64,16 @@ from .components import (
     mark_cron_delivery_target as _mark_cron_delivery_target_facade,
     reindex_sidecars as _reindex_sidecars_facade,
     renew_cron_run_lease as _renew_cron_run_lease_facade,
+    renew_session_turn_lease as _renew_session_turn_lease_facade,
     replace_cron_job_payload as _replace_cron_job_payload_facade,
+    release_session_turn_lease as _release_session_turn_lease_facade,
     save_compression_checkpoint as _save_compression_checkpoint_facade,
     save_seed_bundle as _save_seed_bundle_facade,
     set_cron_job_enabled as _set_cron_job_enabled_facade,
     storage_status as _storage_status_facade,
     trigger_cron_run as _trigger_cron_run_facade,
     update_derived_views as _update_derived_views_facade,
+    assert_session_turn_fence as _assert_session_turn_fence_facade,
 )
 from openminion.modules.storage.migrations.metadata import (
     ensure_module_metadata_via_store,
@@ -330,6 +334,7 @@ class SQLiteSessionStore(SessionStore):
         self._summary_store = components.summary_store
         self._context_store = components.context_store
         self._run_store = components.run_store
+        self._turn_lease_store = components.turn_lease_store
         self._session_helper = components.session_helper
         self._replay_helper = components.replay_helper
         self._slice_store = components.slice_store
@@ -337,6 +342,31 @@ class SQLiteSessionStore(SessionStore):
     @property
     def run_store(self) -> RunStore:
         return self._run_store
+
+    def _assert_session_turn_fence_if_requested(
+        self,
+        session_id: str,
+        session_turn_fence_token: int | None,
+    ) -> None:
+        if session_turn_fence_token is None:
+            return
+        self._turn_lease_store.assert_fence(
+            session_id,
+            fence_token=int(session_turn_fence_token),
+        )
+
+    def _session_id_for_prompt_context(self, prompt_context_id: str) -> str | None:
+        rows = self._record_store.query_dicts(
+            "SELECT session_id FROM prompt_contexts WHERE prompt_context_id = ?",
+            (prompt_context_id,),
+        )
+        return str(rows[0]["session_id"]) if rows else None
+
+    def _session_id_for_run_record(self, run_id: str) -> str | None:
+        record = self.run_store.get_run_record(run_id)
+        if record is None:
+            return None
+        return str(record.get("session_id") or "") or None
 
     create_snapshot = _create_snapshot_facade
     add_cron_job = _add_cron_job_facade
@@ -350,6 +380,10 @@ class SQLiteSessionStore(SessionStore):
     enqueue_due_cron_runs = _enqueue_due_cron_runs_facade
     acquire_cron_runs = _acquire_cron_runs_facade
     renew_cron_run_lease = _renew_cron_run_lease_facade
+    acquire_session_turn_lease = _acquire_session_turn_lease_facade
+    renew_session_turn_lease = _renew_session_turn_lease_facade
+    release_session_turn_lease = _release_session_turn_lease_facade
+    assert_session_turn_fence = _assert_session_turn_fence_facade
     finish_cron_run = _finish_cron_run_facade
     delete_old_cron_runs = _delete_old_cron_runs_facade
     mark_cron_delivery_target = _mark_cron_delivery_target_facade
@@ -575,7 +609,11 @@ class SQLiteSessionStore(SessionStore):
         content: str,
         attachments: list[str] | None = None,
         meta: dict[str, Any] | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> str:
+        self._assert_session_turn_fence_if_requested(
+            session_id, session_turn_fence_token
+        )
         return self._event_writer.append_turn(
             session_id,
             role,
@@ -626,7 +664,11 @@ class SQLiteSessionStore(SessionStore):
         memory_refs: list[str] | None = None,
         status: str | None = None,
         error: dict[str, Any] | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> str:
+        self._assert_session_turn_fence_if_requested(
+            session_id, session_turn_fence_token
+        )
         return self._event_writer.append_event(
             session_id,
             type,
@@ -718,7 +760,11 @@ class SQLiteSessionStore(SessionStore):
         *,
         state_ref: str | None = None,
         state_inline: dict[str, Any] | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> int:
+        self._assert_session_turn_fence_if_requested(
+            session_id, session_turn_fence_token
+        )
         return self._state_store.put_working_state(
             session_id,
             state_ref=state_ref,
@@ -731,10 +777,28 @@ class SQLiteSessionStore(SessionStore):
     def get_active_state(self, session_id: str) -> dict[str, Any]:
         return self._state_store.get_active_state(session_id)
 
-    def set_summary_base(self, session_id: str, base_ref: str) -> None:
+    def set_summary_base(
+        self,
+        session_id: str,
+        base_ref: str,
+        *,
+        session_turn_fence_token: int | None = None,
+    ) -> None:
+        self._assert_session_turn_fence_if_requested(
+            session_id, session_turn_fence_token
+        )
         self._summary_store.set_summary_base(session_id, base_ref)
 
-    def append_summary_delta(self, session_id: str, delta_ref: str) -> None:
+    def append_summary_delta(
+        self,
+        session_id: str,
+        delta_ref: str,
+        *,
+        session_turn_fence_token: int | None = None,
+    ) -> None:
+        self._assert_session_turn_fence_if_requested(
+            session_id, session_turn_fence_token
+        )
         self._summary_store.append_summary_delta(session_id, delta_ref)
 
     def get_summaries(self, session_id: str) -> dict[str, Any]:
@@ -757,7 +821,11 @@ class SQLiteSessionStore(SessionStore):
         *,
         summary_long: str | None = None,
         based_on_seq: int,
+        session_turn_fence_token: int | None = None,
     ) -> None:
+        self._assert_session_turn_fence_if_requested(
+            session_id, session_turn_fence_token
+        )
         self._summary_store.update_summary(
             session_id,
             summary_short,

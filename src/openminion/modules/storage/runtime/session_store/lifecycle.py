@@ -22,10 +22,22 @@ class RuntimeSessionStoreLifecycle:
         *,
         get_session: Callable[[str], SessionRecord | None],
         list_sessions: Callable[..., list[SessionRecord]],
+        assert_session_turn_fence: Callable[[str, int], None] | None = None,
     ) -> None:
         self._backend = backend
         self._get_session = get_session
         self._list_sessions = list_sessions
+        self._assert_session_turn_fence = assert_session_turn_fence
+
+    def _assert_fence_if_requested(
+        self,
+        *,
+        session_id: str,
+        session_turn_fence_token: int | None,
+    ) -> None:
+        if session_turn_fence_token is None or self._assert_session_turn_fence is None:
+            return
+        self._assert_session_turn_fence(session_id, int(session_turn_fence_token))
 
     def append_event(
         self,
@@ -33,11 +45,16 @@ class RuntimeSessionStoreLifecycle:
         session_id: str,
         event_type: str,
         payload: Mapping[str, Any] | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> EventRecord:
         from .rows import metadata_json
 
         now = utc_now_iso()
         with self._backend.transaction():
+            self._assert_fence_if_requested(
+                session_id=session_id,
+                session_turn_fence_token=session_turn_fence_token,
+            )
             self._backend.execute_count(
                 """
                 INSERT INTO events(session_id, event_type, payload_json, created_at)
