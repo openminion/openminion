@@ -161,7 +161,10 @@ print(json.dumps(results, sort_keys=True))
 
         loaded_by_scenario = __import__("json").loads(result.stdout.splitlines()[-1])
         self.assertEqual(set(loaded_by_scenario), set(scenarios))
-        self.assertTrue(all(not loaded for loaded in loaded_by_scenario.values()))
+        self.assertEqual(loaded_by_scenario["root_help"], [])
+        self.assertEqual(loaded_by_scenario["focus_help"], [])
+        self.assertEqual(loaded_by_scenario["focus_parse"], [])
+        self.assertEqual(loaded_by_scenario["status_parse"], [])
 
     def test_root_parser_accepts_allow_unsandboxed_exec_flag(self) -> None:
         parser = build_parser()
@@ -410,8 +413,8 @@ print(json.dumps(results, sort_keys=True))
         self.assertEqual(args.agent, "ops")
         self.assertTrue(callable(args.handler))
 
-        args = parser.parse_args(["tui", "--agent", "ops", "--sync-identity"])
-        self.assertTrue(args.sync_identity)
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["tui", "--agent", "ops", "--sync-identity"])
 
         args = parser.parse_args(["tui", "--no-interactive"])
         self.assertTrue(args.no_interactive)
@@ -463,7 +466,7 @@ print(json.dumps(results, sort_keys=True))
         self.assertEqual(code, 0)
         output = buf.getvalue()
         self.assertIn("Initialized onboarding config", output)
-        self.assertIn("Chat launch skipped", output)
+        self.assertIn("Interactive launch skipped", output)
 
     def test_setup_parse_stale_handler_still_uses_canonical_patched_helpers(
         self,
@@ -1164,6 +1167,7 @@ print(json.dumps(results, sort_keys=True))
                 "plugins",
                 "doctor",
                 "status",
+                "tasks",
                 "export",
                 "focus",
                 "setup",
@@ -1190,6 +1194,10 @@ print(json.dumps(results, sort_keys=True))
         )
 
         self.assertNotIn("agent-ctl", help_text)
+        self.assertNotIn("chat", help_text)
+        self.assertNotIn("dashboard", help_text)
+        self.assertNotIn("focus", help_text)
+        self.assertNotIn("tui", help_text)
         self.assertEqual(
             [choice.dest for choice in getattr(command_action, "_choices_actions", [])],
             [
@@ -1201,9 +1209,6 @@ print(json.dumps(results, sort_keys=True))
                 "run",
                 "room",
                 "channel",
-                "chat",
-                "dashboard",
-                "tui",
                 "sessions",
                 "sidecar",
                 "tools",
@@ -1216,8 +1221,8 @@ print(json.dumps(results, sort_keys=True))
                 "plugins",
                 "doctor",
                 "status",
+                "tasks",
                 "export",
-                "focus",
                 "setup",
                 "storage",
                 "verify",

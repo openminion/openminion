@@ -34,10 +34,13 @@ dependencies = [
   "psutil>=5",
   "pydantic>=2",
   "pyfiglet>=1.0,<2",
+  # The default terminal renderer imports prompt-toolkit at runtime; keep it in
+  # core while bare `openminion` uses the no-rich terminal path.
+  "prompt-toolkit>=3,<4",
   "pyyaml",
   "rich>=13.0",
-  # The canonical interactive CLI is Textual; noninteractive command imports
-  # stay lazy so automation does not initialize the app.
+  # Textual is retained only for the explicit `openminion --rich` renderer.
+  # Noninteractive command imports stay lazy so automation does not initialize it.
   "textual>=1,<9",
   "typer>=0.12",
 ]

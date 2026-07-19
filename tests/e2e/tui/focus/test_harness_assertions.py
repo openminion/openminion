@@ -441,6 +441,16 @@ def test_active_approval_visible_accepts_session_grant_copy() -> None:
     assert active_approval_visible(screen)
 
 
+def test_compact_inline_approval_stops_after_key_echo_without_newline() -> None:
+    screen = (
+        'Approval required: file.write("wordcount.py")\n'
+        "[y]es / [N]o / [a]lways: a"
+    )
+
+    assert inline_approval_menu(screen) is None
+    assert not active_approval_visible(screen)
+
+
 def test_active_approval_visible_keeps_unanswered_prompt_after_input_returns() -> None:
     screen = (
         "● Policy confirmation required.\n"

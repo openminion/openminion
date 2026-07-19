@@ -22,6 +22,18 @@ Run a single suite:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py progress-visibility
 ```
 
+Run the deep-smoke matrix contract:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py matrix
+```
+
+Run the bounded local adversarial suite:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py adversarial-local
+```
+
 Run the deterministic high-level request handoff suite:
 
 ```bash
@@ -89,6 +101,8 @@ PYTHONDONTWRITEBYTECODE=1 \
 Suite names:
 
 - `local`: deterministic PTY launch, slash-command smoke, and fake-runtime default-focus queue/progress/interrupt proof.
+- `matrix`: deep-smoke matrix contract covering every required break surface and writing `deep-smoke-matrix.json`.
+- `adversarial-local`: bounded local breakage suite for routing, PTY resize, permissions, approvals, terminal rendering, exec sandbox, sessions, and config/env preflight.
 - `core`: live MiniMax basic answer.
 - `tools`: live MiniMax tool and policy-recovery smoke.
 - `approval`: focused approval UI tests without live credentials.

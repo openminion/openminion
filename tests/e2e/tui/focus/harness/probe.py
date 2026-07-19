@@ -125,7 +125,7 @@ def _compact_approval_answered(
 ) -> bool:
     trailing = screen_text[match.end() :]
     return re.match(
-        r"[ \t]*(?:y|yes|a|always|n|no)[ \t]*\n",
+        r"[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\n|[ \t]*$)",
         trailing,
         re.IGNORECASE,
     ) is not None
@@ -257,7 +257,6 @@ class FocusProbe:
             "openminion",
             "--config",
             str(self.config_path),
-            "focus",
             "--agent",
             self.agent_id,
             "--session",

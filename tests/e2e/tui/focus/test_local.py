@@ -47,11 +47,24 @@ def test_focus_pty_submits_after_composer_is_ready(
         write_transcript(artifact_root(tmp_path), "local-submit", transcript)
 
 
+def test_focus_pty_survives_resize_after_launch(
+    focus_probe: FocusProbe,
+    tmp_path,
+) -> None:
+    with focus_probe.session(rows=24, cols=100) as session:
+        focus_probe.wait_ready(session)
+        session.resize(rows=18, cols=72)
+        transcript = focus_probe.run_slash(session, "/help", marker="/exit")
+        write_transcript(artifact_root(tmp_path), "local-resize-help", transcript)
+
+
 def test_focus_runner_exposes_tracker_suite_names() -> None:
     assert set(suite_names()) >= {
+        "adversarial-local",
         "core",
         "tools",
         "approval",
+        "matrix",
         "research",
         "coding",
         "long-running",
@@ -78,6 +91,7 @@ def test_focus_probe_can_disable_project_context(
 def test_focus_probe_uses_test_scoped_session(focus_probe: FocusProbe) -> None:
     command = focus_probe.command()
 
+    assert "focus" not in command
     session_flag = command.index("--session")
     assert command[session_flag + 1] == focus_probe.session_id
     assert focus_probe.session_id.startswith("focus-e2e-")

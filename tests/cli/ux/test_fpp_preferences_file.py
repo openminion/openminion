@@ -182,7 +182,7 @@ def test_malformed_toml_falls_through_with_warning(
     result = resolve_verbosity(_args())
     assert result == "normal"
     err = capsys.readouterr().err
-    assert "failed to read focus preferences" in err
+    assert "failed to read CLI preferences" in err
     assert str(temp_prefs_file) in err
 
 
@@ -193,7 +193,7 @@ def test_malformed_toml_returns_empty(
 ) -> None:
     temp_prefs_file.write_text("garbage\n")
     assert _read_preferences_file() == {}
-    assert "failed to read focus preferences" in capsys.readouterr().err
+    assert "failed to read CLI preferences" in capsys.readouterr().err
 
 
 def test_garbage_verbosity_value_falls_through_with_warning(

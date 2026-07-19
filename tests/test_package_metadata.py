@@ -84,6 +84,16 @@ def test_package_metadata_declares_canonical_public_urls() -> None:
     }
 
 
+def test_default_terminal_renderer_dependencies_are_core() -> None:
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    )
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert any(dep.startswith("prompt-toolkit") for dep in dependencies)
+    assert any(dep.startswith("textual") for dep in dependencies)
+
+
 def test_package_version_owner_matches_public_metadata() -> None:
     pyproject = tomllib.loads(
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()

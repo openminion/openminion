@@ -120,6 +120,16 @@ class PtySession:
         time.sleep(0.05)
         self.send("\r")
 
+    def resize(self, *, rows: int, cols: int) -> None:
+        if self._master_fd is None or self._process is None:
+            raise RuntimeError("PTY session is not running")
+        self.rows = rows
+        self.cols = cols
+        self._screen.resize(lines=rows, columns=cols)
+        self._set_window_size(self._master_fd)
+        os.kill(self._process.pid, signal.SIGWINCH)
+        self._read_available(timeout=0.1)
+
     def wait_for_visible_match_after(
         self,
         pattern: str | re.Pattern[str],
