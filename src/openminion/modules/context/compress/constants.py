@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional
 
 CHECKPOINT_ERROR_BUDGET_EXCEEDED = "budget_exceeded"
 CHECKPOINT_ERROR_RANGE_INVALID = "range_invalid"
@@ -7,7 +6,7 @@ CHECKPOINT_ERROR_STABLE_ID_COLLISION = "stable_id_collision"
 CHECKPOINT_ERROR_INVARIANT_VIOLATED = "invariant_violated"
 CHECKPOINT_ERROR_PIPELINE_FAILED = "pipeline_failed"
 
-DEFAULT_QUALITY_OVERRIDES: dict[str, Optional[str]] = {
+DEFAULT_QUALITY_OVERRIDES: dict[str, str | None] = {
     "GOOD": None,
     "OK": None,
     "BAD": "extractive.v1",

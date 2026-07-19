@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ..contracts.schemas import (
     Artifact,
@@ -60,7 +60,7 @@ def make_ok_envelope(
     workspace: Path,
     artifacts: list[Artifact],
     logs: list[LogEntry],
-    data: Dict[str, Any],
+    data: dict[str, Any],
 ) -> ResultEnvelope:
     started = datetime.fromisoformat(started_at)
     ended = datetime.now(timezone.utc)

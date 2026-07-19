@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from .constants import (
     A2A_POLICY_ACTION_ALLOW,
@@ -14,11 +13,11 @@ from .models import Envelope
 @dataclass
 class PolicyRule:
     action: str
-    from_agent: Optional[str] = None
-    to_agent: Optional[str] = None
-    to_capability: Optional[str] = None
-    method_prefix: Optional[str] = None
-    message_type: Optional[str] = None
+    from_agent: str | None = None
+    to_agent: str | None = None
+    to_capability: str | None = None
+    method_prefix: str | None = None
+    message_type: str | None = None
 
     def matches(self, envelope: Envelope, resolved_agent: str) -> bool:
         return (
@@ -76,7 +75,7 @@ class PolicyEngine:
         return decision == A2A_POLICY_ACTION_ALLOW
 
 
-def _norm(value: object) -> Optional[str]:
+def _norm(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()

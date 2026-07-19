@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from typing import Optional
 
 from openminion.api.runtime import APIRuntime
 from openminion.cli.parser.flags import (
@@ -279,7 +278,7 @@ def _cron_show(app: APIRuntime, args) -> int:
     return 0
 
 
-def _cron_run(app: APIRuntime, *, job_id: Optional[str]) -> int:
+def _cron_run(app: APIRuntime, *, job_id: str | None) -> int:
     if not job_id:
         print("Error: job-id is required for run")
         return 1

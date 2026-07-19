@@ -16,9 +16,7 @@ from openminion.base.config import (
 )
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.logging import configure_logging
-from openminion.modules.llm.providers.factory import (
-    build_runtime_llm_handle as build_runtime_llm_handle,
-)
+from openminion.modules.llm.providers.factory import build_runtime_llm_handle
 from openminion.modules.storage.runtime import (
     build_runtime_storage,
     resolve_database_path,

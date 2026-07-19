@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 from pathlib import Path
 
+import openminion.daemon as daemon_core
 from openminion.cli.commands import daemon as daemon_command
 
 
@@ -22,17 +23,17 @@ def test_daemon_status_json_output_when_reachable(monkeypatch, capsys) -> None:
     )
     monkeypatch.setattr(daemon_command, "load_config", lambda _cfg: config)
     monkeypatch.setattr(
-        daemon_command, "resolve_daemon_pid_file", lambda _cfg: pid_file
+        daemon_core, "resolve_daemon_pid_file", lambda _cfg: pid_file
     )
-    monkeypatch.setattr(daemon_command, "read_pid", lambda _path: 4321)
-    monkeypatch.setattr(daemon_command, "process_alive", lambda _pid: True)
+    monkeypatch.setattr(daemon_core, "read_pid", lambda _path: 4321)
+    monkeypatch.setattr(daemon_core, "process_alive", lambda _pid: True)
     monkeypatch.setattr(
         daemon_command,
         "probe_daemon_endpoint",
         lambda _endpoint: ("ok", {"daemon": {"config_path": "/tmp/openminion.json"}}),
     )
     monkeypatch.setattr(
-        daemon_command, "resolve_daemon_log_file", lambda _cfg: log_file
+        daemon_core, "resolve_daemon_log_file", lambda _cfg: log_file
     )
 
     code = daemon_command.daemon_status("config.json")
@@ -68,17 +69,17 @@ def test_daemon_status_json_output_when_unreachable(monkeypatch, capsys) -> None
     )
     monkeypatch.setattr(daemon_command, "load_config", lambda _cfg: config)
     monkeypatch.setattr(
-        daemon_command, "resolve_daemon_pid_file", lambda _cfg: pid_file
+        daemon_core, "resolve_daemon_pid_file", lambda _cfg: pid_file
     )
-    monkeypatch.setattr(daemon_command, "read_pid", lambda _path: None)
-    monkeypatch.setattr(daemon_command, "process_alive", lambda _pid: False)
+    monkeypatch.setattr(daemon_core, "read_pid", lambda _path: None)
+    monkeypatch.setattr(daemon_core, "process_alive", lambda _pid: False)
     monkeypatch.setattr(
         daemon_command,
         "probe_daemon_endpoint",
         lambda _endpoint: ("unreachable", {}),
     )
     monkeypatch.setattr(
-        daemon_command, "resolve_daemon_log_file", lambda _cfg: log_file
+        daemon_core, "resolve_daemon_log_file", lambda _cfg: log_file
     )
 
     code = daemon_command.daemon_status("config.json")

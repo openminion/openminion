@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 from types import FrameType
-from typing import Optional, Sequence, cast
+from typing import Sequence, cast
 
 from openminion.api.server import build_api_server
 from openminion.base.config import (
@@ -252,7 +252,7 @@ def build_daemon_supervision_policy(
 
 
 def _resolve_daemon_file(
-    config: OpenMinionConfig, configured_path: Optional[str], default_relative: str
+    config: OpenMinionConfig, configured_path: str | None, default_relative: str
 ) -> Path:
     configured = str(configured_path or "").strip()
     if configured:
@@ -290,7 +290,7 @@ def resolve_ipc_bind(config: OpenMinionConfig) -> tuple[str, int]:
     return host, max(1, port)
 
 
-def read_pid(pid_file: Path) -> Optional[int]:
+def read_pid(pid_file: Path) -> int | None:
     try:
         raw = pid_file.read_text(encoding="utf-8").strip()
     except OSError:
@@ -316,10 +316,10 @@ def process_alive(pid: int) -> bool:
 
 def run_server(
     *,
-    config_path: Optional[str],
-    host: Optional[str] = None,
-    port: Optional[int] = None,
-    pid_file: Optional[str] = None,
+    config_path: str | None,
+    host: str | None = None,
+    port: int | None = None,
+    pid_file: str | None = None,
 ) -> int:
     manager = ConfigManager.load(config_path)
     bootstrap_config_manager(manager)
@@ -465,7 +465,7 @@ def run_server(
     return exit_code
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="openminion.daemon")
     subparsers = parser.add_subparsers(dest="command")
 

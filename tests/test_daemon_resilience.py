@@ -263,9 +263,9 @@ def test_daemon_stop_force_kills_hung_process(
 
     monkeypatch.setattr(daemon_cmd, "resolve_daemon_endpoint", lambda _cfg: endpoint)
     monkeypatch.setattr(daemon_cmd, "load_config", lambda _path: SimpleNamespace())
-    monkeypatch.setattr(daemon_cmd, "resolve_daemon_pid_file", lambda _cfg: pid_file)
-    monkeypatch.setattr(daemon_cmd, "read_pid", lambda _pid_file: 123)
-    monkeypatch.setattr(daemon_cmd, "process_alive", _fake_alive)
+    monkeypatch.setattr(daemon_mod, "resolve_daemon_pid_file", lambda _cfg: pid_file)
+    monkeypatch.setattr(daemon_mod, "read_pid", lambda _pid_file: 123)
+    monkeypatch.setattr(daemon_mod, "process_alive", _fake_alive)
     monkeypatch.setattr(daemon_cmd.os, "kill", _fake_kill)
     monkeypatch.setattr(daemon_cmd.time, "time", _fake_time)
     monkeypatch.setattr(daemon_cmd.time, "sleep", lambda _s: None)

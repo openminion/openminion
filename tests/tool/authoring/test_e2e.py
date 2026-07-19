@@ -103,7 +103,8 @@ def _run_tool(
 def test_authored_tool_pipeline_end_to_end(monkeypatch) -> None:
     runner = _EndToEndSandboxRunner()
     monkeypatch.setattr(
-        "openminion.api.runtime.build_daytona_runner", lambda **kwargs: runner
+        "openminion.api.core.infrastructure.build_daytona_runner",
+        lambda **kwargs: runner,
     )
 
     with tempfile.TemporaryDirectory() as tmp:

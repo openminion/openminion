@@ -8,9 +8,7 @@ from typing import Any
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext
-from openminion.modules.tool.refs import (
-    tool_result_artifact_refs as _tool_result_artifact_refs,
-)
+from openminion.modules.tool.refs import tool_result_artifact_refs
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 from openminion.modules.policy.adapters.composition import (
     SEAM_API_TOOLS,
@@ -98,7 +96,7 @@ def execute_tool_run(
         context=context,
     )
     result = batch.results[0]
-    artifact_refs = _tool_result_artifact_refs(
+    artifact_refs = tool_result_artifact_refs(
         trace_id=request_id,
         session_id=session.id,
         result=result,
