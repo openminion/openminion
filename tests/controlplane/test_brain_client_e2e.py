@@ -335,6 +335,37 @@ def test_brain_client_e2e_success(tmp_path: Path) -> None:
     store.close()
 
 
+def test_telegram_profile_switch_routes_next_turn_without_session_rebind(
+    tmp_path: Path,
+) -> None:
+    gateway = _StubGateway(reply_text="selected profile reply")
+    dispatcher, store, _outbound, _audit, brain = _build_dispatcher(
+        tmp_path / "cp.db", gateway
+    )
+
+    switch_result = dispatcher.handle_inbound(
+        _telegram_inbound("/profile use minimax-m2-5")
+    )
+    binding = store.get_chat_binding("telegram:100")
+    assert binding is not None
+    session_id = str(binding["session_id"])
+
+    chat_result = dispatcher.handle_inbound(_telegram_inbound("hi selected profile"))
+    refreshed_binding = store.get_chat_binding("telegram:100")
+
+    assert switch_result["type"] == "command_result"
+    assert store.resolve_agent(session_id) == "minimax-m2-5"
+    assert refreshed_binding is not None
+    assert refreshed_binding["session_id"] == session_id
+    assert chat_result["text"] == "selected profile reply"
+    assert gateway.calls[-1]["target"] == "minimax-m2-5"
+    assert gateway.calls[-1]["session_id"] == session_id
+    assert gateway.calls[-1]["message"] == "hi selected profile"
+
+    brain.close()
+    store.close()
+
+
 def test_brain_client_e2e_does_not_replay_previous_turn_for_local_delivery(
     tmp_path: Path,
 ) -> None:

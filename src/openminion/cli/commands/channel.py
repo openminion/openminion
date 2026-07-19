@@ -22,8 +22,11 @@ from openminion.base.config import (
 from openminion.base.config.env import resolve_environment_config
 from openminion.cli.config import load_cli_config, resolve_cli_roots
 from openminion.cli.transport.daemon_client import (
-    daemon_is_reachable,
+    probe_daemon_endpoint,
     resolve_daemon_endpoint,
+)
+from openminion.cli.commands.telegram_status import (
+    build_telegram_status_payload,
 )
 from openminion.modules.controlplane.config import (
     ControlPlaneConfig,
@@ -239,20 +242,49 @@ def telegram_run(args: argparse.Namespace) -> int:
 
 
 def telegram_status(args: argparse.Namespace) -> int:
+    payload = _telegram_status_payload(args)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    telegram_payload = payload["telegram"]
+    controlplane_payload = payload["controlplane"]
+    daemon_payload = payload["daemon"]
+    session_payload = payload["session"]
+    print(f"telegram.enabled={telegram_payload['enabled']}")
+    print(f"telegram.mode={telegram_payload['mode']}")
+    print(f"telegram.poll_state={telegram_payload['poll_state']}")
+    print(f"controlplane.sqlite={controlplane_payload['sqlite_path']}")
+    print(f"default.profile={controlplane_payload['default_profile']}")
+    print(f"pairings.active={payload['pairings']['active']}")
+    print(f"daemon.reachable={str(daemon_payload['reachable']).lower()}")
+    print(f"daemon.endpoint_status={daemon_payload['endpoint_status']}")
+    print(f"daemon.state={daemon_payload['state']}")
+    print(f"telegram.listener_state={telegram_payload['listener_state']}")
+    print(f"telegram.listener_alive={telegram_payload['listener_alive']}")
+    print(f"telegram.connected={telegram_payload['connected']}")
+    if session_payload["chat_key"]:
+        print(f"session.chat_key={session_payload['chat_key']}")
+    print(f"active.session={session_payload['session_id']}")
+    print(f"active.profile={session_payload['profile_id']}")
+    print(RUNNER_ONLINE_MESSAGE)
+    return 0
+
+
+def _telegram_status_payload(args: argparse.Namespace) -> dict[str, Any]:
     config_path = getattr(args, "config", None)
     cfg = _load_telegram_channel_config(config_path)
     cp_cfg = _load_controlplane_config(config_path)
-    reachable = _daemon_reachable(config_path)
-    print(f"telegram.enabled={cfg.enabled}")
-    print(f"telegram.mode={cfg.mode}")
-    print(f"telegram.poll_state={cfg.polling.state_sqlite_path}")
-    print(f"controlplane.sqlite={cp_cfg.sqlite_path}")
-    print(f"pairings.active={_count_active_pairings(cp_cfg.sqlite_path)}")
-    print(f"daemon.reachable={str(reachable).lower()}")
-    if not reachable:
-        print("daemon.state=not observed from this process")
-    print(RUNNER_ONLINE_MESSAGE)
-    return 0
+    probe_status, health_payload = _daemon_probe(config_path)
+    return build_telegram_status_payload(
+        telegram_config=cfg,
+        controlplane_config=cp_cfg,
+        daemon_probe_status=probe_status,
+        daemon_payload=health_payload,
+        active_pairings=_count_active_pairings(cp_cfg.sqlite_path),
+        chat_id=getattr(args, "chat_id", None),
+        topic_id=getattr(args, "topic_id", None),
+    )
 
 
 def telegram_commands_sync(args: argparse.Namespace) -> int:
@@ -455,11 +487,56 @@ def _telegram_doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
             required=False,
         )
     )
-    daemon_ok = _daemon_reachable(config_path)
+    status_payload = _telegram_status_payload(args)
+    _append_telegram_status_checks(checks, status_payload)
+    return checks
+
+
+def _append_telegram_status_checks(
+    checks: list[dict[str, Any]], status_payload: dict[str, Any]
+) -> None:
+    checks.append(
+        _check(
+            "default.profile",
+            True,
+            status_payload["controlplane"]["default_profile"],
+            required=False,
+        )
+    )
+    session_payload = status_payload["session"]
+    session_detail = (
+        f"{session_payload['session_id']} profile={session_payload['profile_id']}"
+        if session_payload["chat_key"]
+        else "pass --chat-id to inspect active session"
+    )
+    checks.append(
+        _check(
+            "session.binding",
+            session_payload["session_id"] not in {"not_found", "not_observed"},
+            session_detail,
+            required=False,
+        )
+    )
+    daemon_ok = bool(status_payload["daemon"]["reachable"])
     checks.append(
         _check("daemon.reachable", daemon_ok, "runner/daemon status", required=False)
     )
-    return checks
+    checks.append(
+        _check(
+            "daemon.state",
+            True,
+            status_payload["daemon"]["state"],
+            required=False,
+        )
+    )
+    checks.append(
+        _check(
+            "telegram.listener",
+            True,
+            status_payload["telegram"]["listener_state"],
+            required=False,
+        )
+    )
 
 
 def _check(
@@ -735,11 +812,16 @@ def _env_snapshot() -> dict[str, str]:
 
 
 def _daemon_reachable(config_path: str | None) -> bool:
+    status, _payload = _daemon_probe(config_path)
+    return status == "ok"
+
+
+def _daemon_probe(config_path: str | None) -> tuple[str, dict[str, Any]]:
     try:
         endpoint = resolve_daemon_endpoint(config_path)
-        return daemon_is_reachable(endpoint)
+        return probe_daemon_endpoint(endpoint)
     except Exception:
-        return False
+        return "unreachable", {}
 
 
 def _timeout_seconds(args: argparse.Namespace) -> int:
@@ -819,6 +901,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     doctor = telegram_subcommands.add_parser("doctor", help="Check Telegram setup")
     _add_config_arg(doctor)
     doctor.add_argument("--json", action="store_true")
+    _add_telegram_scope_args(doctor)
     doctor.set_defaults(handler=run_channel, needs_app=False)
 
     identify = telegram_subcommands.add_parser(
@@ -845,6 +928,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     status = telegram_subcommands.add_parser("status", help="Show Telegram status")
     _add_config_arg(status)
+    status.add_argument("--json", action="store_true")
+    _add_telegram_scope_args(status)
     status.set_defaults(handler=run_channel, needs_app=False)
 
     commands_sync = telegram_subcommands.add_parser(
@@ -862,3 +947,9 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 def _add_config_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", default=None, help="Config file path")
+
+
+def _add_telegram_scope_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--user-id", type=int, default=None)
+    parser.add_argument("--chat-id", type=int, default=None)
+    parser.add_argument("--topic-id", type=int, default=None)
