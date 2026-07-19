@@ -166,6 +166,8 @@ format-check: $(DEV_STAMP)
 lint: $(DEV_STAMP)
 	$(RUFF) check "$(REPO_ROOT)"
 	$(MAKE) -j $(JOBS) validate-patterns
+	$(PYTHON) scripts/validate/controlplane_delivery.py
+	$(PYTHON) scripts/validate/webhook_secret.py
 	$(MAKE) typecheck
 
 typecheck: $(DEV_STAMP)

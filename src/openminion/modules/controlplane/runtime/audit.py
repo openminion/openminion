@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from openminion.base.time import utc_now_iso as _iso_now
+from openminion.modules.controlplane.runtime.events import validate_audit_event
 
 
 def emit_audit_event(
@@ -54,9 +55,12 @@ class AuditEvent:
 
 
 class AuditLogger:
-    def __init__(self, sink: Any = None) -> None:
+    def __init__(
+        self, sink: Any = None, *, schema_validation_enabled: bool = False
+    ) -> None:
         self.events: list[AuditEvent] = []
         self._sink = sink  # callable(AuditEvent) -> None or None
+        self._schema_validation_enabled = schema_validation_enabled
         self._logger = logging.getLogger(__name__)
         self._failures = 0
         self._last_error: str | None = None
@@ -90,6 +94,7 @@ class AuditLogger:
             details=details or {},
             error=error,
         )
+        validate_audit_event(ev, enabled=self._schema_validation_enabled)
         self.events.append(ev)
         if ev.event_type == "cp.wizard.step.failed":
             self._wizard_step_failures += 1

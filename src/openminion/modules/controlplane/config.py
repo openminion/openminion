@@ -55,6 +55,21 @@ class ControlPlaneConfig:
     rate_limit_user_limit: int = 30
     rate_limit_session_window_s: int = 60
     rate_limit_session_limit: int = 40
+    audit_schema_validation_enabled: bool = False
+    health_probe_enabled: bool = False
+    health_probe_host: str = "127.0.0.1"
+    health_probe_port: int = 9100
+    health_probe_allow_remote: bool = False
+    health_probe_bearer_token: str | None = None
+    janitor_enabled: bool = True
+    janitor_interval_seconds: int = 3600
+    janitor_dry_run: bool = False
+    audit_retention_days: int = 30
+    outbox_terminal_retention_days: int = 7
+    pair_token_retention_days: int = 30
+    pair_attempt_retention_days: int = 90
+    rate_limit_retention_days: int = 7
+    wizard_terminal_retention_days: int = 30
 
 
 def load_config(
@@ -214,6 +229,33 @@ def _from_dict(
         rate_limit_user_limit=int(raw.get("rate_limit_user_limit", 30)),
         rate_limit_session_window_s=int(raw.get("rate_limit_session_window_s", 60)),
         rate_limit_session_limit=int(raw.get("rate_limit_session_limit", 40)),
+        audit_schema_validation_enabled=_as_bool(
+            raw.get("audit_schema_validation_enabled"), default=False
+        ),
+        health_probe_enabled=_as_bool(raw.get("health_probe_enabled"), default=False),
+        health_probe_host=_as_non_empty_str(
+            raw.get("health_probe_host"), default="127.0.0.1"
+        ),
+        health_probe_port=int(raw.get("health_probe_port", 9100)),
+        health_probe_allow_remote=_as_bool(
+            raw.get("health_probe_allow_remote"), default=False
+        ),
+        health_probe_bearer_token=_as_str_or_none(
+            _resolve_secret(raw.get("health_probe_bearer_token"), env_map=env_map)
+        ),
+        janitor_enabled=_as_bool(raw.get("janitor_enabled"), default=True),
+        janitor_interval_seconds=int(raw.get("janitor_interval_seconds", 3600)),
+        janitor_dry_run=_as_bool(raw.get("janitor_dry_run"), default=False),
+        audit_retention_days=int(raw.get("audit_retention_days", 30)),
+        outbox_terminal_retention_days=int(
+            raw.get("outbox_terminal_retention_days", 7)
+        ),
+        pair_token_retention_days=int(raw.get("pair_token_retention_days", 30)),
+        pair_attempt_retention_days=int(raw.get("pair_attempt_retention_days", 90)),
+        rate_limit_retention_days=int(raw.get("rate_limit_retention_days", 7)),
+        wizard_terminal_retention_days=int(
+            raw.get("wizard_terminal_retention_days", 30)
+        ),
     )
 
 

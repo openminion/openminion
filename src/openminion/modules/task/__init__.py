@@ -115,6 +115,14 @@ from .runtime.lifecycle import (
     TaskManager,
 )
 from .runtime.persistent_service import SqlTaskCtl
+from .replay_commands import (
+    ReplayCommandResult,
+    branch_task_from_checkpoint,
+    compare_task_checkpoint,
+    list_task_checkpoints,
+    replay_task_checkpoint,
+    rewind_task_to_checkpoint,
+)
 
 __version__ = OPENMINION_VERSION
 
@@ -166,6 +174,12 @@ __all__ = (
     "ProjectVerificationState",
     "ResumePointer",
     "SqlTaskCtl",
+    "ReplayCommandResult",
+    "branch_task_from_checkpoint",
+    "compare_task_checkpoint",
+    "list_task_checkpoints",
+    "replay_task_checkpoint",
+    "rewind_task_to_checkpoint",
     "StepNotFoundError",
     "StepUpdateInput",
     "TASK_INTERFACE_VERSION",

@@ -15,7 +15,9 @@ from openminion.modules.controlplane.config import (
     from_base_config as controlplane_from_base_config,
 )
 from openminion.modules.controlplane.constants import PRINCIPAL_BINDING_STATUS_ACTIVE
-from openminion.modules.controlplane.runtime import EchoBrain
+from openminion.modules.controlplane.runtime import EchoBrain, MetricsAuditSink
+from openminion.modules.controlplane.runtime import MetricsRegistry, compose_audit_sinks
+from openminion.modules.controlplane.runtime import build_controlplane_sidecar_specs
 from openminion.modules.controlplane.runtime.audit import AuditLogger
 from openminion.modules.controlplane.runtime.auth import AuthEvaluator
 from openminion.modules.controlplane.runtime.channels import ChannelRegistry
@@ -55,6 +57,8 @@ class ControlPlaneRuntimeComponents:
     rate_limiter: ControlPlaneRateLimiter
     delivery_registry: ChannelRegistry
     outbox_worker: OutboxWorker
+    metrics: MetricsRegistry
+    sidecar_specs: list[Any]
 
     def close(self) -> None:
         closer = getattr(self.brain_client, "close", None)
@@ -80,7 +84,12 @@ def build_controlplane_runtime_components(
     store = _build_store(config=config, cp_cfg=cp_cfg)
     _initialize_store(store=store, cp_cfg=cp_cfg)
 
-    audit_logger = AuditLogger(sink=store.put_audit)
+    metrics = MetricsRegistry()
+    metrics_sink = MetricsAuditSink(metrics)
+    audit_logger = AuditLogger(
+        sink=compose_audit_sinks(store.put_audit, metrics_sink.observe),
+        schema_validation_enabled=cp_cfg.audit_schema_validation_enabled,
+    )
     auth = AuthEvaluator(admin_user_keys=cp_cfg.admin_user_keys)
     router = Router(store, auth=auth, audit_logger=audit_logger)
     parser = SlashCommandParser()
@@ -113,6 +122,17 @@ def build_controlplane_runtime_components(
         max_attempts=cp_cfg.outbox_max_attempts,
         max_backoff_s=cp_cfg.outbox_max_backoff_s,
     )
+    rate_limiter = ControlPlaneRateLimiter(
+        store=store,
+        policy=RateLimitPolicy(
+            chat_window_s=cp_cfg.rate_limit_chat_window_s,
+            chat_limit=cp_cfg.rate_limit_chat_limit,
+            user_window_s=cp_cfg.rate_limit_user_window_s,
+            user_limit=cp_cfg.rate_limit_user_limit,
+            session_window_s=cp_cfg.rate_limit_session_window_s,
+            session_limit=cp_cfg.rate_limit_session_limit,
+        ),
+    )
     return ControlPlaneRuntimeComponents(
         config=cp_cfg,
         store=store,
@@ -124,19 +144,16 @@ def build_controlplane_runtime_components(
         command_registry=command_registry,
         brain_client=brain,
         dispatcher=dispatcher,
-        rate_limiter=ControlPlaneRateLimiter(
-            store=store,
-            policy=RateLimitPolicy(
-                chat_window_s=cp_cfg.rate_limit_chat_window_s,
-                chat_limit=cp_cfg.rate_limit_chat_limit,
-                user_window_s=cp_cfg.rate_limit_user_window_s,
-                user_limit=cp_cfg.rate_limit_user_limit,
-                session_window_s=cp_cfg.rate_limit_session_window_s,
-                session_limit=cp_cfg.rate_limit_session_limit,
-            ),
-        ),
+        rate_limiter=rate_limiter,
         delivery_registry=delivery_registry,
         outbox_worker=outbox_worker,
+        metrics=metrics,
+        sidecar_specs=build_controlplane_sidecar_specs(
+            config=cp_cfg,
+            store=store,
+            audit_logger=audit_logger,
+            metrics=metrics,
+        ),
     )
 
 

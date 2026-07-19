@@ -92,6 +92,11 @@ otel = [
   "opentelemetry-sdk>=1.20,<2",
   "opentelemetry-exporter-otlp>=1.20,<2",
 ]
+metrics = [
+  # Optional controlplane metrics exposition. Runtime falls back to an internal
+  # registry when this extra is absent, so default installs stay dependency-free.
+  "prometheus-client>=0.20,<1",
+]
 fetch-scrapling = [
   "scrapling>=0.2.0",
 ]

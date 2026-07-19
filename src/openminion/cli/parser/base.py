@@ -72,6 +72,10 @@ COMMAND_SPECS = (
     CommandSpec(
         "tasks", "openminion.cli.commands.tasks", "Task inventory and controls"
     ),
+    CommandSpec("replay", "openminion.cli.commands.replay", "Replay/checkpoint controls"),
+    CommandSpec("checkpoint", "openminion.cli.commands.replay", "List task checkpoints"),
+    CommandSpec("rewind", "openminion.cli.commands.replay", "Create a rewind branch"),
+    CommandSpec("branch", "openminion.cli.commands.replay", "Create a checkpoint branch"),
     CommandSpec("export", "openminion.cli.commands.export", "Export commands"),
     CommandSpec("focus", "openminion.cli.commands.interactive", argparse.SUPPRESS),
     CommandSpec("setup", "openminion.cli.commands.setup", "Configure OpenMinion"),
