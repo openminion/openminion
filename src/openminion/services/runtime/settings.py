@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from typing import Any
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -16,7 +17,7 @@ class CronRunLogConfig:
         self.max_bytes = max(1, int(self.max_bytes))
         self.keep_lines = max(1, int(self.keep_lines))
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "max_bytes": self.max_bytes,
             "keep_lines": self.keep_lines,
@@ -40,7 +41,7 @@ class CronConfig:
         if isinstance(self.session_retention, str):
             self.session_retention = self.session_retention.strip() or "24h"
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
             "tick_ms": self.tick_ms,
@@ -73,7 +74,7 @@ class RuntimeConfig:
             return cls()
 
         try:
-            import yaml
+            import yaml  # type: ignore[import-untyped]
 
             with open(path, encoding="utf-8") as fh:
                 raw = yaml.safe_load(fh) or {}
@@ -105,7 +106,7 @@ class RuntimeConfig:
             cron=cron,
         )
 
-    def as_dict(self) -> dict:
+    def as_dict(self) -> dict[str, Any]:
         return {
             "max_agents_hot": self.max_agents_hot,
             "max_global_concurrency": self.max_global_concurrency,
@@ -126,13 +127,13 @@ def from_base_config(
     return RuntimeConfig.from_yaml(str(runtime_path))
 
 
-def _mapping(value: object) -> dict:
+def _mapping(value: object) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
-def _parse_simple_yaml(path: str) -> dict:
-    result: dict = {}
-    current_section: dict | None = None
+def _parse_simple_yaml(path: str) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    current_section: dict[str, Any] | None = None
 
     with open(path, encoding="utf-8") as fh:
         for line in fh:

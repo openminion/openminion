@@ -454,77 +454,6 @@ class SessionContextService:
             to_compact[-1].rowid,
         )
 
-    def _ingest_compacted_messages(
-        self,
-        *,
-        session_id: str,
-        messages: list[MessageRecord],
-    ) -> None:
-        """Ingest compacted messages into RetrieveCtl as episode units."""
-        if self._retrieve_ctl is None:
-            return
-
-        def _role_of(msg: MessageRecord) -> str:
-            r = str(msg.role or "").strip().lower()
-            if r in {"inbound", "user"}:
-                return "user"
-            if r in {"outbound", "assistant"}:
-                return "assistant"
-            return r
-
-        i = 0
-        while i < len(messages):
-            msg = messages[i]
-            role = _role_of(msg)
-            # Try to form a user→assistant pair
-            if (
-                role == "user"
-                and i + 1 < len(messages)
-                and _role_of(messages[i + 1]) == "assistant"
-            ):
-                pair = messages[i + 1]
-                source_ref = f"session:{session_id}#rowid:{msg.rowid}-{pair.rowid}"
-                text = f"user: {msg.body}\nassistant: {pair.body}"
-                created_at = msg.created_at
-                try:
-                    self._retrieve_ctl.ingest_source(
-                        source_type="episode",
-                        source_ref=source_ref,
-                        text=text,
-                        scope=f"session:{session_id}",
-                        tags=["session", "compact", "turn-pair"],
-                        created_at=created_at,
-                    )
-                except Exception as exc:
-                    self._logger.warning(
-                        "session episode ingest failed session_id=%s rowid=%s-%s error=%s",
-                        session_id,
-                        msg.rowid,
-                        pair.rowid,
-                        exc,
-                    )
-                i += 2
-            else:
-                # Ingest individually (system messages, consecutive same-role, etc.)
-                source_ref = f"session:{session_id}#rowid:{msg.rowid}"
-                text = f"{role}: {msg.body}"
-                try:
-                    self._retrieve_ctl.ingest_source(
-                        source_type="episode",
-                        source_ref=source_ref,
-                        text=text,
-                        scope=f"session:{session_id}",
-                        tags=["session", "compact"],
-                        created_at=msg.created_at,
-                    )
-                except Exception as exc:
-                    self._logger.warning(
-                        "session episode ingest failed session_id=%s rowid=%s error=%s",
-                        session_id,
-                        msg.rowid,
-                        exc,
-                    )
-                i += 1
 
     def build_history(
         self,
@@ -640,66 +569,6 @@ class SessionContextService:
             thread_id=thread_id,
         )
 
-    def _maybe_schedule_summary_enrichment(
-        self, *, session_id: str, deterministic_summary: str
-    ) -> None:
-        if not self._summary_enrichment_enabled:
-            return
-        if self._summary_enricher is None:
-            return
-        summary_enricher = self._summary_enricher
-        base_summary = str(deterministic_summary or "").strip()
-        if not base_summary:
-            return
-
-        def _task() -> None:
-            try:
-                enriched = str(summary_enricher(base_summary) or "").strip()
-            except Exception as exc:  # noqa: BLE001
-                self._logger.warning(
-                    "session summary enrichment failed session_id=%s error=%s",
-                    session_id,
-                    exc,
-                )
-                return
-            if not enriched or enriched == base_summary:
-                return
-            safe_summary = enriched[-self._summary_max_chars :]
-            try:
-                context = self._sessions.ensure_session_context(session_id=session_id)
-                if context.rolling_summary.strip() != base_summary:
-                    return
-                self._sessions.update_session_context(
-                    session_id=session_id,
-                    summary_short=_summary_short_from_rolling_summary(safe_summary),
-                    rolling_summary=safe_summary,
-                    compacted_until_rowid=context.compacted_until_rowid,
-                    compacted_until_created_at=context.compacted_until_created_at,
-                    compacted_until_message_id=context.compacted_until_message_id,
-                    compacted_message_count=context.compacted_message_count,
-                    version=context.version + 1,
-                    expected_version=context.version,
-                )
-                self._sessions.append_event(
-                    session_id=session_id,
-                    event_type="session.summary.enriched",
-                    payload={"mode": "deferred", "chars": len(safe_summary)},
-                )
-            except Exception as exc:  # noqa: BLE001
-                self._logger.warning(
-                    "session summary enrichment apply failed session_id=%s error=%s",
-                    session_id,
-                    exc,
-                )
-
-        try:
-            self._summary_enrichment_defer(_task)
-        except Exception as exc:  # noqa: BLE001
-            self._logger.warning(
-                "session summary enrichment scheduling failed session_id=%s error=%s",
-                session_id,
-                exc,
-            )
 
     def list_pins(self, *, session_id: str) -> list[PinnedContextEntry]:
         return self._sessions.list_pins(session_id=session_id)
@@ -740,62 +609,6 @@ class SessionContextService:
             policy=policy,
         )
 
-    @staticmethod
-    def _default_defer_summary_task(task: Callable[[], None]) -> None:
-        thread = Thread(target=task, daemon=True)
-        thread.start()
-
-    def _archive_compacted_messages(
-        self,
-        *,
-        session_id: str,
-        messages: List[MessageRecord],
-    ) -> SessionArchiveRef | None:
-        if not self._archive_enabled or self._archive_root is None:
-            return None
-        if not messages:
-            return None
-
-        first = messages[0]
-        last = messages[-1]
-        now = datetime.now(timezone.utc)
-        partition = now.strftime("%Y-%m-%d")
-        session_dir = self._archive_root / _slug(session_id) / partition
-        session_dir.mkdir(parents=True, exist_ok=True)
-        file_name = (
-            f"chunk-{first.rowid:010d}-{last.rowid:010d}-"
-            f"{now.strftime('%H%M%S')}-{uuid4().hex[:8]}.jsonl"
-        )
-        file_path = session_dir / file_name
-
-        with file_path.open("w", encoding="utf-8") as handle:
-            for item in messages:
-                payload = {
-                    "rowid": int(item.rowid),
-                    "id": item.id,
-                    "session_id": item.session_id,
-                    "role": item.role,
-                    "body": item.body,
-                    "metadata": item.metadata,
-                    "created_at": item.created_at,
-                }
-                handle.write(json.dumps(payload, sort_keys=True) + "\n")
-
-        try:
-            relative_path = str(file_path.relative_to(self._archive_root))
-        except ValueError:
-            relative_path = str(file_path)
-
-        return SessionArchiveRef(
-            path=str(file_path),
-            relative_path=relative_path,
-            first_rowid=first.rowid,
-            last_rowid=last.rowid,
-            message_count=len(messages),
-            first_created_at=first.created_at,
-            last_created_at=last.created_at,
-        )
-
     def _list_recent_archive_refs(self, *, session_id: str) -> list[dict[str, Any]]:
         events = self._sessions.list_events(
             session_id=session_id,
@@ -820,6 +633,199 @@ class SessionContextService:
                 }
             )
         return refs
+
+
+def _ingest_compacted_messages(
+    self,
+    *,
+    session_id: str,
+    messages: list[MessageRecord],
+) -> None:
+    """Ingest compacted messages into RetrieveCtl as episode units."""
+    if self._retrieve_ctl is None:
+        return
+
+    def _role_of(msg: MessageRecord) -> str:
+        r = str(msg.role or "").strip().lower()
+        if r in {"inbound", "user"}:
+            return "user"
+        if r in {"outbound", "assistant"}:
+            return "assistant"
+        return r
+
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        role = _role_of(msg)
+        # Try to form a user→assistant pair
+        if (
+            role == "user"
+            and i + 1 < len(messages)
+            and _role_of(messages[i + 1]) == "assistant"
+        ):
+            pair = messages[i + 1]
+            source_ref = f"session:{session_id}#rowid:{msg.rowid}-{pair.rowid}"
+            text = f"user: {msg.body}\nassistant: {pair.body}"
+            created_at = msg.created_at
+            try:
+                self._retrieve_ctl.ingest_source(
+                    source_type="episode",
+                    source_ref=source_ref,
+                    text=text,
+                    scope=f"session:{session_id}",
+                    tags=["session", "compact", "turn-pair"],
+                    created_at=created_at,
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "session episode ingest failed session_id=%s rowid=%s-%s error=%s",
+                    session_id,
+                    msg.rowid,
+                    pair.rowid,
+                    exc,
+                )
+            i += 2
+        else:
+            # Ingest individually (system messages, consecutive same-role, etc.)
+            source_ref = f"session:{session_id}#rowid:{msg.rowid}"
+            text = f"{role}: {msg.body}"
+            try:
+                self._retrieve_ctl.ingest_source(
+                    source_type="episode",
+                    source_ref=source_ref,
+                    text=text,
+                    scope=f"session:{session_id}",
+                    tags=["session", "compact"],
+                    created_at=msg.created_at,
+                )
+            except Exception as exc:
+                self._logger.warning(
+                    "session episode ingest failed session_id=%s rowid=%s error=%s",
+                    session_id,
+                    msg.rowid,
+                    exc,
+                )
+            i += 1
+
+def _maybe_schedule_summary_enrichment(
+    self, *, session_id: str, deterministic_summary: str
+) -> None:
+    if not self._summary_enrichment_enabled:
+        return
+    if self._summary_enricher is None:
+        return
+    summary_enricher = self._summary_enricher
+    base_summary = str(deterministic_summary or "").strip()
+    if not base_summary:
+        return
+
+    def _task() -> None:
+        try:
+            enriched = str(summary_enricher(base_summary) or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning(
+                "session summary enrichment failed session_id=%s error=%s",
+                session_id,
+                exc,
+            )
+            return
+        if not enriched or enriched == base_summary:
+            return
+        safe_summary = enriched[-self._summary_max_chars :]
+        try:
+            context = self._sessions.ensure_session_context(session_id=session_id)
+            if context.rolling_summary.strip() != base_summary:
+                return
+            self._sessions.update_session_context(
+                session_id=session_id,
+                summary_short=_summary_short_from_rolling_summary(safe_summary),
+                rolling_summary=safe_summary,
+                compacted_until_rowid=context.compacted_until_rowid,
+                compacted_until_created_at=context.compacted_until_created_at,
+                compacted_until_message_id=context.compacted_until_message_id,
+                compacted_message_count=context.compacted_message_count,
+                version=context.version + 1,
+                expected_version=context.version,
+            )
+            self._sessions.append_event(
+                session_id=session_id,
+                event_type="session.summary.enriched",
+                payload={"mode": "deferred", "chars": len(safe_summary)},
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning(
+                "session summary enrichment apply failed session_id=%s error=%s",
+                session_id,
+                exc,
+            )
+
+    try:
+        self._summary_enrichment_defer(_task)
+    except Exception as exc:  # noqa: BLE001
+        self._logger.warning(
+            "session summary enrichment scheduling failed session_id=%s error=%s",
+            session_id,
+            exc,
+        )
+
+def _default_defer_summary_task(task: Callable[[], None]) -> None:
+    thread = Thread(target=task, daemon=True)
+    thread.start()
+
+def _archive_compacted_messages(
+    self,
+    *,
+    session_id: str,
+    messages: List[MessageRecord],
+) -> SessionArchiveRef | None:
+    if not self._archive_enabled or self._archive_root is None:
+        return None
+    if not messages:
+        return None
+
+    first = messages[0]
+    last = messages[-1]
+    now = datetime.now(timezone.utc)
+    partition = now.strftime("%Y-%m-%d")
+    session_dir = self._archive_root / _slug(session_id) / partition
+    session_dir.mkdir(parents=True, exist_ok=True)
+    file_name = (
+        f"chunk-{first.rowid:010d}-{last.rowid:010d}-"
+        f"{now.strftime('%H%M%S')}-{uuid4().hex[:8]}.jsonl"
+    )
+    file_path = session_dir / file_name
+
+    with file_path.open("w", encoding="utf-8") as handle:
+        for item in messages:
+            payload = {
+                "rowid": int(item.rowid),
+                "id": item.id,
+                "session_id": item.session_id,
+                "role": item.role,
+                "body": item.body,
+                "metadata": item.metadata,
+                "created_at": item.created_at,
+            }
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+
+    try:
+        relative_path = str(file_path.relative_to(self._archive_root))
+    except ValueError:
+        relative_path = str(file_path)
+
+    return SessionArchiveRef(
+        path=str(file_path),
+        relative_path=relative_path,
+        first_rowid=first.rowid,
+        last_rowid=last.rowid,
+        message_count=len(messages),
+        first_created_at=first.created_at,
+        last_created_at=last.created_at,
+    )
+SessionContextService._ingest_compacted_messages = _ingest_compacted_messages
+SessionContextService._maybe_schedule_summary_enrichment = _maybe_schedule_summary_enrichment
+SessionContextService._default_defer_summary_task = staticmethod(_default_defer_summary_task)
+SessionContextService._archive_compacted_messages = _archive_compacted_messages
 
 
 def _render_context_block(

@@ -164,6 +164,90 @@ def _thinking_on_default_profile(cfg: OpenMinionConfig) -> str:
     return str(getattr(profile, "thinking", "") or "")
 
 
+def _provider_facade(provider: object | None, llm_runtime: object | None) -> object | None:
+    if provider is not None or llm_runtime is None:
+        return provider
+    return SimpleNamespace(
+        name=str(getattr(llm_runtime, "name", "") or ""),
+        model=str(getattr(llm_runtime, "model", "") or ""),
+        tool_call_strategy=str(getattr(llm_runtime, "tool_call_strategy", "") or ""),
+    )
+
+
+def _default_identity_name(config: OpenMinionConfig) -> str:
+    from openminion.base.config.core import resolve_default_agent_id
+
+    try:
+        default_agent_id = resolve_default_agent_id(config)
+        return str(config.agents[default_agent_id].name or "").strip() or default_agent_id
+    except Exception:  # noqa: BLE001
+        return "openminion"
+
+
+def _tool_result_resolution_metadata(data: dict[str, Any]) -> dict[str, str]:
+    chain_value = data.get("runtime_fallback_chain", [])
+    runtime_fallback_chain = (
+        json.dumps(chain_value, sort_keys=True, default=str)
+        if isinstance(chain_value, list)
+        else json.dumps([], sort_keys=True)
+    )
+    return {
+        "model_tool_name": str(data.get("model_tool_name", "") or ""),
+        "runtime_binding_id": str(data.get("runtime_binding_id", "") or ""),
+        "runtime_tool_name": str(data.get("runtime_tool_name", "") or ""),
+        "runtime_fallback_chain": runtime_fallback_chain,
+        "runtime_fallback_used": str(bool(data.get("runtime_fallback_used", False))).lower(),
+        "runtime_resolution_source": str(data.get("runtime_resolution_source", "") or ""),
+    }
+
+
+def _tool_result_payload_entry(item: Any) -> dict[str, Any]:
+    data = getattr(item, "data", {}) or {}
+    entry_data = data if isinstance(data, dict) else {}
+    entry_chain = entry_data.get("runtime_fallback_chain", []) or []
+    if not isinstance(entry_chain, list):
+        entry_chain = []
+    status = str(entry_data.get("status", "") or "")
+    if not status:
+        status = "success" if bool(getattr(item, "ok", False)) else "error"
+    content, output_frame = _tool_output_content_and_frame(
+        content=str(getattr(item, "content", "") or ""),
+        data=entry_data,
+    )
+    payload_entry = {
+        "id": str(getattr(item, "call_id", "") or ""),
+        "name": str(getattr(item, "tool_name", "") or ""),
+        "status": status,
+        "error_code": str(entry_data.get("error_code", "") or ""),
+        "reason_code": str(entry_data.get("reason_code", "") or ""),
+        "error_message": str(getattr(item, "error", "") or ""),
+        "tool_name": str(getattr(item, "tool_name", "") or ""),
+        "ok": bool(getattr(item, "ok", False)),
+        "verified": bool(getattr(item, "verified", False)),
+        "content": content,
+        "error": str(getattr(item, "error", "") or ""),
+        "data": data,
+        "call_id": str(getattr(item, "call_id", "") or ""),
+        "source": str(getattr(item, "source", "") or ""),
+        "model_tool_name": str(entry_data.get("model_tool_name", "") or ""),
+        "runtime_binding_id": str(entry_data.get("runtime_binding_id", "") or ""),
+        "runtime_tool_name": str(entry_data.get("runtime_tool_name", "") or ""),
+        "runtime_fallback_chain": list(entry_chain),
+        "runtime_fallback_used": bool(entry_data.get("runtime_fallback_used", False)),
+        "runtime_resolution_source": str(entry_data.get("runtime_resolution_source", "") or ""),
+        "fallback_index": int(getattr(item, "fallback_index", 0) or 0),
+        "state": str(getattr(item, "state", "ok") or "ok"),
+        "duration_ms": (
+            int(getattr(item, "duration_ms", 0) or 0)
+            if getattr(item, "duration_ms", None) is not None
+            else None
+        ),
+    }
+    if output_frame is not None:
+        payload_entry["tool_output_frame"] = output_frame
+    return payload_entry
+
+
 @bind_agent_identity_runtime_api
 class AgentService(AgentTurnFlowMixin):
     """Core service for managing agent interactions and tool loops."""
@@ -184,15 +268,7 @@ class AgentService(AgentTurnFlowMixin):
         self._config = config
         self._plugins = plugins
         self._llm_runtime = llm_runtime
-        self._provider = provider
-        if self._provider is None and self._llm_runtime is not None:
-            self._provider = SimpleNamespace(
-                name=str(getattr(self._llm_runtime, "name", "") or ""),
-                model=str(getattr(self._llm_runtime, "model", "") or ""),
-                tool_call_strategy=str(
-                    getattr(self._llm_runtime, "tool_call_strategy", "") or ""
-                ),
-            )
+        self._provider = _provider_facade(provider, llm_runtime)
         self._logger = logger
         self._home_root = home_root
         self._tools = tools
@@ -206,17 +282,7 @@ class AgentService(AgentTurnFlowMixin):
         self._tool_fallbacks = AgentToolFallbacks(self)
         self._thinking_ctl = ThinkingCtl()
         self._identityctl = None
-        from openminion.base.config.core import resolve_default_agent_id
-
-        try:
-            _svc_default_agent_id = resolve_default_agent_id(config)
-            _svc_identity_name = (
-                str(config.agents[_svc_default_agent_id].name or "").strip()
-                or _svc_default_agent_id
-            )
-        except Exception:  # noqa: BLE001
-            _svc_identity_name = "openminion"
-        self._identity_agent_id = _svc_identity_name
+        self._identity_agent_id = _default_identity_name(config)
         self._identity_tool_filter: dict | None = None
         self._last_identity_snippet = None
         self._init_identity_runtime()
@@ -692,99 +758,23 @@ class AgentService(AgentTurnFlowMixin):
     def _tool_batch_metadata(
         self, *, batch: Any, tool_calls_count: int
     ) -> dict[str, str]:
-        contract_metadata = {"tool_contract_version": CONTRACT_VERSION_V2}
-        tool_results_payload = []
-        model_tool_name = ""
-        runtime_binding_id = ""
-        runtime_tool_name = ""
-        runtime_fallback_chain = "[]"
-        runtime_fallback_used = "false"
-        runtime_resolution_source = ""
-        for item in list(getattr(batch, "results", []) or []):
+        results = list(getattr(batch, "results", []) or [])
+        tool_results_payload = [_tool_result_payload_entry(item) for item in results]
+        resolution_metadata = self._empty_tool_resolution_metadata()
+        for item in results:
             data = getattr(item, "data", {}) or {}
-            if not model_tool_name and isinstance(data, dict):
-                model_tool_name = str(data.get("model_tool_name", "") or "")
-                runtime_binding_id = str(data.get("runtime_binding_id", "") or "")
-                runtime_tool_name = str(data.get("runtime_tool_name", "") or "")
-                chain_value = data.get("runtime_fallback_chain", [])
-                if isinstance(chain_value, list):
-                    runtime_fallback_chain = json.dumps(
-                        chain_value, sort_keys=True, default=str
-                    )
-                else:
-                    runtime_fallback_chain = json.dumps([], sort_keys=True)
-                runtime_fallback_used = str(
-                    bool(data.get("runtime_fallback_used", False))
-                ).lower()
-                runtime_resolution_source = str(
-                    data.get("runtime_resolution_source", "") or ""
-                )
-            error_code = str(data.get("error_code", "") or "")
-            reason_code = str(data.get("reason_code", "") or "")
-            status = str(data.get("status", "") or "")
-            if not status:
-                status = "success" if bool(getattr(item, "ok", False)) else "error"
-            entry_data = data if isinstance(data, dict) else {}
-            entry_chain = entry_data.get("runtime_fallback_chain", []) or []
-            if not isinstance(entry_chain, list):
-                entry_chain = []
-            content, output_frame = _tool_output_content_and_frame(
-                content=str(getattr(item, "content", "") or ""),
-                data=entry_data,
-            )
-            payload_entry = {
-                "id": str(getattr(item, "call_id", "") or ""),
-                "name": str(getattr(item, "tool_name", "") or ""),
-                "status": status,
-                "error_code": error_code,
-                "reason_code": reason_code,
-                "error_message": str(getattr(item, "error", "") or ""),
-                "tool_name": str(getattr(item, "tool_name", "") or ""),
-                "ok": bool(getattr(item, "ok", False)),
-                "verified": bool(getattr(item, "verified", False)),
-                "content": content,
-                "error": str(getattr(item, "error", "") or ""),
-                "data": data,
-                "call_id": str(getattr(item, "call_id", "") or ""),
-                "source": str(getattr(item, "source", "") or ""),
-                # per-result provenance + state
-                "model_tool_name": str(entry_data.get("model_tool_name", "") or ""),
-                "runtime_binding_id": str(
-                    entry_data.get("runtime_binding_id", "") or ""
-                ),
-                "runtime_tool_name": str(entry_data.get("runtime_tool_name", "") or ""),
-                "runtime_fallback_chain": list(entry_chain),
-                "runtime_fallback_used": bool(
-                    entry_data.get("runtime_fallback_used", False)
-                ),
-                "runtime_resolution_source": str(
-                    entry_data.get("runtime_resolution_source", "") or ""
-                ),
-                "fallback_index": int(getattr(item, "fallback_index", 0) or 0),
-                "state": str(getattr(item, "state", "ok") or "ok"),
-                "duration_ms": (
-                    int(getattr(item, "duration_ms", 0) or 0)
-                    if getattr(item, "duration_ms", None) is not None
-                    else None
-                ),
-            }
-            if output_frame is not None:
-                payload_entry["tool_output_frame"] = output_frame
-            tool_results_payload.append(payload_entry)
+            if isinstance(data, dict) and str(data.get("model_tool_name", "") or ""):
+                resolution_metadata = _tool_result_resolution_metadata(data)
+                break
         return {
-            **contract_metadata,
+            "tool_contract_version": CONTRACT_VERSION_V2,
             "tool_calls_count": str(max(0, int(tool_calls_count))),
-            "tool_execution_count": str(len(getattr(batch, "results", []) or [])),
+            "tool_execution_count": str(len(results)),
             "tool_verified": str(bool(getattr(batch, "all_verified", False))).lower(),
             "tool_results": json.dumps(
                 tool_results_payload, sort_keys=True, default=str
             ),
-            "model_tool_name": model_tool_name,
-            "runtime_binding_id": runtime_binding_id,
-            "runtime_tool_name": runtime_tool_name,
-            "runtime_fallback_chain": runtime_fallback_chain,
-            "runtime_fallback_used": runtime_fallback_used,
-            "runtime_resolution_source": runtime_resolution_source,
+            **resolution_metadata,
         }
 
     def _get_spec_for_tool(self, tool_name: str) -> ProviderToolSpec | None:
