@@ -104,6 +104,7 @@ SegmentBucket = Literal[
     "trailer_feedback",
     "self_awareness",
     "recent_window",
+    "memory",
     "retrieval",
     "evidence_refs",
     "turn_input",
@@ -303,6 +304,7 @@ class ContextSegment(BaseModel):
     cache_key: str = ""
     cache_invalidation_refs: List[str] = Field(default_factory=list)
     pinned: bool = False  # mission_snapshot/safety/identity: always True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class BucketAllocation(BaseModel):
@@ -358,6 +360,18 @@ class ContextDecisionRef(BaseModel):
     content_digest: str = ""
     refs: List[str] = Field(default_factory=list)
     source: str = "typed_schema"
+
+
+class MemoryBlockSegmentRef(BaseModel):
+    """OpenMinion reference to a Sophiagraph-owned memory block."""
+
+    block_id: str
+    class_name: str
+    mode: str
+    namespace_id: str
+    provenance_ref: str = ""
+    updated_at: str = ""
+    stale: bool = False
 
 
 class ContextTracePersistenceResult(BaseModel):
@@ -770,6 +784,7 @@ def bucket_caps_for(budgets: ContextBudgets) -> Dict[str, int]:
             64, int(total * BUCKET_TOKEN_FRACTIONS["self_awareness"])
         ),
         "recent_window": budgets.recent_turn_tokens,
+        "memory": budgets.memory_tokens,
         "retrieval": budgets.facts_tokens
         + budgets.memory_tokens
         + budgets.skills_tokens,

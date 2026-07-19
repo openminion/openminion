@@ -20,6 +20,7 @@ RECOMP_EXTRACTIVE_DEFAULT_TOP_N = 2
 @dataclass(frozen=True)
 class ContextConfig:
     compaction_trigger_percent: float = 0.85
+    memory_blocks_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not 0.0 < float(self.compaction_trigger_percent) <= 1.0:

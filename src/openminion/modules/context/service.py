@@ -35,10 +35,13 @@ from .pack.budgeting import (
     _fit_to_budget,
     _normalize_context_budget_tier,
 )
+from .pack.build_steps import (
+    inject_memory_block_segments as _inject_memory_block_segments_impl,
+    trim_segments_for_pack as _trim_segments_for_pack_impl,
+)
 from .pack.finalize import (
     apply_live_state_overlay as _apply_live_state_overlay_impl,
     build_runtime_cache_lookup_key as _build_runtime_cache_lookup_key_impl,
-    context_drop_visibility_counts as _context_drop_visibility_counts_impl,
     finalize_context_pack as _finalize_context_pack_impl,
 )
 from .prefix import PinnedPrefixBuilder, PrefixCacheAdapter
@@ -105,14 +108,11 @@ LayoutDisciplineError = _LayoutDisciplineError
 _WORKING_STATE_MODULE_STATE_ATTR = "".join(("module", "_", "state"))
 _MAINTENANCE_MODULE_STATE_KEY = "".join(("memory", "_", "context", "_", "maintenance"))
 
-
 class IdentityMissingError(RuntimeError):
     pass
 
-
 class MissionContextMissingError(RuntimeError):
     """Raised when the mission_snapshot bucket would be empty (fail-closed)."""
-
 
 @dataclass(frozen=True)
 class _BuildPackRuntimeState:
@@ -126,7 +126,6 @@ class _BuildPackRuntimeState:
     identity: Any
     identity_budget: _IdentityBudgetResult
     cache_key: tuple[str, ...]
-
 
 def _make_segment(
     seg_id: str,
@@ -149,16 +148,13 @@ def _make_segment(
         estimate_tokens=_estimate_tokens,
     )
 
-
 def _position_aware_v1(
     segments: list[ContextSegment], scores: list[float]
 ) -> list[ContextSegment]:
     return _position_aware_v1_impl(segments, scores)
 
-
 def _assert_layout_discipline(segments: list[ContextSegment]) -> None:
     _assert_layout_discipline_impl(segments)
-
 
 class ContextCtlService:
     """V1.5 ContextCtlService: builds segment-first ContextPacks."""
@@ -180,6 +176,8 @@ class ContextCtlService:
         prefix_cache_adapter: PrefixCacheAdapter | None = None,
         telemetryctl: Any | None = None,
         identity_budget: Any | None = None,
+        memory_block_store: Any | None = None,
+        memory_blocks_enabled: bool | None = None,
         rolling_enabled: bool = True,
         compaction_enabled: bool = True,
         compression_enabled: bool = True,
@@ -203,6 +201,12 @@ class ContextCtlService:
         self._compaction_enabled = bool(compaction_enabled)
         self._compression_enabled = bool(compression_enabled)
         self._context_module_config = _load_context_module_config()
+        self._memory_block_store = memory_block_store
+        self._memory_blocks_enabled = (
+            bool(self._context_module_config.memory_blocks_enabled)
+            if memory_blocks_enabled is None
+            else bool(memory_blocks_enabled)
+        )
         self._compaction_eligibility: CompactionEligibility = (
             DefaultCompactionEligibility(
                 compaction_trigger_percent=(
@@ -297,23 +301,23 @@ class ContextCtlService:
             skill_snippet_text=materials.skill_snippet_text,
             artifact_digests=materials.artifact_digests,
         )
+        _inject_memory_block_segments_impl(
+            enabled=self._memory_blocks_enabled,
+            memory_block_store=self._memory_block_store,
+            memory_client=self._memctl,
+            request=request,
+            budgets=runtime_state.budgets,
+            segments=segments,
+            bucket_stats=bucket_stats,
+        )
 
-        decision_log = PackingDecisionLog()
-        warnings: list[str] = []
-        segments, decision_log, warnings = self._apply_trim_ladder(
+        segments, decision_log, warnings = _trim_segments_for_pack_impl(
             segments=segments,
             total_cap=runtime_state.budgets.total_max_tokens,
             bucket_caps=runtime_state.bucket_caps,
-            decision_log=decision_log,
-            warnings=warnings,
-        )
-        segments = _inject_context_drop_visibility_note_impl(
-            segments=segments,
-            drop_counts=_context_drop_visibility_counts_impl(
-                decision_log=decision_log,
-                bucket_stats=bucket_stats,
-            ),
-            estimate_tokens=_estimate_tokens,
+            bucket_stats=bucket_stats,
+            apply_trim_ladder_fn=self._apply_trim_ladder,
+            inject_visibility_note_fn=_inject_context_drop_visibility_note_impl,
         )
 
         self._apply_evidence_priority_ordering(
@@ -353,16 +357,14 @@ class ContextCtlService:
             normalize_context_budget_tier_fn=_normalize_context_budget_tier,
             mid_session_recall_state=materials.mid_session_recall_state,
         )
-        pack = finalized.pack
-
         self._record_built_pack(
             request=request,
             runtime_state=runtime_state,
-            pack=pack,
+            pack=finalized.pack,
             drop_count=finalized.drop_count,
             truncation_count=finalized.truncation_count,
         )
-        return pack
+        return finalized.pack
 
     def _prepare_build_pack_runtime_state(
         self, request: BuildPackRequest
@@ -460,9 +462,10 @@ class ContextCtlService:
         runtime_state: _BuildPackRuntimeState,
     ) -> ContextPack:
         cached_pack = self._cache[runtime_state.cache_key]
-        self._latest_manifest_by_session[request.session_id] = (
-            cached_pack.context_manifest
-        )
+        if cached_pack.context_manifest is not None:
+            self._latest_manifest_by_session[request.session_id] = (
+                cached_pack.context_manifest
+            )
         self._telemetry.emit_identity_audit_events(
             session_id=request.session_id,
             agent_id=request.agent_id,
@@ -555,8 +558,9 @@ class ContextCtlService:
     ) -> None:
         if runtime_state.cache_allowed:
             self._cache[runtime_state.cache_key] = pack
-        self._manifest_index[pack.pack_version] = pack.context_manifest
-        self._latest_manifest_by_session[request.session_id] = pack.context_manifest
+        if pack.context_manifest is not None:
+            self._manifest_index[pack.pack_version] = pack.context_manifest
+            self._latest_manifest_by_session[request.session_id] = pack.context_manifest
         self._telemetry.emit_identity_audit_events(
             session_id=request.session_id,
             agent_id=request.agent_id,
