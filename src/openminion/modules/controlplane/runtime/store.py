@@ -623,6 +623,66 @@ class InMemoryControlPlaneStore:
             binding = self._channel_subjects.get(key)
             return dict(binding) if isinstance(binding, dict) else None
 
+    def list_channel_subjects(
+        self,
+        *,
+        channel: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        chan = str(channel or "").strip()
+        state = str(status or "").strip()
+        max_items = max(1, int(limit))
+        with self._lock:
+            rows = [
+                dict(row)
+                for row in self._channel_subjects.values()
+                if (not chan or row.get("channel") == chan)
+                and (not state or row.get("status") == state)
+            ]
+        return sorted(
+            rows,
+            key=lambda row: str(row.get("last_seen_at") or ""),
+            reverse=True,
+        )[:max_items]
+
+    def update_channel_subject(
+        self,
+        *,
+        channel: str,
+        subject_id: str,
+        status: str | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
+        note: str | None = None,
+    ) -> bool:
+        key = (str(channel or "").strip(), str(subject_id or "").strip())
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            binding = self._channel_subjects.get(key)
+            if not isinstance(binding, dict):
+                return False
+            if status is not None:
+                binding["status"] = str(status)
+            if scopes is not None:
+                binding["scopes"] = [
+                    str(scope) for scope in scopes if str(scope).strip()
+                ]
+            if note is not None:
+                binding["note"] = note
+            binding["last_seen_at"] = now
+            pairing = self._pairings.get(key)
+            if isinstance(pairing, dict):
+                if status is not None:
+                    pairing["status"] = str(status)
+                if scopes is not None:
+                    pairing["scopes"] = [
+                        str(scope) for scope in scopes if str(scope).strip()
+                    ]
+                if note is not None:
+                    pairing["note"] = note
+                pairing["last_seen_at"] = now
+            return True
+
     def touch_channel_subject(self, *, channel: str, subject_id: str) -> None:
         key = (str(channel or "").strip(), str(subject_id or "").strip())
         now = datetime.now(timezone.utc).isoformat()
