@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from .contracts import (
+    TOKEN_TOTAL_SOURCES,
     TokenUsageCoveragePayload,
     TokenUsageDimensionCoveragePayload,
 )
@@ -162,6 +163,13 @@ def _coverage_event_text(event: Mapping[str, Any], key: str) -> str:
     return str(event.get(key, "") or "").strip()
 
 
+def explicit_total_source(payload: Mapping[str, Any]) -> str:
+    normalized = str(
+        payload.get("total_source") or payload.get("total_tokens_source") or ""
+    ).strip()
+    return normalized if normalized in TOKEN_TOTAL_SOURCES else ""
+
+
 def coverage_from_session_events(
     events: list[dict[str, Any]],
 ) -> TokenUsageCoverage:
@@ -176,6 +184,12 @@ def coverage_from_session_events(
         for event in llm_events:
             usage = _coverage_payload(event).get("usage")
             usage_payload = usage if isinstance(usage, Mapping) else {}
+            if (
+                keys == TOTAL_TOKEN_KEYS
+                and explicit_total_source(usage_payload) == "derived"
+            ):
+                missing += 1
+                continue
             state = observed_token_value(usage_payload, keys).state
             reported += state == "reported"
             missing += state == "missing"

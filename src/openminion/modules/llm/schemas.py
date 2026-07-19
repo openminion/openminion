@@ -12,6 +12,7 @@ Role = Literal["system", "user", "assistant", "tool"]
 ToolCallStatus = Literal["requested", "parsed", "blocked", "error"]
 ImageSourceType = Literal["path", "url", "base64"]
 ImageDetailLevel = Literal["auto", "low", "high"]
+TotalTokensSource = Literal["provider", "derived"]
 PromptBlockKind = Literal[
     "static_prefix",
     "mission_snapshot",
@@ -101,6 +102,7 @@ class UsageInfo(BaseModel):
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    total_source: Optional[TotalTokensSource] = None
     cached_tokens: Optional[int] = None
     cache_creation_tokens: Optional[int] = None
 

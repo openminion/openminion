@@ -2145,9 +2145,10 @@ def test_follow_up_after_tool_preserves_typed_cache_usage_in_completed_event() -
     assert final_model == "follow-model"
     completed = bridge._runner.session_api.events[1]
     assert completed["payload"]["usage"] == {
-        "input_tokens": 12,
-        "output_tokens": 4,
+        "prompt_tokens": 12,
+        "completion_tokens": 4,
         "total_tokens": 16,
+        "total_source": "provider",
         "cached_tokens": 5,
         "cache_creation_tokens": 3,
     }

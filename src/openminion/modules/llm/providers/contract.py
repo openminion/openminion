@@ -110,6 +110,7 @@ def _estimate_usage(messages: list[Message], output_text: str) -> UsageInfo:
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total,
+        total_source="derived",
     )
 
 

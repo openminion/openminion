@@ -643,6 +643,12 @@ def _usage_from_openai_like(payload: Any) -> UsageInfo:
     prompt_tokens = payload.get("prompt_tokens")
     completion_tokens = payload.get("completion_tokens")
     total_tokens = payload.get("total_tokens")
+    total_source: str | None = None
+    if isinstance(total_tokens, int) and not isinstance(total_tokens, bool):
+        total_source = "provider"
+    elif isinstance(prompt_tokens, int) and isinstance(completion_tokens, int):
+        total_tokens = prompt_tokens + completion_tokens
+        total_source = "derived"
 
     cached_tokens: int | None = None
     details = payload.get("prompt_tokens_details")
@@ -655,6 +661,7 @@ def _usage_from_openai_like(payload: Any) -> UsageInfo:
         input_tokens=prompt_tokens if isinstance(prompt_tokens, int) else None,
         output_tokens=completion_tokens if isinstance(completion_tokens, int) else None,
         total_tokens=total_tokens if isinstance(total_tokens, int) else None,
+        total_source=total_source,
         cached_tokens=cached_tokens,
     )
 
@@ -670,6 +677,7 @@ def _usage_from_ollama(payload: Dict[str, Any]) -> UsageInfo:
         input_tokens=prompt_eval_count if isinstance(prompt_eval_count, int) else None,
         output_tokens=eval_count if isinstance(eval_count, int) else None,
         total_tokens=total,
+        total_source="derived" if total is not None else None,
     )
 
 
@@ -694,6 +702,7 @@ def _usage_from_anthropic(payload: Any) -> UsageInfo:
         input_tokens=input_tokens if isinstance(input_tokens, int) else None,
         output_tokens=output_tokens if isinstance(output_tokens, int) else None,
         total_tokens=total,
+        total_source="derived" if total is not None else None,
         cached_tokens=cached_tokens,
         cache_creation_tokens=cache_creation_tokens,
     )

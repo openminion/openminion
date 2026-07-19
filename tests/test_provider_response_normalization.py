@@ -38,10 +38,49 @@ def test_normalize_provider_response_coerces_object_shape() -> None:
     assert normalized.usage["prompt_tokens"] == 11
     assert normalized.usage["completion_tokens"] == 7
     assert normalized.usage["total_tokens"] == 18
+    assert normalized.usage["total_source"] == "derived"
     assert len(normalized.tool_calls) == 1
     assert normalized.tool_calls[0].name == "weather"
     assert normalized.tool_calls[0].source == "requested"
     assert normalized.normalization.get("response_normalized") is True
+
+
+def test_normalize_provider_response_marks_provider_reported_total() -> None:
+    normalized = normalize_provider_response(
+        {
+            "text": "ok",
+            "model": "gpt-test",
+            "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 0},
+            "tool_calls": [],
+            "finish_reason": "stop",
+            "normalization": {},
+        },
+        provider_name="openai",
+    )
+
+    assert normalized.usage["total_tokens"] == 0
+    assert normalized.usage["total_source"] == "provider"
+
+
+def test_normalize_provider_response_derives_malformed_total() -> None:
+    normalized = normalize_provider_response(
+        {
+            "text": "ok",
+            "model": "gpt-test",
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 7,
+                "total_tokens": "oops",
+            },
+            "tool_calls": [],
+            "finish_reason": "stop",
+            "normalization": {},
+        },
+        provider_name="openai",
+    )
+
+    assert normalized.usage["total_tokens"] == 18
+    assert normalized.usage["total_source"] == "derived"
 
 
 def test_normalize_provider_response_does_not_recover_tool_call_from_text() -> None:

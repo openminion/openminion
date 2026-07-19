@@ -79,6 +79,7 @@ class TokenUsageCoveragePayload(TypedDict):
 
 class TokenUsageTotalsPayload(TypedDict):
     provider_tokens: int
+    derived_tokens: int
     input_tokens: int
     output_tokens: int
     cache_read_tokens: int

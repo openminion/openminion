@@ -87,6 +87,73 @@ def test_missing_or_invalid_provider_total_is_marked_derived() -> None:
     assert total.total_source == "derived"
 
 
+def test_explicit_derived_total_stays_out_of_provider_aggregate() -> None:
+    completed = {
+        "event_type": "llm.call.completed",
+        "payload": {
+            "usage": {
+                "input_tokens": 8,
+                "output_tokens": 2,
+                "total_tokens": 10,
+                "total_source": "derived",
+                "cached_tokens": 3,
+                "cache_creation_tokens": 4,
+            }
+        },
+    }
+
+    records = records_from_session_event(completed, session_id="session-1")
+    summary = TokenUsageSummary(session_id="session-1", records=records)
+
+    total = next(record for record in records if record.surface == "llm_total")
+    assert total.total_tokens == 10
+    assert total.total_source == "derived"
+    assert summary.total_provider_tokens == 0
+    assert summary.total_derived_tokens == 10
+    assert summary.total_cache_read_tokens == 3
+    assert summary.total_cache_write_tokens == 4
+    assert summary.as_payload()["totals"]["provider_tokens"] == 0
+    assert summary.as_payload()["totals"]["derived_tokens"] == 10
+    assert summary.totals_by_surface == {
+        "llm_total": 10,
+        "llm_prompt": 8,
+        "llm_output": 2,
+        "llm_cache_read": 3,
+        "llm_cache_write": 4,
+    }
+
+
+def test_explicit_derived_total_does_not_count_as_provider_coverage() -> None:
+    coverage = coverage_from_session_events(
+        [
+            {
+                "event_type": "llm.call.completed",
+                "payload": {
+                    "usage": {
+                        "input_tokens": 8,
+                        "output_tokens": 2,
+                        "total_tokens": 10,
+                        "total_source": "derived",
+                    }
+                },
+            },
+            {
+                "event_type": "llm.call.completed",
+                "payload": {
+                    "usage": {
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                        "total_source": "provider",
+                    }
+                },
+            },
+        ]
+    )
+
+    assert coverage.total_tokens == TokenUsageDimensionCoverage(reported=1, missing=1)
+
+
 def test_usage_coverage_distinguishes_reported_missing_and_invalid() -> None:
     coverage = coverage_from_session_events(
         [
@@ -152,7 +219,8 @@ def test_usage_aliases_skip_present_but_invalid_values() -> None:
     assert summary.total_input_tokens == 8
     assert summary.total_output_tokens == 2
     assert summary.total_cache_read_tokens == 3
-    assert summary.total_provider_tokens == 10
+    assert summary.total_provider_tokens == 0
+    assert summary.total_derived_tokens == 10
 
 
 def test_context_manifest_preserves_opaque_cache_correlation() -> None:

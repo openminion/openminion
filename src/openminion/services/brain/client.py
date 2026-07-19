@@ -37,6 +37,7 @@ from openminion.services.agent.telemetry import (
 
 _LOG = logging.getLogger(__name__)
 
+
 class OpenMinionLLMClient:
     def __init__(
         self,
@@ -223,7 +224,7 @@ class OpenMinionLLMClient:
     def _emit_llm_usage(
         self,
         *,
-        usage_payload: dict[str, int],
+        usage_payload: dict[str, Any],
         mode_name: str | None,
     ) -> None:
         if not (self._telemetryctl and self._turn_id and self._session_id):

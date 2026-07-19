@@ -307,6 +307,7 @@ def _usage_payload_from_provider_response(raw_follow_up: Any) -> dict[str, Any]:
             "input_tokens",
             "output_tokens",
             "total_tokens",
+            "total_source",
             "cached_tokens",
             "cache_creation_tokens",
         ):
@@ -407,7 +408,7 @@ async def _follow_up_after_tool(
                 follow_up_model or getattr(self._provider, "name", "provider")
             ),
             **({"run_id": run_id} if run_id else {}),
-            "usage": _usage_payload_from_provider_response(raw_follow_up),
+            "usage": _usage_payload_from_provider_response(follow_up),
         },
         trace_id=trace_id,
     )
