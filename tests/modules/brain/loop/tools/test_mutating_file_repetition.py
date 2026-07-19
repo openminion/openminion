@@ -3,8 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from openminion.modules.brain.loop.tools import AdaptiveToolLoopState
-from openminion.modules.brain.loop.tools.postprocess.mutation_closeout import (
+from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
     mutating_file_evidence_fallback_text,
+    tool_evidence_closeout_text,
 )
 from openminion.modules.brain.loop.tools.postprocess.loop import (
     _mutating_file_closeout_message,
@@ -81,3 +82,30 @@ def test_mutating_file_fallback_preserves_requested_result_marker() -> None:
     assert "result:" in text
     assert "files changed: module.py" in text
     assert "validation:" in text
+
+
+def test_tool_evidence_closeout_preserves_research_labels() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content="Finish with exact labels `tradeoffs:` and `recommendation:`.",
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "web.search",
+                    "ok": True,
+                    "content": "found terminal UX evidence",
+                    "data": {},
+                }
+            ]
+        },
+    )
+
+    text = tool_evidence_closeout_text(state, reason="tool budget exhausted.")
+
+    assert "tradeoffs:" in text
+    assert "recommendation:" in text
+    assert "tool evidence:" in text

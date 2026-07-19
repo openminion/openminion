@@ -29,16 +29,17 @@ from .postprocess.rules import (
     _looks_like_unexecutable_tool_payload_text,
     _raw_tool_payload_retry_allowed,
 )
-from .postprocess.mutation_closeout import (
+from .postprocess.evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
+    missing_requested_closeout_markers,
     mutating_file_evidence_fallback_text,
+    tool_evidence_closeout_text,
 )
 from .iteration.helpers import (
     _count_substantive_non_control_tool_results,
     _requires_typed_finalization_contract,
 )
 from .iteration.termination import build_no_tool_outcome
-from .evidence import _successful_substantive_tool_results
 from .response_payloads import (
     _FINALIZATION_STATUS_SALVAGE_GUIDANCE,
     _confident_complete_payload,
@@ -64,37 +65,11 @@ from .runtime import _extract_visible_response_text
 from .status import emit_adaptive_status
 
 
-def _truncate_tool_evidence_text(value: Any, *, limit: int = 400) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return f"{text[: limit - 1].rstrip()}..."
-
-
 def _final_text_from_successful_tool_evidence(loop_state: Any) -> str:
-    tool_results = _successful_substantive_tool_results(loop_state)
-    if not tool_results:
-        return ""
-    lines = [
-        "Result: the tool-backed work reached a finalization guard.",
-        (
-            "Validation: successful tool evidence was gathered, but the model "
-            "kept returning next-step text instead of the final answer."
-        ),
-        "",
-        "Files/tool evidence:",
-    ]
-    for item in tool_results[-5:]:
-        tool_name = str(item.get("tool_name") or "tool").strip() or "tool"
-        summary = str(item.get("content") or "").strip()
-        if not summary:
-            data = item.get("data")
-            if isinstance(data, dict):
-                summary = str(data.get("summary") or data.get("stdout") or "").strip()
-        lines.append(
-            f"- {tool_name}: {_truncate_tool_evidence_text(summary) or 'success'}"
-        )
-    return "\n".join(lines)
+    return tool_evidence_closeout_text(
+        loop_state,
+        reason="the tool-backed work reached a finalization guard.",
+    )
 
 
 def _evidence_fallback_for_draft_final_text(loop_state: Any) -> str:
@@ -103,6 +78,64 @@ def _evidence_fallback_for_draft_final_text(loop_state: Any) -> str:
         return ""
     loop_state.scratchpad["pre_tool_draft_echo_used_evidence_fallback"] = True
     return fallback_final_text
+
+
+def _retry_missing_requested_markers_after_tool_results(
+    runner: Any,
+    *,
+    normalized_final_text: str,
+) -> tuple[bool, None] | None:
+    if _count_substantive_non_control_tool_results(runner.loop_state) <= 0:
+        return None
+    missing = missing_requested_closeout_markers(
+        runner.loop_state,
+        normalized_final_text,
+    )
+    if not missing:
+        return None
+    scratchpad = runner.loop_state.scratchpad
+    if bool(scratchpad.get("missing_requested_closeout_markers_retry_used", False)):
+        return None
+    scratchpad["missing_requested_closeout_markers_retry_used"] = True
+    rendered = ", ".join(f"{marker}:" for marker in missing)
+    return runner._retry_with_system_message(
+        "Your previous reply omitted requested final-output labels after "
+        f"successful tool results. Return the final answer now with these labels: "
+        f"{rendered}. Do not call more tools unless the evidence is genuinely "
+        "insufficient.",
+        discard_assistant_text=normalized_final_text,
+    )
+
+
+def _fallback_missing_requested_markers_after_retry(
+    runner: Any,
+    *,
+    normalized_final_text: str,
+) -> str:
+    if not bool(
+        runner.loop_state.scratchpad.get(
+            "missing_requested_closeout_markers_retry_used",
+            False,
+        )
+    ):
+        return ""
+    if not missing_requested_closeout_markers(
+        runner.loop_state,
+        normalized_final_text,
+    ):
+        return ""
+    fallback = tool_evidence_closeout_text(
+        runner.loop_state,
+        reason=(
+            "the model omitted requested final-output labels after successful "
+            "tool results, so preserved evidence is returned."
+        ),
+    )
+    if fallback:
+        runner.loop_state.scratchpad[
+            "missing_requested_closeout_markers_used_evidence_fallback"
+        ] = True
+    return fallback
 
 
 def _retry_empty_final_after_tool_results(
@@ -277,6 +310,43 @@ class AdaptiveLoopRunnerNoToolMixin:
         self.loop_state.messages.append(Message(role="system", content=message))
         return True, None
 
+    def _repair_raw_tool_payload_final_text(
+        self, normalized_final_text: str
+    ) -> tuple[bool, AdaptiveToolLoopOutcome | None] | str | None:
+        if not (
+            normalized_final_text
+            and _looks_like_unexecutable_tool_payload_text(normalized_final_text)
+        ):
+            return None
+        if _raw_tool_payload_retry_allowed(
+            self.loop_state,
+            text=normalized_final_text,
+        ):
+            return self._retry_with_system_message(
+                "Your previous reply emitted raw tool markup, a raw tool-result "
+                "JSON envelope, or an unexecutable tool envelope. Use existing "
+                "tool results and return only the final plain-text answer.",
+                discard_assistant_text=normalized_final_text,
+            )
+        if bool(self.loop_state.scratchpad.get(MUTATING_FILE_CLOSEOUT_KEY, False)):
+            fallback_text = mutating_file_evidence_fallback_text(self.loop_state)
+            if fallback_text:
+                self.loop_state.scratchpad[
+                    "mutating_file_closeout_used_evidence_fallback"
+                ] = True
+                return fallback_text
+        fallback_text = tool_evidence_closeout_text(
+            self.loop_state,
+            reason=(
+                "the model emitted raw tool markup after successful tool "
+                "results, so preserved evidence is returned."
+            ),
+        )
+        if not fallback_text:
+            return None
+        self.loop_state.scratchpad["raw_tool_payload_used_evidence_fallback"] = True
+        return fallback_text
+
     def _handle_no_tool_calls(
         self,
         *,
@@ -328,30 +398,14 @@ class AdaptiveLoopRunnerNoToolMixin:
                     "Model returned provider recovery text instead of a real final answer."
                 ),
             )
-        if (
+        raw_payload_repair = self._repair_raw_tool_payload_final_text(
             normalized_final_text
-            and _looks_like_unexecutable_tool_payload_text(normalized_final_text)
-        ):
-            if _raw_tool_payload_retry_allowed(
-                self.loop_state,
-                text=normalized_final_text,
-            ):
-                return self._retry_with_system_message(
-                    "Your previous reply emitted raw tool markup, a raw tool-result "
-                    "JSON envelope, or an unexecutable tool envelope. Use existing "
-                    "tool results and return only the final plain-text answer.",
-                    discard_assistant_text=normalized_final_text,
-                )
-            if bool(self.loop_state.scratchpad.get(MUTATING_FILE_CLOSEOUT_KEY, False)):
-                fallback_final_text = mutating_file_evidence_fallback_text(
-                    self.loop_state
-                )
-                if fallback_final_text:
-                    self.loop_state.scratchpad[
-                        "mutating_file_closeout_used_evidence_fallback"
-                    ] = True
-                    final_text = fallback_final_text
-                    normalized_final_text = fallback_final_text
+        )
+        if isinstance(raw_payload_repair, tuple):
+            return raw_payload_repair
+        if raw_payload_repair:
+            final_text = raw_payload_repair
+            normalized_final_text = raw_payload_repair
         if (
             normalized_final_text
             and _looks_like_structured_status_payload(normalized_final_text)
@@ -403,6 +457,19 @@ class AdaptiveLoopRunnerNoToolMixin:
             if fallback_final_text:
                 final_text = fallback_final_text
                 normalized_final_text = fallback_final_text
+        missing_marker_retry = _retry_missing_requested_markers_after_tool_results(
+            self,
+            normalized_final_text=normalized_final_text,
+        )
+        if missing_marker_retry is not None:
+            return missing_marker_retry
+        missing_marker_fallback = _fallback_missing_requested_markers_after_retry(
+            self,
+            normalized_final_text=normalized_final_text,
+        )
+        if missing_marker_fallback:
+            final_text = missing_marker_fallback
+            normalized_final_text = missing_marker_fallback
         if (
             normalized_final_text
             and _count_substantive_non_control_tool_results(self.loop_state) > 0

@@ -4183,6 +4183,64 @@ class TestFinalizeIterationCapExit:
 
         assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
         assert outcome.final_text.startswith("SOURCES")
+
+    def test_iteration_cap_preserves_tool_evidence_when_finalization_fails(
+        self,
+    ) -> None:
+        prof = _profile(allowed_tools=frozenset({"file.read"}))
+        st_loop = AdaptiveToolLoopState(
+            messages=[
+                Message(
+                    role="user",
+                    content="Finish with exact labels `files:`, `validation:`, and `follow-ups:`.",
+                )
+            ],
+            total_tool_calls=1,
+        )
+        st_loop.scratchpad["adaptive.tool_results"] = [
+            {
+                "tool_name": "file.read",
+                "ok": True,
+                "content": "read back loopcalc.py",
+                "data": {"path": "loopcalc.py"},
+            }
+        ]
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="I hit an internal decision error before I could continue safely on this turn.",
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        outcome = finalize_iteration_cap_exit(
+            loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            allowed_tools=frozenset({"file.read"}),
+            public_mode_name="Act",
+            public_mode_tag="act",
+            max_output_tokens=100,
+            metadata=None,
+            loop_profiler=SimpleNamespace(summary=dict),
+            trigger_macro_correction=lambda **_: None,
+            dispatch_correction_plan=lambda **_: None,
+        )
+
+        assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert "files: loopcalc.py" in str(outcome.final_text)
+        assert "validation:" in str(outcome.final_text)
+        assert (
+            st_loop.scratchpad.get("iteration_cap_used_evidence_fallback") is True
+            or st_loop.scratchpad.get("budget_stop_used_evidence_fallback") is True
+        )
         assert runtime.calls[-1]["tool_choice"] == "none"
 
     def test_force_finalization_llm_exception_returns_llm_error(self) -> None:

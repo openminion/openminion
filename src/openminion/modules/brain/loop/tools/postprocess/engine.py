@@ -49,7 +49,7 @@ from .rules import (
     _looks_like_execution_preface_draft,
     _looks_like_unexecutable_tool_payload_text,
 )
-from .mutation_closeout import (
+from .evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
     mutating_file_evidence_fallback_text,
 )

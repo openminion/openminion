@@ -69,10 +69,11 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "Research terminal-agent UX patterns for long running tasks. Compare "
             "Codex-style, Claude-style, and OpenCode-style interaction patterns "
             "when evidence is available. Use at most four search/fetch calls total, "
-            "then stop searching and produce a concise tradeoff matrix plus a "
-            "practical recommended direction for OpenMinion."
+            "then stop searching and produce exact labels `tradeoffs:` and "
+            "`recommendation:` with a concise tradeoff matrix plus a practical "
+            "recommended direction for OpenMinion."
         ),
-        expected_markers=("tradeoff", "recommendation|recommended|recommend"),
+        expected_markers=("tradeoffs", "recommendation|recommended|recommend"),
         timeout=1200,
     ),
     FocusScenario(
@@ -94,9 +95,10 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="coding_deep_scratch_feature",
         prompt=(
             "In the current directory, create a tiny Python function and one "
+            "minimal check. "
             f"{SCRATCH_RELATIVE_PATH_RULE}"
-            "minimal check. Use file tools for files and direct exec.run commands "
-            "for checks. Keep it small and finish with the exact label `result:`."
+            "Use file tools for files and direct exec.run commands for checks. "
+            "Keep it small and finish with the exact label `result:`."
         ),
         expected_markers=("result",),
         timeout=900,
@@ -153,7 +155,8 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "Treat this as a long-running goal-style coding loop in the current "
             "directory. Build a small zero-dependency Python CLI named "
             f"`loopcalc` using at most five files. {SCRATCH_RELATIVE_PATH_RULE}"
-            "Use file.write and file.read; "
+            "Begin by using file.write for `loopcalc.py`; do not inspect the repo "
+            "first. Use file.write and file.read; "
             "do not call exec.run in this soak scenario. Validate by reading back "
             "one file, then finish with exact labels `files:`, `validation:`, and "
             "`follow-ups:`."
