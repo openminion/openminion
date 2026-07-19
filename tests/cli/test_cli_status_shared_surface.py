@@ -230,7 +230,7 @@ def test_focus_screen_uses_shared_status_controller() -> None:
     )
     assert "_status_controller" in src, (
         "The interactive CLI must hold a per-turn `_status_controller` so dedup "
-        "and elapsed tracking match chat CLI."
+        "and elapsed tracking match the canonical interactive CLI."
     )
 
 
@@ -246,8 +246,7 @@ _SHARED_STATUS_MODULES = [
 
 _FORBIDDEN_PREFIXES = (
     "openminion.cli.interactive.",
-    "openminion.cli.commands.chat.",
-    "openminion.cli.commands.tui.",
+    "openminion.cli.commands.aliases.",
 )
 
 

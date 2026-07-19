@@ -4,10 +4,10 @@ from dataclasses import replace
 
 import pytest
 
-from tests.e2e.tui.focus.conftest import require_complex_focus
-from tests.e2e.tui.focus.harness import FocusProbe
-from tests.e2e.tui.focus.harness.artifacts import artifact_root, write_transcript
-from tests.e2e.tui.focus.harness.scenarios import COMPLEX_LIVE_SCENARIOS
+from tests.e2e.cli.focus.conftest import require_complex_focus
+from tests.e2e.cli.focus.harness import FocusProbe
+from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
+from tests.e2e.cli.focus.harness.scenarios import COMPLEX_LIVE_SCENARIOS
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(1200)]
 

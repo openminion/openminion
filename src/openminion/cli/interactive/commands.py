@@ -726,7 +726,7 @@ class SlashCommandMixin:
         )
 
     def _slash_dashboard(self, _args: str) -> None:
-        from openminion.cli.commands.tui import dashboard_deprecation_message
+        from openminion.cli.commands.aliases import dashboard_deprecation_message
         from openminion.cli.status.surface import record_surface_event
 
         notice = dashboard_deprecation_message()

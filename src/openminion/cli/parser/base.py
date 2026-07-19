@@ -31,13 +31,13 @@ COMMAND_SPECS = (
     CommandSpec(
         "channel", "openminion.cli.commands.channel", "Channel setup and operations"
     ),
-    CommandSpec("chat", "openminion.cli.commands.chat", argparse.SUPPRESS),
+    CommandSpec("chat", "openminion.cli.commands.aliases", argparse.SUPPRESS),
     CommandSpec(
         "dashboard",
-        "openminion.cli.commands.tui",
+        "openminion.cli.commands.aliases",
         argparse.SUPPRESS,
     ),
-    CommandSpec("tui", "openminion.cli.commands.tui", argparse.SUPPRESS),
+    CommandSpec("tui", "openminion.cli.commands.aliases", argparse.SUPPRESS),
     CommandSpec("sessions", "openminion.cli.commands.sessions", "Session operations"),
     CommandSpec(
         "sidecar", "openminion.cli.commands.sidecar", "Sidecar lifecycle controls"

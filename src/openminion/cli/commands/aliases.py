@@ -5,13 +5,13 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
-from openminion.api.turns import run_turn as _api_run_turn
+from openminion.cli.commands.interactive import (
+    add_interactive_arguments,
+    run_interactive,
+)
 from openminion.cli.ux.deprecation import print_deprecation_notice
 
-run_turn = _api_run_turn
-
-
-_UNSUPPORTED_OPTIONS = {
+_CHAT_UNSUPPORTED_OPTIONS = {
     "override_provider": "--override-provider",
     "override_model": "--override-model",
     "override_system_prompt": "--override-system-prompt",
@@ -26,21 +26,35 @@ _UNSUPPORTED_OPTIONS = {
     "no_activity_indicator": "--no-activity-indicator",
 }
 
-_NOTICE_TEXT = (
+_CHAT_NOTICE_TEXT = (
     "openminion chat is a compatibility alias; use bare `openminion` for "
     "interactive work. Suppress this notice with "
     "OPENMINION_CHAT_NO_DEPRECATION=1."
 )
+_DASHBOARD_NOTICE = (
+    "openminion dashboard was retired.\n"
+    "Use bare `openminion` for the interactive CLI.\n"
+    "Use `openminion status`, `sessions`, `tasks`, `cron`, `memory`, `tools`, "
+    "`agent`, or `api` for operator workflows."
+)
+_TUI_NOTICE = (
+    "openminion tui is a compatibility alias; use bare `openminion`. "
+    "Suppress this notice with OPENMINION_TUI_NO_DEPRECATION=1."
+)
 
 
-def _unsupported_option(args: argparse.Namespace) -> str:
-    for attribute, option in _UNSUPPORTED_OPTIONS.items():
+def dashboard_deprecation_message() -> str:
+    return _DASHBOARD_NOTICE
+
+
+def _unsupported_chat_option(args: argparse.Namespace) -> str:
+    for attribute, option in _CHAT_UNSUPPORTED_OPTIONS.items():
         if getattr(args, attribute, None):
             return option
     return ""
 
 
-def _print_migration_error(option: str) -> int:
+def _print_chat_migration_error(option: str) -> int:
     print(
         f"openminion chat: {option} is not supported by the compatibility "
         "alias. Use bare `openminion`; use "
@@ -50,9 +64,7 @@ def _print_migration_error(option: str) -> int:
     return 2
 
 
-def _run_interactive_alias(args: argparse.Namespace) -> int:
-    from openminion.cli.commands.interactive import run_interactive
-
+def _run_chat_interactive_alias(args: argparse.Namespace) -> int:
     return int(
         run_interactive(
             SimpleNamespace(
@@ -78,7 +90,7 @@ def _run_interactive_alias(args: argparse.Namespace) -> int:
     )
 
 
-def _run_piped_alias(args: argparse.Namespace, prompt: str) -> int:
+def _run_chat_piped_alias(args: argparse.Namespace, prompt: str) -> int:
     from openminion.cli.commands.run import run_openminion
 
     return int(
@@ -102,22 +114,22 @@ def _run_piped_alias(args: argparse.Namespace, prompt: str) -> int:
 
 def run_chat(args: argparse.Namespace) -> int:
     notice_shown = print_deprecation_notice(
-        _NOTICE_TEXT,
+        _CHAT_NOTICE_TEXT,
         suppression_env="OPENMINION_CHAT_NO_DEPRECATION",
     )
-    unsupported = _unsupported_option(args)
+    unsupported = _unsupported_chat_option(args)
     if unsupported:
-        return _print_migration_error(unsupported)
+        return _print_chat_migration_error(unsupported)
 
     stdin_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
     stdout_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
     if stdin_tty and stdout_tty:
         args.deprecation_notice_shown = notice_shown
-        return _run_interactive_alias(args)
+        return _run_chat_interactive_alias(args)
     if not stdin_tty:
         prompt = sys.stdin.read().strip()
         if prompt:
-            return _run_piped_alias(args, prompt)
+            return _run_chat_piped_alias(args, prompt)
     print(
         "openminion chat: interactive use requires a TTY. Pipe a prompt to "
         "bare `openminion` or use `openminion run` for one-shot execution.",
@@ -126,7 +138,31 @@ def run_chat(args: argparse.Namespace) -> int:
     return 2
 
 
+def run_dashboard(args: argparse.Namespace) -> int:
+    del args
+    print(_DASHBOARD_NOTICE, file=sys.stderr)
+    return 0
+
+
+def run_tui(args: argparse.Namespace) -> int:
+    forwarded = argparse.Namespace(**vars(args))
+    forwarded.surface = "tui"
+    forwarded.deprecation_notice_shown = print_deprecation_notice(
+        _TUI_NOTICE,
+        suppression_env="OPENMINION_TUI_NO_DEPRECATION",
+    )
+    return run_interactive(forwarded)
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    _register_chat(subparsers)
+    _register_dashboard(subparsers)
+    _register_tui(subparsers)
+
+
+def _register_chat(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     chat = subparsers.add_parser("chat", help=argparse.SUPPRESS)
     chat.add_argument(
         "--profile",
@@ -154,3 +190,19 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--no-activity-indicator", action="store_true", help=argparse.SUPPRESS
     )
     chat.set_defaults(handler=run_chat, needs_app=False)
+
+
+def _register_dashboard(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    dashboard = subparsers.add_parser("dashboard", help=argparse.SUPPRESS)
+    add_interactive_arguments(dashboard)
+    dashboard.set_defaults(handler=run_dashboard, needs_app=False)
+
+
+def _register_tui(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    tui = subparsers.add_parser("tui", help=argparse.SUPPRESS)
+    add_interactive_arguments(tui)
+    tui.set_defaults(handler=run_tui, needs_app=False)

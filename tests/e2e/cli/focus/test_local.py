@@ -4,14 +4,15 @@ import re
 
 import pytest
 
-from tests.e2e.tui.focus.harness import FocusProbe
-from tests.e2e.tui.focus.harness.artifacts import artifact_root, write_transcript
-from tests.e2e.runners.run_tui_focus_e2e import suite_names
+from tests.e2e.cli.focus.harness import FocusProbe
+from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
+from tests.e2e.runners.run_cli_focus_e2e import suite_names
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(120)]
 
 
 def test_focus_artifact_root_isolates_pytest_runs(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENMINION_CLI_FOCUS_E2E_ARTIFACT_ROOT", raising=False)
     monkeypatch.delenv("OPENMINION_TUI_FOCUS_E2E_ARTIFACT_ROOT", raising=False)
 
     first = artifact_root(tmp_path.parent / "run-a" / tmp_path.name)

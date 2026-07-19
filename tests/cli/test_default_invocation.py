@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -300,7 +301,7 @@ def test_tui_alias_routes_to_interactive(monkeypatch) -> None:
         called["interactive"] = True
         return 0
 
-    monkeypatch.setattr("openminion.cli.commands.tui.run_tui", _fake)
+    monkeypatch.setattr("openminion.cli.commands.aliases.run_tui", _fake)
     rc = cli_main(["tui"])
     assert rc == 0
     assert called.get("interactive") is True
@@ -314,7 +315,7 @@ def test_chat_alias_routes_to_interactive(monkeypatch) -> None:
         return 0
 
     # Chat handler may need APIRuntime; skip the heavy path by patching.
-    monkeypatch.setattr("openminion.cli.commands.chat.run_chat", _fake)
+    monkeypatch.setattr("openminion.cli.commands.aliases.run_chat", _fake)
     monkeypatch.setattr(
         "openminion.api.runtime.APIRuntime.from_config_path",
         classmethod(lambda cls, *a, **kw: object()),
@@ -324,7 +325,7 @@ def test_chat_alias_routes_to_interactive(monkeypatch) -> None:
     assert called.get("interactive") is True
 
 
-# ── Live tui.py dashboard source check ────────────────────────────────
+# ── Retired aliases remain hidden ─────────────────────────────────────
 
 
 def test_legacy_aliases_are_hidden_from_root_help(capsys) -> None:
@@ -333,3 +334,10 @@ def test_legacy_aliases_are_hidden_from_root_help(capsys) -> None:
     help_text = capsys.readouterr().out
     for alias in ("focus", "chat", "tui", "dashboard"):
         assert alias not in help_text
+
+
+def test_retired_product_command_modules_are_deleted() -> None:
+    command_dir = Path(__file__).resolve().parents[2] / "src/openminion/cli/commands"
+    assert not (command_dir / "chat.py").exists()
+    assert not (command_dir / "tui.py").exists()
+    assert (command_dir / "aliases.py").exists()

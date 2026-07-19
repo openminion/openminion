@@ -6,12 +6,12 @@ import sys
 import pytest
 from pyte.screens import Char
 
-from tests.e2e.tui.focus.harness.assertions import (
+from tests.e2e.cli.focus.harness.assertions import (
     assert_expected_markers,
     assert_focus_turn_completed,
     turn_output_text,
 )
-from tests.e2e.tui.focus.harness.probe import (
+from tests.e2e.cli.focus.harness.probe import (
     FocusProbe,
     active_approval_visible,
     active_turn_busy,
@@ -25,7 +25,7 @@ from tests.e2e.tui.focus.harness.probe import (
     latest_turn_event,
     screen_after_submission,
 )
-from tests.e2e.tui.focus.harness.pty import PtySession
+from tests.e2e.cli.focus.harness.pty import PtySession
 
 
 def test_expected_markers_ignore_echoed_prompt() -> None:

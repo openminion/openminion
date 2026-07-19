@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.tui.focus.harness.artifacts import artifact_root
-from tests.e2e.tui.focus.harness.deep_smoke_matrix import (
+from tests.e2e.cli.focus.harness.artifacts import artifact_root
+from tests.e2e.cli.focus.harness.deep_smoke_matrix import (
     matrix_payload,
     matrix_rows,
     missing_required_items,
@@ -29,7 +29,7 @@ def test_deep_smoke_rows_are_runnable_and_evidence_backed() -> None:
         assert row.summary
         assert row.execution in allowed_execution
         assert row.command.startswith(
-            ("PYTHONDONTWRITEBYTECODE=1", "OPENMINION_LIVE_TUI_FOCUS_E2E=1")
+            ("PYTHONDONTWRITEBYTECODE=1", "OPENMINION_LIVE_CLI_FOCUS_E2E=1")
         )
         assert row.owners
         assert row.covers
@@ -41,6 +41,6 @@ def test_local_deep_smoke_matrix_has_a_bounded_runner_suite() -> None:
 
     assert local_rows, "adversarial local smoke must not depend only on live providers"
     assert all(
-        "pytest" in row.command or "run_tui_focus_e2e.py" in row.command
+        "pytest" in row.command or "run_cli_focus_e2e.py" in row.command
         for row in local_rows
     )

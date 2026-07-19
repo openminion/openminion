@@ -65,16 +65,10 @@ class TestInProcessChatNoLegacy(unittest.TestCase):
             finally:
                 runtime.close()
 
-    def test_chat_uses_request_orchestrator_adapter(self):
-        import openminion.cli.commands.chat as chat_module
+    def test_turn_api_uses_request_orchestrator_adapter(self):
         import openminion.api.turns as api_turns
         import openminion.services.lifecycle.request_orchestrator as orchestrator
 
-        self.assertIs(
-            chat_module.run_turn,
-            api_turns.run_turn,
-            "Chat CLI should call API turn adapter",
-        )
         self.assertIs(
             api_turns._run_turn,
             orchestrator.run_turn,

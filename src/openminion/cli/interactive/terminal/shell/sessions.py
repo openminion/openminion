@@ -95,7 +95,7 @@ async def show_dashboard_retirement(
     transcript: TerminalTranscript,
 ) -> None:
     del console
-    from openminion.cli.commands.tui import dashboard_deprecation_message
+    from openminion.cli.commands.aliases import dashboard_deprecation_message
     from openminion.cli.status.surface import record_surface_event
 
     transcript.push_message(

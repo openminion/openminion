@@ -109,10 +109,10 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
         "resizes, and writes transcripts.",
         execution="local",
         command="PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 "
-        "tests/e2e/runners/run_tui_focus_e2e.py local",
+        "tests/e2e/runners/run_cli_focus_e2e.py local",
         owners=(
-            "tests/e2e/tui/focus/test_local.py",
-            "tests/e2e/tui/focus/harness/pty.py",
+            "tests/e2e/cli/focus/test_local.py",
+            "tests/e2e/cli/focus/harness/pty.py",
         ),
         covers=(
             "runtime.bare_openminion",
@@ -249,9 +249,9 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
         summary="Configured live provider performs tool turns, recovers after policy "
         "blocks, and persists artifacts.",
         execution="live",
-        command="OPENMINION_LIVE_TUI_FOCUS_E2E=1 PYTHONDONTWRITEBYTECODE=1 "
-        ".venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py tools",
-        owners=("tests/e2e/tui/focus/test_live_tools.py",),
+        command="OPENMINION_LIVE_CLI_FOCUS_E2E=1 PYTHONDONTWRITEBYTECODE=1 "
+        ".venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py tools",
+        owners=("tests/e2e/cli/focus/test_live_tools.py",),
         covers=(
             "runtime.configured_provider",
             "workflow.tool_execution_loop",
@@ -265,11 +265,11 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
         summary="Configured live provider performs complex research with context and "
         "memory evidence instead of a one-turn toy answer.",
         execution="live",
-        command="OPENMINION_LIVE_TUI_FOCUS_E2E=1 "
-        "OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 PYTHONDONTWRITEBYTECODE=1 "
-        ".venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py research",
+        command="OPENMINION_LIVE_CLI_FOCUS_E2E=1 "
+        "OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 PYTHONDONTWRITEBYTECODE=1 "
+        ".venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py research",
         owners=(
-            "tests/e2e/tui/focus/test_live_complex.py",
+            "tests/e2e/cli/focus/test_live_complex.py",
             "tests/e2e/test_live_skill_cli_smoke.py",
         ),
         covers=(
@@ -285,12 +285,12 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
         summary="Configured live provider handles long coding, file generation, "
         "snapshot transcripts, and goal-style autonomous loops.",
         execution="live",
-        command="OPENMINION_LIVE_TUI_FOCUS_E2E=1 "
-        "OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 PYTHONDONTWRITEBYTECODE=1 "
-        ".venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py soak",
+        command="OPENMINION_LIVE_CLI_FOCUS_E2E=1 "
+        "OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 PYTHONDONTWRITEBYTECODE=1 "
+        ".venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py soak",
         owners=(
-            "tests/e2e/tui/focus/test_live_soak.py",
-            "tests/e2e/tui/focus/test_live_complex.py",
+            "tests/e2e/cli/focus/test_live_soak.py",
+            "tests/e2e/cli/focus/test_live_complex.py",
         ),
         covers=(
             "workflow.long_coding_loop",

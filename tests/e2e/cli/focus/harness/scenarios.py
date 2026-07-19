@@ -19,8 +19,8 @@ class FocusScenario:
 BASE_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
     FocusScenario(
         scenario_id="exact_reply",
-        prompt="Reply with exactly: TUI focus live smoke OK",
-        expected_markers=("TUI focus live smoke OK",),
+        prompt="Reply with exactly: CLI Focus live smoke OK",
+        expected_markers=("CLI Focus live smoke OK",),
         timeout=180,
     ),
 )

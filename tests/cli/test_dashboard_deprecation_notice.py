@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from openminion.cli.commands.tui import (
+from openminion.cli.commands.aliases import (
     _DASHBOARD_NOTICE,
     _TUI_NOTICE,
 )

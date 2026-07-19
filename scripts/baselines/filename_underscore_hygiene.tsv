@@ -523,7 +523,7 @@ tests/e2e/runners/run_live_skill_dense_catalog_probe.py	5
 tests/e2e/runners/run_memory_identity_e2e_smoke.py	4
 tests/e2e/runners/run_project_worker_e2e.py	3
 tests/e2e/runners/run_trailer_conformance_matrix.py	3
-tests/e2e/runners/run_tui_focus_e2e.py	3
+tests/e2e/runners/run_cli_focus_e2e.py	3
 tests/e2e/skill_learning/test_workflow_learning_pipeline.py	3
 tests/e2e/test_cli_chat_probe_runner.py	4
 tests/e2e/test_live_cli_chat_afe_cross_provider.py	6
@@ -551,12 +551,12 @@ tests/e2e/test_live_tool_profile_matrix.py	4
 tests/e2e/test_run_chat_permutations_e2e.py	4
 tests/e2e/test_run_cli_chat_probe.py	4
 tests/e2e/test_trailer_conformance_matrix.py	3
-tests/e2e/tui/focus/test_harness_artifacts.py	2
-tests/e2e/tui/focus/test_harness_assertions.py	2
-tests/e2e/tui/focus/test_live_basic.py	2
-tests/e2e/tui/focus/test_live_complex.py	2
-tests/e2e/tui/focus/test_live_soak.py	2
-tests/e2e/tui/focus/test_live_tools.py	2
+tests/e2e/cli/focus/test_harness_artifacts.py	2
+tests/e2e/cli/focus/test_harness_assertions.py	2
+tests/e2e/cli/focus/test_live_basic.py	2
+tests/e2e/cli/focus/test_live_complex.py	2
+tests/e2e/cli/focus/test_live_soak.py	2
+tests/e2e/cli/focus/test_live_tools.py	2
 tests/eval/test_flagship_differentiation_replay.py	3
 tests/helpers/flagship_differentiation_proof.py	2
 tests/helpers/live_cli_chat_alibaba.py	3

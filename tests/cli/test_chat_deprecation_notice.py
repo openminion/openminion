@@ -5,7 +5,7 @@ from typing import Iterator
 
 import pytest
 
-from openminion.cli.commands.chat import _NOTICE_TEXT
+from openminion.cli.commands.aliases import _CHAT_NOTICE_TEXT
 from openminion.cli.ux.deprecation import (
     deprecation_suppressed,
     print_deprecation_notice,
@@ -58,7 +58,7 @@ def test_notice_text_has_expected_substrings(
     clean_env: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert print_deprecation_notice(
-        _NOTICE_TEXT,
+        _CHAT_NOTICE_TEXT,
         suppression_env=_CHAT_SUPPRESSION_ENV,
     )
     captured = capsys.readouterr()
@@ -76,7 +76,7 @@ def test_notice_suppressed_by_env(
 ) -> None:
     monkeypatch.setenv(_CHAT_SUPPRESSION_ENV, "1")
     assert not print_deprecation_notice(
-        _NOTICE_TEXT,
+        _CHAT_NOTICE_TEXT,
         suppression_env=_CHAT_SUPPRESSION_ENV,
     )
     captured = capsys.readouterr()
@@ -88,22 +88,22 @@ def test_helper_is_callable_multiple_times_without_state(
     clean_env: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
     print_deprecation_notice(
-        _NOTICE_TEXT,
+        _CHAT_NOTICE_TEXT,
         suppression_env=_CHAT_SUPPRESSION_ENV,
     )
     print_deprecation_notice(
-        _NOTICE_TEXT,
+        _CHAT_NOTICE_TEXT,
         suppression_env=_CHAT_SUPPRESSION_ENV,
     )
     assert capsys.readouterr().err.count("compatibility alias") == 2
 
 
-def test_run_chat_invokes_notice_helper_exactly_once() -> None:
+def test_chat_alias_invokes_notice_helper_exactly_once() -> None:
     import inspect
 
-    from openminion.cli.commands import chat as chat_cmd
+    from openminion.cli.commands import aliases
 
-    source = inspect.getsource(chat_cmd.run_chat)
+    source = inspect.getsource(aliases.run_chat)
     assert source.count("print_deprecation_notice(") == 1
 
 
@@ -133,8 +133,8 @@ def test_chat_command_is_the_only_surface_declaring_suppression_env() -> None:
         if found:
             hits.append(str(path))
     relative = sorted(os.path.relpath(h, str(src)) for h in hits)
-    assert relative == ["cli/commands/chat.py"], relative
+    assert relative == ["cli/commands/aliases.py"], relative
 
 
 def test_notice_text_constant_includes_charter_link() -> None:
-    assert "bare `openminion`" in _NOTICE_TEXT
+    assert "bare `openminion`" in _CHAT_NOTICE_TEXT

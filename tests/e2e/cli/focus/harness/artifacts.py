@@ -5,11 +5,16 @@ from pathlib import Path
 
 
 _FRAMEWORK_ROOT = Path(__file__).resolve().parents[6]
-_DEFAULT_ARTIFACT_ROOT = _FRAMEWORK_ROOT / "workspace-tmp" / "openminion-tui-focus-e2e"
+_DEFAULT_ARTIFACT_ROOT = _FRAMEWORK_ROOT / "workspace-tmp" / "openminion-cli-focus-e2e"
 
 
 def artifact_root(tmp_path: Path) -> Path:
-    raw = str(os.getenv("OPENMINION_TUI_FOCUS_E2E_ARTIFACT_ROOT", "")).strip()
+    raw = str(
+        os.getenv(
+            "OPENMINION_CLI_FOCUS_E2E_ARTIFACT_ROOT",
+            os.getenv("OPENMINION_TUI_FOCUS_E2E_ARTIFACT_ROOT", ""),
+        )
+    ).strip()
     if raw:
         root = Path(raw).expanduser()
     else:
