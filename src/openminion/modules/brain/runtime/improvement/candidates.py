@@ -167,6 +167,7 @@ def build_owner_stage_fns(
     memory_service: Any | None = None,
     skill_store: Any | None = None,
     docs_owner: Any | None = None,
+    instruction_store: Any | None = None,
     session_id: str = "",
     agent_id: str = "",
     trace_id: str | None = None,
@@ -191,6 +192,11 @@ def build_owner_stage_fns(
         stage_fns["docs"] = partial(
             stage_docs_candidate,
             docs_owner=docs_owner,
+        )
+    if instruction_store is not None:
+        stage_fns["instruction"] = partial(
+            stage_instruction_candidate,
+            instruction_store=instruction_store,
         )
     return stage_fns
 
@@ -285,17 +291,36 @@ def stage_docs_candidate(
     }
 
 
+def stage_instruction_candidate(
+    candidate: ImprovementCandidate,
+    *,
+    instruction_store: Any,
+) -> Mapping[str, Any]:
+    """Hand instruction candidates to the durable instruction proposal owner."""
+
+    for method_name in ("stage_instruction_candidate", "stage_candidate"):
+        method = getattr(instruction_store, method_name, None)
+        if callable(method):
+            result = method(candidate)
+            return dict(result or {})
+    return {
+        "status": "unsupported",
+        "reason_code": "instruction_owner_stage_unavailable",
+    }
+
+
 def stage_candidate_with_default_owners(
     candidate: ImprovementCandidate | Mapping[str, Any],
     *,
     memory_service: Any | None = None,
     skill_store: Any | None = None,
     docs_owner: Any | None = None,
+    instruction_store: Any | None = None,
     session_id: str = "",
     agent_id: str = "",
     trace_id: str | None = None,
 ) -> ImprovementCandidateStageResult:
-    """Stage a candidate through the built-in memory/skill/docs owner adapters."""
+    """Stage a candidate through the built-in owner adapters."""
 
     return stage_candidate_with_owner(
         candidate,
@@ -303,6 +328,7 @@ def stage_candidate_with_default_owners(
             memory_service=memory_service,
             skill_store=skill_store,
             docs_owner=docs_owner,
+            instruction_store=instruction_store,
             session_id=session_id,
             agent_id=agent_id,
             trace_id=trace_id,
@@ -337,6 +363,7 @@ __all__ = [
     "stage_candidate_with_default_owners",
     "stage_candidate_with_owner",
     "stage_docs_candidate",
+    "stage_instruction_candidate",
     "stage_memory_candidate",
     "stage_skill_candidate",
 ]
