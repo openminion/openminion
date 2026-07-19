@@ -55,9 +55,6 @@ def _make_harness(
     return SearchProviderFaultHarness(stub, fault=fault), stub
 
 
-# --- pass-through behavior (fault=None) ------------------------------------
-
-
 def test_harness_with_no_fault_is_transparent_passthrough() -> None:
     harness, stub = _make_harness(fault=None)
     result = harness.search("openminion", max_results=5, args={}, ctx=None)
@@ -77,9 +74,6 @@ def test_harness_exposes_wrapped_provider_id_and_display_name() -> None:
     harness, _ = _make_harness(fault=None)
     assert harness.provider_id == "stub"
     assert harness.display_name == "Stub Provider"
-
-
-# --- fault injection: each typed fault emits the right reason code --------
 
 
 @pytest.mark.parametrize(
@@ -138,9 +132,6 @@ def test_harness_omits_http_status_when_not_provided() -> None:
     assert "http_status" not in exc.value.details
 
 
-# --- recovery observability via healthcheck --------------------------------
-
-
 def test_harness_healthcheck_is_false_under_any_fault() -> None:
     for mode in (
         "network_timeout",
@@ -158,9 +149,6 @@ def test_harness_healthcheck_is_false_under_any_fault() -> None:
         assert harness.healthcheck() is False, (
             f"fault {mode!r} must short-circuit healthcheck"
         )
-
-
-# --- discipline contract: fault profile is structural, not prose ----------
 
 
 def test_fault_error_message_is_fixed_per_mode_not_runtime_authored() -> None:

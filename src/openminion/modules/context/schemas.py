@@ -34,6 +34,21 @@ TASK_PLAN_TOOL_FAMILIES = _context_constants.TASK_PLAN_TOOL_FAMILIES
 
 
 ContextBudgetTier = Literal["short", "medium", "full"]
+ContextDecisionTracePersistenceStatus = Literal["pending", "persisted", "degraded"]
+ContextTracePersistenceReason = Literal[
+    "persisted_canonical",
+    "persisted_fallback",
+    "canonical_failed",
+    "fallback_failed",
+    "no_persistence_sink",
+    "not_attempted",
+]
+
+CONTEXT_DECISION_TRACE_VERSION = _context_constants.CONTEXT_DECISION_TRACE_VERSION
+CONTEXT_DECISION_TRACE_MAX_REFERENCES = (
+    _context_constants.CONTEXT_DECISION_TRACE_MAX_REFERENCES
+)
+CONTEXT_DECISION_TRACE_MAX_BYTES = _context_constants.CONTEXT_DECISION_TRACE_MAX_BYTES
 
 
 class LastResultSummary(BaseModel):
@@ -89,6 +104,7 @@ SegmentBucket = Literal[
     "trailer_feedback",
     "self_awareness",
     "recent_window",
+    "memory",
     "retrieval",
     "evidence_refs",
     "turn_input",
@@ -100,6 +116,7 @@ BlockType = Literal[
     "safety",
     "task_header",
     "summary",
+    "continuation",
     "active_state",
     "facts",
     "memory",
@@ -188,6 +205,7 @@ class SessionSlice(BaseModel):
     summary_long: Optional[str] = None
     conversation_summary: str = ""
     active_task_plan: Optional[TaskPlan] = None
+    continuation: Optional[Dict[str, Any]] = None
     task_digest: Optional[Dict[str, Any]] = None
     pending_trailer_feedback: Optional[Dict[str, Any]] = None
     total_turn_count: int = Field(default=0, ge=0)
@@ -286,6 +304,7 @@ class ContextSegment(BaseModel):
     cache_key: str = ""
     cache_invalidation_refs: List[str] = Field(default_factory=list)
     pinned: bool = False  # mission_snapshot/safety/identity: always True
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class BucketAllocation(BaseModel):
@@ -328,6 +347,112 @@ class TokenBudgetReport(BaseModel):
     over_budget: bool = False
     degrade_trace: List[str] = Field(default_factory=list)
     decision_log: Optional[PackingDecisionLog] = None
+
+
+class ContextDecisionRef(BaseModel):
+    """Structural decision reference; never carries segment content."""
+
+    segment_id: str
+    bucket: str
+    action: str
+    reason_code: str
+    token_estimate: int = Field(ge=0)
+    content_digest: str = ""
+    refs: List[str] = Field(default_factory=list)
+    source: str = "typed_schema"
+
+
+class MemoryBlockSegmentRef(BaseModel):
+    """OpenMinion reference to a Sophiagraph-owned memory block."""
+
+    block_id: str
+    class_name: str
+    mode: str
+    namespace_id: str
+    provenance_ref: str = ""
+    updated_at: str = ""
+    stale: bool = False
+
+
+class ContextTracePersistenceResult(BaseModel):
+    persisted: bool = False
+    event_id: Optional[str] = None
+    reason_code: ContextTracePersistenceReason = "not_attempted"
+    sink: str = ""
+
+
+class ContextDecisionTraceV1(BaseModel):
+    trace_version: str = CONTEXT_DECISION_TRACE_VERSION
+    session_id: str
+    turn_id: Optional[str] = None
+    llm_call_id: Optional[str] = None
+    prompt_context_id: Optional[str] = None
+    pack_version: str = ""
+    decisions: List[ContextDecisionRef] = Field(default_factory=list)
+    token_budget_report: Optional[TokenBudgetReport] = None
+    memory_provenance_refs: List[str] = Field(default_factory=list)
+    retrieval_score_refs: List[str] = Field(default_factory=list)
+    summary_checkpoint_refs: List[str] = Field(default_factory=list)
+    memory_block_refs: List[str] = Field(default_factory=list)
+    missing_sources: List[str] = Field(default_factory=list)
+    persistence_status: ContextDecisionTracePersistenceStatus = "pending"
+    persistence_result: ContextTracePersistenceResult = Field(
+        default_factory=ContextTracePersistenceResult
+    )
+    truncated: bool = False
+    omitted_decision_count: int = 0
+    omitted_decision_digest: str = ""
+
+    def bounded(self) -> "ContextDecisionTraceV1":
+        """Return a payload bounded to the CDT durable-event contract."""
+
+        trace = self.model_copy(deep=True)
+        if len(trace.decisions) > CONTEXT_DECISION_TRACE_MAX_REFERENCES:
+            trace._trim_decisions_to(CONTEXT_DECISION_TRACE_MAX_REFERENCES)
+        while len(trace._json_bytes()) > CONTEXT_DECISION_TRACE_MAX_BYTES:
+            if not trace.decisions:
+                break
+            keep_count = max(0, len(trace.decisions) // 2)
+            trace._trim_decisions_to(keep_count)
+        return trace
+
+    def with_persistence_result(
+        self, result: ContextTracePersistenceResult
+    ) -> "ContextDecisionTraceV1":
+        return self.model_copy(
+            update={
+                "persistence_result": result,
+                "persistence_status": "persisted" if result.persisted else "degraded",
+            },
+            deep=True,
+        )
+
+    def _trim_decisions_to(self, keep_count: int) -> None:
+        keep_count = max(0, int(keep_count))
+        omitted = self.decisions[keep_count:]
+        if not omitted:
+            return
+        omitted_payload = [
+            decision.model_dump(mode="json", exclude_none=True) for decision in omitted
+        ]
+        existing_count = int(self.omitted_decision_count or 0)
+        self.decisions = self.decisions[:keep_count]
+        self.truncated = True
+        self.omitted_decision_count = existing_count + len(omitted)
+        self.omitted_decision_digest = _stable_hash(
+            {
+                "previous_digest": self.omitted_decision_digest,
+                "omitted": omitted_payload,
+            }
+        )
+
+    def _json_bytes(self) -> bytes:
+        return json.dumps(
+            self.model_dump(mode="json", exclude_none=True),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
 
 
 class IdentityManifest(BaseModel):
@@ -425,6 +550,7 @@ class ContextManifest(BaseModel):
     active_state_prompt_view: Optional[Dict[str, Any]] = Field(default_factory=dict)
     active_state_full: Optional[Dict[str, Any]] = Field(default_factory=dict)
     active_state_metrics: Optional[Dict[str, int]] = Field(default_factory=dict)
+    decision_trace: Optional[ContextDecisionTraceV1] = None
 
 
 class ContextPack(BaseModel):
@@ -658,6 +784,7 @@ def bucket_caps_for(budgets: ContextBudgets) -> Dict[str, int]:
             64, int(total * BUCKET_TOKEN_FRACTIONS["self_awareness"])
         ),
         "recent_window": budgets.recent_turn_tokens,
+        "memory": budgets.memory_tokens,
         "retrieval": budgets.facts_tokens
         + budgets.memory_tokens
         + budgets.skills_tokens,

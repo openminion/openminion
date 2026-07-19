@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from openminion.modules.storage.record_store import RecordStore
 
@@ -14,7 +14,7 @@ def _json_payload(payload: Mapping[str, Any] | None) -> str:
     return json.dumps(dict(payload or {}), sort_keys=True)
 
 
-def _parse_json(raw: str) -> Dict[str, Any]:
+def _parse_json(raw: str) -> dict[str, Any]:
     parsed = json.loads(raw)
     if isinstance(parsed, dict):
         return parsed
@@ -26,7 +26,7 @@ class IdempotencyRecord:
     method: str
     idempotency_key: str
     request_hash: str
-    response: Dict[str, Any]
+    response: dict[str, Any]
     status: str
     created_at: str
     updated_at: str

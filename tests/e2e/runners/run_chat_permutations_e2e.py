@@ -107,7 +107,7 @@ PROVIDER_CONFIG_KEY = {
     "claude": "anthropic",
 }
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-_READY_PROMPT_RE = re.compile(r"(?:^|\n)\[[^\]\n]+\]\s+you>\s*$")
+_READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
 _CONFIRMATION_REQUIRED_RE = re.compile(r"Policy confirmation required\.", re.IGNORECASE)
 _KNOWN_FAILURE_RE = re.compile(
     r"General act work ended without the required typed "
@@ -414,12 +414,12 @@ def _run_chat(
         str(data_root),
         "--generated-root",
         str(data_root / "runtime"),
-        "chat",
         "--agent",
         agent_id,
         "--session",
         session_id,
-        "--quiet",
+        "--verbosity",
+        "quiet",
         "--no-progress",
     ]
     master_fd, slave_fd = _open_probe_pty()

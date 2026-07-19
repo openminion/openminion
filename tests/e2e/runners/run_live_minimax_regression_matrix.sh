@@ -23,8 +23,7 @@ run_pytest() {
 }
 
 run_gate() {
-  "$PY_BIN" "$ROOT/tests/e2e/runners/run_cli_chat_e2e_gate.py" \
-    --session "cli-chat-gate-$(date +%Y%m%d-%H%M%S)"
+  "$PY_BIN" "$ROOT/tests/e2e/runners/run_cli_e2e_gate.py" live
 }
 
 run_official_core() {
@@ -109,7 +108,7 @@ case "$MODE" in
 usage: run_live_minimax_regression_matrix.sh [mode]
 
 modes:
-  gate              run generic CLI chat gate
+  gate              run canonical CLI and Focus gate
   core              run official MiniMax wildcard matrix
   skills            run live skill matrix
   tasking           run task/cron/autonomous/progress matrix

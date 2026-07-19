@@ -4,6 +4,17 @@ from openminion.services.security.validate import run_security_validate
 from tests._csc_fixtures import _csc_install_default_agent
 
 
+def test_service_security_diagnostics_wrap_canonical_report_type() -> None:
+    from openminion.modules.policy.diagnostics.security import (
+        SecurityValidateReport as canonical,
+    )
+    from openminion.services.security.validate import (
+        SecurityValidateReport as compatibility,
+    )
+
+    assert compatibility is canonical
+
+
 def _base_config() -> OpenMinionConfig:
     config = OpenMinionConfig()
     _csc_install_default_agent(config)  # type: ignore[attr-defined]

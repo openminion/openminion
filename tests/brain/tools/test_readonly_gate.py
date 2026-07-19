@@ -16,13 +16,14 @@ from openminion.modules.brain.schemas import (
     ActionResult,
     AgentCommand,
     BudgetCounters,
+    RequestReadiness,
     ToolCommand,
     WorkingState,
 )
 from openminion.modules.brain.tools.action_dispatch import (
     execute_action_dispatch,
 )
-from openminion.services.agent.lifecycle import (
+from openminion.modules.brain.tools.lifecycle import (
     LIFECYCLE_EVENT_ON_SUBAGENT_STOP,
     get_default_lifecycle_registry,
     reset_default_lifecycle_registry,
@@ -150,6 +151,62 @@ def test_readonly_mode_with_read_tool_skips_the_gate() -> None:
         }
     )
     logger = SimpleNamespace(emit=lambda *a, **k: None)
+    with pytest.raises(AttributeError, match="model_dump"):
+        execute_action_dispatch(
+            runner,
+            state=state,
+            command=command,
+            logger=logger,
+            sanitize_tool_command_args=lambda runner, command: ({}, []),
+            execute_action_fn=None,
+        )
+
+
+def test_non_execution_outcome_blocks_write_even_with_bypass() -> None:
+    state = _make_state(permission_mode="bypass")
+    state.request_readiness = RequestReadiness(
+        posture="direct",
+        requested_outcome="answer_only",
+        state="ready",
+    )
+    command = _make_command(tool_name="file.write")
+    runner = _make_runner()
+    logger = SimpleNamespace(emit=lambda *a, **k: None)
+
+    result, job = execute_action_dispatch(
+        runner,
+        state=state,
+        command=command,
+        logger=logger,
+        sanitize_tool_command_args=lambda runner, command: ({}, []),
+        execute_action_fn=None,
+    )
+
+    assert job is None
+    assert result.status == BRAIN_ACTION_STATUS_BLOCKED
+    assert result.error.code == "REQUEST_OUTCOME_EFFECT_BLOCKED"
+    assert result.error.details["requested_outcome"] == "answer_only"
+
+
+def test_plan_only_allows_session_plan_control_exception() -> None:
+    state = _make_state(permission_mode="readonly")
+    state.request_readiness = RequestReadiness(
+        posture="brief_plan",
+        requested_outcome="plan_only",
+        state="ready",
+    )
+    command = _make_command(tool_name="plan.set")
+    runner = _make_runner()
+    runner.tool_api = SimpleNamespace(
+        execute=lambda command, session_id, trace_id: {
+            "status": "success",
+            "summary": "ok",
+            "artifact_refs": [],
+            "memory_refs": [],
+        }
+    )
+    logger = SimpleNamespace(emit=lambda *a, **k: None)
+
     with pytest.raises(AttributeError, match="model_dump"):
         execute_action_dispatch(
             runner,

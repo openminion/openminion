@@ -7,12 +7,14 @@ from .interfaces import (
     ensure_session_component_compatibility,
 )
 from .runtime.factory import build_module_session_store
+from .runtime.continuation import SessionContinuationService
 from .storage.store import PostgresSessionStore, SQLiteSessionStore, SliceLimits
 
 __all__ = [
     "SESSION_INTERFACE_VERSION",
     "SessionContextClientAPI",
     "SessionStoreAPI",
+    "SessionContinuationService",
     "PostgresSessionStore",
     "SQLiteSessionStore",
     "SliceLimits",

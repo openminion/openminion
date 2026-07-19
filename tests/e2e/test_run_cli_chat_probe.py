@@ -16,6 +16,14 @@ def _helper_command(source: str) -> list[str]:
     return [sys.executable, "-u", "-c", textwrap.dedent(source)]
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    ("[probe|agent] you> ", "\x1b[36m\u276f\x1b[0m "),
+)
+def test_probe_recognizes_supported_prompt_boundaries(prompt: str) -> None:
+    assert probe_runner._ready_prompt_detected(prompt)
+
+
 def test_probe_waits_for_real_prompt_boundary_after_echoed_input() -> None:
     command = _helper_command(
         """

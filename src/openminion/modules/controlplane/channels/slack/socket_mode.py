@@ -70,6 +70,8 @@ class SlackSocketModeRunner:
         self._outbox_worker = outbox_worker
         self._bot_user_id = bot_user_id
         self._sleep = sleep_fn
+        self._connected = False
+        self._outbox_managed_by_supervisor = False
 
     def start(self, stop_event: Any | None = None) -> None:
         if self._socket_client is None:
@@ -79,6 +81,7 @@ class SlackSocketModeRunner:
             )
         event = stop_event if stop_event is not None else threading.Event()
         self._socket_client.connect()
+        self._connected = True
         try:
             while not event.is_set():
                 envelope = self._socket_client.recv(timeout=1.0)
@@ -87,10 +90,12 @@ class SlackSocketModeRunner:
                 self._handle_socket_envelope(envelope)
         finally:
             self._socket_client.close()
+            self._connected = False
 
     def stop(self) -> None:
         if self._socket_client is not None:
             self._socket_client.close()
+        self._connected = False
         close = getattr(self._state_store, "close", None)
         if callable(close):
             close()
@@ -99,7 +104,11 @@ class SlackSocketModeRunner:
         return self._delivery.deliver(payload, ctx)
 
     def health(self) -> dict[str, Any]:
-        return {"ok": True, "mode": "socket"}
+        return {
+            "ok": self._connected,
+            "mode": "socket",
+            "connected": self._connected,
+        }
 
     def _handle_socket_envelope(self, envelope: dict[str, Any]) -> None:
         envelope_id = str(envelope.get("envelope_id") or "").strip()

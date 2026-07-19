@@ -54,14 +54,12 @@ def test_global_concurrency_limit() -> None:
             )
             handles.append(h)
 
-        # Allow all turns to proceed
         sleep(0.05)  # let workers hit the gate
         gate.set()
 
         for h in handles:
             h.result(timeout_s=4)
 
-        # Peak concurrency must not exceed our limit
         assert active_peak[0] <= concurrency_limit, (
             f"peak concurrency {active_peak[0]} exceeded limit {concurrency_limit}"
         )
@@ -85,7 +83,6 @@ def test_set_limits_updates_live() -> None:
     )
     manager.start()
     try:
-        # Increase concurrency limit while running
         manager.set_limits(max_agents_hot=4, max_global_concurrency=4)
 
         handles = []
@@ -143,7 +140,6 @@ def test_concurrency_limit_one_serializes_across_agents() -> None:
         for h in handles:
             h.result(timeout_s=5)
 
-        # With concurrency=1 no two executors overlap — order has exactly 3 items
         assert len(order) == 3
     finally:
         manager.shutdown()

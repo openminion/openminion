@@ -946,6 +946,37 @@ class TestRunnerClarify(unittest.TestCase):
 
     @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
     @patch("openminion.modules.brain.runner.BrainRunner._save_state")
+    def test_hlpe_needs_user_does_not_assume_default(self, mock_save, mock_load):
+        from openminion.modules.brain.config import ClarifyConfig
+        from openminion.modules.brain.schemas import ClarifyQuestion, RequestReadiness
+
+        state = WorkingState(
+            session_id="sess_123",
+            agent_id="test-agent",
+            budgets_remaining=self._get_test_budgets(),
+            unresolved_clarify_items=[
+                ClarifyQuestion(id="q1", question="?", type="ambiguous_input")
+            ],
+            request_readiness=RequestReadiness(
+                posture="direct",
+                requested_outcome="execute",
+                state="needs_user",
+            ),
+            mode=BrainMode.COMMAND,
+        )
+        mock_load.return_value = state
+        self.runner.options.request_handoff_enabled = True
+        self.runner.options.clarify_config = ClarifyConfig(
+            handle_unanswered_policy="assume_default"
+        )
+
+        result = self.runner.step(session_id="sess_123", user_input=None)
+
+        self.assertEqual(result.status, "waiting_user")
+        self.assertEqual(len(state.unresolved_clarify_items), 1)
+
+    @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
+    @patch("openminion.modules.brain.runner.BrainRunner._save_state")
     def test_handle_unanswered_abort(self, mock_save, mock_load):
         from openminion.modules.brain.config import ClarifyConfig
         from openminion.modules.brain.schemas import ClarifyQuestion

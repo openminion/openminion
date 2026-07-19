@@ -85,27 +85,58 @@ def _default_route_data_root(
     return (_default_route_home_root(effective_home_root) / ".openminion").resolve()
 
 
-def _run_default_focus(
+def _run_default_interactive(
     args: object,
     home_root: str,
     data_root: str,
     *,
     no_interactive: bool,
 ) -> int:
-    from openminion.cli.commands.focus import run_focus
+    from openminion.cli.commands.interactive import run_interactive
 
     return int(
-        run_focus(
+        run_interactive(
             SimpleNamespace(
                 config=getattr(args, "config", None),
                 home_root=home_root or None,
                 data_root=data_root or None,
                 no_interactive=no_interactive,
-                agent=None,
-                session=None,
-                working_dir=None,
-                no_resume=False,
-                rich=False,
+                agent=getattr(args, "agent", None),
+                session=getattr(args, "session", None),
+                dir=getattr(args, "dir", None),
+                theme=getattr(args, "theme", None),
+                demo=bool(getattr(args, "demo", False)),
+                no_context=bool(getattr(args, "no_context", False)),
+                no_update_check=bool(getattr(args, "no_update_check", False)),
+                animation_provider=getattr(args, "animation_provider", None),
+                animation=getattr(args, "animation", None),
+                verbosity=getattr(args, "verbosity", None),
+                progress=getattr(args, "progress", None),
+                rich=bool(getattr(args, "rich", False)),
+                terminal=bool(getattr(args, "terminal", False)),
+                surface="interactive",
+            )
+        )
+        or 0
+    )
+
+
+def _run_piped_prompt(args: object, prompt: str) -> int:
+    from openminion.cli.commands.run import run_openminion
+
+    return int(
+        run_openminion(
+            SimpleNamespace(
+                config=getattr(args, "config", None),
+                prompt=prompt,
+                file="",
+                agent=getattr(args, "agent", None),
+                session=getattr(args, "session", None),
+                resume=False,
+                reset_session=False,
+                purpose="piped-input",
+                stream=False,
+                json=False,
             )
         )
         or 0
@@ -140,7 +171,11 @@ def _run_no_handler(
         home_root=_default_route_home_root(effective_home_root),
         data_root=_default_route_data_root(effective_home_root, effective_data_root),
         config_arg=getattr(args, "config", None),
-        requested_mode=OnboardingRequestedMode.AUTO,
+        requested_mode=(
+            OnboardingRequestedMode.DEMO
+            if bool(getattr(args, "demo", False))
+            else OnboardingRequestedMode.AUTO
+        ),
         has_tty=has_tty,
         no_interactive=bool(getattr(args, "no_interactive", False)),
         env=EnvironmentConfig.from_sources(),
@@ -158,7 +193,7 @@ def _run_no_handler(
             + "\n",
         )
     if has_tty:
-        return _run_default_focus(
+        return _run_default_interactive(
             args,
             home_root,
             data_root,
@@ -170,17 +205,7 @@ def _run_no_handler(
         except (OSError, ValueError):
             stdin_text = ""
         if stdin_text.strip():
-            import io as _io
-
-            _replacement = _io.StringIO(stdin_text)
-            _replacement.isatty = lambda: False  # type: ignore[method-assign]
-            sys.stdin = _replacement  # type: ignore[assignment]
-            return _run_default_focus(
-                args,
-                home_root,
-                data_root,
-                no_interactive=True,
-            )
+            return _run_piped_prompt(args, stdin_text.strip())
         parser.print_help()
         return 1
     parser.print_help()

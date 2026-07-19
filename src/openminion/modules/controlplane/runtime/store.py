@@ -7,6 +7,13 @@ from typing import Any, Dict, Tuple
 from ..constants import PRINCIPAL_BINDING_STATUS_ACTIVE
 from ..interfaces import CONTROLPLANE_INTERFACE_VERSION
 from ..contracts.models import AttachmentInput, AttachmentRef, InboundMessage
+from ..pairing.store import (
+    now_ts as _pair_now_ts,
+    scopes_json as _pair_scopes_json,
+    scopes_list as _pair_scopes_list,
+    token_hash as _pair_token_hash,
+    validate_or_generate_token,
+)
 
 
 @dataclass
@@ -32,6 +39,9 @@ class InMemoryControlPlaneStore:
         self._pending_clarify: Dict[str, dict[str, Any]] = {}
         self._principals: Dict[str, dict[str, Any]] = {}
         self._channel_subjects: Dict[Tuple[str, str], dict[str, Any]] = {}
+        self._pairings: Dict[Tuple[str, str], dict[str, Any]] = {}
+        self._pair_tokens: Dict[str, dict[str, Any]] = {}
+        self._pair_attempts: list[dict[str, Any]] = []
         self._agents: Dict[str, dict[str, Any]] = {
             "agent:default": {"id": "agent:default", "name": "Default Agent"},
             "agent:brain": {"id": "agent:brain", "name": "Brain Agent"},
@@ -256,7 +266,279 @@ class InMemoryControlPlaneStore:
                 result.append(entry)
             return result
 
+    # Cross-channel pairing token storage
+
+    def issue_pair_token(
+        self,
+        *,
+        channel: str,
+        expected_account_id: str | None,
+        expected_chat_key: str | None,
+        scopes: list[str],
+        token: str | None,
+        ttl_seconds: int,
+        hash_pepper: str | None = None,
+    ) -> dict[str, Any]:
+        generated = validate_or_generate_token(token)
+        hashed = _pair_token_hash(generated, pepper=hash_pepper)
+        now = _pair_now_ts()
+        row = {
+            "token_hash": hashed,
+            "channel": str(channel),
+            "token_hint": generated[:4],
+            "created_at_ts": now,
+            "expires_at_ts": now + max(60, int(ttl_seconds)),
+            "used_at_ts": None,
+            "expected_account_id": expected_account_id,
+            "expected_chat_key": expected_chat_key,
+            "consumer_account_id": None,
+            "consumer_chat_key": None,
+            "scopes_json": _pair_scopes_json(scopes),
+        }
+        with self._lock:
+            self._pair_tokens[hashed] = row
+        return {
+            "token": generated,
+            "token_hint": generated[:4],
+            "token_hash_prefix": hashed[:12],
+            "expires_at_ts": row["expires_at_ts"],
+            "scopes": list(scopes),
+        }
+
+    def consume_pair_token(
+        self,
+        *,
+        channel: str,
+        token: str,
+        consumer_account_id: str,
+        consumer_chat_key: str,
+        hash_pepper: str | None = None,
+    ) -> dict[str, Any]:
+        hashed = _pair_token_hash(token, pepper=hash_pepper)
+        now = _pair_now_ts()
+        with self._lock:
+            row = self._pair_tokens.get(hashed)
+            if row is None or row.get("channel") != channel:
+                return self._pair_consume_result(token, hashed, "invalid_token")
+            token_hint = str(row.get("token_hint") or token[:4])
+            if row.get("used_at_ts") is not None:
+                return self._pair_consume_result(token_hint, hashed, "already_used")
+            if int(row.get("expires_at_ts") or 0) < now:
+                return self._pair_consume_result(token_hint, hashed, "expired_token")
+            expected_account = row.get("expected_account_id")
+            if expected_account is not None and str(expected_account) != str(
+                consumer_account_id
+            ):
+                return self._pair_consume_result(token_hint, hashed, "user_mismatch")
+            expected_chat = row.get("expected_chat_key")
+            if expected_chat is not None and str(expected_chat) != str(
+                consumer_chat_key
+            ):
+                return self._pair_consume_result(token_hint, hashed, "chat_mismatch")
+            row["used_at_ts"] = now
+            row["consumer_account_id"] = consumer_account_id
+            row["consumer_chat_key"] = consumer_chat_key
+            return {
+                "ok": True,
+                "reason": "paired",
+                "token_hint": token_hint,
+                "token_hash_prefix": hashed[:12],
+                "scopes": _pair_scopes_list(row.get("scopes_json")),
+            }
+
+    def _pair_consume_result(
+        self, token_or_hint: str, hashed: str, reason: str
+    ) -> dict[str, Any]:
+        return {
+            "ok": False,
+            "reason": reason,
+            "token_hint": token_or_hint[:4],
+            "token_hash_prefix": hashed[:12],
+            "scopes": [],
+        }
+
+    def count_recent_pair_attempts(
+        self, *, channel: str, account_id: str, since_ts: int
+    ) -> int:
+        with self._lock:
+            return sum(
+                1
+                for row in self._pair_attempts
+                if row["channel"] == channel
+                and row["account_id"] == account_id
+                and int(row["attempted_at_ts"]) >= int(since_ts)
+            )
+
+    def count_recent_pair_attempts_for_chat(
+        self, *, channel: str, chat_key: str, since_ts: int
+    ) -> int:
+        with self._lock:
+            return sum(
+                1
+                for row in self._pair_attempts
+                if row["channel"] == channel
+                and row.get("chat_key") == chat_key
+                and int(row["attempted_at_ts"]) >= int(since_ts)
+            )
+
+    def record_pair_attempt(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        chat_key: str | None,
+        token: str,
+        outcome: str,
+        hash_pepper: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            self._pair_attempts.append(
+                {
+                    "channel": channel,
+                    "account_id": account_id,
+                    "chat_key": chat_key,
+                    "attempted_at_ts": _pair_now_ts(),
+                    "token_hash_prefix": _pair_token_hash(token, pepper=hash_pepper)[
+                        :12
+                    ],
+                    "outcome": outcome,
+                    "detail": dict(detail or {}),
+                }
+            )
+
+    def has_pair_channel_data(self, *, channel: str) -> bool:
+        with self._lock:
+            return any(
+                row.get("channel") == channel for row in self._pair_tokens.values()
+            )
+
+    def bulk_insert_pair_tokens(self, rows: Any) -> int:
+        copied = 0
+        with self._lock:
+            for row in rows:
+                token_hash = str(row.get("token_hash") or "")
+                if not token_hash or token_hash in self._pair_tokens:
+                    continue
+                item = dict(row)
+                item.setdefault("channel", "telegram")
+                if (
+                    item.get("expected_account_id") is None
+                    and item.get("expected_user_id") is not None
+                ):
+                    item["expected_account_id"] = (
+                        f"telegram-bot:user:{item['expected_user_id']}"
+                    )
+                if (
+                    item.get("expected_chat_key") is None
+                    and item.get("expected_chat_id") is not None
+                ):
+                    item["expected_chat_key"] = (
+                        f"telegram-bot:chat:{item['expected_chat_id']}"
+                    )
+                self._pair_tokens[token_hash] = item
+                copied += 1
+        return copied
+
+    def bulk_insert_pair_attempts(self, rows: Any) -> int:
+        copied = 0
+        with self._lock:
+            for row in rows:
+                item = dict(row)
+                item.setdefault("channel", "telegram")
+                if item.get("account_id") is None and item.get("user_id") is not None:
+                    item["account_id"] = f"telegram-bot:user:{item['user_id']}"
+                if item.get("chat_key") is None and item.get("chat_id") is not None:
+                    item["chat_key"] = f"telegram-bot:chat:{item['chat_id']}"
+                self._pair_attempts.append(item)
+                copied += 1
+        return copied
+
     # P3b v1 principal identity mappings
+
+    def upsert_pairing(
+        self,
+        *,
+        channel: str,
+        chat_id: str,
+        user_id: str,
+        session_id: str,
+        status: str = PRINCIPAL_BINDING_STATUS_ACTIVE,
+        scopes: list[str] | tuple[str, ...] | None = None,
+        note: str | None = None,
+        pairing_id: str | None = None,
+    ) -> str:
+        now = datetime.now(timezone.utc).isoformat()
+        key = (str(channel), str(chat_id))
+        with self._lock:
+            pid = pairing_id or self._pairings.get(key, {}).get("pairing_id")
+            pid = str(pid or f"pairing-{uuid.uuid4().hex}")
+            created_at = self._pairings.get(key, {}).get("created_at", now)
+            row = {
+                "pairing_id": pid,
+                "channel": key[0],
+                "chat_id": key[1],
+                "user_id": str(user_id),
+                "session_id": str(session_id),
+                "created_at": created_at,
+                "last_seen_at": now,
+                "status": str(status or PRINCIPAL_BINDING_STATUS_ACTIVE),
+                "scopes": list(scopes or ()),
+                "note": note,
+            }
+            self._pairings[key] = row
+            self._principals.setdefault(
+                pid,
+                {
+                    "principal_id": pid,
+                    "created_at": now,
+                    "updated_at": now,
+                    "meta": {},
+                },
+            )
+            self._channel_subjects[(key[0], key[1])] = {
+                "principal_id": pid,
+                "channel": key[0],
+                "subject_id": key[1],
+                "status": row["status"],
+                "scopes": row["scopes"],
+                "note": note,
+                "created_at": created_at,
+                "last_seen_at": now,
+                "meta": {"source": "cp_pairings_dual_write"},
+            }
+            return pid
+
+    def get_pairing(self, *, channel: str, chat_id: str) -> dict[str, Any] | None:
+        key = (str(channel), str(chat_id))
+        with self._lock:
+            row = self._pairings.get(key)
+            if not isinstance(row, dict):
+                return None
+            if str(row.get("status") or "").lower() != PRINCIPAL_BINDING_STATUS_ACTIVE:
+                return None
+            return dict(row)
+
+    def list_pairings(
+        self, *, channel: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = [
+                dict(row)
+                for row in self._pairings.values()
+                if (channel is None or row.get("channel") == channel)
+                and str(row.get("status") or "").lower()
+                == PRINCIPAL_BINDING_STATUS_ACTIVE
+            ]
+        return rows[: max(1, int(limit))]
+
+    def touch_pairing(self, *, channel: str, chat_id: str) -> None:
+        key = (str(channel), str(chat_id))
+        with self._lock:
+            if key in self._pairings:
+                self._pairings[key]["last_seen_at"] = datetime.now(
+                    timezone.utc
+                ).isoformat()
 
     def upsert_principal(
         self,

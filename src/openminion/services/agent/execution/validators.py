@@ -2,10 +2,14 @@ from typing import Any, Callable
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 from openminion.modules.tool.base import ToolExecutionResult
-from openminion.modules.tool.dispatch import _get_registry_manager
+from openminion.modules.tool import canonical_tool_name
 
-from ..errors import collect_missing_required, extract_missing_fields, is_argument_error
-from ..prompt_history import _looks_like_tool_call_envelope_text
+from ..context.history import _looks_like_tool_call_envelope_text
+from .tool_arguments import (
+    collect_missing_required,
+    extract_missing_fields,
+    is_argument_error,
+)
 
 
 def is_empty_provider_response(response: Any) -> bool:
@@ -18,14 +22,6 @@ def is_empty_provider_response(response: Any) -> bool:
 
 SpecLookup = Callable[[str], object | None]
 
-
-def canonical_tool_name(tool_name: str) -> str:
-    """Normalize tool name using manager-backed resolution."""
-    token = str(tool_name or "").strip()
-    if not token:
-        return ""
-    mgr = _get_registry_manager()
-    return mgr.normalize_raw_name(token) or token
 
 
 def canonical_tool_chain(tool_names: list[str]) -> list[str]:

@@ -6,7 +6,10 @@ from typing import Any, Sequence
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime.capability import resolve_plugin_runtime_policy
 from openminion.base.config.core import resolve_default_agent_id
-from openminion.services.runtime.discovery import HookDiscoveryError, discover_hooks
+from openminion.services.runtime.plugins.discovery import (
+    PluginDiscoveryError,
+    discover_plugin_manifests,
+)
 from openminion.services.config import resolve_services_plugin_paths
 
 
@@ -67,8 +70,10 @@ class ExtensionCatalog:
 
         discovered = []
         try:
-            discovered = discover_hooks(resolve_services_plugin_paths(plugin_roots))
-        except HookDiscoveryError as exc:
+            discovered = discover_plugin_manifests(
+                resolve_services_plugin_paths(plugin_roots)
+            )
+        except PluginDiscoveryError as exc:
             errors.append(
                 {
                     "kind": "plugin_manifest",

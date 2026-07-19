@@ -632,7 +632,7 @@ def _run_skill_validate(args, app: Any | None = None) -> int:
         from openminion.modules.skill.authoring import (
             build_skill_validation_report,
         )
-        from openminion.services.integration.skill_harness import run_skill_harness
+        from openminion.modules.skill.diagnostics.harness import run_skill_harness
 
         ctl = Skill(args.config)
         try:
@@ -692,7 +692,7 @@ def _run_skill_test(args, app: Any | None = None) -> int:
         return 1
     try:
         from openminion.modules.skill.authoring import build_skill_test_report
-        from openminion.services.integration.skill_harness import run_skill_harness
+        from openminion.modules.skill.diagnostics.harness import run_skill_harness
 
         harness_report = run_skill_harness(args.skill_root)
         report = build_skill_test_report(

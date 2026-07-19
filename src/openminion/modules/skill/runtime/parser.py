@@ -44,6 +44,11 @@ RECOGNIZED_FRONT_MATTER_KEYS: frozenset[str] = frozenset(
         "stop_conditions",
         "safety_notes",
         "idempotency_notes",
+        "teaches",
+        "requires_tools",
+        "safe_for_domains",
+        "forbidden_claims",
+        "evidence_expectations",
     }
 )
 

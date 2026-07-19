@@ -76,6 +76,7 @@ def to_inbound_message(
             "from_username": envelope.from_user.username,
             "update_id": envelope.update_id,
             "raw_type": envelope.raw_type,
+            "chat_type": envelope.chat_type,
             "attachments": list(envelope.attachments),
         },
         "control_event": {

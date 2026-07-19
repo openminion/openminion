@@ -23,66 +23,94 @@ def _load_validator():
 _validator = _load_validator()
 
 
-def test_modules_directory_has_no_forbidden_service_or_api_imports():
+def test_live_tree_has_no_reverse_layer_imports():
     hits: list[str] = []
     for path in _validator.MODULES_DIR.rglob("*.py"):
         hits.extend(_validator.scan_file(path))
-    assert not hits, (
-        "Forbidden modules → services/api imports detected.\n"
-        "Each new violation must either be fixed (preferred) or added to "
-        "`scripts/validate/import_boundaries.py:EXCLUDED_MODULE_FILES` with "
-        "an explicit rationale comment (see CTCR/MSB tracker discipline).\n\n"
-        + "\n".join(hits)
+    for path in _validator.SERVICES_DIR.rglob("*.py"):
+        hits.extend(_validator.scan_file(path))
+    assert not hits, "Forbidden reverse layer imports detected.\n\n" + "\n".join(hits)
+
+
+def test_validator_rejects_indented_and_type_only_module_to_service_imports(
+    tmp_path: pathlib.Path,
+):
+    test_file = tmp_path / "module_probe.py"
+    test_file.write_text(
+        "if TYPE_CHECKING:\n"
+        "    from openminion.services.runtime import OpenMinionRuntime\n"
+        "def load():\n"
+        "    import openminion.services.cron\n",
+        encoding="utf-8",
     )
 
+    hits = _validator.scan_file(test_file, layer="modules")
 
-def test_validator_rejects_a_newly_introduced_violation(tmp_path: pathlib.Path):
-    test_file = _validator.MODULES_DIR / "_msb_06_injection_probe.py"
-    try:
-        test_file.write_text(
-            '"""Temporary MSB-06 injection probe."""\n'
-            "from openminion.services.runtime.cron_resume.handler import (\n"
-            "    schedule_backoff_resume,\n"
-            ")\n"
-            "_ = schedule_backoff_resume\n",
-            encoding="utf-8",
-        )
-        hits = _validator.scan_file(test_file)
-        assert hits, (
-            "MSB-06: validator failed to detect a deliberately injected "
-            "`openminion.services.*` import in a fresh modules-tree file. "
-            "The boundary guard is broken."
-        )
-        # The validator's hit format is `{rel_path}:{line}: {matched_pattern}`
-        # where `matched_pattern` is the regex match itself (`from openminion.services.`),
-        # not the full import line. Assert the injected file's path appears.
-        assert any("_msb_06_injection_probe.py" in h for h in hits), (
-            f"Expected the probe filename in at least one hit: {hits!r}"
-        )
-    finally:
-        if test_file.exists():
-            test_file.unlink()
+    assert len(hits) == 2
 
 
-def test_validator_allowlist_is_in_sync_with_existing_violations():
-    stale: list[str] = []
-    for rel in _validator.EXCLUDED_MODULE_FILES:
-        path = REPO_ROOT / rel
-        if not path.exists():
-            stale.append(f"{rel} (file does not exist)")
-            continue
-        # Temporarily remove from allowlist to see if it would otherwise hit
-        original = _validator.EXCLUDED_MODULE_FILES
-        try:
-            _validator.EXCLUDED_MODULE_FILES = set(original) - {rel}
-            hits = _validator.scan_file(path)
-        finally:
-            _validator.EXCLUDED_MODULE_FILES = original
-        if not hits:
-            stale.append(
-                f"{rel} (on allowlist but no forbidden import remains; "
-                "remove the entry)"
-            )
-    assert not stale, "Stale `EXCLUDED_MODULE_FILES` entries detected:\n" + "\n".join(
-        stale
+def test_validator_rejects_type_only_and_lazy_service_to_api_imports(
+    tmp_path: pathlib.Path,
+):
+    test_file = tmp_path / "service_probe.py"
+    test_file.write_text(
+        "if TYPE_CHECKING:\n"
+        "    from openminion.api.runtime import APIRuntime\n"
+        "def load():\n"
+        "    import openminion.api.constants\n",
+        encoding="utf-8",
     )
+
+    hits = _validator.scan_file(test_file, layer="services")
+
+    assert len(hits) == 2
+
+
+def test_validator_rejects_type_only_and_lazy_service_to_cli_imports(
+    tmp_path: pathlib.Path,
+):
+    test_file = tmp_path / "service_probe.py"
+    test_file.write_text(
+        "if TYPE_CHECKING:\n"
+        "    from openminion.cli.main import main\n"
+        "def load():\n"
+        "    import openminion.cli.commands.context_cleanup\n",
+        encoding="utf-8",
+    )
+
+    hits = _validator.scan_file(test_file, layer="services")
+
+    assert len(hits) == 2
+
+
+def test_validator_accepts_canonical_dependency_directions(tmp_path: pathlib.Path):
+    module_file = tmp_path / "module_ok.py"
+    module_file.write_text(
+        "from openminion.modules.task import TaskCtl\n",
+        encoding="utf-8",
+    )
+    service_file = tmp_path / "service_ok.py"
+    service_file.write_text(
+        "from openminion.modules.task import TaskCtl\n",
+        encoding="utf-8",
+    )
+
+    assert _validator.scan_file(module_file, layer="modules") == []
+    assert _validator.scan_file(service_file, layer="services") == []
+
+
+def test_import_boundary_validator_includes_base_upward_imports(
+    tmp_path: pathlib.Path,
+):
+    base_file = tmp_path / "config" / "lazy_feature.py"
+    base_file.parent.mkdir(parents=True)
+    base_file.write_text(
+        "def load():\n"
+        "    from openminion.modules.task import TaskCtl\n"
+        "    return TaskCtl\n",
+        encoding="utf-8",
+    )
+
+    assert _validator.scan_base(tmp_path) == [
+        "New upward import from base: config/lazy_feature.py:2: openminion.modules.task"
+    ]

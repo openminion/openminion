@@ -299,3 +299,28 @@ def test_run_sessions_delete_missing_session(capsys) -> None:
 
     assert result == 1
     assert "session not found" in capsys.readouterr().err
+
+
+def test_session_cli_share_retention_and_branch_commands(tmp_path, capsys) -> None:
+    from openminion.modules.session.cli import main
+
+    db = tmp_path / "sessions.db"
+    assert main(["create-session", "--db", str(db), "--session-id", "cli-src", "--title", "source"]) == 0
+    assert main(["create-session", "--db", str(db), "--session-id", "cli-target", "--title", "target"]) == 0
+    assert main(["update-summary", "--db", str(db), "--session-id", "cli-src", "--summary-short", "summary", "--based-on-seq", "1"]) == 0
+    assert main(["share-create", "--db", str(db), "--session-id", "cli-src", "--ttl-seconds", "60"]) == 0
+    output = capsys.readouterr().out
+    assert '"token_return_policy": "returned_once_at_creation"' in output
+
+    assert main(["share-list", "--db", str(db), "--session-id", "cli-src"]) == 0
+    output = capsys.readouterr().out
+    assert '"token"' not in output
+    assert '"token_hint"' in output
+
+    assert main(["branch-carry-forward", "--db", str(db), "--source-session-id", "cli-src", "--target-parent-session-id", "cli-target", "--fields-json", '["summary"]']) == 0
+    output = capsys.readouterr().out
+    assert '"schema_version": "session_branch_carry_forward.v1"' in output
+
+    assert main(["retention-dry-run", "--db", str(db), "--inactivity-ttl-seconds", "999999999"]) == 0
+    output = capsys.readouterr().out
+    assert '"schema_version": "session_retention_plan.v1"' in output

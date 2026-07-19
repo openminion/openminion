@@ -6,7 +6,9 @@ from pathlib import Path
 
 from openminion.base.config import OpenMinionConfig
 from openminion.modules.tool.base import ToolExecutionResult
-from openminion.services.lifecycle import self_improvement as self_improvement_module
+from openminion.modules.brain.runtime.improvement import (
+    notes as self_improvement_module,
+)
 from openminion.services.agent.execution import flow as agent_execution_flow
 from openminion.services.brain.post_execution import (
     context as brain_post_execution_context,
@@ -36,6 +38,17 @@ def _engine_with_captured_note(tmp: str) -> SelfImprovementEngine:
         ],
     )
     return engine
+
+
+def test_service_self_improvement_surface_is_canonical_brain_owner() -> None:
+    from openminion.modules.brain.runtime.improvement.notes import (
+        SelfImprovementEngine as canonical,
+    )
+    from openminion.services.lifecycle.self_improvement import (
+        SelfImprovementEngine as compatibility,
+    )
+
+    assert compatibility is canonical
 
 
 _FORBIDDEN_CALL_PATTERNS = (

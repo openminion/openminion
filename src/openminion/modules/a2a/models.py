@@ -4,7 +4,7 @@ from openminion.base.time import utc_now_iso as iso_now
 import json
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from .constants import (
     A2A_AGENT_STATUS_ONLINE,
@@ -64,7 +64,7 @@ class ArtifactRef:
     mime: str
     sha256: str
     size_bytes: int
-    label: Optional[str] = None
+    label: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -94,8 +94,8 @@ class Envelope:
     trace_id: str
     ts: str
     from_agent: str
-    to_agent: Optional[str]
-    to_capability: Optional[str]
+    to_agent: str | None
+    to_capability: str | None
     type: str
     method: str
     params: dict[str, Any] = field(default_factory=dict)
@@ -109,15 +109,15 @@ class Envelope:
         cls,
         *,
         from_agent: str,
-        to_agent: Optional[str],
-        to_capability: Optional[str],
+        to_agent: str | None,
+        to_capability: str | None,
         type: str,
         method: str,
-        params: Optional[dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         timeout_ms: int = 30_000,
         idempotency_key: str = "",
-        trace_id: Optional[str] = None,
-        meta: Optional[dict[str, Any]] = None,
+        trace_id: str | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> "Envelope":
         return cls(
             msg_id=new_uuid(),
@@ -188,10 +188,10 @@ class IdempotencyRecord:
     key: str
     scope: str
     status: str
-    result_inline: Optional[dict[str, Any]] = None
-    result_ref: Optional[str] = None
-    error: Optional[dict[str, Any]] = None
-    task_id: Optional[str] = None
+    result_inline: dict[str, Any] | None = None
+    result_ref: str | None = None
+    error: dict[str, Any] | None = None
+    task_id: str | None = None
     created_at: str = field(default_factory=iso_now)
     updated_at: str = field(default_factory=iso_now)
 
@@ -222,9 +222,9 @@ class JobRecord:
     state: str
     current_step: str = ""
     progress: float = 0.0
-    result_inline: Optional[dict[str, Any]] = None
-    result_ref: Optional[str] = None
-    error: Optional[dict[str, Any]] = None
+    result_inline: dict[str, Any] | None = None
+    result_ref: str | None = None
+    error: dict[str, Any] | None = None
     created_at: str = field(default_factory=iso_now)
     updated_at: str = field(default_factory=iso_now)
     heartbeat_at: str = field(default_factory=iso_now)
@@ -278,16 +278,16 @@ class AuditRecord:
     msg_id: str
     trace_id: str
     from_agent: str
-    to_agent: Optional[str]
-    to_capability: Optional[str]
+    to_agent: str | None
+    to_capability: str | None
     type: str
     method: str
     status: str
-    task_id: Optional[str] = None
-    error_code: Optional[str] = None
-    error_message: Optional[str] = None
-    envelope: Optional[dict[str, Any]] = None
-    data: Optional[dict[str, Any]] = None
+    task_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    envelope: dict[str, Any] | None = None
+    data: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {

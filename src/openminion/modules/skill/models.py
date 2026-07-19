@@ -301,6 +301,11 @@ class SkillPackage:
     created_at: str
     updated_at: str
     source: str = SKILL_SOURCE_OPERATOR_DECLARED
+    teaches: list[str] = field(default_factory=list)
+    requires_tools: list[str] = field(default_factory=list)
+    safe_for_domains: list[str] = field(default_factory=list)
+    forbidden_claims: list[str] = field(default_factory=list)
+    evidence_expectations: list[str] = field(default_factory=list)
 
     def to_catalog_summary(self) -> dict[str, Any]:
         title = str(self.display_name or self.name or "").strip() or self.name
@@ -394,6 +399,11 @@ class SkillPackage:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "source": self.source,
+            "teaches": list(self.teaches),
+            "requires_tools": list(self.requires_tools),
+            "safe_for_domains": list(self.safe_for_domains),
+            "forbidden_claims": list(self.forbidden_claims),
+            "evidence_expectations": list(self.evidence_expectations),
         }
 
     @classmethod
@@ -471,6 +481,13 @@ class SkillPackage:
             source=normalize_source(
                 str(raw.get("source", SKILL_SOURCE_OPERATOR_DECLARED))
             ),
+            teaches=normalize_text_list(raw.get("teaches")),
+            requires_tools=normalize_text_list(raw.get("requires_tools")),
+            safe_for_domains=normalize_text_list(raw.get("safe_for_domains")),
+            forbidden_claims=normalize_text_list(raw.get("forbidden_claims")),
+            evidence_expectations=normalize_text_list(
+                raw.get("evidence_expectations")
+            ),
         )
 
     def to_version_hash(self) -> str:
@@ -488,6 +505,8 @@ class SkillPackage:
         for item in self.tags:
             tokens.extend(tokenize(item))
         for item in self.tools:
+            tokens.extend(tokenize(item))
+        for item in self.teaches:
             tokens.extend(tokenize(item))
         for item in self.applies_to.get("intents", []):
             tokens.extend(tokenize(item))

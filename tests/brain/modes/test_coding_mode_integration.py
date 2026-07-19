@@ -808,10 +808,18 @@ def test_coding_loop_executes_all_plan_phases_in_order() -> None:
                 output_text="",
                 tool_calls=[
                     ToolCall(
+                        id="tc-write",
+                        name="file.write",
+                        arguments={
+                            "path": "src/auth.py",
+                            "content": "class AuthService:\n    pass\n",
+                        },
+                    ),
+                    ToolCall(
                         id="tc-run",
                         name="exec.run",
                         arguments={"argv": ["pytest", "-q"]},
-                    )
+                    ),
                 ],
                 finish_reason="tool_calls",
             ),
@@ -962,9 +970,9 @@ def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
                 output_text="",
                 tool_calls=[
                     ToolCall(
-                        id="tc-run",
+                        id="tc-verify",
                         name="exec.run",
-                        arguments={"argv": ["pytest", "-q"]},
+                        arguments={"command": "pytest -q"},
                     )
                 ],
                 finish_reason="tool_calls",
@@ -990,10 +998,18 @@ def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
 
     assert result.status == "done"
     assert executor.calls[0].tool_name == "exec.run"
-    assert any(
-        "Stay in implement and run at least one exec.run" in message.content
-        for message in llm_client.calls[2]["messages"]
+    user_messages = [
+        message.content
+        for call in llm_client.calls
+        for message in call["messages"]
         if message.role == "user"
+    ]
+    assert any(
+        "Stay in implement and run at least one verification readback step"
+        in content
+        and "file.read" in content
+        and "exec.run" in content
+        for content in user_messages
     )
 
 
@@ -1086,8 +1102,44 @@ def test_coding_plan_prompt_uses_repo_map_only_as_fallback() -> None:
 
 
 def test_coding_plan_persists_to_module_state_and_resumes_on_continue() -> None:
+    from openminion.modules.brain.schemas import JobHandle, iso_now
+
+    pending_job = JobHandle(
+        task_id="job-1",
+        command_id=new_uuid(),
+        provider="tool",
+        status="pending",
+        poll_after_ms=1000,
+        created_at=iso_now(),
+    )
     first_llm = _FakeLLMClient(
         responses=[
+            _plan_response(
+                json.dumps(
+                    {
+                        "goal": "inspect auth",
+                        "phases": [
+                            {
+                                "name": "implement",
+                                "status": "active",
+                                "steps": ["read source"],
+                                "output": "",
+                            },
+                            {
+                                "name": "verify",
+                                "status": "pending",
+                                "steps": ["summarize evidence"],
+                                "output": "",
+                            },
+                        ],
+                        "current_phase": "implement",
+                        "scratchpad": [],
+                        "completed_steps": [],
+                        "open_issues": [],
+                        "subtasks": [],
+                    }
+                )
+            ),
             LLMResponse(
                 ok=True,
                 provider="fake",
@@ -1104,14 +1156,27 @@ def test_coding_plan_persists_to_module_state_and_resumes_on_continue() -> None:
             )
         ]
     )
+    first_executor = _FakeCommandExecutor(
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=MagicMock(),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="job started",
+                ),
+                job=pending_job,
+            )
+        ]
+    )
     first_ctx = _ctx(
         first_llm,
-        _FakeCommandExecutor(),
-        state=_state(tool_calls=1),
+        first_executor,
+        state=_state(tool_calls=2),
     )
     first_result = CodingMode().execute(first_ctx)
 
-    assert first_result.status == "active"
+    assert first_result.status == "job_pending"
     assert first_ctx.state.module_state["coding"]["coding_plan"]["current_phase"] == (
         "implement"
     )
@@ -1127,6 +1192,26 @@ def test_coding_plan_persists_to_module_state_and_resumes_on_continue() -> None:
         _ctx(
             _FakeLLMClient(
                 responses=[
+                    _plan_response(
+                        json.dumps(
+                            {
+                                "goal": "inspect auth",
+                                "phases": [
+                                    {
+                                        "name": "verify",
+                                        "status": "active",
+                                        "steps": ["summarize evidence"],
+                                        "output": "",
+                                    }
+                                ],
+                                "current_phase": "verify",
+                                "scratchpad": [],
+                                "completed_steps": ["read source"],
+                                "open_issues": [],
+                                "subtasks": [],
+                            }
+                        )
+                    ),
                     LLMResponse(
                         ok=True,
                         provider="fake",
@@ -1562,11 +1647,18 @@ def test_coding_verifier_verdict_rejects_non_enum_values() -> None:
 def test_coding_verify_gate_blocks_with_typed_reason_when_exec_run_missing() -> None:
     state = _state()
     payload = _coding_resume_payload()
-    payload["tool_calls_made"] = []
+    payload["tool_calls_made"] = ["file.write"]
     payload["scratchpad"] = {
         "coding.plan_phases_executed": ["plan", "implement"],
         "coding.current_phase": "implement",
         "coding.open_issues_count": 0,
+        "adaptive.tool_results": [
+            {
+                "tool_name": "file.write",
+                "ok": True,
+                "data": {"path": "src/parser.py", "bytes_written": 128},
+            }
+        ],
     }
     payload["coding_plan"]["phases"] = [
         {
@@ -1589,6 +1681,7 @@ def test_coding_verify_gate_blocks_with_typed_reason_when_exec_run_missing() -> 
         },
     ]
     payload["coding_plan"]["current_phase"] = "implement"
+    payload["coding_plan"]["requires_file_change"] = True
     state.module_state["coding"] = payload
     mode = CodingMode()
     mode.apply_mode_config(
@@ -1665,6 +1758,7 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
                   "scratchpad": [],
                   "completed_steps": [],
                   "open_issues": [],
+                  "requires_file_change": true,
                   "subtasks": []
                 }
                 """
@@ -1676,9 +1770,12 @@ def test_coding_verify_phase_blocks_when_verifier_goal_is_unbound() -> None:
                 output_text="",
                 tool_calls=[
                     ToolCall(
-                        id="tc-run",
-                        name="exec.run",
-                        arguments={"argv": ["pytest", "-q"]},
+                        id="tc-write",
+                        name="file.write",
+                        arguments={
+                            "path": "src/auth.py",
+                            "content": "class AuthService:\n    pass\n",
+                        },
                     )
                 ],
                 finish_reason="tool_calls",
@@ -1773,6 +1870,14 @@ def test_coding_verify_phase_uses_typed_verifier_before_done() -> None:
                 model="fake-model",
                 output_text="",
                 tool_calls=[
+                    ToolCall(
+                        id="tc-write",
+                        name="file.write",
+                        arguments={
+                            "path": "src/auth.py",
+                            "content": "class AuthService:\n    pass\n",
+                        },
+                    ),
                     ToolCall(
                         id="tc-run",
                         name="exec.run",
@@ -2447,7 +2552,7 @@ def test_coding_loop_preserves_confirmation_replay_state() -> None:
     assert state.pending_confirmation_command.tool_name == "exec.run"
     assert state.pending_confirmation_command.args == {"command": "python --version"}
     assert (
-        "Reply exactly yes to confirm or exactly no to cancel."
+        "Reply exactly yes to allow once, session to allow this tool for the session, or no to cancel."
         in state.post_action_user_message
     )
     assert "command=python --version" in state.post_action_user_message
@@ -2846,9 +2951,11 @@ def test_coding_loop_stops_on_token_budget_exhausted() -> None:
     result = handler.execute(ctx)
 
     # Budget exhausted after consuming all tokens
-    assert result.status in ("active",)
+    assert result.status == "waiting_user"
     assert result.action_result is not None
     assert "budget" in (result.message or "").lower()
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "coding_budget_exhausted"
 
 
 def test_coding_loop_circular_pattern_returns_recoverable_result() -> None:
@@ -2871,7 +2978,7 @@ def test_coding_loop_circular_pattern_returns_recoverable_result() -> None:
         allowed_tools=frozenset({"file.write", "exec.run"}),
     )
 
-    assert result.status == "active"
+    assert result.status == "waiting_user"
     assert "repeated the same tool pattern" in (result.message or "")
     assert result.action_result is not None
     assert result.action_result.error is not None

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Mapping, Optional, cast
 
 from openminion import __version__
 from openminion.base.protocol import (
@@ -21,7 +21,7 @@ from openminion.services.gateway.authz import (
 class HandshakeState:
     connected: bool = False
     protocol: Optional[int] = None
-    client: Dict[str, Any] = field(default_factory=dict)
+    client: dict[str, Any] = field(default_factory=dict)
     role: str = "operator"
     scopes: tuple[str, ...] = ()
 
@@ -34,8 +34,8 @@ class GatewayProtocolSession:
         server_version: str = __version__,
         min_protocol: int = 1,
         max_protocol: int = 1,
-        features: Optional[Dict[str, Any]] = None,
-        policy_limits: Optional[Dict[str, Any]] = None,
+        features: Optional[dict[str, Any]] = None,
+        policy_limits: Optional[dict[str, Any]] = None,
         method_authz: Optional[Mapping[str, MethodAuthorizationRule]] = None,
     ) -> None:
         self._server_name = server_name
@@ -51,34 +51,38 @@ class GatewayProtocolSession:
     def state(self) -> HandshakeState:
         return self._state
 
-    def handle_frame(self, frame_raw: Mapping[str, Any]) -> Dict[str, Any]:
+    def handle_frame(self, frame_raw: Mapping[str, Any]) -> dict[str, Any]:
         request_id = _extract_request_id(frame_raw)
         try:
             request = parse_request_frame(frame_raw)
         except ProtocolError as exc:
-            return build_error_response(request_id, exc).to_dict()
+            return _response_dict(build_error_response(request_id, exc))
 
         if not self._state.connected:
             if request.method != "connect":
-                return build_error_response(
-                    request.id,
-                    ProtocolError(
-                        "handshake_required",
-                        "First request must use method 'connect'",
-                        retryable=False,
-                    ),
-                ).to_dict()
+                return _response_dict(
+                    build_error_response(
+                        request.id,
+                        ProtocolError(
+                            "handshake_required",
+                            "First request must use method 'connect'",
+                            retryable=False,
+                        ),
+                    )
+                )
             return self._handle_connect(request.id, request.params)
 
         if request.method == "connect":
-            return build_error_response(
-                request.id,
-                ProtocolError(
-                    "already_connected",
-                    "Protocol session is already connected",
-                    retryable=False,
-                ),
-            ).to_dict()
+            return _response_dict(
+                build_error_response(
+                    request.id,
+                    ProtocolError(
+                        "already_connected",
+                        "Protocol session is already connected",
+                        retryable=False,
+                    ),
+                )
+            )
 
         auth_error = authorize_method(
             method=request.method,
@@ -87,20 +91,22 @@ class GatewayProtocolSession:
             rules=self._method_authz,
         )
         if auth_error is not None:
-            return build_error_response(request.id, auth_error).to_dict()
+            return _response_dict(build_error_response(request.id, auth_error))
 
-        return build_error_response(
-            request.id,
-            ProtocolError(
-                "method_not_implemented",
-                f"Method '{request.method}' is not implemented",
-                retryable=False,
-            ),
-        ).to_dict()
+        return _response_dict(
+            build_error_response(
+                request.id,
+                ProtocolError(
+                    "method_not_implemented",
+                    f"Method '{request.method}' is not implemented",
+                    retryable=False,
+                ),
+            )
+        )
 
     def _handle_connect(
         self, request_id: str, params_raw: Mapping[str, Any]
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             params = parse_connect_params(params_raw)
             selected_protocol = negotiate_protocol(
@@ -111,7 +117,7 @@ class GatewayProtocolSession:
             )
             role, scopes = _parse_client_role_and_scopes(params.client)
         except ProtocolError as exc:
-            return build_error_response(request_id, exc).to_dict()
+            return _response_dict(build_error_response(request_id, exc))
 
         self._state = HandshakeState(
             connected=True,
@@ -120,21 +126,27 @@ class GatewayProtocolSession:
             role=role,
             scopes=scopes,
         )
-        return build_success_response(
-            request_id,
-            payload={
-                "protocol": selected_protocol,
-                "server": {
-                    "name": self._server_name,
-                    "version": self._server_version,
-                    "min_protocol": self._min_protocol,
-                    "max_protocol": self._max_protocol,
+        return _response_dict(
+            build_success_response(
+                request_id,
+                payload={
+                    "protocol": selected_protocol,
+                    "server": {
+                        "name": self._server_name,
+                        "version": self._server_version,
+                        "min_protocol": self._min_protocol,
+                        "max_protocol": self._max_protocol,
+                    },
+                    "features": self._features,
+                    "policy_limits": self._policy_limits,
+                    "auth": {"role": role, "scopes": list(scopes)},
                 },
-                "features": self._features,
-                "policy_limits": self._policy_limits,
-                "auth": {"role": role, "scopes": list(scopes)},
-            },
-        ).to_dict()
+            )
+        )
+
+
+def _response_dict(response: Any) -> dict[str, Any]:
+    return cast(dict[str, Any], response.to_dict())
 
 
 def _extract_request_id(frame_raw: Mapping[str, Any]) -> str:

@@ -2,12 +2,17 @@ from openminion.modules.storage.migrations.alembic import (
     apply_ddl_statements,
     drop_sql_objects,
 )
+from openminion.modules.controlplane.pairing.schema import CP_PAIRING_SCHEMA
 
 
 revision = "0001_baseline"
 down_revision = None
 branch_labels = None
 depends_on = None
+
+_CP_PAIRING_DDL = tuple(
+    statement.strip() for statement in CP_PAIRING_SCHEMA.split(";") if statement.strip()
+)
 
 DDL = (
     """
@@ -205,6 +210,7 @@ DDL = (
     "CREATE INDEX IF NOT EXISTS idx_cp_outbound_session_ts ON cp_outbound_messages(session_id, timestamp, id)",
     "CREATE INDEX IF NOT EXISTS idx_cp_outbox_channel_chat ON cp_outbox(channel, chat_id)",
     "CREATE INDEX IF NOT EXISTS idx_cp_outbox_status_next ON cp_outbox(status, next_attempt_at)",
+    *_CP_PAIRING_DDL,
     "CREATE INDEX IF NOT EXISTS idx_cp_pending_clarify_updated ON cp_pending_clarify(updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_cp_rate_limits_lookup ON cp_rate_limits(key_type, key_id, window_start DESC)",
     "CREATE INDEX IF NOT EXISTS idx_cp_session_agents_agent ON cp_session_agents(agent_id, updated_at)",
@@ -229,6 +235,8 @@ def downgrade() -> None:
             "cp_outbound_messages",
             "cp_outbox",
             "cp_pairings",
+            "cp_pair_tokens",
+            "cp_pair_attempts",
             "cp_pending_clarify",
             "cp_rate_limits",
             "cp_session_agents",
@@ -254,6 +262,10 @@ def downgrade() -> None:
             "idx_cp_outbound_session_ts",
             "idx_cp_outbox_channel_chat",
             "idx_cp_outbox_status_next",
+            "idx_cp_pair_tokens_channel_expected",
+            "idx_cp_pair_tokens_expiry",
+            "idx_cp_pair_attempts_channel_account_time",
+            "idx_cp_pair_attempts_channel_chat_time",
             "idx_cp_pending_clarify_updated",
             "idx_cp_rate_limits_lookup",
             "idx_cp_session_agents_agent",

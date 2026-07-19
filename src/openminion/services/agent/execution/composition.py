@@ -176,31 +176,29 @@ def build_service_port(service: Any) -> TurnFlowServicePort:
 
 def build_turn_executor_components(
     *,
-    service: Any | None = None,
-    service_port: TurnFlowServicePort | None = None,
+    service_port: TurnFlowServicePort,
     runtime: TurnRuntimeContext,
 ) -> TurnExecutorComponents:
     from .required import RequiredLaneRunner
     from .runtime import ExecutorRuntime
     from .unforced import UnforcedLaneRunner
 
-    resolved_service_port = service_port or build_service_port(service)
     runtime_ops = ExecutorRuntime(
-        service_port=resolved_service_port,
+        service_port=service_port,
         runtime=runtime,
     )
     required_lane = RequiredLaneRunner(
-        service_port=resolved_service_port,
+        service_port=service_port,
         runtime=runtime,
         runtime_ops=runtime_ops,
     )
     unforced_lane = UnforcedLaneRunner(
-        service_port=resolved_service_port,
+        service_port=service_port,
         runtime=runtime,
         runtime_ops=runtime_ops,
     )
     return TurnExecutorComponents(
-        service_port=resolved_service_port,
+        service_port=service_port,
         runtime_ops=runtime_ops,
         required_lane=required_lane,
         unforced_lane=unforced_lane,
@@ -209,14 +207,12 @@ def build_turn_executor_components(
 
 def build_turn_executor(
     *,
-    service: Any | None = None,
-    service_port: TurnFlowServicePort | None = None,
+    service_port: TurnFlowServicePort,
     runtime: TurnRuntimeContext,
 ) -> Any:
     from .executor import TurnExecutor
 
     components = build_turn_executor_components(
-        service=service,
         service_port=service_port,
         runtime=runtime,
     )

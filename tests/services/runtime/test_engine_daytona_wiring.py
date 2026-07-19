@@ -7,7 +7,7 @@ from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.base.runtime.sandbox import ExecSpec
 from openminion.services.runtime.bootstrap import build_daytona_runner
-from openminion.services.runtime.daytona.runner import DaytonaRunner
+from openminion.modules.runtime.sandboxes.daytona import DaytonaRunner
 from openminion.services.runtime.engine import (
     PolicyDecision,
     RuntimeContext,

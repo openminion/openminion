@@ -7,7 +7,7 @@ from typing import Any, Mapping
 from openminion.base.config import RunProfileOverrides
 from openminion.services.runtime.manager import TurnRequest
 from openminion.services.runtime.manager import TurnHandle as ManagerTurnHandle
-from openminion.services.stats import RunStats
+from openminion.modules.telemetry.usage import RunStats
 
 
 class TurnRequestError(RuntimeError):

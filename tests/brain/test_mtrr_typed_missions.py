@@ -22,7 +22,6 @@ from openminion.modules.brain.schemas.missions import (
 from openminion.modules.tool.plugin_contract import RiskReversibility
 
 
-# MissionType — closed-set Literal
 
 
 def test_mission_type_is_closed_set_of_four_values() -> None:
@@ -41,7 +40,6 @@ def test_mission_type_invalid_value_is_rejected_via_intake_record() -> None:
         )
 
 
-# MissionIntakeRecord
 
 
 def test_intake_record_constructs_with_minimal_valid_kwargs() -> None:
@@ -97,7 +95,6 @@ def test_intake_record_rejects_unknown_classification_source() -> None:
         )
 
 
-# CapabilityBoundary
 
 
 def test_capability_boundary_constructs_with_minimal_valid_kwargs() -> None:
@@ -147,7 +144,6 @@ def test_capability_boundary_composes_tool_reversibility() -> None:
     assert boundary.tool_reversibility == "irreversible"
 
 
-# ToolReversibility alias
 
 
 def test_tool_reversibility_is_alias_of_risk_reversibility() -> None:
@@ -161,7 +157,6 @@ def test_tool_reversibility_is_alias_of_risk_reversibility() -> None:
     }
 
 
-# ExploratoryDisclosure
 
 
 def test_exploratory_disclosure_constructs_with_minimal_valid_kwargs() -> None:
@@ -182,7 +177,6 @@ def test_exploratory_disclosure_reason_closed_set() -> None:
     }
 
 
-# MissionVerifierExpectation
 
 
 def test_verifier_expectation_consumes_tgcr_verifier_family_verbatim() -> None:
@@ -227,7 +221,6 @@ def test_verifier_expectation_rejects_duplicate_families() -> None:
         )
 
 
-# Default registry + runtime composition
 
 
 @pytest.mark.parametrize(

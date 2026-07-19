@@ -5,7 +5,7 @@ import pytest
 from openminion.modules.task import (
     AutonomyRunPhase,
     AutonomyRunStatus,
-    CPACK_TRACKER_REF,
+    DOMAIN_WORKFLOW_REF,
     GAP_ASSESSMENT_REF,
     ProjectBudgetPolicy,
     ProjectCapabilityArea,
@@ -569,8 +569,8 @@ def test_project_capability_matrix_marks_required_gaps_explicitly() -> None:
         "desktop_apps is required for this pilot but has no first-class owner."
     )
     assert email.disposition == ProjectCapabilityDisposition.DEFER_OWNED
-    assert email.defer_owner == "CPACK"
-    assert CPACK_TRACKER_REF in email.evidence_refs
+    assert email.defer_owner == "tool-skill-domain-owner"
+    assert DOMAIN_WORKFLOW_REF in email.evidence_refs
     assert code.disposition == ProjectCapabilityDisposition.AVAILABLE
     assert {row.area for row in blockers} == {
         ProjectCapabilityArea.DESKTOP_APPS,

@@ -2,7 +2,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from openminion.base.logging import format_structured_event, get_logger
-from openminion.services.cron.delivery import deliver_cron_result
+from openminion.modules.controlplane import deliver_cron_result
 
 _CRON_LOGGER = get_logger("modules.cron")
 

@@ -11,12 +11,12 @@ from openminion.base.runtime.sandbox import (
     ExecutionSandboxSpec,
     FsWriteSpec,
 )
-from openminion.services.runtime.daytona.client import (
+from openminion.modules.runtime.sandboxes.daytona import (
     DaytonaClientError,
     DaytonaCommandResult,
     DaytonaWorkspace,
 )
-from openminion.services.runtime.daytona.runner import DaytonaRunner
+from openminion.modules.runtime.sandboxes.daytona import DaytonaRunner
 
 
 @dataclass

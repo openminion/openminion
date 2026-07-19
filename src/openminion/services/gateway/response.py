@@ -2,7 +2,7 @@ import json
 from typing import Any
 
 from openminion.base.types import Message
-from openminion.services.stats import RunStats
+from openminion.modules.telemetry.usage import RunStats
 
 
 def envelope_truncation_payload(

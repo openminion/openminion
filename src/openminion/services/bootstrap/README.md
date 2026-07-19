@@ -9,7 +9,7 @@ Canonical builders: `bootstrap_config_manager`, `migrate_data_root`
 Startup-time orchestration that runs before the rest of the service
 layer composes. Hosts the config-manager bootstrap pass, the
 data-root migration runner, the onboarding state machine consumed by
-CLI / TUI / daemon surfaces, and the shared path helpers used by
+interactive CLI and daemon surfaces, and the shared path helpers used by
 those bootstraps.
 
 ## Public surface
@@ -34,8 +34,8 @@ re-exports — consumers import by file). The intended public surface:
 
 ## Owned objects
 
-- The shared `OnboardingStatusService` consumed across CLI / TUI /
-  daemon entry points.
+- The shared `OnboardingStatusService` consumed across interactive CLI
+  and daemon entry points.
 - `MigrationReport` records for completed data-root migrations.
 
 ## Non-goals
@@ -43,7 +43,7 @@ re-exports — consumers import by file). The intended public surface:
 - Canonical path layout — that lives in `base/paths.py`.
 - Operator-tunable defaults — they live in `base/config/`.
 - Runtime assembly — that is `services/runtime/`.
-- Surface-specific (CLI / TUI) UX — surfaces consume this package,
+- Surface-specific interactive CLI UX — surfaces consume this package,
   they do not live here.
 
 ## Dependencies

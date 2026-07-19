@@ -8,9 +8,24 @@ from openminion.services.agent.execution.finalization import (
     finalization_status_termination_reason,
 )
 from openminion.services.agent.constants import TERMINATION_REASON_LOOP_NO_PROGRESS
-from openminion.services.security.policy import ToolBudgetState
+from openminion.modules.policy import ToolBudgetState
 
 from ..dependencies import ExecutorDeps
+from ..response import tool_calls_payload
+
+
+def _finalize(
+    runner, deps: ExecutorDeps, *, text: str, metadata: dict
+) -> AgentResponse:
+    inbound = runner.runtime.inbound
+    return deps.finalize_response(
+        AgentResponse(
+            text=text,
+            channel=inbound.channel,
+            target=inbound.target,
+            metadata=metadata,
+        )
+    )
 
 
 def _blocked_tool_response_text(batch: ToolExecutionBatch) -> str:
@@ -67,24 +82,18 @@ def duplicate_tool_response(
         ),
         **deps.identity_metadata(),
     }
-    inbound = runner.runtime.inbound
     if last_batch is not None and last_batch.results:
-        response_text = runner.runtime_ops._collect_batch_output(last_batch)
-        return deps.finalize_response(
-            AgentResponse(
-                text=response_text,
-                channel=inbound.channel,
-                target=inbound.target,
-                metadata=metadata,
-            )
-        )
-    return deps.finalize_response(
-        AgentResponse(
-            text="Tool execution halted due to repeated tool calls.",
-            channel=inbound.channel,
-            target=inbound.target,
+        return _finalize(
+            runner,
+            deps,
+            text=runner.runtime_ops._collect_batch_output(last_batch),
             metadata=metadata,
         )
+    return _finalize(
+        runner,
+        deps,
+        text="Tool execution halted due to repeated tool calls.",
+        metadata=metadata,
     )
 
 
@@ -117,14 +126,11 @@ def blocked_tool_response(
         metadata["tool_budget"] = json.dumps(
             tool_budget_state.snapshot(), sort_keys=True
         )
-    inbound = runner.runtime.inbound
-    return deps.finalize_response(
-        AgentResponse(
-            text=_blocked_tool_response_text(batch),
-            channel=inbound.channel,
-            target=inbound.target,
-            metadata=metadata,
-        )
+    return _finalize(
+        runner,
+        deps,
+        text=_blocked_tool_response_text(batch),
+        metadata=metadata,
     )
 
 
@@ -149,14 +155,11 @@ def direct_tool_response(
         ),
         **deps.identity_metadata(),
     }
-    inbound = runner.runtime.inbound
-    return deps.finalize_response(
-        AgentResponse(
-            text=runner.runtime_ops._collect_batch_output(batch),
-            channel=inbound.channel,
-            target=inbound.target,
-            metadata=metadata,
-        )
+    return _finalize(
+        runner,
+        deps,
+        text=runner.runtime_ops._collect_batch_output(batch),
+        metadata=metadata,
     )
 
 
@@ -187,14 +190,11 @@ def model_final_response(
         **finalization_status_metadata(response),
         **deps.identity_metadata(),
     }
-    inbound = runner.runtime.inbound
-    return deps.finalize_response(
-        AgentResponse(
-            text=response.text,
-            channel=inbound.channel,
-            target=inbound.target,
-            metadata=metadata,
-        )
+    return _finalize(
+        runner,
+        deps,
+        text=response.text,
+        metadata=metadata,
     )
 
 
@@ -219,17 +219,14 @@ def finalization_contract_missing_response(
         ),
         **deps.identity_metadata(),
     }
-    inbound = runner.runtime.inbound
-    return deps.finalize_response(
-        AgentResponse(
-            text=(
-                "Substantive tool-backed work ended without the required typed "
-                "finalization_status contract."
-            ),
-            channel=inbound.channel,
-            target=inbound.target,
-            metadata=metadata,
-        )
+    return _finalize(
+        runner,
+        deps,
+        text=(
+            "Substantive tool-backed work ended without the required typed "
+            "finalization_status contract."
+        ),
+        metadata=metadata,
     )
 
 
@@ -260,17 +257,14 @@ def empty_provider_response_response(
         ),
         **deps.identity_metadata(),
     }
-    inbound = runner.runtime.inbound
-    return deps.finalize_response(
-        AgentResponse(
-            text=(
-                "Provider returned an empty response with no tool calls or "
-                "finalization status."
-            ),
-            channel=inbound.channel,
-            target=inbound.target,
-            metadata=metadata,
-        )
+    return _finalize(
+        runner,
+        deps,
+        text=(
+            "Provider returned an empty response with no tool calls or "
+            "finalization status."
+        ),
+        metadata=metadata,
     )
 
 
@@ -304,17 +298,14 @@ def loop_no_progress_response(
         ),
         **deps.identity_metadata(),
     }
-    inbound = runner.runtime.inbound
-    return deps.finalize_response(
-        AgentResponse(
-            text=(
-                "Tool loop stopped after repeated no-progress failures for "
-                f"`{tool_name}` ({error_code})."
-            ),
-            channel=inbound.channel,
-            target=inbound.target,
-            metadata=metadata,
-        )
+    return _finalize(
+        runner,
+        deps,
+        text=(
+            "Tool loop stopped after repeated no-progress failures for "
+            f"`{tool_name}` ({error_code})."
+        ),
+        metadata=metadata,
     )
 
 
@@ -331,7 +322,7 @@ def max_steps_response(
         "finish_reason": response.finish_reason or "tool_calls",
         "intent_category": intent_category or "none",
         "tool_loop_termination_reason": "tool_loop_max_steps",
-        "tool_calls": deps.tool_calls_payload(response.tool_calls or []),
+        "tool_calls": tool_calls_payload(response.tool_calls or []),
         **(
             deps.tool_batch_metadata(
                 batch=last_batch,
@@ -342,23 +333,9 @@ def max_steps_response(
         ),
         **deps.identity_metadata(),
     }
-    inbound = runner.runtime.inbound
-    return deps.finalize_response(
-        AgentResponse(
-            text="Tool loop reached max steps.",
-            channel=inbound.channel,
-            target=inbound.target,
-            metadata=metadata,
-        )
+    return _finalize(
+        runner,
+        deps,
+        text="Tool loop reached max steps.",
+        metadata=metadata,
     )
-
-
-__all__ = [
-    "blocked_tool_response",
-    "direct_tool_response",
-    "duplicate_tool_response",
-    "finalization_contract_missing_response",
-    "loop_no_progress_response",
-    "max_steps_response",
-    "model_final_response",
-]

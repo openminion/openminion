@@ -52,49 +52,16 @@ def _tool_batch_metadata(
 def _deps() -> ExecutorDeps:
     return ExecutorDeps(
         finalize_response=lambda response: response,
-        tool_calls_payload=lambda calls: json.dumps(
-            [
-                {"name": call.name, "arguments": dict(call.arguments)}
-                for call in list(calls or [])
-            ],
-            sort_keys=True,
-        ),
-        looks_like_tool_call_envelope=lambda text: False,
         identity_metadata=lambda: {},
         tool_batch_metadata=_tool_batch_metadata,
-        collect_missing_required_args=lambda *args, **kwargs: {},
-        is_tool_argument_error=lambda result: False,
-        extract_missing_argument_fields=lambda results: "",
-        canonical_tool_name=lambda name: str(name or ""),
     )
 
 
 def _deps_with_tool_argument_errors() -> ExecutorDeps:
     return ExecutorDeps(
         finalize_response=lambda response: response,
-        tool_calls_payload=lambda calls: json.dumps(
-            [
-                {"name": call.name, "arguments": dict(call.arguments)}
-                for call in list(calls or [])
-            ],
-            sort_keys=True,
-        ),
-        looks_like_tool_call_envelope=lambda text: False,
         identity_metadata=lambda: {},
         tool_batch_metadata=_tool_batch_metadata,
-        collect_missing_required_args=lambda *args, **kwargs: {},
-        is_tool_argument_error=lambda result: (
-            (getattr(result, "data", {}) or {}).get("error_code")
-            == "INVALID_TOOL_ARGUMENTS"
-        ),
-        extract_missing_argument_fields=lambda results: ",".join(
-            str(field)
-            for result in list(results or [])
-            for field in (
-                (getattr(result, "data", {}) or {}).get("missing_fields") or []
-            )
-        ),
-        canonical_tool_name=lambda name: str(name or ""),
     )
 
 

@@ -25,6 +25,9 @@ from .constants import (
     DEFAULT_INTEGRATED_DB_SUBPATH,
     DEFAULT_STANDALONE_DB_SUBPATH,
 )
+from .fork_restore.branch import carry_forward_branch_fields, diff_session_branches
+from .retention import SessionRetentionPolicy, SessionRetentionService
+from .sharing import SessionShareService
 from .storage.store import SQLiteSessionStore
 
 
@@ -277,7 +280,7 @@ def _build_parser() -> argparse.ArgumentParser:
     get_slice.add_argument(
         "--include-active-state", action=argparse.BooleanOptionalAction, default=True
     )
-
+    _add_reliability_subcommands(sub, add_db_arg)
     storage_status = sub.add_parser(
         "storage-status", help="Inspect sqlite/fallback status"
     )
@@ -588,7 +591,9 @@ def main(argv: list[str] | None = None) -> int:
             return _print_result(
                 store.get_slice(args.session_id, purpose=args.purpose, limits=limits)
             )
-
+        reliability_result = _handle_reliability_command(store, args)
+        if reliability_result is not None:
+            return reliability_result
         if args.command == "cron-add":
             created_job_id = store.add_cron_job(
                 name=args.name,
@@ -607,7 +612,6 @@ def main(argv: list[str] | None = None) -> int:
                 job_id=args.job_id,
             )
             return _print_result({"ok": True, "job_id": created_job_id})
-
         if args.command == "cron-list":
             enabled_filter: bool | None
             if args.enabled == "true":
@@ -619,7 +623,6 @@ def main(argv: list[str] | None = None) -> int:
             return _print_result(
                 store.list_cron_jobs(enabled=enabled_filter, limit=args.limit)
             )
-
         if args.command == "cron-get":
             return _print_result(store.get_cron_job(args.job_id))
 
@@ -660,6 +663,102 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     finally:
         store.close()
+
+
+
+def _add_reliability_subcommands(sub: Any, add_db_arg: Any) -> None:
+    share_create = sub.add_parser("share-create", help="Create bearer-only share")
+    add_db_arg(share_create)
+    share_create.add_argument("--session-id", required=True)
+    share_create.add_argument("--created-by", default="operator")
+    share_create.add_argument("--ttl-seconds", type=int, default=3600)
+
+    share_list = sub.add_parser("share-list", help="List session shares")
+    add_db_arg(share_list)
+    share_list.add_argument("--session-id", required=True)
+
+    share_revoke = sub.add_parser("share-revoke", help="Revoke session share")
+    add_db_arg(share_revoke)
+    share_revoke.add_argument("--share-id", required=True)
+
+    retention_dry_run = sub.add_parser("retention-dry-run", help="Preview purge")
+    add_db_arg(retention_dry_run)
+    retention_dry_run.add_argument("--inactivity-ttl-seconds", type=int, default=2592000)
+    retention_dry_run.add_argument("--closed-retention-seconds", type=int, default=604800)
+
+    retention_purge = sub.add_parser("retention-purge", help="Run purge from snapshot")
+    add_db_arg(retention_purge)
+    retention_purge.add_argument("--snapshot-hash", required=True)
+    retention_purge.add_argument("--override-blockers", action="store_true")
+    retention_purge.add_argument("--inactivity-ttl-seconds", type=int, default=2592000)
+    retention_purge.add_argument("--closed-retention-seconds", type=int, default=604800)
+
+    branch_diff = sub.add_parser("branch-diff", help="Diff two session branches")
+    add_db_arg(branch_diff)
+    branch_diff.add_argument("--left-session-id", required=True)
+    branch_diff.add_argument("--right-session-id", required=True)
+
+    branch_carry = sub.add_parser("branch-carry-forward", help="Create carry-forward child")
+    add_db_arg(branch_carry)
+    branch_carry.add_argument("--source-session-id", required=True)
+    branch_carry.add_argument("--target-parent-session-id", required=True)
+    branch_carry.add_argument("--fields-json", required=True)
+    branch_carry.add_argument("--title", default=None)
+
+
+
+def _handle_reliability_command(
+    store: SQLiteSessionStore, args: argparse.Namespace
+) -> int | None:
+    if args.command == "share-create":
+        created = SessionShareService(store).create_share(
+            session_id=args.session_id,
+            created_by=args.created_by,
+            ttl_seconds=args.ttl_seconds,
+        )
+        return _print_result(created.response_payload())
+
+    if args.command == "share-list":
+        return _print_result(SessionShareService(store).list_shares(args.session_id))
+
+    if args.command == "share-revoke":
+        record = SessionShareService(store).revoke_share(args.share_id)
+        return _print_result(record.public_dict())
+
+    if args.command in {"retention-dry-run", "retention-purge"}:
+        return _handle_retention_command(store, args)
+
+    if args.command == "branch-diff":
+        result = diff_session_branches(
+            store,
+            left_session_id=args.left_session_id,
+            right_session_id=args.right_session_id,
+        )
+        return _print_result(result.to_dict())
+
+    if args.command == "branch-carry-forward":
+        result = carry_forward_branch_fields(
+            store,
+            source_session_id=args.source_session_id,
+            target_parent_session_id=args.target_parent_session_id,
+            fields=_json_arg(args.fields_json, default=[]),
+            title=args.title,
+        )
+        return _print_result(result)
+    return None
+
+def _handle_retention_command(store: SQLiteSessionStore, args: argparse.Namespace) -> int:
+    policy = SessionRetentionPolicy(
+        inactivity_ttl_seconds=args.inactivity_ttl_seconds,
+        closed_retention_seconds=args.closed_retention_seconds,
+    )
+    service = SessionRetentionService(store)
+    plan = service.dry_run(policy=policy)
+    if args.command == "retention-dry-run":
+        return _print_result(plan.to_dict())
+    if args.snapshot_hash != plan.snapshot_hash:
+        raise ValueError("snapshot hash does not match current retention candidate set")
+    return _print_result(service.purge(plan, override_blockers=args.override_blockers))
 
 
 if __name__ == "__main__":

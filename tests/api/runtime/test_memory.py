@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from openminion.api import runtime as runtime_module
+from openminion.api.core import bootstrap as bootstrap_module
+from openminion.api.core.infrastructure import RuntimePaths
 from openminion.modules.memory.errors import MemoryQueryUnavailableError, StoreReadError
 from openminion.modules.memory.interfaces import MemoryNamespaceQueryInterface
 from openminion.modules.memory.storage.base import ListQueryOptions, SearchQueryOptions
@@ -115,17 +116,21 @@ def test_runtime_exposes_same_memory_adapter(monkeypatch) -> None:
         "authored_tools": object(),
         "default_agent": default_agent,
     }
-    monkeypatch.setattr(runtime_module, "build_runtime_manager", lambda runtime: object())
+    monkeypatch.setattr(
+        bootstrap_module, "build_runtime_manager", lambda runtime: object()
+    )
 
-    runtime = runtime_module._finalize_runtime_instance(
+    runtime = bootstrap_module.finalize_runtime_instance(
         cls=_RuntimeCapture,
         base_config=SimpleNamespace(runtime=SimpleNamespace(tool_workspace_root=None)),
         manager=object(),
-        resolved_home_root=Path("/tmp/home"),
-        resolved_data_root=Path("/tmp/data"),
-        resolved_config_path=Path("/tmp/config.json"),
-        storage_path=Path("/tmp/storage.db"),
-        memory_root=Path("/tmp/memory"),
+        paths=RuntimePaths(
+            home=Path("/tmp/home"),
+            data=Path("/tmp/data"),
+            config=Path("/tmp/config.json"),
+            storage=Path("/tmp/storage.db"),
+            memory=Path("/tmp/memory"),
+        ),
         infrastructure=infrastructure,
         agent=object(),
         gateway=SimpleNamespace(_agent_memory=memory_adapter),

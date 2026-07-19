@@ -32,7 +32,7 @@ from openminion.modules.runtime.constants import (
     TYPED_TURN_INTENT_KIND_SCRIPTED_CLI,
     TYPED_TURN_INTENT_KIND_TUI_TASK,
 )
-from openminion.services.runtime.run_status import Run
+from openminion.modules.task.run import Run
 
 TypedTurnIntentKind = Literal[
     "mission_runner",

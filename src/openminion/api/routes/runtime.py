@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from http import HTTPStatus
-from urllib.parse import parse_qs
 
 from openminion.api.core.deps import (
     resolve_runtime_manager,
@@ -10,7 +9,12 @@ from openminion.api.core.deps import (
     v1_runtime_self_model,
 )
 
-from .contracts import APIRouteContext, RouteResult, runtime_unavailable_route_result
+from .contracts import (
+    APIRouteContext,
+    RouteResult,
+    query_value,
+    runtime_unavailable_route_result,
+)
 
 
 def handle_request(
@@ -39,7 +43,7 @@ def handle_request(
     except Exception as exc:  # noqa: BLE001
         return runtime_unavailable_route_result(path=path, exc=exc)
     try:
-        agent_id = _query_value(query, "agent_id")
+        agent_id = query_value(query, "agent_id")
         if path == "/v1/runtime/capabilities":
             payload = {
                 "ok": True,
@@ -64,14 +68,6 @@ def handle_request(
     finally:
         if own_runtime:
             active_runtime.close()
-
-
-def _query_value(query: str | None, name: str) -> str | None:
-    values = parse_qs(str(query or ""), keep_blank_values=False).get(name, [])
-    if not values:
-        return None
-    value = str(values[0] or "").strip()
-    return value or None
 
 
 def _status_for_payload(payload: dict) -> HTTPStatus:

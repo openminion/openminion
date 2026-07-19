@@ -22,20 +22,25 @@ from openminion.base.config import (
 from openminion.base.config.env import resolve_environment_config
 from openminion.cli.config import load_cli_config, resolve_cli_roots
 from openminion.cli.transport.daemon_client import (
-    daemon_is_reachable,
+    probe_daemon_endpoint,
     resolve_daemon_endpoint,
 )
+from openminion.cli.commands.telegram_status import (
+    build_telegram_status_payload,
+)
 from openminion.modules.controlplane.config import (
+    ControlPlaneConfig,
     from_base_config as controlplane_from_base_config,
     load_config as load_controlplane_config,
 )
 from openminion.modules.controlplane.channels.telegram.bot_api import TelegramBotAPI
 from openminion.modules.controlplane.channels.telegram.config import (
+    TelegramChannelConfig,
     from_base_config as telegram_from_base_config,
     load_config as load_telegram_config,
 )
-from openminion.modules.controlplane.channels.telegram.pairing import (
-    TelegramPairingService,
+from openminion.modules.controlplane.channels.telegram.cli import (
+    issue_pair_token_for_cli,
 )
 from openminion.modules.controlplane.channels.telegram.state import (
     TelegramPollStateStore,
@@ -78,6 +83,23 @@ class TelegramCandidate:
     chat_type: str
     username: str
     display_name: str
+
+
+@dataclass
+class _ForegroundChannelRuntime:
+    runner: Any
+    supervisor: Any
+    registry: Any
+    outbox_worker: Any | None = None
+
+    def start(self, stop_event: threading.Event | None = None) -> None:
+        event = stop_event or threading.Event()
+        self.supervisor.start()
+        while not event.is_set():
+            event.wait(0.2)
+
+    def stop(self) -> None:
+        self.supervisor.stop()
 
 
 def run_channel(args: argparse.Namespace) -> int:
@@ -194,42 +216,75 @@ def telegram_pair(args: argparse.Namespace) -> int:
 
 def telegram_run(args: argparse.Namespace) -> int:
     print(RUNNER_ONLINE_MESSAGE)
-    runner = _build_unified_telegram_runner(getattr(args, "config", None))
+    foreground = _build_unified_telegram_runtime(getattr(args, "config", None))
+    runner = foreground.runner
     if bool(getattr(args, "once", False)):
-        run_once = getattr(runner, "run_once", None)
-        if not callable(run_once):
-            raise SystemExit("--once is only supported in polling mode")
-        run_once()
+        try:
+            run_once = getattr(runner, "run_once", None)
+            if not callable(run_once):
+                raise SystemExit("--once is only supported in polling mode")
+            run_once()
+            if foreground.outbox_worker is not None:
+                foreground.outbox_worker.run_once()
+        finally:
+            foreground.stop()
         return 0
 
     stop = threading.Event()
     try:
-        runner.start(stop_event=stop)
+        foreground.start(stop_event=stop)
     except KeyboardInterrupt:
         stop.set()
     finally:
         stop.set()
-        stop_runner = getattr(runner, "stop", None)
-        if callable(stop_runner):
-            stop_runner()
+        foreground.stop()
     return 0
 
 
 def telegram_status(args: argparse.Namespace) -> int:
+    payload = _telegram_status_payload(args)
+    if bool(getattr(args, "json", False)):
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+
+    telegram_payload = payload["telegram"]
+    controlplane_payload = payload["controlplane"]
+    daemon_payload = payload["daemon"]
+    session_payload = payload["session"]
+    print(f"telegram.enabled={telegram_payload['enabled']}")
+    print(f"telegram.mode={telegram_payload['mode']}")
+    print(f"telegram.poll_state={telegram_payload['poll_state']}")
+    print(f"controlplane.sqlite={controlplane_payload['sqlite_path']}")
+    print(f"default.profile={controlplane_payload['default_profile']}")
+    print(f"pairings.active={payload['pairings']['active']}")
+    print(f"daemon.reachable={str(daemon_payload['reachable']).lower()}")
+    print(f"daemon.endpoint_status={daemon_payload['endpoint_status']}")
+    print(f"daemon.state={daemon_payload['state']}")
+    print(f"telegram.listener_state={telegram_payload['listener_state']}")
+    print(f"telegram.listener_alive={telegram_payload['listener_alive']}")
+    print(f"telegram.connected={telegram_payload['connected']}")
+    if session_payload["chat_key"]:
+        print(f"session.chat_key={session_payload['chat_key']}")
+    print(f"active.session={session_payload['session_id']}")
+    print(f"active.profile={session_payload['profile_id']}")
+    print(RUNNER_ONLINE_MESSAGE)
+    return 0
+
+
+def _telegram_status_payload(args: argparse.Namespace) -> dict[str, Any]:
     config_path = getattr(args, "config", None)
     cfg = _load_telegram_channel_config(config_path)
     cp_cfg = _load_controlplane_config(config_path)
-    reachable = _daemon_reachable(config_path)
-    print(f"telegram.enabled={cfg.enabled}")
-    print(f"telegram.mode={cfg.mode}")
-    print(f"telegram.poll_state={cfg.polling.state_sqlite_path}")
-    print(f"controlplane.sqlite={cp_cfg.sqlite_path}")
-    print(f"pairings.active={_count_active_pairings(cp_cfg.sqlite_path)}")
-    print(f"daemon.reachable={str(reachable).lower()}")
-    if not reachable:
-        print("daemon.state=not observed from this process")
-    print(RUNNER_ONLINE_MESSAGE)
-    return 0
+    probe_status, health_payload = _daemon_probe(config_path)
+    return build_telegram_status_payload(
+        telegram_config=cfg,
+        controlplane_config=cp_cfg,
+        daemon_probe_status=probe_status,
+        daemon_payload=health_payload,
+        active_pairings=_count_active_pairings(cp_cfg.sqlite_path),
+        chat_id=getattr(args, "chat_id", None),
+        topic_id=getattr(args, "topic_id", None),
+    )
 
 
 def telegram_commands_sync(args: argparse.Namespace) -> int:
@@ -258,17 +313,13 @@ def create_telegram_pair_token_for_cli(
     if user_id is None and chat_id is None:
         raise RuntimeError("pair-create requires --user-id and/or --chat-id")
     selected_scopes = scopes or list(cfg.pairing.default_scopes)
-    store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
-    try:
-        pairing = TelegramPairingService(config=cfg.pairing, store=store)
-        issued = pairing.issue_token(
-            expected_user_id=int(user_id) if user_id is not None else None,
-            expected_chat_id=int(chat_id) if chat_id is not None else None,
-            token_ttl_seconds=ttl_seconds or cfg.pairing.token_ttl_seconds,
-            scopes=selected_scopes,
-        )
-    finally:
-        store.close()
+    _issued_cfg, issued = issue_pair_token_for_cli(
+        config_path=config_path,
+        user_id=user_id,
+        chat_id=chat_id,
+        ttl_seconds=ttl_seconds or cfg.pairing.token_ttl_seconds,
+        scopes=selected_scopes,
+    )
     expires_iso = datetime.fromtimestamp(
         issued.expires_at_ts, tz=timezone.utc
     ).isoformat()
@@ -436,11 +487,56 @@ def _telegram_doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
             required=False,
         )
     )
-    daemon_ok = _daemon_reachable(config_path)
+    status_payload = _telegram_status_payload(args)
+    _append_telegram_status_checks(checks, status_payload)
+    return checks
+
+
+def _append_telegram_status_checks(
+    checks: list[dict[str, Any]], status_payload: dict[str, Any]
+) -> None:
+    checks.append(
+        _check(
+            "default.profile",
+            True,
+            status_payload["controlplane"]["default_profile"],
+            required=False,
+        )
+    )
+    session_payload = status_payload["session"]
+    session_detail = (
+        f"{session_payload['session_id']} profile={session_payload['profile_id']}"
+        if session_payload["chat_key"]
+        else "pass --chat-id to inspect active session"
+    )
+    checks.append(
+        _check(
+            "session.binding",
+            session_payload["session_id"] not in {"not_found", "not_observed"},
+            session_detail,
+            required=False,
+        )
+    )
+    daemon_ok = bool(status_payload["daemon"]["reachable"])
     checks.append(
         _check("daemon.reachable", daemon_ok, "runner/daemon status", required=False)
     )
-    return checks
+    checks.append(
+        _check(
+            "daemon.state",
+            True,
+            status_payload["daemon"]["state"],
+            required=False,
+        )
+    )
+    checks.append(
+        _check(
+            "telegram.listener",
+            True,
+            status_payload["telegram"]["listener_state"],
+            required=False,
+        )
+    )
 
 
 def _check(
@@ -491,22 +587,41 @@ def _discover_telegram_candidate(
 ) -> TelegramCandidate | None:
     cfg = _load_telegram_channel_config(config_path)
     api = TelegramBotAPI(cfg.bot_token)
-    print("Send a message to your Telegram bot now. Waiting for an update...")
-    deadline = time.time() + max(0, int(timeout_seconds))
-    while True:
-        updates = api.get_updates(
-            offset=None,
-            timeout=min(2, max(0, timeout_seconds)),
-            limit=10,
-            allowed_updates=["message", "edited_message"],
-        )
-        for update in updates:
-            candidate = _candidate_from_update(update)
-            if candidate is not None:
-                return candidate
-        if time.time() >= deadline:
-            return None
-        time.sleep(0.2)
+    store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
+    account_id = _telegram_account_id(api)
+    lease = store.acquire_polling_lease(
+        account_id=account_id,
+        command="openminion channel telegram identify",
+        stale_after_seconds=30,
+    )
+    if not lease.acquired:
+        raise RuntimeError(lease.diagnostic())
+    try:
+        print("Send a message to your Telegram bot now. Waiting for an update...")
+        deadline = time.time() + max(0, int(timeout_seconds))
+        while True:
+            store.heartbeat_polling_lease(account_id=account_id)
+            updates = api.get_updates(
+                offset=None,
+                timeout=min(2, max(0, timeout_seconds)),
+                limit=10,
+                allowed_updates=["message", "edited_message"],
+            )
+            for update in updates:
+                candidate = _candidate_from_update(update)
+                if candidate is not None:
+                    return candidate
+            if time.time() >= deadline:
+                return None
+            time.sleep(0.2)
+    finally:
+        store.release_polling_lease(account_id=account_id)
+
+
+def _telegram_account_id(api: TelegramBotAPI) -> str:
+    me = api.get_me()
+    bot_id = str(me.get("id") or "").strip()
+    return f"telegram-bot:{bot_id}" if bot_id else "default"
 
 
 def _candidate_from_update(update: dict[str, Any]) -> TelegramCandidate | None:
@@ -566,7 +681,7 @@ def _parse_scopes(raw: str | None) -> list[str]:
     return [scope for item in raw.split(",") if (scope := item.strip())]
 
 
-def _load_telegram_channel_config(config_path: str | None):
+def _load_telegram_channel_config(config_path: str | None) -> TelegramChannelConfig:
     base = load_cli_config(config_path)
     if "telegram" in dict(getattr(base, "channels", {}) or {}):
         roots = resolve_cli_roots(config_path=config_path)
@@ -578,7 +693,7 @@ def _load_telegram_channel_config(config_path: str | None):
     return load_telegram_config(config_path, env=_env_snapshot()).telegram
 
 
-def _load_controlplane_config(config_path: str | None):
+def _load_controlplane_config(config_path: str | None) -> ControlPlaneConfig:
     base = load_cli_config(config_path)
     if "controlplane" in dict(getattr(base, "channels", {}) or {}):
         roots = resolve_cli_roots(config_path=config_path)
@@ -590,36 +705,106 @@ def _load_controlplane_config(config_path: str | None):
     return load_controlplane_config(config_path, env=_env_snapshot())
 
 
-def _build_unified_telegram_runner(config_path: str | None):
-    from openminion.services.runtime.lifecycle import (
-        build_channel_registry as lifecycle_build_channel_registry,
-    )
+def _build_unified_telegram_runner(
+    config_path: str | None,
+) -> Any:
+    return _build_unified_telegram_runtime(config_path).runner
 
+
+def _build_unified_telegram_runtime(
+    config_path: str | None,
+) -> _ForegroundChannelRuntime:
     base = load_cli_config(config_path)
     roots = resolve_cli_roots(config_path=config_path)
-    registry = lifecycle_build_channel_registry(
-        config=base,
+    return _build_unified_telegram_runtime_from_base(
+        base=base,
         home_root=roots.home_root,
         data_root=roots.data_root,
-        logger=logging.getLogger("openminion.cli.channel.telegram"),
+        logger_name="openminion.cli.channel.telegram",
     )
-    return registry.get("telegram")
 
 
-def build_unified_slack_runner(config_path: str | None):
+def _build_unified_telegram_runtime_from_base(
+    *,
+    base: Any,
+    home_root: Path,
+    data_root: Path,
+    logger_name: str,
+) -> _ForegroundChannelRuntime:
     from openminion.services.runtime.lifecycle import (
         build_channel_registry as lifecycle_build_channel_registry,
     )
+    from openminion.services.runtime.channel_supervisor import ChannelRuntimeSupervisor
+
+    registry, components = lifecycle_build_channel_registry(
+        config=base,
+        home_root=home_root,
+        data_root=data_root,
+        logger=logging.getLogger(logger_name),
+    )
+    if components is None:
+        raise RuntimeError("telegram channel requires controlplane runtime components")
+    return _ForegroundChannelRuntime(
+        runner=registry.get("telegram"),
+        registry=registry,
+        outbox_worker=components.outbox_worker,
+        supervisor=ChannelRuntimeSupervisor(
+            channels=registry,
+            outbox_worker=components.outbox_worker,
+            close_runtime=components.close,
+            logger=logging.getLogger(f"{logger_name}.supervisor"),
+            channel_ids=["telegram"],
+        ),
+    )
+
+
+def _build_controlplane_components_from_base(
+    *,
+    base: Any,
+    home_root: Path,
+    data_root: Path,
+    logger_name: str,
+) -> Any:
+    from openminion.services.runtime.controlplane import (
+        build_controlplane_runtime_components,
+    )
+
+    return build_controlplane_runtime_components(
+        config=base,
+        home_root=home_root,
+        data_root=data_root,
+        logger=logging.getLogger(logger_name),
+    )
+
+
+def build_unified_slack_runner(config_path: str | None) -> _ForegroundChannelRuntime:
+    from openminion.services.runtime.lifecycle import (
+        build_channel_registry as lifecycle_build_channel_registry,
+    )
+    from openminion.services.runtime.channel_supervisor import ChannelRuntimeSupervisor
 
     base = load_cli_config(config_path)
     roots = resolve_cli_roots(config_path=config_path)
-    registry = lifecycle_build_channel_registry(
+    registry, components = lifecycle_build_channel_registry(
         config=base,
         home_root=roots.home_root,
         data_root=roots.data_root,
         logger=logging.getLogger("openminion.cli.channel.slack"),
     )
-    return registry.get("slack")
+    if components is None:
+        raise RuntimeError("slack channel requires controlplane runtime components")
+    return _ForegroundChannelRuntime(
+        runner=registry.get("slack"),
+        registry=registry,
+        outbox_worker=components.outbox_worker,
+        supervisor=ChannelRuntimeSupervisor(
+            channels=registry,
+            outbox_worker=components.outbox_worker,
+            close_runtime=components.close,
+            logger=logging.getLogger("openminion.cli.channel.slack.supervisor"),
+            channel_ids=["slack"],
+        ),
+    )
 
 
 def _env_snapshot() -> dict[str, str]:
@@ -627,11 +812,16 @@ def _env_snapshot() -> dict[str, str]:
 
 
 def _daemon_reachable(config_path: str | None) -> bool:
+    status, _payload = _daemon_probe(config_path)
+    return status == "ok"
+
+
+def _daemon_probe(config_path: str | None) -> tuple[str, dict[str, Any]]:
     try:
         endpoint = resolve_daemon_endpoint(config_path)
-        return daemon_is_reachable(endpoint)
+        return probe_daemon_endpoint(endpoint)
     except Exception:
-        return False
+        return "unreachable", {}
 
 
 def _timeout_seconds(args: argparse.Namespace) -> int:
@@ -711,6 +901,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     doctor = telegram_subcommands.add_parser("doctor", help="Check Telegram setup")
     _add_config_arg(doctor)
     doctor.add_argument("--json", action="store_true")
+    _add_telegram_scope_args(doctor)
     doctor.set_defaults(handler=run_channel, needs_app=False)
 
     identify = telegram_subcommands.add_parser(
@@ -737,6 +928,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     status = telegram_subcommands.add_parser("status", help="Show Telegram status")
     _add_config_arg(status)
+    status.add_argument("--json", action="store_true")
+    _add_telegram_scope_args(status)
     status.set_defaults(handler=run_channel, needs_app=False)
 
     commands_sync = telegram_subcommands.add_parser(
@@ -754,3 +947,9 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 def _add_config_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", default=None, help="Config file path")
+
+
+def _add_telegram_scope_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--user-id", type=int, default=None)
+    parser.add_argument("--chat-id", type=int, default=None)
+    parser.add_argument("--topic-id", type=int, default=None)

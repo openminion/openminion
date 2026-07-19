@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.cli.transport.daemon_client import (
@@ -36,7 +35,7 @@ def run_daemon(args) -> int:
 
 
 def ensure_daemon_running(
-    config_path: Optional[str], *, auto_start: bool
+    config_path: str | None, *, auto_start: bool
 ) -> DaemonEndpoint:
     endpoint = resolve_daemon_endpoint(config_path)
     probe_status, payload = probe_daemon_endpoint(endpoint)
@@ -64,7 +63,7 @@ def ensure_daemon_running(
     return endpoint
 
 
-def daemon_start(config_path: Optional[str]) -> int:
+def daemon_start(config_path: str | None) -> int:
     endpoint = resolve_daemon_endpoint(config_path)
     result = _start_daemon(endpoint)
     if result["ok"]:
@@ -74,7 +73,7 @@ def daemon_start(config_path: Optional[str]) -> int:
     return 1
 
 
-def daemon_stop(config_path: Optional[str]) -> int:
+def daemon_stop(config_path: str | None) -> int:
     from openminion.daemon import process_alive, read_pid, resolve_daemon_pid_file
 
     endpoint = resolve_daemon_endpoint(config_path)
@@ -125,7 +124,7 @@ def daemon_stop(config_path: Optional[str]) -> int:
     return 1
 
 
-def daemon_status(config_path: Optional[str]) -> int:
+def daemon_status(config_path: str | None) -> int:
     from openminion.daemon import (
         process_alive,
         read_pid,
@@ -163,7 +162,7 @@ def daemon_status(config_path: Optional[str]) -> int:
     return 0 if reachable else 1
 
 
-def daemon_logs(config_path: Optional[str], *, lines: int = 200) -> int:
+def daemon_logs(config_path: str | None, *, lines: int = 200) -> int:
     from openminion.daemon import resolve_daemon_log_file
 
     endpoint = resolve_daemon_endpoint(config_path)

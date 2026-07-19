@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from openminion.api.queries.mcp_reports import build_mcp_section as _build_mcp_section
 from openminion.modules.brain.bootstrap.route_catalog import (
     available_routes as available_brain_routes,
     get_route_descriptor,
 )
-from openminion.services.tool.exposure import get_visible_tool_specs_and_dispatch_map
+from openminion.modules.tool.exposure import get_visible_tool_specs_and_dispatch_map
 from openminion.tools.mcp.exposure import (
     build_mcp_exposure_report,
     scoped_mcp_registry_view,
@@ -491,78 +492,3 @@ def _provider_candidate_ids(config: Any, diagnostics: dict[str, Any]) -> list[st
         if str(item).strip()
     )
     return sorted(candidates)
-
-
-def _build_mcp_section(runtime: Any) -> dict[str, Any]:
-    tools = getattr(runtime, "tools", None)
-    manager = getattr(tools, "mcp_manager", None)
-    if manager is None:
-        return {
-            "enabled": False,
-            "failed_servers": {},
-            "server_metrics": {},
-            "server_logs": {},
-            "resource_updates": {},
-            "sampling_events": [],
-            "elicitation_events": [],
-            "discovery_cache": {},
-            "capability_change_events": [],
-        }
-    failed_servers = {
-        str(name): {
-            "reason_code": str(getattr(error, "reason_code", "") or "").strip(),
-            "message": str(getattr(error, "message", "") or "").strip(),
-        }
-        for name, error in dict(getattr(manager, "failed_servers", {}) or {}).items()
-    }
-    metrics_fn = getattr(manager, "mcp_server_metrics", None)
-    metrics = metrics_fn() if callable(metrics_fn) else {}
-    logs_fn = getattr(manager, "mcp_server_logs", None)
-    raw_logs = logs_fn(limit=5) if callable(logs_fn) else {}
-    logs = {
-        str(server_name): [
-            {
-                "level": str(getattr(item, "level", "") or "").strip(),
-                "message": str(getattr(item, "message", "") or "").strip(),
-                "logger": str(getattr(item, "logger", "") or "").strip(),
-                "data": dict(getattr(item, "data", {}) or {}),
-                "timestamp": float(getattr(item, "timestamp", 0.0) or 0.0),
-            }
-            for item in list(items or [])
-        ]
-        for server_name, items in dict(raw_logs or {}).items()
-    }
-    events_fn = getattr(manager, "capability_change_events", None)
-    events = events_fn() if callable(events_fn) else []
-    cache_fn = getattr(manager, "discovery_cache_snapshot", None)
-    discovery_cache = cache_fn() if callable(cache_fn) else {}
-    sampling_events_fn = getattr(manager, "mcp_sampling_events", None)
-    sampling_events = sampling_events_fn() if callable(sampling_events_fn) else []
-    elicitation_events_fn = getattr(manager, "mcp_elicitation_events", None)
-    elicitation_events = (
-        elicitation_events_fn() if callable(elicitation_events_fn) else []
-    )
-    updates_fn = getattr(manager, "mcp_resource_updates", None)
-    raw_updates = updates_fn(limit=10) if callable(updates_fn) else {}
-    updates = {
-        str(server_name): [
-            {
-                "uri": str(getattr(item, "uri", "") or "").strip(),
-                "title": str(getattr(item, "title", "") or "").strip(),
-                "timestamp": float(getattr(item, "timestamp", 0.0) or 0.0),
-            }
-            for item in list(items or [])
-        ]
-        for server_name, items in dict(raw_updates or {}).items()
-    }
-    return {
-        "enabled": True,
-        "failed_servers": failed_servers,
-        "server_metrics": dict(metrics or {}),
-        "server_logs": logs,
-        "resource_updates": updates,
-        "sampling_events": list(sampling_events or []),
-        "elicitation_events": list(elicitation_events or []),
-        "discovery_cache": dict(discovery_cache or {}),
-        "capability_change_events": list(events or []),
-    }

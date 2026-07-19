@@ -8,25 +8,22 @@ from openminion.modules.llm.providers.base import ProviderResponse
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.execution.dependencies import ExecutorDeps
-from openminion.services.agent.execution.unforced import UnforcedLaneMixin
+from openminion.services.agent.execution.unforced import UnforcedLaneRunner
 
 
-class _FakeLegacyLoop(UnforcedLaneMixin):
+class _FakeRuntimeOps:
     def __init__(self) -> None:
-        self._runtime = SimpleNamespace(
-            inbound=Message(channel="console", target="me", body="weather"),
-            user_message="weather",
-            system_prompt="system",
-            provider_history=[],
-        )
-        self._service = SimpleNamespace(
-            _config=SimpleNamespace(runtime=SimpleNamespace(agent_loop_max_steps=4))
-        )
         self.execute_calls = 0
         self.provider_calls = 0
 
-    async def execute_tool_calls(self, tool_calls, *, tool_budget_state=None):
-        del tool_calls, tool_budget_state
+    async def execute_tool_calls(
+        self,
+        tool_calls,
+        *,
+        tool_budget_state=None,
+        context_metadata_overrides=None,
+    ):
+        del tool_calls, tool_budget_state, context_metadata_overrides
         self.execute_calls += 1
         batch = ToolExecutionBatch(
             results=[
@@ -58,22 +55,19 @@ class _FakeLegacyLoop(UnforcedLaneMixin):
         )
 
 
-class _FakeMaxStepsLegacyLoop(UnforcedLaneMixin):
+class _FakeMaxStepsRuntimeOps:
     def __init__(self) -> None:
-        self._runtime = SimpleNamespace(
-            inbound=Message(channel="console", target="me", body="weather"),
-            user_message="weather",
-            system_prompt="system",
-            provider_history=[],
-        )
-        self._service = SimpleNamespace(
-            _config=SimpleNamespace(runtime=SimpleNamespace(agent_loop_max_steps=2))
-        )
         self.execute_calls = 0
         self.provider_calls = 0
 
-    async def execute_tool_calls(self, tool_calls, *, tool_budget_state=None):
-        del tool_calls, tool_budget_state
+    async def execute_tool_calls(
+        self,
+        tool_calls,
+        *,
+        tool_budget_state=None,
+        context_metadata_overrides=None,
+    ):
+        del tool_calls, tool_budget_state, context_metadata_overrides
         self.execute_calls += 1
         return (
             ToolExecutionBatch(
@@ -116,23 +110,37 @@ class _FakeMaxStepsLegacyLoop(UnforcedLaneMixin):
 def _deps() -> ExecutorDeps:
     return ExecutorDeps(
         finalize_response=lambda response: response,
-        tool_calls_payload=lambda tool_calls: "payload-signature",
-        looks_like_tool_call_envelope=lambda text: False,
         identity_metadata=lambda: {},
         tool_batch_metadata=lambda *, batch, tool_calls_count: {
             "tool_calls_count": str(tool_calls_count),
             "tool_execution_count": str(len(batch.results)),
             "tool_results": batch.to_metadata_payload(),
         },
-        collect_missing_required_args=lambda *args, **kwargs: [],
-        is_tool_argument_error=lambda *args, **kwargs: False,
-        extract_missing_argument_fields=lambda *args, **kwargs: [],
-        canonical_tool_name=lambda name: name,
+    )
+
+
+def _runner(runtime_ops, *, max_steps: int) -> UnforcedLaneRunner:
+    runtime = SimpleNamespace(
+        inbound=Message(channel="console", target="me", body="weather"),
+        user_message="weather",
+        system_prompt="system",
+        provider_history=[],
+    )
+    service_port = SimpleNamespace(
+        config=SimpleNamespace(runtime=SimpleNamespace(agent_loop_max_steps=max_steps)),
+        tools=None,
+        provider=SimpleNamespace(name=""),
+    )
+    return UnforcedLaneRunner(
+        service_port=service_port,
+        runtime=runtime,
+        runtime_ops=runtime_ops,
     )
 
 
 async def _run_handle_unforced_tool_calls() -> AgentResponse:
-    flow = _FakeLegacyLoop()
+    runtime_ops = _FakeRuntimeOps()
+    flow = _runner(runtime_ops, max_steps=4)
     initial_response = ProviderResponse(
         text="Tool requested",
         model="fake-model",
@@ -153,8 +161,8 @@ async def _run_handle_unforced_tool_calls() -> AgentResponse:
             deps=_deps(),
         )
     shared_engine.assert_not_called()
-    assert flow.execute_calls == 1
-    assert flow.provider_calls == 1
+    assert runtime_ops.execute_calls == 1
+    assert runtime_ops.provider_calls == 1
     return response
 
 
@@ -176,22 +184,16 @@ def test_legacy_agent_execution_tool_loop_preserves_max_step_termination() -> No
 
     deps = ExecutorDeps(
         finalize_response=lambda response: response,
-        tool_calls_payload=lambda tool_calls: str(tool_calls[0]["name"]),
-        looks_like_tool_call_envelope=lambda text: False,
         identity_metadata=lambda: {},
         tool_batch_metadata=lambda *, batch, tool_calls_count: {
             "tool_calls_count": str(tool_calls_count),
             "tool_execution_count": str(len(batch.results)),
             "tool_results": batch.to_metadata_payload(),
         },
-        collect_missing_required_args=lambda *args, **kwargs: [],
-        is_tool_argument_error=lambda *args, **kwargs: False,
-        extract_missing_argument_fields=lambda *args, **kwargs: [],
-        canonical_tool_name=lambda name: name,
     )
 
     async def _run() -> AgentResponse:
-        flow = _FakeMaxStepsLegacyLoop()
+        flow = _runner(_FakeMaxStepsRuntimeOps(), max_steps=2)
         return await flow.handle_unforced_tool_calls(
             initial_response=ProviderResponse(
                 text="Tool requested",

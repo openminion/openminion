@@ -208,8 +208,9 @@ def _duplicate_batch_answer_only_messages(
     loop_state: AdaptiveToolLoopState,
     tool_calls: list[Any],
 ) -> list[Message]:
+    del tool_calls
     tool_results = _successful_substantive_tool_results(loop_state)
-    messages = _answer_only_finalization_messages(
+    return _answer_only_finalization_messages(
         loop_ctx=loop_ctx,
         loop_state=loop_state,
         tool_results=tool_results,
@@ -218,9 +219,6 @@ def _duplicate_batch_answer_only_messages(
             "more tools. This must be the final answer for the current turn."
         ),
     )
-    if tool_results:
-        return messages
-    return [*messages, _build_duplicate_batch_answer_only_closure_message(tool_calls)]
 
 
 def _looks_like_unexecutable_tool_markup_final_text(text: str) -> bool:

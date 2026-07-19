@@ -1,19 +1,19 @@
 from typing import Any
 
+from openminion.base.config.runtime.reasoning import resolve_runtime_reasoning_config
+
 from .constants import (
     THINKING_DEGRADE_UNKNOWN_PROFILE,
     THINKING_DEGRADE_MODE_CLAMP,
     THINKING_DEGRADE_REQUEST_OVERRIDE_BLOCKED,
     THINKING_SOURCE_AGENT_RUNTIME,
     THINKING_SOURCE_CAPABILITY_DEFINITION,
-    THINKING_SOURCE_INVOCATION_OVERRIDE,
     THINKING_SOURCE_MODE_POLICY,
     THINKING_SOURCE_SYSTEM_RUNTIME,
 )
 from .mapping import (
     normalize_optional_reasoning_profile,
     provider_effort_for_profile,
-    reasoning_profile_was_unknown,
     resolve_provider_effort_support,
 )
 from .schemas import (
@@ -91,9 +91,17 @@ def resolve_mode_aware_thinking(
         if request.requested_profile is not None
         else layers.request_profile
     )
-    requested_profile = normalize_optional_reasoning_profile(raw_request_profile)
-    system_profile = normalize_optional_reasoning_profile(layers.system_profile)
-    agent_profile = normalize_optional_reasoning_profile(layers.agent_profile)
+    config_resolution = resolve_runtime_reasoning_config(
+        code_default_profile=layers.code_default_profile,
+        system_profile=layers.system_profile,
+        agent_profile=layers.agent_profile,
+        invocation_requested_profile=raw_request_profile,
+        provider_name=request.provider,
+        model_name=request.model,
+    )
+    requested_profile = config_resolution.requested_profile
+    system_profile = config_resolution.system_profile
+    agent_profile = config_resolution.agent_profile
     code_default_profile = (
         normalize_optional_reasoning_profile(layers.code_default_profile) or "minimal"
     )
@@ -106,21 +114,20 @@ def resolve_mode_aware_thinking(
     )
 
     degraded_reasons: list[str] = []
-    if reasoning_profile_was_unknown(raw_request_profile):
+    if config_resolution.unknown_request_profile:
         degraded_reasons.append(THINKING_DEGRADE_UNKNOWN_PROFILE)
 
-    reasoning_profile = code_default_profile
-    source_layer = THINKING_SOURCE_CAPABILITY_DEFINITION
-    if system_profile is not None:
-        reasoning_profile = system_profile
-        source_layer = THINKING_SOURCE_SYSTEM_RUNTIME
-    if agent_profile is not None:
-        reasoning_profile = agent_profile
-        source_layer = THINKING_SOURCE_AGENT_RUNTIME
-    if requested_profile is not None and allow_request_override:
-        reasoning_profile = requested_profile
-        source_layer = THINKING_SOURCE_INVOCATION_OVERRIDE
-    elif requested_profile is not None and not allow_request_override:
+    reasoning_profile = config_resolution.reasoning_profile
+    source_layer = config_resolution.source_layer
+    if requested_profile is not None and not allow_request_override:
+        reasoning_profile = agent_profile or system_profile or code_default_profile
+        source_layer = (
+            THINKING_SOURCE_AGENT_RUNTIME
+            if agent_profile is not None
+            else THINKING_SOURCE_SYSTEM_RUNTIME
+            if system_profile is not None
+            else THINKING_SOURCE_CAPABILITY_DEFINITION
+        )
         degraded_reasons.append(THINKING_DEGRADE_REQUEST_OVERRIDE_BLOCKED)
 
     if (

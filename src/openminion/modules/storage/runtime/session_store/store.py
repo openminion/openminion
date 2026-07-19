@@ -30,18 +30,23 @@ from .models import (
 )
 from .participants import RuntimeSessionStoreParticipants
 from .sessions import RuntimeSessionStoreSessions
+from .turn_leases import RuntimeSessionTurnLeases
 
 
 class SessionStore:
     def __init__(self, store_or_connection: RecordStore | sqlite3.Connection) -> None:
         self._backend = RuntimeSessionStoreBackend(store_or_connection)
+        self._turn_leases = RuntimeSessionTurnLeases(self._backend)
         self._sessions = RuntimeSessionStoreSessions(
             self._backend,
             list_participants=lambda session_id: self._participants.list_participants(
                 session_id
             ),
         )
-        self._messages = RuntimeSessionStoreMessages(self._backend)
+        self._messages = RuntimeSessionStoreMessages(
+            self._backend,
+            assert_session_turn_fence=self._assert_session_turn_fence_for_child,
+        )
         self._participants = RuntimeSessionStoreParticipants(
             self._backend,
             get_session=self._sessions.get_session,
@@ -50,8 +55,19 @@ class SessionStore:
             self._backend,
             get_session=self._sessions.get_session,
             list_sessions=self._sessions.list_sessions,
+            assert_session_turn_fence=self._assert_session_turn_fence_for_child,
         )
-        self._context = RuntimeSessionStoreContext(self._backend)
+        self._context = RuntimeSessionStoreContext(
+            self._backend,
+            assert_session_turn_fence=self._assert_session_turn_fence_for_child,
+        )
+
+    def _assert_session_turn_fence_for_child(
+        self,
+        session_id: str,
+        fence_token: int,
+    ) -> None:
+        self._turn_leases.assert_fence(session_id, fence_token=fence_token)
 
     def resolve_session(
         self,
@@ -173,6 +189,63 @@ class SessionStore:
     def delete_session(self, session_id: str) -> bool:
         return self._sessions.delete_session(session_id)
 
+    def acquire_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        request_id: str,
+        ttl_s: int = 60,
+        now_iso: str | None = None,
+    ) -> Any:
+        return self._turn_leases.acquire(
+            session_id,
+            owner=owner,
+            request_id=request_id,
+            ttl_s=ttl_s,
+            now_iso=now_iso,
+        )
+
+    def renew_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        fence_token: int,
+        ttl_s: int = 60,
+        now_iso: str | None = None,
+    ) -> bool:
+        return self._turn_leases.renew(
+            session_id,
+            owner=owner,
+            fence_token=fence_token,
+            ttl_s=ttl_s,
+            now_iso=now_iso,
+        )
+
+    def release_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        fence_token: int,
+        now_iso: str | None = None,
+    ) -> bool:
+        return self._turn_leases.release(
+            session_id,
+            owner=owner,
+            fence_token=fence_token,
+            now_iso=now_iso,
+        )
+
+    def assert_session_turn_fence(
+        self,
+        session_id: str,
+        *,
+        fence_token: int,
+    ) -> None:
+        self._turn_leases.assert_fence(session_id, fence_token=fence_token)
+
     def append_message(
         self,
         *,
@@ -186,6 +259,7 @@ class SessionStore:
         participant_id: str | None = None,
         participant_type: str | None = None,
         display_name: str | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> MessageRecord:
         return self._messages.append_message(
             session_id=session_id,
@@ -198,6 +272,7 @@ class SessionStore:
             participant_id=participant_id,
             participant_type=participant_type,
             display_name=display_name,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
     def list_messages(
@@ -269,11 +344,13 @@ class SessionStore:
         session_id: str,
         event_type: str,
         payload: Mapping[str, Any] | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> EventRecord:
         return self._lifecycle.append_event(
             session_id=session_id,
             event_type=event_type,
             payload=payload,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
     def list_events(
@@ -441,6 +518,7 @@ class SessionStore:
         compacted_message_count: int | None = None,
         version: int | None = None,
         expected_version: int | None = None,
+        session_turn_fence_token: int | None = None,
     ) -> SessionContextRecord:
         return self._context.update_session_context(
             session_id=session_id,
@@ -453,6 +531,7 @@ class SessionStore:
             compacted_message_count=compacted_message_count,
             version=version,
             expected_version=expected_version,
+            session_turn_fence_token=session_turn_fence_token,
         )
 
 

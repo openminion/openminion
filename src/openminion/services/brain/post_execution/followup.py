@@ -23,7 +23,7 @@ from openminion.services.agent import (
     _map_history_to_provider,
     _resolve_system_prompt,
 )
-from openminion.services.tool.exposure import get_allowed_model_tool_names
+from openminion.modules.tool.exposure import get_allowed_model_tool_names
 
 
 def _dated_evidence_lines_from_tool_results(
@@ -399,6 +399,10 @@ async def _follow_up_after_tool(
         payload={
             "llm_call_id": llm_call_id,
             "purpose": "respond_followup",
+            "provider": str(
+                getattr(follow_up, "provider", "")
+                or getattr(self._provider, "name", "provider")
+            ).strip(),
             "model": str(
                 follow_up_model or getattr(self._provider, "name", "provider")
             ),

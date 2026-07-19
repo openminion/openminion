@@ -181,7 +181,7 @@ def test_file_and_exec_manifest_descriptions_encode_scaffolding_boundary() -> No
 
     assert "parent directories" in file_write.description
     assert "scaffolding" in file_write.description
-    assert "structured file tools" in exec_run.description
+    assert "structured file" in exec_run.description
     assert "scaffolding" in exec_run.description
 
 
@@ -232,6 +232,26 @@ def test_bootstrap_registrar_module_id_matches_manifest_module_id() -> None:
             )
 
     assert not mismatches, "Module ID mismatches:\n" + "\n".join(mismatches)
+
+
+def test_top_level_tool_package_names_match_module_ids_or_compatibility_map() -> None:
+    from openminion.modules.tool.bootstrap import _TOOL_BOOTSTRAP_ENTRIES
+    from openminion.modules.tool.bootstrap.registration import (
+        _validate_tool_package_module_id,
+    )
+
+    for entry in _TOOL_BOOTSTRAP_ENTRIES:
+        suffix = entry.module_name.removeprefix("openminion.tools.")
+        if entry.kind != "tool" or "." in suffix:
+            continue
+        registrar = importlib.import_module(entry.module_name).REGISTRAR
+        _validate_tool_package_module_id(entry.module_name, registrar.module_id)
+
+    with pytest.raises(TypeError, match="must match package owner 'fixture'"):
+        _validate_tool_package_module_id(
+            "openminion.tools.fixture",
+            "different_owner",
+        )
 
 
 def test_bootstrap_registrar_protocol_and_provider_flag() -> None:

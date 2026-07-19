@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import Sequence
 
 from openminion.base.config.env import resolve_environment_config
 
@@ -28,7 +28,7 @@ def resolve_compress_provider_preference() -> str:
 class MethodResolution:
     """Result of resolving prepass/main/fallback methods."""
 
-    prepass_method: Optional[str]
+    prepass_method: str | None
     main_method: str
     fallback_method: str
     fallback_used: bool
@@ -44,7 +44,7 @@ class PolicyResolver:
         self,
         registry: MethodRegistry,
         *,
-        quality_overrides: Optional[Dict[str, Optional[str]]] = None,
+        quality_overrides: dict[str, str | None] | None = None,
     ) -> None:
         self._registry = registry
         self._quality_overrides = {
@@ -56,7 +56,7 @@ class PolicyResolver:
         self,
         request: CompressionRequest,
         *,
-        override_main: Optional[str] = None,
+        override_main: str | None = None,
     ) -> MethodResolution:
         policy = request.policy
         prepass_method, warnings = self._resolve_prepass(policy)
@@ -77,10 +77,8 @@ class PolicyResolver:
         )
 
     # Internal helpers -----------------------------------------------------
-    def _resolve_prepass(
-        self, policy: CompressionPolicy
-    ) -> tuple[Optional[str], List[str]]:
-        warnings: List[str] = []
+    def _resolve_prepass(self, policy: CompressionPolicy) -> tuple[str | None, list[str]]:
+        warnings: list[str] = []
         method_id = policy.method_prepass
         if not method_id or method_id.lower() == "none":
             return None, warnings
@@ -92,12 +90,12 @@ class PolicyResolver:
     def _resolve_main(
         self,
         policy: CompressionPolicy,
-        quality_hint: Optional[str],
-        override_main: Optional[str],
-    ) -> tuple[str, bool, List[str], List[str]]:
-        attempted: List[str] = []
-        unavailable: List[str] = []
-        chain: List[tuple[str, Optional[str]]] = []
+        quality_hint: str | None,
+        override_main: str | None,
+    ) -> tuple[str, bool, list[str], list[str]]:
+        attempted: list[str] = []
+        unavailable: list[str] = []
+        chain: list[tuple[str, str | None]] = []
         if override_main:
             chain.append(("override", override_main))
         preference = resolve_compress_provider_preference()

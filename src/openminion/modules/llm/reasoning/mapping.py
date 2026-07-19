@@ -1,60 +1,20 @@
-from typing import Any
+from openminion.base.config.runtime.reasoning import (
+    normalize_optional_reasoning_profile,
+    reasoning_profile_was_unknown,
+)
 
 from .constants import (
     THINKING_DEGRADE_PROVIDER_UNSUPPORTED,
-    THINKING_REASONING_PROFILE_DETAILED,
-    THINKING_REASONING_PROFILE_MINIMAL,
     THINKING_REASONING_PROFILE_OFF,
-    THINKING_REASONING_PROFILES,
     THINKING_SUPPORTED_PROVIDER_NAMES,
 )
 
-_OFF_ALIASES = frozenset({"0", "disabled", "false", "none", "no", "off"})
-_MINIMAL_ALIASES = frozenset(
-    {
-        "",
-        "default",
-        "light",
-        "low",
-        "min",
-        "minimal",
-        "normal",
-    }
-)
-_DETAILED_ALIASES = frozenset(
-    {
-        "deep",
-        "detailed",
-        "full",
-        "hard",
-        "harder",
-        "high",
-        "max",
-        "verbose",
-    }
-)
-_KNOWN_ALIAS_TOKENS = (
-    _OFF_ALIASES
-    | _MINIMAL_ALIASES
-    | _DETAILED_ALIASES
-    | frozenset(THINKING_REASONING_PROFILES)
-)
-
-
-def normalize_optional_reasoning_profile(raw_value: Any) -> str | None:
-    token = str(raw_value or "").strip().lower()
-    if not token:
-        return None
-    if token in _OFF_ALIASES:
-        return THINKING_REASONING_PROFILE_OFF
-    if token in _DETAILED_ALIASES:
-        return THINKING_REASONING_PROFILE_DETAILED
-    return THINKING_REASONING_PROFILE_MINIMAL
-
-
-def reasoning_profile_was_unknown(raw_value: Any) -> bool:
-    token = str(raw_value or "").strip().lower()
-    return bool(token) and token not in _KNOWN_ALIAS_TOKENS
+__all__ = [
+    "normalize_optional_reasoning_profile",
+    "provider_effort_for_profile",
+    "reasoning_profile_was_unknown",
+    "resolve_provider_effort_support",
+]
 
 
 def provider_effort_for_profile(profile: str) -> str | None:

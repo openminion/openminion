@@ -271,6 +271,46 @@ class SessionStore(ABC):
     ) -> bool: ...
 
     @abstractmethod
+    def acquire_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        request_id: str,
+        ttl_s: int = 60,
+        now_iso: str | None = None,
+    ) -> Any: ...
+
+    @abstractmethod
+    def renew_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        fence_token: int,
+        ttl_s: int = 60,
+        now_iso: str | None = None,
+    ) -> bool: ...
+
+    @abstractmethod
+    def release_session_turn_lease(
+        self,
+        session_id: str,
+        *,
+        owner: str,
+        fence_token: int,
+        now_iso: str | None = None,
+    ) -> bool: ...
+
+    @abstractmethod
+    def assert_session_turn_fence(
+        self,
+        session_id: str,
+        *,
+        fence_token: int,
+    ) -> None: ...
+
+    @abstractmethod
     def finish_cron_run(
         self,
         run_id: str,

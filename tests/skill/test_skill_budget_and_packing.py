@@ -79,7 +79,6 @@ class TestSkillModeOverrides:
     def test_respond_mode_does_not_bump_skills(self) -> None:
         budgets = default_budgets_for("decide")
         overridden = _apply_mode_budget_bias(budgets, mode_name="respond")
-        # Should not be bumped above the decide default
         assert overridden.skills_tokens == budgets.skills_tokens
 
 
@@ -204,7 +203,6 @@ class TestTrimLadderBehavior:
 
         skill_seg = next((s for s in result_segments if "skill" in s.id), None)
         assert skill_seg is not None
-        # Content should be emptied by the trim
         assert not skill_seg.content.strip()
 
     def test_skill_segment_trimmed_before_summaries(self) -> None:

@@ -18,6 +18,28 @@ from openminion.services.stats import (
 )
 
 
+def test_service_stats_surface_reexports_canonical_owners() -> None:
+    from openminion.cli.status.stats import (
+        format_run_stats_footer as canonical_format,
+    )
+    from openminion.modules.telemetry.usage import (
+        RunStats as canonical_run_stats,
+        StatsService as canonical_service,
+        TokenUsageRecord as canonical_record,
+    )
+    from openminion.services.stats import (
+        RunStats as compatibility_run_stats,
+        StatsService as compatibility_service,
+        TokenUsageRecord as compatibility_record,
+        format_run_stats_footer as compatibility_format,
+    )
+
+    assert compatibility_run_stats is canonical_run_stats
+    assert compatibility_service is canonical_service
+    assert compatibility_record is canonical_record
+    assert compatibility_format is canonical_format
+
+
 @pytest.fixture()
 def store(tmp_path: Path) -> SQLiteSessionStore:
     session_store = SQLiteSessionStore(tmp_path / "stats.db")
@@ -109,12 +131,14 @@ def test_run_token_usage_normalizes_llm_surfaces_from_events(
         "llm_output": 5,
         "llm_cache_read": 3,
         "llm_cache_write": 2,
+        "llm_total": 17,
     }
     assert {record.surface for record in summary.records} == {
         "llm_prompt",
         "llm_output",
         "llm_cache_read",
         "llm_cache_write",
+        "llm_total",
     }
     assert all(record.llm_call_id == "call-1" for record in summary.records)
 

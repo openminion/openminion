@@ -170,7 +170,7 @@ ENV_VAR_SPECS: tuple[EnvVarSpec, ...] = (
         name="OPENMINION_SHOW_RESPONSE_TIME",
         value_type="bool",
         default="true",
-        owner="cli/tui",
+        owner="cli/interactive",
         description="Show a muted whole-second response duration after terminal focus turns.",
     ),
     EnvVarSpec(

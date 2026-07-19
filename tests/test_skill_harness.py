@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 
-from openminion.services.integration.skill_harness import run_skill_harness
+from openminion.modules.skill.diagnostics import run_skill_harness
 
 SKILL_BODY = "# Skill\n\n## Purpose\nDo hello.\n\n## Recipe\n1. Say hello.\n"
 

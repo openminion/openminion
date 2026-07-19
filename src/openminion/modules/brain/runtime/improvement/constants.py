@@ -1,5 +1,6 @@
 """Constants for runtime self-improvement contracts."""
 
 RETRY_ANOMALY_THRESHOLD = 0.8
+SELF_IMPROVEMENT_MAX_CONTEXT_CHARS = 240
 
-__all__ = ["RETRY_ANOMALY_THRESHOLD"]
+__all__ = ["RETRY_ANOMALY_THRESHOLD", "SELF_IMPROVEMENT_MAX_CONTEXT_CHARS"]

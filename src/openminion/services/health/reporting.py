@@ -2,8 +2,11 @@ import logging
 from time import perf_counter
 from typing import Any, Dict, List
 
-from openminion.api.constants import API_METRICS_TOKEN_ENV, API_METRICS_TOKEN_HEADER
 from openminion.base.config import EnvironmentConfig
+from openminion.services.runtime.constants import (
+    API_METRICS_TOKEN_ENV,
+    API_METRICS_TOKEN_HEADER,
+)
 from .types import HealthCheck
 
 _HEALTH_LOG = logging.getLogger("openminion.health")

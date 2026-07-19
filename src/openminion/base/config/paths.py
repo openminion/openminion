@@ -114,7 +114,7 @@ def resolve_data_root(
             candidate = home_root / candidate
         return candidate.resolve()
 
-    return (home_root / BASE_DEFAULT_CONFIG_DIRNAME).resolve()
+    return (home_root / str(BASE_DEFAULT_CONFIG_DIRNAME)).resolve()
 
 
 def resolve_storage_paths(

@@ -1,19 +1,18 @@
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Mapping, Protocol
 
 from openminion.modules.llm.providers.base import (
+    ProviderHistoryMessage as ProviderHistoryMessage,
     ProviderRequest,
     ProviderResponse,
+    ProviderToolCall as ProviderToolCall,
     ProviderToolSpec,
 )
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.registry import ToolExecutionBatch
-from openminion.services.security.policy import ToolBudgetState
-
-from .state import TurnRuntimeContext
+from openminion.modules.policy import ToolBudgetState
 
 
-@runtime_checkable
 class TurnFlowServicePort(Protocol):
     @property
     def provider(self) -> Any: ...
@@ -111,7 +110,6 @@ class TurnFlowServicePort(Protocol):
     ) -> list[str]: ...
 
 
-@runtime_checkable
 class RuntimeOpsPort(Protocol):
     async def call_provider(
         self,
@@ -146,42 +144,3 @@ class RuntimeOpsPort(Protocol):
         missing_fields: str,
         user_message: str,
     ) -> None: ...
-
-
-def resolve_runtime_context(owner: Any) -> TurnRuntimeContext:
-    runtime = getattr(owner, "_runtime", None)
-    if runtime is None:
-        raise RuntimeError("turn-flow owner is missing runtime context")
-    return runtime
-
-
-def resolve_runtime_ops(owner: Any) -> RuntimeOpsPort:
-    if isinstance(owner, RuntimeOpsPort):
-        return owner
-    runtime_ops = getattr(owner, "_runtime_ops", None)
-    if runtime_ops is not None:
-        return runtime_ops
-    return owner
-
-
-def resolve_service_port(owner: Any) -> TurnFlowServicePort:
-    if isinstance(owner, TurnFlowServicePort):
-        return owner
-    service_port = getattr(owner, "_service_port", None)
-    if service_port is not None:
-        return service_port
-    service = getattr(owner, "_service", None)
-    if service is None:
-        raise RuntimeError("turn-flow owner is missing service adapter")
-    from .composition import build_service_port
-
-    return build_service_port(service)
-
-
-__all__ = [
-    "RuntimeOpsPort",
-    "TurnFlowServicePort",
-    "resolve_runtime_context",
-    "resolve_runtime_ops",
-    "resolve_service_port",
-]

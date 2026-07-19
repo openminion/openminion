@@ -1,7 +1,7 @@
 # OpenMinion Runtime Surfaces
 
 Status: active
-Last updated: 2026-06-18
+Last updated: 2026-07-14
 
 Purpose: give developers one package-local map of the public `openminion`
 surfaces and when to use each one.
@@ -23,9 +23,12 @@ Best for:
 
 Notes:
 
-1. the default invocation is the primary interactive surface,
-2. `openminion chat` remains a legacy/maintenance surface rather than the
-   preferred new interactive path.
+1. the default invocation launches the interactive CLI with the terminal renderer on a TTY,
+2. `openminion --rich` explicitly selects the Textual renderer,
+3. piped input executes one request without mounting an interactive renderer,
+4. `focus`, `chat`, `tui`, and `dashboard` are hidden compatibility aliases,
+5. no compatibility alias owns a separate interactive runtime,
+6. startup creates a fresh session unless `--session <id>` is provided.
 
 ### 2. Python library API
 

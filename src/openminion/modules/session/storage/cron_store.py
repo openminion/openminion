@@ -5,7 +5,7 @@ from threading import RLock
 from typing import Any, Mapping
 from uuid import uuid4
 
-from openminion.services.cron.scheduling import (
+from openminion.modules.task.scheduling.schedule import (
     compute_next_due,
     default_delete_after_run,
     default_session_target_for_payload,

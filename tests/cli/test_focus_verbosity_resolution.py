@@ -6,7 +6,7 @@ from typing import Iterator
 
 import pytest
 
-from openminion.cli.commands.focus import _resolve_focus_verbosity
+from openminion.cli.commands.interactive import _resolve_focus_verbosity
 
 
 @pytest.fixture
@@ -102,7 +102,7 @@ def test_empty_env_no_warning(
 
 
 def test_argparse_flag_choices_registered() -> None:
-    from openminion.cli.commands.focus import register
+    from openminion.cli.commands.interactive import register
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
@@ -114,7 +114,7 @@ def test_argparse_flag_choices_registered() -> None:
 
 
 def test_argparse_flag_default_none() -> None:
-    from openminion.cli.commands.focus import register
+    from openminion.cli.commands.interactive import register
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
@@ -124,24 +124,13 @@ def test_argparse_flag_default_none() -> None:
 
 
 def test_argparse_invalid_choice_rejected() -> None:
-    from openminion.cli.commands.focus import register
+    from openminion.cli.commands.interactive import register
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
     register(subparsers)
     with pytest.raises(SystemExit):
         parser.parse_args(["focus", "--verbosity", "loud"])
-
-
-def test_run_terminal_focus_accepts_verbosity_kwarg() -> None:
-    import inspect
-
-    from openminion.cli.tui.terminal.shell import run_terminal_focus
-
-    sig = inspect.signature(run_terminal_focus)
-    assert "verbosity" in sig.parameters
-    # Default is "normal" so existing callers aren't broken.
-    assert sig.parameters["verbosity"].default == "normal"
 
 
 def test_only_ux_module_reads_legacy_focus_verbosity_env() -> None:

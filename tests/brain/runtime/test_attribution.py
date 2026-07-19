@@ -37,7 +37,6 @@ def _record(
     return SimpleNamespace(record_id=record_id, meta=meta)
 
 
-# --- project_records_to_learning_events ------------------------------------
 
 
 def test_projection_emits_one_event_per_retrieved_id() -> None:
@@ -122,7 +121,6 @@ def test_projection_is_deterministic_and_idempotent() -> None:
     assert [e.model_dump() for e in first] == [e.model_dump() for e in second]
 
 
-# --- aggregate_attribution_readout -----------------------------------------
 
 
 def test_aggregate_groups_by_retrieved_record_with_bucket_counts() -> None:
@@ -230,7 +228,6 @@ def test_aggregate_distinct_traces_dedups_blank_trace_ids() -> None:
     assert readout.rows[0].distinct_traces == 1
 
 
-# --- Anti-LLM discipline regressions --------------------------------------
 
 
 def test_schemas_do_not_expose_learning_happened_or_causal_fields() -> None:

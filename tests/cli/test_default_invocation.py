@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -22,16 +23,19 @@ def _stub_route(
     )
 
 
-def test_no_subcommand_with_tty_and_config_launches_focus(monkeypatch) -> None:
+def test_no_subcommand_with_tty_and_config_launches_interactive(monkeypatch) -> None:
     called = {}
 
-    def _fake_run_focus(args):
-        called["focus"] = True
+    def _fake_run_interactive(args):
+        called["interactive"] = args
         return 0
 
-    monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake_run_focus)
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.cli.commands.interactive.run_interactive",
+        _fake_run_interactive,
+    )
+    monkeypatch.setattr(
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(),
     )
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -39,7 +43,102 @@ def test_no_subcommand_with_tty_and_config_launches_focus(monkeypatch) -> None:
 
     rc = cli_main([])
     assert rc == 0
-    assert called.get("focus") is True
+    interactive_args = called.get("interactive")
+    assert interactive_args is not None
+    assert interactive_args.rich is False
+
+
+def test_no_subcommand_can_opt_into_rich_interactive(monkeypatch) -> None:
+    called = {}
+
+    def _fake_run_interactive(args):
+        called["interactive"] = args
+        return 0
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.interactive.run_interactive",
+        _fake_run_interactive,
+    )
+    monkeypatch.setattr(
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
+        lambda **kw: _stub_route(),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    assert cli_main(["--rich"]) == 0
+    interactive_args = called.get("interactive")
+    assert interactive_args is not None
+    assert interactive_args.rich is True
+    assert interactive_args.terminal is False
+
+
+def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> None:
+    called = {}
+
+    def _fake_run_interactive(args):
+        called["interactive"] = args
+        return 0
+
+    monkeypatch.setattr(
+        "openminion.cli.commands.interactive.run_interactive",
+        _fake_run_interactive,
+    )
+    monkeypatch.setattr(
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
+        lambda **kw: _stub_route(),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    assert (
+        cli_main(
+            [
+                "--agent",
+                "demo-agent",
+                "--session",
+                "demo-session",
+                "--dir",
+                "/tmp/demo-workspace",
+                "--theme",
+                "light",
+                "--no-context",
+                "--no-update-check",
+                "--verbosity",
+                "quiet",
+            ]
+        )
+        == 0
+    )
+    interactive_args = called["interactive"]
+    assert interactive_args.agent == "demo-agent"
+    assert interactive_args.session == "demo-session"
+    assert interactive_args.dir == "/tmp/demo-workspace"
+    assert interactive_args.theme == "light"
+    assert interactive_args.no_context is True
+    assert interactive_args.no_update_check is True
+    assert interactive_args.verbosity == "quiet"
+
+
+def test_no_subcommand_demo_requests_demo_onboarding(monkeypatch) -> None:
+    requested_modes = []
+
+    def _fake_route(**kwargs):
+        requested_modes.append(kwargs["requested_mode"])
+        return _stub_route()
+
+    monkeypatch.setattr(
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
+        _fake_route,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.interactive.run_interactive", lambda _args: 0
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    assert cli_main(["--demo"]) == 0
+    assert requested_modes[-1].value == "demo"
 
 
 def test_no_subcommand_with_no_config_runs_setup(monkeypatch) -> None:
@@ -51,7 +150,7 @@ def test_no_subcommand_with_no_config_runs_setup(monkeypatch) -> None:
 
     monkeypatch.setattr("openminion.cli.commands.setup.run_setup", _fake_run_setup)
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(should_launch_setup=True),
     )
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -64,11 +163,11 @@ def test_no_subcommand_with_no_config_runs_setup(monkeypatch) -> None:
 
 def test_no_subcommand_with_should_fail_fast_exits_two(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(should_fail_fast=True),
     )
     monkeypatch.setattr(
-        "openminion.cli.main.format_fail_fast_message",
+        "openminion.services.bootstrap.onboarding.format_fail_fast_message",
         lambda **kw: "remediation message",
     )
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
@@ -79,14 +178,12 @@ def test_no_subcommand_with_should_fail_fast_exits_two(monkeypatch, capsys) -> N
     assert excinfo.value.code == 2
 
 
-def test_no_subcommand_pipe_with_data_dispatches_terminal_flow(
-    monkeypatch, capsys
-) -> None:
+def test_no_subcommand_pipe_with_data_dispatches_one_shot(monkeypatch, capsys) -> None:
     import io
     import sys as _sys
 
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(),
     )
     # Non-TTY stdin with content.
@@ -97,15 +194,15 @@ def test_no_subcommand_pipe_with_data_dispatches_terminal_flow(
 
     called = {}
 
-    def _fake_run_focus(_args):
-        called["focus"] = True
+    def _fake_run(prompt_args):
+        called["prompt"] = prompt_args.prompt
         return 0
 
-    monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake_run_focus)
+    monkeypatch.setattr("openminion.cli.commands.run.run_openminion", _fake_run)
 
     rc = cli_main([])
     assert rc == 0
-    assert called.get("focus") is True
+    assert called.get("prompt") == "summarize the plan"
 
 
 def test_no_subcommand_pipe_with_no_data_prints_help(monkeypatch, capsys) -> None:
@@ -113,7 +210,7 @@ def test_no_subcommand_pipe_with_no_data_prints_help(monkeypatch, capsys) -> Non
     import sys as _sys
 
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(),
     )
     fake_stdin = io.StringIO("")
@@ -123,16 +220,19 @@ def test_no_subcommand_pipe_with_no_data_prints_help(monkeypatch, capsys) -> Non
 
     called = {}
 
-    def _fake_run_focus(_args):
-        called["focus"] = True
+    def _fake_run_interactive(_args):
+        called["interactive"] = True
         return 0
 
-    monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake_run_focus)
+    monkeypatch.setattr(
+        "openminion.cli.commands.interactive.run_interactive",
+        _fake_run_interactive,
+    )
 
     rc = cli_main([])
     assert rc == 1
-    assert "focus" not in called, (
-        "empty stdin must NOT dispatch focus; print_help fallback applies"
+    assert "interactive" not in called, (
+        "empty stdin must not dispatch the interactive CLI; print_help applies"
     )
 
 
@@ -143,7 +243,7 @@ def test_no_subcommand_pipe_with_whitespace_only_data_prints_help(
     import sys as _sys
 
     monkeypatch.setattr(
-        "openminion.cli.main.resolve_surface_onboarding_route",
+        "openminion.services.bootstrap.onboarding.resolve_surface_onboarding_route",
         lambda **kw: _stub_route(),
     )
     fake_stdin = io.StringIO("   \n  \t\n")
@@ -153,109 +253,91 @@ def test_no_subcommand_pipe_with_whitespace_only_data_prints_help(
 
     called = {}
 
-    def _fake_run_focus(_args):
-        called["focus"] = True
+    def _fake_run_interactive(_args):
+        called["interactive"] = True
         return 0
 
-    monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake_run_focus)
+    monkeypatch.setattr(
+        "openminion.cli.commands.interactive.run_interactive",
+        _fake_run_interactive,
+    )
 
     rc = cli_main([])
     assert rc == 1
-    assert "focus" not in called
+    assert "interactive" not in called
 
 
 # ── Subcommand handlers ──────────────────────────────────────────────
 
 
-def test_explicit_focus_subcommand_routes_to_focus(monkeypatch) -> None:
+def test_explicit_focus_alias_routes_to_interactive(monkeypatch) -> None:
     called = {}
 
     def _fake(_args):
-        called["focus"] = True
+        called["interactive"] = True
         return 0
 
-    monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake)
+    monkeypatch.setattr("openminion.cli.commands.interactive.run_interactive", _fake)
     rc = cli_main(["focus"])
     assert rc == 0
-    assert called.get("focus") is True
+    assert called.get("interactive") is True
 
 
-def test_dashboard_subcommand_routes_to_dashboard(monkeypatch) -> None:
-    from openminion.cli.parser import base as parser_base
-
-    called = {}
-
-    def _fake(_args):
-        called["dashboard"] = True
-        return 0
-
-    monkeypatch.setattr(parser_base.tui_cmd, "run_tui", _fake)
+def test_dashboard_alias_prints_migration_map(capsys) -> None:
     rc = cli_main(["dashboard"])
     assert rc == 0
-    assert called.get("dashboard") is True
+    notice = capsys.readouterr().err
+    assert "dashboard was retired" in notice
+    assert "bare `openminion`" in notice
+    assert "openminion status" in notice
+    assert "`agent`" in notice
+    assert "agent-ctl" not in notice
 
 
-def test_tui_subcommand_routes_to_focus_by_default(monkeypatch) -> None:
+def test_tui_alias_routes_to_interactive(monkeypatch) -> None:
     called = {}
 
     def _fake(_args):
-        called["focus"] = True
+        called["interactive"] = True
         return 0
 
-    monkeypatch.setattr("openminion.cli.commands.focus.run_focus", _fake)
+    monkeypatch.setattr("openminion.cli.commands.aliases.run_tui", _fake)
     rc = cli_main(["tui"])
     assert rc == 0
-    assert called.get("focus") is True
+    assert called.get("interactive") is True
 
 
-def test_tui_dashboard_flag_routes_to_dashboard(monkeypatch) -> None:
-    from openminion.cli.parser import base as parser_base
-
-    called = {}
-
-    def _fake(_args):
-        called["dashboard"] = True
-        return 0
-
-    monkeypatch.setattr(parser_base.tui_cmd, "run_tui", _fake)
-    rc = cli_main(["tui", "--dashboard"])
-    assert rc == 0
-    assert called.get("dashboard") is True
-
-
-def test_chat_subcommand_routes_unchanged(monkeypatch) -> None:
+def test_chat_alias_routes_to_interactive(monkeypatch) -> None:
     called = {}
 
     def _fake(_args, _app=None):
-        called["chat"] = True
+        called["interactive"] = True
         return 0
 
     # Chat handler may need APIRuntime; skip the heavy path by patching.
-    monkeypatch.setattr("openminion.cli.commands.chat.run_chat", _fake)
+    monkeypatch.setattr("openminion.cli.commands.aliases.run_chat", _fake)
     monkeypatch.setattr(
         "openminion.api.runtime.APIRuntime.from_config_path",
         classmethod(lambda cls, *a, **kw: object()),
     )
     rc = cli_main(["chat"])
     assert rc == 0
-    assert called.get("chat") is True
+    assert called.get("interactive") is True
 
 
-# ── Live tui.py dashboard source check ────────────────────────────────
+# ── Retired aliases remain hidden ─────────────────────────────────────
 
 
-def test_tui_register_source_declares_dashboard_canonical_command() -> None:
-    from pathlib import Path
+def test_legacy_aliases_are_hidden_from_root_help(capsys) -> None:
+    with pytest.raises(SystemExit):
+        cli_main(["--help"])
+    help_text = capsys.readouterr().out
+    for alias in ("focus", "chat", "tui", "dashboard"):
+        assert alias not in help_text
 
-    src = (
-        Path(__file__).resolve().parents[2]
-        / "src"
-        / "openminion"
-        / "cli"
-        / "commands"
-        / "tui.py"
-    ).read_text(encoding="utf-8")
-    assert 'add_parser(\n        "dashboard"' in src
-    assert '"tui"' in src
-    assert "--dashboard" in src
-    assert "launches the default focus shell" in src
+
+def test_retired_product_command_modules_are_deleted() -> None:
+    command_dir = Path(__file__).resolve().parents[2] / "src/openminion/cli/commands"
+    assert not (command_dir / "chat.py").exists()
+    assert not (command_dir / "tui.py").exists()
+    assert (command_dir / "aliases.py").exists()

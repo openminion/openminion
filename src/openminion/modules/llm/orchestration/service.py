@@ -28,6 +28,7 @@ from .coercion import (
     _first_positive_int,
     _safe_error_code,
 )
+from .capabilities import capability_error_details
 from .config import load_catalog_config, resolve_route
 from .disagreement import aggregate_usage, compute_disagreement
 from .schemas import (
@@ -470,20 +471,20 @@ class LLMOrchestrator:
     ) -> CandidateResponse:
         started = time.perf_counter()
         profile = self._get_profile(profile_id)
-        if request.output_schema is not None and not profile.supports_json:
+        capability_error = capability_error_details(profile, request)
+        if capability_error is not None:
             return self._candidate_error(
                 candidate_id=candidate_id,
                 profile=profile,
                 code="INVALID_ARGUMENT",
-                message="Requested structured output but profile does not support JSON output",
-                details={"profile_id": profile.id, "supports_json": False},
+                message="Provider profile does not satisfy the request capabilities",
+                details=capability_error,
                 started=started,
             )
         provider_name = profile.provider
         model_name = profile.model
         call_request = self._build_provider_request(request, profile)
         provider_raw: Optional[Dict[str, Any]] = None
-
         client = self._get_profile_client(profile_id)
 
         try:

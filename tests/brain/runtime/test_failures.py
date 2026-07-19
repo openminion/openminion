@@ -34,7 +34,6 @@ def _emission(
     return SimpleNamespace(**fields)
 
 
-# --- Projection: closed-set seam_id discipline ----------------------------
 
 
 def test_projection_rejects_unknown_seam_id() -> None:
@@ -87,7 +86,6 @@ def test_projection_skips_emission_with_no_extractable_mapping() -> None:
     assert facts == []
 
 
-# --- Aggregation discipline -----------------------------------------------
 
 
 def test_aggregate_groups_by_seam_id_and_reason_code() -> None:
@@ -191,7 +189,6 @@ def test_aggregate_earliest_latest_timestamps_sorted() -> None:
     assert readout.rows[0].latest_recorded_at == "2026-05-13T12:00:00Z"
 
 
-# --- Anti-LLM regression --------------------------------------------------
 
 
 def test_schemas_do_not_expose_root_cause_or_pattern_label_fields() -> None:
@@ -229,7 +226,6 @@ def test_all_seam_ids_are_acceptable_to_projection() -> None:
         "strategy_outcome",
         "low_progress",
     ):
-        # Should not raise on empty emissions list.
         facts = project_seam_emissions_to_facts([], seam_id=seam_id)  # type: ignore[arg-type]
         assert facts == []
 

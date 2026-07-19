@@ -11,6 +11,15 @@ from openminion.services.runtime.sandboxes import (
 )
 
 
+def test_service_sandbox_contract_is_canonical_module_owner() -> None:
+    from openminion.modules.runtime.sandboxes import SandboxExecResult as canonical
+    from openminion.services.runtime.sandboxes import (
+        SandboxExecResult as compatibility,
+    )
+
+    assert compatibility is canonical
+
+
 def test_factory_dispatches_to_each_provider() -> None:
     assert isinstance(build_sandbox_adapter("e2b"), E2BSandboxAdapter)
     assert isinstance(build_sandbox_adapter("modal"), ModalSandboxAdapter)

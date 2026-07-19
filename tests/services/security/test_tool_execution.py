@@ -16,6 +16,17 @@ from openminion.services.security.tool_execution import (
 from openminion.tools.exec.schemas import ExecRunArgs
 
 
+def test_service_tool_policy_surface_is_canonical_module_owner() -> None:
+    from openminion.modules.policy.adapters.tool import (
+        ExecutionBoundaryPolicyAdapter as canonical,
+    )
+    from openminion.services.security.tool_execution import (
+        ExecutionBoundaryPolicyAdapter as compatibility,
+    )
+
+    assert compatibility is canonical
+
+
 def _exec_spec() -> ToolSpec:
     def _handler(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         del args, ctx

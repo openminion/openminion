@@ -16,6 +16,7 @@ from .sessions import SessionLifecycleHelper
 from .queries import SessionSliceQueries
 from .slices import SessionSliceSourceAdapter, SliceStore
 from .summaries import StateStore, SummaryStore
+from .turn_leases import SessionTurnLeaseStore
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,36 @@ class StoreComponents:
     session_helper: SessionLifecycleHelper
     replay_helper: SessionReplayHelper
     slice_store: SliceStore
+    turn_lease_store: SessionTurnLeaseStore
+
+
+def _build_slice_source_adapter(
+    *,
+    get_session: Callable[[str], dict[str, Any] | None],
+    slice_queries: SessionSliceQueries,
+    event_store: EventStore,
+    state_store: StateStore,
+    summary_store: SummaryStore,
+    context_store: ContextStore,
+) -> SessionSliceSourceAdapter:
+    return SessionSliceSourceAdapter(
+        session_getter=get_session,
+        latest_event_seq_getter=slice_queries.latest_event_seq_tx,
+        summary_getter=summary_store.get_summary,
+        recent_turns_getter=event_store.get_recent_turns,
+        total_turn_count_getter=event_store.get_total_turn_count,
+        conversation_summary_getter=event_store.get_conversation_summary,
+        active_task_plan_getter=event_store.get_active_task_plan,
+        continuation_projection_getter=event_store.get_latest_continuation_projection,
+        pending_trailer_feedback_getter=event_store.get_pending_trailer_feedback,
+        open_tasks_getter=slice_queries.derive_open_tasks,
+        active_state_getter=state_store.get_active_state,
+        recent_tool_events_getter=event_store.get_recent_tool_events,
+        prompt_context_getter=context_store.get_active_prompt_context,
+        checkpoint_getter=context_store.get_latest_checkpoint,
+        seed_bundle_getter=context_store.get_latest_seed_bundle,
+        archive_refs_getter=slice_queries.list_recent_archive_ref_lines,
+    )
 
 
 def build_store_components(
@@ -61,6 +92,7 @@ def build_store_components(
         utc_now_iso=_utc_now_iso,
     )
     cron_store = CronStore(record_store, lock)
+    turn_lease_store = SessionTurnLeaseStore(record_store, lock)
     state_store = StateStore(
         record_store,
         touch_session_tx=touch_session_tx,
@@ -97,22 +129,13 @@ def build_store_components(
         append_event=append_event,
     )
     slice_store = SliceStore(
-        SessionSliceSourceAdapter(
-            session_getter=get_session,
-            latest_event_seq_getter=slice_queries.latest_event_seq_tx,
-            summary_getter=summary_store.get_summary,
-            recent_turns_getter=event_store.get_recent_turns,
-            total_turn_count_getter=event_store.get_total_turn_count,
-            conversation_summary_getter=event_store.get_conversation_summary,
-            active_task_plan_getter=event_store.get_active_task_plan,
-            pending_trailer_feedback_getter=event_store.get_pending_trailer_feedback,
-            open_tasks_getter=slice_queries.derive_open_tasks,
-            active_state_getter=state_store.get_active_state,
-            recent_tool_events_getter=event_store.get_recent_tool_events,
-            prompt_context_getter=context_store.get_active_prompt_context,
-            checkpoint_getter=context_store.get_latest_checkpoint,
-            seed_bundle_getter=context_store.get_latest_seed_bundle,
-            archive_refs_getter=slice_queries.list_recent_archive_ref_lines,
+        _build_slice_source_adapter(
+            get_session=get_session,
+            slice_queries=slice_queries,
+            event_store=event_store,
+            state_store=state_store,
+            summary_store=summary_store,
+            context_store=context_store,
         ),
         lock=lock,
         slice_cache=slice_cache,
@@ -131,4 +154,5 @@ def build_store_components(
         session_helper=session_helper,
         replay_helper=replay_helper,
         slice_store=slice_store,
+        turn_lease_store=turn_lease_store,
     )

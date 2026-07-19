@@ -15,7 +15,9 @@ def upgrade() -> None:
     bind = op.get_bind()
     columns = {column["name"] for column in inspect(bind).get_columns("memory_records")}
     if "namespace_json" not in columns:
-        bind.exec_driver_sql("ALTER TABLE memory_records ADD COLUMN namespace_json TEXT")
+        bind.exec_driver_sql(
+            "ALTER TABLE memory_records ADD COLUMN namespace_json TEXT"
+        )
 
 
 def downgrade() -> None:

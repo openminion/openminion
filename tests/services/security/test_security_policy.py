@@ -19,6 +19,17 @@ from openminion.services.security.policy import (
 )
 
 
+def test_service_policy_surface_is_canonical_module_owner() -> None:
+    from openminion.modules.policy.runtime.security import (
+        SecurityPolicyEngine as canonical,
+    )
+    from openminion.services.security.policy import (
+        SecurityPolicyEngine as compatibility,
+    )
+
+    assert compatibility is canonical
+
+
 class SecurityPolicyEngineTests(unittest.TestCase):
     def test_unknown_action_is_denied(self) -> None:
         engine = SecurityPolicyEngine()

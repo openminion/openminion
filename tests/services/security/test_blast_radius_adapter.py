@@ -9,7 +9,7 @@ from openminion.modules.tool.runtime.blast_radius import (
     InMemoryCompositionAuditLog,
     build_composition_policy,
 )
-from openminion.services.security.blast_radius.adapter import (
+from openminion.modules.policy.adapters.blast_radius import (
     CompositionBoundaryAdapter,
     build_composition_boundary_adapter,
 )

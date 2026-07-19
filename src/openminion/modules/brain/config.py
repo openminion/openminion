@@ -11,20 +11,19 @@ from openminion.base.config import OpenMinionConfig
 from openminion.base.config.core import resolve_default_agent_id
 
 from .meta.schemas import MetaConfig as MetaRuntimeConfig, VerificationMode
-from .schemas import (
+from .schemas.agent import (
     AdaptiveBudgetConfig,
     AgentBudgets,
     AgentDefaults,
     AgentProfile,
     AutoFactExtractionConfig,
     BudgetTelemetryConfig,
-    BrainMode,
-    ClarifyPolicy,
     LLMProfiles,
     OutcomeAttributionConfig,
     ProactiveAutonomousEntrypointConfig,
     SuccessMemoryConfig,
 )
+from .schemas.state import BrainMode, ClarifyPolicy
 from .constants import (
     DEFAULT_CONFIG_FILENAMES,
     DEFAULT_INTEGRATED_CONFIG_SUBDIR,
@@ -202,6 +201,12 @@ class MissionConfig(BaseModel):
     max_turns_per_mission: int = Field(default=4, ge=1, le=64)
 
 
+class RequestHandoffConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+
+
 @dataclass
 class RunnerOptions:
     max_retries_per_step: int = 2
@@ -232,6 +237,7 @@ class RunnerOptions:
     failure_strategy: str = "replan"
     clarify_config: ClarifyConfig = field(default_factory=ClarifyConfig)
     mission_config: MissionConfig = field(default_factory=MissionConfig)
+    request_handoff_enabled: bool = False
     complex_request_plan_policy: str = "balanced"
     memory_policy_snapshot: dict[str, Any] = field(default_factory=dict)
     skill_selection_strategy: str = "llm"
@@ -362,6 +368,9 @@ class RunnerOptions:
             self.mission_config = raw_mission_config
         else:
             self.mission_config = MissionConfig.model_validate(raw_mission_config)
+        self.request_handoff_enabled = bool(
+            getattr(self, "request_handoff_enabled", False)
+        )
         raw_outcome_attribution = getattr(
             self,
             "outcome_attribution_config",
@@ -574,6 +583,7 @@ class BrainConfig(BaseModel):
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     clarify: ClarifyConfig = Field(default_factory=ClarifyConfig)
     mission: MissionConfig = Field(default_factory=MissionConfig)
+    request_handoff: RequestHandoffConfig = Field(default_factory=RequestHandoffConfig)
     skill_selection_strategy: str = "llm"
     max_skills_per_session: int = Field(default=MAX_SKILLS_PER_SESSION, ge=1)
     outcome_attribution: OutcomeAttributionConfig = Field(

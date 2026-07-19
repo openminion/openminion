@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from urllib.parse import urlencode
 
 from openminion.cli.commands.daemon import ensure_daemon_running
 from openminion.cli.transport.daemon_client import daemon_request
@@ -14,11 +15,11 @@ from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.refs import (
     tool_result_artifact_refs as _tool_result_artifact_refs,
 )
-from openminion.services.security.blast_radius.wiring import (
+from openminion.modules.policy.adapters.composition import (
     SEAM_CLI_TOOLS,
     build_default_composition_boundary_adapter,
 )
-from openminion.services.tool.selection import ToolSelectionService
+from openminion.modules.tool.selection import ToolSelectionService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 
 
@@ -30,6 +31,8 @@ def run_tools(args) -> int:
         return _tools_schema(args)
     if action == "run":
         return _tools_run(args)
+    if action == "exposure":
+        return _tools_exposure(args)
     raise RuntimeError("Unknown tools command")
 
 
@@ -187,6 +190,78 @@ def _tools_run(args) -> int:
     return 0 if payload.get("ok", False) else 1
 
 
+def _exposure_payload(args) -> dict[str, object]:
+    return {
+        "profile_id": str(getattr(args, "profile", "") or "").strip(),
+        "session_id": str(getattr(args, "session", "") or "").strip() or "tools",
+        "task_id": str(getattr(args, "task", "") or "").strip(),
+        "target_id": str(getattr(args, "target", "") or "").strip(),
+    }
+
+
+def _tools_exposure(args) -> int:
+    action = str(getattr(args, "exposure_command", "") or "status").strip().lower()
+    payload = _exposure_payload(args)
+    if action == "status":
+        query = urlencode(
+            {
+                key: value
+                for key, value in payload.items()
+                if key != "profile_id" and value
+            }
+        )
+        result = _from_daemon_or_inproc(
+            args,
+            daemon_call=lambda endpoint: daemon_request(
+                endpoint=endpoint,
+                method="GET",
+                path=f"/v1/tools/exposure?{query}",
+                timeout_s=10,
+            ),
+            inproc_call=lambda: _inproc_exposure_status(args.config, payload),
+        )
+    elif action == "activate":
+        payload.update(
+            {
+                "target_kind": str(getattr(args, "target_kind", "") or "").strip(),
+                "credential_scopes": list(getattr(args, "credential_scope", ()) or ()),
+                "dependencies": list(getattr(args, "dependency", ()) or ()),
+                "approved": bool(getattr(args, "approved", False)),
+                "ttl_seconds": getattr(args, "ttl", None),
+                "activation_reason": getattr(args, "reason", ""),
+                "approved_by": getattr(args, "approved_by", ""),
+                "policy_source": getattr(args, "policy_source", ""),
+            }
+        )
+        result = _from_daemon_or_inproc(
+            args,
+            daemon_call=lambda endpoint: daemon_request(
+                endpoint=endpoint,
+                method="POST",
+                path="/v1/tools/exposure/activate",
+                payload=payload,
+                timeout_s=10,
+            ),
+            inproc_call=lambda: _inproc_exposure_activate(args.config, payload),
+        )
+    elif action == "deactivate":
+        result = _from_daemon_or_inproc(
+            args,
+            daemon_call=lambda endpoint: daemon_request(
+                endpoint=endpoint,
+                method="POST",
+                path="/v1/tools/exposure/deactivate",
+                payload=payload,
+                timeout_s=10,
+            ),
+            inproc_call=lambda: _inproc_exposure_deactivate(args.config, payload),
+        )
+    else:
+        raise RuntimeError("Unknown tools exposure command")
+    print_json_payload(result)
+    return 0 if result.get("ok", False) else 1
+
+
 def _from_daemon_or_inproc(args, *, daemon_call, inproc_call) -> dict:
     config = load_config(args.config)
     auto_start = bool(config.runtime.daemon_auto_start)
@@ -245,6 +320,43 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     add_tool_session_arg(tools_run, default="tools")
     tools_run.set_defaults(handler=run_tools, needs_app=False)
 
+    exposure = tools_subcommands.add_parser(
+        "exposure",
+        help="Inspect or change explicit tool exposure profiles",
+    )
+    exposure_subcommands = exposure.add_subparsers(dest="exposure_command")
+    exposure_status = exposure_subcommands.add_parser("status", help="Show profiles")
+    _add_exposure_scope_args(exposure_status, include_profile=False)
+    exposure_status.set_defaults(handler=run_tools, needs_app=False)
+
+    exposure_activate = exposure_subcommands.add_parser(
+        "activate", help="Activate one profile"
+    )
+    _add_exposure_scope_args(exposure_activate)
+    exposure_activate.add_argument("--target-kind", default="")
+    exposure_activate.add_argument("--credential-scope", action="append", default=[])
+    exposure_activate.add_argument("--dependency", action="append", default=[])
+    exposure_activate.add_argument("--approved", action="store_true")
+    exposure_activate.add_argument("--ttl", type=float, default=None)
+    exposure_activate.add_argument("--reason", default="")
+    exposure_activate.add_argument("--approved-by", default="")
+    exposure_activate.add_argument("--policy-source", default="")
+    exposure_activate.set_defaults(handler=run_tools, needs_app=False)
+
+    exposure_deactivate = exposure_subcommands.add_parser(
+        "deactivate", help="Deactivate one profile"
+    )
+    _add_exposure_scope_args(exposure_deactivate)
+    exposure_deactivate.set_defaults(handler=run_tools, needs_app=False)
+
+
+def _add_exposure_scope_args(parser, *, include_profile: bool = True) -> None:
+    if include_profile:
+        parser.add_argument("profile", help="Exposure profile id")
+    parser.add_argument("--session", default="tools")
+    parser.add_argument("--task", default="")
+    parser.add_argument("--target", default="")
+
 
 def _inproc_tool_schema(config_path: str | None, *, tool_name: str) -> dict:
     runtime = APIRuntime.from_config_path(config_path)
@@ -300,6 +412,7 @@ def _inproc_tool_run(
                 session_id=session_id,
                 authored_tools_api=getattr(runtime, "authored_tools", None),
                 metadata={
+                    "session_id": session_id,
                     "origin": "openminion.tools.inproc",
                     "runtime_env": dict(
                         getattr(
@@ -335,6 +448,62 @@ def _inproc_tool_run(
                 session_id=session_id,
                 tool_name=tool_name,
                 result=result,
+            ),
+        }
+    finally:
+        runtime.close()
+
+
+def _inproc_exposure_status(config_path: str | None, payload: dict) -> dict:
+    runtime = APIRuntime.from_config_path(config_path)
+    try:
+        return {
+            "ok": True,
+            "exposure": runtime.tool_exposure_status(
+                session_id=str(payload.get("session_id", "")),
+                task_id=str(payload.get("task_id", "")),
+                target_id=str(payload.get("target_id", "")),
+            ),
+        }
+    finally:
+        runtime.close()
+
+
+def _inproc_exposure_activate(config_path: str | None, payload: dict) -> dict:
+    runtime = APIRuntime.from_config_path(config_path)
+    try:
+        try:
+            activation = runtime.activate_tool_profile(
+                str(payload.get("profile_id", "")),
+                session_id=str(payload.get("session_id", "")),
+                task_id=str(payload.get("task_id", "")),
+                target_id=str(payload.get("target_id", "")),
+                target_kind=str(payload.get("target_kind", "")),
+                credential_scopes=tuple(payload.get("credential_scopes", ()) or ()),
+                dependencies=tuple(payload.get("dependencies", ()) or ()),
+                approved=bool(payload.get("approved", False)),
+                ttl_seconds=payload.get("ttl_seconds"),
+                activation_reason=str(payload.get("activation_reason", "")),
+                approved_by=str(payload.get("approved_by", "")),
+                policy_source=str(payload.get("policy_source", "")),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "activation": activation}
+    finally:
+        runtime.close()
+
+
+def _inproc_exposure_deactivate(config_path: str | None, payload: dict) -> dict:
+    runtime = APIRuntime.from_config_path(config_path)
+    try:
+        return {
+            "ok": True,
+            "deactivated": runtime.deactivate_tool_profile(
+                str(payload.get("profile_id", "")),
+                session_id=str(payload.get("session_id", "")),
+                task_id=str(payload.get("task_id", "")),
+                target_id=str(payload.get("target_id", "")),
             ),
         }
     finally:

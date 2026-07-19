@@ -247,6 +247,7 @@ def _extract_ephemeral_prompt_metadata(
     if not isinstance(inbound_metadata, dict):
         return {}
     allowed_keys = {
+        "cwd",
         "workspace_root",
         "project_context_body",
         "project_context_name",

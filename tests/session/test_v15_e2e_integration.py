@@ -132,7 +132,6 @@ class MockLLMAPI:
         return 10
 
     def call_structured(self, **kwargs):
-        # depending on purpose, return mock schema
         purpose = kwargs.get("purpose")
         if purpose == "decide":
             return {"mode": "plan", "confidence": "high", "reason_code": "test"}
@@ -207,13 +206,10 @@ class T17IntegrationTests(unittest.TestCase):
 
             store.create_session(session_id="s-e2e")
 
-            # Since LLM is None, runner evaluates heuristics or raises.
-            # But the goal of T17 is to prove context + session exchange works and manifest runs.
-            # A heuristic "plan" input will trigger plan which builds context!
+            # Exercise the context and session exchange without an LLM.
             res = runner.step(session_id="s-e2e", user_input="plan ahead")
             print("RUNNER STEP RESULT:", res)
 
-            # Check if canonical events were written
             events = session_adapter.list_events("s-e2e")
             print(
                 "EVENTS IN DB:",
@@ -227,7 +223,6 @@ class T17IntegrationTests(unittest.TestCase):
                 or "context.manifest" in event_types
             )
 
-            # Verify the manifest content
             manifest_event = next(
                 e
                 for e in events

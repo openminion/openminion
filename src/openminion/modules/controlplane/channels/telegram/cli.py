@@ -4,30 +4,17 @@ from datetime import datetime, timezone
 import threading
 from pathlib import Path
 
-from openminion.modules.controlplane.runtime.audit import AuditLogger
-from openminion.modules.controlplane.constants import PRINCIPAL_BINDING_STATUS_ACTIVE
-from openminion.modules.controlplane.runtime.auth import AuthEvaluator
-from openminion.modules.controlplane.runtime.channels import ChannelRegistry
-from openminion.modules.controlplane.runtime.parser import SlashCommandParser
-from openminion.modules.controlplane.commands.registry import CommandRegistry
 from openminion.modules.controlplane.config import (
     load_config as load_controlplane_config,
 )
-from openminion.modules.controlplane.runtime.dispatcher import ControlPlaneDispatcher
-from openminion.modules.controlplane.adapters.client import (
-    OpenMinionBrainClient,
-    OpenMinionIntegrationError,
-)
-from openminion.modules.controlplane.runtime.router import Router
-from openminion.modules.controlplane.runtime import EchoBrain
 from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
-
 from openminion.modules.controlplane.channels.telegram.bot_api import TelegramBotAPI
-from openminion.modules.controlplane.channels.telegram.config import load_config
-from openminion.modules.controlplane.channels.telegram.delivery import (
-    TelegramDeliveryService,
+from openminion.modules.controlplane.channels.telegram.config import (
+    TelegramChannelConfig,
+    load_config,
 )
 from openminion.modules.controlplane.channels.telegram.pairing import (
+    PairCreateResult,
     TelegramPairingService,
 )
 from openminion.modules.controlplane.channels.telegram.polling import (
@@ -116,42 +103,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def build_runtime(config_path: str | None) -> ControlPlaneDispatcher:
-    cp_cfg = load_controlplane_config(config_path, env=dict(os.environ))
-
-    store = SQLiteControlPlaneStore(cp_cfg.sqlite_path, wal=cp_cfg.wal)
-    if hasattr(store, "backfill_pairings_to_principals"):
-        store.backfill_pairings_to_principals(status=PRINCIPAL_BINDING_STATUS_ACTIVE)
-    router = Router(store)
-    parser = SlashCommandParser()
-    auth = AuthEvaluator(admin_user_keys=cp_cfg.admin_user_keys)
-    registry = CommandRegistry(store=store, auth=auth)
-    brain = _build_brain(cp_cfg)
-    audit_logger = AuditLogger(sink=store.put_audit)
-
-    return ControlPlaneDispatcher(
-        store=store,
-        router=router,
-        parser=parser,
-        command_registry=registry,
-        brain_client=brain,
-        outbound_sender=lambda _payload: None,
-        audit_logger=audit_logger,
+def build_runtime(config_path: str | None):
+    from openminion.cli.commands.channel import (
+        _build_controlplane_components_from_base,
     )
+    from openminion.cli.config import resolve_cli_roots
 
-
-def _build_brain(cp_cfg):
-    if cp_cfg.openminion_enabled:
-        try:
-            return OpenMinionBrainClient(
-                config_path=cp_cfg.openminion_config_path,
-                channel=cp_cfg.openminion_channel,
-                target=cp_cfg.openminion_target,
-                deliver=cp_cfg.openminion_deliver,
-            )
-        except OpenMinionIntegrationError as exc:  # pragma: no cover
-            raise SystemExit(str(exc)) from exc
-    return EchoBrain()
+    base = _load_unified_compat_config(config_path)
+    roots = resolve_cli_roots(config_path=config_path)
+    components = _build_controlplane_components_from_base(
+        base=base,
+        home_root=roots.home_root,
+        data_root=roots.data_root,
+        logger_name="openminion.controlplane.telegram.compat",
+    )
+    return components.dispatcher
 
 
 def build_runner(
@@ -161,54 +127,90 @@ def build_runner(
     return registry.get(channel_id)
 
 
-def build_channel_registry(config_path: str | None) -> tuple[ChannelRegistry, str]:
-    cfg = load_config(config_path, env=dict(os.environ)).telegram
-    if not cfg.enabled:
-        raise SystemExit("channels.telegram.enabled is false")
+def build_channel_registry(config_path: str | None):
+    from openminion.cli.commands.channel import (
+        _build_unified_telegram_runtime_from_base,
+    )
+    from openminion.cli.config import resolve_cli_roots
 
-    runtime = build_runtime(config_path)
-    api = TelegramBotAPI(cfg.bot_token)
-    delivery = TelegramDeliveryService(
-        api=api,
-        delivery_config=cfg.delivery,
-        reply_config=cfg.reply,
-    )
-    state_store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
-    runner_cls = (
-        TelegramWebhookRunner if cfg.mode == "webhook" else TelegramPollingRunner
-    )
-    adapter = runner_cls(
-        config=cfg,
-        api=api,
-        runtime=runtime,
-        delivery=delivery,
-        state_store=state_store,
-        audit_logger=getattr(runtime, "audit_logger", None),
-    )
+    base = _load_unified_compat_config(config_path)
+    roots = resolve_cli_roots(config_path=config_path)
+    try:
+        foreground = _build_unified_telegram_runtime_from_base(
+            base=base,
+            home_root=roots.home_root,
+            data_root=roots.data_root,
+            logger_name="openminion.controlplane.telegram.compat",
+        )
+    except RuntimeError as exc:
+        if "controlplane runtime components" in str(exc):
+            raise SystemExit("channels.telegram.enabled is false") from exc
+        raise
+    return _UnifiedTelegramRegistry(foreground), "telegram"
 
-    registry = ChannelRegistry()
-    registry.register(adapter)
-    return registry, adapter.channel_id
+
+class _UnifiedTelegramRegistry:
+    def __init__(self, foreground) -> None:
+        self._foreground = foreground
+
+    def get(self, channel_id: str):
+        if channel_id != "telegram":
+            raise KeyError(channel_id)
+        return self._foreground.runner
+
+    def list(self) -> list[str]:
+        return ["telegram"]
+
+    def start_all(self, stop_event=None):
+        self._foreground.start(stop_event=stop_event)
+        return {"telegram": {"ok": True}}
+
+    def stop_all(self):
+        self._foreground.stop()
+        return {"telegram": {"ok": True}}
+
+
+def _load_unified_compat_config(config_path: str | None):
+    from openminion.cli.config import load_cli_config
+
+    base = load_cli_config(config_path)
+    channels = dict(getattr(base, "channels", {}) or {})
+    cp_cfg = load_controlplane_config(config_path, env=dict(os.environ))
+    channels.setdefault(
+        "controlplane",
+        {
+            "sqlite_path": cp_cfg.sqlite_path,
+            "wal": cp_cfg.wal,
+            "openminion_enabled": cp_cfg.openminion_enabled,
+            "openminion_config_path": cp_cfg.openminion_config_path,
+            "openminion_channel": cp_cfg.openminion_channel,
+            "openminion_target": cp_cfg.openminion_target,
+            "openminion_deliver": cp_cfg.openminion_deliver,
+        },
+    )
+    tg_cfg = load_config(config_path, env=dict(os.environ)).telegram
+    if tg_cfg.enabled:
+        enabled = list(getattr(base, "enabled_channels", []) or [])
+        if "telegram" not in enabled:
+            enabled.append("telegram")
+        base.enabled_channels = enabled
+    base.channels = channels
+    return base
 
 
 def create_pair_token(args: argparse.Namespace) -> None:
-    cfg = load_config(args.config, env=dict(os.environ)).telegram
-    if not cfg.enabled:
-        raise SystemExit("channels.telegram.enabled is false")
-
-    if args.user_id is None and args.chat_id is None:
-        raise SystemExit("pair-create requires --user-id and/or --chat-id")
-
-    scopes = _parse_scopes(args.scopes) or list(cfg.pairing.default_scopes)
-    store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
-    pairing = TelegramPairingService(config=cfg.pairing, store=store)
-    issued = pairing.issue_token(
-        expected_user_id=args.user_id,
-        expected_chat_id=args.chat_id,
-        token_ttl_seconds=args.ttl_seconds or cfg.pairing.token_ttl_seconds,
-        scopes=scopes,
-        token=args.token,
-    )
+    scopes = _parse_scopes(args.scopes)
+    try:
+        cfg, issued = issue_pair_token_for_cli(
+            config_path=args.config,
+            user_id=args.user_id,
+            chat_id=args.chat_id,
+            ttl_seconds=args.ttl_seconds,
+            scopes=scopes,
+            token=args.token,
+        )
+    except RuntimeError as exc:
+        raise SystemExit(str(exc)) from exc
 
     expires_iso = datetime.fromtimestamp(
         issued.expires_at_ts, tz=timezone.utc
@@ -228,7 +230,42 @@ def create_pair_token(args: argparse.Namespace) -> None:
         except Exception:
             pass
 
-    store.close()
+
+def issue_pair_token_for_cli(
+    *,
+    config_path: str | None,
+    user_id: int | str | None,
+    chat_id: int | str | None,
+    ttl_seconds: int | None = None,
+    scopes: list[str] | None = None,
+    token: str | None = None,
+) -> tuple[TelegramChannelConfig, PairCreateResult]:
+    cfg = load_config(config_path, env=dict(os.environ)).telegram
+    if not cfg.enabled:
+        raise RuntimeError("channels.telegram.enabled is false")
+    if user_id is None and chat_id is None:
+        raise RuntimeError("pair-create requires --user-id and/or --chat-id")
+
+    store = TelegramPollStateStore(cfg.polling.state_sqlite_path)
+    cp_cfg = load_controlplane_config(config_path, env=dict(os.environ))
+    cp_store = SQLiteControlPlaneStore(cp_cfg.sqlite_path, wal=cp_cfg.wal)
+    try:
+        pairing = TelegramPairingService(
+            config=cfg.pairing,
+            store=store,
+            controlplane_store=cp_store,
+        )
+        issued = pairing.issue_token(
+            expected_user_id=int(user_id) if user_id is not None else None,
+            expected_chat_id=int(chat_id) if chat_id is not None else None,
+            token_ttl_seconds=ttl_seconds or cfg.pairing.token_ttl_seconds,
+            scopes=scopes or list(cfg.pairing.default_scopes),
+            token=token,
+        )
+        return cfg, issued
+    finally:
+        cp_store.close()
+        store.close()
 
 
 def _parse_scopes(raw: str | None) -> list[str]:
@@ -280,10 +317,13 @@ def main(argv: list[str] | None = None) -> int:
     runner = registry.get(channel_id)
 
     if args.once:
-        run_once = getattr(runner, "run_once", None)
-        if not callable(run_once):
-            raise SystemExit("--once is only supported in polling mode")
-        run_once()
+        try:
+            run_once = getattr(runner, "run_once", None)
+            if not callable(run_once):
+                raise SystemExit("--once is only supported in polling mode")
+            run_once()
+        finally:
+            registry.stop_all()
         return 0
 
     stop = threading.Event()

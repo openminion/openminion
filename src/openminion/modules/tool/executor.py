@@ -225,6 +225,29 @@ def _unknown_tool_result(
     )
 
 
+def _hidden_tool_result(
+    *,
+    call: ProviderToolCall,
+    decision: Any,
+) -> ToolExecutionResult:
+    return ToolExecutionResult(
+        tool_name=str(call.name or "").strip() or "unknown",
+        ok=False,
+        content="",
+        verified=False,
+        error="tool is not active in the current exposure profile",
+        call_id=call.id,
+        source=call.source,
+        data={
+            "error_code": "tool_exposure_denied",
+            "reason_code": decision.reason_code or "profile_inactive",
+            "profile_id": str(getattr(decision, "profile_id", "") or ""),
+            "activation_id": str(getattr(decision, "activation_id", "") or ""),
+            "target_id": str(getattr(decision, "target_id", "") or ""),
+        },
+    )
+
+
 def _normalized_depends_on(call: ProviderToolCall) -> list[str]:
     raw_depends_on = getattr(call, "depends_on", []) or []
     if isinstance(raw_depends_on, str):
@@ -265,6 +288,7 @@ def _stamp_execution_facts(
             "approval_denied",
             "confirm_required",
             "require_approval",
+            "tool_exposure_denied",
         }:
             result.state = "denied"
         else:
@@ -344,6 +368,70 @@ def _stamp_and_emit_tool_result(
     return stamped
 
 
+def _runtime_direct_allowed(
+    registry: "ToolRegistry",
+    *,
+    context: ToolExecutionContext,
+    raw_tool_name: str,
+) -> bool:
+    metadata = context.metadata
+    if not isinstance(metadata, Mapping):
+        return True
+    origin = str(metadata.get("tool_call_origin", "") or "").strip().lower()
+    if origin != "model":
+        return True
+    tool = registry._tools.get(raw_tool_name)
+    if isinstance(tool, ToolSpec) and bool(
+        getattr(tool, "prompt_visible_runtime_name", False)
+    ):
+        return True
+    override = str(metadata.get("allow_runtime_direct", "") or "").strip().lower()
+    return override in {"1", "true", "yes", "on"}
+
+
+def _sidecar_start_failure(
+    registry: "ToolRegistry",
+    *,
+    tool: ToolSpec,
+    runtime_tool_name: str,
+    call: ProviderToolCall,
+    env_owner: Any,
+) -> ToolExecutionResult | None:
+    if not tool.sidecar:
+        return None
+    try:
+        autostart = registry.ensure_sidecar_autostart(
+            name=tool.sidecar,
+            config_path=env_owner.get(OPENMINION_CONFIG_PATH_ENV, "") or None,
+            runtime_env=env_owner.snapshot(),
+            interactive=bool(sys.stdin.isatty()),
+            logger=logging.getLogger("openminion.sidecars"),
+        )
+    except Exception as exc:
+        return ToolExecutionResult(
+            tool_name=runtime_tool_name or "unknown",
+            ok=False,
+            content="",
+            verified=False,
+            error=f"sidecar '{tool.sidecar}' autostart failed: {exc}",
+            call_id=call.id,
+            source=call.source,
+            data={"sidecar": tool.sidecar},
+        )
+    if autostart.get("enabled", False):
+        return None
+    return ToolExecutionResult(
+        tool_name=runtime_tool_name or "unknown",
+        ok=False,
+        content="",
+        verified=False,
+        error=f"sidecar '{tool.sidecar}' not enabled",
+        call_id=call.id,
+        source=call.source,
+        data={"sidecar": tool.sidecar, "autostart": autostart},
+    )
+
+
 def execute_single_call(
     registry: "ToolRegistry",
     *,
@@ -360,36 +448,50 @@ def execute_single_call(
         status="ok",
         extra={"tool_name": raw_tool_name or "unknown"},
     )
-    allow_runtime_direct = True
-    if isinstance(getattr(context, "metadata", None), Mapping):
-        origin = str(context.metadata.get("tool_call_origin", "") or "").strip().lower()
-        if origin == "model":
-            allow_runtime_direct = False
-            prompt_visible_runtime_tool = registry._tools.get(raw_tool_name)
-            if isinstance(prompt_visible_runtime_tool, ToolSpec) and bool(
-                getattr(
-                    prompt_visible_runtime_tool,
-                    "prompt_visible_runtime_name",
-                    False,
-                )
-            ):
-                allow_runtime_direct = True
-            override = (
-                str(context.metadata.get("allow_runtime_direct", "") or "")
-                .strip()
-                .lower()
-            )
-            if override in {"1", "true", "yes", "on"}:
-                allow_runtime_direct = True
     resolution = resolve_binding_for_call(
         raw_tool_name=raw_tool_name,
         available_tool_names=available_tool_names,
-        allow_runtime_direct=allow_runtime_direct,
+        allow_runtime_direct=_runtime_direct_allowed(
+            registry,
+            context=context,
+            raw_tool_name=raw_tool_name,
+        ),
     )
     if resolution is None:
         return _stamp_and_emit_tool_result(
             context,
             result=_unknown_tool_result(call=call, raw_tool_name=raw_tool_name),
+            started_at=started_at,
+        )
+
+    from openminion.modules.tool.exposure import exposure_scope
+
+    scope = exposure_scope(
+        context.metadata if isinstance(context.metadata, Mapping) else None
+    )
+    exposure_service = getattr(registry, "exposure_service", None)
+    decision = None
+    if exposure_service is not None and exposure_service.profiles:
+        decision = exposure_service.decide(
+            resolution.model_tool_id or raw_tool_name,
+            **scope,
+        )
+    if decision is not None and decision.state != "visible":
+        exposure_service.record_refusal(decision, **scope)
+        result = _hidden_tool_result(call=call, decision=decision)
+        _emit_tool_execution_counter(
+            context,
+            counter_name="tool_exposure_refused",
+            status="denied",
+            extra={
+                "tool_name": result.tool_name,
+                "profile_id": decision.profile_id,
+                "reason_code": decision.reason_code or "profile_inactive",
+            },
+        )
+        return _stamp_and_emit_tool_result(
+            context,
+            result=result,
             started_at=started_at,
         )
 
@@ -449,42 +551,15 @@ def execute_single_call(
             arguments=raw_arguments,
         )
 
-        if isinstance(tool, ToolSpec) and tool.sidecar:
-            try:
-                from openminion.services.lifecycle.sidecars import (
-                    ensure_sidecar_autostart,
-                )
-
-                autostart = ensure_sidecar_autostart(
-                    name=tool.sidecar,
-                    config_path=env_owner.get(OPENMINION_CONFIG_PATH_ENV, "") or None,
-                    runtime_env=env_owner.snapshot(),
-                    interactive=bool(sys.stdin.isatty()),
-                    logger=logging.getLogger("openminion.sidecars"),
-                )
-            except Exception as exc:
-                last_result = ToolExecutionResult(
-                    tool_name=runtime_tool_name or "unknown",
-                    ok=False,
-                    content="",
-                    verified=False,
-                    error=f"sidecar '{tool.sidecar}' autostart failed: {exc}",
-                    call_id=call.id,
-                    source=call.source,
-                    data={"sidecar": tool.sidecar},
-                )
-                break
-            if not autostart.get("enabled", False):
-                last_result = ToolExecutionResult(
-                    tool_name=runtime_tool_name or "unknown",
-                    ok=False,
-                    content="",
-                    verified=False,
-                    error=f"sidecar '{tool.sidecar}' not enabled",
-                    call_id=call.id,
-                    source=call.source,
-                    data={"sidecar": tool.sidecar, "autostart": autostart},
-                )
+        if isinstance(tool, ToolSpec):
+            last_result = _sidecar_start_failure(
+                registry,
+                tool=tool,
+                runtime_tool_name=runtime_tool_name,
+                call=call,
+                env_owner=env_owner,
+            )
+            if last_result is not None:
                 break
 
         boundary_adapter = getattr(context, "blast_radius_adapter", None)
@@ -511,6 +586,12 @@ def execute_single_call(
             )
         )
         enriched_data.update(_tool_contract_metadata(tool))
+        if decision is not None and decision.profile_id:
+            enriched_data["tool_exposure"] = {
+                "profile_id": decision.profile_id,
+                "activation_id": decision.activation_id,
+                "target_id": decision.target_id,
+            }
         last_result = ToolExecutionResult(
             tool_name=runtime_tool_name or resolution.runtime_tool_name or "unknown",
             ok=bool(executed.ok),
@@ -542,6 +623,8 @@ def execute_single_call(
             ),
             started_at=started_at,
         )
+    if decision is not None:
+        exposure_service.record_invocation(decision, **scope)
     return _stamp_and_emit_tool_result(
         context,
         result=last_result,

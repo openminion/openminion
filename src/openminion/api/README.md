@@ -29,12 +29,27 @@ Surface posture:
   navigation, but that documentation does not make deep imports blanket stable.
 
 Root allowlist:
+- `__init__.py`
+- `agent.py`
 - `config.py`
 - `constants.py`
+- `handoff.py`
 - `metrics.py`
 - `metrics_registry.py`
 - `runtime.py`
 - `turns.py`
+
+Executable boundary checks:
+- `scripts/validate/api_layout.py` rejects root files outside that allowlist and
+  requires `core/`, `operations/`, `queries/`, `responses/`, `routes/`, and
+  `server/`.
+- `scripts/baselines/api_route_owner_imports.tsv` is an exact downward-only
+  inventory of route imports from module/service owners.
+- `scripts/baselines/api_complexity.tsv` is the downward-only budget for the
+  largest API callable, largest route, and the bounded runtime, report, and
+  server owners.
+- `scripts/validate/import_boundaries.py` rejects module-to-API and
+  service-to-API implementation imports, including lazy and type-only imports.
 
 Not in `api/`:
 - top-level process entry points such as `openminion/daemon.py` and `openminion/daemon_main.py`

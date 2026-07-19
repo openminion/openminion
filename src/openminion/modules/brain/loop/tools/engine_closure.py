@@ -99,15 +99,7 @@ class AdaptiveLoopRunnerClosureMixin:
                 self.loop_state,
                 signature=signature,
             )
-            repeated_tool_names = {
-                str(getattr(item, "name", "") or "").strip()
-                for item in tool_calls
-                if str(getattr(item, "name", "") or "").strip()
-            }
-            has_alternative_tool = len(self.active_tool_names) <= 5 and bool(
-                set(self.active_tool_names) - repeated_tool_names
-            )
-            if eligible_facts is not None and not has_alternative_tool:
+            if eligible_facts is not None:
                 duplicate_outcome, duration_ms, duplicate_tokens = (
                     _force_duplicate_batch_answer_only_closure(
                         loop_ctx=self.loop_ctx,

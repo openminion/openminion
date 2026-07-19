@@ -2,6 +2,18 @@ from functools import lru_cache
 from typing import Final
 
 
+_PLAN_CONTROL_TOOL_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "plan.set",
+        "plan.add",
+        "plan.update",
+        "plan.complete",
+        "plan.list",
+        "plan.clear",
+    }
+)
+
+
 PERMISSION_MODE_ALIASES: Final[dict[str, str]] = {
     "default": "ask",
     "plan": "ask",
@@ -77,6 +89,19 @@ def readonly_blocked_tool_names() -> frozenset[str]:
     )
 
 
+@lru_cache(maxsize=1)
+def registered_readonly_tool_names() -> frozenset[str]:
+    from openminion.modules.tool import build_default_tool_registry
+
+    registry = build_default_tool_registry()
+    return frozenset(
+        name
+        for name, spec in registry.list().items()
+        if str(getattr(spec, "min_scope", "") or "").strip().upper() == "READ_ONLY"
+        and not bool(getattr(spec, "block_under_readonly", False))
+    )
+
+
 def is_tool_blocked_by_readonly(tool_name: str) -> bool:
     normalized = str(tool_name or "").strip().lower()
     if not normalized:
@@ -87,11 +112,29 @@ def is_tool_blocked_by_readonly(tool_name: str) -> bool:
     return False
 
 
+def request_outcome_allows_tool(
+    *,
+    requested_outcome: str | None,
+    tool_name: str,
+) -> bool:
+    outcome = str(requested_outcome or "").strip().lower()
+    if outcome in {"", "execute"}:
+        return True
+    normalized = str(tool_name or "").strip().lower()
+    if not normalized:
+        return False
+    if outcome == "plan_only" and normalized in _PLAN_CONTROL_TOOL_NAMES:
+        return True
+    return normalized in registered_readonly_tool_names()
+
+
 __all__ = [
     "PERMISSION_MODE_ALIASES",
     "canonical_permission_overrides",
     "canonical_permission_mode",
     "effective_permission_mode_for_tool",
     "is_tool_blocked_by_readonly",
+    "registered_readonly_tool_names",
+    "request_outcome_allows_tool",
     "readonly_blocked_tool_names",
 ]

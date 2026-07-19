@@ -3,7 +3,7 @@ from __future__ import annotations
 from openminion.modules.storage.runtime.migrations import migrate_database
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.storage.runtime.sqlite import connect_database
-from openminion.services.context.slices import (
+from openminion.modules.context.slices import (
     SUMMARY_SHORT_SOURCE,
     build_session_slice_from_runtime_store,
 )

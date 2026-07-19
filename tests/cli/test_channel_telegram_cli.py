@@ -10,6 +10,7 @@ import pytest
 
 from openminion.cli.commands import channel
 from openminion.cli.parser.base import build_parser
+from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
 
 
 class FakeTelegramBotAPI:
@@ -105,6 +106,22 @@ def test_channel_telegram_subcommands_registered() -> None:
     )
     assert sync_args.telegram_command == "commands-sync"
 
+    status_args = parser.parse_args(
+        [
+            "channel",
+            "telegram",
+            "status",
+            "--config",
+            "a.json",
+            "--json",
+            "--chat-id",
+            "22",
+        ]
+    )
+    assert status_args.telegram_command == "status"
+    assert status_args.json is True
+    assert status_args.chat_id == 22
+
 
 def test_setup_writes_unified_config_from_stdin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -172,14 +189,31 @@ def test_doctor_reports_json_checks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(channel, "TelegramBotAPI", FakeTelegramBotAPI)
+    monkeypatch.setattr(channel, "_daemon_probe", lambda _path: ("unreachable", {}))
     config_path = _write_profile(tmp_path)
 
-    rc = channel.telegram_doctor(SimpleNamespace(config=str(config_path), json=True))
+    rc = channel.telegram_doctor(
+        SimpleNamespace(
+            config=str(config_path),
+            json=True,
+            user_id=None,
+            chat_id=None,
+            topic_id=None,
+        )
+    )
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     check_ids = {check["id"] for check in payload["checks"]}
-    assert {"config.parse", "bot.get_me", "pairings.active"} <= check_ids
+    assert {
+        "config.parse",
+        "bot.get_me",
+        "pairings.active",
+        "default.profile",
+        "session.binding",
+        "daemon.state",
+        "telegram.listener",
+    } <= check_ids
 
 
 def test_identify_prints_candidate(
@@ -298,8 +332,13 @@ def test_run_starts_unified_profile_runner(
 
     runner = _Runner()
     config_path = _write_profile(tmp_path)
+    foreground = SimpleNamespace(
+        runner=runner,
+        outbox_worker=None,
+        stop=lambda: None,
+    )
     monkeypatch.setattr(
-        channel, "_build_unified_telegram_runner", lambda _config_path: runner
+        channel, "_build_unified_telegram_runtime", lambda _config_path: foreground
     )
 
     rc = channel.telegram_run(SimpleNamespace(config=str(config_path), once=True))
@@ -313,15 +352,77 @@ def test_status_prints_runner_requirement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config_path = _write_profile(tmp_path)
-    monkeypatch.setattr(channel, "daemon_is_reachable", lambda _endpoint: False)
+    monkeypatch.setattr(channel, "_daemon_probe", lambda _path: ("unreachable", {}))
 
-    rc = channel.telegram_status(SimpleNamespace(config=str(config_path)))
+    rc = channel.telegram_status(
+        SimpleNamespace(
+            config=str(config_path),
+            json=False,
+            user_id=None,
+            chat_id=None,
+            topic_id=None,
+        )
+    )
 
     assert rc == 0
     output = capsys.readouterr().out
     assert "telegram.enabled=True" in output
-    assert "daemon.state=not observed from this process" in output
+    assert "daemon.state=not_observed" in output
+    assert "default.profile=agent:default" in output
+    assert "active.session=not_observed" in output
+    assert "active.profile=not_observed" in output
     assert "runner is online" in output
+
+
+def test_status_json_reports_bound_session_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_path = _write_profile(tmp_path)
+    cp_cfg = channel._load_controlplane_config(str(config_path))
+    store = SQLiteControlPlaneStore(cp_cfg.sqlite_path)
+    session_id = store.resolve_session("telegram:11", "telegram:22")
+    store.ensure_agent("minimax-m2-5")
+    store.set_agent(session_id, "minimax-m2-5")
+    store.close()
+    monkeypatch.setattr(
+        channel,
+        "_daemon_probe",
+        lambda _path: (
+            "ok",
+            {
+                "channel_runtime": {
+                    "state": "running",
+                    "channels": {
+                        "telegram": {
+                            "state": "running",
+                            "listener_alive": True,
+                            "connected": True,
+                        }
+                    },
+                }
+            },
+        ),
+    )
+
+    rc = channel.telegram_status(
+        SimpleNamespace(
+            config=str(config_path),
+            json=True,
+            user_id=11,
+            chat_id=22,
+            topic_id=None,
+        )
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["daemon"]["state"] == "running"
+    assert payload["telegram"]["listener_state"] == "running"
+    assert payload["telegram"]["listener_alive"] is True
+    assert payload["telegram"]["connected"] is True
+    assert payload["session"]["chat_key"] == "telegram:22"
+    assert payload["session"]["session_id"] == session_id
+    assert payload["session"]["profile_id"] == "minimax-m2-5"
 
 
 def test_commands_sync_updates_bot_menu(

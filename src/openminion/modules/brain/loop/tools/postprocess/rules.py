@@ -64,6 +64,20 @@ _TOOL_ARGUMENT_KEYS = (
 )
 
 
+def _looks_like_file_write_argument_json(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    path = str(payload.get("path") or payload.get("file_path") or "").strip()
+    has_body = any(key in payload for key in ("content", "body"))
+    if path and has_body:
+        return True
+    for key in ("arguments", "args", "input", "tool_input", "parameters"):
+        nested = payload.get(key)
+        if _looks_like_file_write_argument_json(nested):
+            return True
+    return False
+
+
 def _looks_like_embedded_tool_payload_json(text: str) -> bool:
     for raw_line in str(text or "").splitlines():
         line = raw_line.strip()
@@ -75,6 +89,8 @@ def _looks_like_embedded_tool_payload_json(text: str) -> bool:
             continue
         if not isinstance(payload, dict):
             continue
+        if _looks_like_file_write_argument_json(payload):
+            return True
         if "tool_name" in payload and any(
             key in payload for key in ("tool_input", "arguments", "input")
         ):
@@ -125,6 +141,7 @@ def _looks_like_unexecutable_tool_payload_text(text: str) -> bool:
                 )
             )
         )
+        or _looks_like_file_write_argument_json(parsed)
         or lower_token.startswith("[system: unexecutable_tool_envelope]")
         or lower_token.startswith("<invoke")
         or "minimax:tool_call" in lower_token

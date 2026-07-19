@@ -1,5 +1,5 @@
 from openminion.base.config import ChannelPolicyConfig
-from openminion.services.channel.policy import (
+from openminion.modules.controlplane.channels.policy import (
     build_channel_access_policy,
     evaluate_inbound_policy,
 )

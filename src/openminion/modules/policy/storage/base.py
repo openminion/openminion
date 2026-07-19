@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from ..models import PolicyGrant, PolicyGrantInput
 
@@ -48,11 +48,11 @@ class PolicyStore(ABC):
         decision: str,
         matched_grant_id: Optional[str],
         reason_code: str,
-        risk_spec: Dict[str, Any],
+        risk_spec: dict[str, Any],
     ) -> str: ...
 
     @abstractmethod
-    def list_decisions(self, *, limit: int = 100) -> list[Dict[str, Any]]: ...
+    def list_decisions(self, *, limit: int = 100) -> list[dict[str, Any]]: ...
 
     @abstractmethod
     def set_setting(self, key: str, value: str) -> None: ...

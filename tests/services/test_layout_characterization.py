@@ -20,8 +20,8 @@ import openminion.api.server  # noqa: F401
         ("openminion.services.lifecycle.request_orchestrator", "run_turn"),
         ("openminion.services.lifecycle.self_improvement", "SelfImprovementEngine"),
         ("openminion.services.lifecycle.sidecars", "SidecarManager"),
-        ("openminion.services.integration.skill_harness", "run_skill_harness"),
-        ("openminion.services.integration.vector_sync", "VectorSyncScheduler"),
+        ("openminion.modules.skill.diagnostics.harness", "run_skill_harness"),
+        ("openminion.modules.storage.runtime.vector_sync", "VectorSyncScheduler"),
     ],
 )
 def test_moving_services_modules_expose_expected_symbol(

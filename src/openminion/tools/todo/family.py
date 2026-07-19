@@ -1,4 +1,8 @@
-from openminion.modules.tool.contracts.model_ids import MODEL_TODO_WRITE
+from openminion.modules.tool.contracts.model_ids import (
+    LEGACY_PLAN_MODEL_TOOL_IDS,
+    MODEL_TODO_WRITE,
+)
+from openminion.modules.tool.exposure import ToolExposureProfile, ToolRiskAnnotations
 from openminion.modules.tool.framework import ToolDecl, ToolFamilySpec
 
 from .plugin import (
@@ -23,6 +27,19 @@ TODO_FAMILY = ToolFamilySpec(
     min_scope_default="WRITE_SAFE",
     common_tags=("plugin", "plan"),
     common_capabilities=("plan",),
+    exposure_profiles=(
+        ToolExposureProfile(
+            profile_id="legacy_session_plan",
+            title="Legacy session planning",
+            summary="Compatibility plan and checklist tools backed by process-local state.",
+            tool_names=frozenset(LEGACY_PLAN_MODEL_TOOL_IDS),
+            risk=ToolRiskAnnotations(tier="plan", mutates_state=True),
+            activation_hint=(
+                "Activate only for compatibility callers that explicitly require "
+                "the legacy session plan tools."
+            ),
+        ),
+    ),
     tools=(
         ToolDecl(
             name="plan.set",

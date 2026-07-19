@@ -24,9 +24,6 @@ def _load_script_module():
     return module
 
 
-# --- 1. rule parsing ---------------------------------------------------------
-
-
 def test_load_rules_parses_canonical_rules_file(tmp_path: pathlib.Path) -> None:
     mod = _load_script_module()
     rules = mod._load_rules(_RULES_PATH)
@@ -54,9 +51,6 @@ def test_load_rules_malformed_json_returns_empty(tmp_path: pathlib.Path) -> None
     assert mod._load_rules(bad) == []
 
 
-# --- 2. counting -------------------------------------------------------------
-
-
 def test_count_file_finds_direct_calls(tmp_path: pathlib.Path) -> None:
     mod = _load_script_module()
     sample = tmp_path / "sample.py"
@@ -75,9 +69,6 @@ def test_count_file_finds_direct_calls(tmp_path: pathlib.Path) -> None:
     count, lines = mod._count_file(sample)
     assert count == 3
     assert lines == [2, 3, 4]
-
-
-# --- 3. fail-mode + warn-mode CLI behavior -----------------------------------
 
 
 def test_script_warn_mode_against_canonical_rules_passes() -> None:
@@ -113,9 +104,7 @@ def test_script_fail_mode_against_canonical_rules_passes() -> None:
 def test_script_fail_mode_triggers_on_synthetic_violation(
     tmp_path: pathlib.Path,
 ) -> None:
-    # Pick a known canonical-boundary-owner with >0 direct calls.
     target = pathlib.Path("src/openminion/base/logging.py")
-    # Artificially force a violation by setting max_calls=0.
     forced = tmp_path / "forced-violation-rules.json"
     forced.write_text(
         json.dumps(
@@ -165,7 +154,6 @@ def test_script_warn_lines_include_category_labels() -> None:
         timeout=60,
     )
     assert proc.returncode == 0
-    # base/logging.py is a canonical-boundary-owner with direct calls.
     assert "[boundary_exception]" in proc.stdout, (
         f"expected [boundary_exception] label in warn output; got:\n{proc.stdout}"
     )

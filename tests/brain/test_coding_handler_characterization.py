@@ -25,7 +25,9 @@ from openminion.modules.brain.loop.tools import (
 )
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_TERM_DISALLOWED_TOOL,
+    CODING_TERM_FINAL_TEXT,
     CODING_TERM_TOOL_FAILURE,
+    CODING_TERM_VERIFY_CAP_EXCEEDED,
 )
 from openminion.modules.brain.schemas import ActionResult, BudgetCounters, ToolCommand
 from openminion.modules.llm.schemas import Message
@@ -154,7 +156,7 @@ class TestCodingHandlerPureHelperBehavior:
 
     def test_verify_phase_allowed_tools_drop_mutating_writers(self) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Ship a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Ship a tiny CLI.", include_verify=True)
         runner._coding_plan.current_phase = "verify"
 
         allowed = runner._allowed_tools_for_current_phase(
@@ -179,7 +181,7 @@ class TestCodingHandlerPureHelperBehavior:
 
     def test_verify_phase_instruction_is_read_only(self) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Ship a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Ship a tiny CLI.", include_verify=True)
         runner._coding_plan.current_phase = "verify"
 
         runner._append_phase_instruction()
@@ -369,7 +371,7 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
         runner._last_verifier_candidate_payload = {
             "command": {"tool_name": "file.read"},
             "action_result": {"summary": "read ok"},
@@ -409,7 +411,7 @@ class TestCodingVerificationReserve:
 
     def test_reserved_verification_step_also_works_inside_verify_phase(self) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.messages = [
             Message(role="assistant", content="old context"),
@@ -461,7 +463,7 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.scratchpad = {
             "adaptive.tool_results": [
@@ -501,7 +503,7 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.scratchpad = {
             "coding.final_answer_reserve_used": True,
@@ -543,7 +545,7 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.messages = [
             Message(
@@ -594,7 +596,7 @@ class TestCodingVerificationReserve:
 
     def test_final_answer_reserve_budget_exhausted_salvages_final_summary(self) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.messages = [
             Message(
@@ -644,7 +646,7 @@ class TestCodingVerificationReserve:
     def test_final_answer_reserve_blocked_cap_salvages_final_summary(self) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 1
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.termination_reason = "blocked_cap"
         runner._loop_state.messages = [
@@ -701,7 +703,7 @@ class TestCodingVerificationReserve:
     def test_advance_plan_after_phase_blocks_at_self_correction_cap(self) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 2
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.")
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
         runner._loop_state.messages = [
             Message(
                 role="tool",
@@ -724,6 +726,439 @@ class TestCodingVerificationReserve:
         assert runner._advance_plan_after_phase(ctx, outcome=outcome) is False
         assert runner._loop_state.termination_reason == "blocked_cap"
         assert "coding.pending_continue" not in runner._loop_state.scratchpad
+
+    def test_advance_plan_after_phase_requires_mutating_implementation_tool(
+        self,
+    ) -> None:
+        emitted: list[dict[str, object]] = []
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.scratchpad = {}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: emitted.append(dict(kwargs)),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+        )
+
+        assert runner._advance_plan_after_phase(ctx, outcome=outcome) is False
+        assert runner._coding_plan.current_phase == "implement"
+        assert runner._loop_state.scratchpad["coding.verify_gate_blocks"] == 1
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+        assert "file.write" in runner._loop_state.messages[-1].content
+        assert "code.patch" in runner._loop_state.messages[-1].content
+        assert any(
+            status.get("payload", {}).get("coding.verify_gate_reason")
+            == "missing_implementation_write"
+            for status in emitted
+        )
+
+    def test_advance_plan_after_phase_allows_read_only_plan_without_write(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback(
+            "Explain this module.",
+            include_verify=True,
+            requires_file_change=False,
+        )
+        runner._loop_state.scratchpad = {}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.read", "exec.run"}),
+        )
+
+        assert runner._advance_plan_after_phase(ctx, outcome=outcome) is True
+        assert runner._coding_plan.current_phase == "verify"
+        assert "coding.verify_gate_blocks" not in runner._loop_state.scratchpad
+
+    def test_advance_plan_after_phase_caps_missing_implementation_tool(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 1
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.scratchpad = {}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+        )
+
+        assert runner._advance_plan_after_phase(ctx, outcome=outcome) is False
+        assert runner._loop_state.termination_reason == CODING_TERM_VERIFY_CAP_EXCEEDED
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+
+    def test_final_text_requires_mutating_tool_for_file_change_plan(
+        self,
+    ) -> None:
+        emitted: list[dict[str, object]] = []
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.scratchpad = {}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: emitted.append(dict(kwargs)),
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            final_text="result: done",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        assert runner._coding_plan.current_phase == "implement"
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+        assert "file.write" in runner._loop_state.messages[-1].content
+        assert "code.patch" in runner._loop_state.messages[-1].content
+        assert any(
+            status.get("payload", {}).get("coding.verify_gate_reason")
+            == "missing_implementation_write"
+            for status in emitted
+        )
+
+    def test_final_text_uses_scratchpad_required_file_change_when_plan_loses_flag(
+        self,
+    ) -> None:
+        emitted: list[dict[str, object]] = []
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.",
+            include_verify=True,
+            requires_file_change=False,
+        )
+        runner._loop_state.scratchpad = {"coding.requires_file_change": True}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: emitted.append(dict(kwargs)),
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            final_text="result: done",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+
+    def test_final_text_uses_scratchpad_required_file_change_when_plan_is_missing(
+        self,
+    ) -> None:
+        emitted: list[dict[str, object]] = []
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = None
+        runner._loop_state.scratchpad = {"coding.requires_file_change": True}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: emitted.append(dict(kwargs)),
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            final_text="result: done",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+        assert "file.write" in runner._loop_state.messages[-1].content
+        assert any(
+            status.get("payload", {}).get("coding.verify_gate_reason")
+            == "missing_implementation_write"
+            for status in emitted
+        )
+
+    def test_final_text_retries_when_model_prints_file_payload(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = None
+        runner._loop_state.scratchpad = {"coding.requires_file_change": True}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "code.patch", "exec.run"}),
+            final_text=json.dumps(
+                {
+                    "path": "test_project/pyproject.toml",
+                    "content": "[project]\nname = \"test-project\"\n",
+                }
+            ),
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        retry = runner._loop_state.messages[-1].content
+        assert "Do not print JSON" in retry
+        assert "file.write" in retry
+        assert "code.patch" in retry
+
+    def test_context_sync_does_not_infer_file_change_requirement_without_plan(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = None
+        runner._loop_state.scratchpad = {}
+        ctx = SimpleNamespace(
+            user_input="In the current directory, create a tiny Python module.",
+            state=SimpleNamespace(goal="", task_backed_checkpoint_id=None),
+            decision=SimpleNamespace(objective="", cwd="/tmp/project"),
+            options=SimpleNamespace(),
+        )
+
+        runner._sync_coding_context(ctx)
+
+        assert "coding.requires_file_change" not in runner._loop_state.scratchpad
+        assert runner._loop_state.scratchpad["coding.cwd"] == "/tmp/project"
+
+    def test_mutating_file_result_requires_existing_relative_path(
+        self,
+        tmp_path,
+    ) -> None:
+        runner = CodingProfileRunner()
+        created = tmp_path / "tiny_func.py"
+        created.write_text("def ok():\n    return True\n", encoding="utf-8")
+        runner._loop_state.scratchpad = {
+            "coding.cwd": str(tmp_path),
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True, "path": "tiny_func.py"},
+            ],
+        }
+
+        assert runner._has_successful_mutating_file_result() is True
+
+        runner._loop_state.scratchpad["adaptive.tool_results"] = [
+            {"tool_name": "file.write", "ok": True, "path": "missing.py"},
+        ]
+
+        assert runner._has_successful_mutating_file_result() is False
+
+    def test_mutating_file_result_accepts_runtime_final_path(
+        self,
+        tmp_path,
+    ) -> None:
+        runner = CodingProfileRunner()
+        created = tmp_path / "runtime_written.py"
+        created.write_text("VALUE = 1\n", encoding="utf-8")
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"final_path": str(created)},
+                },
+            ],
+        }
+
+        assert runner._has_successful_mutating_file_result() is True
+
+        runner._loop_state.scratchpad["adaptive.tool_results"] = [
+            {
+                "tool_name": "file.write",
+                "ok": True,
+                "data": {"final_path": str(tmp_path / "missing.py")},
+            },
+        ]
+
+        assert runner._has_successful_mutating_file_result() is False
+
+    def test_mutating_file_result_without_path_keeps_legacy_success(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.write", "ok": True},
+            ],
+        }
+
+        assert runner._has_successful_mutating_file_result() is True
+
+    def test_duplicate_tool_stop_requires_mutating_tool_for_file_change_plan(
+        self,
+    ) -> None:
+        emitted: list[dict[str, object]] = []
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.list_dir", "ok": True},
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: emitted.append(dict(kwargs)),
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "file.list_dir", "exec.run"}),
+            error_message="duplicate tool batch",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        assert runner._coding_plan.current_phase == "implement"
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+        assert "file.write" in runner._loop_state.messages[-1].content
+        assert "code.patch" in runner._loop_state.messages[-1].content
+        assert any(
+            status.get("payload", {}).get("coding.verify_gate_reason")
+            == "missing_implementation_write"
+            for status in emitted
+        )
+
+    def test_final_text_allows_read_only_plan_without_write(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback("Explain this module.", include_verify=True)
+        runner._coding_plan.requires_file_change = False
+        runner._loop_state.scratchpad = {}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: None,
+            apply_closure_judgment=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.read"}),
+            final_text="result: explanation",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "done"
+        assert result.message == "result: explanation"
+        assert "coding.verify_gate_blocks" not in runner._loop_state.scratchpad
 
     def test_final_answer_reserve_detects_missing_requested_markers(self) -> None:
         runner = CodingProfileRunner()

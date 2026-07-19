@@ -8,7 +8,7 @@ import pytest
 from openminion.base.config import OpenMinionConfig
 from openminion.services.agent.memory.gateway_adapter import MemoryServiceGatewayAdapter
 from openminion.services.runtime import bootstrap
-from openminion.services.runtime.contracts.manifest import HookManifest
+from openminion.services.runtime.plugins import PluginManifest
 from openminion.services.runtime.errors import (
     PluginActivationError,
     RuntimeBootstrapError,
@@ -29,7 +29,7 @@ def test_plugin_trust_denial_raises_domain_error(monkeypatch) -> None:
             reason_code="test-denial",
         ),
     )
-    manifest = HookManifest(
+    manifest = PluginManifest(
         id="sample",
         name="Sample",
         version="0.0.1",

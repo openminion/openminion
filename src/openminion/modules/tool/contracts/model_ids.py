@@ -42,6 +42,28 @@ MODEL_IP_PUBLIC = "ip.public"
 MODEL_IP_LOCAL = "ip.local"
 MODEL_BROWSER = "browser"
 
+MODEL_OPS_TARGET_LIST = "ops.target.list"
+MODEL_OPS_TARGET_INSPECT = "ops.target.inspect"
+MODEL_OPS_HOST_SNAPSHOT = "ops.host.snapshot"
+MODEL_OPS_SERVICE_INSPECT = "ops.service.inspect"
+MODEL_OPS_LOGS_QUERY = "ops.logs.query"
+MODEL_OPS_NETWORK_INSPECT = "ops.network.inspect"
+MODEL_OPS_COMMAND_OBSERVE = "ops.command.observe"
+MODEL_OPS_JOB_INSPECT = "ops.job.inspect"
+MODEL_OPS_JOB_CANCEL = "ops.job.cancel"
+
+OPS_MODEL_TOOL_IDS: tuple[str, ...] = (
+    MODEL_OPS_TARGET_LIST,
+    MODEL_OPS_TARGET_INSPECT,
+    MODEL_OPS_HOST_SNAPSHOT,
+    MODEL_OPS_SERVICE_INSPECT,
+    MODEL_OPS_LOGS_QUERY,
+    MODEL_OPS_NETWORK_INSPECT,
+    MODEL_OPS_COMMAND_OBSERVE,
+    MODEL_OPS_JOB_INSPECT,
+    MODEL_OPS_JOB_CANCEL,
+)
+
 MODEL_GWS_CALL = "gws.call"
 MODEL_GWS_SCHEMA = "gws.schema"
 MODEL_GWS_AUTH_SETUP = "gws.auth.setup"
@@ -77,6 +99,16 @@ MODEL_PLAN_COMPLETE = "plan.complete"
 MODEL_PLAN_LIST = "plan.list"
 MODEL_PLAN_CLEAR = "plan.clear"
 MODEL_TODO_WRITE = "todo.write"
+
+LEGACY_PLAN_MODEL_TOOL_IDS: tuple[str, ...] = (
+    MODEL_PLAN_SET,
+    MODEL_PLAN_ADD,
+    MODEL_PLAN_UPDATE,
+    MODEL_PLAN_COMPLETE,
+    MODEL_PLAN_LIST,
+    MODEL_PLAN_CLEAR,
+    MODEL_TODO_WRITE,
+)
 MODEL_TASK_SCHEDULE = "task.schedule"
 MODEL_TASK_CONSOLIDATE_MEMORY = "task.consolidate_memory"
 MODEL_TASK_WATCH = "task.watch"
@@ -99,6 +131,102 @@ MODEL_AGENT_LIST = "agent.list"
 MODEL_AGENT_GET = "agent.get"
 
 ALL_MODEL_TOOL_IDS: tuple[str, ...] = (
+    MODEL_FILE_LIST_DIR,
+    MODEL_FILE_READ,
+    MODEL_FILE_READ_RANGE,
+    MODEL_FILE_WRITE,
+    MODEL_FILE_FIND,
+    MODEL_FILE_TRASH,
+    MODEL_FILE_SEARCH,
+    MODEL_FILE_EDIT,
+    MODEL_CODE_PATCH,
+    MODEL_CODE_GREP,
+    MODEL_CODE_REPO_MAP,
+    MODEL_CODE_REPO_INDEX,
+    MODEL_CODE_SYMBOL_FIND,
+    MODEL_TOOL_LIST,
+    MODEL_TOOL_GET,
+    MODEL_TOOL_AUTHOR,
+    MODEL_TOOL_INSPECT,
+    MODEL_TOOL_REGISTER,
+    MODEL_EXEC_RUN,
+    MODEL_EXEC_POLL,
+    MODEL_EXEC_KILL,
+    MODEL_EXEC_LIST,
+    MODEL_EXEC_CLEAR,
+    MODEL_EXEC_PASTE,
+    MODEL_EXEC_SEND_KEYS,
+    MODEL_EXEC_SUBMIT,
+    MODEL_WEB_SEARCH,
+    MODEL_WEB_FETCH,
+    MODEL_WEATHER,
+    MODEL_TIME,
+    MODEL_LOCATION,
+    MODEL_HOST_METRICS,
+    MODEL_IP_PUBLIC,
+    MODEL_IP_LOCAL,
+    MODEL_BROWSER,
+    *OPS_MODEL_TOOL_IDS,
+    MODEL_GWS_CALL,
+    MODEL_GWS_SCHEMA,
+    MODEL_GWS_AUTH_SETUP,
+    MODEL_GWS_AUTH_LOGIN,
+    MODEL_GWS_AUTH_EXPORT,
+    MODEL_SKILL_INGEST,
+    MODEL_SKILL_INGEST_URL,
+    MODEL_SKILL_INSPECT,
+    MODEL_SKILL_LIST,
+    MODEL_SKILL_GET,
+    MODEL_SKILL_REMOVE,
+    MODEL_MEMORY_WRITE,
+    MODEL_MEMORY_SEARCH,
+    MODEL_MEMORY_FORGET,
+    MODEL_GIT_STATUS,
+    MODEL_GIT_DIFF,
+    MODEL_GIT_LOG,
+    MODEL_GIT_SHOW,
+    MODEL_GIT_BLAME,
+    MODEL_GIT_BRANCH,
+    MODEL_GIT_CHECKOUT,
+    MODEL_GIT_ADD,
+    MODEL_GIT_COMMIT,
+    MODEL_GIT_STASH,
+    MODEL_GIT_RESET,
+    MODEL_GIT_REFLOG,
+    MODEL_PLAN_SET,
+    MODEL_PLAN_ADD,
+    MODEL_PLAN_UPDATE,
+    MODEL_PLAN_COMPLETE,
+    MODEL_PLAN_LIST,
+    MODEL_PLAN_CLEAR,
+    MODEL_TODO_WRITE,
+    MODEL_TASK_SCHEDULE,
+    MODEL_TASK_CONSOLIDATE_MEMORY,
+    MODEL_TASK_WATCH,
+    MODEL_TASK_CANCEL,
+    MODEL_TASK_LIST,
+    MODEL_TASK_PAUSE,
+    MODEL_TASK_RESUME,
+    MODEL_TASK_SHOW,
+    MODEL_GITHUB_LIST_PRS,
+    MODEL_GITHUB_FETCH_PR,
+    MODEL_GITHUB_FETCH_DIFF,
+    MODEL_GITHUB_FETCH_COMMENTS,
+    MODEL_GITHUB_FETCH_CHECKS,
+    MODEL_GITHUB_COMMIT_FILES,
+    MODEL_GITHUB_OPEN_PR,
+    MODEL_GITHUB_POST_PR_REVIEW,
+    MODEL_GITHUB_POST_PR_COMMENT,
+    MODEL_TASK_DELEGATE,
+    MODEL_AGENT_LIST,
+    MODEL_AGENT_GET,
+)
+
+ALL_MODEL_TOOL_IDS_SET = frozenset(ALL_MODEL_TOOL_IDS)
+
+# This is intentionally explicit: a newly added canonical tool stays hidden until
+# its owner classifies it here or attaches an exposure profile to its family.
+DEFAULT_VISIBLE_MODEL_TOOL_IDS: tuple[str, ...] = (
     MODEL_FILE_LIST_DIR,
     MODEL_FILE_READ,
     MODEL_FILE_READ_RANGE,
@@ -160,13 +288,6 @@ ALL_MODEL_TOOL_IDS: tuple[str, ...] = (
     MODEL_GIT_STASH,
     MODEL_GIT_RESET,
     MODEL_GIT_REFLOG,
-    MODEL_PLAN_SET,
-    MODEL_PLAN_ADD,
-    MODEL_PLAN_UPDATE,
-    MODEL_PLAN_COMPLETE,
-    MODEL_PLAN_LIST,
-    MODEL_PLAN_CLEAR,
-    MODEL_TODO_WRITE,
     MODEL_TASK_SCHEDULE,
     MODEL_TASK_CONSOLIDATE_MEMORY,
     MODEL_TASK_WATCH,
@@ -188,10 +309,30 @@ ALL_MODEL_TOOL_IDS: tuple[str, ...] = (
     MODEL_AGENT_LIST,
     MODEL_AGENT_GET,
 )
+DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET = frozenset(DEFAULT_VISIBLE_MODEL_TOOL_IDS)
+PROFILE_GATED_MODEL_TOOL_IDS = (*OPS_MODEL_TOOL_IDS, *LEGACY_PLAN_MODEL_TOOL_IDS)
+PROFILE_GATED_MODEL_TOOL_IDS_SET = frozenset(PROFILE_GATED_MODEL_TOOL_IDS)
 
-ALL_MODEL_TOOL_IDS_SET = frozenset(ALL_MODEL_TOOL_IDS)
+MODEL_CONTROL_TOOL_IDS = frozenset(
+    {
+        "clarify",
+        "coding",
+        "decompose",
+        "plan",
+        "research",
+        "review.diff",
+        "tool.request",
+    }
+)
 
 _DYNAMIC_MODEL_TOOL_PREFIXES: tuple[str, ...] = ("mcp.",)
+
+
+def is_dynamic_model_tool_id(model_tool_id: str) -> bool:
+    token = str(model_tool_id or "").strip()
+    return bool(token) and any(
+        token.startswith(prefix) for prefix in _DYNAMIC_MODEL_TOOL_PREFIXES
+    )
 
 
 def is_valid_model_tool_id(model_tool_id: str) -> bool:
@@ -200,4 +341,4 @@ def is_valid_model_tool_id(model_tool_id: str) -> bool:
         return False
     if token in ALL_MODEL_TOOL_IDS_SET:
         return True
-    return any(token.startswith(prefix) for prefix in _DYNAMIC_MODEL_TOOL_PREFIXES)
+    return is_dynamic_model_tool_id(token)

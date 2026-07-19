@@ -1,3 +1,6 @@
+from openminion.modules.controlplane.pairing.schema import CP_PAIRING_SCHEMA
+
+
 MIGRATIONS: list[tuple[int, str, str]] = [
     (
         1,
@@ -218,6 +221,11 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         CREATE INDEX IF NOT EXISTS idx_cp_channel_subjects_status
             ON cp_channel_subjects(status, channel);
         """,
+    ),
+    (
+        5,
+        "cross_channel_pairing_v1",
+        CP_PAIRING_SCHEMA,
     ),
 ]
 

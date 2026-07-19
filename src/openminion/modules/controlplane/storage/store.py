@@ -13,6 +13,7 @@ from openminion.modules.storage.runtime.module_store import (
 from openminion.modules.storage.record_store import RecordStore
 from .base import ControlplaneStore
 from .inbox_outbox import InboxOutboxStore
+from .pair_tokens import PairTokenStoreMixin
 from .principals import PrincipalsStore
 from .rows import iso_now as _iso_now, json_dump as _json_dump, json_load as _json_load
 from .schema import MIGRATIONS as _MIGRATIONS, list_migrations as _list_migrations
@@ -28,7 +29,7 @@ def _postgresify_ddl(statement: str) -> str:
     return statement.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
 
 
-class _ControlPlaneStoreMixin(ControlplaneStore):
+class _ControlPlaneStoreMixin(PairTokenStoreMixin, ControlplaneStore):
     contract_version = CONTROLPLANE_INTERFACE_VERSION
 
     def __init_agents(self) -> None:
@@ -620,29 +621,6 @@ class _ControlPlaneStoreMixin(ControlplaneStore):
 
     def get_outbox(self, outbox_id: str) -> dict[str, Any] | None:
         return self._inbox_outbox.get_outbox(outbox_id)
-
-    def upsert_pairing(
-        self,
-        *,
-        channel: str,
-        chat_id: str,
-        user_id: str,
-        session_id: str,
-        status: str = PRINCIPAL_BINDING_STATUS_ACTIVE,
-        scopes: list[str] | tuple[str, ...] | None = None,
-        note: str | None = None,
-        pairing_id: str | None = None,
-    ) -> str:
-        return self._principals.upsert_pairing(
-            channel=channel,
-            chat_id=chat_id,
-            user_id=user_id,
-            session_id=session_id,
-            status=status,
-            scopes=scopes,
-            note=note,
-            pairing_id=pairing_id,
-        )
 
     def get_pairing(self, *, channel: str, chat_id: str) -> dict[str, Any] | None:
         return self._principals.get_pairing(channel=channel, chat_id=chat_id)

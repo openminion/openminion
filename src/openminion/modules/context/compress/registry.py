@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Literal, Optional
+from typing import Literal
 
 
 MethodKind = Literal["main", "prepass"]
@@ -24,8 +24,8 @@ class MethodRegistry:
     BASELINE_METHOD_ID = "extractive.v1"
 
     def __init__(self) -> None:
-        self._main_methods: Dict[str, MethodDescriptor] = {}
-        self._prepass_methods: Dict[str, MethodDescriptor] = {}
+        self._main_methods: dict[str, MethodDescriptor] = {}
+        self._prepass_methods: dict[str, MethodDescriptor] = {}
         # Baseline extractive path is always available.
         self.register_main(self.BASELINE_METHOD_ID, optional=False, available=True)
 
@@ -68,20 +68,20 @@ class MethodRegistry:
         descriptor.available = available
 
     # Query helpers --------------------------------------------------------
-    def get_descriptor(self, method_id: str) -> Optional[MethodDescriptor]:
+    def get_descriptor(self, method_id: str) -> MethodDescriptor | None:
         return self._main_methods.get(method_id) or self._prepass_methods.get(method_id)
 
-    def get_main(self, method_id: Optional[str]) -> Optional[MethodDescriptor]:
+    def get_main(self, method_id: str | None) -> MethodDescriptor | None:
         if not method_id:
             return None
         return self._main_methods.get(method_id)
 
-    def get_prepass(self, method_id: Optional[str]) -> Optional[MethodDescriptor]:
+    def get_prepass(self, method_id: str | None) -> MethodDescriptor | None:
         if not method_id:
             return None
         return self._prepass_methods.get(method_id)
 
-    def is_main_available(self, method_id: Optional[str]) -> bool:
+    def is_main_available(self, method_id: str | None) -> bool:
         if not method_id:
             return False
         if method_id == self.BASELINE_METHOD_ID:
@@ -89,7 +89,7 @@ class MethodRegistry:
         descriptor = self._main_methods.get(method_id)
         return bool(descriptor and descriptor.is_available())
 
-    def is_prepass_available(self, method_id: Optional[str]) -> bool:
+    def is_prepass_available(self, method_id: str | None) -> bool:
         if not method_id:
             return False
         descriptor = self._prepass_methods.get(method_id)

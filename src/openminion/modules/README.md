@@ -8,13 +8,12 @@ subsystems operate.
 
 ## Ownership split with `services/`
 
-Four subsystems pair with a `services/` peer that handles runtime wiring for
+Three subsystems pair with a `services/` peer that handles runtime wiring for
 that area:
 
 - `brain/`
 - `context/`
 - `identity/`
-- `tool/`
 
 When a paired subsystem changes shape, update the module owner and the matching
 service owner together. Module packages own domain contracts, schemas,
@@ -23,7 +22,7 @@ policy wiring, lifecycle hooks, and cross-module orchestration. Do not move code
 between the two layers unless the owning tracker names the paired owner,
 validator effect, and behavior tests.
 
-Fifteen subsystems are standalone domain owners with no `services/` peer:
+The following subsystems are standalone domain owners with no `services/` peer:
 
 - `a2a/`
 - `artifact/`
@@ -40,10 +39,13 @@ Fifteen subsystems are standalone domain owners with no `services/` peer:
 - `storage/`
 - `task/`
 - `telemetry/`
+- `tool/`
 
 `modules/` does not mirror `services/` one-to-one. Runtime glue such as
-`services/integration/skill_harness.py` remains integration wiring, not a
-peer package for `modules/skill/`.
+`services/runtime/` remains cross-owner orchestration, not a peer package for
+every module with runtime helpers. Service paths for policy, tool selection,
+channel authenticity, stats, and similar module-owned behavior are
+compatibility imports or runtime wiring, not parallel feature owners.
 
 ## Root allowlist
 

@@ -31,7 +31,8 @@ from .adapters.factory import (
 )
 from .interfaces import SessionAPI
 from .runner import BrainRunner, RunnerOptions
-from .schemas import StepOutput, new_uuid
+from .schemas.base import new_uuid
+from .schemas.state import StepOutput
 from openminion.base.constants import STATE_KEY_WORKING
 
 try:
@@ -136,6 +137,7 @@ def _build_runner(
         metactl_config=sm_cfg.metactl.to_meta_config(),
         clarify_config=sm_cfg.clarify,
         mission_config=sm_cfg.mission,
+        request_handoff_enabled=sm_cfg.request_handoff.enabled,
         skill_selection_strategy=sm_cfg.skill_selection_strategy,
         max_skills_per_session=sm_cfg.max_skills_per_session,
         outcome_attribution_config=sm_cfg.outcome_attribution,

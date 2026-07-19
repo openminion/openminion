@@ -21,11 +21,11 @@ def error_response(
     *,
     code: Optional[str] = None,
     message: Optional[str] = None,
-    details: Optional[dict] = None,
+    details: Optional[dict[str, Any]] = None,
     retryable: bool = False,
     retry_after_ms: Optional[int] = None,
     error: ErrorInfo | BaseException | Mapping[str, Any] | None = None,
-) -> tuple[HTTPStatus, dict]:
+) -> tuple[HTTPStatus, dict[str, Any]]:
     resolved = _resolve_error_info(
         error=error,
         code=code,
@@ -48,14 +48,14 @@ def error_response(
 
 
 def attach_response_meta(
-    payload: dict,
+    payload: dict[str, Any],
     *,
     request_id: str,
     method: str,
     path: str,
     session_id: Optional[str] = None,
     run_id: Optional[str] = None,
-) -> dict:
+) -> dict[str, Any]:
     response_payload = dict(payload)
     existing_meta = response_payload.get("meta")
     if isinstance(existing_meta, dict):
@@ -80,7 +80,7 @@ def normalize_request_id(raw_request_id: Optional[str]) -> str:
     return uuid4().hex
 
 
-def response_error_code(payload: Optional[dict]) -> Optional[str]:
+def response_error_code(payload: Optional[dict[str, Any]]) -> Optional[str]:
     if not isinstance(payload, dict):
         return None
     error = payload.get("error")
@@ -98,7 +98,7 @@ def _resolve_error_info(
     error: ErrorInfo | BaseException | Mapping[str, Any] | None,
     code: Optional[str],
     message: Optional[str],
-    details: Optional[dict],
+    details: Optional[dict[str, Any]],
 ) -> ErrorInfo:
     if isinstance(error, ErrorInfo):
         return error

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, Optional
 
 
-def parse_json_request_body(*, content_length_raw: str, raw_body: str) -> dict:
+def parse_json_request_body(
+    *, content_length_raw: str, raw_body: str
+) -> dict[str, Any]:
     try:
         content_length = int(content_length_raw)
     except ValueError as exc:
@@ -55,7 +57,7 @@ def parse_positive_int_query_value(
     return parsed
 
 
-def v1_tool_arguments(body: dict) -> dict:
+def v1_tool_arguments(body: dict[str, Any]) -> dict[str, Any]:
     raw_arguments = body.get("arguments")
     if raw_arguments is None:
         return {}

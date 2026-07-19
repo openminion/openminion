@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import io
-from contextlib import redirect_stdout
-from types import SimpleNamespace
-
-from openminion.cli.chat.commands.goal import handle_goal_command
+from openminion.cli.commands.goal import execute_goal_cli_command
 from openminion.modules.brain.schemas import Deliverable, Goal, SuccessCriterion
 from openminion.modules.brain.storage.goals import SQLiteGoalStore
 
@@ -36,18 +32,13 @@ def _capture(
     db_path,
     monkeypatch,
 ) -> tuple[bool, str]:
-    monkeypatch.setattr(
-        "openminion.cli.chat.commands.goal.resolve_cli_roots",
-        lambda **_kwargs: SimpleNamespace(data_root=db_path.parent),
+    del monkeypatch
+    _tone, output = execute_goal_cli_command(
+        line,
+        session_id=session_id,
+        db_path=db_path,
     )
-    monkeypatch.setattr(
-        "openminion.cli.chat.commands.goal.resolve_brain_runtime_db_path",
-        lambda *, storage_path: db_path,
-    )
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        handled = handle_goal_command(line, session_id=session_id, config_path=None)
-    return handled, buf.getvalue()
+    return True, output
 
 
 def test_goal_command_list_show_abort_and_verify(tmp_path, monkeypatch) -> None:

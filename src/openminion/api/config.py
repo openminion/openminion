@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
-from typing import Optional
 
 from openminion.api.runtime import APIRuntime
 
@@ -14,7 +13,7 @@ class APIRuntimeBootstrap:
     runtime_bootstrap_error: str | None
 
 
-def bootstrap_api_runtime(config_path: Optional[str]) -> APIRuntimeBootstrap:
+def bootstrap_api_runtime(config_path: str | None) -> APIRuntimeBootstrap:
     try:
         return APIRuntimeBootstrap(APIRuntime.from_config_path(config_path), None)
     except Exception as exc:  # noqa: BLE001
@@ -29,7 +28,7 @@ def bootstrap_api_runtime(config_path: Optional[str]) -> APIRuntimeBootstrap:
 def build_api_handler_class(
     base_handler: type[BaseHTTPRequestHandler],
     *,
-    config_path: Optional[str],
+    config_path: str | None,
     bootstrap: APIRuntimeBootstrap,
     class_name: str = "ConfiguredOpenMinionAPIHandler",
 ) -> type[BaseHTTPRequestHandler]:
@@ -46,8 +45,8 @@ def build_api_handler_class(
 
 def resolve_api_runtime(
     *,
-    config_path: Optional[str],
-    runtime: Optional[APIRuntime],
+    config_path: str | None,
+    runtime: APIRuntime | None,
 ) -> tuple[APIRuntime, bool]:
     own_runtime = runtime is None
     active_runtime = runtime or APIRuntime.from_config_path(config_path)
@@ -55,7 +54,7 @@ def resolve_api_runtime(
 
 
 def close_api_runtime_if_owned(
-    runtime: Optional[APIRuntime],
+    runtime: APIRuntime | None,
     *,
     own_runtime: bool,
 ) -> None:

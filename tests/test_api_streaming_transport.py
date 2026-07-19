@@ -71,6 +71,11 @@ class _FakeSubmission:
     run_id: str
 
 
+class _BusyError(RuntimeError):
+    code = "SESSION_TURN_BUSY"
+    retry_after_s = 7
+
+
 class APIStreamingTransportTests(unittest.TestCase):
     def setUp(self) -> None:
         reset_api_metrics()
@@ -188,6 +193,89 @@ class APIStreamingTransportTests(unittest.TestCase):
         self.assertEqual(done_event.get("status"), "error")
         self.assertEqual(observed_status, [int(HTTPStatus.GATEWAY_TIMEOUT)])
         close_submission.assert_called_once()
+
+    def test_streaming_open_busy_writes_retryable_conflict_json(self) -> None:
+        captured: list[tuple[HTTPStatus, dict]] = []
+        observed_status: list[int] = []
+
+        with mock.patch(
+            "openminion.api.server.streaming.open_turn_submission",
+            side_effect=_BusyError("session turn is busy"),
+        ):
+            handle_turn_stream_request(
+                body={"message": "hello"},
+                request_id="req-busy-open",
+                config_path=None,
+                runtime=None,
+                start_sse_response=lambda: (_ for _ in ()).throw(
+                    AssertionError("SSE response should not start")
+                ),
+                write_sse_event=lambda **_kwargs: (_ for _ in ()).throw(
+                    AssertionError("SSE event should not be written")
+                ),
+                write_json=lambda status, payload: captured.append((status, payload)),
+                observe_request_metrics=lambda **kwargs: (
+                    observed_status.append(int(kwargs["status"])) or 0
+                ),
+                log_request_done=lambda **kwargs: None,
+                perf_counter=lambda: 0.0,
+            )
+
+        self.assertEqual(len(captured), 1)
+        status, payload = captured[0]
+        self.assertEqual(status, HTTPStatus.CONFLICT)
+        self.assertEqual(payload["error"]["code"], "SESSION_TURN_BUSY")
+        self.assertTrue(payload["error"]["retryable"])
+        self.assertEqual(payload["error"]["retry_after_ms"], 7000)
+        self.assertEqual(payload["error"]["details"]["retry_after_s"], 7)
+        self.assertEqual(observed_status, [int(HTTPStatus.CONFLICT)])
+
+    def test_streaming_result_busy_emits_error_and_conflict_metrics(self) -> None:
+        events: list[tuple[str, object]] = []
+        observed_status: list[int] = []
+
+        submission = _FakeSubmission(
+            handle=_FakeHandle(
+                chunks=[],
+                result_exc=_BusyError("session turn is busy"),
+            ),
+            request=_FakeRequest(session_id="s-busy", trace_id="r-busy"),
+            timeout_s=1.0,
+            session_id="s-busy",
+            run_id="r-busy",
+        )
+
+        with (
+            mock.patch(
+                "openminion.api.server.streaming.open_turn_submission",
+                return_value=submission,
+            ),
+            mock.patch("openminion.api.server.streaming.close_submission"),
+        ):
+            handle_turn_stream_request(
+                body={"message": "hello"},
+                request_id="req-busy-result",
+                config_path=None,
+                runtime=None,
+                start_sse_response=lambda: None,
+                write_sse_event=lambda *, event, data: events.append((event, data)),
+                write_json=lambda status, payload: (_ for _ in ()).throw(
+                    AssertionError(f"unexpected json write {status} {payload}")
+                ),
+                observe_request_metrics=lambda **kwargs: (
+                    observed_status.append(int(kwargs["status"])) or 0
+                ),
+                log_request_done=lambda **kwargs: None,
+                perf_counter=lambda: 0.0,
+            )
+
+        self.assertEqual([event for event, _ in events], ["meta", "error", "done"])
+        error_event = events[1][1]
+        self.assertIsInstance(error_event, dict)
+        self.assertEqual(error_event.get("code"), "SESSION_TURN_BUSY")
+        self.assertEqual(error_event.get("retry_after_ms"), 7000)
+        self.assertEqual(error_event.get("details"), {"retry_after_s": 7})
+        self.assertEqual(observed_status, [int(HTTPStatus.CONFLICT)])
 
     def test_sse_path_records_stream_route_metrics(self) -> None:
         handler = object.__new__(_OpenMinionAPIHandler)

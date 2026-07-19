@@ -10,6 +10,10 @@ import pytest
 from openminion.modules.session.runtime.factory import build_module_session_store
 from openminion.modules.session.storage.base import SessionStore
 from openminion.modules.session.storage.store import PostgresSessionStore
+from openminion.modules.session.storage.turn_leases import (
+    SessionTurnBusyError,
+    SessionTurnFenceError,
+)
 from openminion.modules.storage.engine import StorageEngineConfig
 from openminion.modules.storage.backends.postgres import (
     RecordStorePostgres,
@@ -68,6 +72,48 @@ def test_postgres_session_store_core_lifecycle_round_trip(tmp_path: Path) -> Non
         )
 
         session = store.get_session(session_id)
+        first_lease = store.acquire_session_turn_lease(
+            session_id,
+            owner="postgres-worker-a",
+            request_id="pg-req-a",
+            ttl_s=60,
+            now_iso="2026-07-18T10:00:00+00:00",
+        )
+        with pytest.raises(SessionTurnBusyError):
+            store.acquire_session_turn_lease(
+                session_id,
+                owner="postgres-worker-b",
+                request_id="pg-req-b",
+                ttl_s=60,
+                now_iso="2026-07-18T10:00:05+00:00",
+            )
+        assert store.release_session_turn_lease(
+            session_id,
+            owner=first_lease.owner,
+            fence_token=first_lease.fence_token,
+            now_iso="2026-07-18T10:00:06+00:00",
+        )
+        second_lease = store.acquire_session_turn_lease(
+            session_id,
+            owner="postgres-worker-b",
+            request_id="pg-req-b",
+            ttl_s=60,
+            now_iso="2026-07-18T10:00:07+00:00",
+        )
+        assert second_lease.fence_token == first_lease.fence_token + 1
+        with pytest.raises(SessionTurnFenceError):
+            store.append_turn(
+                session_id,
+                role="user",
+                content="stale postgres write",
+                session_turn_fence_token=first_lease.fence_token,
+            )
+        fenced_turn_id = store.append_turn(
+            session_id,
+            role="user",
+            content="active postgres write",
+            session_turn_fence_token=second_lease.fence_token,
+        )
         recent_turns = store.get_recent_turns(session_id, limit_messages=5)
         sessions = store.list_sessions(limit=5)
         store.update_summary(
@@ -83,7 +129,9 @@ def test_postgres_session_store_core_lifecycle_round_trip(tmp_path: Path) -> Non
         assert session is not None
         assert session["session_id"] == session_id
         assert session["active_agent_id"] == "hello-agent"
-        assert turn_id in {turn["turn_id"] for turn in recent_turns}
+        turn_ids = {turn["turn_id"] for turn in recent_turns}
+        assert turn_id in turn_ids
+        assert fenced_turn_id in turn_ids
         assert event_id in {
             event["event_id"] for event in store.get_events(session_id, limit=10)
         }

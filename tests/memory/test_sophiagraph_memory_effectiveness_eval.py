@@ -3,24 +3,25 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from openminion_eval import (
-    MemoryEffectivenessTrace,
-    MemoryTraceClaim,
-    MemoryTraceToolCall,
-    build_memory_scorecard,
-    compare_memory_scorecards,
-    score_memory_case,
-)
-from openminion_eval.memory_effectiveness import (
-    MemoryEffectivenessCase,
-    MemoryExpectation,
-)
+import pytest
 from sophiagraph import (
     MemoryNamespace,
     MemoryRecord,
     SearchQueryOptions,
     SophiaGraphMemoryStore,
 )
+
+openminion_eval = pytest.importorskip("openminion_eval")
+memory_effectiveness = pytest.importorskip("openminion_eval.memory_effectiveness")
+MemoryEffectivenessTrace = openminion_eval.MemoryEffectivenessTrace
+MemoryTraceClaim = openminion_eval.MemoryTraceClaim
+MemoryTraceToolCall = openminion_eval.MemoryTraceToolCall
+build_memory_scorecard = openminion_eval.build_memory_scorecard
+compare_memory_scorecards = openminion_eval.compare_memory_scorecards
+score_memory_case = openminion_eval.score_memory_case
+MemoryEffectivenessCase = memory_effectiveness.MemoryEffectivenessCase
+MemoryExpectation = memory_effectiveness.MemoryExpectation
+pytestmark = pytest.mark.package_integration
 
 
 def _namespace() -> MemoryNamespace:

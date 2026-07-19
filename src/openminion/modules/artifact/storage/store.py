@@ -4,7 +4,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Iterable, Mapping
 
 from openminion.modules.artifact.models import (
     AliasRecord,
@@ -153,7 +153,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
 
     def get_artifact(
         self, sha256: str, *, include_deleted: bool = True
-    ) -> Optional[ArtifactMeta]:
+    ) -> ArtifactMeta | None:
         where = "sha256 = ?"
         params: list[Any] = [sha256]
         if not include_deleted:
@@ -171,7 +171,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
         return _artifact_from_row(rows[0]) if rows else None
 
     def list_recent(
-        self, limit: int = 50, filters: Optional[dict] = None
+        self, limit: int = 50, filters: dict | None = None
     ) -> list[ArtifactMeta]:
         filters = filters or {}
         sql, params = self._artifact_base_query(filters)
@@ -181,7 +181,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
         return [_artifact_from_row(row) for row in rows if row is not None]
 
     def search(
-        self, query: str, filters: Optional[dict] = None, limit: int = 100
+        self, query: str, filters: dict | None = None, limit: int = 100
     ) -> list[ArtifactMeta]:
         filters = filters or {}
         sql, params = self._artifact_base_query(filters)
@@ -194,7 +194,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
         return [_artifact_from_row(row) for row in rows if row is not None]
 
     def largest(
-        self, limit: int = 50, filters: Optional[dict] = None
+        self, limit: int = 50, filters: dict | None = None
     ) -> list[ArtifactMeta]:
         filters = filters or {}
         sql, params = self._artifact_base_query(filters)
@@ -241,7 +241,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
         policy_hash: str = "",
         *,
         include_deleted: bool = True,
-    ) -> Optional[ViewRecord]:
+    ) -> ViewRecord | None:
         where = "raw_sha256 = ? AND view_type = ? AND schema_version = ? AND policy_hash = ?"
         params: list[Any] = [raw_sha256, view_type, schema_version, policy_hash]
         if not include_deleted:
@@ -299,7 +299,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
             (alias, sha256, updated_at, expires_at, _json(meta_json)),
         )
 
-    def alias_resolve(self, alias: str) -> Optional[AliasRecord]:
+    def alias_resolve(self, alias: str) -> AliasRecord | None:
         now = iso_now()
         rows = self._record_store.query_dicts(
             """

@@ -37,6 +37,12 @@ from .storage import (
     _storage_context_to_payload,
 )
 
+_KNOWN_TOP_LEVEL_KEYS = frozenset(
+    "gateway channel_policy channel_authenticity security runtime storage vector "
+    "self_improvement context identity providers action_policy agents default_agent "
+    "enabled_channels channels enabled_plugins system".split()
+)
+
 
 def _merge_mapping_dicts(
     base: dict[str, Any],
@@ -53,68 +59,30 @@ def _merge_mapping_dicts(
 
 
 def openminion_config_from_dict(payload: dict[str, Any]) -> OpenMinionConfig:
-    known_top_level_keys = {
-        "gateway",
-        "channel_policy",
-        "channel_authenticity",
-        "security",
-        "runtime",
-        "storage",
-        "vector",
-        "self_improvement",
-        "context",
-        "identity",
-        "providers",
-        "action_policy",
-        "agents",
-        "default_agent",
-        "enabled_channels",
-        "channels",
-        "enabled_plugins",
-        "system",
-    }
     if "agent" in payload:
         raise ConfigError(
             "Legacy 'agent' top-level block is no longer supported. "
             "Move fields to 'runtime.*' (system-wide) or 'agents.<id>.*' "
             "(per-agent). "
-            "See the config-shape migration guide."
+            "See docs/reference/config-shape-migration-2026.md."
         )
     system_payload = mapping_payload(payload, "system")
     system_runtime_payload = mapping_payload(system_payload, "runtime")
     system_providers_payload = mapping_payload(system_payload, "providers")
 
-    gateway_payload = mapping_payload(payload, "gateway")
-    channel_policy_payload = mapping_payload(payload, "channel_policy")
-    channel_authenticity_payload = mapping_payload(payload, "channel_authenticity")
-    security_payload = mapping_payload(payload, "security")
-
     if "action_policy" in payload and not isinstance(
         payload.get("action_policy"), dict
     ):
         raise ConfigError("action_policy must be an object")
-    action_policy_payload = mapping_payload(payload, "action_policy")
-
     default_agent = str(payload.get("default_agent", "") or "").strip()
-
-    runtime_payload = mapping_payload(payload, "runtime")
     effective_runtime_payload = _merge_mapping_dicts(
-        runtime_payload,
+        mapping_payload(payload, "runtime"),
         system_runtime_payload,
     )
-
-    storage_payload = mapping_payload(payload, "storage")
-    vector_payload = mapping_payload(payload, "vector")
-    self_improvement_payload = mapping_payload(payload, "self_improvement")
-
     if "context" in payload and not isinstance(payload.get("context"), dict):
         raise ConfigError("context must be an object")
-    context_payload = mapping_payload(payload, "context")
-    identity_payload = mapping_payload(payload, "identity")
-
-    providers_payload = mapping_payload(payload, "providers")
     effective_providers_payload = _merge_mapping_dicts(
-        providers_payload,
+        mapping_payload(payload, "providers"),
         system_providers_payload,
     )
     if "provider" in payload:
@@ -124,21 +92,28 @@ def openminion_config_from_dict(payload: dict[str, Any]) -> OpenMinionConfig:
         )
 
     normalized_channel_defaults = _normalize_channel_defaults(payload)
+    sections = {
+        name: mapping_payload(payload, name)
+        for name in (
+            "gateway channel_policy channel_authenticity security action_policy "
+            "storage vector self_improvement context identity"
+        ).split()
+    }
     resolved_env = resolve_environment_config()
     gateway_security_sections = _build_gateway_security_sections(
-        gateway_payload=gateway_payload,
-        channel_policy_payload=channel_policy_payload,
-        channel_authenticity_payload=channel_authenticity_payload,
-        security_payload=security_payload,
-        action_policy_payload=action_policy_payload,
+        gateway_payload=sections["gateway"],
+        channel_policy_payload=sections["channel_policy"],
+        channel_authenticity_payload=sections["channel_authenticity"],
+        security_payload=sections["security"],
+        action_policy_payload=sections["action_policy"],
         normalized_channel_defaults=normalized_channel_defaults,
     )
     storage_context_sections = _build_storage_context_sections(
-        storage_payload=storage_payload,
-        vector_payload=vector_payload,
-        self_improvement_payload=self_improvement_payload,
-        context_payload=context_payload,
-        identity_payload=identity_payload,
+        storage_payload=sections["storage"],
+        vector_payload=sections["vector"],
+        self_improvement_payload=sections["self_improvement"],
+        context_payload=sections["context"],
+        identity_payload=sections["identity"],
         storage_backend_env=resolved_env.get(OPENMINION_STORAGE_BACKEND_ENV, ""),
         storage_postgres_url_env=resolved_env.get(
             OPENMINION_STORAGE_POSTGRES_URL_ENV, ""
@@ -153,21 +128,13 @@ def openminion_config_from_dict(payload: dict[str, Any]) -> OpenMinionConfig:
     module_configs = {
         str(key): dict(value)
         for key, value in payload.items()
-        if key not in known_top_level_keys and isinstance(value, dict)
+        if key not in _KNOWN_TOP_LEVEL_KEYS and isinstance(value, dict)
     }
 
     return OpenMinionConfig(
-        gateway=gateway_security_sections["gateway"],
-        channel_policy=gateway_security_sections["channel_policy"],
-        channel_authenticity=gateway_security_sections["channel_authenticity"],
-        security=gateway_security_sections["security"],
-        action_policy=gateway_security_sections["action_policy"],
+        **gateway_security_sections,
+        **storage_context_sections,
         runtime=_build_runtime_config(effective_runtime_payload),
-        storage=storage_context_sections["storage"],
-        vector=storage_context_sections["vector"],
-        self_improvement=storage_context_sections["self_improvement"],
-        context=storage_context_sections["context"],
-        identity=storage_context_sections["identity"],
         providers=_build_providers_config(
             _extract_provider_payloads(effective_providers_payload)
         ),

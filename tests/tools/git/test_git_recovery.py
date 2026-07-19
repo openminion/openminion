@@ -70,7 +70,6 @@ class ResetTests(unittest.TestCase):
         self.assertEqual(result["parsed"]["mode"], "mixed")
         head = _run([_GIT, "rev-parse", "HEAD"], cwd=self.tmp).stdout.strip()
         self.assertEqual(head, self.first)
-        # Working tree still has v2 content (mixed doesn't touch it).
         self.assertEqual((self.tmp / "README.md").read_text(encoding="utf-8"), "v2\n")
 
     def test_soft_reset_moves_head_keeps_index_and_working_tree(self) -> None:
@@ -85,7 +84,6 @@ class ResetTests(unittest.TestCase):
         with self.assertRaises(ToolRuntimeError) as ctx:
             _h_reset({"ref": self.first, "mode": "hard"}, self.ctx)
         self.assertEqual(ctx.exception.code, "GIT_DESTRUCTIVE_NOT_APPROVED")
-        # And the repo state must NOT have changed.
         head = _run([_GIT, "rev-parse", "HEAD"], cwd=self.tmp).stdout.strip()
         self.assertEqual(head, self.second)
 
@@ -95,7 +93,6 @@ class ResetTests(unittest.TestCase):
         )
         self.assertEqual(result["parsed"]["mode"], "hard")
         self.assertTrue(result["parsed"]["confirmed"])
-        # Working tree was overwritten with v1 content.
         self.assertEqual((self.tmp / "README.md").read_text(encoding="utf-8"), "v1\n")
 
     def test_unknown_mode_returns_invalid_argument(self) -> None:
@@ -127,7 +124,6 @@ class ReflogTests(unittest.TestCase):
     def test_reflog_returns_structured_entries(self) -> None:
         result = _h_reflog({}, self.ctx)
         entries = result["parsed"]
-        # At minimum: the two commits should each have a reflog entry.
         self.assertGreaterEqual(len(entries), 2)
         for entry in entries:
             self.assertIn("sha", entry)
@@ -180,7 +176,6 @@ class BranchForceDeleteApprovalTests(unittest.TestCase):
         self.assertEqual(result["parsed"]["action"], "delete")
         self.assertTrue(result["parsed"]["force"])
         self.assertTrue(result["parsed"]["confirmed"])
-        # Branch should be gone.
         list_result = _h_branch({"action": "list"}, self.ctx)
         names = {entry["name"] for entry in list_result["parsed"]["branches"]}
         self.assertNotIn("unmerged", names)
@@ -205,7 +200,6 @@ class StashDestructiveTests(unittest.TestCase):
         # Working tree clean now; pop should re-apply and drop the stash.
         result = _h_stash({"action": "pop"}, self.ctx)
         self.assertEqual(result["parsed"]["action"], "pop")
-        # Stash list should be empty after pop.
         list_result = _h_stash({"action": "list"}, self.ctx)
         self.assertEqual(list_result["parsed"]["stashes"], [])
 
@@ -214,7 +208,6 @@ class StashDestructiveTests(unittest.TestCase):
         with self.assertRaises(ToolRuntimeError) as ctx:
             _h_stash({"action": "drop"}, self.ctx)
         self.assertEqual(ctx.exception.code, "GIT_DESTRUCTIVE_NOT_APPROVED")
-        # Stash MUST still be present.
         list_result = _h_stash({"action": "list"}, self.ctx)
         self.assertEqual(len(list_result["parsed"]["stashes"]), 1)
 

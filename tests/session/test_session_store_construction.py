@@ -50,6 +50,7 @@ def test_sqlite_session_store_uses_injected_record_store_for_all_substores(
         assert store._summary_store._rs is record_store
         assert store._context_store._rs is record_store
         assert store._run_store._rs is record_store
+        assert store._turn_lease_store._record_store is record_store
         assert store._session_helper._record_store is record_store
         assert store._replay_helper._record_store is record_store
     finally:

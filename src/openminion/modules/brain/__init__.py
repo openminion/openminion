@@ -27,6 +27,7 @@ from .runtime.goal.loop import (
     render_goal_run_status,
 )
 from .runtime.goal.verification import GoalVerificationResult
+from .runtime.improvement.notes import ImprovementNote, SelfImprovementEngine
 from .schemas.agent import AgentProfile
 from .schemas.decisions import Decision
 from .schemas.plan import Plan
@@ -45,6 +46,7 @@ __all__ = [
     "GoalTurnResult",
     "GoalVerificationResult",
     "LongRunningGoalRuntime",
+    "ImprovementNote",
     "BudgetAdjust",
     "MetaConfig",
     "MetaDirective",
@@ -58,6 +60,7 @@ __all__ = [
     "RuntimeConfig",
     "StateMachineConfig",
     "StateMachineRunner",
+    "SelfImprovementEngine",
     "StepOutput",
     "SQLiteGoalRunStepLedger",
     "SQLiteGoalRunStore",

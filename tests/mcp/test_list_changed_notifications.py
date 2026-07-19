@@ -11,7 +11,7 @@ from openminion.base.config.runtime import RuntimeConfig
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.tool.bootstrap import build_runtime_bootstrap
-from openminion.services.tool.schema import ToolSchemaService
+from openminion.modules.tool.schema_service import ToolSchemaService
 from openminion.tools.mcp.interfaces import MCPCapabilityChangeListener
 from openminion.tools.mcp.manager import MCPFleetManager
 

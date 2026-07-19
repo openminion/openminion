@@ -10,7 +10,6 @@ from openminion.modules.controlplane.channels.telegram.approval import (
 )
 
 
-# extract_approval_request: typed extraction only
 
 
 def _confirm_required_payload(
@@ -84,7 +83,6 @@ def test_extract_strips_whitespace_in_choice_strings():
     assert result["choices"] == ["allow_once", "allow_session", "deny"]
 
 
-# render_approval_prompt: pure rendering, no semantic transformation
 
 
 def test_render_includes_all_four_typed_choices_by_default():
@@ -121,7 +119,6 @@ def test_render_includes_approval_id_and_reason_when_present():
     assert "exec_policy" in rendered
 
 
-# parse_approval_decision: ANTI-LLM gate — typed input only
 
 
 @pytest.mark.parametrize("typed", APPROVAL_CHOICES)

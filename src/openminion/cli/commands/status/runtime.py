@@ -16,7 +16,7 @@ from openminion.services.bootstrap.onboarding import (
 )
 from openminion.services.runtime.bootstrap import enforce_plugin_activation_policy
 from openminion.services.runtime.lifecycle import LifecycleService
-from openminion.services.security.policy import SecurityPolicyEngine, ToolBudgetPolicy
+from openminion.modules.policy import SecurityPolicyEngine, ToolBudgetPolicy
 
 
 def run_tools_status(args, *, config) -> int:
@@ -219,7 +219,7 @@ def _build_onboarding_capabilities(
             {
                 "id": "demo_mode",
                 "label": "Explicit demo mode",
-                "reason": "Available later via `openminion chat --demo` or `openminion setup`.",
+                "reason": "Available later via bare `openminion` or `openminion setup`.",
             }
         )
     return configured_now, available_later

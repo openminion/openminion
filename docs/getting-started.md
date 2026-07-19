@@ -82,7 +82,7 @@ Guidance:
 
 1. include a scope by default in `openminion`,
 2. choose a real owner scope such as `agent`, `api`, `cli`, `e2e`, `gateway`,
-   `runtime`, `telemetry`, `tool`, `tools`, or `tui`,
+   `runtime`, `telemetry`, `tool`, or `tools`,
 3. keep the summary specific to the landed change,
 4. avoid vague subjects like `update`,
 5. prefer the most specific truthful type; do not use `chore` when `docs`,

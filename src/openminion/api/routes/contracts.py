@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Mapping, Optional
+from urllib.parse import parse_qs
 
 from openminion.api.responses.serialization import error_response
 from openminion.api.runtime import APIRuntime
@@ -20,9 +21,16 @@ class APIRouteContext:
 @dataclass(frozen=True)
 class RouteResult:
     status: HTTPStatus
-    payload: dict
+    payload: dict[str, Any]
     session_id: Optional[str] = None
     run_id: Optional[str] = None
+
+
+def query_value(query: str | None, name: str) -> str | None:
+    values = parse_qs(str(query or ""), keep_blank_values=False).get(name, [])
+    if not values:
+        return None
+    return str(values[0] or "").strip() or None
 
 
 def error_route_result(

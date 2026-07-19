@@ -80,7 +80,7 @@ def test_every_live_submodule_resolves(submodule: str, attr: str | None) -> None
 
 @pytest.mark.parametrize(
     "storage_submodule",
-    ["base", "integrity", "io", "store"],
+    ["base", "store"],
 )
 def test_storage_submodules_resolve(storage_submodule: str) -> None:
 
@@ -107,8 +107,8 @@ def test_non_test_src_importers_resolve() -> None:
 
     repo_root = Path(__file__).resolve().parents[3]
     known_non_test_importers = {
-        "src/openminion/cli/chat/commands/session.py",
         "src/openminion/cli/commands/agents.py",
+        "src/openminion/cli/commands/channel.py",
         "src/openminion/cli/commands/debug/registry.py",
         "src/openminion/services/bootstrap/config.py",
         "src/openminion/services/runtime/catalog.py",

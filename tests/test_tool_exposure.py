@@ -1,13 +1,34 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+from types import SimpleNamespace
+
+import pytest
+
+from openminion.api.runtime import APIRuntime
+from openminion.modules.tool.contracts import (
+    ALL_MODEL_TOOL_IDS_SET,
+    DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET,
+    MODEL_CONTROL_TOOL_IDS,
+    PROFILE_GATED_MODEL_TOOL_IDS_SET,
+)
 from openminion.modules.llm.providers.base import ProviderToolSpec
 from openminion.modules.tool.registry import ToolSpec
 from openminion.modules.tool import build_default_tool_registry
-from openminion.services.tool.exposure import (
+from openminion.modules.tool.base import ToolExecutionContext
+from openminion.modules.tool.executor import execute_single_call
+from openminion.modules.tool.exposure import (
+    ToolExposureProfile,
+    ToolExposureService,
+    ToolRiskAnnotations,
+    apply_model_exposure,
     get_allowed_model_tool_names,
     get_model_exposure_specs,
     get_visible_tool_specs_and_dispatch_map,
+    render_catalog_cards,
 )
+from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.llm.providers.base import ProviderToolCall
 
 
 def _spec(name: str) -> ProviderToolSpec:
@@ -123,4 +144,582 @@ def test_get_visible_tool_specs_and_dispatch_map_merges_prompt_visible_runtime_t
     assert dispatch_map["mcp.fixture.echo_text"] == {
         "runtime_binding_id": "runtime.mcp.fixture.echo_text",
         "runtime_tool_name": "mcp.fixture.echo_text",
+    }
+
+
+def test_default_exposure_keeps_read_only_ops_visible_and_job_cancel_hidden() -> None:
+    registry = build_default_tool_registry()
+    names = {spec.name for spec in get_model_exposure_specs(registry)}
+
+    assert "ops.target.list" in names
+    assert "ops.job.inspect" in names
+    assert "ops.job.cancel" not in names
+    assert (
+        registry.exposure_service.decide(
+            "ops.job.cancel", session_id="session-a"
+        ).reason_code
+        == "profile_inactive"
+    )
+
+
+def test_default_exposure_hides_legacy_plan_compatibility_tools() -> None:
+    registry = build_default_tool_registry()
+    names = {spec.name for spec in get_model_exposure_specs(registry)}
+
+    assert "plan.set" not in names
+    assert "todo.write" not in names
+    assert registry.exposure_service.profile("legacy_session_plan") is not None
+
+
+def test_legacy_plan_tools_are_visible_only_after_explicit_activation() -> None:
+    registry = build_default_tool_registry()
+    registry.exposure_service.activate(
+        "legacy_session_plan",
+        session_id="compat-session",
+    )
+
+    names = {
+        spec.name
+        for spec in get_model_exposure_specs(
+            registry,
+            metadata={"session_id": "compat-session"},
+        )
+    }
+
+    assert "plan.set" in names
+    assert "todo.write" in names
+
+
+def test_unclassified_tools_require_profiles_without_hiding_baseline_or_mcp() -> None:
+    service = ToolExposureService()
+
+    assert service.decide("web.fetch").state == "visible"
+    assert service.decide("mcp.fixture.inspect").state == "visible"
+    hidden_controls = {
+        name
+        for name in MODEL_CONTROL_TOOL_IDS
+        if service.decide(name).state != "visible"
+    }
+    assert hidden_controls == set()
+    assert service.decide("legacy.fixture.inspect").state == "hidden"
+    assert service.decide("cluster.future.inspect").state == "hidden"
+    assert service.decide("k8s.future.inspect").state == "hidden"
+    assert service.decide("cloud.future.inspect").reason_code == "profile_inactive"
+
+
+def test_request_exposure_preserves_control_tools_and_hides_unknown_tools() -> None:
+    request = SimpleNamespace(
+        tools=[_spec("plan"), _spec("cluster.future.inspect")],
+        metadata={},
+        system_prompt="system",
+    )
+    registry = SimpleNamespace(exposure_service=ToolExposureService())
+
+    apply_model_exposure(request, registry)
+
+    assert [spec.name for spec in request.tools] == ["plan"]
+
+
+def test_control_tool_classification_matches_brain_contracts() -> None:
+    from openminion.modules.brain.loop.entry import (
+        ENTRY_CLARIFY_TOOL_NAME,
+        ENTRY_CODING_TOOL_NAME,
+        ENTRY_DECOMPOSE_TOOL_NAME,
+        ENTRY_RESEARCH_TOOL_NAME,
+    )
+    from openminion.modules.brain.loop.tools.plan_control import PLAN_TOOL_NAME
+    from openminion.modules.brain.loop.tools.shortlisting import (
+        TOOL_REQUEST_TOOL_NAME,
+    )
+    from openminion.modules.brain.runtime.review.observation import REVIEW_TOOL_NAME
+
+    assert MODEL_CONTROL_TOOL_IDS == frozenset(
+        {
+            ENTRY_CLARIFY_TOOL_NAME,
+            ENTRY_CODING_TOOL_NAME,
+            ENTRY_DECOMPOSE_TOOL_NAME,
+            ENTRY_RESEARCH_TOOL_NAME,
+            PLAN_TOOL_NAME,
+            REVIEW_TOOL_NAME,
+            TOOL_REQUEST_TOOL_NAME,
+        }
+    )
+
+
+def test_canonical_tool_ids_have_complete_exposure_classification() -> None:
+    assert MODEL_CONTROL_TOOL_IDS.isdisjoint(ALL_MODEL_TOOL_IDS_SET)
+    assert DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET.isdisjoint(
+        PROFILE_GATED_MODEL_TOOL_IDS_SET
+    )
+    assert (
+        DEFAULT_VISIBLE_MODEL_TOOL_IDS_SET | PROFILE_GATED_MODEL_TOOL_IDS_SET
+        == ALL_MODEL_TOOL_IDS_SET
+    )
+
+
+def test_profile_registration_is_idempotent_but_rejects_conflicts() -> None:
+    profile = ToolExposureProfile(
+        profile_id="optional",
+        title="Optional",
+        summary="Optional inspection.",
+        tool_names=frozenset({"optional.inspect"}),
+    )
+    service = ToolExposureService()
+
+    service.register_profiles((profile,))
+    service.register_profiles((profile,))
+
+    with pytest.raises(ToolRuntimeError, match="different exposure profiles"):
+        service.register_profiles(
+            (
+                ToolExposureProfile(
+                    profile_id="optional",
+                    title="Optional changed",
+                    summary="Conflicting owner.",
+                    tool_names=frozenset({"optional.changed"}),
+                ),
+            )
+        )
+
+
+def test_activation_enforces_prerequisites_and_scope() -> None:
+    profile = ToolExposureProfile(
+        profile_id="cluster_read",
+        title="Cluster read",
+        summary="Read a selected cluster.",
+        tool_names=frozenset({"cluster.inspect"}),
+        target_kinds=frozenset({"cluster"}),
+        credential_scopes=frozenset({"cluster.read"}),
+        dependencies=frozenset({"cluster_client"}),
+    )
+    service = ToolExposureService((profile,))
+
+    for expected, kwargs in (
+        ("target_missing", {}),
+        ("risk_denied", {"target_id": "c1", "target_kind": "host"}),
+        (
+            "credential_missing",
+            {"target_id": "c1", "target_kind": "cluster"},
+        ),
+        (
+            "dependency_missing",
+            {
+                "target_id": "c1",
+                "target_kind": "cluster",
+                "credential_scopes": ("cluster.read",),
+            },
+        ),
+    ):
+        try:
+            service.activate("cluster_read", session_id="s1", **kwargs)
+        except ToolRuntimeError as exc:
+            assert str(exc) == expected
+        else:
+            raise AssertionError(f"activation should fail with {expected}")
+
+    activation = service.activate(
+        "cluster_read",
+        session_id="s1",
+        task_id="task-a",
+        target_id="c1",
+        target_kind="cluster",
+        credential_scopes=("cluster.read",),
+        dependencies=("cluster_client",),
+    )
+    assert activation.audit_id
+    assert (
+        service.decide(
+            "cluster.inspect", session_id="s1", task_id="task-a", target_id="c1"
+        ).state
+        == "visible"
+    )
+    assert (
+        service.decide(
+            "cluster.inspect", session_id="s2", task_id="task-a", target_id="c1"
+        ).state
+        == "hidden"
+    )
+    assert (
+        service.decide(
+            "cluster.inspect", session_id="s1", task_id="task-b", target_id="c1"
+        ).state
+        == "hidden"
+    )
+    assert (
+        service.decide(
+            "cluster.inspect", session_id="s1", task_id="task-a", target_id="c2"
+        ).state
+        == "hidden"
+    )
+
+
+def test_expired_activation_is_removed_and_audited(monkeypatch) -> None:
+    profile = ToolExposureProfile(
+        profile_id="temporary",
+        title="Temporary",
+        summary="Temporary tools.",
+        tool_names=frozenset({"temporary.inspect"}),
+    )
+    service = ToolExposureService((profile,))
+    monkeypatch.setattr(
+        "openminion.modules.tool.exposure.service.time.time", lambda: 10.0
+    )
+    service.activate("temporary", session_id="s1", ttl_seconds=5)
+    monkeypatch.setattr(
+        "openminion.modules.tool.exposure.service.time.time", lambda: 16.0
+    )
+
+    assert service.decide("temporary.inspect", session_id="s1").state == "hidden"
+    assert any(event["event"] == "expired" for event in service.events)
+
+
+def test_snapshot_includes_expiry_discovered_during_snapshot(monkeypatch) -> None:
+    profile = ToolExposureProfile(
+        profile_id="temporary",
+        title="Temporary",
+        summary="Temporary tools.",
+        tool_names=frozenset({"temporary.inspect"}),
+    )
+    service = ToolExposureService((profile,))
+    monkeypatch.setattr(
+        "openminion.modules.tool.exposure.service.time.time", lambda: 10.0
+    )
+    service.activate("temporary", session_id="s1", ttl_seconds=5)
+    monkeypatch.setattr(
+        "openminion.modules.tool.exposure.service.time.time", lambda: 16.0
+    )
+
+    snapshot = service.snapshot(session_id="s1")
+
+    assert snapshot["profiles"][0]["active"] is False
+    assert snapshot["events"][-1]["event"] == "expired"
+
+
+def test_exposure_event_history_is_bounded() -> None:
+    service = ToolExposureService(
+        (
+            ToolExposureProfile(
+                profile_id="optional",
+                title="Optional",
+                summary="Optional tools.",
+                tool_names=frozenset({"optional.read"}),
+            ),
+        )
+    )
+    decision = service.decide("optional.read", session_id="inactive")
+
+    for index in range(520):
+        service.record_refusal(decision, session_id=f"session-{index}")
+
+    assert len(service.events) == 512
+    assert service.events[0]["session_id"] == "session-8"
+
+
+def test_catalog_cards_render_only_active_registered_tools() -> None:
+    service = ToolExposureService(
+        (
+            ToolExposureProfile(
+                profile_id="always",
+                title="Always",
+                summary="Default tools.",
+                tool_names=frozenset({"known.read", "missing.read"}),
+                evidence_expectations=("cite evidence",),
+                stop_rules=("stop before mutation",),
+                guidance_names=("known-read-guidance",),
+                default_active=True,
+            ),
+            ToolExposureProfile(
+                profile_id="optional",
+                title="Optional",
+                summary="Optional tools.",
+                tool_names=frozenset({"optional.read"}),
+            ),
+        )
+    )
+
+    rendered = render_catalog_cards(
+        service.cards(session_id="s1"),
+        available_tool_names={"known.read", "optional.read"},
+    )
+    assert "Always [always]" in rendered
+    assert "known.read" in rendered
+    assert "missing.read" not in rendered
+    assert "Optional" not in rendered
+    assert "tier: read" in rendered
+    assert "evidence: cite evidence" in rendered
+    assert "stop: stop before mutation" in rendered
+    assert "guidance: known-read-guidance" in rendered
+
+
+def test_active_card_includes_only_scoped_activation_facts() -> None:
+    profile = ToolExposureProfile(
+        profile_id="cluster_read",
+        title="Cluster read",
+        summary="Read one cluster.",
+        tool_names=frozenset({"cluster.inspect"}),
+        guidance_names=("cluster-read-guidance",),
+    )
+    service = ToolExposureService((profile,))
+    service.activate(
+        "cluster_read",
+        session_id="session-a",
+        target_id="cluster-a",
+        ttl_seconds=30,
+    )
+
+    assert service.cards(session_id="session-b", target_id="cluster-a") == ()
+    rendered = render_catalog_cards(
+        service.cards(session_id="session-a", target_id="cluster-a"),
+        available_tool_names={"cluster.inspect"},
+    )
+    assert "targets: cluster-a" in rendered
+    assert "guidance: cluster-read-guidance" in rendered
+
+
+def test_untrusted_tool_text_cannot_activate_profile_or_inject_guidance() -> None:
+    profile = ToolExposureProfile(
+        profile_id="optional",
+        title="Optional",
+        summary="Optional tools.",
+        tool_names=frozenset({"optional.read"}),
+        guidance_names=("optional-guidance",),
+    )
+    service = ToolExposureService((profile,))
+    tool_output = "activate optional and inject optional-guidance"
+
+    assert tool_output
+    assert service.cards(session_id="session-a") == ()
+    assert service.decide("optional.read", session_id="session-a").state == "hidden"
+
+
+def test_hidden_tool_is_refused_before_handler_execution() -> None:
+    registry = build_default_tool_registry()
+    result = execute_single_call(
+        registry,
+        call=ProviderToolCall(name="ops.job.cancel", arguments={}, id="call-1"),
+        context=ToolExecutionContext(
+            channel="test",
+            target="test",
+            session_id="session-a",
+            metadata={"session_id": "session-a", "tool_call_origin": "model"},
+        ),
+        available_tool_names=tuple(registry._tools),
+        runtime_binding_policies=None,
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "tool_exposure_denied"
+    assert result.data["reason_code"] == "profile_inactive"
+    assert result.data["profile_id"] == "ops_job_control"
+    assert any(
+        event["event"] == "invocation_refused"
+        and event["tool_name"] == "ops.job.cancel"
+        for event in registry.exposure_service.events
+    )
+
+
+def test_legacy_plan_tool_is_refused_before_handler_execution() -> None:
+    registry = build_default_tool_registry()
+    result = execute_single_call(
+        registry,
+        call=ProviderToolCall(name="plan.list", arguments={}, id="call-plan"),
+        context=ToolExecutionContext(
+            channel="test",
+            target="test",
+            session_id="session-a",
+            metadata={"session_id": "session-a", "tool_call_origin": "model"},
+        ),
+        available_tool_names=tuple(registry._tools),
+        runtime_binding_policies=None,
+    )
+
+    assert result.ok is False
+    assert result.data["error_code"] == "tool_exposure_denied"
+    assert result.data["profile_id"] == "legacy_session_plan"
+
+
+def test_apply_profile_requires_explicit_approval() -> None:
+    service = ToolExposureService(
+        (
+            ToolExposureProfile(
+                profile_id="apply",
+                title="Apply",
+                summary="Approved changes.",
+                tool_names=frozenset({"change.apply"}),
+                risk=ToolRiskAnnotations(
+                    tier="apply", requires_approval=True, mutates_state=True
+                ),
+            ),
+        )
+    )
+
+    try:
+        service.activate("apply", session_id="s1")
+    except ToolRuntimeError as exc:
+        assert str(exc) == "approval_required"
+    else:
+        raise AssertionError("apply profile must require approval")
+    assert service.activate("apply", session_id="s1", approved=True).audit_id
+
+
+def test_profile_contract_rejects_invalid_shapes_and_duplicate_ids() -> None:
+    with pytest.raises(ToolRuntimeError, match="profile_id is required"):
+        ToolExposureProfile(
+            profile_id="",
+            title="Invalid",
+            summary="Missing id.",
+            tool_names=frozenset({"invalid.read"}),
+        )
+    with pytest.raises(ToolRuntimeError, match="normalized identifier"):
+        ToolExposureProfile(
+            profile_id="not valid",
+            title="Invalid",
+            summary="Invalid id.",
+            tool_names=frozenset({"invalid.read"}),
+        )
+    with pytest.raises(ToolRuntimeError, match="cannot be empty"):
+        ToolExposureProfile(
+            profile_id="empty",
+            title="Empty",
+            summary="No tools.",
+            tool_names=frozenset(),
+        )
+    with pytest.raises(ToolRuntimeError, match="must require approval"):
+        ToolRiskAnnotations(tier="apply", mutates_state=True)
+
+    profile = ToolExposureProfile(
+        profile_id="valid",
+        title="Valid",
+        summary="Valid profile.",
+        tool_names=frozenset({"valid.read"}),
+    )
+    assert profile.risk == ToolRiskAnnotations()
+    with pytest.raises(ToolRuntimeError, match="must be unique"):
+        ToolExposureService((profile, profile))
+
+
+def test_activation_records_provenance_and_emits_audit_events(monkeypatch) -> None:
+    profile = ToolExposureProfile(
+        profile_id="temporary",
+        title="Temporary",
+        summary="Temporary inspection.",
+        tool_names=frozenset({"temporary.inspect"}),
+    )
+    service = ToolExposureService((profile,))
+    emitted: list[dict] = []
+    service.bind_event_sink(emitted.append)
+    monkeypatch.setattr(
+        "openminion.modules.tool.exposure.service.time.time", lambda: 10.0
+    )
+
+    with pytest.raises(ToolRuntimeError, match="greater than zero"):
+        service.activate("temporary", session_id="s1", ttl_seconds=0)
+    activation = service.activate(
+        "temporary",
+        session_id="s1",
+        task_id="task-1",
+        target_id="target-1",
+        ttl_seconds=5,
+        activation_reason="incident triage",
+        approved_by="operator-1",
+        policy_source="runtime-policy",
+    )
+    serialized = asdict(activation)
+    assert serialized["activation_reason"] == "incident triage"
+    assert serialized["approved_by"] == "operator-1"
+    assert serialized["policy_source"] == "runtime-policy"
+    assert emitted[-1]["event"] == "activated"
+    assert emitted[-1]["audit_id"] == activation.audit_id
+    assert service.snapshot(session_id="other-session")["events"] == []
+    assert (
+        service.snapshot(session_id="s1")["events"][-1]["audit_id"]
+        == activation.audit_id
+    )
+
+    monkeypatch.setattr(
+        "openminion.modules.tool.exposure.service.time.time", lambda: 16.0
+    )
+    assert service.decide("temporary.inspect", session_id="s1").state == "hidden"
+    assert emitted[-1]["event"] == "expired"
+
+    decision = service.decide("temporary.inspect", session_id="s1")
+    service.record_refusal(decision, session_id="s1", task_id="task-1")
+    assert emitted[-1]["event"] == "invocation_refused"
+    assert emitted[-1]["reason_code"] == "profile_inactive"
+
+
+def test_runtime_bridge_emits_sanitized_exposure_telemetry() -> None:
+    events = []
+    runtime = object.__new__(APIRuntime)
+    runtime.telemetry_service = SimpleNamespace(record_event_sync=events.append)
+
+    runtime._emit_tool_exposure_event(
+        {
+            "event": "activation_denied",
+            "session_id": "session-1",
+            "task_id": "task-1",
+            "profile_id": "k8s_readonly",
+            "target_id": "cluster-1",
+            "audit_id": "audit-1",
+            "reason_code": "credential_missing",
+        }
+    )
+
+    assert events[0].event_type == "tool.exposure.activation_denied"
+    assert events[0].session_id == "session-1"
+    assert events[0].turn_id == "task-1"
+    assert events[0].data == {
+        "profile_id": "k8s_readonly",
+        "target_id": "cluster-1",
+        "audit_id": "audit-1",
+        "reason_code": "credential_missing",
+    }
+
+
+def test_hidden_tool_refusal_also_blocks_runtime_direct_origin() -> None:
+    registry = build_default_tool_registry()
+    result = execute_single_call(
+        registry,
+        call=ProviderToolCall(name="ops.job.cancel", arguments={}, id="call-direct"),
+        context=ToolExecutionContext(
+            channel="test",
+            target="test",
+            session_id="session-direct",
+            metadata={"session_id": "session-direct", "tool_call_origin": "runtime"},
+        ),
+        available_tool_names=tuple(registry._tools),
+        runtime_binding_policies=None,
+    )
+
+    assert result.ok is False
+    assert result.data["reason_code"] == "profile_inactive"
+
+
+def test_visible_ops_result_preserves_evidence_and_adds_exposure_metadata() -> None:
+    registry = build_default_tool_registry()
+    result = execute_single_call(
+        registry,
+        call=ProviderToolCall(
+            name="ops.host.snapshot",
+            arguments={"target_id": "local"},
+            id="call-ops",
+        ),
+        context=ToolExecutionContext(
+            channel="test",
+            target="test",
+            session_id="session-ops",
+            metadata={"session_id": "session-ops", "tool_call_origin": "model"},
+        ),
+        available_tool_names=tuple(registry._tools),
+        runtime_binding_policies=None,
+    )
+
+    assert result.ok is True
+    assert result.data["claim_status"] == "observed"
+    assert result.data["target_id"] == "local"
+    assert result.data["evidence_id"]
+    assert result.data["tool_exposure"] == {
+        "profile_id": "ops_minimal",
+        "activation_id": "",
+        "target_id": "",
     }

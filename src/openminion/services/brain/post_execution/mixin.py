@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import json
 import time
 import uuid
@@ -51,7 +53,9 @@ def _emit_prep_status(
 def _bind_tool_workspace_root(
     tool_api: Any, metadata_source: Mapping[str, Any]
 ) -> None:
-    workspace_root = str(metadata_source.get("workspace_root", "") or "").strip()
+    workspace_root = str(
+        metadata_source.get("workspace_root") or metadata_source.get("cwd") or ""
+    ).strip()
     if not workspace_root:
         return
 
@@ -68,6 +72,14 @@ def _bind_tool_workspace_root(
             context_metadata = {}
             policy_raw["context_metadata"] = context_metadata
         context_metadata["workspace_root"] = str(workspace_path)
+        raw_cwd = str(metadata_source.get("cwd") or "").strip()
+        cwd_path = Path(raw_cwd).expanduser() if raw_cwd else workspace_path
+        if not cwd_path.is_absolute():
+            cwd_path = workspace_path / cwd_path
+        if cwd_path.resolve(strict=False).is_relative_to(
+            workspace_path.resolve(strict=False)
+        ):
+            context_metadata["cwd"] = str(cwd_path)
 
 
 def _parse_permission_overrides(metadata_source: dict[str, Any]) -> dict[str, str]:
@@ -266,7 +278,11 @@ class BrainBridgeTurnMixin:
         session_id: str,
         request_id: str | None,
     ) -> None:
-        if self._security_policy is None or not hasattr(runner, "tool_api"):
+        tool_api = getattr(runner, "tool_api", None)
+        if tool_api is None:
+            return
+        _bind_tool_workspace_root(tool_api, message.metadata or {})
+        if self._security_policy is None:
             return
         tool_policy_lookup = None
         if self._tools is not None and hasattr(self._tools, "policy_for"):
@@ -286,9 +302,7 @@ class BrainBridgeTurnMixin:
                 seam_id=SEAM_BRAIN_RUNTIME_TOOL_API,
             ),
         )
-        tool_api = getattr(runner, "tool_api", None)
-        if tool_api is not None and hasattr(tool_api, "policy_adapter"):
-            _bind_tool_workspace_root(tool_api, message.metadata or {})
+        if hasattr(tool_api, "policy_adapter"):
             tool_api.policy_adapter = tool_policy_adapter
 
     def _bind_inbound_permission_metadata(
@@ -449,7 +463,21 @@ class BrainBridgeTurnMixin:
             progress_callback=progress_callback,
         )
 
-        step_out = self._execute_turn(
+        if callable(approval_callback):
+            loop = asyncio.get_running_loop()
+            async_approval_callback = approval_callback
+
+            def _sync_approval_callback(*args: Any, **kwargs: Any) -> bool:
+                result = async_approval_callback(*args, **kwargs)
+                return bool(
+                    asyncio.run_coroutine_threadsafe(result, loop).result()
+                    if inspect.isawaitable(result)
+                    else result
+                )
+
+            approval_callback = _sync_approval_callback
+        step_out = await asyncio.to_thread(
+            self._execute_turn,
             runner=runner,
             session_id=session_id,
             request_id=request_id,

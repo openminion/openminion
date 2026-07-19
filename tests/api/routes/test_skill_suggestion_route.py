@@ -110,7 +110,6 @@ def test_http_suggestion_status_returns_typed_counts(cfg_path: str) -> None:
     status = result.payload["status"]
     assert status["surfaced_count"] == 0
     assert status["pending_count"] == 1
-    # Structural projection — no score / quality keys.
     for forbidden in ("quality", "value", "score", "confidence"):
         assert forbidden not in status
 
@@ -127,7 +126,6 @@ def test_http_suggestion_surface_pass_writes_audit(cfg_path: str) -> None:
     assert result is not None
     assert result.status == HTTPStatus.OK
     assert len(result.payload["surfaced"]) == 1
-    # Status now reflects the surface event.
     status_result = handle_request(
         _ctx(cfg_path),
         method_name="GET",
@@ -193,8 +191,6 @@ def test_http_suggestion_routes_do_not_swallow_proposal_routes(
     cfg_path: str,
 ) -> None:
     _seed_proposal(cfg_path)
-    # The proposal-list route lives under /v1/skills/proposals and must
-    # still match. The suggestion routes live under /v1/skills/suggestions.
     result = handle_request(
         _ctx(cfg_path),
         method_name="GET",

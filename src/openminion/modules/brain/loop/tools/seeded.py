@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_FAILURES,
-    BRAIN_ACTION_STATUS_BLOCKED,
     BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_ACTION_STATUS_SUCCESS,
 )
@@ -20,6 +19,7 @@ from .contracts import (
     ADAPTIVE_TERM_NEEDS_USER,
     ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
     AdaptiveToolLoopOutcome,
+    is_budget_exhausted_action_result,
     profile_include_reflect,
 )
 from .prompts import (
@@ -301,11 +301,7 @@ def _run_seeded_command_step(
             allowed_tools=allowed_tools,
             action_result=action_result,
         )
-    if (
-        action_result.status == BRAIN_ACTION_STATUS_BLOCKED
-        and getattr(getattr(action_result, "error", None), "code", "")
-        == "BUDGET_EXCEEDED"
-    ):
+    if is_budget_exhausted_action_result(action_result):
         loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
         emit_adaptive_status(
             loop_ctx,

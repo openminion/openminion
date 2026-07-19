@@ -1,33 +1,39 @@
-import logging
-import re
-from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Any, Protocol
+from __future__ import annotations
 
-from openminion.modules.controlplane.constants import PRINCIPAL_BINDING_STATUS_ACTIVE
+import logging
+import sqlite3
+import warnings
+from typing import Any, Protocol, cast
+
 from openminion.modules.controlplane.channels.telegram.config import PairingConfig
-from openminion.modules.controlplane.channels.telegram.constants import PAIRING_MODE_OFF
 from openminion.modules.controlplane.channels.telegram.interfaces import (
     TELEGRAM_INTERFACE_VERSION,
 )
 from openminion.modules.controlplane.channels.telegram.models import (
-    PairingHandleResult,
+    PairTokenIssue,
     TelegramInboundEnvelope,
+)
+from openminion.modules.controlplane.channels.telegram.normalization import (
+    to_control_event,
+    to_inbound_message,
+)
+from openminion.modules.controlplane.channels.telegram.pairing_adapter import (
+    TelegramPairingAdapter,
 )
 from openminion.modules.controlplane.channels.telegram.state import (
     TelegramPollStateStore,
 )
-
-_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
-@dataclass(frozen=True)
-class PairCreateResult:
-    token: str
-    token_hint: str
-    token_hash_prefix: str
-    expires_at_ts: int
-    scopes: list[str]
+from openminion.modules.controlplane.constants import (
+    PRINCIPAL_BINDING_STATUS_ACTIVE,
+)
+from openminion.modules.controlplane.pairing import (
+    ControlPlanePairingService,
+    ControlPlanePairingStore,
+    PairCreateResult,
+    PairingHandleResult,
+    PairingPolicy,
+    RecentPairAttemptsLRU,
+)
 
 
 class _ControlPlanePairingStore(Protocol):
@@ -45,22 +51,111 @@ class _ControlPlanePairingStore(Protocol):
     ) -> str: ...
 
 
-class _ControlPlaneSessionResolver(Protocol):
-    def resolve_session(self, user_key: str, chat_key: str) -> str: ...
+class _LegacyTelegramPairingStoreAdapter:
+    def __init__(self, *, store: TelegramPollStateStore, config: PairingConfig) -> None:
+        self._store = store
+        self._config = config
 
+    def issue_pair_token(
+        self,
+        *,
+        channel: str,
+        expected_account_id: str | None,
+        expected_chat_key: str | None,
+        scopes: list[str],
+        token: str | None,
+        ttl_seconds: int,
+        hash_pepper: str | None = None,
+    ) -> dict[str, Any]:
+        issued = self._store.issue_pair_token(
+            token=token,
+            token_ttl_seconds=ttl_seconds,
+            scopes=scopes,
+            expected_user_id=_telegram_id_suffix(expected_account_id),
+            expected_chat_id=_telegram_id_suffix(expected_chat_key),
+            hash_pepper=hash_pepper,
+        )
+        return _issue_to_dict(issued)
 
-class RecentPairAttemptsLRU:
-    def __init__(self, *, max_size: int = 2048) -> None:
-        self._max_size = max(128, int(max_size))
-        self._seen: OrderedDict[str, int] = OrderedDict()
+    def consume_pair_token(
+        self,
+        *,
+        channel: str,
+        token: str,
+        consumer_account_id: str,
+        consumer_chat_key: str,
+        hash_pepper: str | None = None,
+    ) -> dict[str, Any]:
+        consumed = self._store.consume_pair_token(
+            token=token,
+            user_id=int(_telegram_id_suffix(consumer_account_id) or 0),
+            chat_id=int(_telegram_id_suffix(consumer_chat_key) or 0),
+            topic_id=None,
+            hash_pepper=hash_pepper,
+        )
+        return {
+            "ok": consumed.ok,
+            "reason": consumed.reason,
+            "token_hint": consumed.token_hint,
+            "token_hash_prefix": consumed.token_hash_prefix,
+            "scopes": list(consumed.scopes or []),
+        }
 
-    def bump(self, token_prefix: str) -> int:
-        current = int(self._seen.get(token_prefix, 0)) + 1
-        self._seen[token_prefix] = current
-        self._seen.move_to_end(token_prefix)
-        if len(self._seen) > self._max_size:
-            self._seen.popitem(last=False)
-        return current
+    def count_recent_pair_attempts(
+        self, *, channel: str, account_id: str, since_ts: int
+    ) -> int:
+        del since_ts
+        user_id = _telegram_id_suffix(account_id)
+        if user_id is None:
+            return 0
+        return self._store.count_recent_attempts_for_user(
+            user_id=user_id,
+            window_seconds=self._config.attempt_window_seconds,
+        )
+
+    def count_recent_pair_attempts_for_chat(
+        self, *, channel: str, chat_key: str, since_ts: int
+    ) -> int:
+        del since_ts
+        chat_id = _telegram_id_suffix(chat_key)
+        if chat_id is None:
+            return 0
+        return self._store.count_recent_attempts_for_chat(
+            chat_id=chat_id,
+            window_seconds=self._config.attempt_window_seconds,
+        )
+
+    def record_pair_attempt(
+        self,
+        *,
+        channel: str,
+        account_id: str,
+        chat_key: str | None,
+        token: str,
+        outcome: str,
+        hash_pepper: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        user_id = _telegram_id_suffix(account_id)
+        chat_id = _telegram_id_suffix(chat_key)
+        if user_id is None or chat_id is None:
+            return
+        self._store.record_pair_attempt(
+            token=token,
+            user_id=user_id,
+            chat_id=chat_id,
+            outcome=outcome,
+            hash_pepper=hash_pepper,
+        )
+
+    def has_pair_channel_data(self, *, channel: str) -> bool:
+        return any(True for _ in self._store.iter_pair_tokens())
+
+    def bulk_insert_pair_tokens(self, rows: Any) -> int:
+        return 0
+
+    def bulk_insert_pair_attempts(self, rows: Any) -> int:
+        return 0
 
 
 class TelegramPairingService:
@@ -74,12 +169,35 @@ class TelegramPairingService:
         controlplane_store: _ControlPlanePairingStore | None = None,
         logger: logging.Logger | None = None,
         lru: RecentPairAttemptsLRU | None = None,
+        audit_logger: object | None = None,
     ) -> None:
+        warnings.warn(
+            "TelegramPairingService is a compatibility wrapper; use "
+            "ControlPlanePairingService with TelegramPairingAdapter for new code.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._config = config
         self._store = store
         self._controlplane_store = controlplane_store
         self._log = logger or logging.getLogger(__name__)
         self._lru = lru or RecentPairAttemptsLRU()
+        self._adapter = TelegramPairingAdapter()
+        self._pairing_store = ControlPlanePairingStore(
+            cast(Any, controlplane_store)
+            if _has_controlplane_pairing_methods(controlplane_store)
+            else _LegacyTelegramPairingStoreAdapter(store=store, config=config)
+        )
+        self._service = ControlPlanePairingService(
+            policy=PairingPolicy.from_config(config),
+            store=self._pairing_store,
+            adapter=self._adapter,
+            bridge_store=cast(Any, controlplane_store),
+            legacy_store=store if controlplane_store is not None else None,
+            audit_logger=audit_logger,
+            logger=self._log,
+            lru=self._lru,
+        )
 
     def issue_token(
         self,
@@ -90,23 +208,20 @@ class TelegramPairingService:
         scopes: list[str] | None = None,
         token: str | None = None,
     ) -> PairCreateResult:
-        ttl = token_ttl_seconds or self._config.token_ttl_seconds
-        scoped = scopes or list(self._config.default_scopes)
-        issued = self._store.issue_pair_token(
+        issued = self._service.issue_token(
+            expected_account_id=_telegram_account_id(expected_user_id),
+            expected_chat_key=_telegram_chat_key(expected_chat_id),
+            token_ttl_seconds=token_ttl_seconds or self._config.token_ttl_seconds,
+            scopes=scopes or list(self._config.default_scopes),
             token=token,
-            token_ttl_seconds=ttl,
-            scopes=scoped,
-            expected_user_id=expected_user_id,
-            expected_chat_id=expected_chat_id,
-            hash_pepper=self._config.hash_pepper,
         )
-        return PairCreateResult(
-            token=issued.token,
-            token_hint=issued.token_hint,
-            token_hash_prefix=issued.token_hash_prefix,
-            expires_at_ts=issued.expires_at_ts,
-            scopes=issued.scopes,
-        )
+        if _has_controlplane_pairing_methods(self._controlplane_store):
+            self._dual_write_legacy_issue(
+                expected_user_id=expected_user_id,
+                expected_chat_id=expected_chat_id,
+                issued=issued,
+            )
+        return issued
 
     def handle_start_pairing(
         self,
@@ -114,179 +229,101 @@ class TelegramPairingService:
         *,
         bot_username: str | None,
     ) -> PairingHandleResult:
-        if not self._config.enabled or self._config.mode == PAIRING_MODE_OFF:
-            return PairingHandleResult(handled=False)
-
-        token = _extract_start_token(envelope.text, bot_username=bot_username)
-        if token is None:
-            return PairingHandleResult(handled=False)
-
-        if envelope.chat_type != "private" and not self._config.allow_in_groups:
-            return PairingHandleResult(
-                handled=True,
-                reply_text="Pairing is only allowed in direct messages.",
-            )
-
-        if not _TOKEN_RE.fullmatch(token):
-            self._record_attempt(
-                token=token, envelope=envelope, outcome="invalid_format"
-            )
-            return PairingHandleResult(
-                handled=True,
-                reply_text="Pairing failed or expired. Generate a new link.",
-            )
-
-        lru_count = self._lru.bump(token[:12])
-        if lru_count > 8:
-            self._record_attempt(token=token, envelope=envelope, outcome="lru_limited")
-            return PairingHandleResult(
-                handled=True,
-                reply_text="Too many pairing attempts. Try again shortly.",
-            )
-
-        if self._is_rate_limited(envelope):
-            self._record_attempt(token=token, envelope=envelope, outcome="rate_limited")
-            return PairingHandleResult(
-                handled=True,
-                reply_text="Too many pairing attempts. Try again shortly.",
-            )
-
-        consume = self._store.consume_pair_token(
-            token=token,
-            user_id=envelope.from_user.id,
-            chat_id=envelope.chat_id,
-            topic_id=envelope.topic_id,
-            hash_pepper=self._config.hash_pepper,
+        control_event = to_control_event(envelope)
+        inbound = to_inbound_message(
+            envelope,
+            normalized_text=envelope.text,
+            control_event=control_event,
         )
-        self._record_attempt(token=token, envelope=envelope, outcome=consume.reason)
-
-        if consume.ok:
-            self._bridge_pairing_to_controlplane(envelope=envelope, consume=consume)
-            self._log.info(
-                "telegram pairing success user=%s chat=%s hint=%s hash_prefix=%s",
-                envelope.from_user.id,
-                envelope.chat_id,
-                consume.token_hint,
-                consume.token_hash_prefix,
-            )
-            return PairingHandleResult(handled=True, reply_text="Paired ✅")
-
-        self._log.warning(
-            "telegram pairing denied user=%s chat=%s reason=%s hint=%s hash_prefix=%s",
-            envelope.from_user.id,
-            envelope.chat_id,
-            consume.reason,
-            consume.token_hint,
-            consume.token_hash_prefix,
-        )
-        return PairingHandleResult(
-            handled=True,
-            reply_text="Pairing failed or expired. Generate a new link.",
+        return self._service.handle_pairing_attempt(
+            inbound,
+            channel_context={"bot_username": bot_username},
         )
 
-    def _is_rate_limited(self, envelope: TelegramInboundEnvelope) -> bool:
-        return (
-            self._store.count_recent_attempts_for_user(
-                user_id=envelope.from_user.id,
-                window_seconds=self._config.attempt_window_seconds,
-            )
-            >= self._config.max_attempts_per_user
-            or self._store.count_recent_attempts_for_chat(
-                chat_id=envelope.chat_id,
-                window_seconds=self._config.attempt_window_seconds,
-            )
-            >= self._config.max_attempts_per_chat
-        )
-
-    def _record_attempt(
-        self, *, token: str, envelope: TelegramInboundEnvelope, outcome: str
-    ) -> None:
-        self._store.record_pair_attempt(
-            token=token,
-            user_id=envelope.from_user.id,
-            chat_id=envelope.chat_id,
-            outcome=outcome,
-            hash_pepper=self._config.hash_pepper,
-        )
-
-    def _bridge_pairing_to_controlplane(
+    def _dual_write_legacy_issue(
         self,
         *,
-        envelope: TelegramInboundEnvelope,
-        consume: Any,
+        expected_user_id: int | None,
+        expected_chat_id: int | None,
+        issued: PairCreateResult,
     ) -> None:
-        bridge = self._controlplane_store
-        if bridge is None:
-            return
-
-        chat_id = str(envelope.chat_id)
-        user_id = str(envelope.from_user.id)
-        user_key = f"telegram:{envelope.from_user.id}"
-        chat_key = (
-            f"telegram:{envelope.chat_id}:{envelope.topic_id}"
-            if envelope.topic_id is not None
-            else f"telegram:{envelope.chat_id}"
-        )
-        session_id = f"telegram-pair:{envelope.chat_id}"
-
-        if hasattr(bridge, "resolve_session"):
-            try:
-                resolver = bridge  # type: ignore[assignment]
-                session_id = str(
-                    _as_session_resolver(resolver).resolve_session(
-                        user_key=user_key,
-                        chat_key=chat_key,
-                    )
-                )
-            except Exception as exc:
-                self._log.warning(
-                    "telegram pairing bridge resolve_session failed: %s", exc
-                )
-
-        scopes = list(consume.scopes or self._config.default_scopes)
         try:
-            bridge.upsert_pairing(
-                channel="telegram",
-                chat_id=chat_id,
-                user_id=user_id,
-                session_id=session_id,
-                scopes=scopes,
-                note="telegram_pair_bridge",
+            self._store.issue_pair_token(
+                token=issued.token,
+                token_ttl_seconds=max(60, issued.expires_at_ts - _now_ts()),
+                scopes=list(issued.scopes or self._config.default_scopes),
+                expected_user_id=expected_user_id,
+                expected_chat_id=expected_chat_id,
+                hash_pepper=self._config.hash_pepper,
             )
-        except Exception as exc:
-            self._log.warning(
-                "telegram pairing bridge upsert failed user=%s chat=%s: %s",
-                user_id,
-                chat_id,
-                exc,
-            )
+        except (TypeError, ValueError, RuntimeError, sqlite3.Error) as exc:
+            self._log.warning("telegram pairing legacy dual-write failed: %s", exc)
 
 
-def _as_session_resolver(store: object) -> _ControlPlaneSessionResolver:
-    return store  # type: ignore[return-value]
+def _issue_to_dict(issued: PairTokenIssue) -> dict[str, Any]:
+    return {
+        "token": issued.token,
+        "token_hint": issued.token_hint,
+        "token_hash_prefix": issued.token_hash_prefix,
+        "expires_at_ts": issued.expires_at_ts,
+        "scopes": list(issued.scopes or []),
+    }
+
+
+def _has_controlplane_pairing_methods(store: object | None) -> bool:
+    return store is not None and all(
+        hasattr(store, name)
+        for name in (
+            "issue_pair_token",
+            "consume_pair_token",
+            "record_pair_attempt",
+            "has_pair_channel_data",
+        )
+    )
+
+
+def _telegram_account_id(user_id: int | None) -> str | None:
+    if user_id is None:
+        return None
+    return f"telegram-bot:user:{int(user_id)}"
+
+
+def _telegram_chat_key(chat_id: int | None) -> str | None:
+    if chat_id is None:
+        return None
+    return f"telegram-bot:chat:{int(chat_id)}"
+
+
+def _telegram_id_suffix(value: object | None) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text.rsplit(":", 1)[-1])
+    except ValueError:
+        return None
+
+
+def _now_ts() -> int:
+    from openminion.modules.controlplane.pairing.store import now_ts
+
+    return now_ts()
 
 
 def _extract_start_token(text: str, *, bot_username: str | None) -> str | None:
-    stripped = (text or "").strip()
-    if not stripped:
-        return None
+    from openminion.modules.controlplane.channels.telegram.pairing_text import (
+        extract_start_token,
+    )
 
-    parts = stripped.split(maxsplit=1)
-    head = parts[0]
-    if not head.startswith("/"):
-        return None
+    return extract_start_token(text, bot_username=bot_username)
 
-    cmd = head[1:]
-    if "@" in cmd:
-        name, target_bot = cmd.split("@", 1)
-        if bot_username and target_bot.lower() != bot_username.lower():
-            return None
-        cmd = name
 
-    if cmd.lower() != "start":
-        return None
-    if len(parts) < 2:
-        return None
-
-    token = parts[1].strip().split()[0]
-    return token or None
+__all__ = [
+    "PairCreateResult",
+    "PairingHandleResult",
+    "RecentPairAttemptsLRU",
+    "TelegramPairingService",
+    "_extract_start_token",
+]

@@ -32,7 +32,7 @@ def _write_fixture(tmp_path: Path, body: str) -> Path:
 def test_detects_package_re_export_form(guard_module, tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path,
-        "from openminion.cli.tui.widgets import ChatView, ChatInputBar\n",
+        "from legacy.dashboard.widgets import ChatView, ChatInputBar\n",
     )
     violations = guard_module._scan_file(fixture)
     symbols = {v.symbol for v in violations}
@@ -42,8 +42,8 @@ def test_detects_package_re_export_form(guard_module, tmp_path: Path) -> None:
 def test_detects_submodule_absolute_form(guard_module, tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path,
-        "from openminion.cli.tui.widgets.chat import ChatView, MessageWidget\n"
-        "from openminion.cli.tui.widgets.input_bar import ChatInputBar\n",
+        "from legacy.dashboard.widgets.chat import ChatView, MessageWidget\n"
+        "from legacy.dashboard.widgets.input_bar import ChatInputBar\n",
     )
     violations = guard_module._scan_file(fixture)
     symbols = {v.symbol for v in violations}
@@ -64,7 +64,7 @@ def test_detects_relative_form(guard_module, tmp_path: Path) -> None:
 def test_detects_multiline_parenthesized_import(guard_module, tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path,
-        "from openminion.cli.tui.widgets import (\n"
+        "from legacy.dashboard.widgets import (\n"
         "    ChatInputBar,\n"
         "    ChatSearchBar,\n"
         "    ChatView,\n"
@@ -80,7 +80,7 @@ def test_detects_multiline_parenthesized_import(guard_module, tmp_path: Path) ->
 def test_exception_list_symbols_do_not_trigger(guard_module, tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path,
-        "from openminion.cli.tui.widgets import (\n"
+        "from legacy.dashboard.widgets import (\n"
         "    ChatSearchBar,\n"
         "    ToolBlockWidget,\n"
         "    ToolApprovalWidget,\n"
@@ -97,7 +97,7 @@ def test_clean_file_returns_no_violations(guard_module, tmp_path: Path) -> None:
     fixture = _write_fixture(
         tmp_path,
         "from textual.widget import Widget\n"
-        "from openminion.cli.tui.focus.widgets import FocusStatusLine\n",
+        "from openminion.cli.interactive.widgets import FocusStatusLine\n",
     )
     assert guard_module._scan_file(fixture) == []
 
@@ -108,7 +108,7 @@ def test_baseline_grandfathers_known_violations(
     # Build a tiny fake focus tree the validator scans.
     fake_screen = tmp_path / "screen.py"
     fake_screen.write_text(
-        "from openminion.cli.tui.widgets import ChatView, ChatInputBar\n",
+        "from legacy.dashboard.widgets import ChatView, ChatInputBar\n",
         encoding="utf-8",
     )
     fake_widgets = tmp_path / "widgets"
@@ -136,7 +136,7 @@ def test_new_violation_outside_baseline_fails(
 ) -> None:
     fake_screen = tmp_path / "screen.py"
     fake_screen.write_text(
-        "from openminion.cli.tui.widgets import ChatView, ChatInputBar\n",
+        "from legacy.dashboard.widgets import ChatView, ChatInputBar\n",
         encoding="utf-8",
     )
     fake_widgets = tmp_path / "widgets"
@@ -166,10 +166,8 @@ def test_live_tree_baseline_matches_expected_violations(
     for v in violations:
         symbols_by_file.setdefault(v.file, set()).add(v.symbol)
 
-    # The only file with violations today is focus/screen.py; both
-    # symbols are body widgets. ChatSearchBar (also imported there)
-    # is on the exception list and must NOT show up.
-    expected_file = "src/openminion/cli/tui/focus/screen.py"
+    # Any live violation must remain isolated to the canonical screen.
+    expected_file = "src/openminion/cli/interactive/screen.py"
     assert set(symbols_by_file.keys()) <= {expected_file}, (
         f"unexpected violation file(s): {set(symbols_by_file.keys())}"
     )

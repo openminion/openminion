@@ -11,6 +11,7 @@ from openminion.modules.telemetry.trace.layout import (
     build_trace_file_path,
     resolve_trace_root,
 )
+from openminion.modules.telemetry.trace.metadata import merge_trace_metadata
 from openminion.modules.telemetry.trace.structured import write_structured_trace
 from openminion.modules.llm.thinking import serialize_thinking_blocks
 from openminion.modules.tool.dispatch import _get_registry_manager
@@ -315,45 +316,4 @@ def trace_provider_response(
         logger.warning("trace_response: failed to write trace: %s", exc)
 
 
-def merge_metadata(
-    metadata: dict[str, str],
-    *,
-    model: str | None,
-    provider_name: str,
-    inference_steps: int,
-    untrusted_metadata: dict[str, str],
-    untrusted_events: list[dict[str, str]],
-    self_improvement_metadata: dict[str, str],
-) -> dict[str, str]:
-    merged = dict(metadata)
-    # Keep tool resolution metadata contract stable on all paths.
-    merged.setdefault("model_tool_name", "")
-    merged.setdefault("runtime_binding_id", "")
-    merged.setdefault("runtime_tool_name", "")
-    merged.setdefault("runtime_fallback_chain", "[]")
-    merged.setdefault("runtime_fallback_used", "false")
-    merged.setdefault("runtime_resolution_source", "")
-    if model and not merged.get("model"):
-        merged["model"] = str(model)
-    merged.setdefault("provider", provider_name)
-    merged["inference_steps"] = str(inference_steps)
-    for key, value in untrusted_metadata.items():
-        merged[key] = value
-    for key, value in self_improvement_metadata.items():
-        merged[key] = value
-    events: list[dict[str, str]] = []
-    raw_events = str(merged.get("security_events", "")).strip()
-    if raw_events:
-        try:
-            parsed = json.loads(raw_events)
-        except json.JSONDecodeError:
-            parsed = []
-        if isinstance(parsed, list):
-            for item in parsed:
-                if isinstance(item, dict):
-                    events.append({str(k): str(v) for k, v in item.items()})
-    if untrusted_events:
-        events.extend(untrusted_events)
-    if events:
-        merged["security_events"] = json.dumps(events, sort_keys=True)
-    return merged
+merge_metadata = merge_trace_metadata

@@ -434,13 +434,12 @@ def run_cli_session(
         "openminion",
         "--config",
         str(resolved_config),
-        "chat",
         "--agent",
         resolved_agent_id,
         "--session",
         session_id,
-        "--reset-session",
-        "--quiet",
+        "--verbosity",
+        "quiet",
         "--no-progress",
     ]
     exit_code, transcript = _run_probe_session(

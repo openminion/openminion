@@ -33,7 +33,7 @@ def open_turn_submission(
     *,
     config_path: Optional[str],
     runtime: Optional[APIRuntime],
-    body: dict,
+    body: dict[str, Any],
 ) -> TurnSubmission:
     active_runtime, own_runtime = resolve_api_runtime(
         config_path=config_path,

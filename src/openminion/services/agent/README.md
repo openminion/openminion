@@ -28,16 +28,15 @@ Re-exported from `openminion.services.agent`:
 Internal modules of note:
 
 - `service.py` — `AgentService`
-- `execution/` — turn flow (`flow.py`), composition, tool planning, lane
-  runners (`required/`, `unforced/`), validators, and finalization helpers
-- `hooks.py` — hook fabric
-- `lifecycle.py` — lifecycle event registry and settings-driven lifecycle hooks
-- `identity.py`, `identity_binding.py` — identity binding at turn time
+- `execution/` — turn flow, composition, tool planning, fallback and argument
+  handling, execution prompts, lane runners (`required/`, `unforced/`),
+  validators, and finalization helpers
+- `context/` — provider history, system-prompt resolution, grounding, and turn
+  context assembly
+- `hooks.py` — AECR compatibility import for the runtime plugin context
+- `identity_binding.py` — binds the module-owned identity bundle at turn time
 - `memory/` — memory retrieval, extraction, and turn-recording helpers
-- `prompt_history.py` — provider-shaped prompt-history assembly
 - `telemetry.py` — agent-side event emission
-- `fallbacks.py` — fallback tool catalog when provider catalog is empty
-- `turn_context.py` — per-turn context container
 - `context.py` — builds the system context for a turn
 
 ## Owned objects

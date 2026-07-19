@@ -6,6 +6,7 @@ import typer
 
 from openminion.base.generated_paths import resolve_generated_config_path
 from openminion.modules.tool.cli import _execute_call_payload
+from openminion.modules.tool.cli.runtime import print_envelope
 from openminion.modules.tool.contracts.schemas import ResultEnvelope
 from openminion.tools.config import get_tool_env
 
@@ -39,8 +40,7 @@ def _parse_env_overrides(items: List[str]) -> Dict[str, str]:
 
 
 def _print_env_and_exit(env: ResultEnvelope, exit_code: int, json_out: bool) -> None:
-    payload = env.model_dump_json(indent=2)
-    print(payload)
+    print_envelope(env, json_out=json_out)
     if exit_code:
         raise typer.Exit(code=exit_code)
 

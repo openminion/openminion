@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from openminion.base.config.env import (
-    EnvironmentConfig,
-    resolve_credential_env_value,
-)
+import pytest
+
+from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.runtime.credentials import (
     CredentialAccessEvent,
     CredentialRotationEvent,
     InMemoryCredentialAuditLog,
+    resolve_credential_env_value,
     resolve_credential_ref,
 )
 from openminion.tools.config import resolve_tool_credential_value
@@ -28,7 +28,7 @@ def _env_with_token(value: str) -> EnvironmentConfig:
     )
 
 
-def test_base_env_seam_routes_five_step_flow() -> None:
+def test_runtime_credential_owner_routes_five_step_flow() -> None:
     log = InMemoryCredentialAuditLog()
     env = _env_with_token(SECRET_VALUE)
     ref = resolve_credential_ref(
@@ -44,7 +44,7 @@ def test_base_env_seam_routes_five_step_flow() -> None:
         ref,
         caller_agent_id="agent-1",
         caller_profile_id="profile-gh",
-        access_site="base.config.env.resolve_credential_env_value",
+        access_site="modules.runtime.credentials.resolve_credential_env_value",
         audit_log=log,
         env=env,
     )
@@ -57,6 +57,24 @@ def test_base_env_seam_routes_five_step_flow() -> None:
     # Event never carries the secret value.
     for event in log.events:
         assert SECRET_VALUE not in str(event)
+
+
+def test_credential_owner_rejects_non_env_source() -> None:
+    ref = resolve_credential_ref(
+        "vault_token",
+        scope_kind="process",
+        scope_id="proc",
+        source_kind="secret_ref",
+    )
+
+    with pytest.raises(ValueError, match="env-source"):
+        resolve_credential_env_value(
+            ref,
+            caller_agent_id="agent-1",
+            caller_profile_id="profile-1",
+            access_site="modules.runtime.credentials",
+            audit_log=InMemoryCredentialAuditLog(),
+        )
 
 
 def test_tools_config_seam_routes_five_step_flow() -> None:

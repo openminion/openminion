@@ -23,14 +23,12 @@ from openminion.base.config.mcp import coerce_mcp_exposure_config
 def _parse_model_capability_overrides(value: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(value, dict):
         return {}
-
-    parsed: dict[str, dict[str, Any]] = {}
-    for raw_profile_id, raw_override in value.items():
-        profile_id = str(raw_profile_id).strip()
-        if not profile_id or not isinstance(raw_override, dict):
-            continue
-        parsed[profile_id] = deepcopy(raw_override)
-    return parsed
+    return {
+        profile_id: deepcopy(raw_override)
+        for raw_profile_id, raw_override in value.items()
+        if (profile_id := str(raw_profile_id).strip())
+        and isinstance(raw_override, dict)
+    }
 
 
 def _parse_provider_config_overrides(value: Any) -> dict[str, Any]:
@@ -58,8 +56,6 @@ def _parse_trailer_guidance_variant_map(
 def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
     from .action import _build_action_policy_config
 
-    if value is None:
-        return {}
     if not isinstance(value, dict):
         return {}
 
@@ -72,7 +68,7 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
             raise ConfigError(
                 f"Nested 'runtime_overrides' under agents.{agent_id} is no longer supported. "
                 f"Flatten to 'agents.{agent_id}.*'. "
-                "See the config-shape migration guide."
+                "See docs/reference/config-shape-migration-2026.md."
             )
 
         kwargs: dict[str, Any] = dict(
@@ -116,16 +112,13 @@ def _parse_agent_profiles(value: Any) -> dict[str, AgentProfileConfig]:
             tools=coerce_tool_runtime_config(agent_config.get("tools")),
             mcp_exposure=coerce_mcp_exposure_config(agent_config.get("mcp_exposure")),
         )
-        if "tool_schema_shortlisting_enabled" in agent_config:
-            kwargs["tool_schema_shortlisting_enabled"] = _as_bool(
-                agent_config.get("tool_schema_shortlisting_enabled"), True
-            )
-            kwargs["has_tool_schema_shortlisting_enabled"] = True
-        if "allow_background_write_authorization" in agent_config:
-            kwargs["allow_background_write_authorization"] = _as_bool(
-                agent_config.get("allow_background_write_authorization"), False
-            )
-            kwargs["has_allow_background_write_authorization"] = True
+        for field_name, default in (
+            ("tool_schema_shortlisting_enabled", True),
+            ("allow_background_write_authorization", False),
+        ):
+            if field_name in agent_config:
+                kwargs[field_name] = _as_bool(agent_config.get(field_name), default)
+                kwargs[f"has_{field_name}"] = True
         if "trailer_guidance_variant" in agent_config:
             variant, has_variant = _parse_trailer_guidance_variant_map(
                 agent_config.get("trailer_guidance_variant"),

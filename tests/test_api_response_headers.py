@@ -34,3 +34,29 @@ def test_write_json_sets_no_store_for_metrics_path() -> None:
     payload = {"ok": True, "meta": {"request_id": "req-123", "path": "/metrics"}}
     _OpenMinionAPIHandler._write_json(handler, HTTPStatus.OK, payload)
     handler.send_header.assert_any_call("Cache-Control", "no-store")
+
+
+def test_write_json_sets_retry_after_header_from_error_payload() -> None:
+    handler = _handler()
+    payload = {"ok": False, "error": {"retry_after_ms": 7000}}
+    _OpenMinionAPIHandler._write_json(handler, HTTPStatus.CONFLICT, payload)
+    handler.send_header.assert_any_call("Retry-After", "7")
+
+
+def test_write_json_sets_allowlisted_response_headers_from_meta() -> None:
+    handler = _handler()
+    payload = {
+        "ok": True,
+        "meta": {
+            "response_headers": {
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+                "X-Not-Allowed": "nope",
+            }
+        },
+    }
+    _OpenMinionAPIHandler._write_json(handler, HTTPStatus.OK, payload)
+    handler.send_header.assert_any_call("Cache-Control", "no-store")
+    handler.send_header.assert_any_call("Referrer-Policy", "no-referrer")
+    sent = [call.args for call in handler.send_header.call_args_list]
+    assert ("X-Not-Allowed", "nope") not in sent

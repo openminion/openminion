@@ -98,6 +98,19 @@ def _open_stream_submission(
         )
         return None, status, payload
     except RuntimeError as exc:
+        if getattr(exc, "code", "") == "SESSION_TURN_BUSY":
+            retry_after_ms = max(1000, int(getattr(exc, "retry_after_s", 1)) * 1000)
+            status, payload = _stream_error_payload(
+                HTTPStatus.CONFLICT,
+                code="SESSION_TURN_BUSY",
+                message=str(exc),
+                retryable=True,
+                retry_after_ms=retry_after_ms,
+            )
+            payload["error"].setdefault("details", {})["retry_after_s"] = (
+                retry_after_ms // 1000
+            )
+            return None, status, payload
         status, payload = _stream_error_payload(
             HTTPStatus.SERVICE_UNAVAILABLE,
             code="runtime_unavailable",
@@ -170,6 +183,39 @@ def _collect_stream_result(
             write_sse_event=write_sse_event,
         )
         return HTTPStatus.GATEWAY_TIMEOUT, payload
+    except RuntimeError as exc:
+        if getattr(exc, "code", "") == "SESSION_TURN_BUSY":
+            retry_after_ms = max(1000, int(getattr(exc, "retry_after_s", 1)) * 1000)
+            payload = {
+                "ok": False,
+                "error": {
+                    "code": "SESSION_TURN_BUSY",
+                    "message": str(exc),
+                    "retryable": True,
+                    "retry_after_ms": retry_after_ms,
+                    "details": {"retry_after_s": retry_after_ms // 1000},
+                },
+            }
+            _safe_stream_event(
+                event="error",
+                data=payload["error"],
+                write_sse_event=write_sse_event,
+            )
+            return HTTPStatus.CONFLICT, payload
+        payload = {
+            "ok": False,
+            "error": {
+                "code": "turn_failed",
+                "message": str(exc),
+                "retryable": False,
+            },
+        }
+        _safe_stream_event(
+            event="error",
+            data=payload["error"],
+            write_sse_event=write_sse_event,
+        )
+        return HTTPStatus.INTERNAL_SERVER_ERROR, payload
     except Exception as exc:  # noqa: BLE001
         payload = {
             "ok": False,

@@ -42,6 +42,49 @@ def test_os_adapter_returns_needs_user_on_confirm_required(tmp_path: Path):
     assert "approval_id" in result["error"]["details"]
 
 
+def test_os_adapter_executes_after_inline_approval(tmp_path: Path):
+    adapter = ToolAdapter(workspace_root=tmp_path)
+    approvals: list[tuple[str, dict[str, object], str]] = []
+
+    def approve(tool_name, args, approval_id):
+        approvals.append((tool_name, args, approval_id))
+        return True
+
+    adapter.set_approval_callback(approve)
+    result = adapter.execute(
+        command={
+            "tool_name": "file.write",
+            "args": {"path": "probe.txt", "content": "hello"},
+        },
+        session_id="s1",
+        trace_id="t1",
+    )
+
+    assert result["status"] == "success"
+    assert (tmp_path / "probe.txt").read_text(encoding="utf-8") == "hello"
+    assert approvals[0][0] == "file.write"
+    assert approvals[0][1]["path"] == "probe.txt"
+    assert approvals[0][2]
+
+
+def test_os_adapter_fails_closed_after_inline_denial(tmp_path: Path):
+    adapter = ToolAdapter(workspace_root=tmp_path)
+    adapter.set_approval_callback(lambda *_args: False)
+
+    result = adapter.execute(
+        command={
+            "tool_name": "file.write",
+            "args": {"path": "probe.txt", "content": "hello"},
+        },
+        session_id="s1",
+        trace_id="t1",
+    )
+
+    assert result["status"] == "error"
+    assert result["error"]["code"] == "POLICY_DENIED"
+    assert not (tmp_path / "probe.txt").exists()
+
+
 def test_os_adapter_confirmation_grant_replay_uses_policy_gate(tmp_path: Path):
     adapter = ToolAdapter(
         workspace_root=tmp_path,

@@ -82,10 +82,10 @@ For package-release or integration-owner validation, use:
 2. `tests/e2e/runners/` for committed end-to-end runners
 3. the maintainer workflow docs for broader integration and tracking flows
 
-## TUI focus PTY smoke
+## Interactive CLI PTY smoke
 
-The terminal focus shell has a reusable PTY-based E2E harness under
-`tests/e2e/tui/focus/`. It is intended for maintainer and contributor
+The interactive CLI has a reusable PTY-based E2E harness under
+`tests/e2e/cli/focus/`. It is intended for maintainer and contributor
 validation of the interactive surface a person actually uses: launch, prompt
 readiness, slash commands, live turns, tool turns, and opt-in complex workflows.
 
@@ -93,43 +93,55 @@ Run the deterministic local slice from the package root:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 \
-.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py local
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py local
 ```
 
-Run live MiniMax focus smoke when a compatible config and credentials are
+Before release, run the deterministic Tier A coding-harness journey gate:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py tier-a
+```
+
+This gate covers PTY answer/interrupt/queue behavior, approval and session-grant
+flows, and an isolated code edit/diff/validation/rollback journey. Live MiniMax
+smoke remains separate evidence for provider behavior and must not replace this
+deterministic gate.
+
+Run live MiniMax interactive CLI smoke when a compatible config and credentials are
 available:
 
 ```bash
-OPENMINION_TUI_FOCUS_E2E_CONFIG=/path/to/config.json \
-OPENMINION_TUI_FOCUS_E2E_AGENT=minimax-m2-7 \
-.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py live
+OPENMINION_CLI_FOCUS_E2E_CONFIG=/path/to/config.json \
+OPENMINION_CLI_FOCUS_E2E_AGENT=minimax-m2-7 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py live
 ```
 
 Run only the separately gated deep/complex research scenarios:
 
 ```bash
-OPENMINION_TUI_FOCUS_E2E_CONFIG=/path/to/config.json \
-OPENMINION_TUI_FOCUS_E2E_AGENT=minimax-m2-7 \
-OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 \
-.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py research
+OPENMINION_CLI_FOCUS_E2E_CONFIG=/path/to/config.json \
+OPENMINION_CLI_FOCUS_E2E_AGENT=minimax-m2-7 \
+OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py research
 ```
 
 Run only the separately gated deep/complex/long coding scenarios:
 
 ```bash
-OPENMINION_TUI_FOCUS_E2E_CONFIG=/path/to/config.json \
-OPENMINION_TUI_FOCUS_E2E_AGENT=minimax-m2-7 \
-OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 \
-.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py coding
+OPENMINION_CLI_FOCUS_E2E_CONFIG=/path/to/config.json \
+OPENMINION_CLI_FOCUS_E2E_AGENT=minimax-m2-7 \
+OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py coding
 ```
 
 Run the full complex/deep matrix:
 
 ```bash
-OPENMINION_TUI_FOCUS_E2E_CONFIG=/path/to/config.json \
-OPENMINION_TUI_FOCUS_E2E_AGENT=minimax-m2-7 \
-OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E=1 \
-.venv/bin/python3.11 tests/e2e/runners/run_tui_focus_e2e.py complex
+OPENMINION_CLI_FOCUS_E2E_CONFIG=/path/to/config.json \
+OPENMINION_CLI_FOCUS_E2E_AGENT=minimax-m2-7 \
+OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py complex
 ```
 
 The complex slice is intentionally not part of routine local validation. It can

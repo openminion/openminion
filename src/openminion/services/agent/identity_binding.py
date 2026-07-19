@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.base.config.runtime import resolve_identity_root_from_env
@@ -11,21 +12,7 @@ from openminion.modules.identity.config import (
     from_base_config,
     resolve_default_render_budget,
 )
-from openminion.modules.identity.runtime.renderer import (
-    _CANONICAL_PURPOSES,
-    normalize_purpose,
-)
-from openminion.services.config import (
-    resolve_services_env,
-    resolve_services_path,
-    resolve_services_roots,
-)
-from openminion.services.bootstrap.paths import (
-    SERVICES_IDENTITY_DB_FILENAME,
-    SERVICES_IDENTITY_SUBDIR,
-)
-
-from .constants import (
+from openminion.modules.identity.constants import (
     IDENTITY_RUNTIME_STATUS_BUNDLE_EMPTY,
     IDENTITY_RUNTIME_STATUS_BUNDLE_INVALID,
     IDENTITY_RUNTIME_STATUS_BUNDLE_ROOT_UNSET,
@@ -42,10 +29,47 @@ from .constants import (
     IDENTITY_RUNTIME_STATUS_SYNCED,
     IDENTITY_RUNTIME_STATUS_SYNC_FAILED,
 )
-from .prompt_history import _IDENTITY_FRAME, _resolve_system_prompt
+from openminion.modules.identity.runtime.renderer import (
+    _CANONICAL_PURPOSES,
+    normalize_purpose,
+)
+from openminion.services.config import (
+    resolve_services_env,
+    resolve_services_path,
+    resolve_services_roots,
+)
+from openminion.services.bootstrap.paths import (
+    SERVICES_IDENTITY_DB_FILENAME,
+    SERVICES_IDENTITY_SUBDIR,
+)
+
+from .context.history import _IDENTITY_FRAME, _resolve_system_prompt
 
 
 class AgentIdentityMixin:
+    if TYPE_CHECKING:
+        _config: Any
+        _home_root: Path
+        _identity_agent_id: str
+        _identity_render_budgets: dict[str, int]
+        _identity_runtime_status: str
+        _identity_tool_filter: Any
+        _identityctl: Any
+        _logger: logging.Logger
+        _security_policy: Any
+
+        def _identity_runtime_configured(self) -> bool: ...
+
+        def _create_identity_ctl(self) -> Any: ...
+
+        def _ensure_default_identity_profile(self, *, imported: bool) -> bool: ...
+
+        def _log_identity_startup_sync(
+            self, *, yaml_summary: dict[str, Any], fallback_applied: bool
+        ) -> None: ...
+
+        def _disable_identity_runtime(self, exc: Exception) -> None: ...
+
     def _resolve_identity_render_purpose(
         self,
         *,
@@ -62,7 +86,7 @@ class AgentIdentityMixin:
         ):
             value = str(metadata.get(key, "") or "").strip()
             if value:
-                return normalize_purpose(value)
+                return str(normalize_purpose(value))
         return "act"
 
     def _identity_env(self) -> EnvironmentConfig:
@@ -87,7 +111,7 @@ class AgentIdentityMixin:
         self._identity_render_budgets = dict(resolved)
         return dict(resolved)
 
-    def _load_identity_ctl_config(self):
+    def _load_identity_ctl_config(self) -> Any:
         env = self._identity_env()
         roots = resolve_services_roots(env=env, home_root=self._home_root)
         try:
@@ -420,7 +444,7 @@ class AgentIdentityMixin:
             self._identity_import_summary = summary
             return False
         try:
-            from openminion.services.agent.identity import load_identity_bundle
+            from openminion.modules.identity import load_identity_bundle
 
             bundle = load_identity_bundle(self._identity_agent_id, root=bundle_root)
             summary["bundle_root"] = str(bundle.root_path)
@@ -503,63 +527,21 @@ class AgentIdentityMixin:
 
     def _init_identity_runtime(self) -> None:
         try:
-            env = self._identity_env()
-            env_path = env.get(OPENMINION_IDENTITY_DB_ENV, "").strip()
-            configured_path = str(getattr(self._config.identity, "db_path", "")).strip()
-            legacy_root = str(getattr(self._config.identity, "root", "")).strip()
-            bundle_root = self._resolve_bundle_root()
-            if (
-                not env_path
-                and not configured_path
-                and not legacy_root
-                and not bundle_root
-            ):
+            if not self._identity_runtime_configured():
                 return
-            from openminion.modules.identity.runtime.service import IdentityCtl
-            from openminion.modules.identity.storage.store import SQLiteIdentityStore
-            from openminion.services.identity.bootstrap import ensure_default_profile
-
-            db_path = Path(self._resolve_identity_db_path())
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._identityctl = IdentityCtl(
-                store=SQLiteIdentityStore(sqlite_path=str(db_path))
-            )
+            self._create_identity_ctl()
             yaml_summary = self._sync_startup_yaml_profiles()
             self._identity_yaml_sync_summary = dict(yaml_summary or {})
-            imported = self._import_identity_bundle_profile()
-            existing_profile = self._identityctl.get_profile(self._identity_agent_id)
-            fallback_applied = False
-            if not imported and existing_profile is None:
-                ensure_default_profile(
-                    self._identityctl,
-                    self._identity_agent_id,
-                    system_prompt=_resolve_system_prompt(self._config),
-                )
-                fallback_applied = True
-            import_summary = dict(getattr(self, "_identity_import_summary", {}) or {})
-            self._logger.info(
-                "identity startup sync agent_id=%s yaml_status=%s yaml_profiles=%s yaml_upserted=%s yaml_errors=%s status=%s imported=%s fallback_default=%s defaulted_fields=%s warnings=%s errors=%s",
-                self._identity_agent_id,
-                str(yaml_summary.get("status", "unknown")),
-                int(yaml_summary.get("profile_files_count", 0) or 0),
-                int(yaml_summary.get("upserted_profiles_count", 0) or 0),
-                int(yaml_summary.get("errors_count", 0) or 0),
-                str(import_summary.get("status", "unknown")),
-                bool(import_summary.get("imported", False)),
-                fallback_applied,
-                int(import_summary.get("defaulted_fields_count", 0) or 0),
-                int(import_summary.get("warnings_count", 0) or 0),
-                int(import_summary.get("errors_count", 0) or 0),
+            fallback_applied = self._ensure_default_identity_profile(
+                imported=self._import_identity_bundle_profile()
+            )
+            self._log_identity_startup_sync(
+                yaml_summary=yaml_summary,
+                fallback_applied=fallback_applied,
             )
             self._refresh_identity_runtime_state()
         except Exception as exc:  # noqa: BLE001
-            self._identityctl = None
-            self._identity_tool_filter = None
-            self._logger.debug(
-                "identity runtime not active agent_id=%s reason=%s",
-                self._identity_agent_id,
-                exc,
-            )
+            self._disable_identity_runtime(exc)
 
     def _refresh_identity_runtime_state(self) -> None:
         if self._identityctl is None:
@@ -698,6 +680,79 @@ class AgentIdentityMixin:
             return framed_identity
         return f"{system_prompt}\n\n{framed_identity}".strip()
 
+def _identity_runtime_configured(self) -> bool:
+    env = self._identity_env()
+    return any(
+        str(value or "").strip()
+        for value in (
+            env.get(OPENMINION_IDENTITY_DB_ENV, ""),
+            getattr(self._config.identity, "db_path", ""),
+            getattr(self._config.identity, "root", ""),
+            self._resolve_bundle_root(),
+        )
+    )
+
+def _create_identity_ctl(self) -> None:
+    from openminion.modules.identity.runtime.service import IdentityCtl
+    from openminion.modules.identity.storage.store import SQLiteIdentityStore
+
+    db_path = Path(self._resolve_identity_db_path())
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    self._identityctl = IdentityCtl(store=SQLiteIdentityStore(sqlite_path=str(db_path)))
+
+def _ensure_default_identity_profile(self, *, imported: bool) -> bool:
+    if imported or self._identityctl is None:
+        return False
+    existing_profile = self._identityctl.get_profile(self._identity_agent_id)
+    if existing_profile is not None:
+        return False
+    from openminion.services.identity.bootstrap import ensure_default_profile
+
+    ensure_default_profile(
+        self._identityctl,
+        self._identity_agent_id,
+        system_prompt=_resolve_system_prompt(self._config),
+    )
+    return True
+
+def _log_identity_startup_sync(
+    self,
+    *,
+    yaml_summary: dict[str, Any],
+    fallback_applied: bool,
+) -> None:
+    import_summary = dict(getattr(self, "_identity_import_summary", {}) or {})
+    self._logger.info(
+        "identity startup sync agent_id=%s yaml_status=%s yaml_profiles=%s yaml_upserted=%s yaml_errors=%s status=%s imported=%s fallback_default=%s defaulted_fields=%s warnings=%s errors=%s",
+        self._identity_agent_id,
+        str(yaml_summary.get("status", "unknown")),
+        int(yaml_summary.get("profile_files_count", 0) or 0),
+        int(yaml_summary.get("upserted_profiles_count", 0) or 0),
+        int(yaml_summary.get("errors_count", 0) or 0),
+        str(import_summary.get("status", "unknown")),
+        bool(import_summary.get("imported", False)),
+        fallback_applied,
+        int(import_summary.get("defaulted_fields_count", 0) or 0),
+        int(import_summary.get("warnings_count", 0) or 0),
+        int(import_summary.get("errors_count", 0) or 0),
+    )
+
+def _disable_identity_runtime(self, exc: Exception) -> None:
+    self._identityctl = None
+    self._identity_tool_filter = None
+    self._logger.debug(
+        "identity runtime not active agent_id=%s reason=%s",
+        self._identity_agent_id,
+        exc,
+    )
+
+
+
+AgentIdentityMixin._identity_runtime_configured = _identity_runtime_configured
+AgentIdentityMixin._create_identity_ctl = _create_identity_ctl
+AgentIdentityMixin._ensure_default_identity_profile = _ensure_default_identity_profile
+AgentIdentityMixin._log_identity_startup_sync = _log_identity_startup_sync
+AgentIdentityMixin._disable_identity_runtime = _disable_identity_runtime
 
 _AGENT_IDENTITY_RUNTIME_API_NAMES = (
     "_resolve_identity_render_purpose",
@@ -712,8 +767,16 @@ _AGENT_IDENTITY_RUNTIME_API_NAMES = (
     "_discover_startup_yaml_profile_paths",
     "_sync_startup_yaml_profiles",
     "_classify_profile_source",
+    "_identity_bundle_existing_profile_state",
+    "_identity_bundle_documents",
+    "_upsert_identity_bundle_profile",
     "_import_identity_bundle_profile",
     "_resolve_identity_db_path",
+    "_identity_runtime_configured",
+    "_create_identity_ctl",
+    "_ensure_default_identity_profile",
+    "_log_identity_startup_sync",
+    "_disable_identity_runtime",
     "_init_identity_runtime",
     "_refresh_identity_runtime_state",
     "_budget_value",

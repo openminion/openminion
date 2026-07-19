@@ -4,28 +4,27 @@ from pathlib import Path
 
 import pytest
 
-from openminion.services.agent.hooks import Hook
-from openminion.services.runtime.discovery import DiscoveredHook
-from openminion.services.runtime.contracts.manifest import (
-    HookManifest,
+from openminion.services.runtime.plugins import Plugin, PluginRegistry
+from openminion.services.runtime.plugins.discovery import DiscoveredPlugin
+from openminion.services.runtime.plugins.manifests import (
+    PluginManifest,
     validate_plugin_manifest,
 )
-from openminion.services.agent.hooks import HookRegistry
 from openminion.services.runtime.plugins import _build_custom_lookup
 
 
-class _AlphaHook(Hook):
+class _AlphaPlugin(Plugin):
     name = "alpha"
 
 
-class _BetaHook(Hook):
+class _BetaPlugin(Plugin):
     name = "beta"
 
 
 def test_plugin_registry_register_names_and_manifest_ids() -> None:
-    registry = HookRegistry()
-    registry.register(_AlphaHook(), manifest=_manifest("example.alpha"))
-    registry.register(_BetaHook(), manifest=_manifest("example.beta"))
+    registry = PluginRegistry()
+    registry.register(_AlphaPlugin(), manifest=_manifest("example.alpha"))
+    registry.register(_BetaPlugin(), manifest=_manifest("example.beta"))
 
     assert registry.names() == ["alpha", "beta"]
     assert registry.manifest_ids() == ["example.alpha", "example.beta"]
@@ -36,12 +35,12 @@ def test_plugin_registry_register_names_and_manifest_ids() -> None:
 
 
 def test_plugin_registry_rejects_duplicate_manifest_id() -> None:
-    registry = HookRegistry()
+    registry = PluginRegistry()
     manifest = _manifest("example.alpha")
-    registry.register(_AlphaHook(), manifest=manifest)
+    registry.register(_AlphaPlugin(), manifest=manifest)
 
-    with pytest.raises(RuntimeError, match="Duplicate hook manifest id"):
-        registry.register(_BetaHook(), manifest=manifest)
+    with pytest.raises(RuntimeError, match="Duplicate plugin manifest id"):
+        registry.register(_BetaPlugin(), manifest=manifest)
 
 
 def test_build_custom_lookup_detects_conflicting_alias() -> None:
@@ -81,7 +80,7 @@ def test_build_custom_lookup_keeps_manifest_id_when_alias_is_reserved() -> None:
     assert lookup["example.custom"].module_alias == "validate"
 
 
-def _manifest(plugin_id: str) -> HookManifest:
+def _manifest(plugin_id: str) -> PluginManifest:
     return validate_plugin_manifest(
         {
             "id": plugin_id,
@@ -105,9 +104,9 @@ def _manifest(plugin_id: str) -> HookManifest:
     )
 
 
-def _discovered(*, manifest_id: str, module_alias: str, stem: str) -> DiscoveredHook:
+def _discovered(*, manifest_id: str, module_alias: str, stem: str) -> DiscoveredPlugin:
     root = Path("/tmp/extensions-registry-tests")
-    return DiscoveredHook(
+    return DiscoveredPlugin(
         manifest=_manifest(manifest_id),
         manifest_path=root / f"{stem}.manifest.json",
         module_path=root / f"{stem}.py",

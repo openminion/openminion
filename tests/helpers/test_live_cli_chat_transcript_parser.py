@@ -32,8 +32,8 @@ def test_legacy_prose_marker_path_extracts_assistant_body() -> None:
 
 def test_structured_debug_path_extracts_body_preview_when_prose_absent() -> None:
     transcript = (
-        "(openminion chat is in maintenance mode — `openminion focus` is "
-        "the recommended interactive surface.)\n"
+        "(openminion chat is a compatibility alias; use bare `openminion` "
+        "for interactive use.)\n"
         f"[chat ready] agent={_AGENT_ID} session={_SESSION_ID}\n"
         f"[{_SESSION_ID}|{_AGENT_ID}] you> what's the weather?\n"
         "{\n"

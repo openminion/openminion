@@ -25,14 +25,14 @@ capability-specific proof.
 
 ## Current Proof Shape
 
-The current alpha proof uses deterministic compressed pilots and a live Focus
+The current alpha proof uses deterministic compressed pilots and a live interactive CLI
 smoke proof:
 
 1. a 30-minute local fixture,
 2. a 2-hour coding/research fixture,
 3. a 24-hour restart/resume fixture,
 4. a 72-hour multi-day fixture,
-5. a live provider-backed Focus tools scenario when credentials and quota are
+5. a live provider-backed interactive tools scenario when credentials and quota are
    available.
 
 The compressed pilots prove reporting, restart/resume, operator-control,
@@ -66,5 +66,5 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_project_wor
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_project_worker_e2e.py soak-artifacts
 ```
 
-Live Focus scenarios require provider credentials and quota. Local tests should
+Live interactive CLI scenarios require provider credentials and quota. Local tests should
 remain useful even when live-provider proof is unavailable.

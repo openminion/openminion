@@ -21,6 +21,7 @@ from .debug import (
     truncate_debug_value,
     write_llm_debug_event,
 )
+from .payload import serialize_json_payload
 from .trace import trace_http_json_request, trace_http_json_response
 
 _LOG = logging.getLogger(__name__)
@@ -53,12 +54,14 @@ def _emit_transport_timeout_counter(
         return
 
     def _emit(method_name: str, *args: Any, **kwargs: Any) -> bool:
-        return emit_module_telemetry(
-            telemetryctl,
-            method_name,
-            *args,
-            logger=_LOG,
-            **kwargs,
+        return bool(
+            emit_module_telemetry(
+                telemetryctl,
+                method_name,
+                *args,
+                logger=_LOG,
+                **kwargs,
+            )
         )
 
     emit_module_counter(
@@ -100,12 +103,14 @@ def _emit_transport_performance(
         return
 
     def _emit(method_name: str, *args: Any, **kwargs: Any) -> bool:
-        return emit_module_telemetry(
-            telemetryctl,
-            method_name,
-            *args,
-            logger=_LOG,
-            **kwargs,
+        return bool(
+            emit_module_telemetry(
+                telemetryctl,
+                method_name,
+                *args,
+                logger=_LOG,
+                **kwargs,
+            )
         )
 
     extra = {
@@ -516,15 +521,14 @@ def http_json_post(
         }
     )
 
-    body_json = json.dumps(payload)
-    body = body_json.encode("utf-8")
+    serialized_payload = serialize_json_payload(payload)
 
     trace_http_json_request(
         trace_metadata=trace_metadata,
         provider_name=provider_name,
         url=url,
-        body_json=body_json,
-        payload=payload,
+        body_json=serialized_payload.body_json,
+        payload=serialized_payload.payload,
         headers=request_headers,
         timeout_seconds=timeout_seconds,
         transport="urllib",
@@ -532,7 +536,7 @@ def http_json_post(
     )
     request_obj = urllib_request.Request(
         url,
-        data=body,
+        data=serialized_payload.body_bytes,
         headers=request_headers,
         method="POST",
     )
@@ -582,7 +586,7 @@ def http_json_post(
                 round_trip_ms=round_trip_ms,
                 parse_ms=parse_ms,
                 total_ms=_elapsed_ms(total_started),
-                request_bytes=len(body),
+                request_bytes=serialized_payload.byte_count,
                 response_bytes=response_bytes,
                 reason=f"http_{exc.code}",
             )
@@ -606,7 +610,7 @@ def http_json_post(
                 round_trip_ms=round_trip_ms,
                 parse_ms=parse_ms,
                 total_ms=_elapsed_ms(total_started),
-                request_bytes=len(body),
+                request_bytes=serialized_payload.byte_count,
                 response_bytes=response_bytes,
                 reason=f"http_{exc.code}",
             )
@@ -636,7 +640,7 @@ def http_json_post(
                 round_trip_ms=round_trip_ms,
                 parse_ms=parse_ms,
                 total_ms=_elapsed_ms(total_started),
-                request_bytes=len(body),
+                request_bytes=serialized_payload.byte_count,
                 response_bytes=response_bytes,
                 reason=f"http_{exc.code}",
             )
@@ -659,7 +663,7 @@ def http_json_post(
             round_trip_ms=round_trip_ms,
             parse_ms=parse_ms,
             total_ms=_elapsed_ms(total_started),
-            request_bytes=len(body),
+            request_bytes=serialized_payload.byte_count,
             response_bytes=response_bytes,
             reason=f"http_{exc.code}",
         )
@@ -700,7 +704,7 @@ def http_json_post(
                 round_trip_ms=round_trip_ms,
                 parse_ms=parse_ms,
                 total_ms=_elapsed_ms(total_started),
-                request_bytes=len(body),
+                request_bytes=serialized_payload.byte_count,
                 reason=reason,
             )
             raise LLMCtlError(
@@ -718,14 +722,14 @@ def http_json_post(
                 round_trip_ms=round_trip_ms,
                 parse_ms=parse_ms,
                 total_ms=_elapsed_ms(total_started),
-                request_bytes=len(body),
+                request_bytes=serialized_payload.byte_count,
                 retry_count=1,
                 reason=reason,
             )
             return curl_json_post(
                 url=url,
-                payload=payload,
-                body_json=body_json,
+                payload=serialized_payload.payload,
+                body_json=serialized_payload.body_json,
                 headers=headers,
                 timeout_seconds=timeout_seconds,
                 provider_name=provider_name,
@@ -743,7 +747,7 @@ def http_json_post(
             round_trip_ms=round_trip_ms,
             parse_ms=parse_ms,
             total_ms=_elapsed_ms(total_started),
-            request_bytes=len(body),
+            request_bytes=serialized_payload.byte_count,
             reason=reason,
         )
         raise LLMCtlError(
@@ -790,7 +794,7 @@ def http_json_post(
             round_trip_ms=round_trip_ms,
             parse_ms=parse_ms,
             total_ms=_elapsed_ms(total_started),
-            request_bytes=len(body),
+            request_bytes=serialized_payload.byte_count,
             response_bytes=response_bytes,
             reason="invalid_json_response",
         )
@@ -829,7 +833,7 @@ def http_json_post(
             round_trip_ms=round_trip_ms,
             parse_ms=parse_ms,
             total_ms=_elapsed_ms(total_started),
-            request_bytes=len(body),
+            request_bytes=serialized_payload.byte_count,
             response_bytes=response_bytes,
             reason="response_not_object",
         )
@@ -855,7 +859,7 @@ def http_json_post(
         round_trip_ms=round_trip_ms,
         parse_ms=parse_ms,
         total_ms=_elapsed_ms(total_started),
-        request_bytes=len(body),
+        request_bytes=serialized_payload.byte_count,
         response_bytes=response_bytes,
     )
     return parsed

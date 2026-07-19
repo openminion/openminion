@@ -10,9 +10,6 @@ from openminion.modules.tool.runtime.grounding_footer import (
 )
 
 
-# -- Helper unit tests -------------------------------------------------------
-
-
 class TestWithSourceFooter:
     def test_appends_footer_to_body(self) -> None:
         assert (
@@ -32,7 +29,6 @@ class TestWithSourceFooter:
         assert with_source_footer("hello", "   ") == "hello"
 
     def test_normalizes_provider_whitespace_and_case(self) -> None:
-        # Provider is lowered + stripped to a stable token.
         assert with_source_footer("body", "  Tavily  ") == "body\nsource=tavily"
 
     def test_handles_trailing_newline(self) -> None:
@@ -55,9 +51,6 @@ class TestHasSourceFooter:
 
     def test_returns_false_for_empty(self) -> None:
         assert not has_source_footer("")
-
-
-# -- End-to-end tool-family tests --------------------------------------------
 
 
 def _ctx(tmp_path) -> ToolExecutionContext:
@@ -127,7 +120,6 @@ class TestLocationFooter:
             arguments={"method": "explicit", "city": ""},
             context=_ctx(tmp_path),
         )
-        # location.get with empty city fails; no footer should be appended.
         assert not result.ok
         assert "source=location_module" not in result.content
 
@@ -163,7 +155,6 @@ class TestCentralizedFooterIsIdempotent:
             context=_ctx(tmp_path),
         )
         assert result.ok
-        # Exactly one footer line.
         assert result.content.count("source=tavily") == 1
 
 

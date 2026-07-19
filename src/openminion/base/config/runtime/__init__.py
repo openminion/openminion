@@ -39,7 +39,6 @@ from openminion.base.config.runtime.tools import (
     coerce_tool_runtime_config,
 )
 from openminion.base.config.tool_selection import ToolSelectionConfig
-
 _BASE_IDENTITY_DIRNAME = "identity"
 _BASE_IDENTITY_DB_FILENAME = "identity.db"
 
@@ -51,7 +50,6 @@ class ToolPolicyConfig:
     max_calls_per_tool: int = 4
     max_budget_cost_per_run: int = 16
 
-
 @dataclass
 class OTELExporterConfig:
     enabled: bool = False
@@ -62,6 +60,8 @@ class OTELExporterConfig:
     include_assistant_body: bool = False
     backend: str = ""
     headers: dict[str, str] = field(default_factory=dict)
+    noncritical_queue_capacity: int = 1024
+    queue_flush_timeout_seconds: float = 2.0
 
 
 @dataclass
@@ -134,6 +134,7 @@ class RuntimeConfig:
     thinking_policy: ThinkingRuntimePolicyConfig | None = None
     modes: dict[str, ModeRuntimePolicyConfig] = field(default_factory=dict)
     plugins: PluginRuntimePolicyConfig | None = None
+    ops: dict[str, object] = field(default_factory=dict)
     mcp_servers: list[MCPServerConfig] = field(default_factory=list)
     mcp_publish: MCPPublishConfig = field(default_factory=MCPPublishConfig)
     mcp_sampling_mode: str = "disabled"
@@ -251,7 +252,7 @@ def resolve_identity_root_from_env(
         process_env=process_env,
     )
     base_root = _resolve_identity_home_root(resolved_env, home_root=home_root)
-    data_root = resolve_data_root(
+    data_root: Path = resolve_data_root(
         base_root,
         data_root=resolved_env.get(OPENMINION_DATA_ROOT_ENV, ""),
     )
@@ -280,18 +281,15 @@ def resolve_identity_db_from_env(
     if configured_db:
         candidate = Path(configured_db).expanduser()
         if not candidate.is_absolute():
-            candidate = (
-                resolve_identity_root_from_env(
-                    env=resolved_env,
-                    home_root=home_root,
-                )
-                / candidate
+            identity_root = resolve_identity_root_from_env(
+                env=resolved_env, home_root=home_root
             )
+            candidate = identity_root / candidate
         return candidate.resolve()
-    return (
-        resolve_identity_root_from_env(env=resolved_env, home_root=home_root)
-        / _BASE_IDENTITY_DB_FILENAME
-    ).resolve()
+    identity_root = resolve_identity_root_from_env(
+        env=resolved_env, home_root=home_root
+    )
+    return (identity_root / _BASE_IDENTITY_DB_FILENAME).resolve()
 
 
 __all__ = [

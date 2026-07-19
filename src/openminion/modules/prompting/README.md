@@ -10,7 +10,7 @@ Reference: `docs/reference/openminion-prompt-ownership-reference.md`
 
 ## Owns
 
-- identity, safety, and tool-result prompt fragments shared by agent/context paths
+- default system, identity, safety, and tool-result prompt fragments shared by agent/context paths
 - continuation and resume prompt fragments shared outside one domain state machine
 - stable context block headings and simple render helpers
 - brain decision prompt fragments whose wording is a shared runtime contract

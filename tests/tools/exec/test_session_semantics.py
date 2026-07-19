@@ -9,7 +9,7 @@ import pytest
 
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.runtime.policy import Policy
-from openminion.services.runtime.daytona.runner import DaytonaRunner
+from openminion.modules.runtime.sandboxes.daytona import DaytonaRunner
 from openminion.tools.exec.plugin import (
     _h_exec_run,
     _h_process_clear,
@@ -229,8 +229,10 @@ class _FakeSessionTransport:
 
 
 def _runner() -> DaytonaRunner:
-    from openminion.services.runtime.daytona.client import DaytonaClient
-    from openminion.services.runtime.daytona.config import DaytonaConfig
+    from openminion.modules.runtime.sandboxes.daytona import (
+        DaytonaClient,
+        DaytonaConfig,
+    )
 
     return DaytonaRunner(
         client=DaytonaClient(

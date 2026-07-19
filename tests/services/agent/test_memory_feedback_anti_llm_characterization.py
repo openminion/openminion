@@ -185,7 +185,9 @@ def test_mfac03_candidate_turn_signals_method_is_fully_removed() -> None:
 
 def test_mfac03_record_candidate_retrieval_hits_is_removed() -> None:
 
-    from openminion.modules.memory.surfacing import agent_context as agent_memory_context
+    from openminion.modules.memory.surfacing import (
+        agent_context as agent_memory_context,
+    )
     from openminion.modules.memory.runtime.learning import LearningMixin
 
     # 1. Structural absence on the mixin.

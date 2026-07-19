@@ -3,7 +3,6 @@ from __future__ import annotations
 from openminion.modules.brain.loop.tools.cache import LoopCache
 
 
-# Helpers
 
 
 def _fake_result(summary: str) -> object:
@@ -15,7 +14,6 @@ def _fake_result(summary: str) -> object:
     return r
 
 
-# ACL-09 tests
 
 
 def test_identical_read_returns_cached_result() -> None:
@@ -40,7 +38,6 @@ def test_different_args_cause_cache_miss() -> None:
 
     assert cache.get("file.read", {"path": "a.py"}) is result_a
     assert cache.get("file.read", {"path": "b.py"}) is result_b
-    # Also verify a completely different path is a miss
     miss = cache.get("file.read", {"path": "c.py"})
     assert miss is None
     assert cache.misses == 1
@@ -65,10 +62,8 @@ def test_write_invalidates_overlapping_read_cache() -> None:
     cache.put("file.read", {"path": "config.py"}, original)
     assert cache.get("file.read", {"path": "config.py"}) is original
 
-    # Write invalidates the cached read
     cache.invalidate_for_write("file.write", {"path": "config.py"})
 
-    # Now the read entry is gone
     cache.hits = 0  # reset counters for clarity
     cache.misses = 0
     after = cache.get("file.read", {"path": "config.py"})

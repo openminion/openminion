@@ -99,6 +99,35 @@ def execute_coding_profile(ctx: ExecutionContext) -> ExecutionResult:
     return _configured_coding_profile_runner(ctx).execute(ctx)
 
 
+def _first_non_empty_string(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _context_workspace_hint(ctx: ExecutionContext) -> str:
+    state = getattr(ctx, "state", None)
+    decision = getattr(ctx, "decision", None)
+    options = getattr(ctx, "options", None)
+    return _first_non_empty_string(
+        getattr(ctx, "workspace_root", None),
+        getattr(ctx, "cwd", None),
+        getattr(ctx, "workdir", None),
+        getattr(state, "workspace_root", None),
+        getattr(state, "cwd", None),
+        getattr(state, "workdir", None),
+        getattr(state, "working_directory", None),
+        getattr(decision, "workspace_root", None),
+        getattr(decision, "cwd", None),
+        getattr(decision, "workdir", None),
+        getattr(options, "workspace_root", None),
+        getattr(options, "cwd", None),
+        getattr(options, "workdir", None),
+    )
+
+
 class CodingProfileRunner(
     CodingReserveMixin,
     CodingResumeMixin,
@@ -267,74 +296,15 @@ class CodingProfileRunner(
             )
 
         allowed_tools = CODING_ALLOWED_TOOLS
-        tool_specs = _build_tool_specs(allowed_tools, ctx=ctx)
         model = _resolve_model(ctx)
-        self._init_checkpoint(ctx)
-        seed_response: Any | None = getattr(ctx.decision, "_entry_response", None)
-        resume_state = {
-            key: value
-            for key, value in dict(
-                getattr(ctx.state, STATE_KEY_TASK_BACKED_RESUME, {}) or {}
-            ).items()
-            if not key.startswith("_checkpoint_")
-        }
-        if not resume_state:
-            resume_state = self._coding_module_state_payload(ctx)
-        if resume_state:
-            if self._resume_prepared:
-                self.restore_state(dict(resume_state))
-            else:
-                resume_state = self._prepare_resume_state(
-                    ctx,
-                    payload=dict(resume_state),
-                    checkpoint_id=getattr(ctx.state, "task_backed_checkpoint_id", None),
-                )
-            had_pending_confirmation = (
-                ctx.state.pending_confirmation_command is not None
-            )
-            confirmation_result = self._consume_pending_confirmation_reply(ctx)
-            if confirmation_result is not None:
-                return confirmation_result
-            if (
-                not had_pending_confirmation
-                and ctx.state.pending_confirmation_command is None
-            ):
-                self._apply_resume_input(ctx)
-            if self._coding_plan is None:
-                self._coding_plan = CodingPlan.fallback(
-                    str(ctx.state.goal or ctx.user_input or "")
-                )
-        else:
-            self._loop_state = CodingLoopState()
-            self._last_verifier_candidate_payload = None
-            if ctx.user_input:
-                self._loop_state.messages.append(
-                    Message(role="user", content=ctx.user_input)
-                )
-            if seed_response is not None:
-                goal = (
-                    str(
-                        ctx.user_input
-                        or ctx.state.goal
-                        or getattr(ctx.decision, "objective", "")
-                        or ""
-                    ).strip()
-                    or "Complete the coding task."
-                )
-                self._coding_plan = CodingPlan.fallback(goal)
-                self._apply_plan_to_scratchpad(self._coding_plan)
-            else:
-                self._coding_plan, seed_response = self._initialize_plan(
-                    ctx,
-                    runtime=runtime,
-                    model=model,
-                )
-            self._sync_coding_module_state(ctx)
-        seeded_replay_result = self._consume_seeded_confirmation_replay(ctx)
-        if seeded_replay_result is not None:
-            return seeded_replay_result
-        if self._coding_plan is not None:
-            self._emit_phase_status(ctx)
+        prepared = self._prepare_execution_state(
+            ctx,
+            runtime=runtime,
+            model=model,
+        )
+        if isinstance(prepared, ExecutionResult):
+            return prepared
+        tool_specs, seed_response = prepared
 
         while True:
             self._sync_plan_telemetry()
@@ -399,104 +369,180 @@ class CodingProfileRunner(
                 seed_response=seed_response,
             )
             seed_response = None
-            self._sync_loop_state(outcome.state)
-            if self._last_verifier_candidate_payload is not None:
-                self._loop_state.scratchpad["coding.last_verifier_candidate"] = dict(
-                    self._last_verifier_candidate_payload
-                )
-            self._sync_coding_module_state(ctx)
+            result = self._handle_iteration_outcome(
+                ctx,
+                outcome=outcome,
+                allowed_tools=allowed_tools,
+            )
+            if result is not None:
+                return result
 
+    def _prepare_execution_state(
+        self,
+        ctx: ExecutionContext,
+        *,
+        runtime: DefaultCodingLLMRuntime,
+        model: str,
+    ) -> tuple[list[Any], Any | None] | ExecutionResult:
+        tool_specs = _build_tool_specs(CODING_ALLOWED_TOOLS, ctx=ctx)
+        self._init_checkpoint(ctx)
+        seed_response: Any | None = getattr(ctx.decision, "_entry_response", None)
+        resume_state = {
+            key: value
+            for key, value in dict(
+                getattr(ctx.state, STATE_KEY_TASK_BACKED_RESUME, {}) or {}
+            ).items()
+            if not key.startswith("_checkpoint_")
+        }
+        if not resume_state:
+            resume_state = self._coding_module_state_payload(ctx)
+        if resume_state:
+            if self._resume_prepared:
+                self.restore_state(dict(resume_state))
+            else:
+                resume_state = self._prepare_resume_state(
+                    ctx,
+                    payload=dict(resume_state),
+                    checkpoint_id=getattr(ctx.state, "task_backed_checkpoint_id", None),
+                )
+            had_pending_confirmation = (
+                ctx.state.pending_confirmation_command is not None
+            )
+            confirmation_result = self._consume_pending_confirmation_reply(ctx)
+            if confirmation_result is not None:
+                return confirmation_result
             if (
-                outcome.termination_reason != CODING_TERM_FINAL_TEXT
-                or self._coding_plan is None
+                not had_pending_confirmation
+                and ctx.state.pending_confirmation_command is None
             ):
-                if self._maybe_continue_with_verify_closeout_reserve(
-                    ctx,
-                    outcome=outcome,
-                ):
-                    self._sync_coding_module_state(ctx)
-                    continue
-                if self._maybe_continue_with_final_answer_reserve(
-                    ctx,
-                    outcome=outcome,
-                ):
-                    self._sync_coding_module_state(ctx)
-                    continue
-                if self._maybe_continue_with_verification_reserve(
-                    ctx,
-                    outcome=outcome,
-                ):
-                    self._sync_coding_module_state(ctx)
-                    continue
-                return self._result_from_outcome(
-                    ctx,
-                    outcome=outcome,
-                    allowed_tools=allowed_tools,
+                self._apply_resume_input(ctx)
+            if self._coding_plan is None:
+                self._coding_plan = CodingPlan.fallback(
+                    str(ctx.state.goal or ctx.user_input or "")
                 )
-            if self._coding_plan.next_phase_name() is None:
-                if self._maybe_continue_with_final_answer_reserve(
-                    ctx,
-                    outcome=outcome,
-                ):
-                    self._sync_coding_module_state(ctx)
-                    continue
-                verifier_result = self._maybe_finalize_verify_phase_with_verifier(
-                    ctx,
-                    outcome=outcome,
-                    allowed_tools=allowed_tools,
+            self._sync_coding_context(ctx)
+        else:
+            self._loop_state = CodingLoopState()
+            self._last_verifier_candidate_payload = None
+            if ctx.user_input:
+                self._loop_state.messages.append(
+                    Message(role="user", content=ctx.user_input)
                 )
-                if verifier_result is not None:
-                    return verifier_result
-                return self._result_from_outcome(
-                    ctx,
-                    outcome=outcome,
-                    allowed_tools=allowed_tools,
+            if seed_response is not None:
+                goal = (
+                    str(
+                        ctx.user_input
+                        or ctx.state.goal
+                        or getattr(ctx.decision, "objective", "")
+                        or ""
+                    ).strip()
+                    or "Complete the coding task."
                 )
-
-            if not self._advance_plan_after_phase(ctx, outcome=outcome):
-                self._sync_coding_module_state(ctx)
-                if (
-                    self._loop_state.termination_reason
-                    == CODING_TERM_VERIFY_CAP_EXCEEDED
-                ):
-                    return self._exit_autonomous_blocked(
-                        ctx,
-                        reason_code=CODING_TERM_VERIFY_CAP_EXCEEDED,
-                        failure_summary=str(
-                            self._loop_state.scratchpad.get(
-                                "coding.last_failure_summary",
-                                "Verify gate did not observe exec.run.",
-                            )
-                            or "Verify gate did not observe exec.run."
-                        ),
-                        allowed_tools=allowed_tools,
-                    )
-                if self._loop_state.termination_reason in {
-                    "blocked_cap",
-                    "blocked_novel_failure",
-                }:
-                    return self._exit_autonomous_blocked(
-                        ctx,
-                        reason_code=self._loop_state.termination_reason,
-                        failure_summary=str(
-                            self._loop_state.scratchpad.get(
-                                "coding.last_failure_summary",
-                                "verification failed",
-                            )
-                            or "verification failed"
-                        ),
-                        allowed_tools=allowed_tools,
-                    )
-                if bool(
-                    self._loop_state.scratchpad.pop("coding.pending_continue", False)
-                ):
-                    return self._exit_continue(
-                        ctx,
-                        allowed_tools=allowed_tools,
-                    )
-                continue
-            self._append_phase_instruction()
+                self._coding_plan = CodingPlan.fallback(goal)
+                self._apply_plan_to_scratchpad(self._coding_plan)
+            else:
+                self._coding_plan, seed_response = self._initialize_plan(
+                    ctx,
+                    runtime=runtime,
+                    model=model,
+                )
+            self._sync_coding_context(ctx)
             self._sync_coding_module_state(ctx)
+        seeded_replay_result = self._consume_seeded_confirmation_replay(ctx)
+        if seeded_replay_result is not None:
+            return seeded_replay_result
+        if self._coding_plan is not None:
+            self._emit_phase_status(ctx)
+        return tool_specs, seed_response
+
+    def _handle_iteration_outcome(
+        self,
+        ctx: ExecutionContext,
+        *,
+        outcome: AdaptiveToolLoopOutcome,
+        allowed_tools: frozenset[str],
+    ) -> ExecutionResult | None:
+        self._sync_loop_state(outcome.state)
+        if self._last_verifier_candidate_payload is not None:
+            self._loop_state.scratchpad["coding.last_verifier_candidate"] = dict(
+                self._last_verifier_candidate_payload
+            )
+        self._sync_coding_module_state(ctx)
+
+        if outcome.termination_reason != CODING_TERM_FINAL_TEXT or self._coding_plan is None:
+            if self._maybe_continue_with_verify_closeout_reserve(ctx, outcome=outcome):
+                self._sync_coding_module_state(ctx)
+                return None
+            if self._maybe_continue_with_final_answer_reserve(ctx, outcome=outcome):
+                self._sync_coding_module_state(ctx)
+                return None
+            if self._maybe_continue_with_verification_reserve(ctx, outcome=outcome):
+                self._sync_coding_module_state(ctx)
+                return None
+            return self._result_from_outcome(
+                ctx,
+                outcome=outcome,
+                allowed_tools=allowed_tools,
+            )
+        if self._coding_plan.next_phase_name() is None:
+            if self._maybe_continue_with_final_answer_reserve(ctx, outcome=outcome):
+                self._sync_coding_module_state(ctx)
+                return None
+            verifier_result = self._maybe_finalize_verify_phase_with_verifier(
+                ctx,
+                outcome=outcome,
+                allowed_tools=allowed_tools,
+            )
+            if verifier_result is not None:
+                return verifier_result
+            return self._result_from_outcome(
+                ctx,
+                outcome=outcome,
+                allowed_tools=allowed_tools,
+            )
+
+        if not self._advance_plan_after_phase(ctx, outcome=outcome):
+            self._sync_coding_module_state(ctx)
+            if self._loop_state.termination_reason == CODING_TERM_VERIFY_CAP_EXCEEDED:
+                return self._exit_autonomous_blocked(
+                    ctx,
+                    reason_code=CODING_TERM_VERIFY_CAP_EXCEEDED,
+                    failure_summary=str(
+                        self._loop_state.scratchpad.get(
+                            "coding.last_failure_summary",
+                            "Verify gate did not observe exec.run.",
+                        )
+                        or "Verify gate did not observe exec.run."
+                    ),
+                    allowed_tools=allowed_tools,
+                )
+            if self._loop_state.termination_reason in {
+                "blocked_cap",
+                "blocked_novel_failure",
+            }:
+                return self._exit_autonomous_blocked(
+                    ctx,
+                    reason_code=self._loop_state.termination_reason,
+                    failure_summary=str(
+                        self._loop_state.scratchpad.get(
+                            "coding.last_failure_summary",
+                            "verification failed",
+                        )
+                        or "verification failed"
+                    ),
+                    allowed_tools=allowed_tools,
+                )
+            if bool(
+                self._loop_state.scratchpad.pop("coding.pending_continue", False)
+            ):
+                return self._exit_continue(
+                    ctx,
+                    allowed_tools=allowed_tools,
+                )
+            return None
+        self._append_phase_instruction()
+        self._sync_coding_module_state(ctx)
+        return None
 
     def snapshot_state(self) -> dict[str, Any]:
         return {
@@ -553,6 +599,15 @@ class CodingProfileRunner(
         # that still monkeypatch coding.handler.invoke_decision_direct.
         _subtasks_module.invoke_decision_direct = invoke_decision_direct
         _subtasks_dispatch_if_needed(self, ctx)
+
+    def _sync_coding_context(self, ctx: ExecutionContext) -> None:
+        workspace_hint = _context_workspace_hint(ctx)
+        if workspace_hint:
+            self._loop_state.scratchpad["coding.cwd"] = workspace_hint
+        if self._coding_plan is not None:
+            self._loop_state.scratchpad["coding.requires_file_change"] = bool(
+                self._coding_plan.requires_file_change
+            )
 
     def _as_adaptive_state(self, loop_state: CodingLoopState) -> AdaptiveToolLoopState:
         return AdaptiveToolLoopState(

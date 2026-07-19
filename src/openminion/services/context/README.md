@@ -31,7 +31,6 @@ Internal modules of note:
 - `budget.py`, `pack/semantics.py` — budget config and budget rules
 - `cleanup.py` — `SessionCleanupUtility`
 - `slices.py` — session → segment translation
-- `summary_engine.py` — summary-engine runtime
 - `constants.py` — fixed internal names shared across the package
 
 ## Owned objects

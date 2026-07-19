@@ -104,7 +104,6 @@ class RecordedTelemetryHook:
         self.events.append(dict(event))
 
     def __call__(self, event: dict[str, Any]) -> None:  # pragma: no cover
-        # Callable form for callers that treat the hook as a function.
         self.record(event)
 
 

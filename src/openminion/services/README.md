@@ -12,13 +12,12 @@ module layer into runnable system behavior.
 
 ### Same-name orchestration peers
 
-Four service subpackages pair with a same-named feature area in
+Three service subpackages pair with a same-named feature area in
 `openminion.modules` and handle that area's runtime integration:
 
 - `brain/`
 - `context/`
 - `identity/`
-- `tool/`
 
 Changes in these paired owners must keep the module/service split explicit:
 `modules/<name>/` owns domain contracts, schemas, storage-facing engines, and
@@ -33,28 +32,36 @@ Eight service subpackages are standalone runtime concerns with no
 `modules/` peer:
 
 - `agent/`
-- `channel/`
+- `bootstrap/`
 - `cron/`
+- `diagnostics/`
 - `gateway/`
 - `health/`
 - `runtime/`
-- `security/`
 - `supervision/`
 
 `services/` does not mirror `modules/` one-to-one. Module-only owners such as
 `llm/`, `memory/`, `session/`, `storage/`, and `skill/` stay in the modules
-layer. Runtime glue like `services/integration/skill_harness.py` is not a
-subsystem peer of `modules/skill/`.
+layer. Policy, tool-selection, channel-policy, and stats behavior lives under
+its canonical module owner. Remaining service paths for those areas are
+compatibility imports or runtime wiring, not parallel feature owners.
 
-### Grouped helper packages
+### Compatibility-only packages
 
-Smaller support owners that are not standalone subsystem peers are grouped by
-runtime role:
+These packages accept no new behavior and exist only to preserve old import
+paths during staged migrations:
 
-- `bootstrap/`: startup config bootstrap, onboarding, data-root migration, and shared path helpers
-- `lifecycle/`: turn orchestration, self-improvement, and sidecar lifecycle management
-- `diagnostics/`: debug registry and owner-status reporting
-- `integration/`: cross-module verification and vector-sync bridges
+- `channel/`
+- `lifecycle/`
+- `stats/`
+- `tool/`
+
+`security/` is transitional: its policy, tool-execution, blast-radius, and
+validation paths are compatibility imports, while the service-owned validation
+composition now lives under `diagnostics/security.py`.
+
+The former `integration/` bucket is dissolved: skill diagnostics belongs to
+`modules/skill`, and vector synchronization belongs to `modules/storage`.
 
 Only `config.py` and `constants.py` remain as root-level `.py` files.
 

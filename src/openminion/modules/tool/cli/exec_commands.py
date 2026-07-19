@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 
 import typer
 
@@ -20,8 +20,8 @@ def _build_exec_run_args(
     ask: str,
     node: Optional[str],
     parse_env_pairs: Callable[[list[str]], dict[str, str]],
-) -> Dict[str, Any]:
-    args: Dict[str, Any] = {
+) -> dict[str, Any]:
+    args: dict[str, Any] = {
         "command": command,
         "yield_ms": int(yield_ms),
         "background": bool(background),
@@ -42,7 +42,7 @@ def _build_exec_run_args(
 def _dispatch_exec(
     *,
     tool: str,
-    args: Dict[str, Any],
+    args: dict[str, Any],
     policy: Path,
     workspace: Optional[Path],
     scope: Optional[str],
@@ -271,7 +271,7 @@ def _register_exec_kill(
         outer_timeout_sec: Optional[int] = typer.Option(None, "--outer-timeout-sec"),
         json_out: bool = typer.Option(True, "--json/--no-json"),
     ) -> None:
-        args: Dict[str, Any] = {"session_id": session_id}
+        args: dict[str, Any] = {"session_id": session_id}
         if signal_name:
             args["signal"] = signal_name
         _dispatch_exec(

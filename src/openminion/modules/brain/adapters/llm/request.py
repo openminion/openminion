@@ -335,6 +335,22 @@ def _build_clarify_context_guidance_message(*, purpose: str, schema: type) -> st
     )
 
 
+def _build_request_readiness_guidance_message(*, purpose: str, schema: type) -> str:
+    if purpose != "decide":
+        return ""
+    if str(getattr(schema, "__name__", "")).strip() != "Decision":
+        return ""
+    return "\n".join(
+        [
+            "When the request may continue beyond a simple answer, populate Decision.request_readiness.",
+            "Set posture to direct, brief_plan, or review_before_act based on the smallest safe amount of planning.",
+            "Set requested_outcome to answer_only, plan_only, review_only, or execute as the maximum user-authorized outcome.",
+            "Set state to ready only when the next step can proceed without clarification, plan review, or operation approval.",
+            "Use needs_user only for blocker information; otherwise proceed with bounded reversible assumptions.",
+        ]
+    )
+
+
 def _build_pending_conversational_clarification_followup_guidance_message(
     *,
     purpose: str,
@@ -486,6 +502,10 @@ def _build_request(
             schema=schema,
         ),
         _build_clarify_context_guidance_message(
+            purpose=purpose,
+            schema=schema,
+        ),
+        _build_request_readiness_guidance_message(
             purpose=purpose,
             schema=schema,
         ),

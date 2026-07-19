@@ -289,53 +289,8 @@ def resolve_environment_config_with_explicit_env(
     )
 
 
-def resolve_credential_env_value(
-    ref: "CredentialRef",
-    *,
-    caller_agent_id: str,
-    caller_profile_id: str,
-    access_site: str,
-    audit_log: "CredentialAuditLog",
-    env: "EnvironmentConfig | Mapping[str, object] | None" = None,
-) -> str:
-    """Canonical env-source credential read for the CRES boundary owner."""
-    from openminion.modules.runtime.credentials import (
-        assert_credential_scope,
-        record_credential_access_event,
-    )
-
-    if ref.source_kind != "env":
-        raise ValueError(
-            "resolve_credential_env_value only services env-source refs; "
-            f"received source_kind={ref.source_kind!r}."
-        )
-    assert_credential_scope(
-        ref,
-        caller_agent_id=caller_agent_id,
-        caller_profile_id=caller_profile_id,
-    )
-    record_credential_access_event(
-        ref,
-        access_site=access_site,
-        caller_agent_id=caller_agent_id,
-        caller_profile_id=caller_profile_id,
-        decision="allowed",
-        audit_log=audit_log,
-    )
-    owner = resolve_environment_config(env=env)
-    return owner.get(ref.env_name, "")
-
-
-if False:  # pragma: no cover - typing-only import to avoid cycles
-    from openminion.modules.runtime.credentials import (
-        CredentialAuditLog,
-        CredentialRef,
-    )
-
-
 __all__ = [
     "EnvironmentConfig",
-    "resolve_credential_env_value",
     "resolve_environment_config",
     "resolve_environment_config_with_explicit_env",
 ]

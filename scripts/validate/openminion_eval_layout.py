@@ -18,6 +18,7 @@ ALLOWED_ROOT_FILES = {
     "README.md",
     "__main__.py",
     "__init__.py",
+    "boundary_artifacts.py",
     "cli.py",
     "config.py",
     "constants.py",
@@ -34,12 +35,14 @@ ALLOWED_ROOT_FILES = {
     "scorer.py",
     "suite.py",
     "suite_artifacts.py",
+    "suite_selection.py",
 }
 ALLOWED_TOP_LEVEL_DIRS = {
     "cases",
     "closure",
     "freshness",
     "goal_trajectory",
+    "memory_context_scorecard",
     "memory_effectiveness",
     "policy",
     "reporting",

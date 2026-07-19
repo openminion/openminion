@@ -1,5 +1,7 @@
 """Public API re-exports for ``openminion.api``."""
 
+from typing import Any
+
 from openminion.api.agent import (
     Agent,
     AgentOutputValidationError,
@@ -9,7 +11,7 @@ from openminion.api.handoff import Handoff, subagent
 from openminion.api.runtime import APIRuntime
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "dispatch_request":
         from openminion.api.server import dispatch_request
 

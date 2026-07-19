@@ -562,7 +562,7 @@ def test_act_adaptive_circular_pattern_returns_truthful_waiting_user_result() ->
     assert result.action_result.error.code == "act_adaptive_circular_pattern"
 
 
-def test_act_adaptive_circular_pattern_forces_answer_only_finalization() -> None:
+def test_act_adaptive_changed_tool_arguments_reach_normal_finalization() -> None:
     llm_client = _FakeLLMClient(
         responses=[
             LLMResponse(
@@ -600,6 +600,10 @@ def test_act_adaptive_circular_pattern_forces_answer_only_finalization() -> None
                 provider="fake",
                 model="fake-model",
                 output_text="The files share the same structure and no more tool calls are needed.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "All three distinct file reads were compared.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -643,7 +647,7 @@ def test_act_adaptive_circular_pattern_forces_answer_only_finalization() -> None
     assert result.working_state.status == "done"
     assert "no more tool calls are needed" in str(result.message or "").lower()
     assert len(llm_client.calls) == 4
-    assert llm_client.calls[-1]["overrides"]["tool_choice"] == "none"
+    assert llm_client.calls[-1]["overrides"]["tool_choice"] == "auto"
 
 
 def test_act_adaptive_correction_budget_exhausted_returns_truthful_waiting_user_result() -> (
@@ -2526,6 +2530,12 @@ def test_act_adaptive_unexecutable_detector_rejects_tool_transcript_prose() -> N
     )
 
 
+def test_act_adaptive_unexecutable_detector_rejects_file_write_args() -> None:
+    assert ActLoopMode()._seeded_final_text_is_unexecutable_tool_envelope(
+        '{"path": "/tmp/demo/pyproject.toml", "content": "[project]\\nname = \\"x\\""}'
+    )
+
+
 def test_act_adaptive_seeded_entry_tool_unexecutable_final_text_reopens_autonomous() -> (
     None
 ):
@@ -2539,6 +2549,10 @@ def test_act_adaptive_seeded_entry_tool_unexecutable_final_text_reopens_autonomo
                 termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
                 state=AdaptiveToolLoopState(),
                 allowed_tools=frozenset({"file.read", "file.write", "web.search"}),
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The model attempted to finalize with tool-shaped text.",
+                },
                 final_text=(
                     "I can see the duplicate pyproject sections. Let me run "
                     "verification now.\n```json\n"
@@ -2566,6 +2580,7 @@ def test_act_adaptive_seeded_entry_tool_unexecutable_final_text_reopens_autonomo
     )
     ctx, _ = _ctx(_FakeLLMClient(), _FakeCommandExecutor(), services=services)
     ctx.decision.reason_code = "entry_tool_call"
+    ctx.state.status = BRAIN_STATE_WAITING_USER
     ctx.state.last_user_input = (
         "Research sources, update the package, and return SOURCES."
     )
@@ -2931,6 +2946,10 @@ def test_act_adaptive_seeded_confirmation_replay_lost_reason_policy_denial_uses_
                 provider="fake",
                 model="fake-model",
                 output_text="Recovered with file.find guidance.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The structured recovery tool completed the request.",
+                },
                 finish_reason="stop",
             ),
             LLMResponse(
@@ -3188,10 +3207,17 @@ def test_act_adaptive_forces_answer_only_closure_after_successful_duplicate_batc
     assert [call.args["path"] for call in executor.calls] == ["."]
     assert len(llm_client.calls) == 2
     assert llm_client.calls[1]["overrides"]["tool_choice"] == "none"
+    closure_messages = llm_client.calls[1]["messages"]
     assert any(
-        "already completed successfully" in str(getattr(message, "content", "") or "")
-        for message in llm_client.calls[1]["messages"]
+        "repeated an identical successful tool batch"
+        in str(getattr(message, "content", "") or "")
+        for message in closure_messages
         if getattr(message, "role", "") == "system"
+    )
+    assert any(
+        "listed repo root" in str(getattr(message, "content", "") or "")
+        for message in closure_messages
+        if getattr(message, "role", "") == "user"
     )
 
 

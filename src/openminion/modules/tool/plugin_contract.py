@@ -116,6 +116,10 @@ class ToolCapabilities(BaseModel):
     supports_idempotency: bool = False
     time_sensitive: bool = False
     side_effects: Literal["none", "local", "remote", "external_account"] = "none"
+    approval_required_for: tuple[str, ...] = ()
+    result_contract: str | None = None
+    timeout_policy: str | None = None
+    audit_events: tuple[str, ...] = ()
 
 
 class HealthStatus(BaseModel):

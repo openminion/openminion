@@ -44,6 +44,7 @@ from ..iteration.helpers import (
     _set_turn_progress,
 )
 from ..messages import format_blocking_tool_message
+from ..plan_control import PLAN_TOOL_NAME
 from .rules import (
     _looks_like_execution_preface_draft,
     _looks_like_unexecutable_tool_payload_text,
@@ -256,6 +257,40 @@ class AdaptiveLoopRunnerPostprocessMixin(
             allowed_tools=self.allowed_tools,
         )
 
+    def _prepare_llm_request(self) -> tuple[list[Any], str | dict[str, Any], bool]:
+        llm_tools = _visible_tool_specs_for_direct_tool_turn(
+            self.loop_state,
+            self.active_tool_specs,
+        )
+        llm_tool_choice = self.profile.tool_choice
+        if llm_tool_choice == "none" and any(
+            str(getattr(spec, "name", "") or "").strip() == PLAN_TOOL_NAME
+            for spec in llm_tools
+        ):
+            llm_tool_choice = "auto"
+
+        suppress_tools = bool(
+            _pending_finalization_salvage_text(self.loop_state)
+            or self.loop_state.scratchpad.get(
+                "duplicate_batch_answer_only_closure_pending", False
+            )
+        )
+        if _should_force_direct_tool_closure(self.loop_state):
+            self.loop_state.direct_tool_closure_consumed = True
+            self.loop_state.scratchpad["direct_tool_closure_forced"] = True
+            self.loop_state.messages.append(
+                _build_direct_tool_closure_message(self.loop_state)
+            )
+            suppress_tools = True
+        elif bool(
+            getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
+        ) and bool(getattr(self.loop_state, "direct_tool_closure_consumed", False)):
+            suppress_tools = True
+
+        if suppress_tools:
+            return [], "none", True
+        return llm_tools, llm_tool_choice, llm_tool_choice == "none"
+
     def _prepare_llm_response(self) -> Any:
         profile = self.profile
         loop_state = self.loop_state
@@ -308,39 +343,9 @@ class AdaptiveLoopRunnerPostprocessMixin(
             mode_state="llm_call",
         )
         llm_start = time.monotonic()
-        llm_tools = _visible_tool_specs_for_direct_tool_turn(
-            self.loop_state,
-            self.active_tool_specs,
+        llm_tools, llm_tool_choice, response_was_tool_suppressed = (
+            self._prepare_llm_request()
         )
-        llm_tool_choice = self.profile.tool_choice
-        response_was_tool_suppressed = llm_tool_choice == "none"
-        if _pending_finalization_salvage_text(self.loop_state):
-            llm_tools = []
-            llm_tool_choice = "none"
-            response_was_tool_suppressed = True
-        elif bool(
-            self.loop_state.scratchpad.get(
-                "duplicate_batch_answer_only_closure_pending", False
-            )
-        ):
-            llm_tools = []
-            llm_tool_choice = "none"
-            response_was_tool_suppressed = True
-        elif _should_force_direct_tool_closure(self.loop_state):
-            self.loop_state.direct_tool_closure_consumed = True
-            self.loop_state.scratchpad["direct_tool_closure_forced"] = True
-            self.loop_state.messages.append(
-                _build_direct_tool_closure_message(self.loop_state)
-            )
-            llm_tools = []
-            llm_tool_choice = "none"
-            response_was_tool_suppressed = True
-        elif bool(
-            getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
-        ) and bool(getattr(self.loop_state, "direct_tool_closure_consumed", False)):
-            llm_tools = []
-            llm_tool_choice = "none"
-            response_was_tool_suppressed = True
 
         if self.pending_response is not None:
             response = self.pending_response

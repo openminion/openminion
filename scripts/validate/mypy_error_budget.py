@@ -59,6 +59,28 @@ def _counts(lines: list[str]) -> dict[str, int]:
     return dict(sorted(counts.items()))
 
 
+def _package_error_lines(lines: list[str], package: str, *, limit: int) -> list[str]:
+    package_lines: list[str] = []
+    for line in lines:
+        if ": error:" not in line:
+            continue
+        if _package_for(line) == package:
+            package_lines.append(line)
+        if len(package_lines) >= limit:
+            break
+    return package_lines
+
+
+def _package_file_counts(lines: list[str], package: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for line in lines:
+        if ": error:" not in line or _package_for(line) != package:
+            continue
+        path = line.split(":", 1)[0]
+        counts[path] = counts.get(path, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(
@@ -136,6 +158,16 @@ def main() -> int:
         print("[tcr] regressions detected:", file=sys.stderr)
         for item in regressions:
             print(f"  {item}", file=sys.stderr)
+        print("[tcr] sample regressed-package errors:", file=sys.stderr)
+        for pkg in sorted(set(allowed) | set(current)):
+            if current.get(pkg, 0) <= allowed.get(pkg, 0):
+                continue
+            print(f"  {pkg}:", file=sys.stderr)
+            for line in _package_error_lines(lines, pkg, limit=25):
+                print(f"    {line}", file=sys.stderr)
+            print(f"  {pkg} file counts:", file=sys.stderr)
+            for path, count in _package_file_counts(lines, pkg).items():
+                print(f"    {path}\t{count}", file=sys.stderr)
         return 1
     return 0
 

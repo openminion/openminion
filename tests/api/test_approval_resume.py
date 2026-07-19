@@ -11,9 +11,6 @@ from openminion.api.operations.approve_pending import (
 )
 
 
-# parse_decision: ANTI-LLM gate — typed input only
-
-
 @pytest.mark.parametrize("typed", APPROVAL_CHOICES)
 def test_parse_accepts_each_typed_choice_exactly(typed):
     assert parse_decision(typed) == typed
@@ -62,9 +59,6 @@ def test_parse_rejects_empty_string():
 )
 def test_parse_rejects_prose_and_near_misses(prose):
     assert parse_decision(prose) is None
-
-
-# process_approval_decision: full operation flow
 
 
 def _well_formed_body(decision: str = "allow_once") -> dict:
@@ -193,9 +187,6 @@ def test_process_invocation_must_be_mapping(fake_runtime, monkeypatch):
     )
     assert result["ok"] is False
     assert result["error"]["code"] == "INVALID_REQUEST"
-
-
-# ANTI-LLM negative regression: full-pipeline test
 
 
 @pytest.mark.parametrize(

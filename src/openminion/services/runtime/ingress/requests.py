@@ -18,12 +18,12 @@ from .timeout import _parse_run_profile_overrides, resolve_timeout_seconds
 from .types import RuntimeTurnRequest, TurnRequestError
 
 if TYPE_CHECKING:
-    from openminion.api.runtime import APIRuntime
+    from openminion.services.runtime.interfaces import RuntimeFacade
 
 
 def runtime_turn_request_from_payload(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     payload: dict[str, Any],
     request_id: str | None = None,
 ) -> RuntimeTurnRequest:
@@ -117,7 +117,7 @@ def build_manager_turn_request(
 
 def runtime_turn_request_from_manager_request(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     request: TurnRequest,
 ) -> RuntimeTurnRequest:
     meta = dict(request.meta or {})
@@ -178,7 +178,7 @@ def apply_workspace_root(
 
 def _direct_inbound_metadata(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     payload: dict[str, Any],
 ) -> dict[str, str] | None:
     inbound_metadata = parse_inbound_metadata(
@@ -197,7 +197,7 @@ def _direct_inbound_metadata(
 
 def _managed_inbound_metadata(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     meta: dict[str, Any],
 ) -> dict[str, str] | None:
     inbound_metadata = parse_inbound_metadata(

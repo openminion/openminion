@@ -42,9 +42,6 @@ class _Headers:
         return self._data.get(key.lower(), default)
 
 
-# redirect-aware re-validation tests.
-
-
 def _install_opener_stub(monkeypatch: pytest.MonkeyPatch, handler) -> None:
 
     class _StubOpener:
@@ -134,7 +131,6 @@ def test_fetch_blocks_redirect_to_private_host(
     _install_opener_stub(monkeypatch, handler)
     result = url_ingest.fetch_skill_markdown_from_url("https://example.com/redirect.md")
     assert result["ok"] is False
-    # The redirect target was blocked at the next hop's host check.
     assert result["error_code"] == "BLOCKED_HOST", result
 
 
@@ -164,14 +160,9 @@ def test_fetch_caps_redirect_chain(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_fetch_uses_max_redirects_constant() -> None:
-    # constant is the canonical cap. Pin it so changes are visible
-    # in tests.
     from openminion.tools.skill.constants import SKILL_URL_MAX_REDIRECTS
 
     assert SKILL_URL_MAX_REDIRECTS == 3
-
-
-# DNS rebinding guard.
 
 
 def test_fetch_succeeds_when_dns_resolution_is_stable(
@@ -215,7 +206,6 @@ def test_fetch_fails_when_dns_resolution_drifts(
 
 
 def test_fetch_rejects_non_markdown_extension() -> None:
-    # paths must end with .md.
     result = url_ingest.fetch_skill_markdown_from_url(
         "https://example.com/not-a-skill.txt"
     )

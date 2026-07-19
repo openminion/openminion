@@ -5,7 +5,10 @@ from typing import Any
 
 from openminion.modules.task import TaskManager
 from openminion.modules.tool.runtime.context import RuntimeContext
-from openminion.services.cron.scheduling import normalize_payload, normalize_schedule
+from openminion.modules.task.scheduling.schedule import (
+    normalize_payload,
+    normalize_schedule,
+)
 
 from ..constants import (
     CONSOLIDATION_PAYLOAD_KEY,

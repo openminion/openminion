@@ -23,11 +23,7 @@ from openminion.api.server.app import _OpenMinionAPIHandler
 
 def test_api_shared_constants_contract() -> None:
     assert API_METRICS_TOKEN_HEADER == "X-Metrics-Token"
-    # These were single-consumer constants demoted to private — verify string values directly
-    assert "OPENMINION_API_METRICS_TOKEN" == "OPENMINION_API_METRICS_TOKEN"
-    assert "OPENMINION_DISABLE_SECURITY_POLICY" == "OPENMINION_DISABLE_SECURITY_POLICY"
     assert resolve_api_config_hint(None) == "~/.openminion/config.json"
-    # API_TOOLS_DEFAULT_* are private in api/operations/tools.py
     from openminion.api.operations.tools import (
         _API_TOOLS_DEFAULT_CHANNEL,
         _API_TOOLS_DEFAULT_TARGET,

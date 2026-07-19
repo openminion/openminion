@@ -154,6 +154,7 @@ class TelegramPollingRunner:
         self._store = store if store is not None else getattr(runtime, "store", None)
         self._outbox_worker = outbox_worker
         self._outbox_thread: threading.Thread | None = None
+        self._outbox_managed_by_supervisor = False
         self._rate_limiter = rate_limiter
         self._brain_client = brain_client
         if self._pairing is None and self._state_store is not None:
@@ -161,6 +162,7 @@ class TelegramPollingRunner:
                 config=self._config.pairing,
                 store=self._state_store,
                 controlplane_store=_resolve_controlplane_pairing_store(self._runtime),
+                audit_logger=self._audit_logger,
                 logger=self._log,
             )
         self._auth_store = _resolve_controlplane_auth_store(self._runtime)
@@ -183,6 +185,8 @@ class TelegramPollingRunner:
         self._last_poll_started_ts: float | None = None
         self._last_poll_success_ts: float | None = None
         self._last_poll_error: str | None = None
+        self._polling_lease_acquired = False
+        self._polling_lease_command = "openminion channel telegram run"
         self._runner_online_notice_sent = False
         self._validate_component_contracts()
 
@@ -202,19 +206,25 @@ class TelegramPollingRunner:
         if self._config.actions.reactions:
             maybe_register_reactions_adapter(self._api)
 
-        self._api.delete_webhook(
-            drop_pending_updates=self._config.polling.drop_pending_on_start,
-        )
+        self._acquire_polling_lease()
 
-        if self._config.polling.persist_offset and self._state_store is not None:
-            self._last_update_id = self._state_store.get_last_update_id(
-                self._account_id
+        try:
+            self._api.delete_webhook(
+                drop_pending_updates=self._config.polling.drop_pending_on_start,
             )
 
-        if self._config.polling.drop_pending_on_start:
-            self._drop_pending_updates()
+            if self._config.polling.persist_offset and self._state_store is not None:
+                self._last_update_id = self._state_store.get_last_update_id(
+                    self._account_id
+                )
 
-        self._initialized = True
+            if self._config.polling.drop_pending_on_start:
+                self._drop_pending_updates()
+
+            self._initialized = True
+        except Exception:
+            self._release_polling_lease()
+            raise
 
     def run_forever(self, stop_event: threading.Event | None = None) -> None:
         self.initialize()
@@ -249,12 +259,18 @@ class TelegramPollingRunner:
             self.run_forever(stop_event)
         finally:
             self._stop_outbox_worker()
+            self._release_polling_lease()
+            self._close_state_store()
 
     def stop(self) -> None:
         self._stop_outbox_worker()
         self._close_brain_client()
+        self._release_polling_lease()
+        self._close_state_store()
 
     def _start_outbox_worker(self, stop_event: threading.Event | None) -> None:
+        if self._outbox_managed_by_supervisor:
+            return
         if self._outbox_worker is None or stop_event is None:
             return
         if self._outbox_thread is not None and self._outbox_thread.is_alive():
@@ -269,6 +285,8 @@ class TelegramPollingRunner:
         thread.start()
 
     def _stop_outbox_worker(self) -> None:
+        if self._outbox_managed_by_supervisor:
+            return
         thread = self._outbox_thread
         if thread is None:
             return
@@ -307,6 +325,7 @@ class TelegramPollingRunner:
 
     def run_once(self) -> int:
         self.initialize()
+        self._heartbeat_polling_lease()
         offset = self._last_update_id + 1
         self._last_poll_started_ts = time.time()
         updates = self._api.get_updates(
@@ -651,6 +670,8 @@ class TelegramPollingRunner:
         shutdown. EchoBrain has no ``close``; OpenMinionBrainClient does
         and is the production target.
         """
+        if self._outbox_managed_by_supervisor:
+            return
         brain = self._brain_client
         if brain is None or not hasattr(brain, "close"):
             return
@@ -658,6 +679,40 @@ class TelegramPollingRunner:
             brain.close()
         except Exception as exc:  # noqa: BLE001
             self._log.warning("brain_client.close failed: %s", exc, exc_info=True)
+
+    def _acquire_polling_lease(self) -> None:
+        if self._state_store is None or self._polling_lease_acquired:
+            return
+        acquire = getattr(self._state_store, "acquire_polling_lease", None)
+        if not callable(acquire):
+            return
+        lease = acquire(
+            account_id=self._account_id,
+            command=self._polling_lease_command,
+        )
+        if not lease.acquired:
+            raise RuntimeError(lease.diagnostic())
+        self._polling_lease_acquired = True
+
+    def _heartbeat_polling_lease(self) -> None:
+        if self._state_store is None or not self._polling_lease_acquired:
+            return
+        heartbeat = getattr(self._state_store, "heartbeat_polling_lease", None)
+        if callable(heartbeat):
+            heartbeat(account_id=self._account_id)
+
+    def _release_polling_lease(self) -> None:
+        if self._state_store is None or not self._polling_lease_acquired:
+            return
+        release = getattr(self._state_store, "release_polling_lease", None)
+        if callable(release):
+            release(account_id=self._account_id)
+        self._polling_lease_acquired = False
+
+    def _close_state_store(self) -> None:
+        close = getattr(self._state_store, "close", None)
+        if callable(close):
+            close()
 
     def _audit_event(
         self,

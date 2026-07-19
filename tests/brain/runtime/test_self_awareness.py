@@ -9,7 +9,7 @@ from openminion.modules.runtime.self_model import (
     section_degraded,
     section_ok,
 )
-from openminion.services.agent.prompt_history import (
+from openminion.services.agent.context.history import (
     resolve_self_awareness_prompt_answer,
 )
 

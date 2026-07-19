@@ -75,6 +75,25 @@ __all__ = [
 ]
 
 
+def _filter_continuation_duplicate_memory_cards(
+    memory_cards: list[MemoryCard],
+    continuation: dict[str, Any] | None,
+) -> list[MemoryCard]:
+    event = continuation if isinstance(continuation, dict) else {}
+    payload = (
+        event.get("continuation") if isinstance(event.get("continuation"), dict) else {}
+    )
+    duplicate_ids = {
+        str(item) for item in payload.get("memory_refs", []) if str(item).strip()
+    }
+    summary_ref = str(payload.get("session_work_summary_ref") or "").strip()
+    if summary_ref:
+        duplicate_ids.add(summary_ref)
+    if not duplicate_ids:
+        return memory_cards
+    return [card for card in memory_cards if card.record_id not in duplicate_ids]
+
+
 def assemble_segments(
     *,
     request: BuildPackRequest,
@@ -145,7 +164,10 @@ def assemble_segments(
         request=request,
         session_slice=session_slice,
         fact_records=fact_records,
-        memory_cards=memory_cards,
+        memory_cards=_filter_continuation_duplicate_memory_cards(
+            memory_cards,
+            session_slice.continuation,
+        ),
         procedure=procedure,
         skill_snippet_text=skill_snippet_text,
         budgets=budgets,

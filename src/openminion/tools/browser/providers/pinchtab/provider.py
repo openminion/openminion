@@ -53,7 +53,7 @@ from .constants import (
     PINCHTAB_URL_ENV,
 )
 from .daemon import build_daemon_config, ensure_daemon
-from openminion.services.lifecycle.sidecars import ensure_pinchtab_autostart
+from openminion.services.runtime.sidecars import ensure_pinchtab_autostart
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 

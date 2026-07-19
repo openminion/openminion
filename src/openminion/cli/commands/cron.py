@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-from typing import Optional
 
 from openminion.api.runtime import APIRuntime
 from openminion.cli.parser.flags import (
@@ -12,11 +11,11 @@ from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
-from openminion.services.security.blast_radius.wiring import (
+from openminion.modules.policy.adapters.composition import (
     SEAM_CLI_CRON,
     build_default_composition_boundary_adapter,
 )
-from openminion.services.tool.selection import ToolSelectionService
+from openminion.modules.tool.selection import ToolSelectionService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 from openminion.modules.task.constants import DEFAULT_TASK_MIN_EVERY_MS
 
@@ -279,7 +278,7 @@ def _cron_show(app: APIRuntime, args) -> int:
     return 0
 
 
-def _cron_run(app: APIRuntime, *, job_id: Optional[str]) -> int:
+def _cron_run(app: APIRuntime, *, job_id: str | None) -> int:
     if not job_id:
         print("Error: job-id is required for run")
         return 1

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any
 
 from openminion.api.config import close_api_runtime_if_owned
 from openminion.api.core.deps import resolve_runtime_manager
@@ -6,8 +6,8 @@ from openminion.api.core.deps import resolve_runtime_manager
 
 def evict_agent_runtime(
     *,
-    config_path: Optional[str],
-    runtime,
+    config_path: str | None,
+    runtime: Any,
     agent_id: str,
     reason: str,
 ) -> dict[str, object]:

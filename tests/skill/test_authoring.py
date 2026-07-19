@@ -355,7 +355,7 @@ def test_skill_authoring_validation_operator_guide_reference_resolves() -> None:
 
 
 def test_harness_end_to_end_exercises_all_three_builders(tmp_path: Path) -> None:
-    from openminion.services.integration.skill_harness import run_skill_harness
+    from openminion.modules.skill.diagnostics.harness import run_skill_harness
 
     skill_root = tmp_path / "examples" / "demo"
     skill_root.mkdir(parents=True)

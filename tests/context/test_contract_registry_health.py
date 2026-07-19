@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from openminion.base.config.contracts import (
+from openminion.modules.context.contracts import (
     CONTRACT_REGISTRY,
     POST_RESET_BASELINE_VERSION,
     check_contract_registry_health,

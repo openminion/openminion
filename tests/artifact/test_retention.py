@@ -55,7 +55,6 @@ def test_purge_deletes_blobs_and_counts_missing(tmp_path):
         with conn:
             conn.execute("UPDATE artifacts SET deleted_at = ?", (old_ts,))
             conn.execute("UPDATE artifact_views SET deleted_at = ?", (old_ts,))
-        # Remove derived view file to trigger missing count
         view_path = ctl.blob_store.path_for(view_ref.sha256)
         Path(view_path).unlink(missing_ok=True)
         report = ctl.purge(grace_days=0)

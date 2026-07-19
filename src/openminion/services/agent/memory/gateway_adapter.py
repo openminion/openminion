@@ -26,7 +26,6 @@ from openminion.modules.memory.diagnostics.operability import (
 )
 from openminion.modules.memory.diagnostics.export import export_memory_debug
 from openminion.modules.memory.service.agent_gateway import (
-    MEMORY_ANTONYMS_FILENAME,
     LearningMixin,
     RetrievalPipeline,
     SessionLifecycleMixin,
@@ -38,13 +37,8 @@ from openminion.modules.memory.service.agent_gateway import (
     coerce_float,
     coerce_int,
     build_empty_meta,
-    ensure_default_antonym_config,
 )
 from openminion.modules.memory.surfacing.agent_context import ContextBuildersMixin
-from openminion.services.config import resolve_services_path, resolve_services_roots
-from openminion.services.bootstrap.paths import (
-    SERVICES_CONFIG_SUBDIR,
-)
 
 
 class MemoryServiceGatewayAdapter(
@@ -120,7 +114,7 @@ class MemoryServiceGatewayAdapter(
         self._apply_retrieval_config()
         self._apply_retention_config()
         self._apply_reflection_config()
-        self._apply_ranking_and_antonym_config()
+        self._apply_ranking_config()
 
         if self._session_context is not None and hasattr(
             self._session_context, "register_close_callback"
@@ -268,21 +262,13 @@ class MemoryServiceGatewayAdapter(
                 for key, value in raw_threshold_overrides.items()
             }
 
-    def _apply_ranking_and_antonym_config(self) -> None:
+    def _apply_ranking_config(self) -> None:
         if self._ranking_config is None:
             self._ranking_config = merge_ranking_config(
                 getattr(self._memory_config, "ranking", None),
                 retrieval=getattr(self._memory_config, "retrieval", None),
                 retrieve_defaults=getattr(self._config, "defaults", None),
             )
-        roots = resolve_services_roots(fallback_to_cwd=True)
-        ensure_default_antonym_config(
-            resolve_services_path(
-                Path(SERVICES_CONFIG_SUBDIR) / MEMORY_ANTONYMS_FILENAME,
-                roots=roots,
-                relative_to="data_root",
-            )
-        )
 
     def _init_core_state(
         self,

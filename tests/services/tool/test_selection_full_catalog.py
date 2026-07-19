@@ -155,7 +155,6 @@ class FullCatalogFallbackTests(unittest.TestCase):
 
 class FullCatalogTruncationTests(unittest.TestCase):
     def test_budget_truncation_is_alphabetical_prefix(self) -> None:
-        # Build 5 tools; cap at 3 via max_tools_per_turn.
         service = _make_service(
             [_spec(n) for n in ("zeta", "delta", "alpha", "echo", "bravo")],
             mode=SelectionMode.TYPED,
@@ -163,7 +162,6 @@ class FullCatalogTruncationTests(unittest.TestCase):
         )
         result = service.select_tools(query="", intent_categories=None)
         self.assertEqual(result.shortlist, ["alpha", "bravo", "delta"])
-        # reason_codes includes the truncation marker
         truncation_markers = [
             c for c in result.reason_codes if c.startswith("truncated:")
         ]
@@ -188,11 +186,8 @@ class FullCatalogTruncationTests(unittest.TestCase):
             1,
             "expected at least one tool to fit",
         )
-        # Alphabetical prefix holds
         expected_prefix = ["alpha", "bravo", "charlie"][: len(result.shortlist)]
         self.assertEqual(result.shortlist, expected_prefix)
-        # Truncation of the rest should be represented in reason_codes
-        # when we can't fit all three.
         if len(result.shortlist) < 3:
             truncation_markers = [
                 c for c in result.reason_codes if c.startswith("truncated:")

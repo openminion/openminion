@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Mapping
 
-from openminion.services.cron.interfaces import CRON_INTERFACE_VERSION
+from openminion.modules.task.scheduling.interfaces import CRON_INTERFACE_VERSION
 from ..interfaces import (
     SESSION_REPOSITORY_INTERFACE_VERSION,
     ensure_cron_repository_compatibility,

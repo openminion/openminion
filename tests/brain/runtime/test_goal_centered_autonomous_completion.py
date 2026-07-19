@@ -32,7 +32,7 @@ from openminion.modules.brain.runtime.goal.loop import (
 from openminion.modules.brain.runtime.goal.verification import GoalVerificationResult
 from openminion.modules.brain.schemas.goals import Deliverable, Goal, SuccessCriterion
 from openminion.modules.brain.storage.goals import GoalStore, SQLiteGoalStore
-from openminion.services.brain.cli import execute_goal_cli_command
+from openminion.cli.commands.goal import execute_goal_cli_command
 
 
 def _goal(goal_id: str = "goal-run") -> Goal:

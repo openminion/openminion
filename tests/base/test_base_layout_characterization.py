@@ -34,10 +34,12 @@ EXPECTED_ROOT_FILES = {
     "logging.py",
     "protocol.py",
     "redaction.py",
+    "time.py",
     "types.py",
     "user_io.py",
+    "version.py",
 }
-EXPECTED_SUBPACKAGES = {"channel", "common", "config", "errors", "runtime"}
+EXPECTED_SUBPACKAGES = {"channel", "config", "errors", "runtime"}
 
 
 def test_base_layout_characterization_import_surface() -> None:

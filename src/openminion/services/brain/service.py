@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,12 +12,12 @@ from openminion.base.config import (
 from openminion.base.config import ConfigManager
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.env import EnvironmentConfig
-from openminion.services.agent.hooks import HookRegistry
+from openminion.services.runtime.plugins import PluginRegistry
 from openminion.services.agent import AgentService
 from openminion.services.agent.memory import (  # noqa: F401  (re-export for test patches + canonical runner_metadata resolution)
     build_memory_policy_snapshot,
 )
-from openminion.services.security.policy import SecurityPolicyEngine
+from openminion.modules.policy import SecurityPolicyEngine
 from openminion.services.lifecycle.self_improvement import SelfImprovementEngine
 from openminion.modules.tool import ToolRegistry
 
@@ -44,21 +44,27 @@ from openminion.services.brain.post_execution import BrainBridgeTurnMixin
 from openminion.services.brain.factory.retrieve import init_retrieve_adapter  # noqa: F401  (re-export for test patches + bootstrap helper)
 from openminion.services.brain.factory.rlm import init_rlm_adapter
 from openminion.services.config import resolve_services_env
-from openminion.modules.brain.schemas import (
-    ModeProfileConfig,
-)
+from openminion.modules.brain.schemas.agent import ModeProfileConfig
 from openminion.modules.brain.config import (
     from_base_config as derive_brain_runtime_config,
 )
 
-try:
-    from openminion.modules.telemetry.adapter import create_telemetry_adapter
+if TYPE_CHECKING:
     from openminion.modules.telemetry.service import TelemetryCtl
+else:
+    TelemetryCtl = Any
 
+create_telemetry_adapter: Any
+try:
+    from openminion.modules.telemetry.adapter import (
+        create_telemetry_adapter as _create_telemetry_adapter,
+    )
+
+    create_telemetry_adapter = _create_telemetry_adapter
     TELEMETRY_AVAILABLE = True
 except ImportError:
+    create_telemetry_adapter = None
     TELEMETRY_AVAILABLE = False
-    TelemetryCtl = None
 
 
 class _SessionSummaryStructureReport(BaseModel):
@@ -175,6 +181,89 @@ def _bootstrap_bridge_home_paths(
     )
 
 
+def _session_summary_model(runner: Any) -> tuple[Any | None, str]:
+    llm_api = getattr(runner, "llm_api", None)
+    llm_profiles = getattr(getattr(runner, "profile", None), "llm_profiles", None)
+    model = (
+        str(getattr(llm_profiles, "summarize_model", "") or "").strip()
+        or str(getattr(llm_profiles, "reflect_model", "") or "").strip()
+        or str(getattr(llm_profiles, "act_model", "") or "").strip()
+    )
+    return llm_api, model
+
+
+def _session_summary_structure_context(
+    *,
+    summary_text: str,
+    turn_count: int,
+) -> dict[str, Any]:
+    return {
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You structure prior-session memory for future recall. "
+                    "Return JSON only. Summarize the session in 2-3 sentences, "
+                    "extract reusable prior decisions, unresolved open questions, "
+                    "corrections to earlier assumptions, short topic keywords, "
+                    "and any active thread that remains open, paused, or done. "
+                    "Set outcome to one of `succeeded`, `blocked`, "
+                    "`no_prior_context`, `abandoned`, or `unknown`. Use "
+                    "`no_prior_context` only when the assistant explicitly "
+                    "failed because it lacked prior-session context. Use "
+                    "`blocked` when useful work remains but progress stopped for "
+                    "a concrete reason. Use `succeeded` when the session "
+                    "advanced normally. Use `abandoned` when the work was "
+                    "explicitly dropped. Use `unknown` when the source text "
+                    "does not support a stronger classification. "
+                    "For each active thread, return a short topic, a status "
+                    "(`open`, `paused`, or `done`), and a brief next_step only "
+                    "when the source text makes it explicit. "
+                    "Do not invent facts that are not present in the source text."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Rolling summary text:\n{summary_text}\n\n"
+                    f"Turn count: {max(0, int(turn_count))}\n\n"
+                    "Return structured session-summary fields for later recall."
+                ),
+            },
+        ],
+        "hints": {
+            "user_input": summary_text,
+            "mode_name": "session_summary_structure",
+            "session_summary_turn_count": max(0, int(turn_count)),
+        },
+    }
+
+
+def _structure_session_summary(
+    *,
+    service: "BrainBridgeService",
+    rolling_summary: str,
+    turn_count: int,
+) -> dict[str, Any] | None:
+    summary_text = str(rolling_summary or "").strip()
+    if not summary_text:
+        return None
+    llm_api, model = _session_summary_model(service._get_runner())
+    if llm_api is None or not model:
+        return None
+    raw = call_structured_with_retry(
+        llm_api,
+        model=model,
+        purpose="summarize",
+        context=_session_summary_structure_context(
+            summary_text=summary_text,
+            turn_count=turn_count,
+        ),
+        schema=_SessionSummaryStructureReport,
+    )
+    return _SessionSummaryStructureReport.model_validate(raw).model_dump(mode="json")
+
+
 class _RuntimeProviderAdapter:
     def __init__(self, service: "BrainBridgeService") -> None:
         self._service = service
@@ -200,7 +289,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
     def __init__(
         self,
         config: OpenMinionConfig,
-        plugins: HookRegistry,
+        plugins: PluginRegistry,
         provider: object,
         logger: logging.Logger,
         tools: ToolRegistry | None = None,
@@ -295,6 +384,7 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
 
         self._runner: BrainRunner | None = None
         self._runtime_handle: Any | None = None
+        self._llm_wrapper: Any | None = None
 
     def _init_bridge_telemetry(self, *, config: OpenMinionConfig) -> None:
         self._telemetryctl: TelemetryCtl | None = None
@@ -408,70 +498,10 @@ class BrainBridgeService(BrainBridgeTurnMixin, AgentService):
             rolling_summary: str,
             turn_count: int,
         ) -> dict[str, Any] | None:
-            summary_text = str(rolling_summary or "").strip()
-            if not summary_text:
-                return None
-            runner = self._get_runner()
-            llm_api = getattr(runner, "llm_api", None)
-            llm_profiles = getattr(
-                getattr(runner, "profile", None), "llm_profiles", None
-            )
-            model = (
-                str(getattr(llm_profiles, "summarize_model", "") or "").strip()
-                or str(getattr(llm_profiles, "reflect_model", "") or "").strip()
-                or str(getattr(llm_profiles, "act_model", "") or "").strip()
-            )
-            if llm_api is None or not model:
-                return None
-            context = {
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You structure prior-session memory for future recall. "
-                            "Return JSON only. Summarize the session in 2-3 sentences, "
-                            "extract reusable prior decisions, unresolved open questions, "
-                            "corrections to earlier assumptions, short topic keywords, "
-                            "and any active thread that remains open, paused, or done. "
-                            "Set outcome to one of `succeeded`, `blocked`, "
-                            "`no_prior_context`, `abandoned`, or `unknown`. Use "
-                            "`no_prior_context` only when the assistant explicitly "
-                            "failed because it lacked prior-session context. Use "
-                            "`blocked` when useful work remains but progress stopped for "
-                            "a concrete reason. Use `succeeded` when the session "
-                            "advanced normally. Use `abandoned` when the work was "
-                            "explicitly dropped. Use `unknown` when the source text "
-                            "does not support a stronger classification. "
-                            "For each active thread, return a short topic, a status "
-                            "(`open`, `paused`, or `done`), and a brief next_step only "
-                            "when the source text makes it explicit. "
-                            "Do not invent facts that are not present in the source text."
-                        ),
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Rolling summary text:\n{summary_text}\n\n"
-                            f"Turn count: {max(0, int(turn_count))}\n\n"
-                            "Return structured session-summary fields for later recall."
-                        ),
-                    },
-                ],
-                "hints": {
-                    "user_input": summary_text,
-                    "mode_name": "session_summary_structure",
-                    "session_summary_turn_count": max(0, int(turn_count)),
-                },
-            }
-            raw = call_structured_with_retry(
-                llm_api,
-                model=model,
-                purpose="summarize",
-                context=context,
-                schema=_SessionSummaryStructureReport,
-            )
-            return _SessionSummaryStructureReport.model_validate(raw).model_dump(
-                mode="json"
+            return _structure_session_summary(
+                service=self,
+                rolling_summary=rolling_summary,
+                turn_count=turn_count,
             )
 
         return _structure_summary

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, cast
 
 from openminion.base.config.base import DEFAULT_STORAGE_PATH, UnknownProfileError
 from openminion.base.config.parse import _normalize_brain_integration_mode
@@ -177,8 +177,8 @@ class AgentProfileConfig:
             "provider": self.provider,
             "system_prompt": self.system_prompt,
         }
-        if str(self.default_act_profile or "").strip():
-            payload["default_act_profile"] = str(self.default_act_profile).strip()
+        if default_act_profile := str(self.default_act_profile or "").strip():
+            payload["default_act_profile"] = default_act_profile
         if self.skill_explicit:
             payload["skill"] = skill_value_to_payload(self.skill)
         if self.skill_catalog_explicit:
@@ -221,28 +221,19 @@ class AgentProfileConfig:
             payload["allow_background_write_authorization"] = bool(
                 self.allow_background_write_authorization
             )
+        variant = self.trailer_guidance_variant
         if self.has_trailer_guidance_variant:
-            payload["trailer_guidance_variant"] = dict(
-                self.trailer_guidance_variant or {}
-            )
-        thinking_policy_payload = thinking_runtime_policy_to_dict(self.thinking_policy)
-        if thinking_policy_payload:
-            payload["thinking_policy"] = thinking_policy_payload
-        provider_policy_payload = provider_runtime_policy_to_dict(self.provider_policy)
-        if provider_policy_payload:
-            payload["provider_policy"] = provider_policy_payload
-        modes_payload = mode_runtime_policy_to_dict(self.modes)
-        if modes_payload:
-            payload["modes"] = modes_payload
-        plugins_payload = plugin_runtime_policy_to_dict(self.plugins)
-        if plugins_payload:
-            payload["plugins"] = plugins_payload
-        tools_payload = tool_runtime_config_to_dict(self.tools)
-        if tools_payload:
-            payload["tools"] = tools_payload
-        mcp_exposure_payload = mcp_exposure_config_to_dict(self.mcp_exposure)
-        if mcp_exposure_payload:
-            payload["mcp_exposure"] = mcp_exposure_payload
+            payload["trailer_guidance_variant"] = dict(variant or {})
+        for key, value in (
+            ("thinking_policy", thinking_runtime_policy_to_dict(self.thinking_policy)),
+            ("provider_policy", provider_runtime_policy_to_dict(self.provider_policy)),
+            ("modes", mode_runtime_policy_to_dict(self.modes)),
+            ("plugins", plugin_runtime_policy_to_dict(self.plugins)),
+            ("tools", tool_runtime_config_to_dict(self.tools)),
+            ("mcp_exposure", mcp_exposure_config_to_dict(self.mcp_exposure)),
+        ):
+            if value:
+                payload[key] = value
         return payload
 
 
@@ -327,7 +318,7 @@ class OpenMinionConfig:
     def from_dict(cls, payload: dict[str, Any]) -> "OpenMinionConfig":
         from .parser import openminion_config_from_dict
 
-        return openminion_config_from_dict(payload)
+        return cast(OpenMinionConfig, openminion_config_from_dict(payload))
 
     def to_dict(self) -> dict[str, Any]:
         from .parser import openminion_config_to_dict
@@ -342,7 +333,7 @@ def resolve_default_agent_id(config: OpenMinionConfig) -> str:
         raise ConfigValidationError(
             "OpenMinionConfig.agents is empty; no default agent is available. "
             "Post-CSC configs must populate the 'agents' catalog. "
-            "See the config-shape migration guide."
+            "See docs/reference/config-shape-migration-2026.md."
         )
     if len(config.agents) == 1:
         return next(iter(config.agents))
@@ -395,7 +386,7 @@ def resolve_agent_config(
         raise UnknownProfileError(
             "No agent profiles are configured; post-CSC configs must populate "
             "the 'agents' catalog. "
-            "See the config-shape migration guide."
+            "See docs/reference/config-shape-migration-2026.md."
         )
 
     if requested_agent_id:

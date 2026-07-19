@@ -1,39 +1,17 @@
 from __future__ import annotations
 
-import io
 import logging
-import tempfile
-from argparse import Namespace
-from contextlib import redirect_stdout
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from openminion.base.config import ActionPolicyConfig, OpenMinionConfig
-from tests._csc_fixtures import _csc_install_default_agent
 from openminion.modules.brain.config import BrainConfig
-from openminion.cli.chat.commands import handle_chat_command
-from openminion.cli.chat.runtime import ChatRuntimeState
 from openminion.modules.brain.schemas import BudgetCounters, WorkingState
 from openminion.modules.brain.schemas.agent import AgentProfile
 from openminion.modules.policy.adapters.brain import PolicyCtlBrainAdapter
-from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.tool import build_default_tool_registry
 from openminion.services.brain.service import BrainBridgeService
-from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.services.runtime.plugins import PluginRegistry
-
-
-def _runtime_state() -> ChatRuntimeState:
-    return ChatRuntimeState(
-        endpoint=None,
-        transport="in-process",
-        inproc_runtime=None,
-        mode="single-process",
-        auto_start=False,
-        show_progress=False,
-        quiet=False,
-    )
 
 
 def _working_state(*, session_mode_override: str | None = None) -> WorkingState:
@@ -458,151 +436,3 @@ def test_adapter_with_no_override_keeps_existing_behavior() -> None:
 def test_working_state_exposes_session_action_policy_mode_override_field() -> None:
     state = _working_state()
     assert state.session_action_policy_mode_override is None
-
-
-def test_policy_action_command_sets_session_override_before_first_turn() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        config = OpenMinionConfig()
-        _csc_install_default_agent(config)
-        config.storage.path = str(tmp_path / "state" / "openminion.db")
-
-        result = handle_chat_command(
-            line="/policy action bypass",
-            args=Namespace(config=None, home_root=None, data_root=None),
-            config=config,
-            agent_id=config.agents[next(iter(config.agents.keys()))].name,
-            session_id="sess-policy-1",
-            transport="in-process",
-            mode="single-process",
-            runtime_state=_runtime_state(),
-            last_artifacts=[],
-            last_turn_debug={},
-        )
-
-        assert result.handled is True
-        store = SQLiteSessionStore(
-            resolve_brain_sessions_db_path(storage_path=Path(config.storage.path))
-        )
-        try:
-            session = store.get_session("sess-policy-1")
-            assert session is not None
-            assert session["meta"]["session_action_policy_mode_override"] == "bypass"
-        finally:
-            store.close()
-
-
-def test_policy_action_command_updates_existing_working_state_and_display() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        config = OpenMinionConfig.from_dict(
-            {
-                "agents": {
-                    "openminion": {
-                        "name": "openminion",
-                        "provider": "echo",
-                        "action_policy": {
-                            "mode": "ask",
-                            "default_action": "allow",
-                            "allow_read_only_without_prompt": False,
-                        },
-                    },
-                },
-                "default_agent": "openminion",
-            }
-        )
-        config.storage.path = str(tmp_path / "state" / "openminion.db")
-        store = SQLiteSessionStore(
-            resolve_brain_sessions_db_path(storage_path=Path(config.storage.path))
-        )
-        try:
-            store.create_session(
-                session_id="sess-policy-2",
-                initial_agent_id=config.agents[next(iter(config.agents.keys()))].name,
-            )
-            state = _working_state()
-            state.session_id = "sess-policy-2"
-            state.agent_id = config.agents[next(iter(config.agents.keys()))].name
-            store.put_working_state(
-                "sess-policy-2",
-                state_inline=state.model_dump(mode="json"),
-            )
-        finally:
-            store.close()
-
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            result = handle_chat_command(
-                line="/policy action auto",
-                args=Namespace(config=None, home_root=None, data_root=None),
-                config=config,
-                agent_id=config.agents[next(iter(config.agents.keys()))].name,
-                session_id="sess-policy-2",
-                transport="in-process",
-                mode="single-process",
-                runtime_state=_runtime_state(),
-                last_artifacts=[],
-                last_turn_debug={},
-            )
-
-        assert result.handled is True
-        rendered = buf.getvalue()
-        assert "session action policy set to auto" in rendered
-        assert "mode=auto" in rendered
-        assert "source=session-override" in rendered
-        assert "default_action=allow" in rendered
-        assert "allow_read_only_without_prompt=False" in rendered
-
-        store = SQLiteSessionStore(
-            resolve_brain_sessions_db_path(storage_path=Path(config.storage.path))
-        )
-        try:
-            latest = store.get_latest_working_state("sess-policy-2")
-            assert latest is not None
-            state_inline = latest["state_inline"]
-            assert state_inline["session_action_policy_mode_override"] == "auto"
-        finally:
-            store.close()
-
-
-def test_policy_action_command_without_override_shows_config_level_source() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        config = OpenMinionConfig.from_dict(
-            {
-                "agents": {
-                    "openminion": {
-                        "name": "openminion",
-                        "provider": "echo",
-                        "action_policy": {
-                            "mode": "ask",
-                            "default_action": "allow",
-                            "allow_read_only_without_prompt": False,
-                        },
-                    },
-                },
-                "default_agent": "openminion",
-            }
-        )
-        config.storage.path = str(tmp_path / "state" / "openminion.db")
-
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            result = handle_chat_command(
-                line="/policy action",
-                args=Namespace(config=None, home_root=None, data_root=None),
-                config=config,
-                agent_id=config.agents[next(iter(config.agents.keys()))].name,
-                session_id="fresh-session",
-                transport="in-process",
-                mode="single-process",
-                runtime_state=_runtime_state(),
-                last_artifacts=[],
-                last_turn_debug={},
-            )
-
-        assert result.handled is True
-        rendered = buf.getvalue()
-        assert "mode=ask" in rendered
-        assert "source=agent-config" in rendered
-        assert "default_action=allow" in rendered

@@ -112,7 +112,7 @@ def default_pilot_specs() -> tuple[ProjectPilotSpec, ...]:
             outcome=ProjectOutcomeClassification.COMPLETED_VERIFIED,
             proof_refs=(
                 "pytest:tests/e2e/project_worker/test_local.py",
-                "pytest:tests/e2e/tui/focus/test_local.py",
+                "pytest:tests/e2e/cli/focus/test_local.py",
                 "pytest:tests/cli/test_autonomy_command.py",
                 "artifact:workspace-tmp/long-horizon-project-worker-v3-2026-07-03/pilots/pilot-2h-coding-research.json",
             ),
@@ -160,7 +160,7 @@ def soak_pilot_specs() -> tuple[ProjectPilotSpec, ...]:
             proof_refs=(
                 "pytest:tests/task/test_project_run.py",
                 "pytest:tests/e2e/project_worker/test_pilots.py",
-                "pytest:tests/e2e/tui/focus/test_local.py",
+                "pytest:tests/e2e/cli/focus/test_local.py",
                 "artifact:workspace-tmp/long-horizon-project-worker-v3-2026-07-03/pilots/pilot-24h-restart-resume.json",
             ),
             failures=("simulated retry path recovered before final report",),
@@ -207,7 +207,7 @@ def soak_pilot_specs() -> tuple[ProjectPilotSpec, ...]:
             proof_refs=(
                 "pytest:tests/task/test_project_run.py",
                 "pytest:tests/e2e/project_worker/test_pilots.py",
-                "pytest:tests/e2e/tui/focus/test_local.py",
+                "pytest:tests/e2e/cli/focus/test_local.py",
                 "artifact:workspace-tmp/long-horizon-project-worker-v3-2026-07-03/pilots/pilot-72h-multiday.json",
             ),
             failures=(

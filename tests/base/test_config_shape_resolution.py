@@ -14,9 +14,6 @@ from openminion.base.config import (
 from openminion.base.config.core import ConfigValidationError
 
 
-# ─────────────────────────── default_agent resolution ────────────────────────
-
-
 def test_single_agent_resolves_without_default_agent() -> None:
     config = OpenMinionConfig(
         agents={"lone": AgentProfileConfig(name="lone", provider="echo")}
@@ -26,8 +23,6 @@ def test_single_agent_resolves_without_default_agent() -> None:
 
 def test_empty_agents_catalog_raises_config_validation_error() -> None:
     config = OpenMinionConfig()
-    # Intentionally do NOT install a default agent — we're testing the
-    # empty-catalog fail-closed path.
     assert not config.agents
     with pytest.raises(ConfigValidationError):
         resolve_default_agent_id(config)
@@ -69,9 +64,6 @@ def test_default_agent_pointing_at_present_id_wins() -> None:
         },
     )
     assert resolve_default_agent_id(config) == "beta"
-
-
-# ─────────────────────────── per-field shallow merge ─────────────────────────
 
 
 def test_runtime_only_tss_propagates_to_resolved_profile() -> None:
@@ -143,9 +135,6 @@ def test_trailer_guidance_variant_shallow_merges_per_key() -> None:
         "apd": "terse_strong_model",
         "macc": "terse_strong_model",
     }
-
-
-# ────────────────────────────── parser fail-closed ───────────────────────────
 
 
 def test_parser_rejects_legacy_agent_block_with_migration_pointer() -> None:

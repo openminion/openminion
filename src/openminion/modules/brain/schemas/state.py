@@ -12,7 +12,7 @@ from openminion.modules.brain.constants import (
 )
 from .base import ActionStatus, ArtifactRef, iso_now, new_uuid
 from .commands import Command
-from .decisions import ClarifyContext, PendingTurnContext
+from .decisions import ClarifyContext, PendingTurnContext, RequestReadiness
 from .freshness import (
     FreshnessContract,
     FreshnessDiagnostics,
@@ -438,6 +438,13 @@ class WorkingState(BaseModel):
         ),
     )
     pending_turn_context_stale_turns: int = Field(default=0, ge=0)
+    request_readiness: RequestReadiness | None = Field(
+        default=None,
+        description=(
+            "Single persisted copy of the latest validated high-level request "
+            "readiness payload while request handoff is enabled."
+        ),
+    )
     session_work_summary: str | None = Field(
         default=None,
         description=(

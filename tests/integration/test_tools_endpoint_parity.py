@@ -8,7 +8,7 @@ from openminion.api.routes.tools import handle_request as tools_handle_request
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import OpenMinionConfig, save_config
 from openminion.cli.config import resolve_cli_tool_provider_specs_and_dispatch_map
-from openminion.services.tool.exposure import get_visible_tool_specs_and_dispatch_map
+from openminion.modules.tool.exposure import get_visible_tool_specs_and_dispatch_map
 from tests._csc_fixtures import _csc_install_default_agent
 
 

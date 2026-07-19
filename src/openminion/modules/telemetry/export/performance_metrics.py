@@ -58,10 +58,16 @@ def performance_metrics_for_event(event: TelemetryEvent) -> list[dict[str, Any]]
     event_type = str(event.event_type or "").strip()
     if event_type == "chat.phase_timing":
         return _chat_phase_metrics(payload)
+    if event_type in {"llm.call.completed", "llm_call"}:
+        return _model_provider_metrics(payload)
+    if event_type.startswith("tool."):
+        return _tool_execution_metrics(payload)
     if event_type in {"storage.query", "storage.slow_query"}:
         return _storage_operation_metrics(payload)
     if event_type == "storage.pool.stats":
         return _storage_pool_metrics(payload)
+    if event_type == "telemetry.queue.stats":
+        return _telemetry_queue_metrics(payload)
     if event_type == "module.stats":
         return _module_stats_metrics(payload)
     if event_type == "llm.cache.metrics":
@@ -123,6 +129,99 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return metrics
 
 
+def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]] = []
+    common = {
+        "transport": _bounded_label(payload.get("transport") or "runtime", default="runtime"),
+        "profile_kind": _bounded_label(
+            payload.get("profile_kind") or payload.get("provider_profile") or "runtime",
+            default="runtime",
+        ),
+        "outcome": _outcome_label(payload),
+        "cache_family": _bounded_label(
+            payload.get("cache_family") or "llm", default="llm"
+        ),
+    }
+    _append_metric(
+        metrics,
+        "openminion_model_calls_total",
+        _KIND_COUNTER,
+        _first_present(payload, "call_count", "calls", "count") or 1,
+        {
+            "transport": common["transport"],
+            "profile_kind": common["profile_kind"],
+            "outcome": common["outcome"],
+        },
+    )
+    _append_metric(
+        metrics,
+        "openminion_model_retries_total",
+        _KIND_COUNTER,
+        _first_present(payload, "retry_count", "retries"),
+        {
+            "transport": common["transport"],
+            "profile_kind": common["profile_kind"],
+            "outcome": common["outcome"],
+        },
+    )
+    for metric_name, payload_key in (
+        ("openminion_model_request_bytes", "request_bytes"),
+        ("openminion_model_response_bytes", "response_bytes"),
+        ("openminion_model_input_tokens", "input_tokens"),
+        ("openminion_model_output_tokens", "output_tokens"),
+        ("openminion_model_cached_tokens", "cached_tokens"),
+    ):
+        _append_metric(metrics, metric_name, _KIND_HISTOGRAM, payload.get(payload_key), common)
+    _append_metric(
+        metrics,
+        "openminion_provider_round_trip_ms",
+        _KIND_HISTOGRAM,
+        _first_present(payload, "round_trip_ms", "latency_ms", "elapsed_ms"),
+        {
+            "transport": common["transport"],
+            "profile_kind": common["profile_kind"],
+            "outcome": common["outcome"],
+        },
+    )
+    return metrics
+
+
+def _tool_execution_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]] = []
+    common = {
+        "tool_family": _bounded_label(
+            payload.get("tool_family")
+            or payload.get("tool_name")
+            or payload.get("tool")
+            or "tool",
+            default="tool",
+        ),
+        "outcome": _outcome_label(payload),
+    }
+    _append_metric(
+        metrics,
+        "openminion_tool_calls_total",
+        _KIND_COUNTER,
+        _first_present(payload, "call_count", "calls", "count") or 1,
+        common,
+    )
+    _append_metric(
+        metrics,
+        "openminion_tool_duplicate_calls_total",
+        _KIND_COUNTER,
+        _first_present(payload, "duplicate_call_count", "duplicate_calls"),
+        common,
+    )
+    _append_metric(
+        metrics,
+        "openminion_tool_duration_ms",
+        _KIND_HISTOGRAM,
+        _first_present(payload, "duration_ms", "latency_ms", "elapsed_ms"),
+        common,
+    )
+    return metrics
+
+
 def _storage_operation_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
     value = _first_present(payload, "duration_ms", "latency_ms", "elapsed_ms")
@@ -177,6 +276,24 @@ def _storage_pool_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         payload.get("wal_bytes"),
         {"store_family": common["store_family"]},
     )
+    return metrics
+
+
+def _telemetry_queue_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    metrics: list[dict[str, Any]] = []
+    common = {
+        "criticality": _bounded_label(
+            payload.get("criticality") or "noncritical", default="noncritical"
+        ),
+        "outcome": _outcome_label(payload),
+    }
+    for metric_name, key, kind in (
+        ("openminion_telemetry_queue_depth", "queue_depth", _KIND_GAUGE),
+        ("openminion_telemetry_queue_drops_total", "drops", _KIND_COUNTER),
+        ("openminion_telemetry_flush_failures_total", "flush_failures", _KIND_COUNTER),
+        ("openminion_telemetry_flush_latency_ms", "flush_latency_ms", _KIND_HISTOGRAM),
+    ):
+        _append_metric(metrics, metric_name, kind, payload.get(key), common)
     return metrics
 
 

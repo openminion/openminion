@@ -10,6 +10,7 @@ from openminion.modules.memory.backends import (
     BuiltinKnowledgeBackend,
     KnowledgeBackendConfig,
     NoneKnowledgeBackend,
+    adapt_backend_to_store,
     ensure_backend_compatibility,
     get_registered_backend_factory,
     instantiate_backend,
@@ -170,6 +171,11 @@ class TestKnowledgeBackendFactory:
 
 
 class TestBuiltinKnowledgeBackend:
+    def test_builtin_adapter_preserves_concrete_store_capabilities(self) -> None:
+        store = InMemoryMemoryStore()
+
+        assert adapt_backend_to_store(BuiltinKnowledgeBackend(store)) is store
+
     def test_memory_service_accepts_builtin_backend_without_behavior_regression(
         self,
     ) -> None:

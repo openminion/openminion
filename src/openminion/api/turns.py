@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 
 from openminion.api.runtime import APIRuntime
 from openminion.modules.brain.diagnostics.status import PhaseStatus
-import openminion.services.lifecycle.request_orchestrator as _request_orchestrator
+import openminion.services.runtime.ingress.orchestrator as _request_orchestrator
 
 TurnRequestError = _request_orchestrator.TurnRequestError
 TurnTimeoutError = _request_orchestrator.TurnTimeoutError
@@ -31,6 +31,7 @@ def run_turn(
     return _run_turn(
         config_path=config_path,
         payload=payload,
+        runtime_factory=APIRuntime.from_config_path,
         request_id=request_id,
         progress_callback=progress_callback,
         approval_callback=approval_callback,

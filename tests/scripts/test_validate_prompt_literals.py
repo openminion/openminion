@@ -44,6 +44,22 @@ def test_prompt_literal_validator_catches_inline_return_prompt(tmp_path) -> None
     assert findings[0].name == "<inline-prompt>"
 
 
+def test_prompt_literal_validator_catches_inline_default_system_prompt(
+    tmp_path,
+) -> None:
+    source = tmp_path / "system_prompt.py"
+    source.write_text(
+        "def resolve_prompt():\n    return 'You are a helpful assistant.'\n",
+        encoding="utf-8",
+    )
+
+    findings = collect_findings(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == source
+    assert findings[0].name == "<inline-prompt>"
+
+
 def test_prompt_literal_validator_catches_missing_domain_owner(tmp_path) -> None:
     findings = collect_domain_owner_findings(
         tmp_path,

@@ -14,11 +14,13 @@ from openminion.modules.llm.providers.base import (
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.execution.dependencies import ExecutorDeps
+from openminion.services.agent.execution.response import tool_calls_payload
 from openminion.services.agent.execution.required.completion import (
     _call_initial_final_response,
     _retry_stale_draft_final_response,
     post_execution_follow_up_result,
 )
+from openminion.services.agent.execution.required.state import CompletionContext
 
 
 def _tool_batch_metadata(
@@ -48,20 +50,8 @@ def _tool_batch_metadata(
 def _deps() -> ExecutorDeps:
     return ExecutorDeps(
         finalize_response=lambda response: response,
-        tool_calls_payload=lambda calls: json.dumps(
-            [
-                {"name": call.name, "arguments": dict(call.arguments)}
-                for call in list(calls or [])
-            ],
-            sort_keys=True,
-        ),
-        looks_like_tool_call_envelope=lambda text: False,
         identity_metadata=lambda: {},
         tool_batch_metadata=_tool_batch_metadata,
-        collect_missing_required_args=lambda *args, **kwargs: {},
-        is_tool_argument_error=lambda result: False,
-        extract_missing_argument_fields=lambda results: "",
-        canonical_tool_name=lambda name: str(name or ""),
     )
 
 
@@ -248,15 +238,17 @@ def test_required_lane_replans_once_on_duplicate_final_tool_call() -> None:
         post_execution_follow_up_result(
             _runner(runtime_ops),
             deps=_deps(),
-            intent_category="research",
-            tool_call_strategy="auto",
-            tool_budget_state=None,
-            response=response,
-            batch=batch,
-            attempted_tools=["web.fetch"],
-            capability_fallback_trigger_reason=None,
-            tool_calls_sig=_deps().tool_calls_payload(response.tool_calls),
-            shared_capability_meta={},
+            context=CompletionContext(
+                response=response,
+                batch=batch,
+                intent_category="research",
+                tool_call_strategy="auto",
+                tool_budget_state=None,
+                attempted_tools=["web.fetch"],
+                capability_fallback_trigger_reason=None,
+                tool_calls_sig=tool_calls_payload(response.tool_calls),
+                shared_capability_meta={},
+            ),
         )
     )
 

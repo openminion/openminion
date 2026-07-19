@@ -31,16 +31,17 @@ dependencies = [
   # The public ``openminion`` package imports memory contracts and agent
   # runtime surfaces that depend on the released SophiaGraph package.
   "sophiagraph>=0.0.1",
-  # FTF-11: prompt_toolkit drives the terminal-flow focus shell
-  # (`cli/tui/focus_terminal/`); rich is already transitively
-  # present via Textual but promoted to a direct dependency so
-  # FTF code does not depend on Textual's transitive graph.
-  "prompt_toolkit>=3.0,<4.0",
   "psutil>=5",
   "pydantic>=2",
   "pyfiglet>=1.0,<2",
+  # The default terminal renderer imports prompt-toolkit at runtime; keep it in
+  # core while bare `openminion` uses the no-rich terminal path.
+  "prompt-toolkit>=3,<4",
   "pyyaml",
   "rich>=13.0",
+  # Textual is retained only for the explicit `openminion --rich` renderer.
+  # Noninteractive command imports stay lazy so automation does not initialize it.
+  "textual>=1,<9",
   "typer>=0.12",
 ]
 
@@ -51,12 +52,17 @@ Documentation = "https://www.openminion.com/docs"
 Changelog = "https://github.com/OpenMinion/openminion/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+animations = [
+  "unicode-animatio>=0.0.2",
+]
+remote = [
+  "asyncssh>=2.14,<3",
+]
 dev = [
+  # Package-integration tests exercise optional sibling package surfaces while
+  # remaining skippable in a minimal runtime installation.
+  "graphfakos>=0.0.1",
   "pre-commit>=4,<5",
-  # TUI/focus modules import Textual surfaces directly. Include it in the
-  # dev extra so clean-env mypy and UI-focused tests see the real typed classes
-  # instead of falling back to ``Any`` from missing imports.
-  "textual>=1,<9",
   # FTF-11: pyte is a pure-Python terminal emulator used by
   # FTF-13's PTY scrollback test to capture the post-exit
   # buffer. Test/dev only — never imported from runtime code.
@@ -162,6 +168,7 @@ markers = [
   "benchmark: explicit benchmark / regression harness tests",
   "memory_eval: lightweight memory evaluation scenarios",
   "memory_eval_benchmark: slower memory evaluation benchmark scenarios",
+  "package_integration: requires optional package-integration dependencies",
   "telegram_live: hits real api.telegram.org; skipped unless TELEGRAM_BOT_TOKEN + TELEGRAM_LIVE_CHAT_ID set",
   "slack_live: hits real Slack APIs; skipped unless SLACK_BOT_TOKEN + SLACK_APP_TOKEN + SLACK_TEST_CHANNEL set",
 ]

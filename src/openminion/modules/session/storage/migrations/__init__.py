@@ -6,7 +6,15 @@ from openminion.modules.storage.migrations.alembic import (
 )
 from openminion.modules.storage.migrations.module_ids import get_module_application_id
 
-from ..schema import BOOTSTRAP_SCHEMA, CRON_SCHEMA, EVENT_SOURCED_SCHEMA, V15_SCHEMA
+from ..schema import (
+    BOOTSTRAP_SCHEMA,
+    CRON_SCHEMA,
+    EVENT_SOURCED_SCHEMA,
+    SESSION_RETENTION_SCHEMA,
+    SESSION_SHARING_SCHEMA,
+    SESSION_CONTINUATION_SCHEMA,
+    V15_SCHEMA,
+)
 
 
 @dataclass(frozen=True)
@@ -36,6 +44,21 @@ MIGRATIONS: tuple[Migration, ...] = (
         version=4,
         name="v1_5_continuity_and_canonical_events",
         statements=V15_SCHEMA,
+    ),
+    Migration(
+        version=5,
+        name="session_continuation_lineage_index",
+        statements=SESSION_CONTINUATION_SCHEMA,
+    ),
+    Migration(
+        version=6,
+        name="session_sharing_v1",
+        statements=SESSION_SHARING_SCHEMA,
+    ),
+    Migration(
+        version=7,
+        name="session_retention_v1",
+        statements=SESSION_RETENTION_SCHEMA,
     ),
 )
 

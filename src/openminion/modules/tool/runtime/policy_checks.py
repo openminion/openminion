@@ -4,7 +4,8 @@ from typing import Any, Dict
 
 from openminion.modules.tool.commands import normalize_cd_prefixed_command
 
-from .policy import Policy, canonical_tool_name
+from .policy import Policy
+from .policy_normalization import canonical_tool_name
 from .dangerous import detect_dangerous_command
 from ..registry.catalog import ToolSpec
 from ..contracts.schemas import Scope

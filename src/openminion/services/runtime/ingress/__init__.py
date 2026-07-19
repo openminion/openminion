@@ -36,7 +36,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from openminion.api.runtime import APIRuntime
+    from openminion.services.runtime.interfaces import RuntimeFacade
 
 __all__ = [
     "RuntimeTurnHandle",
@@ -63,7 +63,7 @@ __all__ = [
 
 def run_turn_payload(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     payload: dict[str, Any],
     request_id: str | None = None,
     progress_callback: Callable[[object], None] | None = None,
@@ -100,7 +100,7 @@ def run_turn_payload(
 
 def submit_turn_payload(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     payload: dict[str, Any],
 ) -> RuntimeTurnHandle:
     manager = getattr(runtime, "runtime_manager", None)
@@ -130,7 +130,7 @@ def submit_turn_payload(
 
 def execute_runtime_turn(
     *,
-    runtime: "APIRuntime",
+    runtime: "RuntimeFacade",
     request: RuntimeTurnRequest,
     progress_callback: Callable[[object], None] | None = None,
     approval_callback: Any | None = None,

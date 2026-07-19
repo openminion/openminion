@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
-import logging
 import sqlite3
 import subprocess
 import sys
@@ -360,18 +359,11 @@ def _load_controlplane_config(config_path: str | None):
 
 
 def _build_unified_slack_runner(config_path: str | None):
-    from openminion.modules.controlplane.channels.slack.adapter import (
-        build_slack_runner_from_base_config,
+    from openminion.cli.commands.channel import (
+        build_unified_slack_runner as build_runner,
     )
 
-    base = load_cli_config(config_path)
-    roots = resolve_cli_roots(config_path=config_path)
-    return build_slack_runner_from_base_config(
-        config=base,
-        home_root=roots.home_root,
-        data_root=roots.data_root,
-        logger=logging.getLogger("openminion.cli.channel.slack"),
-    )
+    return build_runner(config_path)
 
 
 def _slack_doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:

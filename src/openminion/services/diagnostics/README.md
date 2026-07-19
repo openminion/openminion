@@ -8,8 +8,8 @@ Pairs with: standalone (no `modules/` peer)
 Operator-facing diagnostics surface. Owns the debug-payload registry
 that surfaces tool-selection internals on demand and the owner-status
 reporter that walks the composed runtime and emits a per-owner
-status snapshot. Consumed by CLI / TUI debug commands and by the
-health snapshot.
+status snapshot. Consumed by interactive CLI debug commands and by
+the health snapshot.
 
 ## Public surface
 
@@ -21,7 +21,7 @@ re-exports — consumers import by file). The intended public surface:
 - `debug.load_debug_providers()` — registers built-in debug providers
 - `debug.is_debug_surface_enabled(...)` — operator gate check
 - `owner_status.build_owner_status(...)` — single owner-status
-  snapshot builder consumed by CLI / TUI / health
+  snapshot builder consumed by the interactive CLI and health surfaces
 
 ## Owned objects
 

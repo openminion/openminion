@@ -24,7 +24,7 @@ def test_vector_factory_disabled_returns_none(tmp_path) -> None:
 
 def test_vector_factory_local_sqlite(monkeypatch, tmp_path) -> None:
     import openminion.modules.storage.runtime.vector_index as vector_index
-    import openminion.services.integration.vector_sync as vector_sync
+    import openminion.modules.storage.runtime.vector_sync as vector_sync
 
     provider_calls: list[dict[str, object]] = []
 

@@ -85,6 +85,15 @@ def clarify(
             return True
         return False
     elif not user_input and state.unresolved_clarify_items:
+        readiness_state = str(
+            getattr(getattr(state, "request_readiness", None), "state", "") or ""
+        ).strip()
+        if (
+            bool(getattr(getattr(runner, "options", None), "request_handoff_enabled", False))
+            and readiness_state == "needs_user"
+        ):
+            transition(state, "clarify_requested", logger=logger)
+            return True
         if config.handle_unanswered_policy == "error":
             transition(state, "task_failed", logger=logger)
             return True

@@ -5,76 +5,18 @@ from types import SimpleNamespace
 import pytest
 
 
-class TestSkillSourceExtraction:
-    @pytest.fixture
-    def extractor(self):
-        from openminion.cli.chat.commands import _extract_skill_source
-
-        return _extract_skill_source
-
-    def test_extracts_unix_path(self, extractor):
-        result = extractor("read /workspace/skills/demo/SKILL.md and learn it")
-        assert result is not None
-        assert result["type"] == "path"
-        assert result["value"] == "/workspace/skills/demo/SKILL.md"
-
-    def test_extracts_relative_path(self, extractor):
-        # The pattern matches both ./path and /path forms.
-        result = extractor("load skill from ./skills/my-skill.md")
-        assert result is not None
-        # The extractor may normalize the leading dot away.
-        assert result["type"] == "path"
-        assert "skills/my-skill.md" in result["value"]
-        assert ".md" in result["value"]
-
-    def test_extracts_windows_path(self, extractor):
-        result = extractor("ingest C:\\skills\\demo\\SKILL.md")
-        assert result is not None
-        assert result["type"] == "path"
-        assert result["value"] == "C:\\skills\\demo\\SKILL.md"
-
-    def test_extracts_simple_url(self, extractor):
-        result = extractor("learn this skill from https://example.com/SKILL.md")
-        assert result is not None
-        assert result["type"] == "url"
-        assert result["value"] == "https://example.com/SKILL.md"
-
-    def test_extracts_github_raw_url(self, extractor):
-        url = "https://raw.githubusercontent.com/org/repo/main/skills/plan-checkpoints/SKILL.md"
-        result = extractor(f"read {url}")
-        assert result is not None
-        assert result["type"] == "url"
-        assert result["value"] == url
-
-    def test_extracts_url_with_query_params(self, extractor):
-        result = extractor("load https://example.com/skill.md?v=1.0&token=abc")
-        assert result is not None
-        assert result["type"] == "url"
-        assert "skill.md?v=1.0&token=abc" in result["value"]
-
-    def test_url_precedence_over_path(self, extractor):
-        result = extractor("learn from https://example.com/skill.md or /local/skill.md")
-        assert result is not None
-        assert result["type"] == "url"
-
-    def test_returns_none_for_no_match(self, extractor):
-        assert extractor("hello world") is None
-        assert extractor("learn this skill") is None
-        assert extractor("read this file.txt") is None
-
-
 class TestURLSafetyChecks:
     @pytest.fixture
     def blocked_host_checker(self):
-        from openminion.cli.chat.commands import _is_blocked_skill_host
+        from openminion.tools.skill.url_ingest import is_blocked_skill_host
 
-        return _is_blocked_skill_host
+        return is_blocked_skill_host
 
     @pytest.fixture
     def markdown_validator(self):
-        from openminion.cli.chat.commands import _is_valid_markdown_content
+        from openminion.tools.skill.url_ingest import is_valid_markdown_content
 
-        return _is_valid_markdown_content
+        return is_valid_markdown_content
 
     def test_blocks_localhost(self, blocked_host_checker):
         assert blocked_host_checker("localhost") is True
@@ -134,9 +76,9 @@ class TestURLSafetyChecks:
 class TestSkillNameExtraction:
     @pytest.fixture
     def name_extractor(self):
-        from openminion.cli.chat.commands import _extract_skill_name_from_url
+        from openminion.tools.skill.url_ingest import extract_skill_name_from_url
 
-        return _extract_skill_name_from_url
+        return extract_skill_name_from_url
 
     def test_extracts_simple_filename(self, name_extractor):
         result = name_extractor("https://example.com/my-skill.md")
@@ -174,9 +116,9 @@ class TestSkillNameExtraction:
 class TestNLIngestNegativePaths:
     @pytest.fixture
     def fetcher(self):
-        from openminion.cli.chat.commands import _fetch_skill_from_url
+        from openminion.tools.skill.url_ingest import fetch_skill_markdown_from_url
 
-        return _fetch_skill_from_url
+        return fetch_skill_markdown_from_url
 
     def test_rejects_invalid_scheme(self, fetcher):
         result = fetcher("ftp://example.com/skill.md")

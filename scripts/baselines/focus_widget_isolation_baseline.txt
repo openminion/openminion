@@ -1,5 +1,5 @@
 # Pinned baseline of accepted forbidden-import violations
-# in the focus shell. Managed by
+# in the interactive CLI. Managed by
 # `scripts/validate/focus/widget_isolation.py`.
 # This list should shrink as native widgets replace shared ones.
 # The validator fails

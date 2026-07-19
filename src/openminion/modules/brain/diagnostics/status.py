@@ -22,14 +22,17 @@ StatusKey = Literal[
     "clarifying",
     "analyzing",
     "planning",
+    "awaiting_plan_review",
     "awaiting_confirmation",
     "executing",
+    "replanning",
     "reviewing",
     "verifying",
     "evaluating_completion",
     "saving_context",
     "waiting_for_user",
     "completed",
+    "blocked",
     "error",
     "working",
 ]
@@ -38,14 +41,17 @@ _STATUS_LABELS: dict[StatusKey, str] = {
     "clarifying": "Clarifying request...",
     "analyzing": "Analyzing request...",
     "planning": "Planning steps...",
+    "awaiting_plan_review": "Waiting for plan review...",
     "awaiting_confirmation": "Waiting for confirmation...",
     "executing": "Executing step...",
+    "replanning": "Replanning with new evidence...",
     "reviewing": "Reviewing results...",
     "verifying": "Verifying results...",
     "evaluating_completion": "Evaluating results...",
     "saving_context": "Saving context...",
     "waiting_for_user": "Waiting for your reply...",
     "completed": "Completed.",
+    "blocked": "Blocked.",
     "error": "Turn failed.",
     "working": "Working...",
 }
@@ -144,14 +150,17 @@ def coerce_phase_status(status: PhaseStatus | Mapping[str, Any] | None) -> Phase
                 "clarifying",
                 "analyzing",
                 "planning",
+                "awaiting_plan_review",
                 "awaiting_confirmation",
                 "executing",
+                "replanning",
                 "reviewing",
                 "verifying",
                 "evaluating_completion",
                 "saving_context",
                 "waiting_for_user",
                 "completed",
+                "blocked",
                 "error",
                 "working",
             }:
@@ -353,6 +362,45 @@ def _label_for_status(
     return _STATUS_LABELS[status_key]
 
 
+def _status_for_request_readiness_state(state: str) -> StatusKey:
+    if state == "ready":
+        return "executing"
+    if state == "needs_user":
+        return "waiting_for_user"
+    if state == "needs_plan_review":
+        return "awaiting_plan_review"
+    if state == "needs_operation_approval":
+        return "awaiting_confirmation"
+    if state == "blocked":
+        return "blocked"
+    return "working"
+
+
+def phase_status_from_request_readiness(
+    *,
+    trace_id: str,
+    readiness: Any,
+    detail_text: str | None = None,
+) -> PhaseStatus:
+    readiness_state = str(getattr(readiness, "state", "") or "").strip()
+    status_key = _status_for_request_readiness_state(readiness_state)
+    posture = str(getattr(readiness, "posture", "") or "").strip() or None
+    requested_outcome = (
+        str(getattr(readiness, "requested_outcome", "") or "").strip() or None
+    )
+    return PhaseStatus(
+        trace_id=trace_id,
+        status_key=status_key,
+        label=_STATUS_LABELS[status_key],
+        route=requested_outcome,
+        mode_state=readiness_state or None,
+        mode_label=posture,
+        detail_code="request_readiness",
+        detail_text=str(detail_text or "").strip() or None,
+        terminal=False,
+    )
+
+
 def normalize_phase_status(
     *,
     trace_id: str,
@@ -525,5 +573,6 @@ __all__ = [
     "normalize_phase_status",
     "phase_status_from_event",
     "phase_status_from_phase",
+    "phase_status_from_request_readiness",
     "phase_status_from_runtime",
 ]

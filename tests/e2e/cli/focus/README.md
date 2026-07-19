@@ -1,0 +1,127 @@
+# CLI Focus E2E harness
+
+These tests drive CLI Focus through a real POSIX PTY. They cover
+the surface a person uses: launch, prompt readiness, slash commands, live turns,
+tool turns, and opt-in complex workflows.
+
+Run the deterministic local smoke:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q tests/e2e/cli/focus/test_local.py -ra
+```
+
+List reusable suites:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py --list
+```
+
+Run a single suite:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py progress-visibility
+```
+
+Run the deep-smoke matrix contract:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py matrix
+```
+
+Run the bounded local adversarial suite:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py adversarial-local
+```
+
+Run the deterministic high-level request handoff suite:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py hlpe
+```
+
+Run the deterministic Tier A release journey gate:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py tier-a
+```
+
+Tier A composes existing canonical owners rather than duplicating their tests:
+
+1. real PTY answer, interrupt, and queued-input flows,
+2. approval allow-once, session grant, deny, and replay behavior,
+3. detached Git-worktree edit, diff, focused validation, and cleanup rollback.
+
+Run live MiniMax focus smoke:
+
+```bash
+OPENMINION_LIVE_CLI_FOCUS_E2E=1 \
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 -m pytest -q tests/e2e/cli/focus/test_live_basic.py tests/e2e/cli/focus/test_live_tools.py -ra
+```
+
+Run only the deep/complex research scenarios:
+
+```bash
+OPENMINION_LIVE_CLI_FOCUS_E2E=1 \
+OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 \
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py research
+```
+
+Run only the deep/complex/long coding scenarios:
+
+```bash
+OPENMINION_LIVE_CLI_FOCUS_E2E=1 \
+OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 \
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py coding
+```
+
+Run the full complex/deep scenario matrix:
+
+```bash
+OPENMINION_LIVE_CLI_FOCUS_E2E=1 \
+OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 \
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py deep
+```
+
+Run the long autonomous coding/research soak scenarios:
+
+```bash
+OPENMINION_LIVE_CLI_FOCUS_E2E=1 \
+OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 \
+OPENMINION_CLI_FOCUS_E2E_ARTIFACT_ROOT="$(cd .. && pwd)/workspace-tmp/cli-focus-soak" \
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py soak
+```
+
+Suite names:
+
+- `local`: deterministic PTY launch, slash-command smoke, and fake-runtime default-focus queue/progress/interrupt proof.
+- `matrix`: deep-smoke matrix contract covering every required break surface and writing `deep-smoke-matrix.json`.
+- `adversarial-local`: bounded local breakage suite for routing, PTY resize, permissions, approvals, terminal rendering, exec sandbox, sessions, and config/env preflight.
+- `core`: live MiniMax basic answer.
+- `tools`: live MiniMax tool and policy-recovery smoke.
+- `approval`: focused approval UI tests without live credentials.
+- `research`: live complex/deep research prompts.
+- `coding`: live complex/deep coding prompts.
+- `long-running`: live long-running research/coding prompts.
+- `soak`: live goal-style long coding and research-to-code loops.
+- `queued-input`: focused queued-input/status tests without live credentials.
+- `hlpe`: deterministic high-level request readiness/status matrix without live credentials.
+- `progress-visibility`: progress/status rendering tests without live credentials.
+- `tier-a`: deterministic bounded coding-harness release journeys.
+- `regression`: broad local Focus, presentation, and status regression suite.
+- `live`: basic plus tools live suites.
+- `complex`: full complex live suite.
+- `deep`: live plus complex live suites.
+- `all`: every focus E2E test.
+
+Useful environment variables:
+
+- `OPENMINION_CLI_FOCUS_E2E_CONFIG`: config file path.
+- `OPENMINION_CLI_FOCUS_E2E_AGENT`: agent id, default `minimax-m2-7`.
+- `OPENMINION_CLI_FOCUS_E2E_ARTIFACT_ROOT`: transcript output directory.

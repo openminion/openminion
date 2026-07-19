@@ -61,11 +61,7 @@ def test_cron_interface_version_is_stable() -> None:
     "submodule,attr",
     [
         ("config", None),
-        ("constants", None),
-        ("delivery", "deliver_cron_result"),
-        ("interfaces", "CRON_INTERFACE_VERSION"),
         ("scheduler", "CronScheduler"),
-        ("scheduling", "compute_next_due"),
     ],
 )
 def test_every_live_submodule_resolves(submodule: str, attr: str | None) -> None:
@@ -79,35 +75,29 @@ def test_every_live_submodule_resolves(submodule: str, attr: str | None) -> None
         assert hasattr(module, attr), f"cron.{submodule} missing {attr!r}"
 
 
-# Spec §5.3 boundary rule: cron must not import from modules.task.
-# This is the negative-path assertion required by CTCR-01a exit criteria.
+# The service package composes task-owned scheduling with service orchestration.
 
 
-def test_cron_does_not_import_from_modules_task() -> None:
+def test_cron_service_imports_task_scheduling_only_at_composition_points() -> None:
 
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[3]
     cron_dir = repo_root / "src" / "openminion" / "services" / "cron"
-    offenders: list[str] = []
+    importers: set[str] = set()
     for py_file in cron_dir.rglob("*.py"):
         text = py_file.read_text()
-        for idx, line in enumerate(text.splitlines(), start=1):
+        for line in text.splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
             if (
-                "from openminion.modules.task" in stripped
-                or "import openminion.modules.task" in stripped
+                "from openminion.modules.task.scheduling" in stripped
+                or "import openminion.modules.task.scheduling" in stripped
             ):
-                offenders.append(f"{py_file.relative_to(repo_root)}:{idx}")
+                importers.add(str(py_file.relative_to(cron_dir)))
 
-    assert not offenders, (
-        f"Spec §5.3 boundary violation: cron imports from modules.task: "
-        f"{offenders}. Scheduling mechanics must not absorb task lifecycle "
-        f"semantics. The import direction should be service→cron or "
-        f"service→task, never cron→task."
-    )
+    assert importers == {"__init__.py", "scheduler.py"}
 
 
 # Cross-package importer seams (matrix §4.3).
@@ -118,22 +108,30 @@ def test_non_test_src_importers_resolve() -> None:
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[3]
-    known_non_test_importers = {
-        "src/openminion/tools/time/plugin.py",
-        "src/openminion/tools/task/plugin.py",
-        "src/openminion/modules/controlplane/runtime/cron_delivery.py",
+    service_importers = {
+        "src/openminion/services/health/lifecycle.py",
+        "src/openminion/services/runtime/daemon.py",
+    }
+    canonical_importers = {
         "src/openminion/modules/session/interfaces.py",
         "src/openminion/modules/session/storage/repository.py",
         "src/openminion/modules/session/storage/cron_store.py",
-        "src/openminion/services/health/lifecycle.py",
-        "src/openminion/services/runtime/cron/delivery.py",
-        "src/openminion/services/runtime/daemon.py",
+        "src/openminion/tools/time/plugin.py",
+        "src/openminion/tools/task/plugin.py",
+        "src/openminion/tools/task/scheduled_task/runtime.py",
+        "src/openminion/tools/task/scheduled_task/views.py",
     }
-    for rel in known_non_test_importers:
+    for rel in service_importers:
         path = repo_root / rel
         assert path.exists(), f"Known non-test importer missing: {rel}"
         content = path.read_text()
         assert "openminion.services.cron" in content, (
-            f"{rel} lost its modules.cron import "
-            f"(CTCR-01 audit needs refresh before CTCR-05)"
+            f"{rel} lost its supported cron compatibility import"
+        )
+    for rel in canonical_importers:
+        path = repo_root / rel
+        assert path.exists(), f"Known canonical importer missing: {rel}"
+        content = path.read_text()
+        assert "openminion.modules.task.scheduling" in content, (
+            f"{rel} lost its task-owned scheduling import"
         )

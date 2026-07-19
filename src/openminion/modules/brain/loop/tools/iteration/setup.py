@@ -207,13 +207,10 @@ def prepare_loop_frame(
         for spec in requestable_specs
         if str(getattr(spec, "name", "") or "").strip()
     }
-    plan_tool_enabled = bool(getattr(profile, "allow_plan_tool", True)) and (
-        profile.tool_choice != "none"
-    )
     active_tool_specs = (
         with_tool_request_spec(tool_specs) if tool_request_enabled else list(tool_specs)
     )
-    if plan_tool_enabled:
+    if bool(getattr(profile, "allow_plan_tool", True)):
         active_tool_specs = with_plan_tool_spec(active_tool_specs)
     active_tool_names = {
         str(getattr(spec, "name", "") or "").strip()
@@ -230,7 +227,7 @@ def prepare_loop_frame(
     )
     if tool_request_enabled:
         allowed_tools = frozenset({*allowed_tools, TOOL_REQUEST_TOOL_NAME})
-    if plan_tool_enabled:
+    if bool(getattr(profile, "allow_plan_tool", True)):
         allowed_tools = frozenset({*allowed_tools, PLAN_TOOL_NAME})
     seeded_queue = list(seeded_commands or [])
     if not active_tool_specs and allowed_tools and not seeded_queue:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 from uuid import uuid4
 
 from .sqlite import connect_database
@@ -197,7 +197,7 @@ class MemoryRecordStore:
         session_id: str,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[MemoryRecord]:
+    ) -> list[MemoryRecord]:
         rows = self._conn.execute(
             """
             SELECT * FROM memory_records
@@ -213,7 +213,7 @@ class MemoryRecordStore:
         self,
         *,
         limit: int = 100,
-    ) -> List[MemoryRecord]:
+    ) -> list[MemoryRecord]:
         rows = self._conn.execute(
             """
             SELECT mr.* FROM memory_records mr
@@ -314,7 +314,7 @@ class MemoryVectorStore:
         *,
         status: str,
         limit: int = 100,
-    ) -> List[MemoryVector]:
+    ) -> list[MemoryVector]:
         rows = self._conn.execute(
             """
             SELECT * FROM memory_vectors

@@ -175,23 +175,15 @@ class CodingVerificationMixin:
 
         verifier_goal, goal_source = self._resolve_verifier_goal(ctx)
         if verifier_goal is None:
-            self._loop_state.scratchpad["coding.verifier_verdict"] = (
-                "verification_unbound"
-            )
-            self._loop_state.scratchpad["coding.verify_gate_reason"] = (
-                "verification_unbound"
-            )
-            self._emit_verifier_status(
-                ctx,
-                mode_state="verification_unbound",
-                detail_text=(
-                    f"{_CODING_PUBLIC_TAG} verifier skipped: no typed verifier goal"
-                ),
-                extra_payload={
-                    "coding.verifier_goal_source": "unbound",
-                    "coding.verifier_skipped": True,
-                },
-            )
+            if self._coding_plan_requires_file_change():
+                return self._exit_verification_unbound(
+                    ctx,
+                    allowed_tools=allowed_tools,
+                    reason=(
+                        "No typed verifier goal was bound for the coding verify "
+                        "phase."
+                    ),
+                )
             return None
 
         candidate = load_verifier_candidate(
@@ -278,67 +270,8 @@ class CodingVerificationMixin:
             return True
         current_phase = self._coding_plan.current_phase
         next_phase = self._coding_plan.next_phase_name()
-        verifier_goal_bound = self._coding_plan.verifier_goal is not None
         if current_phase == "implement" and next_phase == "verify":
-            failure_summary = self._latest_tool_failure_summary()
-            if failure_summary:
-                attempted = int(
-                    self._loop_state.scratchpad.get("coding.self_corrections", 0) or 0
-                )
-                if attempted >= self._max_self_corrections:
-                    self._loop_state.termination_reason = "blocked_cap"
-                    self._sync_plan_telemetry()
-                    self._emit_phase_status(ctx)
-                    return False
-                self._coding_plan.record_open_issue(failure_summary)
-                self._record_autonomous_correction(
-                    ctx,
-                    failure_summary=failure_summary,
-                )
-                self._sync_plan_telemetry()
-                self._loop_state.messages.append(
-                    Message(
-                        role="user",
-                        content=(
-                            "Stay in implement. Fix this failure and run "
-                            f"exec.run again: {failure_summary}"
-                        ),
-                    )
-                )
-                self._emit_phase_status(ctx)
-                return False
-            candidate_payload = self._loop_state.scratchpad.get(
-                "coding.last_verifier_candidate"
-            )
-            if verifier_goal_bound and not isinstance(candidate_payload, dict):
-                failure_summary = (
-                    "Run at least one verification readback step (`file.read` or "
-                    "`exec.run`) before verify."
-                )
-                self._coding_plan.record_open_issue(failure_summary)
-                attempt = self._record_verify_gate_block(
-                    ctx,
-                    failure_summary=failure_summary,
-                )
-                if attempt >= self._max_self_corrections:
-                    self._loop_state.termination_reason = (
-                        CODING_TERM_VERIFY_CAP_EXCEEDED
-                    )
-                    self._sync_plan_telemetry()
-                    self._emit_phase_status(ctx)
-                    return False
-                self._sync_plan_telemetry()
-                self._loop_state.messages.append(
-                    Message(
-                        role="user",
-                        content=(
-                            "Stay in implement and run at least one verification "
-                            "readback step (`file.read` or `exec.run`) before "
-                            "moving to verify."
-                        ),
-                    )
-                )
-                self._emit_phase_status(ctx)
+            if not self._prepare_verify_transition(ctx):
                 return False
 
         current_output = outcome.final_text or ""
@@ -353,24 +286,101 @@ class CodingVerificationMixin:
         self._emit_phase_status(ctx)
         return advanced
 
+    def _prepare_verify_transition(self: Any, ctx: ExecutionContext) -> bool:
+        failure_summary = self._latest_tool_failure_summary()
+        if failure_summary:
+            attempted = int(
+                self._loop_state.scratchpad.get("coding.self_corrections", 0) or 0
+            )
+            if attempted >= self._max_self_corrections:
+                self._loop_state.termination_reason = "blocked_cap"
+                self._sync_plan_telemetry()
+                self._emit_phase_status(ctx)
+                return False
+            self._coding_plan.record_open_issue(failure_summary)
+            self._record_autonomous_correction(ctx, failure_summary=failure_summary)
+            instruction = (
+                "Stay in implement. Fix this failure and run "
+                f"exec.run again: {failure_summary}"
+            )
+        elif (
+            self._coding_plan_requires_file_change()
+            and not self._has_successful_mutating_file_result()
+        ):
+            failure_summary = (
+                "Run a mutating implementation tool (`file.write` or `code.patch`) "
+                "before verify."
+            )
+            self._coding_plan.record_open_issue(failure_summary)
+            attempt = self._record_verify_gate_block(
+                ctx,
+                failure_summary=failure_summary,
+                reason="missing_implementation_write",
+                required_tool="file.write or code.patch",
+            )
+            if attempt >= self._max_self_corrections:
+                self._loop_state.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
+            instruction = (
+                "Stay in implement and use a mutating implementation tool "
+                "(`file.write` or `code.patch`) before moving to verify."
+            )
+        elif self._coding_plan.verifier_goal is not None and not isinstance(
+            self._loop_state.scratchpad.get("coding.last_verifier_candidate"), dict
+        ):
+            failure_summary = (
+                "Run at least one verification readback step (`file.read` or "
+                "`exec.run`) before verify."
+            )
+            self._coding_plan.record_open_issue(failure_summary)
+            attempt = self._record_verify_gate_block(
+                ctx, failure_summary=failure_summary
+            )
+            if attempt >= self._max_self_corrections:
+                self._loop_state.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
+            instruction = (
+                "Stay in implement and run at least one verification readback "
+                "step (`file.read` or `exec.run`) before moving to verify."
+            )
+        else:
+            return True
+
+        self._sync_plan_telemetry()
+        if self._loop_state.termination_reason not in {
+            "blocked_cap",
+            CODING_TERM_VERIFY_CAP_EXCEEDED,
+        }:
+            self._loop_state.messages.append(Message(role="user", content=instruction))
+        self._emit_phase_status(ctx)
+        return False
+
+    def _coding_plan_requires_file_change(self: Any) -> bool:
+        return bool(
+            getattr(self._coding_plan, "requires_file_change", False)
+            or self._loop_state.scratchpad.get("coding.requires_file_change")
+        )
+
     def _record_verify_gate_block(
         self: Any,
         ctx: ExecutionContext,
         *,
         failure_summary: str,
+        reason: str = "missing_exec_run",
+        required_tool: str = "exec.run",
     ) -> int:
         count = (
             int(self._loop_state.scratchpad.get("coding.verify_gate_blocks", 0) or 0)
             + 1
         )
         self._loop_state.scratchpad["coding.verify_gate_blocks"] = count
+        self._loop_state.scratchpad["coding.verify_gate_reason"] = reason
+        self._loop_state.scratchpad["coding.verify_gate_required_tool"] = required_tool
         self._loop_state.scratchpad["coding.last_failure_summary"] = str(
             failure_summary or ""
         ).strip()
         ctx.emit_status(
             source_phase="coding.verify_gate",
             detail_text=(
-                f"{_CODING_PUBLIC_TAG} verify gate awaiting exec.run: "
+                f"{_CODING_PUBLIC_TAG} verify gate awaiting {required_tool}: "
                 f"attempt {count}/{self._max_self_corrections}"
             ),
             mode=BRAIN_DECISION_ROUTE_ACT,
@@ -378,8 +388,8 @@ class CodingVerificationMixin:
             payload={
                 "act.profile": BRAIN_ACT_PROFILE_CODING,
                 "coding.verify_gate_blocks": count,
-                "coding.verify_gate_required_tool": "exec.run",
-                "coding.verify_gate_reason": "missing_exec_run",
+                "coding.verify_gate_required_tool": required_tool,
+                "coding.verify_gate_reason": reason,
                 **self._resume_marker_payload(ctx),
             },
         )

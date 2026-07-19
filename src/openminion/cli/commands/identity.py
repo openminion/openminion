@@ -25,7 +25,7 @@ from openminion.modules.identity.runtime.md_generator import (
 )
 from openminion.modules.identity.storage.store import SQLiteIdentityStore
 from openminion.modules.identity.runtime.service import IdentityCtl
-from openminion.services.agent.identity import (
+from openminion.modules.identity import (
     IdentityBundle,
     IdentityDocument,
     load_identity_bundle,

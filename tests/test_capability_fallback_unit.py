@@ -13,7 +13,7 @@ from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.services.tool.selection import ToolSelectionService
 from openminion.services.agent import AgentService
-from openminion.services.agent.fallbacks import AgentToolFallbacksMixin
+from openminion.services.agent.execution.fallbacks import AgentToolFallbacksMixin
 from tests._csc_fixtures import _csc_install_default_agent
 
 

@@ -1,161 +1,113 @@
 from __future__ import annotations
 
-import io
 import os
 from typing import Iterator
 
 import pytest
 
-from openminion.cli.chat._deprecation import (
+from openminion.cli.commands.aliases import _CHAT_NOTICE_TEXT
+from openminion.cli.ux.deprecation import (
+    deprecation_suppressed,
     print_deprecation_notice,
-    should_print_notice,
 )
+
+_CHAT_SUPPRESSION_ENV = "OPENMINION_CHAT_NO_DEPRECATION"
 
 
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.delenv("OPENMINION_CHAT_NO_DEPRECATION", raising=False)
+    monkeypatch.delenv(_CHAT_SUPPRESSION_ENV, raising=False)
     yield
 
 
-@pytest.fixture
-def force_tty(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    import openminion.cli.chat._deprecation as dep
-
-    monkeypatch.setattr(dep, "_stdout_is_tty", lambda: True)
-    yield
+def test_notice_is_enabled_without_suppression(clean_env: None) -> None:
+    assert deprecation_suppressed(_CHAT_SUPPRESSION_ENV) is False
 
 
-@pytest.fixture
-def force_non_tty(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    import openminion.cli.chat._deprecation as dep
-
-    monkeypatch.setattr(dep, "_stdout_is_tty", lambda: False)
-    yield
-
-
-def test_should_print_on_tty_with_no_env(clean_env: None, force_tty: None) -> None:
-    assert should_print_notice() is True
-
-
-def test_should_not_print_on_non_tty(clean_env: None, force_non_tty: None) -> None:
-    assert should_print_notice() is False
-
-
-def test_should_not_print_when_env_truthy(
-    clean_env: None, force_tty: None, monkeypatch: pytest.MonkeyPatch
+def test_notice_is_suppressed_when_env_truthy(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("OPENMINION_CHAT_NO_DEPRECATION", "1")
-    assert should_print_notice() is False
+    monkeypatch.setenv(_CHAT_SUPPRESSION_ENV, "1")
+    assert deprecation_suppressed(_CHAT_SUPPRESSION_ENV) is True
 
 
 @pytest.mark.parametrize(
     "value",
     ["1", "true", "TRUE", "yes", "on", "True", "Yes", "ON"],
 )
-def test_should_not_print_truthy_variants(
+def test_truthy_suppression_variants(
     clean_env: None,
-    force_tty: None,
     monkeypatch: pytest.MonkeyPatch,
     value: str,
 ) -> None:
-    monkeypatch.setenv("OPENMINION_CHAT_NO_DEPRECATION", value)
-    assert should_print_notice() is False
+    monkeypatch.setenv(_CHAT_SUPPRESSION_ENV, value)
+    assert deprecation_suppressed(_CHAT_SUPPRESSION_ENV) is True
 
 
 @pytest.mark.parametrize("value", ["0", "", "maybe"])
-def test_should_still_print_for_non_truthy_env_values(
+def test_non_truthy_values_do_not_suppress(
     clean_env: None,
-    force_tty: None,
     monkeypatch: pytest.MonkeyPatch,
     value: str,
 ) -> None:
-    monkeypatch.setenv("OPENMINION_CHAT_NO_DEPRECATION", value)
-    assert should_print_notice() is True
-
-
-def test_non_tty_takes_precedence_over_env(
-    clean_env: None, force_non_tty: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("OPENMINION_CHAT_NO_DEPRECATION", raising=False)
-    assert should_print_notice() is False
+    monkeypatch.setenv(_CHAT_SUPPRESSION_ENV, value)
+    assert deprecation_suppressed(_CHAT_SUPPRESSION_ENV) is False
 
 
 def test_notice_text_has_expected_substrings(
-    clean_env: None, force_tty: None, capsys: pytest.CaptureFixture[str]
+    clean_env: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    print_deprecation_notice()
-    out = capsys.readouterr().out
-    assert "maintenance mode" in out
-    assert "openminion focus" in out
+    assert print_deprecation_notice(
+        _CHAT_NOTICE_TEXT,
+        suppression_env=_CHAT_SUPPRESSION_ENV,
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    out = captured.err
+    assert "compatibility alias" in out
+    assert "openminion" in out
     assert "OPENMINION_CHAT_NO_DEPRECATION" in out
-    assert "chat migration guide" in out
 
 
 def test_notice_suppressed_by_env(
     clean_env: None,
-    force_tty: None,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("OPENMINION_CHAT_NO_DEPRECATION", "1")
-    print_deprecation_notice()
-    assert capsys.readouterr().out == ""
-
-
-def test_notice_suppressed_on_non_tty(
-    clean_env: None,
-    force_non_tty: None,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    print_deprecation_notice()
-    assert capsys.readouterr().out == ""
-
-
-def test_notice_with_rich_console(clean_env: None, force_tty: None) -> None:
-    from rich.console import Console
-
-    buf = io.StringIO()
-    console = Console(file=buf, force_terminal=False, width=200)
-    print_deprecation_notice(console=console)
-    out = buf.getvalue()
-    assert "maintenance mode" in out
-    assert "openminion focus" in out
-
-
-def test_notice_with_rich_console_suppressed_by_env(
-    clean_env: None,
-    force_tty: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from rich.console import Console
-
-    monkeypatch.setenv("OPENMINION_CHAT_NO_DEPRECATION", "1")
-    buf = io.StringIO()
-    console = Console(file=buf, force_terminal=False, width=200)
-    print_deprecation_notice(console=console)
-    assert buf.getvalue() == ""
+    monkeypatch.setenv(_CHAT_SUPPRESSION_ENV, "1")
+    assert not print_deprecation_notice(
+        _CHAT_NOTICE_TEXT,
+        suppression_env=_CHAT_SUPPRESSION_ENV,
+    )
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def test_helper_is_callable_multiple_times_without_state(
-    clean_env: None, force_tty: None, capsys: pytest.CaptureFixture[str]
+    clean_env: None, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    print_deprecation_notice()
-    print_deprecation_notice()
-    out = capsys.readouterr().out
-    assert out.count("maintenance mode") == 2
+    print_deprecation_notice(
+        _CHAT_NOTICE_TEXT,
+        suppression_env=_CHAT_SUPPRESSION_ENV,
+    )
+    print_deprecation_notice(
+        _CHAT_NOTICE_TEXT,
+        suppression_env=_CHAT_SUPPRESSION_ENV,
+    )
+    assert capsys.readouterr().err.count("compatibility alias") == 2
 
 
-def test_run_chat_invokes_notice_helper_exactly_once() -> None:
+def test_chat_alias_invokes_notice_helper_exactly_once() -> None:
     import inspect
 
-    from openminion.cli.commands import chat as chat_cmd
+    from openminion.cli.commands import aliases
 
-    source = inspect.getsource(chat_cmd.run_chat)
-    assert source.count("print_deprecation_notice()") == 1
+    source = inspect.getsource(aliases.run_chat)
+    assert source.count("print_deprecation_notice(") == 1
 
 
-def test_only_deprecation_module_reads_chat_env() -> None:
+def test_chat_command_is_the_only_surface_declaring_suppression_env() -> None:
     import ast
     import pathlib
 
@@ -172,37 +124,17 @@ def test_only_deprecation_module_reads_chat_env() -> None:
             continue
         found = False
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            if not isinstance(node.func, ast.Attribute):
-                continue
-            if node.func.attr != "get":
-                continue
-            if not node.args:
-                continue
-            first = node.args[0]
-            if isinstance(first, ast.Constant) and (
-                first.value == "OPENMINION_CHAT_NO_DEPRECATION"
+            if (
+                isinstance(node, ast.Constant)
+                and node.value == _CHAT_SUPPRESSION_ENV
             ):
                 found = True
                 break
         if found:
             hits.append(str(path))
     relative = sorted(os.path.relpath(h, str(src)) for h in hits)
-    assert relative == ["cli/chat/_deprecation.py"], relative
-
-
-# ── Module surface sanity ────────────────────────────────────────
-
-
-def test_deprecation_module_imports_cleanly() -> None:
-    from openminion.cli.chat import _deprecation as dep
-
-    assert callable(dep.print_deprecation_notice)
-    assert callable(dep.should_print_notice)
+    assert relative == ["cli/commands/aliases.py"], relative
 
 
 def test_notice_text_constant_includes_charter_link() -> None:
-    from openminion.cli.chat._deprecation import _NOTICE_TEXT
-
-    assert "chat migration guide" in _NOTICE_TEXT
+    assert "bare `openminion`" in _CHAT_NOTICE_TEXT

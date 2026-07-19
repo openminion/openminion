@@ -11,7 +11,7 @@ from openminion.modules.brain.runtime.escalation import ApprovalResponse
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime import RuntimeContext
-from openminion.services.runtime.daytona.client import DaytonaClientError
+from openminion.modules.runtime.sandboxes.daytona import DaytonaClientError
 
 import openminion.tools.exec.plugin as exec_plugin
 from openminion.tools.exec.plugin import (

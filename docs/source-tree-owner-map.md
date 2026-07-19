@@ -41,3 +41,23 @@ Use this owner ladder:
 
 Deep imports can be useful inside the repo, but they should not be treated as a
 public API promise unless a narrower compatibility doc says so explicitly.
+
+## CLI presentation owners
+
+The `cli/` tree owns both command parsing and interactive terminal UX. Current
+presentation-local owners include:
+
+1. `cli/presentation/animation/` — validated activity frame/timing contract,
+   built-in `openminion:braille`, lazy optional provider discovery, and fallback
+   diagnostics.
+2. `cli/presentation/theme.py` and `cli/theme/` — renderer colors, theme
+   persistence, and theme application.
+3. `cli/interactive/` — shared interactive ownership for the default terminal
+   renderer and the
+   opt-in Textual renderer, including slash commands and runtime adapters.
+4. `cli/interactive/terminal/` — default interactive shell, transcript,
+   composer, status, and tool rendering.
+
+Animation providers return raw frame strings and timing only. Foreground
+colors, backgrounds, labels, progress policy, and accessibility remain owned by
+OpenMinion renderers.

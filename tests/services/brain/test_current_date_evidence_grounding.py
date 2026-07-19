@@ -13,9 +13,6 @@ from openminion.services.brain.post_execution.followup import (
 )
 
 
-# CDEG-02 positive contract: typed facts surfaced, not imperative guidance
-
-
 def _user_message(body: str = "what are the latest market headlines?") -> Message:
     return Message(channel="console", target="chat", body=body)
 
@@ -90,10 +87,7 @@ def test_cdeg02_runtime_facts_message_emits_at_most_one_evidence_line_per_tool()
         },
     ]
     lines = _dated_evidence_lines_from_tool_results(tool_results)
-    # Two tool results with distinct `(value, tool_name)` pairs → two lines.
     assert len(lines) == 2
-    # Same tool_name + same value would dedup to one; this test covers
-    # the distinct-tool case. See next test for the strict dedup case.
     assert all(line.startswith("evidence_date=2026-04-18T12:00:00Z") for line in lines)
 
 
@@ -153,7 +147,6 @@ def test_cdeg02_build_tool_follow_up_history_injects_runtime_facts_message() -> 
         prior_assistant_text="I'll search for that.",
         tool_results=tool_results,
     )
-    # A typed-facts system message must be in the history.
     system_messages = [
         msg for msg in provider_history if str(msg.role).lower() == "system"
     ]
@@ -179,9 +172,6 @@ def test_cdeg02_build_tool_follow_up_history_injects_runtime_facts_message() -> 
     user_messages = [msg for msg in provider_history if str(msg.role).lower() == "user"]
     assert user_messages, "expected user tool-feedback message in history"
     assert str(user_messages[-1].content or "").startswith("Tool execution results:\n")
-
-
-# CDEG-03 anti-regression: forbidden runtime behaviors must not appear
 
 
 _BANNED_IMPERATIVE_SUBSTRINGS = (

@@ -566,6 +566,17 @@ class Plan(BaseModel):
     created_at: str = Field(default_factory=iso_now)
     plan_version: int = Field(default=1, ge=1)
 
+    def first_executable_step(self) -> Command | None:
+        for step in self.steps:
+            if str(getattr(step, "kind", "") or "").strip() in {
+                "tool",
+                "agent",
+                "think",
+                "finish",
+            }:
+                return step
+        return None
+
     @model_validator(mode="after")
     def _reject_unresolved_placeholder_steps(self) -> "Plan":
         for index, step in enumerate(self.steps, start=1):

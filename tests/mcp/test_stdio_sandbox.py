@@ -9,7 +9,7 @@ from openminion.base.config.mcp import (
     MCPStdioSandboxConfig,
     resolve_mcp_server_env,
 )
-from openminion.cli.tui.mcp_status import MCPServerStatusRow, render_mcp_status_report
+from openminion.cli.interactive.mcp_status import MCPServerStatusRow, render_mcp_status_report
 from openminion.tools.mcp.transport import MCPServerUnavailableError, StdioMCPTransport
 
 

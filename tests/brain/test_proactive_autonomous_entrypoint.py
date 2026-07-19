@@ -104,23 +104,23 @@ def _runner_with_pae(*, enabled: bool, interval_seconds: int = 120) -> Any:
 
 class AgentIdleTickPayloadTests(unittest.TestCase):
     def test_allowed_kinds_include_agent_idle_tick(self) -> None:
-        from openminion.services.cron.constants import ALLOWED_PAYLOAD_KINDS
+        from openminion.modules.task.scheduling.constants import ALLOWED_PAYLOAD_KINDS
 
         self.assertIn("agentIdleTick", ALLOWED_PAYLOAD_KINDS)
 
     def test_allowed_session_targets_include_agent_session(self) -> None:
-        from openminion.services.cron.constants import ALLOWED_SESSION_TARGETS
+        from openminion.modules.task.scheduling.constants import ALLOWED_SESSION_TARGETS
 
         self.assertIn("agent_session", ALLOWED_SESSION_TARGETS)
 
     def test_normalize_payload_requires_session_id(self) -> None:
-        from openminion.services.cron.scheduling import normalize_payload
+        from openminion.modules.task.scheduling.schedule import normalize_payload
 
         with self.assertRaises(ValueError):
             normalize_payload({"kind": "agentIdleTick"})
 
     def test_normalize_payload_accepts_agent_idle_tick(self) -> None:
-        from openminion.services.cron.scheduling import normalize_payload
+        from openminion.modules.task.scheduling.schedule import normalize_payload
 
         result = normalize_payload(
             {
@@ -134,7 +134,9 @@ class AgentIdleTickPayloadTests(unittest.TestCase):
         self.assertEqual(result["plan_id"], "p1")
 
     def test_target_payload_pair_agent_session_locked_to_idle_tick(self) -> None:
-        from openminion.services.cron.scheduling import validate_target_payload_pair
+        from openminion.modules.task.scheduling.schedule import (
+            validate_target_payload_pair,
+        )
 
         # Matching pair: OK.
         validate_target_payload_pair(
@@ -156,7 +158,7 @@ class AgentIdleTickPayloadTests(unittest.TestCase):
             )
 
     def test_default_session_target_for_agent_idle_tick(self) -> None:
-        from openminion.services.cron.scheduling import (
+        from openminion.modules.task.scheduling.schedule import (
             default_session_target_for_payload,
         )
 

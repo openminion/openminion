@@ -4,10 +4,18 @@ from tests._csc_fixtures import _csc_install_default_agent
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from openminion.base.config import OpenMinionConfig, resolve_agent_config
 from openminion.services.lifecycle.request_orchestrator import run_turn
+
+
+def test_lifecycle_orchestrator_surface_is_canonical_ingress_owner() -> None:
+    from openminion.services.lifecycle.request_orchestrator import (
+        run_turn as compatibility,
+    )
+    from openminion.services.runtime.ingress.orchestrator import run_turn as canonical
+
+    assert compatibility is canonical
 
 
 @dataclass
@@ -203,22 +211,19 @@ def test_normal_turn_completes() -> None:
     )
     runtime = _RuntimeStub(config=_default_config(), gateway=gateway)
 
-    with patch(
-        "openminion.services.lifecycle.request_orchestrator.APIRuntime.from_config_path",
-        return_value=runtime,
-    ):
-        result = run_turn(
-            config_path="/tmp/config.json",
-            payload={
-                "message": "hello there",
-                "session_id": "session-normal",
-                "agent_id": "main",
-                "channel": "console",
-                "target": "api-user",
-            },
-            runtime=None,
-            request_id="req-normal",
-        )
+    result = run_turn(
+        config_path="/tmp/config.json",
+        payload={
+            "message": "hello there",
+            "session_id": "session-normal",
+            "agent_id": "main",
+            "channel": "console",
+            "target": "api-user",
+        },
+        runtime=None,
+        runtime_factory=lambda _config_path: runtime,
+        request_id="req-normal",
+    )
 
     assert runtime.closed is True
     assert len(gateway.calls) == 1

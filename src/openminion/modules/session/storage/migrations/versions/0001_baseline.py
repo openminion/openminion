@@ -2,6 +2,7 @@ from openminion.modules.session.storage.schema import (
     BOOTSTRAP_SCHEMA,
     CRON_SCHEMA,
     EVENT_SOURCED_SCHEMA,
+    SESSION_CONTINUATION_SCHEMA,
     V15_SCHEMA,
 )
 from openminion.modules.storage.migrations.alembic import (
@@ -24,6 +25,7 @@ DDL = (
     """,
     *BOOTSTRAP_SCHEMA,
     *EVENT_SOURCED_SCHEMA,
+    *SESSION_CONTINUATION_SCHEMA,
     *CRON_SCHEMA,
     *V15_SCHEMA,
 )

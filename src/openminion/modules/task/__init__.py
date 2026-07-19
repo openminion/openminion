@@ -59,8 +59,7 @@ from .project import (
     save_project_run_checkpoint,
 )
 from .project_capabilities import (
-    CPACK_SPEC_REF,
-    CPACK_TRACKER_REF,
+    DOMAIN_WORKFLOW_REF,
     GAP_ASSESSMENT_REF,
     ProjectCapabilityArea,
     ProjectCapabilityDisposition,
@@ -126,8 +125,7 @@ __all__ = (
     "AutonomyRunPhase",
     "AutonomyRunStatus",
     "AutonomyRunStore",
-    "CPACK_SPEC_REF",
-    "CPACK_TRACKER_REF",
+    "DOMAIN_WORKFLOW_REF",
     "CommandEvidence",
     "ContinuationPolicy",
     "DecisionDigest",

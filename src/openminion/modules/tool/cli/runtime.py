@@ -258,7 +258,27 @@ def raise_if_denied(
 
 def print_envelope(env: ResultEnvelope, json_out: bool) -> None:
     payload = env.model_dump_json(indent=2)
-    print(payload if json_out else payload)
+    if json_out:
+        print(payload)
+        return
+    lines = [
+        f"tool: {env.tool}",
+        f"ok: {str(env.ok).lower()}",
+        f"run_id: {env.run_id}",
+        f"scope: {env.policy_scope}",
+        f"duration_ms: {env.duration_ms}",
+    ]
+    for key in sorted(env.data):
+        value = env.data[key]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            rendered = str(value).lower() if isinstance(value, bool) else str(value)
+        else:
+            rendered = json.dumps(value, ensure_ascii=True, sort_keys=True)
+        lines.append(f"{key}: {rendered}")
+    if env.error is not None:
+        lines.append(f"error_code: {env.error.code}")
+        lines.append(f"error_message: {env.error.message}")
+    print("\n".join(lines))
 
 
 def _validate_request_args(spec: Any, req: CallRequest) -> dict[str, Any]:
@@ -330,14 +350,14 @@ def _enforce_safety_and_policy(
     return safety_decision, policy_decision, validated_args
 
 
-def _maybe_autostart_sidecar_for_spec(spec: Any, env_owner: Any) -> None:
+def _maybe_autostart_sidecar_for_spec(
+    spec: Any, env_owner: Any, registry: ToolRegistry
+) -> None:
     """If spec carries a sidecar, ensure autostart and raise on failure/disabled."""
     if not (isinstance(spec, ToolSpec) and getattr(spec, "sidecar", None)):
         return
     try:
-        from openminion.services.lifecycle.sidecars import ensure_sidecar_autostart
-
-        autostart = ensure_sidecar_autostart(
+        autostart = registry.ensure_sidecar_autostart(
             name=str(spec.sidecar),
             config_path=env_owner.get(OPENMINION_CONFIG_PATH_ENV, "") or None,
             runtime_env=env_owner.snapshot(),
@@ -555,7 +575,7 @@ def execute_call_payload(
                 data={"dry_run": True},
             ), 0
 
-        _maybe_autostart_sidecar_for_spec(spec, env_owner)
+        _maybe_autostart_sidecar_for_spec(spec, env_owner, reg)
 
         home_root = resolve_home_root_fn()
         data_root = resolve_data_root_fn(

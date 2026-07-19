@@ -26,4 +26,65 @@ def add_tool_session_arg(
     parser.add_argument("--session", default=default, help=help_text)
 
 
-__all__ = ["add_json_output_flag", "add_tool_session_arg"]
+def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
+    """Add the canonical interactive-session options shared by root and aliases."""
+    parser.add_argument(
+        "--agent",
+        default=None,
+        help="Agent id to activate for the interactive session",
+    )
+    parser.add_argument(
+        "--session",
+        default=None,
+        help="Existing interactive session id to resume",
+    )
+    parser.add_argument(
+        "--dir",
+        default=None,
+        help="Working directory for the interactive session",
+    )
+    parser.add_argument(
+        "--theme",
+        default=None,
+        help=(
+            "Theme variant override (e.g. light, dark). "
+            "Top precedence - beats env and persisted preference."
+        ),
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Use the built-in demo provider without external credentials",
+    )
+    parser.add_argument(
+        "--no-context",
+        action="store_true",
+        help="Do not auto-load OPENMINION.md/AGENTS.md/CLAUDE.md project context",
+    )
+    parser.add_argument(
+        "--no-update-check",
+        action="store_true",
+        help="Disable the cached startup update-available notification",
+    )
+    parser.add_argument(
+        "--animation-provider",
+        default=None,
+        help="Activity animation provider id (default: openminion)",
+    )
+    parser.add_argument(
+        "--animation",
+        default=None,
+        help="Activity animation preset, or provider:preset shorthand",
+    )
+
+    from openminion.cli.ux.verbosity import add_progress_flag, add_verbosity_flag
+
+    add_verbosity_flag(parser)
+    add_progress_flag(parser, include_aliases=True)
+
+
+__all__ = [
+    "add_interactive_session_flags",
+    "add_json_output_flag",
+    "add_tool_session_arg",
+]

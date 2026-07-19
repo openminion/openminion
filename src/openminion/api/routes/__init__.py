@@ -8,6 +8,7 @@ from .memory import handle_request as handle_memory_request
 from .runtime import handle_request as handle_runtime_request
 from .sessions import handle_request as handle_sessions_request
 from .skill import handle_request as handle_skill_request
+from .tasks import handle_request as handle_tasks_request
 from .tools import handle_request as handle_tools_request
 from .turns import handle_request as handle_turns_request
 
@@ -23,6 +24,7 @@ __all__ = [
     "handle_runtime_request",
     "handle_sessions_request",
     "handle_skill_request",
+    "handle_tasks_request",
     "handle_tools_request",
     "handle_turns_request",
 ]

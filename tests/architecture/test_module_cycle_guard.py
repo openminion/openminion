@@ -22,9 +22,6 @@ def _load_validator():
     return module
 
 
-# --- 1. baseline matches detected --------------------------------------------
-
-
 def test_validator_runs_clean_on_current_baseline(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -47,9 +44,6 @@ def test_validator_runs_clean_on_current_baseline(
     )
 
     assert "[OK] detected cycle set matches baseline allowlist." in captured.out
-
-
-# --- 2. synthetic cycle is detected ------------------------------------------
 
 
 def test_synthetic_new_cycle_is_detected(tmp_path: pathlib.Path) -> None:
@@ -77,7 +71,6 @@ def test_synthetic_new_cycle_is_detected(tmp_path: pathlib.Path) -> None:
         ),
         encoding="utf-8",
     )
-    # Add a second beta file to confirm rglob walk works.
     (beta / "more.py").write_text(
         "from openminion.modules.alpha.deep import sub  # noqa: F401\n",
         encoding="utf-8",
@@ -90,9 +83,6 @@ def test_synthetic_new_cycle_is_detected(tmp_path: pathlib.Path) -> None:
     assert "beta" in graph["alpha"]
     assert "alpha" in graph["beta"]
     assert ("alpha", "beta", "alpha") in detected
-
-
-# --- 3. allowlist auto-shrink without real removal fails (when not advisory) ---
 
 
 def test_allowlist_shrink_without_real_removal_fails(
@@ -115,13 +105,8 @@ def test_allowlist_shrink_without_real_removal_fails(
     captured = capsys.readouterr()
     assert exit_code == 1, captured.out
     assert "[DRIFT]" in captured.out
-    # The synthetic baseline cycle must appear in the "no longer detected"
-    # arm of the drift report — confirming auto-shrink discipline.
     rendered = " -> ".join(synthetic_cycle)
     assert rendered in captured.out
-
-
-# --- 4. advisory mode flag is diff-visible -----------------------------------
 
 
 def test_advisory_mode_flag_is_diff_visible() -> None:

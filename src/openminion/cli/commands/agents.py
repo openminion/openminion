@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import time
-from typing import Any, Optional
+from typing import Any
 
 from openminion.cli.config import load_cli_config, resolve_cli_roots
 from openminion.cli.presentation.json_output import print_json_payload
@@ -163,7 +163,7 @@ def agent_stop(registry: AgentRegistryStore, agent_id: str) -> int:
 
 
 def agent_attach(
-    registry: AgentRegistryStore, agent_id: str, config_path: Optional[str]
+    registry: AgentRegistryStore, agent_id: str, config_path: str | None
 ) -> int:
     agent = registry.get_agent(agent_id)
     if not agent:

@@ -83,6 +83,23 @@ ADAPTIVE_TERMINATION_REASONS = frozenset(
 )
 
 _SUPPORTED_REQUEST_OVERRIDE_KEYS = frozenset({"max_output_tokens", "metadata"})
+_BUDGET_EXHAUSTED_ERROR_CODES = frozenset(
+    {
+        "BUDGET_EXCEEDED",
+        "TOOL_BUDGET_CALLS_EXCEEDED",
+        "TOOL_BUDGET_COST_EXCEEDED",
+    }
+)
+
+
+def is_budget_exhausted_action_result(action_result: Any) -> bool:
+    error = getattr(action_result, "error", None)
+    code = (
+        error.get("code", "")
+        if isinstance(error, Mapping)
+        else getattr(error, "code", "")
+    )
+    return str(code or "").strip().upper() in _BUDGET_EXHAUSTED_ERROR_CODES
 
 
 class AdaptiveToolLoopError(ValueError):

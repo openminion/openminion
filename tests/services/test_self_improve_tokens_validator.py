@@ -24,6 +24,12 @@ def _load_validator_module():
 MODULE = _load_validator_module()
 
 
+def test_validator_tracks_canonical_improvement_owner() -> None:
+    assert MODULE.SELF_IMPROVEMENT_PATH.relative_to(MODULE.SRC_ROOT).as_posix() == (
+        "modules/brain/runtime/improvement/notes.py"
+    )
+
+
 def test_validator_passes_live_tree(capsys) -> None:
     rc = MODULE.main()
     captured = capsys.readouterr().out.strip().splitlines()[-1]

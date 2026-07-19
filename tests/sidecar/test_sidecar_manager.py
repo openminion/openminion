@@ -14,6 +14,13 @@ from openminion.services.security.policy import (
 )
 
 
+def test_lifecycle_sidecar_surface_is_canonical_runtime_owner() -> None:
+    from openminion.services.lifecycle.sidecars import SidecarManager as compatibility
+    from openminion.services.runtime.sidecars import SidecarManager as canonical
+
+    assert compatibility is canonical
+
+
 class FakeAdapter:
     def __init__(self) -> None:
         self.start_calls = 0

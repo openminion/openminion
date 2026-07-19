@@ -41,6 +41,18 @@ RUNTIME_IP_PUBLIC = "runtime.ip.public"
 RUNTIME_IP_LOCAL = "runtime.ip.local"
 RUNTIME_BROWSER = "runtime.browser"
 
+OPS_RUNTIME_BINDING_IDS: tuple[str, ...] = (
+    "runtime.ops.target.list",
+    "runtime.ops.target.inspect",
+    "runtime.ops.host.snapshot",
+    "runtime.ops.service.inspect",
+    "runtime.ops.logs.query",
+    "runtime.ops.network.inspect",
+    "runtime.ops.command.observe",
+    "runtime.ops.job.inspect",
+    "runtime.ops.job.cancel",
+)
+
 RUNTIME_GWS_CALL = "runtime.gws.call"
 RUNTIME_GWS_SCHEMA = "runtime.gws.schema"
 RUNTIME_GWS_AUTH_SETUP = "runtime.gws.auth.setup"
@@ -134,6 +146,7 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_IP_PUBLIC,
     RUNTIME_IP_LOCAL,
     RUNTIME_BROWSER,
+    *OPS_RUNTIME_BINDING_IDS,
     RUNTIME_GWS_CALL,
     RUNTIME_GWS_SCHEMA,
     RUNTIME_GWS_AUTH_SETUP,

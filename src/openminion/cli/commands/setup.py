@@ -180,24 +180,24 @@ def _run_setup_doctor(*, config_path: Path) -> int:
     )
 
 
-def _launch_post_setup_chat(args, *, config_path: Path) -> int:
-    from openminion.cli.commands.chat import run_chat
+def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
+    from openminion.cli.commands.interactive import run_interactive
 
-    chat_args = SimpleNamespace(
+    interactive_args = SimpleNamespace(
         config=str(config_path),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
         agent=getattr(args, "agent", None),
         session="onboarding-first-run",
-        quiet=False,
-        no_progress=False,
-        conversation=None,
-        resume=False,
-        reset_session=False,
-        demo=False,
-        verbose=False,
-        tools_verbose=False,
-        first_session_tip=True,
+        dir=str(Path.cwd()),
+        theme=None,
+        no_interactive=False,
+        no_context=False,
+        no_update_check=False,
+        rich=False,
+        terminal=False,
     )
-    return int(run_chat(chat_args) or 0)
+    return int(run_interactive(interactive_args) or 0)
 
 
 def _resolve_runtime_helper(name: str) -> Any:
@@ -207,20 +207,23 @@ def _resolve_runtime_helper(name: str) -> Any:
 
 def _print_post_setup_tips() -> None:
     paragraphs = (
-        "Tip: run `openminion` to start a focus shell that flows in "
-        "your terminal (scroll up to re-read past turns). Use "
-        "`openminion focus --rich` for the Textual shell with the "
-        "full overlay set, or pipe a prompt via "
+        "Tip: run `openminion` to start the interactive terminal. "
+        "Scroll up to re-read past turns, or pipe a prompt via "
         "`cat prompt.md | openminion` for one-shot mode.",
         "Each turn renders with a `⏺` marker, a verb-rotating "
         "thinking spinner, colored `●` tool-call markers, and "
-        "syntax-highlighted code blocks. Pass `--plain-spinner` "
-        "(or set `OPENMINION_FOCUS_PLAIN_SPINNER=1` / `NO_COLOR=1`) "
-        "to drop the verb rotation but keep the elapsed counter. "
+        "syntax-highlighted code blocks. Use `--progress minimal` "
+        "or `--progress off` for reduced motion; `--plain-spinner`, "
+        "`OPENMINION_FOCUS_PLAIN_SPINNER=1`, and `NO_COLOR=1` "
+        "remain compatibility paths. "
         "Tool blocks longer than 6 lines are truncated; type "
         "`/expand` to re-print the most recent one in full "
         "(`/expand 2` for the second-most-recent, `/expand 0` for a "
         "list).",
+        "Activity animation defaults to `openminion:braille`. Install "
+        "`openminion[animations]` to enable `unicode-animatio`, then "
+        "launch with `--animation-provider unicode --animation helix` "
+        "or switch live with `/animation use unicode:helix`.",
         "Tool-block verbosity is configurable: `--verbosity quiet` "
         "hides tool blocks (an end-of-turn summary still shows "
         "what ran); `--verbosity normal` is the default; "
@@ -236,7 +239,8 @@ def _print_post_setup_tips() -> None:
         "shows up to 200 lines inline.",
         "Persistent preferences: create "
         "`<DATA_ROOT>/focus_prefs.toml` with flat keys "
-        '`verbosity = "quiet"` and/or `progress = "off"` to '
+        '`verbosity = "quiet"`, `progress = "off"`, '
+        '`animation_provider = "unicode"`, and/or `animation = "helix"` to '
         "set per-user defaults. Slash overrides + CLI flag + env "
         "vars still win when set.",
         "Tool calls narrate live: a yellow `●` marker prints "
@@ -245,7 +249,7 @@ def _print_post_setup_tips() -> None:
         "prints on completion. Quiet mode hides both but still "
         "shows the end-of-turn hidden-count summary.",
         "Project context: drop `OPENMINION.md` (or `AGENTS.md` / "
-        "`CLAUDE.md`) at your project root; the focus shell loads "
+        "`CLAUDE.md`) at your project root; the terminal loads "
         "it at startup so the agent has project-specific context "
         "every session. Bootstrap one with `/init`.",
         "Switch models mid-session with `/model <provider>` (e.g. "
@@ -263,11 +267,9 @@ def _print_post_setup_tips() -> None:
         "and `openminion agent` (CUC). Same env vars: "
         "`OPENMINION_VERBOSITY` and `OPENMINION_PROGRESS`. "
         "Piped contexts auto-detect to `--progress off`.",
-        "`openminion chat` is in maintenance mode (soft-deprecated). "
-        "Use `openminion` (focus shell) for new interactive work; "
-        "see the chat migration guide for the transition path. "
-        "Suppress chat's deprecation notice on scripted runs "
-        "with `OPENMINION_CHAT_NO_DEPRECATION=1`.",
+        "Legacy interactive subcommands are compatibility aliases. Use bare "
+        "`openminion` for interactive work, and `openminion run` "
+        "for scripted one-shot execution.",
     )
     for paragraph in paragraphs:
         print(paragraph)
@@ -292,12 +294,15 @@ def run_setup(args) -> int:
         return doctor_code
 
     if getattr(args, "no_chat", False):
-        print("Setup complete. Chat launch skipped because --no-chat was requested.")
+        print(
+            "Setup complete. Interactive launch skipped because "
+            "--no-chat/--no-focus was requested."
+        )
         _print_post_setup_tips()
         return 0
 
-    print("Setup validation passed. Entering chat...")
-    return _resolve_runtime_helper("_launch_post_setup_chat")(
+    print("Setup validation passed. Entering OpenMinion...")
+    return _resolve_runtime_helper("_launch_post_setup_interactive")(
         args, config_path=saved_path
     )
 
@@ -309,8 +314,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
     setup.add_argument(
         "--no-chat",
+        "--no-focus",
+        dest="no_chat",
         action="store_true",
-        help="Configure and validate only; do not continue into chat afterwards",
+        help="Configure and validate only; do not launch the interactive CLI afterward",
     )
     setup.add_argument(
         "--agent",

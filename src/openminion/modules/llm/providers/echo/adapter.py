@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from ...contracts.adapter import (
     ProviderAdapterResult,
@@ -16,7 +16,7 @@ class EchoProvider:
     contract_version = LLM_RESPONSE_INTERFACE_VERSION
     provider_interface_version = PROVIDER_INTERFACE_VERSION
 
-    def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
+    def complete(self, request: LLMRequest, config: dict[str, Any]) -> LLMResponse:
         del config
         started = time.perf_counter()
         text = _last_user_text(request.messages)
@@ -42,11 +42,11 @@ class EchoProvider:
             )
         )
 
-    def list_models(self, config: Dict[str, Any]) -> List[str]:
+    def list_models(self, config: dict[str, Any]) -> list[str]:
         del config
         return ["echo"]
 
-    def healthcheck(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def healthcheck(self, config: dict[str, Any]) -> dict[str, Any]:
         del config
         return {"ok": True, "provider": self.name}
 

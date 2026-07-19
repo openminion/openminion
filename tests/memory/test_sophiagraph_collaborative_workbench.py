@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from sophiagraph import (
     CandidateListOptions,
     CandidateQueueOptions,
@@ -23,12 +25,13 @@ from sophiagraph import (
     publish_overlay_from_plan,
     workbench_to_dict,
 )
-from sophiagraph.ui import (
-    build_candidate_review_screen,
-    build_explorer_screen,
-    build_record_detail_screen,
-    render_collaborative_workbench_html,
-)
+
+ui = pytest.importorskip("sophiagraph.ui")
+build_candidate_review_screen = ui.build_candidate_review_screen
+build_explorer_screen = ui.build_explorer_screen
+build_record_detail_screen = ui.build_record_detail_screen
+render_collaborative_workbench_html = ui.render_collaborative_workbench_html
+pytestmark = pytest.mark.package_integration
 
 
 def _namespace() -> MemoryNamespace:

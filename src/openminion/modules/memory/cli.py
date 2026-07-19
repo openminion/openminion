@@ -346,7 +346,9 @@ def _register_namespace_list_command(app: typer.Typer) -> None:
             graph_id=graph_id,
         )
         if namespace is None:
-            typer.echo("Error: --scope or at least one namespace id is required", err=True)
+            typer.echo(
+                "Error: --scope or at least one namespace id is required", err=True
+            )
             raise typer.Exit(1)
         svc = _get_service(db)
         opts = ListQueryOptions(

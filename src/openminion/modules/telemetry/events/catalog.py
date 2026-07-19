@@ -30,6 +30,16 @@ SESSION_RESUMED = "session.resumed"
 SESSION_STALE = "session.stale"
 SESSION_STATUS_CHANGED = "session.status.changed"
 SESSION_SUMMARY_ENRICHED = "session.summary.enriched"
+SESSION_CONTINUATION_BUILD = "session.continuation.build"
+SESSION_CONTINUATION_APPLY = "session.continuation.apply"
+SESSION_SHARE_CREATED = "session.share.created"
+SESSION_SHARE_ACCESSED = "session.share.accessed"
+SESSION_SHARE_DENIED = "session.share.denied"
+SESSION_SHARE_REVOKED = "session.share.revoked"
+SESSION_SHARE_EXPIRED = "session.share.expired"
+SESSION_RETENTION_HOLD_ADDED = "session.retention.hold_added"
+SESSION_RETENTION_HOLD_RELEASED = "session.retention.hold_released"
+SESSION_BRANCH_CARRY_FORWARD_CREATED = "session.branch.carry_forward.created"
 
 RESPONSE_ACKED = "response.acked"
 RESPONSE_DELIVERED = "response.delivered"
@@ -123,6 +133,9 @@ MSPO_MEMORY_SPAN_READ = "mspo_memory_span_read"
 
 CHAT_PHASE_TIMING = "chat.phase_timing"
 TUI_RENDER = "tui.render"
+CLI_SURFACE_USED = "cli.surface.used"
+CLI_DEPRECATION_SHOWN = "cli.deprecation.shown"
+CLI_DASHBOARD_TAB_ACTIVATED = "cli.dashboard.tab_activated"
 SELF_MODEL_SNAPSHOT_BUILT = "self_model.snapshot_built"
 SELF_MODEL_SNAPSHOT_DEGRADED = "self_model.snapshot_degraded"
 SELF_AWARENESS_ANSWER_DEGRADED = "self_awareness.answer_degraded"
@@ -163,6 +176,7 @@ SECRET_REDACTED = "secret_redacted"
 SECURITY_WARNING = "security_warning"
 CONTEXT_MANIFEST = "context.manifest"
 CONTEXT_MANIFEST_CREATED = "context.manifest.created"
+CONTEXT_MANIFEST_PERSISTENCE_FAILED = "context.manifest.persistence_failed"
 CONTEXT_PACK = "context_pack"
 
 METRIC = "metric"
@@ -202,6 +216,16 @@ EVENT_TYPES: frozenset[str] = frozenset(
         SESSION_STALE,
         SESSION_STATUS_CHANGED,
         SESSION_SUMMARY_ENRICHED,
+        SESSION_CONTINUATION_BUILD,
+        SESSION_CONTINUATION_APPLY,
+        SESSION_SHARE_CREATED,
+        SESSION_SHARE_ACCESSED,
+        SESSION_SHARE_DENIED,
+        SESSION_SHARE_REVOKED,
+        SESSION_SHARE_EXPIRED,
+        SESSION_RETENTION_HOLD_ADDED,
+        SESSION_RETENTION_HOLD_RELEASED,
+        SESSION_BRANCH_CARRY_FORWARD_CREATED,
         RESPONSE_ACKED,
         RESPONSE_DELIVERED,
         RESPONSE_PERSISTED,
@@ -284,6 +308,9 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MSPO_MEMORY_SPAN_READ,
         CHAT_PHASE_TIMING,
         TUI_RENDER,
+        CLI_SURFACE_USED,
+        CLI_DEPRECATION_SHOWN,
+        CLI_DASHBOARD_TAB_ACTIVATED,
         SELF_MODEL_SNAPSHOT_BUILT,
         SELF_MODEL_SNAPSHOT_DEGRADED,
         SELF_AWARENESS_ANSWER_DEGRADED,
@@ -319,6 +346,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         SECURITY_WARNING,
         CONTEXT_MANIFEST,
         CONTEXT_MANIFEST_CREATED,
+        CONTEXT_MANIFEST_PERSISTENCE_FAILED,
         CONTEXT_PACK,
         METRIC,
         MESSAGE,
@@ -396,6 +424,16 @@ __all__ = [
     "SESSION_STALE",
     "SESSION_STATUS_CHANGED",
     "SESSION_SUMMARY_ENRICHED",
+    "SESSION_CONTINUATION_BUILD",
+    "SESSION_CONTINUATION_APPLY",
+    "SESSION_SHARE_CREATED",
+    "SESSION_SHARE_ACCESSED",
+    "SESSION_SHARE_DENIED",
+    "SESSION_SHARE_REVOKED",
+    "SESSION_SHARE_EXPIRED",
+    "SESSION_RETENTION_HOLD_ADDED",
+    "SESSION_RETENTION_HOLD_RELEASED",
+    "SESSION_BRANCH_CARRY_FORWARD_CREATED",
     "RESPONSE_ACKED",
     "RESPONSE_DELIVERED",
     "RESPONSE_PERSISTED",
@@ -510,6 +548,7 @@ __all__ = [
     "SECURITY_WARNING",
     "CONTEXT_MANIFEST",
     "CONTEXT_MANIFEST_CREATED",
+    "CONTEXT_MANIFEST_PERSISTENCE_FAILED",
     "CONTEXT_PACK",
     "METRIC",
     "MESSAGE",

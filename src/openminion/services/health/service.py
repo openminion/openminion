@@ -4,7 +4,6 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Dict, List, Optional
 
-from openminion.api.runtime import APIRuntime
 from openminion.base.config import ConfigManager, EnvironmentConfig
 from openminion.base.config.runtime.capability import resolve_plugin_runtime_policy
 from openminion.base.config.core import resolve_default_agent_id
@@ -50,7 +49,8 @@ from .snapshot import (
 )
 from .types import HealthCheck
 from openminion.services.runtime.lifecycle import LifecycleService
-from openminion.services.security.policy import SecurityPolicyEngine, ToolBudgetPolicy
+from openminion.services.runtime.interfaces import RuntimeFacade
+from openminion.modules.policy import SecurityPolicyEngine, ToolBudgetPolicy
 
 _HEALTH_LOG = logging.getLogger("openminion.health")
 
@@ -159,7 +159,7 @@ def _build_health_payload(
 
 def collect_health_snapshot(
     config_path: Optional[str],
-    runtime: Optional[APIRuntime] = None,
+    runtime: Optional[RuntimeFacade] = None,
     metrics_consistency: Optional[Dict[str, Any]] = None,
     probe_session_id: Optional[str] = None,
 ) -> Dict[str, Any]:

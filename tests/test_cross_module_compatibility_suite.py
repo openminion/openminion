@@ -14,7 +14,6 @@ from openminion.tools.search.providers.tavily.interfaces import TavilyRequestEnv
 
 
 def test_normalized_tool_call_envelope_contract() -> None:
-    # Test that all tool types follow standardized request/response schema
     tool_requests = [
         ToolRequestEnvelope(
             method="file.read", args={"path": "test.txt"}, contract_version="v1"
@@ -38,34 +37,13 @@ def test_normalized_tool_call_envelope_contract() -> None:
         ),
     ]
 
-    # All should have the same basic properties
     for req in tool_requests:
         assert hasattr(req, "method")
         assert hasattr(req, "args")
         assert hasattr(req, "contract_version")
 
 
-def test_compatibility_across_module_boundaries() -> None:
-    all_modules_contracts = [
-        "v1",
-        "v1",
-        "v1",
-        "v1",
-        "v1",
-        "v1",
-        "v1",
-        "v1",
-        "v1",
-        "v1",
-        "v1",
-    ]
-    # All should use the same base version scheme
-    for contract_version in all_modules_contracts:
-        assert contract_version.startswith("v1")
-
-
 def test_real_weather_chat_probe() -> None:
-    # Simulated chat command result following normalized contract
     weather_result = WeatherResultEnvelope(
         status="ok",
         data={"temperature": 22.5, "location": "Berlin", "conditions": "sunny"},
@@ -78,7 +56,6 @@ def test_real_weather_chat_probe() -> None:
 
 
 def test_real_search_chat_probe() -> None:
-    # Simulated search command result following normalized contract
     base_result = ToolResultEnvelope(
         status="ok",
         data={"results": [{"title": "AI News", "url": "http://example.com"}]},
@@ -104,7 +81,6 @@ def test_file_exec_tool_envelopes_consistency() -> None:
         contract_version="v1",
     )
 
-    # Both inherit from base envelope and maintain compatible structure
     assert file_result.status == exec_result.status == "ok"
     assert file_result.contract_version == exec_result.contract_version == "v1"
     assert hasattr(file_result, "data") and hasattr(exec_result, "data")
@@ -122,12 +98,8 @@ def test_cross_module_contract_errors() -> None:
         contract_version="v1",
     )
 
-    # Error structure should be the same across all modules
     assert hasattr(base_error, "error_code")
     assert hasattr(base_error, "error_message")
     assert hasattr(base_error, "details")
     assert hasattr(base_error, "contract_version")
     assert base_error.contract_version == "v1"
-
-
-# Test run verification to check that everything passes

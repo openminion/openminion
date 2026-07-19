@@ -5,7 +5,9 @@ from typing import Callable, Literal
 import uuid
 
 from pydantic import BaseModel, Field
-from sophiagraph.contracts.errors import InvalidArgumentError as SophiaInvalidArgumentError
+from sophiagraph.contracts.errors import (
+    InvalidArgumentError as SophiaInvalidArgumentError,
+)
 
 from .constants import (
     MEMORY_SCOPE_BOUNDARY_EVENT_TYPE as _SCOPE_BOUNDARY_EVENT_TYPE,
@@ -83,8 +85,7 @@ def resolve_namespace_filter(
         existing = values.get(scope_field)
         if existing is not None and existing != parsed.value:
             raise InvalidArgumentError(
-                f"conflicting namespace {scope_field}: "
-                f"{existing!r} != {parsed.value!r}"
+                f"conflicting namespace {scope_field}: {existing!r} != {parsed.value!r}"
             )
         values[scope_field] = parsed.value
 

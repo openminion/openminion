@@ -1,8 +1,8 @@
-from openminion.services.channel.authenticity import (
+from openminion.modules.controlplane.channels.authenticity import (
     ChannelAuthenticityPolicy,
     build_channel_authenticity_policy,
 )
-from openminion.services.channel.policy import ChannelPolicyDecision
+from openminion.modules.controlplane.channels.policy import ChannelPolicyDecision
 
 __all__ = [
     "build_channel_authenticity_policy",

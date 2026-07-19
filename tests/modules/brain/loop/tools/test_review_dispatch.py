@@ -111,7 +111,6 @@ def test_review_only_batch_returns_dispatch_result() -> None:
     remaining, progress, result, loop_state, append_cb, iter_records = _run_dispatcher(
         tool_calls=calls
     )
-    # Batch is review-only — dispatcher returns LoopDispatchResult.
     assert result is not None
     assert progress is True
     assert loop_state.scratchpad[REVIEW_TOOL_ATTEMPTED_SCRATCHPAD_KEY] is True
@@ -216,11 +215,8 @@ def test_dispatcher_output_shape_is_observable_by_review_observer() -> None:
         tool_name=REVIEW_TOOL_NAME, action_result=action_result
     )
     fact = observe_review_invocation([payload_entry])
-    # Observer recognizes the invocation.
     assert fact.invoked is True
-    # Severity is propagated from the analyzer's verdict.
     assert fact.severity in {"ok", "warn", "block"}
-    # findings_count is the analyzer's count.
     assert isinstance(fact.findings_count, int)
     assert fact.findings_count >= 0
 

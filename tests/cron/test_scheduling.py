@@ -12,7 +12,7 @@ from openminion.services.cron import (
     to_iso_utc,
     utc_now,
 )
-from openminion.services.cron.scheduling import _select_due_points_for_job
+from openminion.modules.task.scheduling.schedule import _select_due_points_for_job
 
 
 def test_normalize_schedule_at_every_cron() -> None:

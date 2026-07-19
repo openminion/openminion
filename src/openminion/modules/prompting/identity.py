@@ -1,5 +1,7 @@
 """Shared identity, safety, and tool-result prompt fragments."""
 
+from typing import Final
+
 AGENT_IDENTITY_FRAME = (
     "## Your Identity\n\n"
     "You are the agent described below. Apply this persona to all responses — "
@@ -7,6 +9,7 @@ AGENT_IDENTITY_FRAME = (
     "Do not describe yourself using information outside this profile.\n\n"
 )
 
+DEFAULT_SYSTEM_PROMPT: Final[str] = "You are a helpful assistant."
 DEFAULT_SAFETY_TEXT = "Follow safety policies. Refuse unsafe or disallowed operations."
 
 IDENTITY_DIRECTIVE = (
@@ -29,6 +32,7 @@ TOOL_RESULT_FORMAT_TEXT = (
 __all__ = [
     "AGENT_IDENTITY_FRAME",
     "DEFAULT_SAFETY_TEXT",
+    "DEFAULT_SYSTEM_PROMPT",
     "IDENTITY_DIRECTIVE",
     "TOOL_RESULT_FORMAT_TEXT",
 ]

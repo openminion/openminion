@@ -13,7 +13,7 @@ from pathlib import Path
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.services.gateway.protocol import GatewayProtocolSession
-from openminion.services.integration.skill_harness import run_skill_harness
+from openminion.modules.skill.diagnostics.harness import run_skill_harness
 
 
 def run_verify(args) -> int:

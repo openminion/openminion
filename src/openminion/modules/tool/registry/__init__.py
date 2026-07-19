@@ -55,8 +55,10 @@ from openminion.modules.tool.base import (
     ToolExecutionContext,
     ToolExecutionResult,
 )
+from openminion.modules.tool.errors import ToolRuntimeError
 
 if TYPE_CHECKING:
+    from openminion.modules.tool.exposure import ToolExposureService
     from openminion.tools.mcp.interfaces import MCPFleetHandle
     from openminion.modules.tool.runtime import RuntimeContext
 
@@ -70,14 +72,33 @@ Scope = Literal["READ_ONLY", "WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"]
 
 class ToolRegistry:
     def __init__(self, tools: Iterable[Tool] | None = None) -> None:
+        from openminion.modules.tool.exposure import ToolExposureService
+
         self._tools: Dict[str, Any] = {}
         self._category_index: Dict[str, Set[str]] = {}
+        self._sidecar_autostart: Callable[..., dict[str, Any]] | None = None
         self.mcp_manager: MCPFleetHandle | None = None
+        self._exposure_service = ToolExposureService()
         for tool in tools or []:
             self.register(tool)
 
+    @property
+    def exposure_service(self) -> "ToolExposureService":
+        return self._exposure_service
+
     def register(self, tool: Any) -> None:
         _catalog_register_tool(self, tool)
+
+    def bind_sidecar_autostart(self, callback: Callable[..., dict[str, Any]]) -> None:
+        self._sidecar_autostart = callback
+
+    def ensure_sidecar_autostart(self, **kwargs: Any) -> dict[str, Any]:
+        if self._sidecar_autostart is None:
+            raise ToolRuntimeError(
+                "DEPENDENCY_MISSING",
+                "sidecar autostart is unavailable in this runtime",
+            )
+        return self._sidecar_autostart(**kwargs)
 
     def unregister(self, tool_name: str) -> None:
         _catalog_unregister_tool(self, tool_name)
