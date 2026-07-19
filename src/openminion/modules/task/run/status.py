@@ -261,6 +261,7 @@ def append_run_state_event(
     conversation_id: str | None = None,
     thread_id: str | None = None,
     attach_id: str | None = None,
+    session_turn_fence_token: int | None = None,
 ) -> EventRecord:
     normalized_run_id = str(run_id).strip()
     if not normalized_run_id:
@@ -285,11 +286,14 @@ def append_run_state_event(
     if payload:
         event_payload.update(dict(payload))
 
-    return sessions.append_event(
-        session_id=session_id,
-        event_type=f"run.{normalized_state}",
-        payload=event_payload,
-    )
+    event_kwargs: Dict[str, Any] = {
+        "session_id": session_id,
+        "event_type": f"run.{normalized_state}",
+        "payload": event_payload,
+    }
+    if session_turn_fence_token is not None:
+        event_kwargs["session_turn_fence_token"] = session_turn_fence_token
+    return sessions.append_event(**event_kwargs)
 
 
 def append_run_checkpoint_event(
@@ -333,6 +337,7 @@ def append_lifecycle_event(
     thread_id: str | None = None,
     attach_id: str | None = None,
     payload: Optional[Mapping[str, Any]] = None,
+    session_turn_fence_token: int | None = None,
 ) -> EventRecord:
     normalized_event = str(event_type or "").strip()
     if not normalized_event:
@@ -349,11 +354,14 @@ def append_lifecycle_event(
         event_payload["attach_id"] = attach_value
     if payload:
         event_payload.update(dict(payload))
-    return sessions.append_event(
-        session_id=session_id,
-        event_type=normalized_event,
-        payload=event_payload,
-    )
+    event_kwargs: Dict[str, Any] = {
+        "session_id": session_id,
+        "event_type": normalized_event,
+        "payload": event_payload,
+    }
+    if session_turn_fence_token is not None:
+        event_kwargs["session_turn_fence_token"] = session_turn_fence_token
+    return sessions.append_event(**event_kwargs)
 
 
 def list_session_runs(
