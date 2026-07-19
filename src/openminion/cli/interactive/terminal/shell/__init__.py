@@ -76,6 +76,15 @@ from openminion.cli.presentation.visible_parity import statusline_label
 
 _open_dashboard_side_trip = show_dashboard_retirement
 
+__all__ = [
+    "_render_cost_snapshot",
+    "_render_mcp_status",
+    "_render_model_status",
+    "_render_sessions_list",
+    "_render_status_block",
+    "_render_tools_list",
+]
+
 _LOGGER = logging.getLogger(__name__)
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
