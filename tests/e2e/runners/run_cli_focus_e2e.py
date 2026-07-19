@@ -173,10 +173,8 @@ def main(argv: list[str] | None = None) -> int:
     suite = SUITES[mode]
     if suite.live:
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
-        env.setdefault("OPENMINION_LIVE_TUI_FOCUS_E2E", "1")
     if suite.complex:
         env["OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E"] = "1"
-        env.setdefault("OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E", "1")
     return _run(suite.paths, env=env, extra_args=suite.extra_args)
 
 

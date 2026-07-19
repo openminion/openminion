@@ -100,5 +100,5 @@ must consider that limitation during release review.
 ## Retirement status
 
 The operator approved dashboard deletion on 2026-07-14 after the replacement
-map and compatibility routes were reviewed. The `dashboard` alias now forwards
-to the canonical CLI without importing retired dashboard code.
+map and compatibility routes were reviewed. The `dashboard` alias now prints a
+bounded migration map without importing retired dashboard code.

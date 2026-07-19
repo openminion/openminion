@@ -61,10 +61,8 @@ def _run(name: str) -> int:
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     if any(scenario.live for scenario in scenarios):
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
-        env.setdefault("OPENMINION_LIVE_TUI_FOCUS_E2E", "1")
     if any(scenario.complex for scenario in scenarios):
         env["OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E"] = "1"
-        env.setdefault("OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E", "1")
     command = [
         str(_PYTHON),
         "-m",
