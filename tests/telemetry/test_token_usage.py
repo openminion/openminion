@@ -7,12 +7,17 @@ from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
 from openminion.modules.storage.runtime.session_store.models import EventRecord
 from openminion.modules.telemetry.usage import (
     StatsService,
+    TokenUsageCoverage,
+    TokenUsageDimensionCoverage,
     TokenUsageEventRef,
     TokenUsageRecord,
     TokenUsageSummary,
     summary_to_json_payload,
 )
-from openminion.modules.telemetry.usage.token_usage import records_from_session_event
+from openminion.modules.telemetry.usage.token_usage import (
+    coverage_from_session_events,
+    records_from_session_event,
+)
 
 _FIXTURE_PATH = (
     Path(__file__).parent
@@ -64,11 +69,17 @@ def test_provider_total_is_emitted_once_and_cache_diagnostic_is_non_additive() -
     assert diagnostic[0].surface == "llm_cache_diagnostic"
 
 
-def test_missing_provider_total_is_marked_derived() -> None:
+def test_missing_or_invalid_provider_total_is_marked_derived() -> None:
     records = records_from_session_event(
         {
             "event_type": "llm.call.completed",
-            "payload": {"usage": {"prompt_tokens": 8, "completion_tokens": 2}},
+            "payload": {
+                "usage": {
+                    "prompt_tokens": 8,
+                    "completion_tokens": 2,
+                    "total_tokens": "invalid",
+                }
+            },
         },
         session_id="session-1",
     )
@@ -76,6 +87,49 @@ def test_missing_provider_total_is_marked_derived() -> None:
     total = next(record for record in records if record.surface == "llm_total")
     assert total.total_tokens == 10
     assert total.total_source == "derived"
+
+
+def test_usage_coverage_distinguishes_reported_missing_and_invalid() -> None:
+    coverage = coverage_from_session_events(
+        [
+            {
+                "event_type": "llm.call.completed",
+                "trace_id": "trace-1",
+                "payload": {
+                    "run_id": "run-1",
+                    "llm_call_id": "call-1",
+                    "provider": "openai",
+                    "usage": {
+                        "input_tokens": 0,
+                        "output_tokens": None,
+                        "total_tokens": "invalid",
+                        "cache_read_tokens": "invalid",
+                        "cached_tokens": 0,
+                        "cache_creation_tokens": -1,
+                    },
+                },
+            },
+            {
+                "event_type": "context.manifest.created",
+                "payload": {"llm_call_id": "call-1", "total_used_tokens": 10},
+            },
+            {"event_type": "llm.cache.metrics", "payload": {}},
+        ]
+    )
+
+    assert coverage.llm_call_events == 1
+    assert coverage.context_manifest_events == 1
+    assert coverage.cache_metric_events == 1
+    assert coverage.provider_identified_llm_call_events == 1
+    assert coverage.model_identified_llm_call_events == 0
+    assert coverage.run_id_present_events == 1
+    assert coverage.trace_id_present_events == 1
+    assert coverage.llm_call_id_present_events == 2
+    assert coverage.input_tokens == TokenUsageDimensionCoverage(reported=1)
+    assert coverage.output_tokens == TokenUsageDimensionCoverage(missing=1)
+    assert coverage.total_tokens == TokenUsageDimensionCoverage(invalid=1)
+    assert coverage.cache_read_tokens == TokenUsageDimensionCoverage(reported=1)
+    assert coverage.cache_write_tokens == TokenUsageDimensionCoverage(invalid=1)
 
 
 def test_usage_aliases_skip_present_but_invalid_values() -> None:
@@ -268,6 +322,18 @@ def test_json_export_matches_shared_v1_fixture() -> None:
         events_scanned=1,
         first_source_event=source,
         last_source_event=source,
+        coverage=TokenUsageCoverage(
+            llm_call_events=1,
+            provider_identified_llm_call_events=1,
+            model_identified_llm_call_events=1,
+            run_id_present_events=1,
+            llm_call_id_present_events=1,
+            input_tokens=TokenUsageDimensionCoverage(reported=1),
+            output_tokens=TokenUsageDimensionCoverage(reported=1),
+            total_tokens=TokenUsageDimensionCoverage(reported=1),
+            cache_read_tokens=TokenUsageDimensionCoverage(missing=1),
+            cache_write_tokens=TokenUsageDimensionCoverage(missing=1),
+        ),
     )
 
     expected = json.loads(_FIXTURE_PATH.read_text(encoding="utf-8"))
@@ -310,4 +376,9 @@ def test_export_models_normalize_json_boundary_values() -> None:
     assert payload["records"][0]["surface"] == "llm_prompt"
     assert payload["records"][0]["total_source"] == ""
     assert payload["records"][0]["cache_hit"] is None
+    assert payload["coverage"]["input_tokens"] == {
+        "reported": 0,
+        "missing": 0,
+        "invalid": 0,
+    }
     assert json.loads(json.dumps(payload)) == payload

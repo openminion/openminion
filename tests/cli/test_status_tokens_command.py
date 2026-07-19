@@ -73,6 +73,8 @@ def test_status_tokens_json_is_raw_versioned_envelope(
     assert payload["schema_version"] == "openminion.token_usage.v1"
     assert "ok" not in payload
     assert payload["totals"]["provider_tokens"] == 6
+    assert payload["coverage"]["input_tokens"]["reported"] == 1
+    assert payload["coverage"]["cache_read_tokens"]["missing"] == 1
 
 
 def test_status_tokens_text_reports_empty_and_incomplete_states(
@@ -122,6 +124,8 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
     )
     output = capsys.readouterr().out
     assert "complete=no" in output
+    assert "coverage: llm_calls=1" in output
+    assert "input=1/1" in output
     assert "incomplete: event_limit=1" in output
 
 

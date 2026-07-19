@@ -53,6 +53,41 @@ def _format_summary(summary: TokenUsageSummary) -> str:
         if total_source:
             details += f" total_source={total_source}"
         lines.append(f"- {details}")
+    coverage = summary.coverage
+    if coverage.llm_call_events:
+        llm_calls = coverage.llm_call_events
+        dimensions = (
+            ("input", coverage.input_tokens),
+            ("output", coverage.output_tokens),
+            ("total", coverage.total_tokens),
+            ("cache_read", coverage.cache_read_tokens),
+            ("cache_write", coverage.cache_write_tokens),
+        )
+        lines.append(
+            "coverage: "
+            f"llm_calls={llm_calls} "
+            f"provider={coverage.provider_identified_llm_call_events}/{llm_calls} "
+            f"model={coverage.model_identified_llm_call_events}/{llm_calls} "
+            + " ".join(
+                f"{name}={dimension.reported}/{dimension.total}"
+                for name, dimension in dimensions
+            )
+        )
+        invalid = [
+            f"{name}={dimension.invalid}"
+            for name, dimension in dimensions
+            if dimension.invalid
+        ]
+        if invalid:
+            lines.append("invalid usage fields: " + " ".join(invalid))
+    if summary.source_event_count:
+        lines.append(
+            "correlation: "
+            f"run_id={coverage.run_id_present_events}/{summary.source_event_count} "
+            f"trace_id={coverage.trace_id_present_events}/{summary.source_event_count} "
+            "llm_call_id="
+            f"{coverage.llm_call_id_present_events}/{summary.source_event_count}"
+        )
     if not summary.complete:
         lines.append(
             "incomplete: "

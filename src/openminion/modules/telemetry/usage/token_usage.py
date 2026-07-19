@@ -2,8 +2,8 @@
 
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal
 
 from .contracts import (
     TOKEN_TOTAL_SOURCES,
@@ -11,6 +11,8 @@ from .contracts import (
     TOTAL_SOURCE_DERIVED,
     TOTAL_SOURCE_PROVIDER,
     TokenTotalSource,
+    TokenUsageCoveragePayload,
+    TokenUsageDimensionCoveragePayload,
     TokenUsageEventRefPayload,
     TokenUsageExportPayload,
     TokenUsageRecordPayload,
@@ -89,15 +91,38 @@ _RECORD_TEXT_FIELD_NAMES = (
 )
 
 
-def _first_token_int(payload: Mapping[str, Any], keys: tuple[str, ...]) -> int:
+@dataclass(frozen=True)
+class _ObservedTokenValue:
+    value: int
+    state: Literal["reported", "missing", "invalid"]
+
+
+def _observed_token_value(
+    payload: Mapping[str, Any],
+    keys: tuple[str, ...],
+) -> _ObservedTokenValue:
+    invalid = False
     for key in keys:
         if key not in payload or payload.get(key) is None:
             continue
-        try:
-            return max(0, int(payload[key]))
-        except (TypeError, ValueError):
+        value = payload[key]
+        if isinstance(value, bool):
+            invalid = True
             continue
-    return 0
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            invalid = True
+            continue
+        if normalized < 0:
+            invalid = True
+            continue
+        return _ObservedTokenValue(value=normalized, state="reported")
+    return _ObservedTokenValue(value=0, state="invalid" if invalid else "missing")
+
+
+def _first_token_int(payload: Mapping[str, Any], keys: tuple[str, ...]) -> int:
+    return _observed_token_value(payload, keys).value
 
 
 def _optional_non_negative_int(value: Any) -> int | None:
@@ -181,6 +206,95 @@ class TokenUsageEventRef:
         if self.event_id:
             payload["event_id"] = self.event_id
         return payload
+
+
+@dataclass(frozen=True)
+class TokenUsageDimensionCoverage:
+    reported: int = 0
+    missing: int = 0
+    invalid: int = 0
+
+    def __post_init__(self) -> None:
+        for field_name in ("reported", "missing", "invalid"):
+            object.__setattr__(
+                self,
+                field_name,
+                coerce_non_negative_int(getattr(self, field_name)),
+            )
+
+    @property
+    def total(self) -> int:
+        return self.reported + self.missing + self.invalid
+
+    def as_payload(self) -> TokenUsageDimensionCoveragePayload:
+        return {
+            "reported": self.reported,
+            "missing": self.missing,
+            "invalid": self.invalid,
+        }
+
+
+@dataclass(frozen=True)
+class TokenUsageCoverage:
+    llm_call_events: int = 0
+    context_manifest_events: int = 0
+    cache_metric_events: int = 0
+    provider_identified_llm_call_events: int = 0
+    model_identified_llm_call_events: int = 0
+    run_id_present_events: int = 0
+    trace_id_present_events: int = 0
+    llm_call_id_present_events: int = 0
+    input_tokens: TokenUsageDimensionCoverage = field(
+        default_factory=TokenUsageDimensionCoverage
+    )
+    output_tokens: TokenUsageDimensionCoverage = field(
+        default_factory=TokenUsageDimensionCoverage
+    )
+    total_tokens: TokenUsageDimensionCoverage = field(
+        default_factory=TokenUsageDimensionCoverage
+    )
+    cache_read_tokens: TokenUsageDimensionCoverage = field(
+        default_factory=TokenUsageDimensionCoverage
+    )
+    cache_write_tokens: TokenUsageDimensionCoverage = field(
+        default_factory=TokenUsageDimensionCoverage
+    )
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "llm_call_events",
+            "context_manifest_events",
+            "cache_metric_events",
+            "provider_identified_llm_call_events",
+            "model_identified_llm_call_events",
+            "run_id_present_events",
+            "trace_id_present_events",
+            "llm_call_id_present_events",
+        ):
+            object.__setattr__(
+                self,
+                field_name,
+                coerce_non_negative_int(getattr(self, field_name)),
+            )
+
+    def as_payload(self) -> TokenUsageCoveragePayload:
+        return {
+            "llm_call_events": self.llm_call_events,
+            "context_manifest_events": self.context_manifest_events,
+            "cache_metric_events": self.cache_metric_events,
+            "provider_identified_llm_call_events": (
+                self.provider_identified_llm_call_events
+            ),
+            "model_identified_llm_call_events": self.model_identified_llm_call_events,
+            "run_id_present_events": self.run_id_present_events,
+            "trace_id_present_events": self.trace_id_present_events,
+            "llm_call_id_present_events": self.llm_call_id_present_events,
+            "input_tokens": self.input_tokens.as_payload(),
+            "output_tokens": self.output_tokens.as_payload(),
+            "total_tokens": self.total_tokens.as_payload(),
+            "cache_read_tokens": self.cache_read_tokens.as_payload(),
+            "cache_write_tokens": self.cache_write_tokens.as_payload(),
+        }
 
 
 def event_ref_from_session_event(event: Mapping[str, Any]) -> TokenUsageEventRef:
@@ -333,6 +447,7 @@ class TokenUsageSummary:
     event_limit: int | None = None
     first_source_event: TokenUsageEventRef | None = None
     last_source_event: TokenUsageEventRef | None = None
+    coverage: TokenUsageCoverage = field(default_factory=TokenUsageCoverage)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "session_id", str(self.session_id or "").strip())
@@ -432,6 +547,7 @@ class TokenUsageSummary:
                 if self.last_source_event is not None
                 else None,
             },
+            "coverage": self.coverage.as_payload(),
             "records": [record.as_payload() for record in self.records],
             "totals": {
                 "provider_tokens": self.total_provider_tokens,
@@ -466,6 +582,52 @@ def summary_to_json_payload(summary: TokenUsageSummary) -> TokenUsageExportPaylo
     return summary.as_payload()
 
 
+def coverage_from_session_events(
+    events: list[dict[str, Any]],
+) -> TokenUsageCoverage:
+    llm_events = [
+        event
+        for event in events
+        if _event_text(event, "event_type") == "llm.call.completed"
+    ]
+
+    def _dimension(keys: tuple[str, ...]) -> TokenUsageDimensionCoverage:
+        states = {"reported": 0, "missing": 0, "invalid": 0}
+        for event in llm_events:
+            usage = _event_payload(event).get("usage")
+            usage_payload = usage if isinstance(usage, Mapping) else {}
+            states[_observed_token_value(usage_payload, keys).state] += 1
+        return TokenUsageDimensionCoverage(**states)
+
+    event_types = [_event_text(event, "event_type") for event in events]
+    payloads = [_event_payload(event) for event in events]
+    return TokenUsageCoverage(
+        llm_call_events=len(llm_events),
+        context_manifest_events=event_types.count("context.manifest.created"),
+        cache_metric_events=event_types.count("llm.cache.metrics"),
+        provider_identified_llm_call_events=sum(
+            bool(_text(_event_payload(event), "provider")) for event in llm_events
+        ),
+        model_identified_llm_call_events=sum(
+            bool(_text(_event_payload(event), "model")) for event in llm_events
+        ),
+        run_id_present_events=sum(
+            bool(_text(payload, "run_id")) for payload in payloads
+        ),
+        trace_id_present_events=sum(
+            bool(_event_text(event, "trace_id")) for event in events
+        ),
+        llm_call_id_present_events=sum(
+            bool(_text(payload, "llm_call_id")) for payload in payloads
+        ),
+        input_tokens=_dimension(_INPUT_TOKEN_KEYS),
+        output_tokens=_dimension(_OUTPUT_TOKEN_KEYS),
+        total_tokens=_dimension(_TOTAL_TOKEN_KEYS),
+        cache_read_tokens=_dimension(_CACHE_READ_TOKEN_KEYS),
+        cache_write_tokens=_dimension(_CACHE_WRITE_TOKEN_KEYS),
+    )
+
+
 def _records_from_llm_completed(
     event: Mapping[str, Any],
     *,
@@ -478,8 +640,9 @@ def _records_from_llm_completed(
     base = _base_record(event, payload, session_id=session_id)
     input_tokens = _first_token_int(usage, _INPUT_TOKEN_KEYS)
     output_tokens = _first_token_int(usage, _OUTPUT_TOKEN_KEYS)
-    total_is_provider_reported = any(key in usage for key in _TOTAL_TOKEN_KEYS)
-    total_tokens = _first_token_int(usage, _TOTAL_TOKEN_KEYS)
+    observed_total = _observed_token_value(usage, _TOTAL_TOKEN_KEYS)
+    total_is_provider_reported = observed_total.state == "reported"
+    total_tokens = observed_total.value
     if not total_is_provider_reported:
         total_tokens = input_tokens + output_tokens
     records = (

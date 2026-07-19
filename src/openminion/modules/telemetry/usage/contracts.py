@@ -55,6 +55,28 @@ class TokenUsageRecordPayload(TypedDict):
     cache_hit: bool | None
 
 
+class TokenUsageDimensionCoveragePayload(TypedDict):
+    reported: int
+    missing: int
+    invalid: int
+
+
+class TokenUsageCoveragePayload(TypedDict):
+    llm_call_events: int
+    context_manifest_events: int
+    cache_metric_events: int
+    provider_identified_llm_call_events: int
+    model_identified_llm_call_events: int
+    run_id_present_events: int
+    trace_id_present_events: int
+    llm_call_id_present_events: int
+    input_tokens: TokenUsageDimensionCoveragePayload
+    output_tokens: TokenUsageDimensionCoveragePayload
+    total_tokens: TokenUsageDimensionCoveragePayload
+    cache_read_tokens: TokenUsageDimensionCoveragePayload
+    cache_write_tokens: TokenUsageDimensionCoveragePayload
+
+
 class TokenUsageTotalsPayload(TypedDict):
     provider_tokens: int
     input_tokens: int
@@ -75,6 +97,7 @@ class TokenUsageExportPayload(TypedDict):
     events_scanned: int
     event_limit: int | None
     source_event_range: TokenUsageSourceRangePayload
+    coverage: TokenUsageCoveragePayload
     records: list[TokenUsageRecordPayload]
     totals: TokenUsageTotalsPayload
     totals_by_surface: dict[str, int]
@@ -85,6 +108,8 @@ __all__ = [
     "TOKEN_TOTAL_SOURCES",
     "TOKEN_USAGE_SCHEMA_VERSION",
     "TokenTotalSource",
+    "TokenUsageCoveragePayload",
+    "TokenUsageDimensionCoveragePayload",
     "TokenUsageEventRefPayload",
     "TokenUsageExportPayload",
     "TokenUsageRecordPayload",

@@ -134,7 +134,9 @@ def test_summarize_runs_records_metric_units_and_warn_only() -> None:
     assert summary["scenarios"]["provider_turn"]["warn_only"] is True
 
 
-def test_focus_help_command_uses_focus_and_explicit_data_root(tmp_path: Path) -> None:
+def test_canonical_help_command_uses_root_help_and_explicit_data_root(
+    tmp_path: Path,
+) -> None:
     module = _load_module()
     options = module.RunOptions(
         workspace_root=Path(__file__).resolve().parents[3],
@@ -147,9 +149,10 @@ def test_focus_help_command_uses_focus_and_explicit_data_root(tmp_path: Path) ->
     )
     data_root = tmp_path / "runtime-homes" / "warm" / ".openminion"
 
-    command = module._focus_help_command(options, data_root=data_root)
+    command = module._canonical_help_command(options, data_root=data_root)
 
-    assert command[-2:] == ["focus", "--help"]
+    assert command[-1:] == ["--help"]
+    assert "focus" not in command
     assert command[command.index("--data-root") + 1] == str(data_root)
 
 
@@ -157,7 +160,7 @@ def test_comparison_rejects_identity_mismatch() -> None:
     module = _load_module()
     current_identity = module._measurement_identity(
         scenario_id="cold_focus_startup",
-        command="python -m openminion --data-root /tmp/a focus --help",
+        command="python -m openminion --data-root /tmp/a --help",
         measured_boundary=module.SUT_BOUNDARY_SUBPROCESS,
         fixture_revision=module.STARTUP_FIXTURE_REVISION,
     )
@@ -346,6 +349,54 @@ def test_transcript_retention_growth_caps_working_set() -> None:
     assert run.metrics["retained_messages"] == run.metrics["retention_limit"]
     assert run.metrics["transcript_messages_seen"] > run.metrics["retained_messages"]
     assert run.metrics["copy_last_ok"] is True
+
+
+def test_remaining_performance_rows_record_decision_evidence(tmp_path: Path) -> None:
+    module = _load_module()
+    scenario_expectations = {
+        "required_lane_branch_characterization": (
+            "required_lane_branch_count",
+            lambda metrics: metrics["provider_call_reduction_count"] == 0,
+        ),
+        "typeadapter_validation_probe": (
+            "typeadapter_reuse_ratio",
+            lambda metrics: metrics["typeadapter_new_global_cache_added"] is False,
+        ),
+        "metadata_json_churn": (
+            "metadata_json_field_count",
+            lambda metrics: metrics["required_lane_metadata_contract_preserved"] is True,
+        ),
+        "provider_connection_reuse_decision": (
+            "provider_connection_dependency_decision",
+            lambda metrics: metrics["provider_connection_reuse_change_count"] == 0,
+        ),
+        "storage_wal_index_matrix": (
+            "storage_journal_mode",
+            lambda metrics: metrics["storage_query_rows"] == 1,
+        ),
+        "retrieval_breakdown_profile": (
+            "retrieval_candidate_count",
+            lambda metrics: metrics["retrieval_source_grounding_ok"] is True,
+        ),
+    }
+
+    for scenario_id, (metric_key, expectation) in scenario_expectations.items():
+        run = module.run_scenario(
+            scenario_id,
+            module.RunOptions(
+                workspace_root=Path(__file__).resolve().parents[3],
+                output_root=tmp_path / scenario_id,
+                python=Path(sys.executable),
+                runs=1,
+                timeout_seconds=5,
+                include_importtime=False,
+                profile=False,
+            ),
+        )
+
+        assert run.ok is True, run.error
+        assert metric_key in run.metrics
+        assert expectation(run.metrics)
 
 
 def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:

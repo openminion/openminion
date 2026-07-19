@@ -8,6 +8,7 @@ from .constants import RUNTIME_EVENT_READ_LIMIT
 from .token_usage import (
     TokenUsageRecord,
     TokenUsageSummary,
+    coverage_from_session_events,
     event_ref_from_session_event,
     records_from_session_event,
     sort_session_events,
@@ -426,6 +427,7 @@ class StatsService:
             event_limit=read.event_limit,
             first_source_event=first_event,
             last_source_event=last_event,
+            coverage=coverage_from_session_events(ordered_events),
         )
 
     def _list_run_records(self, session_id: str) -> list[dict[str, Any]]:

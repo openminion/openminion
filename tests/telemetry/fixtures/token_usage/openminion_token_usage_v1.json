@@ -21,6 +21,41 @@
       "event_id": "event-fixture"
     }
   },
+  "coverage": {
+    "llm_call_events": 1,
+    "context_manifest_events": 0,
+    "cache_metric_events": 0,
+    "provider_identified_llm_call_events": 1,
+    "model_identified_llm_call_events": 1,
+    "run_id_present_events": 1,
+    "trace_id_present_events": 0,
+    "llm_call_id_present_events": 1,
+    "input_tokens": {
+      "reported": 1,
+      "missing": 0,
+      "invalid": 0
+    },
+    "output_tokens": {
+      "reported": 1,
+      "missing": 0,
+      "invalid": 0
+    },
+    "total_tokens": {
+      "reported": 1,
+      "missing": 0,
+      "invalid": 0
+    },
+    "cache_read_tokens": {
+      "reported": 0,
+      "missing": 1,
+      "invalid": 0
+    },
+    "cache_write_tokens": {
+      "reported": 0,
+      "missing": 1,
+      "invalid": 0
+    }
+  },
   "records": [
     {
       "session_id": "session-fixture",

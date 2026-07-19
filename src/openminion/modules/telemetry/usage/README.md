@@ -14,6 +14,11 @@ apply optimization policy.
 4. `formatting.py` owns compact internal run/session presentation.
 5. `openminion.services.stats` is compatibility-only and owns no behavior.
 
+The additive v1 `coverage` block reports whether provider token dimensions were
+reported, missing, or invalid, plus identity and correlation-field presence.
+This keeps an explicit provider-reported zero distinct from unavailable data
+without changing token totals or inventing missing usage.
+
 OpenMinion callers should import the supported Python surface from
 `openminion.modules.telemetry.usage`. A future external optimization package
 should consume the `openminion.token_usage.v1` envelope or the shared fixture,

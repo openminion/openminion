@@ -7,6 +7,8 @@ from .contracts import (
 from .formatting import format_run_stats_footer, format_session_stats_summary
 from .service import StatsService
 from .token_usage import (
+    TokenUsageCoverage,
+    TokenUsageDimensionCoverage,
     TokenUsageEventRef,
     TokenUsageRecord,
     TokenUsageSummary,
@@ -21,6 +23,8 @@ __all__ = [
     "StatsService",
     "TOKEN_USAGE_SCHEMA_VERSION",
     "TokenUsageEventRef",
+    "TokenUsageCoverage",
+    "TokenUsageDimensionCoverage",
     "TokenUsageExportPayload",
     "TokenUsageRecord",
     "TokenUsageSummary",
