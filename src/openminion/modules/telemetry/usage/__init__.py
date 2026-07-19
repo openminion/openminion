@@ -4,11 +4,10 @@ from .contracts import (
     TOKEN_USAGE_SCHEMA_VERSION,
     TokenUsageExportPayload,
 )
+from .coverage import TokenUsageCoverage, TokenUsageDimensionCoverage
 from .formatting import format_run_stats_footer, format_session_stats_summary
 from .service import StatsService
 from .token_usage import (
-    TokenUsageCoverage,
-    TokenUsageDimensionCoverage,
     TokenUsageEventRef,
     TokenUsageRecord,
     TokenUsageSummary,

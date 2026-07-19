@@ -117,7 +117,7 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
 
     assert (
         run_tokens_status(
-            _args(session_id=session_id, event_limit=1),
+            _args(session_id=session_id, event_limit=2),
             config=OpenMinionConfig(),
         )
         == 0
@@ -126,7 +126,7 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
     assert "complete=no" in output
     assert "coverage: llm_calls=1" in output
     assert "input=1/1" in output
-    assert "incomplete: event_limit=1" in output
+    assert "incomplete: event_limit=2" in output
 
 
 def test_status_tokens_rejects_cross_session_run(

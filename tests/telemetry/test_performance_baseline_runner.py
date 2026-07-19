@@ -364,7 +364,9 @@ def test_remaining_performance_rows_record_decision_evidence(tmp_path: Path) -> 
         ),
         "metadata_json_churn": (
             "metadata_json_field_count",
-            lambda metrics: metrics["required_lane_metadata_contract_preserved"] is True,
+            lambda metrics: (
+                metrics["required_lane_metadata_contract_preserved"] is True
+            ),
         ),
         "provider_connection_reuse_decision": (
             "provider_connection_dependency_decision",

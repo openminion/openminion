@@ -5,10 +5,10 @@ import json
 from typing import Any
 
 from .constants import RUNTIME_EVENT_READ_LIMIT
+from .coverage import coverage_from_session_events
 from .token_usage import (
     TokenUsageRecord,
     TokenUsageSummary,
-    coverage_from_session_events,
     event_ref_from_session_event,
     records_from_session_event,
     sort_session_events,

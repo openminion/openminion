@@ -14,10 +14,8 @@ from openminion.modules.telemetry.usage import (
     TokenUsageSummary,
     summary_to_json_payload,
 )
-from openminion.modules.telemetry.usage.token_usage import (
-    coverage_from_session_events,
-    records_from_session_event,
-)
+from openminion.modules.telemetry.usage.coverage import coverage_from_session_events
+from openminion.modules.telemetry.usage.token_usage import records_from_session_event
 
 _FIXTURE_PATH = (
     Path(__file__).parent
