@@ -7,7 +7,9 @@ from openminion.cli.presentation.permissions import (
     PERMISSION_CHOICE_AUTO,
     PERMISSION_CHOICE_FULL_ACCESS,
     PERMISSION_CHOICE_READONLY,
+    apply_permission_override,
     apply_permission_menu_choice,
+    format_permission_overrides_label,
     format_permission_status_label,
     permission_choice_for_id,
 )
@@ -17,6 +19,7 @@ class _RuntimeDouble:
     def __init__(self) -> None:
         self.permission_mode = "default"
         self.action_policy_mode_override = ""
+        self.permission_overrides: dict[str, str] = {}
 
     def set_permission_mode(self, mode: str) -> str:
         self.permission_mode = mode
@@ -25,6 +28,16 @@ class _RuntimeDouble:
     def set_session_action_policy_mode(self, mode: str) -> str:
         self.action_policy_mode_override = mode
         return mode
+
+    def set_permission_override(self, tool_name: str, mode: str) -> str:
+        if mode == "default":
+            self.permission_overrides.pop(tool_name, None)
+            return "default"
+        self.permission_overrides[tool_name] = mode
+        return mode
+
+    def clear_permission_override(self, tool_name: str) -> bool:
+        return self.permission_overrides.pop(tool_name, None) is not None
 
 
 def test_permission_choice_aliases_cover_human_labels() -> None:
@@ -83,6 +96,32 @@ def test_status_label_keeps_permission_and_approval_axes_distinct() -> None:
             action_policy_mode="auto",
         )
         == "read-only + auto"
+    )
+
+
+def test_apply_permission_override_sets_tool_mode() -> None:
+    runtime = _RuntimeDouble()
+
+    result = apply_permission_override(runtime, "file.write", "readonly")
+
+    assert runtime.permission_overrides == {"file.write": "readonly"}
+    assert result.message == "permissions → file.write: readonly"
+
+
+def test_apply_permission_override_clears_tool_default() -> None:
+    runtime = _RuntimeDouble()
+    runtime.permission_overrides["file.write"] = "bypass"
+
+    result = apply_permission_override(runtime, "file.write", "default")
+
+    assert runtime.permission_overrides == {}
+    assert result.message == "permissions → cleared override for file.write"
+
+
+def test_format_permission_overrides_label_sorts_tools() -> None:
+    assert (
+        format_permission_overrides_label({"shell.exec": "ask", "file.write": "bypass"})
+        == "file.write: bypass, shell.exec: ask"
     )
     assert (
         format_permission_status_label(

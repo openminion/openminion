@@ -190,6 +190,61 @@ async def test_permissions_menu_full_access_requires_second_selection() -> None:
 
 
 @pytest.mark.asyncio
+async def test_slash_permissions_sets_per_tool_override() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+            runtime = screen._runtime
+
+            screen._handle_command("/permissions file.write readonly")
+            await pilot.pause()
+
+            assert runtime.permission_overrides == {"file.write": "readonly"}
+            body = _last_system_body(screen.query_one(FocusTranscript))
+            assert body == "permissions → file.write: readonly"
+
+
+@pytest.mark.asyncio
+async def test_slash_permissions_clears_per_tool_override() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+            runtime = screen._runtime
+            runtime.set_permission_override("file.write", "bypass")
+
+            screen._handle_command("/permissions file.write default")
+            await pilot.pause()
+
+            assert runtime.permission_overrides == {}
+            body = _last_system_body(screen.query_one(FocusTranscript))
+            assert body == "permissions → cleared override for file.write"
+
+
+@pytest.mark.asyncio
+async def test_permissions_menu_shows_active_tool_overrides() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+            screen._runtime.set_permission_override("file.write", "bypass")
+
+            screen._handle_command("/permissions")
+            await pilot.pause()
+
+            assert isinstance(app.screen, PermissionsOverlay)
+            note = app.screen.query_one("#focus-permissions-overlay-note").render()
+            assert "file.write: bypass" in str(note)
+
+
+@pytest.mark.asyncio
 async def test_shift_tab_action_opens_permissions_menu_instead_of_cycling() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         app = _make_app(tmp)

@@ -22,6 +22,7 @@ from openminion.cli.interactive.project_context import (
 )
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.permissions import (
+    apply_permission_override,
     apply_permission_menu_choice,
     format_permission_status_label,
 )
@@ -391,10 +392,23 @@ class SlashCommandMixin:
         self._load_history()
 
     def _slash_permissions(self, args: str) -> None:
-        """Show or set the session-scoped permission mode."""
-        arg = str(args or "").strip().lower()
+        """Show or set session or tool-scoped permission posture."""
+        raw_arg = str(args or "").strip()
+        arg = raw_arg.lower()
         if not arg:
             self._open_permissions_overlay()
+            return
+        parts = raw_arg.split()
+        if len(parts) == 2:
+            tool_name, mode = parts
+            try:
+                result = apply_permission_override(self._runtime, tool_name, mode)
+            except (RuntimeError, ValueError) as exc:
+                body = f"/permissions: {exc}"
+            else:
+                body = result.message
+            self._push_status_line()
+            self._push_permissions_message(body)
             return
         if arg == "cycle":
             body = f"permissions → {self._cycle_permission_mode_from_ui()}"
@@ -425,7 +439,11 @@ class SlashCommandMixin:
             self._apply_permission_menu_choice(choice_id, confirmed=confirmed)
 
         try:
-            self.app.push_screen(PermissionsOverlay(), _on_selected)
+            overrides = getattr(self._runtime, "permission_overrides", {})
+            self.app.push_screen(
+                PermissionsOverlay(overrides=dict(overrides or {})),
+                _on_selected,
+            )
         except (AttributeError, QueryError, RuntimeError, ValueError) as exc:
             self._push_permissions_message(
                 f"/permissions: unable to open chooser: {exc}"

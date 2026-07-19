@@ -35,6 +35,13 @@ class PermissionApplyResult:
     message: str
 
 
+@dataclass(frozen=True)
+class PermissionOverrideApplyResult:
+    tool_name: str
+    mode: str
+    message: str
+
+
 PERMISSION_MENU_CHOICES: tuple[PermissionMenuChoice, ...] = (
     PermissionMenuChoice(
         choice_id=PERMISSION_CHOICE_READONLY,
@@ -137,6 +144,17 @@ def format_permission_status_label(
     return " + ".join(parts)
 
 
+def format_permission_overrides_label(overrides: object) -> str:
+    if not isinstance(overrides, dict) or not overrides:
+        return ""
+    parts = [
+        f"{str(tool).strip()}: {str(mode).strip()}"
+        for tool, mode in sorted(overrides.items())
+        if str(tool).strip() and str(mode).strip()
+    ]
+    return ", ".join(parts)
+
+
 def apply_permission_menu_choice(
     runtime: object,
     choice_id: str,
@@ -164,6 +182,43 @@ def apply_permission_menu_choice(
         permission_mode=mode,
         action_policy_mode=action_mode,
         message=f"permissions → {status}{warning}",
+    )
+
+
+def apply_permission_override(
+    runtime: object,
+    tool_name: str,
+    mode: str,
+) -> PermissionOverrideApplyResult:
+    tool = str(tool_name or "").strip()
+    if not tool:
+        raise ValueError("tool name is required")
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode in {"default", "reset", "clear"}:
+        clearer = getattr(runtime, "clear_permission_override", None)
+        if callable(clearer):
+            clearer(tool)
+        else:
+            setter = getattr(runtime, "set_permission_override", None)
+            if not callable(setter):
+                raise RuntimeError(
+                    "runtime does not expose clear_permission_override"
+                )
+            setter(tool, "default")
+        return PermissionOverrideApplyResult(
+            tool_name=tool,
+            mode=PERMISSION_MODE_DEFAULT,
+            message=f"permissions → cleared override for {tool}",
+        )
+    setter = getattr(runtime, "set_permission_override", None)
+    if not callable(setter):
+        raise RuntimeError("runtime does not expose set_permission_override")
+    applied = str(setter(tool, normalized_mode) or normalized_mode)
+    warning = " — full access for this tool in this session" if applied == "bypass" else ""
+    return PermissionOverrideApplyResult(
+        tool_name=tool,
+        mode=applied,
+        message=f"permissions → {tool}: {applied}{warning}",
     )
 
 
@@ -195,7 +250,10 @@ __all__ = [
     "PERMISSION_MENU_CHOICES",
     "PermissionApplyResult",
     "PermissionMenuChoice",
+    "PermissionOverrideApplyResult",
+    "apply_permission_override",
     "apply_permission_menu_choice",
+    "format_permission_overrides_label",
     "format_permission_status_label",
     "permission_choice_for_id",
     "permission_choice_for_modes",
