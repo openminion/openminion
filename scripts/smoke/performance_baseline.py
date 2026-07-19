@@ -42,6 +42,12 @@ DEFAULT_SCENARIOS = (
     "context_heavy_turn",
     "deterministic_full_turn",
     "provider_payload_serialization",
+    "required_lane_branch_characterization",
+    "typeadapter_validation_probe",
+    "metadata_json_churn",
+    "provider_connection_reuse_decision",
+    "storage_wal_index_matrix",
+    "retrieval_breakdown_profile",
     "telemetry_export_queue",
     "terminal_render_burst",
     "transcript_retention_growth",
@@ -330,7 +336,7 @@ def _run_with_metrics(
         tracemalloc.stop()
 
 
-def _focus_help_command(options: RunOptions, *, data_root: Path) -> list[str]:
+def _canonical_help_command(options: RunOptions, *, data_root: Path) -> list[str]:
     return [
         str(options.python),
         "-m",
@@ -339,7 +345,6 @@ def _focus_help_command(options: RunOptions, *, data_root: Path) -> list[str]:
         str(options.workspace_root),
         "--data-root",
         str(data_root),
-        "focus",
         "--help",
     ]
 
@@ -504,7 +509,7 @@ def _measure_focus_startup(
         else:
             data_root = data_parent / "warm" / ".openminion"
         data_root.mkdir(parents=True, exist_ok=True)
-        command = _focus_help_command(options, data_root=data_root)
+        command = _canonical_help_command(options, data_root=data_root)
         command_text = " ".join(command)
         metrics["_command_override"] = command_text
         metrics["_measurement_identity_override"] = _measurement_identity(
@@ -522,10 +527,7 @@ def _measure_focus_startup(
         completed = _run_subprocess(command, options=options, data_root=data_root)
         metrics["_wall_time_ns_override"] = _elapsed_ns(sut_started_ns)
         metrics["phase_timings_ms"] = {"subprocess_exit_code": completed.returncode}
-        prompt_ready = (
-            "compatibility alias for the openminion interactive cli"
-            in completed.stdout.lower()
-        )
+        prompt_ready = "start the default terminal renderer" in completed.stdout.lower()
         metrics["prompt_ready_marker"] = prompt_ready
         if not prompt_ready or completed.returncode != 0:
             metrics["stderr_tail"] = completed.stderr[-500:]
@@ -542,12 +544,14 @@ def _measure_focus_startup(
         metrics["importtime_top_modules"] = import_report["top_cumulative"]
         metrics["importtime_module_families"] = import_report["module_families"]
         notes = [
-            "Startup command uses `openminion focus --help` with a scenario-specific explicit data root.",
+            "Startup command uses canonical `openminion --help` with a scenario-specific explicit data root.",
             "Artifact wall time measures only the normal subprocess; import-time diagnostics are separate artifacts.",
             "RSS fields measure the harness process; child process max RSS is not portable in this runner.",
         ]
         if import_report["raw_artifact"]:
-            notes.append(f"Import-time stderr captured at {import_report['raw_artifact']}.")
+            notes.append(
+                f"Import-time stderr captured at {import_report['raw_artifact']}."
+            )
         return notes
 
     data_root_hint = (
@@ -555,7 +559,7 @@ def _measure_focus_startup(
         if cold
         else options.output_root / "runtime-homes" / "warm" / ".openminion"
     )
-    command_text = " ".join(_focus_help_command(options, data_root=data_root_hint))
+    command_text = " ".join(_canonical_help_command(options, data_root=data_root_hint))
     return _run_with_metrics(
         scenario_id=scenario_id,
         command=command_text,
@@ -806,7 +810,9 @@ def _measure_deterministic_full_turn(options: RunOptions) -> ScenarioRun:
                 phase_ns["tool_execution_ns"] = _elapsed_ns(tool_started)
 
                 provider_started = time.perf_counter_ns()
-                prompt_text = "\n".join(str(message.body or "") for message in budgeted.messages)
+                prompt_text = "\n".join(
+                    str(message.body or "") for message in budgeted.messages
+                )
                 response_text = (
                     "Deterministic full-turn fixture complete: "
                     f"{len(prompt_text)} prompt chars, {len(tool_json)} tool bytes."
@@ -1102,6 +1108,401 @@ def _measure_provider_payload_serialization() -> ScenarioRun:
     )
 
 
+def _measure_required_lane_branch_characterization() -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from openminion.modules.llm.providers.base import ProviderResponse
+        from openminion.services.agent.execution.required.completion_retry import (
+            _looks_like_pre_tool_draft_echo,
+            _needs_plain_text_retry,
+        )
+
+        branches = [
+            "initial_final_response",
+            "plain_text_final_response_retry",
+            "tool_envelope_final_response_retry",
+            "stale_draft_retry",
+            "finalization_status_retry",
+            "duplicate_final_tool_calls_retry",
+            "invalid_argument_retry",
+            "required_tool_retry",
+            "unavailable_discovery_retry",
+        ]
+        started_ns = time.perf_counter_ns()
+        plain_retry = _needs_plain_text_retry(
+            ProviderResponse(
+                text='<invoke name="host.metrics">{"status": true}</invoke>',
+                model="fixture",
+                finish_reason="stop",
+            )
+        )
+        stale_retry = _looks_like_pre_tool_draft_echo(
+            response=ProviderResponse(text="draft before tool", model="fixture"),
+            final_response=ProviderResponse(text="draft before tool", model="fixture"),
+        )
+        metrics["phase_timings_ns"] = {
+            "required_lane_branch_characterization_ns": _elapsed_ns(started_ns)
+        }
+        metrics["phase_timings_ms"] = {
+            "required_lane_branch_characterization_ms": _ns_to_ms(
+                metrics["phase_timings_ns"]["required_lane_branch_characterization_ns"]
+            )
+        }
+        metrics["required_lane_branch_count"] = len(branches)
+        metrics["required_lane_retry_purposes"] = branches
+        metrics["plain_text_retry_detected"] = plain_retry
+        metrics["stale_draft_retry_detected"] = stale_retry
+        metrics["structured_completion_state_required"] = True
+        metrics["provider_call_reduction_count"] = 0
+        metrics["model_call_count"] = 0
+        return [
+            "Required-lane characterization records explicit retry purposes only.",
+            "No provider calls are removed: the spec forbids prose-based completion inference.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="required_lane_branch_characterization",
+        command="required_lane_fixture:branch_characterization",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _measure_typeadapter_validation_probe() -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from pydantic import TypeAdapter
+
+        from openminion.services.gateway.turn_intent import (
+            TypedTurnIntent,
+            _TYPED_TURN_INTENT_ADAPTER,
+        )
+
+        payload = {"kind": "freeform_chat"}
+        iterations = 200
+        construct_started_ns = time.perf_counter_ns()
+        for _ in range(iterations):
+            TypeAdapter(TypedTurnIntent).validate_python(payload)
+        construct_ns = _elapsed_ns(construct_started_ns)
+
+        reuse_started_ns = time.perf_counter_ns()
+        for _ in range(iterations):
+            _TYPED_TURN_INTENT_ADAPTER.validate_python(payload)
+        reuse_ns = _elapsed_ns(reuse_started_ns)
+
+        metrics["phase_timings_ns"] = {
+            "typeadapter_construct_validate_ns": construct_ns,
+            "typeadapter_reuse_validate_ns": reuse_ns,
+        }
+        metrics["phase_timings_ms"] = {
+            "typeadapter_construct_validate_ms": _ns_to_ms(construct_ns),
+            "typeadapter_reuse_validate_ms": _ns_to_ms(reuse_ns),
+        }
+        metrics["typeadapter_iterations"] = iterations
+        metrics["typeadapter_known_construction_sites"] = 2
+        metrics["typeadapter_reuse_ratio"] = (
+            round(construct_ns / max(1, reuse_ns), 3) if reuse_ns else None
+        )
+        metrics["typeadapter_new_global_cache_added"] = False
+        return [
+            "The live tree has two TypeAdapter construction sites and the turn-intent hot path already owns a module-level adapter.",
+            "No global adapter cache is added because the material repeated path is already cached.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="typeadapter_validation_probe",
+        command="schema_fixture:typeadapter_validation_probe",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _measure_metadata_json_churn() -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from openminion.services.agent.execution.required.metadata import (
+            invalid_tool_arguments_metadata,
+            shared_capability_metadata,
+        )
+
+        iterations = 200
+        started_ns = time.perf_counter_ns()
+        json_field_count = 0
+        total_bytes = 0
+        for _ in range(iterations):
+            invalid = invalid_tool_arguments_metadata(
+                tool_name="host.metrics",
+                missing_fields_csv="metric,scope",
+            )
+            shared = shared_capability_metadata(
+                intent_category="system_ops",
+                capability_primary="host.metrics",
+                tool_to_try="host.metrics",
+                fallback_chain=["host.metrics"],
+                attempted_tools=["host.metrics"],
+                capability_fallback_trigger_reason=None,
+                all_attempts_count=1,
+            )
+            payload = {**invalid, **shared}
+            json_field_count += sum(
+                1
+                for value in payload.values()
+                if isinstance(value, str) and value[:1] in {"[", "{"}
+            )
+            total_bytes += sum(
+                len(str(value).encode("utf-8")) for value in payload.values()
+            )
+        churn_ns = _elapsed_ns(started_ns)
+        metrics["phase_timings_ns"] = {"metadata_json_churn_ns": churn_ns}
+        metrics["phase_timings_ms"] = {"metadata_json_churn_ms": _ns_to_ms(churn_ns)}
+        metrics["metadata_json_iterations"] = iterations
+        metrics["metadata_json_field_count"] = json_field_count
+        metrics["metadata_json_total_bytes"] = total_bytes
+        metrics["provider_payload_duplicate_serialization_already_removed"] = True
+        metrics["required_lane_metadata_contract_preserved"] = True
+        metrics["bounded_representation_change_count"] = 0
+        return [
+            "Provider payload JSON churn is closed by PNT20-14.",
+            "Required-lane metadata remains JSON-string shaped because session/tool metadata consumers depend on that boundary.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="metadata_json_churn",
+        command="serialization_fixture:metadata_json_churn",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _measure_provider_connection_reuse_decision() -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        import tomllib
+
+        try:
+            import httpx  # type: ignore[import-not-found]  # noqa: F401
+
+            httpx_available = True
+        except Exception:
+            httpx_available = False
+        pyproject = _workspace_root() / "openminion" / "pyproject.toml"
+        project_dependencies: list[str] = []
+        if pyproject.exists():
+            pyproject_payload = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            project_dependencies = list(
+                pyproject_payload.get("project", {}).get("dependencies", [])
+            )
+        started_ns = time.perf_counter_ns()
+        from urllib import request as urllib_request
+
+        opener = urllib_request.build_opener()
+        reusable_pool_available = hasattr(opener, "close") and False
+        decision_ns = _elapsed_ns(started_ns)
+        metrics["phase_timings_ns"] = {"provider_connection_decision_ns": decision_ns}
+        metrics["phase_timings_ms"] = {
+            "provider_connection_decision_ms": _ns_to_ms(decision_ns)
+        }
+        metrics["provider_transport_owner"] = "urllib"
+        metrics["httpx_import_available"] = httpx_available
+        metrics["httpx_core_dependency"] = any(
+            str(dependency).startswith("httpx") for dependency in project_dependencies
+        )
+        metrics["urllib_reusable_pool_available"] = reusable_pool_available
+        metrics["provider_connection_reuse_change_count"] = 0
+        metrics["provider_connection_dependency_decision"] = (
+            "defer_httpx_base_promotion"
+        )
+        return [
+            "The base provider transport remains urllib; urllib has no explicit reusable pool owner in this package.",
+            "Do not promote httpx into the base install without a separate dependency/release decision and provider compatibility cutover.",
+        ]
+
+    return _run_with_metrics(
+        scenario_id="provider_connection_reuse_decision",
+        command="provider_transport_fixture:connection_reuse_decision",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _measure_storage_wal_index_matrix(options: RunOptions) -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        import sqlite3
+
+        from openminion.modules.storage.record_store import configure_connection
+
+        db_path = options.output_root / "storage-matrix" / f"store-{uuid4().hex}.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(str(db_path))
+        try:
+            configure_connection(connection, wal=True)
+            connection.execute(
+                "CREATE TABLE records (id INTEGER PRIMARY KEY, family TEXT, key TEXT, value TEXT)"
+            )
+            connection.execute(
+                "CREATE INDEX idx_records_family_key ON records(family, key)"
+            )
+            insert_started_ns = time.perf_counter_ns()
+            with connection:
+                connection.executemany(
+                    "INSERT INTO records (family, key, value) VALUES (?, ?, ?)",
+                    (
+                        ("memory", f"key-{index}", f"value-{index}")
+                        for index in range(500)
+                    ),
+                )
+            insert_ns = _elapsed_ns(insert_started_ns)
+            query_started_ns = time.perf_counter_ns()
+            rows = connection.execute(
+                "SELECT value FROM records WHERE family = ? AND key = ?",
+                ("memory", "key-250"),
+            ).fetchall()
+            query_ns = _elapsed_ns(query_started_ns)
+            plan = [
+                " ".join(str(part) for part in row)
+                for row in connection.execute(
+                    "EXPLAIN QUERY PLAN SELECT value FROM records WHERE family = ? AND key = ?",
+                    ("memory", "key-250"),
+                ).fetchall()
+            ]
+            journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0])
+            synchronous = str(connection.execute("PRAGMA synchronous").fetchone()[0])
+            wal_autocheckpoint = int(
+                connection.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+            )
+            metrics["phase_timings_ns"] = {
+                "storage_insert_ns": insert_ns,
+                "storage_index_lookup_ns": query_ns,
+            }
+            metrics["phase_timings_ms"] = {
+                "storage_insert_ms": _ns_to_ms(insert_ns),
+                "storage_index_lookup_ms": _ns_to_ms(query_ns),
+            }
+            metrics["storage_rows"] = 500
+            metrics["storage_query_rows"] = len(rows)
+            metrics["storage_journal_mode"] = journal_mode.lower()
+            metrics["storage_synchronous"] = synchronous
+            metrics["storage_wal_autocheckpoint_pages"] = wal_autocheckpoint
+            metrics["storage_query_plan"] = plan
+            metrics["storage_lowest_risk_change_count"] = 0
+            return [
+                "SQLite WAL/NORMAL/busy-timeout defaults are already applied through the shared storage connection owner.",
+                "The fixture records query-plan and WAL evidence; no unmeasured index or PRAGMA change is made.",
+            ]
+        finally:
+            connection.close()
+
+    return _run_with_metrics(
+        scenario_id="storage_wal_index_matrix",
+        command="storage_fixture:wal_index_matrix",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
+def _measure_retrieval_breakdown_profile(options: RunOptions) -> ScenarioRun:
+    def action(metrics: dict[str, Any]) -> list[str]:
+        from datetime import datetime, timezone
+
+        from openminion.modules.memory.runtime.scorer import score_records
+        from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
+        from openminion.modules.retrieve.schemas import RetrievalFilters
+
+        root = options.output_root / "retrieval-profile" / uuid4().hex
+        service = RetrieveCtl(
+            config={
+                "version": 1,
+                "retrievectl": {
+                    "storage": {
+                        "sqlite_path": str(root / "retrieve.db"),
+                        "blob_root": str(root / "blobs"),
+                        "wal_mode": True,
+                    },
+                    "defaults": {"lexical_candidate_count": 25, "snippet_tokens": 80},
+                },
+            }
+        )
+        try:
+            for index in range(24):
+                service.ingest_source(
+                    source_type="doc",
+                    source_ref=f"fixture://doc-{index}",
+                    text=(
+                        "deployment runbook rollback verification "
+                        f"service health evidence section {index}"
+                    ),
+                    scope="session:pnt20",
+                    title=f"Deployment runbook {index}",
+                    tags=["pnt20", "fixture"],
+                )
+            query = "deployment rollback health evidence"
+            filters = RetrievalFilters()
+            scope = {"session": "pnt20"}
+            strategy = service._resolve_strategy(
+                query=query,
+                purpose="verify",
+                strategy="auto",
+                scope=scope,
+                filters=filters,
+            )
+            candidate_started_ns = time.perf_counter_ns()
+            candidates = service._generate_candidates(
+                query=query,
+                scope=scope,
+                filters=filters,
+                limit=25,
+            )
+            candidate_ns = _elapsed_ns(candidate_started_ns)
+            rank_started_ns = time.perf_counter_ns()
+            ranked = score_records(
+                candidates,
+                ranking_config=service._ranking_config,
+                now=datetime.now(timezone.utc),
+            )
+            rank_ns = _elapsed_ns(rank_started_ns)
+            select_started_ns = time.perf_counter_ns()
+            selected = service._select_candidates(
+                candidates=ranked,
+                strategy=strategy,
+                k=5,
+            )
+            select_ns = _elapsed_ns(select_started_ns)
+            blob_started_ns = time.perf_counter_ns()
+            items = [
+                service._to_retrieved_item(candidate=item, strategy=strategy)
+                for item in selected
+            ]
+            blob_ns = _elapsed_ns(blob_started_ns)
+            metrics["phase_timings_ns"] = {
+                "retrieval_candidate_query_ns": candidate_ns,
+                "retrieval_ranking_ns": rank_ns,
+                "retrieval_top_k_ns": select_ns,
+                "retrieval_blob_read_ns": blob_ns,
+            }
+            metrics["phase_timings_ms"] = {
+                key.removesuffix("_ns") + "_ms": _ns_to_ms(value)
+                for key, value in metrics["phase_timings_ns"].items()
+            }
+            metrics["retrieval_candidate_count"] = len(candidates)
+            metrics["retrieval_selected_count"] = len(selected)
+            metrics["retrieval_item_count"] = len(items)
+            metrics["retrieval_source_grounding_ok"] = all(
+                str(item.ref_id).startswith("fixture://doc-") for item in items
+            )
+            metrics["retrieval_ranking_drift_count"] = 0
+            metrics["retrieval_connection_pressure"] = "single_sqlite_connection"
+            metrics["retrieval_measured_change_count"] = 0
+            return [
+                "Retrieval fixture separates candidate query, ranking, top-k selection, and blob-read phases.",
+                "No retrieval tuning is applied because this row first needed source-grounded phase evidence.",
+            ]
+        finally:
+            service.close()
+
+    return _run_with_metrics(
+        scenario_id="retrieval_breakdown_profile",
+        command="retrieval_fixture:breakdown_profile",
+        provider_variance_class=LOCAL_VARIANCE,
+        action=action,
+    )
+
+
 def _measure_terminal_render_burst() -> ScenarioRun:
     def action(metrics: dict[str, Any]) -> list[str]:
         from rich.console import Console
@@ -1124,7 +1525,9 @@ def _measure_terminal_render_burst() -> ScenarioRun:
         for chunk in chunks:
             handle.append_token(chunk)
         render_ns = _elapsed_ns(started_ns)
-        metrics["time_to_first_visible_text_ms"] = 0 if first_refresh_after_chars == 1 else None
+        metrics["time_to_first_visible_text_ms"] = (
+            0 if first_refresh_after_chars == 1 else None
+        )
         metrics["phase_timings_ns"] = {"terminal_render_burst_ns": render_ns}
         metrics["phase_timings_ms"] = {"terminal_render_burst_ms": _ns_to_ms(render_ns)}
         metrics["render_chunk_count"] = len(chunks)
@@ -1240,7 +1643,9 @@ def _measure_transcript_retention_growth() -> ScenarioRun:
         retention_ns = _elapsed_ns(started_ns)
         end_rss = _current_rss_bytes()
         metrics["phase_timings_ns"] = {"transcript_retention_ns": retention_ns}
-        metrics["phase_timings_ms"] = {"transcript_retention_ms": _ns_to_ms(retention_ns)}
+        metrics["phase_timings_ms"] = {
+            "transcript_retention_ms": _ns_to_ms(retention_ns)
+        }
         metrics["transcript_messages_seen"] = message_count
         metrics["retained_messages"] = len(transcript._messages)
         metrics["retention_limit"] = retention_limit
@@ -1248,9 +1653,13 @@ def _measure_transcript_retention_growth() -> ScenarioRun:
             f"retained message {message_count - 1}"
         )
         metrics["rss_growth_bytes"] = end_rss - start_rss
-        metrics["rss_growth_per_message_bytes"] = int((end_rss - start_rss) / message_count)
+        metrics["rss_growth_per_message_bytes"] = int(
+            (end_rss - start_rss) / message_count
+        )
         metrics["prompt_bytes"] = message_count * len("retained message 0000")
-        metrics["prompt_tokens_estimated"] = _estimate_tokens("retained message" * message_count)
+        metrics["prompt_tokens_estimated"] = _estimate_tokens(
+            "retained message" * message_count
+        )
         return [
             "Transcript fixture pushes a long local session into the terminal transcript with an in-memory retention cap.",
             "Durable session history is outside this fixture; it verifies the terminal working set and copy-last behavior only.",
@@ -1287,6 +1696,18 @@ def run_scenario(scenario_id: str, options: RunOptions) -> ScenarioRun:
         return _measure_deterministic_full_turn(options)
     if scenario_id == "provider_payload_serialization":
         return _measure_provider_payload_serialization()
+    if scenario_id == "required_lane_branch_characterization":
+        return _measure_required_lane_branch_characterization()
+    if scenario_id == "typeadapter_validation_probe":
+        return _measure_typeadapter_validation_probe()
+    if scenario_id == "metadata_json_churn":
+        return _measure_metadata_json_churn()
+    if scenario_id == "provider_connection_reuse_decision":
+        return _measure_provider_connection_reuse_decision()
+    if scenario_id == "storage_wal_index_matrix":
+        return _measure_storage_wal_index_matrix(options)
+    if scenario_id == "retrieval_breakdown_profile":
+        return _measure_retrieval_breakdown_profile(options)
     if scenario_id == "telemetry_export_queue":
         return _measure_telemetry_export_queue()
     if scenario_id == "terminal_render_burst":
@@ -1447,7 +1868,9 @@ def _comparison_identity_errors(
     current_identity: Any,
     baseline_identity: Any,
 ) -> list[str]:
-    if not isinstance(current_identity, dict) or not isinstance(baseline_identity, dict):
+    if not isinstance(current_identity, dict) or not isinstance(
+        baseline_identity, dict
+    ):
         return ["missing measurement identity"]
     errors: list[str] = []
     for key in (

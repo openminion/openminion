@@ -210,7 +210,7 @@ src/openminion/modules/controlplane/channels/telegram/runtime/helpers.py	8	0	cur
 src/openminion/modules/controlplane/channels/telegram/storage/store.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/channels/telegram/webhook.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/commands/discovery.py	6	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/controlplane/commands/registry.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/controlplane/commands/registry_memory.py	4	0	CCPR split moved existing skill/memory fallback broad handlers; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/contracts/policy_client.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/runtime/__init__.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/runtime/audit.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -323,7 +323,7 @@ src/openminion/modules/storage/runtime/validation.py	4	2	current broad-handler b
 src/openminion/modules/storage/runtime/vector_index.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/storage/runtime/vector_sync.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/task/events.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/task/runtime/lifecycle.py	3	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/task/runtime/lifecycle_schedule.py	3	2	TLRM split moved existing cron cleanup broad handlers; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/task/runtime/migration_runner.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/telemetry/events/module.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/telemetry/export/otel.py	4	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -345,7 +345,6 @@ src/openminion/modules/tool/runtime/context.py	8	0	current broad-handler baselin
 src/openminion/modules/tool/runtime/environment.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/runtime/plugin.py	7	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/runtime/plugins.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/tool/runtime/policy.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/runtime/registry_toolspec.py	9	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/runtime/repositories.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/tool/runtime/tools_core.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

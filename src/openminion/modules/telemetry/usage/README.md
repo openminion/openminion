@@ -11,8 +11,9 @@ apply optimization policy.
 1. `service.py` reads canonical session stores and builds run/session views.
 2. `token_usage.py` normalizes events into records and summaries.
 3. `contracts.py` owns the versioned JSON-compatible export contract.
-4. `formatting.py` owns compact internal run/session presentation.
-5. `openminion.services.stats` is compatibility-only and owns no behavior.
+4. `coverage.py` classifies source-field availability and correlation presence.
+5. `formatting.py` owns compact internal run/session presentation.
+6. `openminion.services.stats` is compatibility-only and owns no behavior.
 
 The additive v1 `coverage` block reports whether provider token dimensions were
 reported, missing, or invalid, plus identity and correlation-field presence.

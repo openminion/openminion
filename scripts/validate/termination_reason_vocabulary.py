@@ -15,6 +15,9 @@ from scripts.common.terminal_output import emit_json_report  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "openminion"
+SRC_IMPORT_ROOT = SRC_ROOT.parent
+if str(SRC_IMPORT_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_IMPORT_ROOT))
 CONSTANTS_PATH = SRC_ROOT / "services" / "agent" / "constants.py"
 SCAN_ROOTS = (
     SRC_ROOT / "services" / "agent",

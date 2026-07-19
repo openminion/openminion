@@ -108,13 +108,12 @@ services/bootstrap/onboarding.py	openminion.modules.llm.providers.factory
 services/brain/adapters/run_verification.py	openminion.modules.brain.runtime.verification.policy
 services/brain/adapters/run_verification.py	openminion.modules.storage.runtime.session_store
 services/brain/client.py	openminion.modules.llm.providers.base
-services/brain/client.py	openminion.modules.llm.providers.normalization
 services/brain/client.py	openminion.modules.llm.runtime.sync
 services/brain/post_execution/context.py	openminion.modules.memory.runtime.consolidation
 services/brain/post_execution/followup.py	openminion.modules.llm.providers.base
 services/brain/post_execution/followup.py	openminion.modules.llm.providers.normalization
 services/brain/post_execution/followup.py	openminion.modules.llm.providers.tool_calling
-services/brain/post_execution/postprocess.py	openminion.modules.llm.providers.envelope_v2
+services/brain/post_execution/postprocess_metadata.py	openminion.modules.llm.providers.envelope_v2
 services/context/session.py	openminion.modules.storage.runtime.pinned_context
 services/context/session.py	openminion.modules.storage.runtime.session_store
 services/gateway/routing.py	openminion.modules.storage.runtime.session_store
