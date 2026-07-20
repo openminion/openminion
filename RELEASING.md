@@ -121,6 +121,13 @@ For `openminion`, step 7 should tag the already-reviewed remote `main` commit.
 Do not publish from a dirty local checkout just because the worktree happens to
 be sitting on `main`.
 
+OpenMinion release PRs also run hosted lint against the stable
+`openminion-eval` `main` branch by default. Normal feature PRs continue to use
+the sibling `dev` branch so integration drift is visible before release, but a
+`release/*` PR should not be blocked by unrelated unreleased sibling work.
+Override this only with `OPENMINION_CI_DEP_BRANCH` when intentionally cutting a
+coordinated multi-repo release.
+
 The repo may keep extra hosted validation around build/install/bootstrap smoke,
 but the release routing contract should not diverge from the shared family
 pattern above.
