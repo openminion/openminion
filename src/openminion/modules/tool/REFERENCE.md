@@ -364,7 +364,7 @@ PYTHONPATH=src .venv/bin/python3.11 -m pytest -q \
 ```bash
 PYTHONPATH=src .venv/bin/python3.11 -m openminion \
   --config test-configs/per-agent-alibaba-minimax.json \
-  chat --agent alibaba-minimax --session test --quiet --no-progress <<EOF
+  --agent alibaba-minimax --session test --verbosity quiet --progress off <<EOF
 hello
 /exit
 EOF

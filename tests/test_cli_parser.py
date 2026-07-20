@@ -116,9 +116,8 @@ class ParserTests(unittest.TestCase):
     def test_help_and_common_parse_paths_avoid_api_runtime_imports(self) -> None:
         scenarios = (
             "root_help",
-            "focus_help",
             "status_help",
-            "focus_parse",
+            "interactive_parse",
             "status_parse",
         )
         script = r"""
@@ -128,9 +127,8 @@ from openminion.cli.parser.base import build_parser
 
 commands = {
     "root_help": ["--help"],
-    "focus_help": ["focus", "--help"],
     "status_help": ["status", "--help"],
-    "focus_parse": ["focus", "--agent", "ops"],
+    "interactive_parse": ["--agent", "ops"],
     "status_parse": ["status", "runs", "--session-id", "session-1"],
 }
 results = {}
@@ -162,13 +160,12 @@ print(json.dumps(results, sort_keys=True))
         loaded_by_scenario = __import__("json").loads(result.stdout.splitlines()[-1])
         self.assertEqual(set(loaded_by_scenario), set(scenarios))
         self.assertEqual(loaded_by_scenario["root_help"], [])
-        self.assertEqual(loaded_by_scenario["focus_help"], [])
-        self.assertEqual(loaded_by_scenario["focus_parse"], [])
+        self.assertEqual(loaded_by_scenario["interactive_parse"], [])
         self.assertEqual(loaded_by_scenario["status_parse"], [])
 
     def test_root_parser_accepts_allow_unsandboxed_exec_flag(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["--allow-unsandboxed-exec", "chat"])
+        args = parser.parse_args(["--allow-unsandboxed-exec"])
 
         self.assertTrue(args.allow_unsandboxed_exec)
 
@@ -302,138 +299,33 @@ print(json.dumps(results, sort_keys=True))
         self.assertTrue(args.json)
         self.assertTrue(callable(args.handler))
 
-    def test_chat_parse(self) -> None:
+    def test_interactive_root_parse(self) -> None:
         parser = build_parser()
         args = parser.parse_args(
             [
-                "chat",
                 "--agent",
                 "research",
                 "--session",
-                "chat-1",
-                "--conversation",
-                "conv-1",
+                "interactive-1",
+                "--verbosity",
+                "quiet",
+                "--progress",
+                "off",
             ]
         )
 
-        self.assertEqual(args.command, "chat")
+        self.assertIsNone(args.command)
         self.assertEqual(args.agent, "research")
-        self.assertEqual(args.session, "chat-1")
-        self.assertEqual(args.conversation, "conv-1")
-        self.assertFalse(args.quiet)
-        self.assertFalse(args.no_progress)
-        self.assertFalse(args.no_activity_indicator)
+        self.assertEqual(args.session, "interactive-1")
+        self.assertEqual(args.verbosity, "quiet")
+        self.assertEqual(args.progress, "off")
         self.assertFalse(args.demo)
-        self.assertTrue(callable(args.handler))
 
-    def test_chat_no_progress_parse(self) -> None:
+    def test_retired_interactive_aliases_are_rejected(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(
-            ["chat", "--agent", "research", "--session", "chat-1", "--no-progress"]
-        )
-
-        self.assertEqual(args.command, "chat")
-        self.assertEqual(args.agent, "research")
-        self.assertEqual(args.session, "chat-1")
-        self.assertFalse(args.quiet)
-        self.assertTrue(args.no_progress)
-        self.assertFalse(args.no_activity_indicator)
-        self.assertTrue(callable(args.handler))
-
-    def test_chat_no_activity_indicator_parse(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "chat",
-                "--agent",
-                "research",
-                "--session",
-                "chat-1",
-                "--no-progress",
-                "--no-activity-indicator",
-            ]
-        )
-
-        self.assertEqual(args.command, "chat")
-        self.assertTrue(args.no_progress)
-        self.assertTrue(args.no_activity_indicator)
-        self.assertTrue(callable(args.handler))
-
-    def test_chat_quiet_parse(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            ["chat", "--agent", "research", "--session", "chat-1", "--quiet"]
-        )
-
-        self.assertEqual(args.command, "chat")
-        self.assertEqual(args.agent, "research")
-        self.assertEqual(args.session, "chat-1")
-        self.assertTrue(args.quiet)
-        self.assertFalse(args.no_progress)
-        self.assertTrue(callable(args.handler))
-
-    def test_chat_demo_parse(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["chat", "--demo", "--session", "demo-chat"])
-
-        self.assertEqual(args.command, "chat")
-        self.assertTrue(args.demo)
-        self.assertEqual(args.session, "demo-chat")
-        self.assertTrue(callable(args.handler))
-
-    def test_chat_no_interactive_parse(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["chat", "--no-interactive"])
-        self.assertTrue(args.no_interactive)
-
-    def test_chat_resume_reset_parse(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            ["chat", "--agent", "research", "--session", "chat-1", "--resume"]
-        )
-        self.assertTrue(args.resume)
-        self.assertFalse(args.reset_session)
-
-        args = parser.parse_args(
-            ["chat", "--agent", "research", "--session", "chat-1", "--reset-session"]
-        )
-        self.assertTrue(args.reset_session)
-
-        args = parser.parse_args(
-            ["chat", "--agent", "research", "--session", "chat-1", "--sync-identity"]
-        )
-        self.assertTrue(args.sync_identity)
-
-    def test_tui_parse(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["tui", "--demo", "--agent", "ops"])
-
-        self.assertEqual(args.command, "tui")
-        self.assertTrue(args.demo)
-        self.assertEqual(args.agent, "ops")
-        self.assertTrue(callable(args.handler))
-
-        with self.assertRaises(SystemExit):
-            parser.parse_args(["tui", "--agent", "ops", "--sync-identity"])
-
-        args = parser.parse_args(["tui", "--no-interactive"])
-        self.assertTrue(args.no_interactive)
-
-    def test_focus_parse(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            ["focus", "--agent", "alpha", "--session", "focus-1", "--dir", "/tmp/work"]
-        )
-
-        self.assertEqual(args.command, "focus")
-        self.assertEqual(args.agent, "alpha")
-        self.assertEqual(args.session, "focus-1")
-        self.assertEqual(args.dir, "/tmp/work")
-        self.assertFalse(args.no_interactive)
-        self.assertTrue(callable(args.handler))
-
-        args = parser.parse_args(["focus", "--no-interactive"])
-        self.assertTrue(args.no_interactive)
+        for alias in ("chat", "focus", "tui", "dashboard"):
+            with self.subTest(alias=alias), self.assertRaises(SystemExit):
+                parser.parse_args([alias])
 
     def test_setup_parse(self) -> None:
         from openminion.base.config import AgentProfileConfig, OpenMinionConfig
@@ -1151,9 +1043,6 @@ print(json.dumps(results, sort_keys=True))
                 "run",
                 "room",
                 "channel",
-                "chat",
-                "dashboard",
-                "tui",
                 "sessions",
                 "sidecar",
                 "tools",
@@ -1168,8 +1057,11 @@ print(json.dumps(results, sort_keys=True))
                 "doctor",
                 "status",
                 "tasks",
+                "replay",
+                "checkpoint",
+                "rewind",
+                "branch",
                 "export",
-                "focus",
                 "setup",
                 "storage",
                 "verify",
@@ -1180,6 +1072,7 @@ print(json.dumps(results, sort_keys=True))
                 "skill",
                 "identity",
                 "memory",
+                "project-learning",
                 "mcp",
             ],
         )
@@ -1222,6 +1115,10 @@ print(json.dumps(results, sort_keys=True))
                 "doctor",
                 "status",
                 "tasks",
+                "replay",
+                "checkpoint",
+                "rewind",
+                "branch",
                 "export",
                 "setup",
                 "storage",
@@ -1233,6 +1130,7 @@ print(json.dumps(results, sort_keys=True))
                 "skill",
                 "identity",
                 "memory",
+                "project-learning",
                 "mcp",
             ],
         )
@@ -1314,7 +1212,7 @@ class SkillBootstrapTests(unittest.TestCase):
         finally:
             sys.path = original_path
 
-    def test_chat_command_parse_without_skill_module(self) -> None:
+    def test_interactive_root_parse_without_skill_module(self) -> None:
         import sys
 
         original_path = sys.path.copy()
@@ -1325,9 +1223,9 @@ class SkillBootstrapTests(unittest.TestCase):
 
             parser = build_parser()
             args = parser.parse_args(
-                ["chat", "--agent", "test-agent", "--session", "test-session"]
+                ["--agent", "test-agent", "--session", "test-session"]
             )
-            self.assertEqual(args.command, "chat")
+            self.assertIsNone(args.command)
             self.assertEqual(args.agent, "test-agent")
             self.assertEqual(args.session, "test-session")
         finally:

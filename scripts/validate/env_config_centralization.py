@@ -67,7 +67,6 @@ ALLOWED_DIRECT_ENV_FILES = {
 # Phase-5 lock: these reviewed CLI surfaces must remain canonical and may not
 # reintroduce direct process-env reads or feature-level from_sources calls.
 REQUIRED_CANONICAL_CLI_FILES = {
-    Path("src/openminion/cli/commands/aliases.py"),
     Path("src/openminion/cli/commands/agents.py"),
     Path("src/openminion/cli/commands/status/__init__.py"),
     Path("src/openminion/cli/presentation/styles.py"),

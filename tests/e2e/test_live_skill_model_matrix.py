@@ -108,13 +108,14 @@ def _run_skill_cli_smoke(
         "openminion",
         "--config",
         str(config_path),
-        "chat",
         "--agent",
         agent_id,
         "--session",
         session_id,
-        "--quiet",
-        "--no-progress",
+        "--verbosity",
+        "quiet",
+        "--progress",
+        "off",
     ]
     completed = subprocess.run(
         command,

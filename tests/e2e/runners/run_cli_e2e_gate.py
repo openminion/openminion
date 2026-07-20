@@ -14,7 +14,6 @@ PYTHON = ROOT / ".venv" / "bin" / "python3.11"
 
 LOCAL_TESTS = (
     "tests/cli/test_default_invocation.py",
-    "tests/cli/test_chat_deprecation_notice.py",
     "tests/cli/test_focus_backend_selection.py",
     "tests/e2e/cli/focus/test_local.py",
 )
@@ -22,7 +21,6 @@ LOCAL_TESTS = (
 HELP_COMMANDS = (
     ("--help",),
     ("run", "--help"),
-    ("focus", "--help"),
     ("status", "--help"),
     ("tools", "--help"),
     ("memory", "--help"),

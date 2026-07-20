@@ -743,18 +743,6 @@ class SlashCommandMixin:
             )
         )
 
-    def _slash_dashboard(self, _args: str) -> None:
-        from openminion.cli.commands.aliases import dashboard_deprecation_message
-        from openminion.cli.status.surface import record_surface_event
-
-        notice = dashboard_deprecation_message()
-        self._push_system_body(notice)
-        record_surface_event(
-            self._runtime,
-            surface="dashboard",
-            action="deprecation",
-        )
-
     def _slash_copy(self, _args: str) -> None:
         """Mirror the Ctrl+Y copy action for terminals that capture the key."""
         self.action_copy_last_agent()

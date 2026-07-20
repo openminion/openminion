@@ -19,9 +19,7 @@ from openminion.cli.ux.verbosity import (
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for key in (
         "OPENMINION_VERBOSITY",
-        "OPENMINION_FOCUS_VERBOSITY",
         "OPENMINION_PROGRESS",
-        "OPENMINION_FOCUS_PLAIN_SPINNER",
         "NO_COLOR",
         "OPENMINION_DATA_ROOT",
     ):
@@ -151,16 +149,6 @@ def test_env_beats_file_progress(
     temp_prefs_file.write_text('progress = "off"\n')
     monkeypatch.setenv("OPENMINION_PROGRESS", "minimal")
     assert resolve_progress(_args(), default="full") == "minimal"
-
-
-def test_legacy_env_beats_file_verbosity(
-    clean_env: None,
-    temp_prefs_file: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    temp_prefs_file.write_text('verbosity = "quiet"\n')
-    monkeypatch.setenv("OPENMINION_FOCUS_VERBOSITY", "verbose")
-    assert resolve_verbosity(_args()) == "verbose"
 
 
 def test_no_color_beats_file_progress(

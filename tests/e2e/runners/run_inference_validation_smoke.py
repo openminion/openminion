@@ -108,13 +108,14 @@ def check_chat_turn(
         "openminion",
         "--config",
         str(config_path),
-        "chat",
         "--agent",
         agent,
         "--session",
         session_id,
-        "--quiet",
-        "--no-progress",
+        "--verbosity",
+        "quiet",
+        "--progress",
+        "off",
     ]
     proc = _run(
         cmd, cwd=openminion_dir, env=env, input_text="hi\n/exit\n", timeout_seconds=180
@@ -157,8 +158,10 @@ def check_gateway_turn(
         "--message",
         "hello",
         "--json",
-        "--quiet",
-        "--no-progress",
+        "--verbosity",
+        "quiet",
+        "--progress",
+        "off",
     ]
     proc = _run(cmd, cwd=openminion_dir, env=env, timeout_seconds=120)
     combined = (proc.stdout or "") + (proc.stderr or "")

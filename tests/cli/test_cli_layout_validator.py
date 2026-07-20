@@ -42,3 +42,28 @@ def test_validate_root_layout_flags_legacy_flat_file(tmp_path: Path) -> None:
 
     assert errors
     assert any("parser.py" in error for error in errors)
+
+
+def test_current_doc_scan_rejects_retired_cli_guidance(tmp_path: Path) -> None:
+    path = tmp_path / "README.md"
+    path.write_text(
+        "Use the hidden compatibility alias and OPENMINION_FOCUS_BACKEND.\n",
+        encoding="utf-8",
+    )
+
+    errors = MODULE.scan_current_doc(path)
+
+    assert errors == [
+        f"{path}:1: removed focus backend env",
+        f"{path}:1: hidden alias claim",
+    ]
+
+
+def test_current_doc_scan_allows_explicit_retirement_language(tmp_path: Path) -> None:
+    path = tmp_path / "README.md"
+    path.write_text(
+        "Legacy `openminion chat` is retired and rejected.\n",
+        encoding="utf-8",
+    )
+
+    assert MODULE.scan_current_doc(path) == []

@@ -70,7 +70,6 @@ def test_no_subcommand_can_opt_into_rich_interactive(monkeypatch) -> None:
     interactive_args = called.get("interactive")
     assert interactive_args is not None
     assert interactive_args.rich is True
-    assert interactive_args.terminal is False
 
 
 def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> None:
@@ -267,65 +266,7 @@ def test_no_subcommand_pipe_with_whitespace_only_data_prints_help(
     assert "interactive" not in called
 
 
-# ── Subcommand handlers ──────────────────────────────────────────────
-
-
-def test_explicit_focus_alias_routes_to_interactive(monkeypatch) -> None:
-    called = {}
-
-    def _fake(_args):
-        called["interactive"] = True
-        return 0
-
-    monkeypatch.setattr("openminion.cli.commands.interactive.run_interactive", _fake)
-    rc = cli_main(["focus"])
-    assert rc == 0
-    assert called.get("interactive") is True
-
-
-def test_dashboard_alias_prints_migration_map(capsys) -> None:
-    rc = cli_main(["dashboard"])
-    assert rc == 0
-    notice = capsys.readouterr().err
-    assert "dashboard was retired" in notice
-    assert "bare `openminion`" in notice
-    assert "openminion status" in notice
-    assert "`agent`" in notice
-    assert "agent-ctl" not in notice
-
-
-def test_tui_alias_routes_to_interactive(monkeypatch) -> None:
-    called = {}
-
-    def _fake(_args):
-        called["interactive"] = True
-        return 0
-
-    monkeypatch.setattr("openminion.cli.commands.aliases.run_tui", _fake)
-    rc = cli_main(["tui"])
-    assert rc == 0
-    assert called.get("interactive") is True
-
-
-def test_chat_alias_routes_to_interactive(monkeypatch) -> None:
-    called = {}
-
-    def _fake(_args, _app=None):
-        called["interactive"] = True
-        return 0
-
-    # Chat handler may need APIRuntime; skip the heavy path by patching.
-    monkeypatch.setattr("openminion.cli.commands.aliases.run_chat", _fake)
-    monkeypatch.setattr(
-        "openminion.api.runtime.APIRuntime.from_config_path",
-        classmethod(lambda cls, *a, **kw: object()),
-    )
-    rc = cli_main(["chat"])
-    assert rc == 0
-    assert called.get("interactive") is True
-
-
-# ── Retired aliases remain hidden ─────────────────────────────────────
+# ── Retired aliases stay retired ──────────────────────────────────────
 
 
 def test_legacy_aliases_are_hidden_from_root_help(capsys) -> None:
@@ -336,8 +277,15 @@ def test_legacy_aliases_are_hidden_from_root_help(capsys) -> None:
         assert alias not in help_text
 
 
+@pytest.mark.parametrize("alias", ("focus", "chat", "tui", "dashboard"))
+def test_retired_aliases_are_rejected(alias: str) -> None:
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main([alias])
+    assert excinfo.value.code == 2
+
+
 def test_retired_product_command_modules_are_deleted() -> None:
     command_dir = Path(__file__).resolve().parents[2] / "src/openminion/cli/commands"
     assert not (command_dir / "chat.py").exists()
     assert not (command_dir / "tui.py").exists()
-    assert (command_dir / "aliases.py").exists()
+    assert not (command_dir / "aliases.py").exists()

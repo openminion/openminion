@@ -195,7 +195,6 @@ def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
         no_context=False,
         no_update_check=False,
         rich=False,
-        terminal=False,
     )
     return int(run_interactive(interactive_args) or 0)
 
@@ -213,9 +212,8 @@ def _print_post_setup_tips() -> None:
         "Each turn renders with a `⏺` marker, a verb-rotating "
         "thinking spinner, colored `●` tool-call markers, and "
         "syntax-highlighted code blocks. Use `--progress minimal` "
-        "or `--progress off` for reduced motion; `--plain-spinner`, "
-        "`OPENMINION_FOCUS_PLAIN_SPINNER=1`, and `NO_COLOR=1` "
-        "remain compatibility paths. "
+        "or `--progress off` for reduced motion; `--plain-spinner` "
+        "and `NO_COLOR=1` also select reduced motion. "
         "Tool blocks longer than 6 lines are truncated; type "
         "`/expand` to re-print the most recent one in full "
         "(`/expand 2` for the second-most-recent, `/expand 0` for a "
@@ -229,7 +227,7 @@ def _print_post_setup_tips() -> None:
         "what ran); `--verbosity normal` is the default; "
         "`--verbosity verbose` shows full tool bodies up to a "
         "200-line cap. Same effect via "
-        "`OPENMINION_FOCUS_VERBOSITY=quiet|normal|verbose`. "
+        "`OPENMINION_VERBOSITY=quiet|normal|verbose`. "
         "Toggle live with `/quiet`, `/verbose`, `/normal` slash "
         "commands. Failed tool calls show `✗ (exit N)` in red.",
         "Edit and Write tool calls render with inline unified-diff "
@@ -267,8 +265,7 @@ def _print_post_setup_tips() -> None:
         "and `openminion agent` (CUC). Same env vars: "
         "`OPENMINION_VERBOSITY` and `OPENMINION_PROGRESS`. "
         "Piped contexts auto-detect to `--progress off`.",
-        "Legacy interactive subcommands are compatibility aliases. Use bare "
-        "`openminion` for interactive work, and `openminion run` "
+        "Use bare `openminion` for interactive work and `openminion run` "
         "for scripted one-shot execution.",
     )
     for paragraph in paragraphs:

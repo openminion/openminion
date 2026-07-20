@@ -101,9 +101,9 @@ If you want the interactive surface next, launch the default interactive CLI:
 python -m openminion
 ```
 
-Legacy interactive command names remain as hidden compatibility aliases for a
-bounded migration window. See
-[`docs/terminal-surfaces.md`](docs/terminal-surfaces.md) for the route map.
+The root command is the only interactive entry point. See
+[`docs/terminal-surfaces.md`](docs/terminal-surfaces.md) for the renderer and
+resource-command map.
 
 ## Contributor setup
 
@@ -176,7 +176,7 @@ Tool package note:
 - [`docs/runtime-surfaces.md`](docs/runtime-surfaces.md) maps the supported
   CLI, runtime, and Python-library surfaces.
 - [`docs/terminal-surfaces.md`](docs/terminal-surfaces.md) records the canonical
-  terminal product, compatibility aliases, and dashboard migration gate.
+  terminal product and the resource-command map for retired dashboard areas.
 - [`docs/long-horizon-project-worker.md`](docs/long-horizon-project-worker.md)
   records the alpha project-worker substrate, proof shape, and current claim
   boundary for longer objectives.
@@ -197,31 +197,27 @@ The default `openminion` invocation is the recommended interactive surface:
 2. `cat prompt.md | openminion` runs one stdin-backed turn and exits without
    mounting either interactive renderer.
 3. `openminion run` is the explicit one-shot command for scripts and JSON.
-4. `openminion focus`, `openminion chat`, and `openminion tui` are hidden
-   compatibility aliases; `openminion dashboard` is a bounded retirement
-   tombstone. None owns a separate interactive implementation.
-5. Each agent turn shows a `⏺` marker, verb-rotating thinking spinner,
+4. Each agent turn shows a `⏺` marker, verb-rotating thinking spinner,
    colored `●` tool-call markers, and syntax-highlighted code blocks.
-6. `--progress minimal` drops moving frames while preserving bounded status
-   text, and `--progress off` suppresses in-flight chrome. `--plain-spinner`,
-   `OPENMINION_FOCUS_PLAIN_SPINNER=1`, and `NO_COLOR=1` remain compatibility
-   paths for reduced motion.
-7. Activity animation defaults to `openminion:braille`. Install the optional
+5. `--progress minimal` drops moving frames while preserving bounded status
+   text, and `--progress off` suppresses in-flight chrome. `--plain-spinner`
+   and `NO_COLOR=1` also select reduced motion.
+6. Activity animation defaults to `openminion:braille`. Install the optional
    Unicode catalog with `python -m pip install "openminion[animations]"`, then
    run `openminion --animation-provider unicode --animation helix` or use
    `/animation list`, `/animation use unicode:helix`, and `/animation save
    unicode:helix` inside the interactive CLI.
-8. Tool blocks longer than 6 lines are truncated to keep scrollback readable:
+7. Tool blocks longer than 6 lines are truncated to keep scrollback readable:
    `/expand` reprints the latest block, `/expand 2` selects the second latest,
    and `/expand 0` lists all truncated blocks.
-9. Tool-block verbosity has three levels:
+8. Tool-block verbosity has three levels:
    - `--verbosity quiet` hides tool blocks but keeps an end-of-turn hidden-call
      summary.
    - `--verbosity normal` is the default: 6-line cap plus `/expand`.
    - `--verbosity verbose` shows full tool bodies up to a 200-line hard cap.
 
    You can set the same default with
-   `OPENMINION_FOCUS_VERBOSITY=quiet|normal|verbose`, then override it live with
+   `OPENMINION_VERBOSITY=quiet|normal|verbose`, then override it live with
    `/quiet`, `/normal`, or `/verbose`. Failed tool calls show `✗ (exit N)` in
    red after the title.
 
@@ -230,14 +226,14 @@ The default `openminion` invocation is the recommended interactive surface:
    `verbosity = "quiet"`, `progress = "off"`, `animation_provider =
    "unicode"`, or `animation = "helix"`. Precedence is CLI flag → env →
    preferences file → default.
-10. Edit and Write tool calls render inline unified diffs. The same verbosity
+9. Edit and Write tool calls render inline unified diffs. The same verbosity
    ladder applies: quiet hides, normal truncates, verbose shows up to 200 lines,
    and `/expand` always shows the full diff.
-11. Live tool-execution narration prints a yellow `● Running Bash(ls -la)` line
+10. Live tool-execution narration prints a yellow `● Running Bash(ls -la)` line
     while a tool is active, then renders the final tool block below it. Quiet
     mode suppresses narration but still counts the call in the end-of-turn
     summary.
-12. Interactive slash commands include `/animation`, `/clear`, `/compact`,
+11. Interactive slash commands include `/animation`, `/clear`, `/compact`,
     `/cost`, `/exit`, `/expand`, `/help`, `/init`, `/mcp`, `/model`,
     `/new`, `/normal`, `/quiet`, `/quit`, `/readonly`, `/resume`, `/sessions`,
     `/status`, `/tools`, and `/verbose`.
@@ -248,21 +244,6 @@ The default `openminion` invocation is the recommended interactive surface:
     - add custom slash commands as Markdown files in `.openminion/commands/*.md`
       or `<DATA_ROOT>/commands/*.md`; command templates can use `$ARGUMENTS`,
       `$1..$N`, `@file`, and shell interpolation with `!` commands.
-
-## Compatibility aliases
-
-`openminion focus`, `openminion chat`, and `openminion tui` print a migration
-notice and forward to the canonical owner. They do not retain separate
-interactive implementations.
-Piped compatibility-alias input forwards to one-shot execution; unsupported old flags fail
-with migration help. Notice suppression is available through
-`OPENMINION_CHAT_NO_DEPRECATION=1` and
-`OPENMINION_TUI_NO_DEPRECATION=1`.
-
-The retired `openminion dashboard` command only prints a migration map; it does
-not launch an interactive runtime. Dashboard functions are available through
-the canonical CLI, resource commands, and typed APIs listed in
-[`docs/terminal-surfaces.md`](docs/terminal-surfaces.md).
 
 ## Cross-surface UX flags
 
@@ -280,13 +261,11 @@ These apply uniformly to the interactive CLI, gateway, run, and agent surfaces:
    `off` so captured output stays clean. Pass `--progress full` to override.
 4. Env defaults: `OPENMINION_VERBOSITY=quiet|normal|verbose` and
    `OPENMINION_PROGRESS=full|minimal|off`.
-5. Legacy aliases still work: `--no-progress` → `--progress off`,
-   `--plain-spinner` → `--progress minimal`, and the older focus-specific env
-   vars still resolve with deprecation warnings.
+5. Shortcut flags remain available: `--no-progress` and
+   `--no-activity-indicator` map to `--progress off`; `--plain-spinner` maps
+   to `--progress minimal`.
 6. `NO_COLOR=1` follows the universal convention by mapping to
    `--progress minimal`.
-7. Compatibility aliases do not own separate rendering or progress behavior;
-   they forward to the default terminal renderer unless `--rich` explicitly selects Textual.
 
 ## Shared logging conventions
 
@@ -302,7 +281,7 @@ These apply uniformly to the interactive CLI, gateway, run, and agent surfaces:
 3. For any UI integration or plugin, use gateway ingress (`/v1/turn*` or
    `GatewayService.run_once`) rather than direct agent-service calls. The
    repository UI gateway contract documents that boundary.
-4. Compatibility aliases remain only for migration and do not own a separate
+4. Retired interactive command names are rejected and do not own a separate
    conversational loop.
 
 ## Costs and warranty

@@ -440,7 +440,8 @@ def run_cli_session(
         session_id,
         "--verbosity",
         "quiet",
-        "--no-progress",
+        "--progress",
+        "off",
     ]
     exit_code, transcript = _run_probe_session(
         cmd=command,

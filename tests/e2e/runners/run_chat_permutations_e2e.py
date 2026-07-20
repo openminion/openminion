@@ -420,7 +420,8 @@ def _run_chat(
         session_id,
         "--verbosity",
         "quiet",
-        "--no-progress",
+        "--progress",
+        "off",
     ]
     master_fd, slave_fd = _open_probe_pty()
     proc = subprocess.Popen(

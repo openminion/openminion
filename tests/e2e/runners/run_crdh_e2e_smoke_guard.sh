@@ -68,10 +68,9 @@ timeout_output=$(
     OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" \
     PYTHONPATH=src "$PY" -m openminion \
         --config "$CONFIG_PATH" \
-        chat \
         --agent "$AGENT_ID" \
         --session "$SESSION_ID" \
-        --quiet \
+        --verbosity quiet \
         2>&1 || true
 )
 

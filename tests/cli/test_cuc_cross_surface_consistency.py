@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from typing import Iterator
 
 import pytest
@@ -16,8 +15,6 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for key in (
         "OPENMINION_VERBOSITY",
         "OPENMINION_PROGRESS",
-        "OPENMINION_FOCUS_VERBOSITY",
-        "OPENMINION_FOCUS_PLAIN_SPINNER",
         "NO_COLOR",
     ):
         monkeypatch.delenv(key, raising=False)
@@ -25,26 +22,17 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def _build_parser():
-    from openminion.cli.commands.agent import register as agent_register
-    from openminion.cli.commands.interactive import register as focus_register
-    from openminion.cli.commands.gateway import register as gateway_register
-    from openminion.cli.commands.run import register as run_register
+    from openminion.cli.parser.base import build_parser
 
-    parser = argparse.ArgumentParser()
-    sub = parser.add_subparsers(dest="cmd")
-    focus_register(sub)
-    gateway_register(sub)
-    run_register(sub)
-    agent_register(sub)
-    return parser
+    return build_parser()
 
 
 # ── Flag registration parity ──────────────────────────────────────
 
 
-def test_focus_accepts_verbosity_and_progress() -> None:
+def test_interactive_root_accepts_verbosity_and_progress() -> None:
     parser = _build_parser()
-    args = parser.parse_args(["focus", "--verbosity", "quiet", "--progress", "off"])
+    args = parser.parse_args(["--verbosity", "quiet", "--progress", "off"])
     assert args.verbosity == "quiet"
     assert args.progress == "off"
 
@@ -86,9 +74,9 @@ def test_agent_accepts_verbosity_and_progress() -> None:
     assert args.progress == "off"
 
 
-def test_focus_accepts_plain_spinner_alias() -> None:
+def test_interactive_root_accepts_plain_spinner_alias() -> None:
     parser = _build_parser()
-    args = parser.parse_args(["focus", "--plain-spinner"])
+    args = parser.parse_args(["--plain-spinner"])
     assert args.plain_spinner is True
 
 
@@ -124,7 +112,7 @@ def test_run_accepts_no_progress_alias() -> None:
 def test_resolve_verbosity_consistent_across_surfaces(clean_env: None) -> None:
     parser = _build_parser()
     surfaces = [
-        ["focus", "--verbosity", "quiet"],
+        ["--verbosity", "quiet"],
         ["gateway", "run", "--once", "--message", "hi", "--verbosity", "quiet"],
         ["run", "hi", "--verbosity", "quiet"],
         ["agent", "--message", "hi", "--verbosity", "quiet"],
@@ -144,7 +132,7 @@ def test_resolve_progress_consistent_across_surfaces(
 
     parser = _build_parser()
     surfaces = [
-        ["focus", "--progress", "off"],
+        ["--progress", "off"],
         ["gateway", "run", "--once", "--message", "hi", "--progress", "off"],
         ["run", "hi", "--progress", "off"],
         ["agent", "--message", "hi", "--progress", "off"],
@@ -163,8 +151,7 @@ def test_resolve_progress_alias_consistent_across_surfaces(
     monkeypatch.setattr(v, "_stdout_is_tty", lambda: True)
 
     parser = _build_parser()
-    # Every CUC-scoped surface (gateway/run/agent) plus focus
-    # registers `--no-progress` as an alias.
+    # Every command-backed CUC surface registers `--no-progress` as an alias.
     surfaces = [
         ["gateway", "run", "--once", "--message", "hi", "--no-progress"],
         ["run", "hi", "--no-progress"],
@@ -185,7 +172,7 @@ def test_resolve_plain_spinner_alias_consistent(
 
     parser = _build_parser()
     surfaces = [
-        ["focus", "--plain-spinner"],
+        ["--plain-spinner"],
         ["run", "hi", "--plain-spinner"],
         ["agent", "--message", "hi", "--plain-spinner"],
     ]
@@ -231,7 +218,7 @@ def test_env_verbosity_consistent_across_surfaces(
     monkeypatch.setenv("OPENMINION_VERBOSITY", "verbose")
     parser = _build_parser()
     surfaces = [
-        ["focus"],
+        [],
         ["gateway", "run", "--once", "--message", "hi"],
         ["run", "hi"],
         ["agent", "--message", "hi"],
@@ -247,7 +234,7 @@ def test_env_progress_consistent_across_surfaces(
     monkeypatch.setenv("OPENMINION_PROGRESS", "off")
     parser = _build_parser()
     surfaces = [
-        ["focus"],
+        [],
         ["gateway", "run", "--once", "--message", "hi"],
         ["run", "hi"],
         ["agent", "--message", "hi"],
@@ -270,7 +257,7 @@ def test_auto_detect_off_on_pipe_across_surfaces(
 
     parser = _build_parser()
     surfaces = [
-        ["focus"],
+        [],
         ["gateway", "run", "--once", "--message", "hi"],
         ["run", "hi"],
         ["agent", "--message", "hi"],
@@ -293,7 +280,7 @@ def test_auto_detect_full_on_tty_across_surfaces(
 
     parser = _build_parser()
     surfaces = [
-        ["focus"],
+        [],
         ["gateway", "run", "--once", "--message", "hi"],
         ["run", "hi"],
         ["agent", "--message", "hi"],
@@ -303,14 +290,10 @@ def test_auto_detect_full_on_tty_across_surfaces(
         assert resolve_progress(args) == "full", invocation
 
 
-# ── Chat is intentionally NOT in the consistency contract ────────
+# ── Retired aliases are not in the consistency contract ─────────
 
 
-def test_chat_is_explicitly_out_of_cuc_scope() -> None:
+def test_retired_chat_alias_is_rejected() -> None:
     parser = _build_parser()
-    # Chat does NOT accept --verbosity (it's not registered there).
     with pytest.raises(SystemExit):
         parser.parse_args(["chat", "--verbosity", "quiet"])
-    # Chat does NOT accept --progress.
-    with pytest.raises(SystemExit):
-        parser.parse_args(["chat", "--progress", "off"])

@@ -38,7 +38,7 @@ PYTHONPATH=src "$PY" -m pytest -q \
   OPENMINION_TRACE_REQUESTS=1 \
   PYTHONPATH=src .venv/bin/python3.11 -m openminion \
     --config test-configs/per-agent-alibaba-minimax.json \
-    chat --agent alibaba-minimax --session identity-authority-interop-redo --quiet --no-progress <<'EOCHAT'
+    --agent alibaba-minimax --session identity-authority-interop-redo --verbosity quiet --progress off <<'EOCHAT'
 hello
 /exit
 EOCHAT

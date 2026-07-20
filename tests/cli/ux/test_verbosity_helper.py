@@ -15,7 +15,6 @@ from openminion.cli.ux.verbosity import (
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("OPENMINION_VERBOSITY", raising=False)
-    monkeypatch.delenv("OPENMINION_FOCUS_VERBOSITY", raising=False)
     yield
 
 
@@ -99,51 +98,6 @@ def test_empty_env_no_warning(
     monkeypatch.setenv("OPENMINION_VERBOSITY", "")
     assert resolve_verbosity(_args()) == "normal"
     assert capsys.readouterr().err == ""
-
-
-def test_legacy_env_resolves_with_deprecation_warning(
-    clean_env: None,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("OPENMINION_FOCUS_VERBOSITY", "verbose")
-    result = resolve_verbosity(_args())
-    assert result == "verbose"
-    err = capsys.readouterr().err
-    assert "OPENMINION_FOCUS_VERBOSITY is deprecated" in err
-    assert "OPENMINION_VERBOSITY" in err
-
-
-def test_canonical_env_beats_legacy(
-    clean_env: None,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("OPENMINION_VERBOSITY", "quiet")
-    monkeypatch.setenv("OPENMINION_FOCUS_VERBOSITY", "verbose")
-    result = resolve_verbosity(_args())
-    assert result == "quiet"
-    err = capsys.readouterr().err
-    assert "deprecated" not in err
-
-
-def test_legacy_env_garbage_falls_through(
-    clean_env: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("OPENMINION_FOCUS_VERBOSITY", "loud")
-    assert resolve_verbosity(_args()) == "normal"
-
-
-def test_flag_beats_legacy_env(
-    clean_env: None,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("OPENMINION_FOCUS_VERBOSITY", "verbose")
-    result = resolve_verbosity(_args(verbosity="quiet"))
-    assert result == "quiet"
-    err = capsys.readouterr().err
-    assert "deprecated" not in err
 
 
 def test_add_verbosity_flag_accepts_choices() -> None:

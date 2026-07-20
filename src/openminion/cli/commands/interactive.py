@@ -81,15 +81,7 @@ def _run_inline_setup(args: Any) -> int:
 
 
 def _resolve_interactive_backend(args: argparse.Namespace) -> str:
-    from openminion.base.config.env import EnvironmentConfig
-
-    if bool(getattr(args, "terminal", False)):
-        return "terminal"
     if bool(getattr(args, "rich", False)):
-        return "textual"
-    env = EnvironmentConfig.from_sources()
-    env_value = str(env.get("OPENMINION_FOCUS_BACKEND", "") or "").strip().lower()
-    if env_value in ("textual", "rich"):
         return "textual"
     return "terminal"
 
@@ -319,10 +311,7 @@ def run_interactive(args: argparse.Namespace) -> int:
         working_dir = str(
             Path(getattr(args, "dir", None) or ".").expanduser().resolve(strict=False)
         )
-        surface = str(getattr(args, "surface", "focus") or "focus")
-        record_surface_event(runtime, surface=surface, action="launch")
-        if bool(getattr(args, "deprecation_notice_shown", False)):
-            record_surface_event(runtime, surface=surface, action="deprecation")
+        record_surface_event(runtime)
         if backend == "terminal":
             return _launch_terminal_focus(args, runtime, working_dir=working_dir)
         _maybe_print_update_notice(args)
@@ -335,42 +324,3 @@ def run_interactive(args: argparse.Namespace) -> int:
     finally:
         if runtime is not None:
             runtime.close()
-
-
-def add_interactive_arguments(parser: argparse.ArgumentParser) -> None:
-    from openminion.cli.parser.flags import add_interactive_session_flags
-
-    add_interactive_session_flags(parser)
-    parser.add_argument(
-        "--no-interactive",
-        action="store_true",
-        help="Disable inline first-run setup and fail fast with remediation",
-    )
-    backend = parser.add_mutually_exclusive_group()
-    backend.add_argument(
-        "--rich",
-        action="store_true",
-        help="Use the optional Textual renderer instead of the default terminal renderer.",
-    )
-    backend.add_argument(
-        "--terminal",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
-
-
-def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    focus = subparsers.add_parser(
-        "focus",
-        help=argparse.SUPPRESS,
-        description=(
-            "Compatibility alias for the OpenMinion interactive CLI. "
-            "Run bare `openminion` for the canonical surface."
-        ),
-    )
-    add_interactive_arguments(focus)
-    focus.set_defaults(handler=run_interactive, needs_app=False)
-
-
-# Python-level compatibility for callers that imported the old function name.
-run_focus = run_interactive

@@ -137,7 +137,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     gateway_run.add_argument(
         "--no-progress",
         action="store_true",
-        help="Legacy alias for --progress off (CUC).",
+        help="Shortcut for --progress off.",
     )
     gateway_run.add_argument(
         "--idempotency-key",

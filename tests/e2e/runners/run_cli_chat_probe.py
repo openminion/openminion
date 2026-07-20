@@ -1009,15 +1009,15 @@ def main() -> int:
         "openminion",
         "--config",
         args.config,
-        "chat",
         "--agent",
         args.agent,
         "--session",
         args.session,
-        "--quiet",
+        "--verbosity",
+        "quiet",
     ]
     if not args.show_progress:
-        cmd.append("--no-progress")
+        cmd.extend(("--progress", "off"))
 
     cwd = Path(os.getcwd()).resolve()
     home_root = _resolve_home_root()

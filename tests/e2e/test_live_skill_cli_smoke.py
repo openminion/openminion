@@ -110,13 +110,14 @@ def _run_skill_cli_smoke(*, data_root: Path) -> tuple[str, Path, str]:
         "openminion",
         "--config",
         str(_SKILL_CONFIG_PATH),
-        "chat",
         "--agent",
         "hello-agent",
         "--session",
         session_id,
-        "--quiet",
-        "--no-progress",
+        "--verbosity",
+        "quiet",
+        "--progress",
+        "off",
     ]
     completed = subprocess.run(
         command,

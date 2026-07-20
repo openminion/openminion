@@ -157,12 +157,6 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/readonly", "Switch permission mode to readonly", "_slash_readonly", None
     ),
     SlashCommandMetadata(
-        "/dashboard",
-        "Show dashboard retirement and replacement commands",
-        "_slash_dashboard",
-        "_slash_dashboard",
-    ),
-    SlashCommandMetadata(
         "/help", "Show this help", "_slash_help", "_slash_help", ("/",)
     ),
     SlashCommandMetadata(

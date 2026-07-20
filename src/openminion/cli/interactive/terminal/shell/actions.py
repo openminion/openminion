@@ -50,7 +50,7 @@ from .renderers import (
     _switch_theme,
     _switch_theme_variant,
 )
-from .sessions import resume_session, show_dashboard_retirement, start_new_session
+from .sessions import resume_session, start_new_session
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -548,10 +548,6 @@ async def _handle_session_slash(
         )
     elif cmd == "/new":
         start_new_session(runtime=runtime, console=console, transcript=transcript)
-    elif cmd == "/dashboard":
-        await show_dashboard_retirement(
-            runtime=runtime, console=console, transcript=transcript
-        )
     elif cmd == "/diff":
         _handle_slash_diff(
             text,

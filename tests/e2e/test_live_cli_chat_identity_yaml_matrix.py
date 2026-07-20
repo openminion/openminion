@@ -272,13 +272,14 @@ def _run_cli_turn(
         "openminion",
         "--config",
         str(config_path),
-        "chat",
         "--agent",
         scenario.agent_id,
         "--session",
         session_id,
-        "--quiet",
-        "--no-progress",
+        "--verbosity",
+        "quiet",
+        "--progress",
+        "off",
     ]
     user_input = "\n".join((*prompt_lines, "/debug", "/exit")) + "\n"
     completed = subprocess.run(

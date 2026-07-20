@@ -60,7 +60,6 @@ from .actions import (
     _cycle_permission_mode,
     _SLASH_COMMANDS,
 )
-from .sessions import show_dashboard_retirement
 from .renderers import (
     _render_cost_snapshot as _render_cost_snapshot,
     _render_mcp_status as _render_mcp_status,
@@ -73,8 +72,6 @@ from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.slash_commands import slash_help_rows
 from openminion.cli.presentation.visible_parity import statusline_label
-
-_open_dashboard_side_trip = show_dashboard_retirement
 
 __all__ = [
     "_render_cost_snapshot",

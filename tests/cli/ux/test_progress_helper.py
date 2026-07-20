@@ -16,7 +16,6 @@ from openminion.cli.ux.verbosity import (
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("OPENMINION_PROGRESS", raising=False)
-    monkeypatch.delenv("OPENMINION_FOCUS_PLAIN_SPINNER", raising=False)
     monkeypatch.delenv("NO_COLOR", raising=False)
     yield
 
@@ -142,44 +141,6 @@ def test_garbage_env_falls_through_with_warning(
     err = capsys.readouterr().err
     assert "OPENMINION_PROGRESS" in err
     assert "loud" in err
-
-
-def test_legacy_plain_spinner_env_returns_minimal_with_warning(
-    clean_env: None,
-    force_tty: None,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("OPENMINION_FOCUS_PLAIN_SPINNER", "1")
-    result = resolve_progress(_args())
-    assert result == "minimal"
-    err = capsys.readouterr().err
-    assert "OPENMINION_FOCUS_PLAIN_SPINNER is deprecated" in err
-    assert "OPENMINION_PROGRESS=minimal" in err
-
-
-@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
-def test_legacy_plain_spinner_truthy_variants(
-    clean_env: None,
-    force_tty: None,
-    monkeypatch: pytest.MonkeyPatch,
-    value: str,
-) -> None:
-    monkeypatch.setenv("OPENMINION_FOCUS_PLAIN_SPINNER", value)
-    assert resolve_progress(_args()) == "minimal"
-
-
-def test_canonical_env_beats_legacy(
-    clean_env: None,
-    force_tty: None,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("OPENMINION_PROGRESS", "off")
-    monkeypatch.setenv("OPENMINION_FOCUS_PLAIN_SPINNER", "1")
-    result = resolve_progress(_args())
-    assert result == "off"
-    assert "deprecated" not in capsys.readouterr().err
 
 
 def test_no_color_returns_minimal(

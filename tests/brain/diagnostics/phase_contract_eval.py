@@ -235,13 +235,14 @@ def run_live_chat_scenario(
             "openminion",
             "--config",
             str(config),
-            "chat",
             "--agent",
             agent,
             "--session",
             session_id,
-            "--quiet",
-            "--no-progress",
+            "--verbosity",
+            "quiet",
+            "--progress",
+            "off",
         ]
         proc = subprocess.run(
             command,
