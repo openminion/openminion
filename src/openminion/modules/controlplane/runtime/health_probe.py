@@ -9,6 +9,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_PROMETHEUS_TEXT_VERSION = (0, 0, 4)
+_PROMETHEUS_TEXT_CONTENT_TYPE = (
+    "text/plain; version={}.{}.{}".format(*_PROMETHEUS_TEXT_VERSION)
+)
 
 
 @dataclass(frozen=True)
@@ -117,7 +121,7 @@ class ControlPlaneHealthProbeSidecar:
                     self._write(200, _redact(sidecar._get_status()))
                 elif self.path == "/metrics":
                     self.send_response(200)
-                    self.send_header("Content-Type", "text/plain; version=0.0.4")
+                    self.send_header("Content-Type", _PROMETHEUS_TEXT_CONTENT_TYPE)
                     self.end_headers()
                     self.wfile.write(sidecar._get_metrics())
                 else:

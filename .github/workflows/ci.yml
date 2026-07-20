@@ -35,7 +35,11 @@ jobs:
         run: |
           dep_branch="${OPENMINION_CI_DEP_BRANCH:-main}"
           if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
-            dep_branch="${OPENMINION_CI_DEP_BRANCH:-dev}"
+            if [[ "${GITHUB_HEAD_REF:-}" == release/* ]]; then
+              dep_branch="${OPENMINION_CI_DEP_BRANCH:-main}"
+            else
+              dep_branch="${OPENMINION_CI_DEP_BRANCH:-dev}"
+            fi
           fi
           mkdir -p .deps
           [[ -d .deps/openminion-eval ]] || git clone --depth 1 --branch "$dep_branch" https://github.com/openminion/openminion-eval .deps/openminion-eval

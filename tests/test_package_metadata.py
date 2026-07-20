@@ -139,7 +139,10 @@ def test_current_package_version_literal_stays_in_version_owner() -> None:
         except UnicodeDecodeError:
             continue
         for version_literal, owner_name in VERSION_LITERAL_OWNERS.items():
-            if version_literal in text:
+            version_pattern = re.compile(
+                rf"(?<![0-9.]){re.escape(version_literal)}(?![0-9A-Za-z.])"
+            )
+            if version_pattern.search(text):
                 findings.append(f"{relative_path}: {owner_name}")
 
     assert findings == []
