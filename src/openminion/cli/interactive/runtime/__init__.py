@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Mapping
+from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, cast
 from uuid import uuid4
 
 from openminion.api.runtime import APIRuntime
@@ -219,6 +219,41 @@ class OpenMinionRuntime(
     @property
     def project_context(self) -> ProjectContextInfo | None:
         return self._project_context
+
+    def execute_goal_command(self, line: str) -> tuple[str, str]:
+        if not self.is_bound:
+            return ("error", "No active session for /goal.")
+        from openminion.cli.commands.goal import execute_goal_cli_command
+
+        return cast(
+            tuple[str, str],
+            execute_goal_cli_command(
+                line,
+                session_id=self.session_id,
+                db_path=self._goal_database_path(),
+            ),
+        )
+
+    def goal_statusline_label(self) -> str:
+        if not self.is_bound:
+            return ""
+        from openminion.cli.commands.goal import goal_statusline_label
+
+        return cast(
+            str,
+            goal_statusline_label(
+                session_id=self.session_id,
+                db_path=self._goal_database_path(),
+            ),
+        )
+
+    def _goal_database_path(self) -> Path:
+        from openminion.modules.brain.paths import resolve_brain_sessions_db_path
+
+        return cast(
+            Path,
+            resolve_brain_sessions_db_path(storage_path=self._rt.storage_path),
+        )
 
     def token_usage_snapshot(self) -> TokenUsageSnapshot:
         turn_usage = self._current_turn_usage or self._last_turn_usage

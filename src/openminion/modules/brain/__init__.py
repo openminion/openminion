@@ -10,6 +10,7 @@ from .meta import (
     VerificationMode,
 )
 from .runner import BrainRunner, StateMachineRunner, StepOutput
+from .runtime.goal.context import build_goal_context_card, render_goal_context_card
 from .runtime.goal.driver import GoalContinuationDriver
 from .runtime.goal.evaluator import GoalTurnResult
 from .runtime.goal.ledger import SQLiteGoalRunStepLedger
@@ -23,6 +24,7 @@ from .runtime.goal.loop import (
     GoalRunOutcome,
     GoalRunState,
     SQLiteGoalRunStore,
+    format_goal_focus_segment,
     parse_replay_evaluations,
     render_goal_run_status,
 )
@@ -65,9 +67,12 @@ __all__ = [
     "SQLiteGoalRunStepLedger",
     "SQLiteGoalRunStore",
     "WorkingState",
+    "build_goal_context_card",
+    "format_goal_focus_segment",
     "load_config",
     "parse_replay_evaluations",
     "render_goal_run_status",
+    "render_goal_context_card",
     "render_goal_summary",
     "render_goal_verification",
 ]

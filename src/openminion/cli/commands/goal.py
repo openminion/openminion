@@ -11,7 +11,10 @@ from openminion.modules.brain import (
     LongRunningGoalRuntime,
     SQLiteGoalRunStepLedger,
     SQLiteGoalRunStore,
+    build_goal_context_card,
+    format_goal_focus_segment,
     parse_replay_evaluations,
+    render_goal_context_card,
     render_goal_run_status,
     render_goal_summary,
     render_goal_verification,
@@ -277,7 +280,20 @@ def _goal_inspect_response(
     ]
     if summary.error_refs:
         lines.append("error_refs=" + ",".join(summary.error_refs))
+    goal = controller.goal_store.get(state.goal_id)
+    if goal is not None:
+        card = build_goal_context_card(goal=goal, state=state, summary=summary)
+        lines.extend(("", render_goal_context_card(card)))
     return ("info", "\n".join(lines))
+
+
+def goal_statusline_label(*, session_id: str, db_path: Path) -> str:
+    runtime = build_goal_cli_runtime(db_path)
+    controller = build_goal_run_controller(runtime, db_path=db_path)
+    return cast(
+        str,
+        format_goal_focus_segment(controller.active_state(session_id=session_id)),
+    )
 
 
 def _goal_evidence_response(
@@ -421,4 +437,5 @@ __all__ = [
     "build_goal_cli_runtime",
     "build_goal_run_controller",
     "execute_goal_cli_command",
+    "goal_statusline_label",
 ]

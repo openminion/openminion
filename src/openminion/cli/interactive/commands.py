@@ -354,6 +354,22 @@ class SlashCommandMixin:
 
         self._push_system_body(render_context_report(self._runtime))
 
+    def _slash_goal(self: Any, args: str) -> None:
+        executor = getattr(self._runtime, "execute_goal_command", None)
+        if not callable(executor):
+            self._push_system_body("This runtime does not expose goal commands.")
+            return
+        line = "/goal" if not str(args or "").strip() else f"/goal {args.strip()}"
+        try:
+            tone, body = executor(line)
+        except (OSError, RuntimeError, ValueError) as exc:
+            tone, body = ("error", f"/goal failed: {exc}")
+        kind = MessageKind.ERROR if tone == "error" else MessageKind.SYSTEM
+        self.query_one(FocusTranscript).push_message(
+            ChatMessage(kind=kind, sender="system", body=body)
+        )
+        self._push_status_line()
+
     def _slash_memory(self, _args: str) -> None:
         from openminion.cli.presentation.visible_parity import render_memory_report
 

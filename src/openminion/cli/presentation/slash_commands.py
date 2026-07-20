@@ -77,6 +77,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/context", "Show visual context usage", "_slash_context", "_slash_context"
     ),
     SlashCommandMetadata(
+        "/goal",
+        "Inspect or control the active goal run",
+        "_slash_goal",
+        "_slash_goal",
+    ),
+    SlashCommandMetadata(
         "/effort", "Show or set per-turn effort", "_slash_effort", "_slash_effort"
     ),
     SlashCommandMetadata(
