@@ -104,6 +104,13 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
         payload.get("time_to_first_text_ms"),
         common,
     )
+    _append_metric(
+        metrics,
+        "openminion_provider_token_ttft_ms",
+        _KIND_HISTOGRAM,
+        payload.get("provider_token_ttft_ms"),
+        common,
+    )
     for phase in CHAT_PHASES:
         _append_metric(
             metrics,
@@ -132,7 +139,9 @@ def _chat_phase_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
 def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
     metrics: list[dict[str, Any]] = []
     common = {
-        "transport": _bounded_label(payload.get("transport") or "runtime", default="runtime"),
+        "transport": _bounded_label(
+            payload.get("transport") or "runtime", default="runtime"
+        ),
         "profile_kind": _bounded_label(
             payload.get("profile_kind") or payload.get("provider_profile") or "runtime",
             default="runtime",
@@ -164,14 +173,25 @@ def _model_provider_metrics(payload: dict[str, Any]) -> list[dict[str, Any]]:
             "outcome": common["outcome"],
         },
     )
+    usage = payload.get("usage")
+    usage_map = usage if isinstance(usage, dict) else {}
     for metric_name, payload_key in (
         ("openminion_model_request_bytes", "request_bytes"),
         ("openminion_model_response_bytes", "response_bytes"),
         ("openminion_model_input_tokens", "input_tokens"),
         ("openminion_model_output_tokens", "output_tokens"),
         ("openminion_model_cached_tokens", "cached_tokens"),
+        ("openminion_context_bytes", "context_bytes"),
+        ("openminion_context_tokens", "context_tokens"),
+        ("openminion_context_segment_count", "context_segment_count"),
+        ("openminion_tool_schema_bytes", "tool_schema_bytes"),
+        ("openminion_tool_schema_count", "tool_schema_count"),
+        ("openminion_exposed_tool_count", "exposed_tool_count"),
     ):
-        _append_metric(metrics, metric_name, _KIND_HISTOGRAM, payload.get(payload_key), common)
+        value = payload.get(payload_key)
+        if value is None:
+            value = usage_map.get(payload_key)
+        _append_metric(metrics, metric_name, _KIND_HISTOGRAM, value, common)
     _append_metric(
         metrics,
         "openminion_provider_round_trip_ms",

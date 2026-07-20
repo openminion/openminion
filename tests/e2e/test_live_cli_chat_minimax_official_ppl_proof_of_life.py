@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 
@@ -14,6 +13,7 @@ from tests.helpers.live_cli_chat_alibaba import (
     artifact_dir,
     framework_root,
     require_live_flag,
+    runtime_home_root,
 )
 from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
@@ -45,7 +45,7 @@ def test_live_minimax_m2_7_ppl_proof_of_life_emission_chain() -> None:
 
     runtime = APIRuntime.from_config_path(
         str(_OFFICIAL_CONFIG),
-        home_root=Path(framework_root()),
+        home_root=runtime_home_root(),
         data_root=data_root,
     )
     try:

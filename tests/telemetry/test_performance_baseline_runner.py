@@ -190,6 +190,97 @@ def test_comparison_rejects_identity_mismatch() -> None:
     assert "command" in result["identity_errors"]
 
 
+def test_comparison_rejects_quality_failure_before_timing_gain() -> None:
+    module = _load_module()
+    identity = module._measurement_identity(
+        scenario_id="simple_turn",
+        command="replay_fixture:simple_turn",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="fixture-v1",
+    )
+    current = {
+        "count": 5,
+        "ok_count": 4,
+        "wall_time_ms": {"p95": 1, "coefficient_of_variation": 0.0},
+        "measurement_identity": identity,
+    }
+    baseline = {
+        "scenarios": {
+            "simple_turn": {
+                "wall_time_ms": {"p95": 10, "coefficient_of_variation": 0.0},
+                "measurement_identity": identity,
+            }
+        }
+    }
+
+    result = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="simple_turn",
+        threshold_mode="warn",
+    )
+
+    assert result["status"] == "fail"
+    assert result["reason"] == "quality fixture failure"
+
+
+def test_comparison_uses_five_sample_p95_and_variance_rule() -> None:
+    module = _load_module()
+    identity = module._measurement_identity(
+        scenario_id="simple_turn",
+        command="replay_fixture:simple_turn",
+        measured_boundary=module.SUT_BOUNDARY_IN_PROCESS,
+        fixture_revision="fixture-v1",
+    )
+    baseline_scenario = {
+        "wall_time_ms": {"p95": 100, "coefficient_of_variation": 0.10},
+        "measurement_identity": identity,
+    }
+    baseline = {"scenarios": {"simple_turn": baseline_scenario}}
+    current = {
+        "count": 5,
+        "ok_count": 5,
+        "wall_time_ms": {"p95": 111, "coefficient_of_variation": 0.10},
+        "measurement_identity": identity,
+    }
+
+    result = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="simple_turn",
+        threshold_mode="hard",
+    )
+    assert result["status"] == "fail"
+    assert result["regression_ratio"] == 1.10
+
+    current["wall_time_ms"] = {"p95": 90, "coefficient_of_variation": 0.21}
+    result = module._threshold_result(
+        current=current,
+        baseline=baseline,
+        scenario_id="simple_turn",
+        threshold_mode="hard",
+    )
+    assert result["status"] == "ineligible"
+    assert "variance" in result["reason"]
+
+
+def test_hard_gate_failures_only_return_failed_scenarios_in_hard_mode() -> None:
+    module = _load_module()
+    summary = {
+        "threshold_mode": "hard",
+        "scenarios": {
+            "stable": {"threshold_result": {"status": "pass"}},
+            "provider": {"threshold_result": {"status": "warn"}},
+            "local_regression": {"threshold_result": {"status": "fail"}},
+            "not_comparable": {"threshold_result": {"status": "ineligible"}},
+        },
+    }
+
+    assert module._hard_gate_failures(summary) == ["local_regression"]
+    summary["threshold_mode"] = "warn"
+    assert module._hard_gate_failures(summary) == []
+
+
 def test_local_status_scenario_records_required_metric_keys() -> None:
     module = _load_module()
 

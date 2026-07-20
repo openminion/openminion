@@ -143,6 +143,42 @@ def test_run_token_usage_normalizes_llm_surfaces_from_events(
     assert all(record.llm_call_id == "call-1" for record in summary.records)
 
 
+def test_run_turn_cost_projects_canonical_events(store: SQLiteSessionStore) -> None:
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    run_id = store.create_run_record(session_id, run_type="llm", run_id="run-cost")
+    store.append_event(
+        session_id=session_id,
+        event_type="llm.call.completed",
+        payload={
+            "run_id": run_id,
+            "llm_call_id": "call-entry",
+            "purpose": "entry",
+            "usage": {"input_tokens": 10, "output_tokens": 2},
+            "request_bytes": 800,
+            "tool_schema_count": 8,
+            "tool_schema_bytes": 300,
+        },
+    )
+    store.append_event(
+        session_id=session_id,
+        event_type="turn.assistant",
+        payload={"run_id": run_id, "content": "answer"},
+    )
+    store.finish_run_record(run_id, status="completed")
+
+    cost = StatsService(store).get_run_turn_cost(run_id)
+
+    assert cost is not None
+    assert cost.provider_calls_total == 1
+    assert cost.call_purposes == ("entry",)
+    assert cost.input_tokens == 10
+    assert cost.output_tokens == 2
+    assert cost.request_bytes == 800
+    assert cost.tool_schema_count == 8
+
+
 def test_run_token_usage_malformed_usage_values_become_zero(
     store: SQLiteSessionStore,
 ) -> None:

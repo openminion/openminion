@@ -24,6 +24,11 @@ OPENMINION_ROOT = FRAMEWORK_ROOT / "openminion"
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
 _CONFIRMATION_REQUIRED_RE = re.compile(r"Policy confirmation required\.", re.IGNORECASE)
+_INLINE_APPROVAL_RE = re.compile(
+    r"Approval required:[^\n]*\n\[y\]es / \[N\]o / \[a\]lways:\s*",
+    re.IGNORECASE,
+)
+_TURN_DONE_RE = re.compile(r"(?:^|\n)Done in \d+s\s*(?:\n|$)")
 _TIMEOUT_EXIT_CODE = 124
 _PROBE_STATUS_PREFIX = "[probe-status]"
 _AUTO_CONFIRM_LIMIT_ENV = "OPENMINION_LIVE_CLI_CHAT_AUTO_CONFIRM_LIMIT"
@@ -62,6 +67,34 @@ def _ready_prompt_detected(text: str) -> bool:
     return bool(_READY_PROMPT_RE.search(_normalize_probe_text(text)))
 
 
+def _prompt_return_after_response_detected(text: str) -> bool:
+    normalized = _normalize_probe_text(text)
+    if not _ready_prompt_detected(normalized):
+        return False
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    if not lines:
+        return False
+    response_lines = [
+        line
+        for line in lines[:-1]
+        if not re.match(r"^(?:\[[^\]\n]+\]\s+you>|\u276f)(?:\s+.*)?$", line)
+    ]
+    return bool(response_lines)
+
+
+def _inline_approval_detected(text: str) -> bool:
+    return bool(_INLINE_APPROVAL_RE.search(_normalize_probe_text(text)))
+
+
+def _turn_response_boundary_detected(text: str) -> bool:
+    normalized = _normalize_probe_text(text)
+    if _inline_approval_detected(normalized):
+        return True
+    return bool(
+        _TURN_DONE_RE.search(normalized)
+    ) or _prompt_return_after_response_detected(normalized)
+
+
 def _latest_prompt_requires_confirmation(previous: str, current: str) -> bool:
     normalized_current = _normalize_probe_text(current)
     normalized_previous = _normalize_probe_text(previous)
@@ -73,7 +106,8 @@ def _latest_prompt_requires_confirmation(previous: str, current: str) -> bool:
     if not delta:
         return False
     return bool(
-        _CONFIRMATION_REQUIRED_RE.search(delta) and _ready_prompt_detected(delta)
+        (_CONFIRMATION_REQUIRED_RE.search(delta) and _ready_prompt_detected(delta))
+        or _inline_approval_detected(delta)
     )
 
 
@@ -166,7 +200,7 @@ def _resolve_home_root() -> Path:
     env_home = str(os.environ.get("OPENMINION_HOME", "")).strip()
     if env_home:
         return Path(env_home).expanduser().resolve()
-    return FRAMEWORK_ROOT.resolve()
+    return OPENMINION_ROOT.resolve()
 
 
 def _resolve_data_root(home_root: Path) -> Path:
@@ -772,10 +806,15 @@ def _run_probe_session(
             if is_terminal_exit_command:
                 break
             try:
+                wait_predicate = (
+                    _ready_prompt_detected
+                    if message.startswith("/")
+                    else _turn_response_boundary_detected
+                )
                 current_output = _read_until(
                     master_fd=master_fd,
                     transcript=transcript,
-                    predicate=_ready_prompt_detected,
+                    predicate=wait_predicate,
                     timeout_seconds=timeout_seconds,
                     phase="turn_timeout",
                 )
@@ -785,49 +824,45 @@ def _run_probe_session(
                     phase=exc.phase,
                     exit_code=_TIMEOUT_EXIT_CODE,
                 )
-            if auto_confirm:
-                confirmation_turns = 0
-                confirmation_limit = _auto_confirm_limit()
-                while _latest_prompt_requires_confirmation(
-                    previous_output,
-                    current_output,
-                ):
-                    confirmation_turns += 1
-                    if confirmation_turns > confirmation_limit:
-                        return _TIMEOUT_EXIT_CODE, _append_probe_status(
-                            _full_transcript(transcript),
-                            phase="confirmation_loop_limit",
-                            exit_code=_TIMEOUT_EXIT_CODE,
-                        )
-                    previous_output = current_output
-                    try:
-                        _write_all(
-                            master_fd=master_fd,
-                            payload=b"yes\n",
-                            timeout_seconds=timeout_seconds,
-                            phase="confirmation_write_timeout",
-                            transcript=transcript,
-                        )
-                    except _ProbeWriteTimeout as exc:
-                        return _TIMEOUT_EXIT_CODE, _append_probe_status(
-                            _full_transcript(transcript),
-                            phase=exc.phase,
-                            exit_code=_TIMEOUT_EXIT_CODE,
-                        )
-                    try:
-                        current_output = _read_until(
-                            master_fd=master_fd,
-                            transcript=transcript,
-                            predicate=_ready_prompt_detected,
-                            timeout_seconds=timeout_seconds,
-                            phase="confirmation_timeout",
-                        )
-                    except _ProbeReadTimeout as exc:
-                        return _TIMEOUT_EXIT_CODE, _append_probe_status(
-                            _full_transcript(transcript, exc.trailing_text),
-                            phase=exc.phase,
-                            exit_code=_TIMEOUT_EXIT_CODE,
-                        )
+            confirmation_turns = 0
+            confirmation_limit = _auto_confirm_limit()
+            while _latest_prompt_requires_confirmation(previous_output, current_output):
+                confirmation_turns += 1
+                if confirmation_turns > confirmation_limit:
+                    return _TIMEOUT_EXIT_CODE, _append_probe_status(
+                        _full_transcript(transcript),
+                        phase="confirmation_loop_limit",
+                        exit_code=_TIMEOUT_EXIT_CODE,
+                    )
+                previous_output = current_output
+                try:
+                    _write_all(
+                        master_fd=master_fd,
+                        payload=b"yes\n" if auto_confirm else b"no\n",
+                        timeout_seconds=timeout_seconds,
+                        phase="confirmation_write_timeout",
+                        transcript=transcript,
+                    )
+                except _ProbeWriteTimeout as exc:
+                    return _TIMEOUT_EXIT_CODE, _append_probe_status(
+                        _full_transcript(transcript),
+                        phase=exc.phase,
+                        exit_code=_TIMEOUT_EXIT_CODE,
+                    )
+                try:
+                    current_output = _read_until(
+                        master_fd=master_fd,
+                        transcript=transcript,
+                        predicate=_turn_response_boundary_detected,
+                        timeout_seconds=timeout_seconds,
+                        phase="confirmation_timeout",
+                    )
+                except _ProbeReadTimeout as exc:
+                    return _TIMEOUT_EXIT_CODE, _append_probe_status(
+                        _full_transcript(transcript, exc.trailing_text),
+                        phase=exc.phase,
+                        exit_code=_TIMEOUT_EXIT_CODE,
+                    )
         messages_completed = True
         if dump_debug_on_exit:
             _maybe_dump_debug_on_exit(

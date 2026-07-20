@@ -16,6 +16,9 @@ from openminion.modules.brain.retry import (
 )
 from openminion.modules.llm.errors import LLMCtlError
 from openminion.modules.telemetry.trace.structured import write_structured_trace
+from openminion.modules.telemetry.trace.phase_timing import (
+    record_active_chat_provider_call,
+)
 
 from .normalize import _normalize_decision_submit_output_payload
 from .normalize import _normalize_act_submit_output_payload
@@ -336,6 +339,12 @@ class LlmctlAdapter(LLMAPI):
             temperature=temperature,
         )
         response = self.client.call(request)
+        record_active_chat_provider_call(
+            purpose=purpose,
+            messages=list(request.messages),
+            tools=list(request.tools or []),
+            response=response,
+        )
         if not response.ok:
             error = getattr(response, "error", None)
             if error is None:

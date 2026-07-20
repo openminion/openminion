@@ -232,7 +232,6 @@ def test_archive_file_inserts_rows_into_postgres(tmp_path: Path) -> None:
 
 
 def test_archive_files_older_than_deletes_by_default(tmp_path: Path) -> None:
-
     engine, record_store, cleanup = _open_postgres_admin_and_scoped()
     try:
         audit_root = tmp_path / "audit"
@@ -323,7 +322,6 @@ def test_query_audit_include_archive_unions_sqlite_and_postgres(
         )
         msg_ids = [r.msg_id for r in unioned]
         assert sorted(msg_ids) == ["archived-1", "live-1"]
-        assert msg_ids == sorted(msg_ids, key=lambda _m: 0)  # noop sanity
         assert msg_ids[0] == "archived-1"
 
         sqlite_store.close()
@@ -332,7 +330,6 @@ def test_query_audit_include_archive_unions_sqlite_and_postgres(
 
 
 def test_query_audit_include_archive_dedupes_on_msg_id(tmp_path: Path) -> None:
-
     engine, record_store, cleanup = _open_postgres_admin_and_scoped()
     try:
         audit_root = tmp_path / "audit"

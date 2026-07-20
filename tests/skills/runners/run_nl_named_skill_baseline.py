@@ -33,7 +33,6 @@ from openminion_eval.skills import (  # noqa: E402
 from tests.helpers.live_cli_chat_alibaba import (  # noqa: E402
     extract_assistant_messages,
     extract_last_debug_payload,
-    framework_root,
     openminion_root,
     python_bin,
     timeout_seconds,
@@ -82,7 +81,7 @@ def _selected_targets(target_set: str) -> tuple[SkillLiveTarget, ...]:
 
 
 def _default_output_root(target_set: str) -> Path:
-    return resolve_generated_root(home_root=OPENMINION_ROOT.parent) / (
+    return resolve_generated_root(home_root=OPENMINION_ROOT) / (
         f"nl-named-skill-{target_set}-baseline"
     )
 
@@ -98,7 +97,7 @@ def _runner_env(*, data_root: Path, trace_root: Path | None = None) -> dict[str,
     ):
         env.pop(key, None)
 
-    env["OPENMINION_HOME"] = str(framework_root())
+    env["OPENMINION_HOME"] = str(openminion_root())
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     if trace_root is not None:
         env["OPENMINION_TRACE_REQUESTS"] = "1"

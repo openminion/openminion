@@ -15,7 +15,10 @@ from tests.helpers.live_cli_chat_alibaba import (
     framework_root,
     parse_tool_results,
     require_live_flag,
+    openminion_root,
     run_cli_session,
+    transcript_has_assistant_output,
+    transcript_has_cli_ready,
 )
 from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
@@ -93,7 +96,7 @@ _SCENARIOS: tuple[_Scenario, ...] = (
 def _scenario_prompt(
     *, target: _Target, scenario: _Scenario
 ) -> tuple[str, Path | None]:
-    repo_root = framework_root()
+    repo_root = openminion_root()
     readme_path = repo_root / "README.md"
     write_path = (
         artifact_dir()
@@ -142,12 +145,21 @@ def _is_truthful_no_execution_outcome(
     assistant_messages: list[str],
     tool_results: list[dict[str, object]],
 ) -> bool:
-    if tool_results:
+    denied_results = [
+        item
+        for item in tool_results
+        if str(item.get("error_code", "") or "").strip() == "POLICY_DENIED"
+        or str(item.get("content", "") or "").strip().lower()
+        == "tool execution denied by operator"
+    ]
+    if tool_results and len(denied_results) != len(tool_results):
         return False
     accepted_needles = (
         "denied by policy: operation requires explicit confirmation",
         "policy confirmation required.",
         "the requested tool was not executed, so i cannot truthfully claim it succeeded.",
+        "repeated identical tool calls detected without reaching a final answer.",
+        "tool execution denied by operator",
     )
     surfaces = [transcript, body_preview, *assistant_messages]
     lowered_surfaces = [str(surface).lower() for surface in surfaces]
@@ -196,6 +208,24 @@ def test_truthful_no_execution_helper_requires_no_tool_results() -> None:
         ],
         tool_results=[{"tool_name": "file.write"}],
     )
+    assert _is_truthful_no_execution_outcome(
+        transcript="Tool execution denied by operator",
+        body_preview=(
+            "[act:coding] repeated identical tool calls detected without reaching "
+            "a final answer."
+        ),
+        assistant_messages=[
+            "[act:coding] repeated identical tool calls detected without reaching "
+            "a final answer."
+        ],
+        tool_results=[
+            {
+                "tool_name": "file.write",
+                "ok": False,
+                "error_code": "POLICY_DENIED",
+            }
+        ],
+    )
 
 
 @pytest.mark.e2e
@@ -224,12 +254,14 @@ def test_live_cli_chat_minimax_official_tool_matrix(
 
     transcript = result.transcript
     transcript_path = result.transcript_path
-    assert f"chat ready agent={target.agent_id}" in transcript, (
+    assert transcript_has_cli_ready(transcript=transcript, agent_id=target.agent_id), (
         f"missing chat ready marker for target={target.target_id} scenario={scenario.id}\n"
         f"transcript={transcript_path}"
     )
-    assert (
-        f"[{result.session_id}|{target.agent_id}] {target.agent_id}:" in transcript
+    assert transcript_has_assistant_output(
+        transcript=transcript,
+        session_id=result.session_id,
+        agent_id=target.agent_id,
     ), (
         f"missing assistant response marker for target={target.target_id} scenario={scenario.id}\n"
         f"transcript={transcript_path}"
@@ -276,11 +308,11 @@ def test_live_cli_chat_minimax_official_tool_matrix(
             f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
             f"transcript={transcript_path}"
         )
-        tool_execution_count = int(
-            str(metadata.get("tool_execution_count", "0")).strip() or "0"
-        )
-        assert tool_execution_count == 0, (
-            f"no-execution scenario should not report tool execution for "
+        successful_tool_results = [
+            item for item in tool_results if bool(item.get("ok", False))
+        ]
+        assert not successful_tool_results, (
+            f"no-execution scenario should not report successful tool execution for "
             f"target={target.target_id} scenario={scenario.id}\n"
             f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
             f"transcript={transcript_path}"

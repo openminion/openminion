@@ -282,12 +282,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    repo_root = Path(
-        os.environ.get("OPENMINION_HOME", "") or Path(__file__).resolve().parents[4]
+    framework_root = Path(__file__).resolve().parents[4]
+    openminion_dir = Path(
+        os.environ.get("OPENMINION_HOME", "") or framework_root / "openminion"
     ).resolve()
-    openminion_dir = repo_root / "openminion"
     config_path = (
-        Path(args.config) if args.config else (repo_root / ".tmp" / "per-agent.json")
+        Path(args.config)
+        if args.config
+        else (framework_root / ".tmp" / "per-agent.json")
     )
     py_bin = (
         Path(args.python_bin)
@@ -295,7 +297,7 @@ def main() -> int:
         else (openminion_dir / ".venv" / "bin" / "python3.11")
     )
 
-    os.environ.setdefault("OPENMINION_HOME", str(repo_root))
+    os.environ.setdefault("OPENMINION_HOME", str(openminion_dir))
 
     if not py_bin.exists():
         print(f"FAIL: python binary not found: {py_bin}")
@@ -305,8 +307,8 @@ def main() -> int:
         return 1
 
     checks = [
-        check_import_smoke(py_bin, repo_root),
-        check_retrieve_debug(py_bin, openminion_dir, config_path, repo_root),
+        check_import_smoke(py_bin, openminion_dir),
+        check_retrieve_debug(py_bin, openminion_dir, config_path, framework_root),
         check_chat_turn(
             py_bin,
             openminion_dir,

@@ -19,9 +19,7 @@ _COMPOSER_READY_RE = re.compile(
     r"Ask anything|Reply, or / for commands|input:\s*(?:send|queue next) message|"
     r"(?:^|\n)\s*❯\s*\Z"
 )
-_CONTENT_COMPOSER_RE = re.compile(
-    r"Ask anything|Reply, or / for commands"
-)
+_CONTENT_COMPOSER_RE = re.compile(r"Ask anything|Reply, or / for commands")
 _LEGACY_INLINE_APPROVAL_RE = re.compile(
     r"\[A\]\s*Allow once\s+\[S\]\s*Session allow\s+\[D\]\s*Deny"
 )
@@ -94,9 +92,8 @@ def approval_prompt_needs_reply(transcript: str, *, offset: int) -> bool:
 
 
 def active_approval_visible(screen_text: str) -> bool:
-    return (
-        inline_approval_menu(screen_text) is not None
-        or approval_prompt_needs_reply(screen_text, offset=0)
+    return inline_approval_menu(screen_text) is not None or approval_prompt_needs_reply(
+        screen_text, offset=0
     )
 
 
@@ -106,10 +103,13 @@ def inline_approval_menu(screen_text: str) -> str | None:
         for match in _COMPACT_INLINE_APPROVAL_RE.finditer(screen_text)
         if not _compact_approval_answered(screen_text, match=match)
     ]
-    if compact_matches and not _interactive_surface_follows(
-        screen_text, offset=compact_matches[-1].end()
-    ):
-        return "compact"
+    if compact_matches:
+        latest_compact = compact_matches[-1]
+        if _compact_approval_inline_status_follows(
+            screen_text,
+            match=latest_compact,
+        ) or not _interactive_surface_follows(screen_text, offset=latest_compact.end()):
+            return "compact"
     legacy_matches = list(_LEGACY_INLINE_APPROVAL_RE.finditer(screen_text))
     if legacy_matches and not _interactive_surface_follows(
         screen_text, offset=legacy_matches[-1].end()
@@ -124,11 +124,14 @@ def _compact_approval_answered(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return re.match(
-        r"[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\n|[ \t]*$)",
-        trailing,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.match(
+            r"[ \t]*(?:y|yes|a|always|n|no)(?:[ \t]*\n|[ \t]*$)",
+            trailing,
+            re.IGNORECASE,
+        )
+        is not None
+    )
 
 
 def _compact_approval_submitted(
@@ -137,11 +140,23 @@ def _compact_approval_submitted(
     match: re.Match[str],
 ) -> bool:
     trailing = screen_text[match.end() :]
-    return re.match(
-        r"[ \t]*(?:y|yes|a|always|n|no)[ \t]*(?:\n|\r\n)",
-        trailing,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        re.match(
+            r"[ \t]*(?:y|yes|a|always|n|no)[ \t]*(?:\n|\r\n)",
+            trailing,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+def _compact_approval_inline_status_follows(
+    screen_text: str,
+    *,
+    match: re.Match[str],
+) -> bool:
+    trailing = screen_text[match.end() :]
+    return re.match(r"[ \t]+(?:●|•)\s", trailing) is not None
 
 
 def inline_approval_fingerprint(screen_text: str) -> str | None:
@@ -150,9 +165,7 @@ def inline_approval_fingerprint(screen_text: str) -> str | None:
     if menu is None:
         return None
     pattern = (
-        _COMPACT_INLINE_APPROVAL_RE
-        if menu == "compact"
-        else _LEGACY_INLINE_APPROVAL_RE
+        _COMPACT_INLINE_APPROVAL_RE if menu == "compact" else _LEGACY_INLINE_APPROVAL_RE
     )
     matches = list(pattern.finditer(screen_text))
     prefix = screen_text[: matches[-1].start()]
@@ -286,7 +299,7 @@ class FocusProbe:
 
     def environment(self) -> dict[str, str]:
         return {
-            "OPENMINION_HOME": str(self.framework_root),
+            "OPENMINION_HOME": str(self.openminion_root),
             "OPENMINION_DATA_ROOT": str(self.data_root),
             "PYTHONPATH": "src",
             "OPENMINION_SHOW_RESPONSE_TIME": "1",
@@ -397,16 +410,13 @@ class FocusProbe:
                     break
                 if current_screen == approval_screen:
                     stable_polls += 1
-                    if (
-                        stable_polls >= 3
-                        and "Approval required:" in str(approval_fingerprint or "")
+                    if stable_polls >= 3 and "Approval required:" in str(
+                        approval_fingerprint or ""
                     ):
                         break
                 else:
                     approval_screen = current_screen
-                    approval_fingerprint = inline_approval_fingerprint(
-                        approval_screen
-                    )
+                    approval_fingerprint = inline_approval_fingerprint(approval_screen)
                     stable_polls = 0
             approval_fingerprint = inline_approval_fingerprint(approval_screen)
             menu = inline_approval_menu(approval_screen)
@@ -425,12 +435,16 @@ class FocusProbe:
                     compact_matches = list(
                         _COMPACT_INLINE_APPROVAL_RE.finditer(screen_text)
                     )
-                    if compact_matches and not _interactive_surface_follows(
-                        screen_text,
-                        offset=compact_matches[-1].end(),
-                    ) and not _compact_approval_submitted(
-                        screen_text,
-                        match=compact_matches[-1],
+                    if (
+                        compact_matches
+                        and not _interactive_surface_follows(
+                            screen_text,
+                            offset=compact_matches[-1].end(),
+                        )
+                        and not _compact_approval_submitted(
+                            screen_text,
+                            match=compact_matches[-1],
+                        )
                     ):
                         clear_polls = 0
                         time.sleep(0.05)

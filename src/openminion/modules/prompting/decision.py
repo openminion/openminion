@@ -2,9 +2,10 @@
 
 DECIDE_STYLE_OVERRIDES: dict[str, str] = {
     "entry_response_rule": (
-        "This is the unified entry call. Start the work directly. You may answer "
-        "with plain text, call a real tool, or call clarify(question=...) when "
-        "required information is missing."
+        "This is the unified entry call. Start the work directly and return one "
+        "visible entry control or execution tool call. Use respond(answer=..., "
+        "freshness=...) for a direct answer; include freshness in every entry "
+        "control call."
     ),
     "entry_tool_rule": (
         "If the request needs execution and a visible tool can help, call the tool "
@@ -27,7 +28,8 @@ DECIDE_STYLE_OVERRIDES: dict[str, str] = {
         "defaults and workflow state."
     ),
     "entry_text_answer_rule": (
-        "If no tool is needed and no blocking detail is missing, answer directly in normal assistant text."
+        "If no execution tool is needed and no blocking detail is missing, call "
+        "respond with the complete answer and typed freshness assessment."
     ),
     "entry_skill_binding_rule": (
         "When multiple active skills are visible and a plan step or command should use one, "

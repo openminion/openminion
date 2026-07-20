@@ -1840,27 +1840,60 @@ def _threshold_result(
             "reason": "measurement identity mismatch",
             "identity_errors": identity_errors,
         }
+    current_count = int(current.get("count", 0) or 0)
+    current_ok = int(current.get("ok_count", 0) or 0)
+    if current_ok < current_count:
+        return {
+            "mode": threshold_mode,
+            "status": "fail",
+            "reason": "quality fixture failure",
+            "sample_count": current_count,
+            "ok_count": current_ok,
+        }
+    if current_count < 5:
+        return {
+            "mode": threshold_mode,
+            "status": "ineligible",
+            "reason": "fewer than five comparable samples",
+            "sample_count": current_count,
+        }
     baseline_wall = dict(baseline_scenario.get("wall_time_ms") or {})
-    baseline_median = baseline_wall.get("median")
-    current_median = dict(current.get("wall_time_ms") or {}).get("median")
-    if not isinstance(baseline_median, int) or not isinstance(current_median, int):
+    current_wall = dict(current.get("wall_time_ms") or {})
+    baseline_cv = baseline_wall.get("coefficient_of_variation")
+    current_cv = current_wall.get("coefficient_of_variation")
+    if any(
+        isinstance(value, int | float) and float(value) > 0.20
+        for value in (baseline_cv, current_cv)
+    ):
+        return {
+            "mode": threshold_mode,
+            "status": "ineligible",
+            "reason": "timing variance exceeds 0.20 CV",
+            "baseline_cv": baseline_cv,
+            "current_cv": current_cv,
+        }
+    baseline_p95 = baseline_wall.get("p95")
+    current_p95 = current_wall.get("p95")
+    if not isinstance(baseline_p95, int) or not isinstance(current_p95, int):
         return {
             "mode": threshold_mode,
             "status": "not_applicable",
-            "reason": "missing comparable wall median",
+            "reason": "missing comparable wall p95",
         }
-    ratio = round(current_median / float(max(1, baseline_median)), 4)
-    if ratio <= 1.20:
+    ratio = round(current_p95 / float(max(1, baseline_p95)), 4)
+    if ratio <= 1.10:
         status = "pass"
     else:
-        status = "fail" if threshold_mode == "hard" else "warn"
+        status = (
+            "warn" if current.get("warn_only") or threshold_mode != "hard" else "fail"
+        )
     return {
         "mode": threshold_mode,
         "status": status,
-        "baseline_wall_median_ms": baseline_median,
-        "current_wall_median_ms": current_median,
+        "baseline_wall_p95_ms": baseline_p95,
+        "current_wall_p95_ms": current_p95,
         "ratio": ratio,
-        "warn_ratio": 1.20,
+        "regression_ratio": 1.10,
     }
 
 
@@ -2263,6 +2296,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _hard_gate_failures(summary: dict[str, Any]) -> list[str]:
+    if str(summary.get("threshold_mode", "") or "") != "hard":
+        return []
+    failures: list[str] = []
+    scenarios = summary.get("scenarios")
+    if not isinstance(scenarios, dict):
+        return failures
+    for scenario_id, payload in scenarios.items():
+        if not isinstance(payload, dict):
+            continue
+        result = payload.get("threshold_result")
+        if isinstance(result, dict) and result.get("status") == "fail":
+            failures.append(str(scenario_id))
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -2308,6 +2357,13 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"[performance-baseline] scenarios={summary['scenario_count']} runs={summary['run_count']}"
     )
+    hard_failures = _hard_gate_failures(summary)
+    if hard_failures:
+        print(
+            "[performance-baseline] hard gate failed: " + ", ".join(hard_failures),
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

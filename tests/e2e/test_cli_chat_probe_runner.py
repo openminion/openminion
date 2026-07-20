@@ -9,9 +9,11 @@ from tests.e2e.runners.run_cli_chat_probe import (
     _default_probe_data_root,
     _expand_probe_messages,
     _inferred_dispatch_sites,
+    _latest_prompt_requires_confirmation,
     main,
     _parse_probe_status,
     _shutdown_timeout_can_count_as_success,
+    _turn_response_boundary_detected,
 )
 
 import pytest
@@ -88,6 +90,20 @@ def test_expand_probe_messages_flattens_multiline_prompt_into_one_turn() -> None
         "/debug",
         "/exit",
     ]
+
+
+def test_turn_response_boundary_ignores_typeahead_prompt_until_done() -> None:
+    assert not _turn_response_boundary_detected(
+        "❯ hello\nhello\n\n❯ Commands are unavailable while a turn is running."
+    )
+    assert _turn_response_boundary_detected("⏺ done\nDone in 3s\n\n❯ ")
+
+
+def test_turn_response_boundary_accepts_inline_approval_prompt() -> None:
+    screen = 'Approval required: file.write("README.md")\n[y]es / [N]o / [a]lways: '
+
+    assert _turn_response_boundary_detected(screen)
+    assert _latest_prompt_requires_confirmation("", screen)
 
 
 def test_inferred_dispatch_sites_maps_coding_and_research_routes() -> None:

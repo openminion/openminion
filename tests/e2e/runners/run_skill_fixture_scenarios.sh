@@ -9,7 +9,7 @@ FRAMEWORK_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 OPENMINION_DIR="${FRAMEWORK_ROOT}/openminion"
 FIXTURES_DIR="${FRAMEWORK_ROOT}/openminion/examples/skills/cli-chat-smoke"
 INVALID_FIXTURES_DIR="${FRAMEWORK_ROOT}/openminion/examples/skills/cli-chat-smoke-invalid"
-export OPENMINION_HOME="${OPENMINION_HOME:-$FRAMEWORK_ROOT}"
+export OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}"
 export OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"
 
 # Colors for output

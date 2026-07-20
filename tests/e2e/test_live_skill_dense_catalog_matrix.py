@@ -16,11 +16,11 @@ from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from tests.helpers.live_cli_chat_alibaba import (
     extract_assistant_messages,
     extract_last_debug_payload,
-    framework_root,
     has_completion_contract_failure,
     openminion_root,
     python_bin,
     require_live_flag,
+    runtime_home_root,
     skip_if_completion_contract_failed,
     timeout_seconds,
 )
@@ -206,7 +206,7 @@ _MISSING_SKILL_PROMPT = (
 
 def _artifact_root() -> Path:
     root = resolve_generated_root(
-        home_root=framework_root()
+        home_root=runtime_home_root()
     ) / dense_skill_artifact_dirname(_TARGET_SET_NAME)
     root.mkdir(parents=True, exist_ok=True)
     return root
@@ -223,7 +223,7 @@ def _run_env(*, data_root: Path, trace_root: Path | None = None) -> dict[str, st
     ):
         env.pop(key, None)
 
-    env["OPENMINION_HOME"] = str(framework_root())
+    env["OPENMINION_HOME"] = str(runtime_home_root())
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     if trace_root is not None:
         env["OPENMINION_TRACE_REQUESTS"] = "1"

@@ -89,10 +89,13 @@ def test_screen_after_submission_accepts_mid_word_terminal_wrapping() -> None:
         "Analyzing request...\n"
     )
 
-    assert screen_after_submission(
-        screen,
-        "files changed and validation result, and remaining follow-ups.",
-    ) == "\nAnalyzing request...\n"
+    assert (
+        screen_after_submission(
+            screen,
+            "files changed and validation result, and remaining follow-ups.",
+        )
+        == "\nAnalyzing request...\n"
+    )
 
 
 def test_screen_after_submission_requires_rendered_input() -> None:
@@ -323,10 +326,16 @@ def test_inline_approval_menu_ignores_persistent_input_footer() -> None:
 
 
 def test_inline_approval_menu_accepts_active_prompt_with_bare_cursor() -> None:
+    screen = "Approval required: file.write(module.py)\n[y]es / [N]o / [a]lways:\n❯"
+
+    assert inline_approval_menu(screen) == "compact"
+    assert active_approval_visible(screen)
+
+
+def test_inline_approval_menu_accepts_prompt_with_same_line_status() -> None:
     screen = (
-        "Approval required: file.write(module.py)\n"
-        "[y]es / [N]o / [a]lways:\n"
-        "❯"
+        "Approval required: file.write(test_hello.py)\n"
+        "[y]es / [N]o / [a]lways: ● Running file.write(README.md)"
     )
 
     assert inline_approval_menu(screen) == "compact"
@@ -340,7 +349,10 @@ def test_inline_approval_menu_uses_latest_overlapping_prompt() -> None:
     )
 
     assert inline_approval_menu(screen) == "compact"
-    assert inline_approval_fingerprint(screen) == "compact:Approval required: file.write(wc.py)"
+    assert (
+        inline_approval_fingerprint(screen)
+        == "compact:Approval required: file.write(wc.py)"
+    )
 
 
 @pytest.mark.parametrize(
@@ -442,10 +454,7 @@ def test_active_approval_visible_accepts_session_grant_copy() -> None:
 
 
 def test_compact_inline_approval_stops_after_key_echo_without_newline() -> None:
-    screen = (
-        'Approval required: file.write("wordcount.py")\n'
-        "[y]es / [N]o / [a]lways: a"
-    )
+    screen = 'Approval required: file.write("wordcount.py")\n[y]es / [N]o / [a]lways: a'
 
     assert inline_approval_menu(screen) is None
     assert not active_approval_visible(screen)

@@ -10,9 +10,12 @@ from openminion.modules.telemetry.trace.phase_timing import (
     ChatPhaseTimingPayload,
     active_chat_phase,
     mark_active_chat_first_text,
+    mark_active_chat_provider_token,
+    record_active_chat_provider_call,
     use_chat_phase_timer,
 )
 from openminion.modules.telemetry.events.catalog import CHAT_PHASE_TIMING
+from openminion.modules.llm.schemas import LLMResponse, Message, ToolSpec, UsageInfo
 
 
 def test_chat_phases_closed_set_matches_contract():
@@ -174,6 +177,19 @@ def test_timer_mark_first_text_is_idempotent():
     assert timer._first_text_ns == first_ttft
 
 
+def test_timer_records_provider_token_separately_from_visible_text():
+    timer = ChatPhaseTimer()
+    with use_chat_phase_timer(timer):
+        mark_active_chat_provider_token()
+        time.sleep(0.002)
+        mark_active_chat_first_text()
+
+    payload = timer.build_payload()
+    assert payload.provider_token_ttft_ms is not None
+    assert payload.time_to_first_text_ms is not None
+    assert payload.provider_token_ttft_ms <= payload.time_to_first_text_ms
+
+
 def test_timer_ttft_is_none_when_no_first_text_marked():
 
     timer = ChatPhaseTimer()
@@ -181,6 +197,7 @@ def test_timer_ttft_is_none_when_no_first_text_marked():
         time.sleep(0.001)
     payload = timer.build_payload()
     assert payload.time_to_first_text_ms is None
+    assert payload.provider_token_ttft_ms is None
 
 
 def test_timer_cold_start_propagates_to_payload():
@@ -240,3 +257,51 @@ def test_active_timer_context_resets_after_exit():
     first_ttft = timer._first_text_ns
     mark_active_chat_first_text()
     assert timer._first_text_ns == first_ttft
+
+
+def test_active_timer_aggregates_provider_call_costs():
+    timer = ChatPhaseTimer()
+    messages = [Message(role="user", content="hello")]
+    tools = [
+        ToolSpec(
+            name="respond",
+            description="Return the answer.",
+            input_schema={"type": "object"},
+        )
+    ]
+
+    with use_chat_phase_timer(timer):
+        record_active_chat_provider_call(
+            purpose="entry",
+            messages=messages,
+            tools=tools,
+            response=LLMResponse(
+                ok=True,
+                provider="fixture",
+                model="fixture-model",
+                output_text="first",
+                usage=UsageInfo(input_tokens=10, output_tokens=2),
+            ),
+        )
+        record_active_chat_provider_call(
+            purpose="adaptive",
+            messages=messages,
+            tools=[],
+            response=LLMResponse(
+                ok=True,
+                provider="fixture",
+                model="fixture-model",
+                output_text="second",
+                usage=UsageInfo(input_tokens=4, output_tokens=3),
+            ),
+        )
+
+    payload = timer.build_payload()
+    assert payload.provider_calls_total == 2
+    assert payload.provider_call_purposes == ("entry", "adaptive")
+    assert payload.provider_input_tokens == 14
+    assert payload.provider_output_tokens == 5
+    assert payload.provider_request_bytes > 0
+    assert payload.provider_response_bytes > 0
+    assert payload.tool_schema_count_max == 1
+    assert payload.tool_schema_bytes_total > 0

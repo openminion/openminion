@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import inspect
 import json
 import time
 from pathlib import Path
+from sqlite3 import Error as SQLiteError
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, cast
 from uuid import uuid4
 
@@ -25,6 +27,7 @@ from openminion.cli.interactive.project_context import (
     ProjectContextInfo,
     build_project_context_metadata,
 )
+from openminion.modules.telemetry.trace import phase_timing
 from openminion.services.gateway.constants import (
     CALLER_HANDLES_DELIVERY_METADATA_KEY,
 )
@@ -571,71 +574,142 @@ class OpenMinionRuntime(
         inbound_metadata: dict[str, str] | None = None,
         approval_callback: ApprovalCallback | None = None,
     ) -> AsyncIterator[str]:
+        timer = phase_timing.ChatPhaseTimer(cold_start=False)
+        turn_id = uuid4().hex
+        with phase_timing.use_chat_phase_timer(timer):
+            try:
+                async for chunk in self._send_message_impl(
+                    text,
+                    progress_callback=progress_callback,
+                    inbound_metadata=inbound_metadata,
+                    approval_callback=approval_callback,
+                ):
+                    if str(chunk or ""):
+                        phase_timing.mark_active_chat_first_text()
+                    yield chunk
+            finally:
+                self._record_chat_phase_timing(timer, turn_id=turn_id)
+
+    def _record_chat_phase_timing(
+        self,
+        timer: phase_timing.ChatPhaseTimer,
+        *,
+        turn_id: str,
+    ) -> None:
+        try:
+            runtime_settings = getattr(
+                getattr(self._rt, "config", None), "runtime", None
+            )
+            payload = timer.build_payload(
+                turn_id=turn_id,
+                session_id=self.session_id,
+                agent_id=self.agent_id,
+                process_mode=str(getattr(runtime_settings, "process_mode", "") or ""),
+                transport=self.transport,
+            )
+            phase_timing.record_chat_phase_timing_payload(
+                getattr(self._rt, "telemetry_service", None),
+                payload,
+            )
+        except (
+            AttributeError,
+            OSError,
+            RuntimeError,
+            SQLiteError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger = getattr(self._rt, "logger", None)
+            warning = getattr(logger, "warning", None)
+            if callable(warning):
+                warning("chat phase timing emission failed: %s", exc)
+
+    def _turn_inbound_metadata(
+        self,
+        inbound_metadata: dict[str, str] | None,
+    ) -> dict[str, str] | None:
+        merged = self._merge_inbound_metadata(inbound_metadata) or {}
+        overrides = {
+            "override_provider": self._model_override_provider,
+            "override_model": self._model_override_model,
+            "override_thinking": self.effort_level,
+            "effort_level": self.effort_level,
+        }
+        merged.update({key: value for key, value in overrides.items() if value})
+        if self.permission_mode != PERMISSION_MODE_DEFAULT:
+            merged["permission_mode"] = self.permission_mode
+            if self.permission_mode == "readonly":
+                merged["read_only"] = "1"
+        if self._permission_overrides:
+            merged["permission_overrides"] = json.dumps(
+                self._permission_overrides,
+                sort_keys=True,
+            )
+        if self.action_policy_mode_override:
+            merged[ACTION_POLICY_SESSION_OVERRIDE_KEY] = (
+                self.action_policy_mode_override
+            )
+        return merged or None
+
+    def _prepare_gateway_turn(
+        self,
+        text: str,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+        inbound_metadata: dict[str, str] | None,
+        approval_callback: ApprovalCallback | None,
+    ) -> tuple[dict[str, Any], Callable[..., Any] | None, Callable[..., Any]]:
+        kwargs: dict[str, Any] = {
+            "channel": self._channel,
+            "target": self._target,
+            "body": text,
+            "session_id": self.session_id,
+        }
+        merged_metadata = self._turn_inbound_metadata(inbound_metadata)
+        if merged_metadata:
+            kwargs["inbound_metadata"] = merged_metadata
+        stream_handler = getattr(self._gateway, "handle_message_streaming", None)
+        if not callable(stream_handler):
+            stream_handler = None
+        handler = stream_handler or self._gateway.handle_message
+        parameters = inspect.signature(handler).parameters
+        if "deliver" in parameters:
+            kwargs["deliver"] = False
+        wrapped_progress = self._wrap_progress_callback(progress_callback)
+        if "progress_callback" in parameters:
+            kwargs["progress_callback"] = wrapped_progress
+        if approval_callback is not None and "approval_callback" in parameters:
+            kwargs["approval_callback"] = approval_callback
+        return kwargs, stream_handler, wrapped_progress
+
+    async def _handle_gateway_message(self, kwargs: dict[str, Any]) -> Message:
+        try:
+            return await self._gateway.handle_message(**kwargs)
+        except Exception:
+            self._finalize_turn_usage(None, succeeded=False)
+            raise
+
+    async def _send_message_impl(
+        self,
+        text: str,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        inbound_metadata: dict[str, str] | None = None,
+        approval_callback: ApprovalCallback | None = None,
+    ) -> AsyncIterator[str]:
         self._ensure_agent_resolved()
         if not self.is_bound:
             raise RuntimeError("interactive runtime is not bound to a session")
         max_attempts = 2
         for attempt in range(1, max_attempts + 1):
             self._begin_turn_usage_tracking()
-            kwargs: dict[str, Any] = dict(
-                channel=self._channel,
-                target=self._target,
-                body=text,
-                session_id=self.session_id,
+            kwargs, stream_handler, wrapped_progress = self._prepare_gateway_turn(
+                text,
+                progress_callback=progress_callback,
+                inbound_metadata=inbound_metadata,
+                approval_callback=approval_callback,
             )
-            merged_inbound_metadata = self._merge_inbound_metadata(inbound_metadata)
-            if self._model_override_provider or self._model_override_model:
-                if merged_inbound_metadata is None:
-                    merged_inbound_metadata = {}
-                if self._model_override_provider:
-                    merged_inbound_metadata["override_provider"] = (
-                        self._model_override_provider
-                    )
-                if self._model_override_model:
-                    merged_inbound_metadata["override_model"] = (
-                        self._model_override_model
-                    )
-            if self.permission_mode != PERMISSION_MODE_DEFAULT:
-                if merged_inbound_metadata is None:
-                    merged_inbound_metadata = {}
-                merged_inbound_metadata["permission_mode"] = self.permission_mode
-                if self.permission_mode == "readonly":
-                    merged_inbound_metadata["read_only"] = "1"
-            if self._permission_overrides:
-                if merged_inbound_metadata is None:
-                    merged_inbound_metadata = {}
-                merged_inbound_metadata["permission_overrides"] = json.dumps(
-                    self._permission_overrides,
-                    sort_keys=True,
-                )
-            if self.action_policy_mode_override:
-                if merged_inbound_metadata is None:
-                    merged_inbound_metadata = {}
-                merged_inbound_metadata[ACTION_POLICY_SESSION_OVERRIDE_KEY] = (
-                    self.action_policy_mode_override
-                )
-            if self.effort_level:
-                if merged_inbound_metadata is None:
-                    merged_inbound_metadata = {}
-                merged_inbound_metadata["override_thinking"] = self.effort_level
-                merged_inbound_metadata["effort_level"] = self.effort_level
-            if merged_inbound_metadata:
-                kwargs["inbound_metadata"] = merged_inbound_metadata
-            import inspect
-
-            stream_handler = getattr(self._gateway, "handle_message_streaming", None)
-            if callable(stream_handler):
-                sig = inspect.signature(stream_handler)
-            else:
-                sig = inspect.signature(self._gateway.handle_message)
-            if "deliver" in sig.parameters:
-                kwargs["deliver"] = False
-            wrapped_progress = self._wrap_progress_callback(progress_callback)
-            if "progress_callback" in sig.parameters:
-                kwargs["progress_callback"] = wrapped_progress
-            if approval_callback is not None and "approval_callback" in sig.parameters:
-                kwargs["approval_callback"] = approval_callback
-            if callable(stream_handler):
+            if stream_handler is not None:
                 final_text = ""
                 final_metadata: Mapping[str, Any] | None = None
                 emitted_text = False
@@ -646,6 +720,7 @@ class OpenMinionRuntime(
                             token = str(getattr(event, "text", "") or "")
                             if not token:
                                 continue
+                            phase_timing.mark_active_chat_provider_token()
                             emitted_text = True
                             final_text += token
                             yield token
@@ -689,15 +764,7 @@ class OpenMinionRuntime(
                 if final_text and not emitted_text:
                     yield final_text
                 return
-            if "progress_callback" in sig.parameters:
-                kwargs["progress_callback"] = wrapped_progress
-            if approval_callback is not None and "approval_callback" in sig.parameters:
-                kwargs["approval_callback"] = approval_callback
-            try:
-                response = await self._gateway.handle_message(**kwargs)
-            except Exception:
-                self._finalize_turn_usage(None, succeeded=False)
-                raise
+            response = await self._handle_gateway_message(kwargs)
             text_body = self._message_text(response)
             retryable_failure = _retryable_turn_failure_message(text_body)
             if retryable_failure is not None:

@@ -1,7 +1,6 @@
 # path	qualname	loc	reason
 src/openminion/cli/commands/autonomy.py	_execute_or_fail	147	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/commands/daemon.py	_start_daemon	101	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/cli/interactive/runtime/__init__.py	OpenMinionRuntime.send_message	154	moved unchanged from cli/tui/providers/runtime; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/presentation/theme.py	handle_theme	117	moved and reduced from cli/chat/theme.py; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/status/activity_ledger.py	activity_from_progress_payload	111	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/cli/status/activity_ledger.py	format_activity_line	101	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

@@ -8,7 +8,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENMINION_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 FRAMEWORK_ROOT="$(cd "$OPENMINION_DIR/.." && pwd)"
-export OPENMINION_HOME="${OPENMINION_HOME:-$FRAMEWORK_ROOT}"
+export OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}"
 export OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"
 
 # Colors for output

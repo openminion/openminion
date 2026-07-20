@@ -168,10 +168,15 @@ def _recover_seed_command_from_response(
 ) -> ToolCommand | None:
     if response is None:
         return None
+    from openminion.modules.brain.loop.entry import (  # noqa: PLC0415
+        ENTRY_RESPOND_TOOL_NAME,
+    )
+
     tool_calls = [
         item
         for item in list(getattr(response, "tool_calls", []) or [])
-        if str(getattr(item, "name", "") or "").strip() != "submit_output"
+        if str(getattr(item, "name", "") or "").strip()
+        not in {"submit_output", ENTRY_RESPOND_TOOL_NAME}
     ]
     if len(tool_calls) != 1:
         return None

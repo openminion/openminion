@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,6 +65,10 @@ def openminion_root() -> Path:
 
 def framework_root() -> Path:
     return openminion_root().parent
+
+
+def runtime_home_root() -> Path:
+    return openminion_root()
 
 
 def default_config_path() -> Path:
@@ -133,9 +138,9 @@ def timeout_seconds(matrix_type: str = "generic") -> int:
 
 
 def artifact_dir() -> Path:
-    # Keep live E2E evidence under the framework-root generated-runtime tree
+    # Keep live E2E evidence under the OpenMinion generated-runtime tree
     # regardless of ambient OPENMINION_HOME / generated-root overrides.
-    root = framework_root() / ".openminion" / "runtime" / "cli-chat-e2e"
+    root = runtime_home_root() / ".openminion" / "runtime" / "cli-chat-e2e"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -151,6 +156,29 @@ def extract_all_debug_payloads(transcript: str) -> list[dict]:
     payloads = extract_debug_payloads(transcript, which="all")
     assert isinstance(payloads, list)
     return payloads
+
+
+def transcript_has_cli_ready(*, transcript: str, agent_id: str) -> bool:
+    if f"chat ready agent={agent_id}" in transcript:
+        return True
+    return "OpenMinion CLI" in transcript and f"agent:      {agent_id}" in transcript
+
+
+def transcript_has_assistant_output(
+    *,
+    transcript: str,
+    session_id: str,
+    agent_id: str,
+) -> bool:
+    if f"[{session_id}|{agent_id}] {agent_id}:" in transcript:
+        return True
+    return bool(
+        extract_assistant_messages(
+            transcript=transcript,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
+    )
 
 
 def extract_debug_payloads(
@@ -361,6 +389,64 @@ def skip_if_completion_contract_failed(
         )
 
 
+def _latest_outbound_debug_payload(
+    *,
+    data_root: Path,
+    agent_id: str,
+) -> dict | None:
+    db_path = data_root / "state" / "openminion.db"
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            """
+            select body, metadata_json
+            from messages
+            where role = 'outbound'
+            order by created_at desc, rowid desc
+            limit 1
+            """
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    body = _strip_agent_namespace(str(row[0] or ""), agent_id=agent_id)
+    try:
+        metadata = json.loads(str(row[1] or "{}"))
+    except json.JSONDecodeError:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    return {
+        "last_turn": {
+            "body": body,
+            "body_preview": body[:2000],
+            "metadata": metadata,
+        }
+    }
+
+
+def _append_structured_probe_debug(
+    *,
+    transcript: str,
+    data_root: Path,
+    agent_id: str,
+) -> str:
+    if extract_all_debug_payloads(transcript):
+        return transcript
+    payload = _latest_outbound_debug_payload(data_root=data_root, agent_id=agent_id)
+    if payload is None:
+        return transcript
+    return (
+        f"{transcript.rstrip()}\n\n[probe-debug]\n"
+        f"{json.dumps(payload, sort_keys=True)}\n"
+    )
+
+
 def run_cli_session(
     *,
     session_id_prefix: str,
@@ -411,7 +497,7 @@ def run_cli_session(
     ):
         env.pop(key, None)
 
-    env["OPENMINION_HOME"] = str(framework_root())
+    env["OPENMINION_HOME"] = str(runtime_home_root())
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     env["OPENMINION_TRACE_REQUESTS"] = "1"
     env["OPENMINION_TRACE_REQUESTS_DIR"] = str(trace_root)
@@ -450,6 +536,11 @@ def run_cli_session(
         messages=[user_input.rstrip("\n")],
         timeout_seconds=float(timeout_seconds(matrix_type)),
         auto_confirm=auto_confirm,
+    )
+    transcript = _append_structured_probe_debug(
+        transcript=transcript,
+        data_root=data_root,
+        agent_id=resolved_agent_id,
     )
     transcript_path.write_text(transcript, encoding="utf-8")
     skip_if_provider_auth_rejected(

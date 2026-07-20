@@ -44,6 +44,8 @@ def requested_closeout_markers(loop_state: Any) -> tuple[str, ...]:
         markers.append("files")
     if "remaining follow-ups" in lowered:
         markers.append("follow-ups")
+    if "recommended direction" in lowered or "recommendation" in lowered:
+        markers.append("recommendation")
     unique: list[str] = []
     for marker in markers:
         if marker and marker not in unique:
@@ -108,6 +110,12 @@ def tool_evidence_closeout_text(loop_state: Any, *, reason: str) -> str:
                 "follow-ups: rerun a narrower continuation if stronger proof or a "
                 "more polished synthesis is needed."
             )
+        elif marker == "recommendation":
+            lines.append(
+                "recommendation: use the preserved tool evidence below as the "
+                "basis for the final direction; rerun a narrower continuation if "
+                "a more polished synthesis is needed."
+            )
         else:
             lines.append(
                 f"{marker}: not captured before closeout; preserved tool evidence "
@@ -165,7 +173,9 @@ def mutating_file_evidence_fallback_text(loop_state: Any) -> str:
             "successful file-write evidence is preserved above."
         )
     if "follow-ups" in requested:
-        lines.append("follow-ups: rerun focused validation if stronger proof is needed.")
+        lines.append(
+            "follow-ups: rerun focused validation if stronger proof is needed."
+        )
     if "result" not in requested:
         lines.append(
             "result: repeated successful file writes were closed from tool evidence."

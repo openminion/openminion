@@ -142,7 +142,24 @@ def build_prompt_cache_key(
         json.dumps(
             {
                 "output_schema": constraints.output_schema or {},
-                "prompt_tools": prompt_tool_schemas,
+                "prompt_tools": sorted(
+                    prompt_tool_schemas,
+                    key=lambda item: json.dumps(
+                        item,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                ),
+                "execution_tools": sorted(
+                    constraints.runtime_tool_schemas,
+                    key=lambda item: json.dumps(
+                        item,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                ),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -324,7 +341,9 @@ def _included_pack_items(
 ) -> _IncludedPackItems:
     return _IncludedPackItems(
         all_segment_ids=[segment.id for segment in segments],
-        included_segment_ids=[segment.id for segment in segments if segment.content.strip()],
+        included_segment_ids=[
+            segment.id for segment in segments if segment.content.strip()
+        ],
         dropped_segment_ids=list(
             dict.fromkeys(
                 segment_id
@@ -337,7 +356,9 @@ def _included_pack_items(
             for record in fact_records
             if record.ttl_valid and _has_segment_ref(segments, record.record_id)
         ],
-        memory=[card for card in memory_cards if _has_segment_ref(segments, card.record_id)],
+        memory=[
+            card for card in memory_cards if _has_segment_ref(segments, card.record_id)
+        ],
         session_start_recalled_memory=[
             card
             for card in session_start_recalled_memory_cards
@@ -354,7 +375,11 @@ def _included_pack_items(
             if _has_segment_ref(segments, item.record_id)
         ],
         procedure_id=getattr(procedure, "procedure_id", "") if procedure else "",
-        artifacts=[artifact for artifact in artifact_digests if _has_segment_ref(segments, artifact.ref)],
+        artifacts=[
+            artifact
+            for artifact in artifact_digests
+            if _has_segment_ref(segments, artifact.ref)
+        ],
     )
 
 
@@ -382,7 +407,9 @@ def _build_context_manifest(
         ),
         session=SessionManifest(
             slice_version=session_slice.slice_version,
-            turn_index=int(session_slice.total_turn_count or len(session_slice.recent_turns)),
+            turn_index=int(
+                session_slice.total_turn_count or len(session_slice.recent_turns)
+            ),
             turn_ids_included=[turn.turn_id for turn in session_slice.recent_turns],
         ),
         facts=[record.record_id for record in included.facts],
@@ -391,12 +418,20 @@ def _build_context_manifest(
             *[card.record_id for card in included.session_start_recalled_memory],
             *[card.record_id for card in included.mid_session_recalled_memory],
         ],
-        session_start_recalled_memory=[card.record_id for card in included.session_start_recalled_memory],
-        mid_session_recalled_memory=[card.record_id for card in included.mid_session_recalled_memory],
-        recent_session_artifacts=[item.record_id for item in included.recent_session_artifacts],
+        session_start_recalled_memory=[
+            card.record_id for card in included.session_start_recalled_memory
+        ],
+        mid_session_recalled_memory=[
+            card.record_id for card in included.mid_session_recalled_memory
+        ],
+        recent_session_artifacts=[
+            item.record_id for item in included.recent_session_artifacts
+        ],
         procedures=[included.procedure_id] if included.procedure_id else [],
         artifacts=[
-            ArtifactManifestItem(ref=item.ref, view_id=item.view_id, digest_hash=item.digest_hash)
+            ArtifactManifestItem(
+                ref=item.ref, view_id=item.view_id, digest_hash=item.digest_hash
+            )
             for item in included.artifacts
         ],
         segment_ids=included.all_segment_ids,
@@ -415,7 +450,9 @@ def _build_context_manifest(
         retrievers_used=list(plugin_registry.retriever_names),
         compressors_used=list(plugin_registry.compressor_names),
         mid_session_recall_state=mid_session_recall_state,
-        active_state_prompt_view=(prompt_view.model_dump() if hasattr(prompt_view, "model_dump") else {}),
+        active_state_prompt_view=(
+            prompt_view.model_dump() if hasattr(prompt_view, "model_dump") else {}
+        ),
         active_state_full=session_slice.active_state,
         active_state_metrics=projection_metrics,
     )
@@ -429,7 +466,11 @@ def _bucket_allocations(
     bucket_stats: dict[str, Any],
     decision_log: PackingDecisionLog,
 ) -> tuple[int, dict[str, BucketAllocation]]:
-    total_used = sum(_estimate_tokens(segment.content) for segment in segments if segment.content.strip())
+    total_used = sum(
+        _estimate_tokens(segment.content)
+        for segment in segments
+        if segment.content.strip()
+    )
     allocations: dict[str, BucketAllocation] = {}
     for bucket, cap in bucket_caps.items():
         bucket_segments = [segment for segment in segments if segment.bucket == bucket]
@@ -443,7 +484,9 @@ def _bucket_allocations(
             bucket=bucket,  # type: ignore[arg-type]
             cap_tokens=cap,
             used_tokens=used,
-            selected_count=len([segment for segment in bucket_segments if segment.content.strip()]),
+            selected_count=len(
+                [segment for segment in bucket_segments if segment.content.strip()]
+            ),
             total_available=stats.get("total_available", len(bucket_segments)),
             dropped_count=stats.get("dropped", 0),
             trim_applied=(
@@ -466,9 +509,13 @@ def _token_budget_report(
         total_cap_tokens=budgets.total_max_tokens,
         total_used_tokens=total_used,
         buckets=bucket_allocs,
-        total_dropped_segments=sum(allocation.dropped_count for allocation in bucket_allocs.values()),
+        total_dropped_segments=sum(
+            allocation.dropped_count for allocation in bucket_allocs.values()
+        ),
         over_budget=total_used > budgets.total_max_tokens,
-        degrade_trace=[action.action + ":" + action.reason_code for action in decision_log.actions],
+        degrade_trace=[
+            action.action + ":" + action.reason_code for action in decision_log.actions
+        ],
         decision_log=decision_log,
     )
 

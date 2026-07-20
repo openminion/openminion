@@ -35,6 +35,10 @@ def _agent_framework_root() -> Path:
     return _openminion_root().parent
 
 
+def _runtime_home_root() -> Path:
+    return _openminion_root()
+
+
 @dataclass(frozen=True)
 class _Scenario:
     id: str
@@ -126,7 +130,7 @@ _SCENARIOS: tuple[_Scenario, ...] = (
 
 
 def _resolve_agent_id(config_path: Path, framework_root: Path) -> str:
-    config = load_config(str(config_path), home_root=framework_root)
+    config = load_config(str(config_path), home_root=_runtime_home_root())
     preferred = str(config.agents[next(iter(config.agents.keys()))].name or "").strip()
     configured = configured_agent_ids(config)
     if preferred and preferred in configured:
@@ -266,10 +270,9 @@ def live_agent(request: pytest.FixtureRequest) -> dict:
         pytest.skip(f"missing config file: {config_path}")
     agent_id = profile.agent_id or _resolve_agent_id(config_path, framework_root)
 
-    os.environ.setdefault("OPENMINION_HOME", str(framework_root))
-    # Keep live E2E data root aligned with OPENMINION_HOME to avoid temp-root drift
-    # from the global pytest fixture when profile config paths are home-relative.
-    os.environ["OPENMINION_DATA_ROOT"] = str(framework_root / ".openminion")
+    runtime_home = _runtime_home_root()
+    os.environ.setdefault("OPENMINION_HOME", str(runtime_home))
+    os.environ["OPENMINION_DATA_ROOT"] = str(runtime_home / ".openminion")
 
     runtime = APIRuntime.from_config_path(str(config_path))
     yield {
@@ -324,7 +327,7 @@ def test_live_new_tools_matrix_bundle_agents_resolve_from_aggregate_configs() ->
         assert agent.agent_id is not None, agent.profile_id
         config_path = resolve_live_config_path(agent.config_path, framework_root)
         assert config_path.exists(), f"missing bundle config: {config_path}"
-        config = load_config(str(config_path), home_root=framework_root)
+        config = load_config(str(config_path), home_root=_runtime_home_root())
         configured = configured_agent_ids(config)
         assert agent.agent_id in configured, (
             f"agent_id={agent.agent_id} not in configured ids={configured}"

@@ -42,6 +42,13 @@ _STEP_PLAN_TAG_RE = re.compile(
     r"<step\d+>\s*(?:create|write|add|read|verify|check|run)\b",
     re.IGNORECASE,
 )
+_CODE_SNIPPET_ARTIFACT_RE = re.compile(
+    r"(?im)^\s*(?:```|#!/usr/bin/env\s+\w+|import\s+\w+|from\s+\w+|"
+    r"def\s+\w+\(|class\s+\w+\(|if\s+__name__\s*==)"
+)
+_ARTIFACT_SECTION_RE = re.compile(
+    r"(?im)^\s*(?:implementation|code|files?)\s*:",
+)
 _PLAINTEXT_FILE_WRITE_TOOL_RE = re.compile(
     r"(?ims)^\s*file\.write\s*$.*^\s*path\s*:\s*\S+.*^\s*content\s*:",
 )
@@ -217,6 +224,22 @@ def _looks_like_execution_preface_draft(text: str) -> bool:
     if _PROGRESS_GERUND_RE.search(lowered):
         return True
     return current.endswith(":")
+
+
+def _looks_like_snippet_only_file_artifact_answer(text: str) -> bool:
+    current = str(text or "").strip()
+    if not current:
+        return False
+    return bool(
+        _CODE_SNIPPET_ARTIFACT_RE.search(current)
+        or (
+            _ARTIFACT_SECTION_RE.search(current) is not None
+            and any(
+                token in current.lower()
+                for token in ("def ", "import ", "#!/", "python ", ".py")
+            )
+        )
+    )
 
 
 def _final_answer_references_unbacked_source_urls(

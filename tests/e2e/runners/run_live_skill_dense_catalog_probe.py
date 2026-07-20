@@ -96,9 +96,9 @@ def _resolve_target(target_id: str) -> SkillLiveTarget:
 
 
 def _artifact_root() -> Path:
-    root = resolve_generated_root(home_root=REPO_ROOT) / dense_skill_artifact_dirname(
-        "official"
-    )
+    root = resolve_generated_root(
+        home_root=OPENMINION_DIR
+    ) / dense_skill_artifact_dirname("official")
     root.mkdir(parents=True, exist_ok=True)
     return root
 

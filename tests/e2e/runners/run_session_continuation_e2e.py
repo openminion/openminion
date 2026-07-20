@@ -114,7 +114,7 @@ def _render_first_segment(store: SQLiteSessionStore, target_id: str) -> dict:
 
 def main() -> int:
     artifact_dir = (
-        resolve_generated_root(home_root=ROOT.parent) / "session-continuation-e2e"
+        resolve_generated_root(home_root=ROOT) / "session-continuation-e2e"
     )
     artifact_dir.mkdir(parents=True, exist_ok=True)
     db_path = artifact_dir / "session-continuation-e2e.db"

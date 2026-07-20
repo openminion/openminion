@@ -123,7 +123,7 @@ _CONFIRMING_MESSAGE_RE = re.compile(
 
 
 def _default_artifacts_root() -> Path:
-    return resolve_generated_root(home_root=REPO_ROOT) / "e2e"
+    return resolve_generated_root(home_root=OPENMINION_DIR) / "e2e"
 
 
 def _default_log_root() -> Path:

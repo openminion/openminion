@@ -135,7 +135,12 @@ def test_tool_request_spec_and_directory_are_loop_control_only() -> None:
         profile_name="watch_check_v1",
         tool_specs=_specs(*[f"tool.{idx}" for idx in range(9)]),
     )
-    assert build_tool_request_spec().name == TOOL_REQUEST_TOOL_NAME
+    request_spec = build_tool_request_spec()
+    assert request_spec.name == TOOL_REQUEST_TOOL_NAME
+    assert request_spec.input_schema["required"] == [
+        "name",
+        "terminal_after_success",
+    ]
     assert [spec.name for spec in specs_with_request] == [
         "web.search",
         TOOL_REQUEST_TOOL_NAME,

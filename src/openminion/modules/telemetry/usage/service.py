@@ -4,6 +4,11 @@ from datetime import datetime
 import json
 from typing import Any
 
+from openminion.modules.telemetry.trace.turn_cost import (
+    TurnCostEnvelope,
+    project_turn_cost,
+)
+
 from .constants import RUNTIME_EVENT_READ_LIMIT
 from .coverage import coverage_from_session_events
 from .token_usage import (
@@ -237,6 +242,59 @@ class StatsService:
             run_id=str(run_id),
             usage_events=usage_events,
             read=read,
+        )
+
+    def get_run_turn_cost(
+        self,
+        run_id: str,
+        *,
+        event_limit: int | None = None,
+    ) -> TurnCostEnvelope | None:
+        if not hasattr(self._store, "get_run_record"):
+            return None
+        record = self._store.get_run_record(run_id)
+        if record is None:
+            return None
+        session_id = str(record.get("session_id", "") or "").strip()
+        if not session_id:
+            return None
+        meta = record.get("meta")
+        meta_map = dict(meta) if isinstance(meta, dict) else {}
+        request_id = str(meta_map.get("request_id", "") or "").strip()
+        read = self._read_session_events(session_id, event_limit=event_limit)
+        direct_events = [
+            event
+            for event in read.events
+            if _event_belongs_to_run(
+                event=event,
+                run_id=str(run_id),
+                request_id=request_id,
+            )
+            or (
+                event.get("event_type") == "chat.phase_timing"
+                and str(event.get("payload", {}).get("turn_id", "") or "").strip()
+                == request_id
+            )
+        ]
+        llm_call_ids = {
+            _event_llm_call_id(event)
+            for event in direct_events
+            if _event_llm_call_id(event)
+        }
+        related_events = [
+            event
+            for event in read.events
+            if event in direct_events
+            or (
+                event.get("event_type") == "context.manifest.created"
+                and _event_llm_call_id(event) in llm_call_ids
+            )
+        ]
+        return project_turn_cost(
+            related_events,
+            run_id=str(run_id),
+            turn_id=request_id,
+            session_id=session_id,
         )
 
     def get_session_token_usage(

@@ -17,6 +17,7 @@ from ..contracts import (
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
+    DirectToolTurnContext,
     canonical_tool_call_signature,
 )
 from ..decompose import (
@@ -541,6 +542,7 @@ def _process_tool_request_calls(
     requested_tools = list(
         loop_state.scratchpad.get("tool_schema_shortlisting.requested_tools", []) or []
     )
+    terminal_requested_names: list[str] = []
     for tool_call in tool_request_calls:
         arguments = dict(getattr(tool_call, "arguments", {}) or {})
         requested_name = str(arguments.get("name", "") or "").strip()
@@ -551,6 +553,12 @@ def _process_tool_request_calls(
             active_tool_specs=active_tool_specs,
         )
         activated_any = activated_any or activated
+        _record_terminal_tool_request(
+            terminal_requested_names,
+            action_result=action_result,
+            arguments=arguments,
+            requested_name=requested_name,
+        )
         active_tool_specs[:] = with_enabled_plan_tool_spec(profile, active_tool_specs)
         requested_tools.append(requested_name)
         loop_state.messages.append(
@@ -594,6 +602,9 @@ def _process_tool_request_calls(
     loop_state.scratchpad["tool_schema_shortlisting.active_tools"] = sorted(
         active_tool_names
     )
+    _stage_terminal_tool_request(
+        loop_state, terminal_requested_names, regular_tool_calls
+    )
     if activated_any:
         inactive_directory_message = build_inactive_tool_directory_message(
             requestable_tool_specs=requestable_specs,
@@ -604,31 +615,82 @@ def _process_tool_request_calls(
     if on_tool_result is not None:
         on_tool_result(loop_state)
     if not regular_tool_calls:
-        if signature not in set(loop_state.seen_signatures):
-            loop_state.seen_signatures.append(signature)
-        _emit_iteration_event(
+        result = _finish_tool_request_only_dispatch(
             loop_ctx=loop_ctx,
             profile=profile,
             loop_state=loop_state,
+            signature=signature,
             llm_duration_ms=iter_llm_duration_ms,
             tool_records=iter_tool_records,
             tokens_used=iter_input_tokens + iter_output_tokens,
         )
-        return (
-            [],
-            True,
-            LoopDispatchResult(
-                tool_calls=[],
-                ordered_tool_results=[],
-                cached_indices=frozenset(),
-                iter_batch_parallel_count=0,
-                dispatch_budget_managed=False,
-                batch_had_progress=True,
-                continue_loop=True,
-                outcome=None,
-            ),
-        )
+        return [], True, result
     return regular_tool_calls, True, None
+
+
+def _finish_tool_request_only_dispatch(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    signature: str,
+    llm_duration_ms: int,
+    tool_records: list[IterationToolCallRecord],
+    tokens_used: int,
+) -> LoopDispatchResult:
+    if signature not in set(loop_state.seen_signatures):
+        loop_state.seen_signatures.append(signature)
+    _emit_iteration_event(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        llm_duration_ms=llm_duration_ms,
+        tool_records=tool_records,
+        tokens_used=tokens_used,
+    )
+    return LoopDispatchResult(
+        tool_calls=[],
+        ordered_tool_results=[],
+        cached_indices=frozenset(),
+        iter_batch_parallel_count=0,
+        dispatch_budget_managed=False,
+        batch_had_progress=True,
+        continue_loop=True,
+        outcome=None,
+    )
+
+
+def _record_terminal_tool_request(
+    names: list[str],
+    *,
+    action_result: Any,
+    arguments: dict[str, Any],
+    requested_name: str,
+) -> None:
+    if str(getattr(action_result, "status", "") or "").strip() == "success" and bool(
+        arguments.get("terminal_after_success", False)
+    ):
+        names.append(requested_name)
+
+
+def _stage_terminal_tool_request(
+    loop_state: AdaptiveToolLoopState,
+    names: list[str],
+    regular_tool_calls: list[Any],
+) -> None:
+    if (
+        len(names) != 1
+        or regular_tool_calls
+        or getattr(loop_state, "direct_tool_turn", None) is not None
+    ):
+        return
+    requested_name = names[0]
+    loop_state.direct_tool_turn = DirectToolTurnContext(
+        requested_tool_names=(requested_name,),
+        requested_batch_signature="",
+        match_by_name_only=True,
+    )
+    loop_state.scratchpad["tool_schema_shortlisting.terminal_tool"] = requested_name
 
 
 def prepare_iteration_dispatch(

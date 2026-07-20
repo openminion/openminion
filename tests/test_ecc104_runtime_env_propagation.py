@@ -234,7 +234,7 @@ def test_api_tools_run_route_injects_runtime_env(monkeypatch):
     )
     monkeypatch.setattr(
         api_tools_operations,
-        "_tool_result_artifact_refs",
+        "tool_result_artifact_refs",
         lambda trace_id, session_id, result: [],
     )
 

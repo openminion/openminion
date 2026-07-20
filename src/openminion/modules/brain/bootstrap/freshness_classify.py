@@ -1,6 +1,8 @@
 import re
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from ..tools.parser import normalize_tool_name_for_brain
 from ..retry import call_structured_with_retry
 from ..schemas import (
@@ -151,6 +153,35 @@ def classify_request_freshness(
     return contract, obligations, diagnostics
 
 
+def freshness_from_entry_response(
+    response: Any,
+    *,
+    user_input: str,
+    model: str,
+) -> tuple[FreshnessContract, FreshnessObligations, FreshnessDiagnostics] | None:
+    """Extract and remove the entry-owned freshness contract from tool arguments."""
+
+    for call in list(getattr(response, "tool_calls", []) or []):
+        arguments = getattr(call, "arguments", None)
+        if not isinstance(arguments, dict) or "freshness" not in arguments:
+            continue
+        raw = arguments.pop("freshness")
+        try:
+            contract = FreshnessContract.model_validate(raw)
+        except ValidationError:
+            return None
+        if not contract.intent:
+            contract.intent = str(user_input or "").strip()
+        diagnostics = FreshnessDiagnostics(
+            classifier_mode="entry_contract",
+            classifier_model=str(model or "").strip(),
+            classified_at=iso_now(),
+            notes=["Freshness was classified in the unified entry provider call."],
+        )
+        return contract, map_freshness_obligations(contract), diagnostics
+    return None
+
+
 def build_freshness_hints(
     *,
     contract: FreshnessContract | None,
@@ -179,5 +210,6 @@ def build_freshness_hints(
 __all__ = [
     "build_freshness_hints",
     "classify_request_freshness",
+    "freshness_from_entry_response",
     "map_freshness_obligations",
 ]

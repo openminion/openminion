@@ -452,9 +452,13 @@ def test_noncritical_export_queue_drops_when_capacity_is_full() -> None:
         sink=sink,
     )
 
-    assert exporter.export(_event("policy.applied", trace_id="trace-1", criticality="noncritical"))
+    assert exporter.export(
+        _event("policy.applied", trace_id="trace-1", criticality="noncritical")
+    )
     sink.started.wait(timeout=1.0)
-    assert exporter.export(_event("policy.applied", trace_id="trace-2", criticality="noncritical"))
+    assert exporter.export(
+        _event("policy.applied", trace_id="trace-2", criticality="noncritical")
+    )
     dropped = exporter.export(
         _event("policy.applied", trace_id="trace-3", criticality="noncritical")
     )
@@ -689,9 +693,13 @@ def test_model_provider_event_emits_required_performance_metrics() -> None:
             retry_count=0,
             request_bytes=120,
             response_bytes=80,
-            input_tokens=30,
-            output_tokens=20,
-            cached_tokens=5,
+            usage={"input_tokens": 30, "output_tokens": 20, "cached_tokens": 5},
+            context_bytes=90,
+            context_tokens=22,
+            context_segment_count=3,
+            tool_schema_bytes=40,
+            tool_schema_count=2,
+            exposed_tool_count=2,
             round_trip_ms=12,
             session_id="forbidden-session-label",
             model="forbidden-model-label",
@@ -709,6 +717,12 @@ def test_model_provider_event_emits_required_performance_metrics() -> None:
         "openminion_model_input_tokens",
         "openminion_model_output_tokens",
         "openminion_model_cached_tokens",
+        "openminion_context_bytes",
+        "openminion_context_tokens",
+        "openminion_context_segment_count",
+        "openminion_tool_schema_bytes",
+        "openminion_tool_schema_count",
+        "openminion_exposed_tool_count",
         "openminion_provider_round_trip_ms",
     }.issubset(names)
     for metric in metrics:
