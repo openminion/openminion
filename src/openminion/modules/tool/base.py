@@ -21,6 +21,7 @@ class ToolExecutionContext:
     a2a_delegate_api: A2ADelegateApi | None = None
     blast_radius_adapter: Any | None = None
     telemetryctl: Any | None = None
+    confirm: bool = False
 
 
 @dataclass

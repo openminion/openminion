@@ -193,3 +193,25 @@ def test_execute_tool_spec_call_honors_policy_replay_confirmation_metadata(
 
     assert result.ok is True
     assert result.content == "confirmed"
+
+
+def test_execute_tool_spec_call_honors_explicit_context_confirmation(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / ".openminion"))
+
+    result = execute_tool_spec_call(
+        tool=_ConfirmRequiredTool(),
+        arguments={},
+        context=ToolExecutionContext(
+            channel="console",
+            target="tests",
+            session_id="session-confirm",
+            metadata={"workspace_root": str(tmp_path)},
+            confirm=True,
+        ),
+    )
+
+    assert result.ok is True
+    assert result.content == "confirmed"

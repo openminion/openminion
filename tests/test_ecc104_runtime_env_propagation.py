@@ -259,13 +259,14 @@ def test_api_tools_run_route_injects_runtime_env(monkeypatch):
         route_ctx,
         method_name="POST",
         path="/v1/tools/weather/run",
-        body={"arguments": {}, "session_id": "s"},
+        body={"arguments": {}, "session_id": "s", "confirm": True},
         query=None,
     )
 
     assert result is not None
     assert int(result.status) == 200
     assert captured["context"].metadata["runtime_env"] == {"ECC_104_API": "enabled"}
+    assert captured["context"].confirm is True
 
 
 def test_cli_inproc_tool_run_injects_runtime_env(monkeypatch):
@@ -319,9 +320,11 @@ def test_cli_inproc_tool_run_injects_runtime_env(monkeypatch):
         tool_name="weather",
         arguments={},
         session_id="session-cli",
+        confirm=True,
     )
     assert payload["ok"] is True
     assert captured["context"].metadata["runtime_env"] == {"ECC_104_CLI": "enabled"}
+    assert captured["context"].confirm is True
 
 
 def test_tool_fallback_builder_injects_runtime_env():

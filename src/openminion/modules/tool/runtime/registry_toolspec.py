@@ -22,6 +22,8 @@ _CONFIRMATION_GRANT_ID_METADATA_KEY = "confirmation_grant_id"
 
 
 def _context_confirm_requested(context: ToolExecutionContext) -> bool:
+    if bool(getattr(context, "confirm", False)):
+        return True
     metadata = context.metadata if isinstance(context.metadata, Mapping) else {}
     source = str(metadata.get(_CONFIRMATION_SOURCE_METADATA_KEY, "") or "").strip()
     grant_id = str(metadata.get(_CONFIRMATION_GRANT_ID_METADATA_KEY, "") or "").strip()

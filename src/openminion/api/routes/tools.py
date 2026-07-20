@@ -223,9 +223,7 @@ def _handle_tool_run(
             tool_name=tool_name,
             arguments=arguments,
             request_id=ctx.request_id,
-            channel=request["channel"],
-            target=request["target"],
-            requested_session_id=request["requested_session_id"],
+            **request,
         )
         return RouteResult(
             status=status,

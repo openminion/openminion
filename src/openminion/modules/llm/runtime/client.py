@@ -21,11 +21,7 @@ from ..config import (
 from ..contracts.adapter import ProviderAdapterResult, coerce_provider_output
 from ..errors import LLMCtlError
 from ..interfaces import LLM_RESPONSE_INTERFACE_VERSION
-from ..providers.tool_calling.contracts import (
-    detect_raw_envelope,
-    detect_raw_xml_tool_wrapper,
-    sanitize_envelope_leak,
-)
+from ..providers.tool_calling.contracts import sanitize_envelope_leak
 from ..providers.tool_calling.normalizer import normalize_tool_calls
 from ..providers.plugins import (
     ProviderRegistry,
@@ -456,18 +452,11 @@ class LLMClient:
             str(name).strip() for name in allowed_tool_names or [] if str(name).strip()
         ]
         if not normalized.tool_calls and normalized.output_text and allowed_names:
-            raw_tool_markup = detect_raw_envelope(
-                normalized.output_text
-            ) or detect_raw_xml_tool_wrapper(normalized.output_text)
-            normalized_fallback = (
-                normalize_tool_calls(
-                    assistant_text=normalized.output_text,
-                    provider_name=provider,
-                    model_name=model,
-                    allowed_tool_names=allowed_names,
-                )
-                if not raw_tool_markup
-                else None
+            normalized_fallback = normalize_tool_calls(
+                assistant_text=normalized.output_text,
+                provider_name=provider,
+                model_name=model,
+                allowed_tool_names=allowed_names,
             )
             if normalized_fallback and normalized_fallback.calls:
                 telemetry = dict(normalized.telemetry or {})

@@ -1195,3 +1195,7 @@ def main() -> int:
     )
     sys.stdout.write(output)
     return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
