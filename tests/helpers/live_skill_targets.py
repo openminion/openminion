@@ -31,6 +31,14 @@ def framework_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def openminion_root() -> Path:
+    return framework_root() / "openminion"
+
+
+def runtime_home_root() -> Path:
+    return openminion_root()
+
+
 def _target(
     *,
     target_id: str,
@@ -215,7 +223,7 @@ def validate_skill_live_target(target: SkillLiveTarget) -> None:
             f"missing config file for live skill target {target.target_id}: {resolved_config_path}"
         )
 
-    config = load_config(str(resolved_config_path), home_root=framework_root())
+    config = load_config(str(resolved_config_path), home_root=runtime_home_root())
     configured = configured_agent_ids(config)
     if target.agent_id not in configured:
         raise AssertionError(

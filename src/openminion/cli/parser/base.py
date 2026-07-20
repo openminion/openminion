@@ -31,13 +31,6 @@ COMMAND_SPECS = (
     CommandSpec(
         "channel", "openminion.cli.commands.channel", "Channel setup and operations"
     ),
-    CommandSpec("chat", "openminion.cli.commands.aliases", argparse.SUPPRESS),
-    CommandSpec(
-        "dashboard",
-        "openminion.cli.commands.aliases",
-        argparse.SUPPRESS,
-    ),
-    CommandSpec("tui", "openminion.cli.commands.aliases", argparse.SUPPRESS),
     CommandSpec("sessions", "openminion.cli.commands.sessions", "Session operations"),
     CommandSpec(
         "sidecar", "openminion.cli.commands.sidecar", "Sidecar lifecycle controls"
@@ -72,8 +65,17 @@ COMMAND_SPECS = (
     CommandSpec(
         "tasks", "openminion.cli.commands.tasks", "Task inventory and controls"
     ),
+    CommandSpec(
+        "replay", "openminion.cli.commands.replay", "Replay/checkpoint controls"
+    ),
+    CommandSpec(
+        "checkpoint", "openminion.cli.commands.replay", "List task checkpoints"
+    ),
+    CommandSpec("rewind", "openminion.cli.commands.replay", "Create a rewind branch"),
+    CommandSpec(
+        "branch", "openminion.cli.commands.replay", "Create a checkpoint branch"
+    ),
     CommandSpec("export", "openminion.cli.commands.export", "Export commands"),
-    CommandSpec("focus", "openminion.cli.commands.interactive", argparse.SUPPRESS),
     CommandSpec("setup", "openminion.cli.commands.setup", "Configure OpenMinion"),
     CommandSpec(
         "storage", "openminion.cli.commands.storage", "Shared storage-core operations"
@@ -96,6 +98,11 @@ COMMAND_SPECS = (
         "identity", "openminion.cli.commands.identity", "Identity profile management"
     ),
     CommandSpec("memory", "openminion.cli.commands.memory", "Memory operations"),
+    CommandSpec(
+        "project-learning",
+        "openminion.cli.commands.project_learning",
+        "Project instruction learning proposals",
+    ),
     CommandSpec("mcp", "openminion.cli.commands.mcp", "Manage MCP servers"),
 )
 COMMAND_MODULES = tuple(dict.fromkeys(spec.module for spec in COMMAND_SPECS))
@@ -255,16 +262,10 @@ def build_parser(*, selected_command: str | None = None) -> argparse.ArgumentPar
     from openminion.cli.parser.flags import add_interactive_session_flags
 
     add_interactive_session_flags(parser)
-    backend = parser.add_mutually_exclusive_group()
-    backend.add_argument(
+    parser.add_argument(
         "--rich",
         action="store_true",
         help="Use the optional Textual renderer instead of the default terminal renderer.",
-    )
-    backend.add_argument(
-        "--terminal",
-        action="store_true",
-        help=argparse.SUPPRESS,
     )
 
     subparsers = parser.add_subparsers(dest="command")

@@ -710,3 +710,37 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     assert len(events) == 3
     assert events[1].startswith("prompt:Approval required: file.write(")
     assert "scratch.txt" in events[1]
+
+
+@pytest.mark.asyncio
+async def test_terminal_approval_callback_serializes_bursty_session_grants() -> None:
+    prompts: list[str] = []
+    first_prompt_entered = asyncio.Event()
+    release_first_prompt = asyncio.Event()
+
+    class _Overlay:
+        async def present_approval_async(self, prompt: str) -> str:
+            prompts.append(prompt)
+            first_prompt_entered.set()
+            await release_first_prompt.wait()
+            return "always"
+
+    callback = terminal_shell._build_terminal_approval_callback(
+        overlay=_Overlay(),
+        session_grants=set(),
+    )
+
+    first = asyncio.create_task(
+        callback("file.write", {"path": "one.py"}, "call-1")
+    )
+    await first_prompt_entered.wait()
+    second = asyncio.create_task(
+        callback("file.write", {"path": "two.py"}, "call-2")
+    )
+    await asyncio.sleep(0)
+    release_first_prompt.set()
+
+    assert await first is True
+    assert await second is True
+    assert len(prompts) == 1
+    assert "one.py" in prompts[0]

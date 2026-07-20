@@ -102,6 +102,18 @@ def _decode_bridge_json_like(value: Any) -> Any:
     return value
 
 
+def _bridge_usage_payload(usage_info: Any) -> dict[str, Any]:
+    usage: dict[str, Any] = {}
+    if usage_info.input_tokens is not None:
+        usage["prompt_tokens"] = int(usage_info.input_tokens)
+    if usage_info.output_tokens is not None:
+        usage["completion_tokens"] = int(usage_info.output_tokens)
+    if usage_info.total_tokens is not None:
+        usage["total_tokens"] = int(usage_info.total_tokens)
+        usage["total_source"] = usage_info.total_source or "provider"
+    return usage
+
+
 class LLMCTLBridgeProvider(LLMProvider):
     """OpenMinion provider adapter backed by openminion.modules.llm runtime."""
 
@@ -306,13 +318,7 @@ class LLMCTLBridgeProvider(LLMProvider):
                 raise ProviderError("llmctl bridge call failed")
             raise ProviderError(f"{response.error.code}: {response.error.message}")
 
-        usage: dict[str, int] = {}
-        if response.usage.input_tokens is not None:
-            usage["prompt_tokens"] = int(response.usage.input_tokens)
-        if response.usage.output_tokens is not None:
-            usage["completion_tokens"] = int(response.usage.output_tokens)
-        if response.usage.total_tokens is not None:
-            usage["total_tokens"] = int(response.usage.total_tokens)
+        usage = _bridge_usage_payload(response.usage)
 
         tool_calls: list[ProviderToolCall] = []
         for call in response.tool_calls:

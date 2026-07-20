@@ -1,5 +1,6 @@
 import json
 from dataclasses import asdict
+from functools import partial
 import hashlib
 from time import perf_counter
 from typing import Any
@@ -18,8 +19,10 @@ from openminion.modules.telemetry.lifecycle import (
     map_runtime_event_to_lifecycle_event,
 )
 from openminion.modules.telemetry.service import TelemetryService
+from openminion.modules.telemetry.trace import phase_timing
 from openminion.base.logging import format_structured_event, get_logger
 from openminion.services.runtime.ingress import (
+    _emit_chat_phase_timing,
     build_manager_turn_request,
     execute_runtime_turn,
     runtime_turn_request_from_manager_request,
@@ -276,41 +279,26 @@ def execute_turn(
             telemetry=TurnTelemetry(duration_ms=0),
         )
 
-    def _emit_phase_status(status: object) -> None:
-        if cancel_event.is_set():
-            return
-        chunk_kind = "status"
-        if hasattr(status, "model_dump"):
-            try:
-                status_payload = status.model_dump()
-            except Exception:
-                return
-        elif isinstance(status, dict):
-            status_payload = dict(status)
-        else:
-            return
-        if isinstance(status_payload, dict):
-            candidate_kind = str(status_payload.get("kind", "") or "").strip()
-            if candidate_kind in {"tool_started", "tool_completed", "budget_event"}:
-                chunk_kind = candidate_kind
-        emit_chunk(
-            TurnChunk(
-                trace_id=request.trace_id,
-                kind=chunk_kind,
-                data=status_payload,
-            )
-        )
-
+    emit_phase_status = partial(
+        _emit_turn_phase_status,
+        request=request,
+        cancel_event=cancel_event,
+        emit_chunk=emit_chunk,
+    )
+    timer = phase_timing.ChatPhaseTimer(cold_start=bool(request.meta.get("cold_start")))
+    ingress_request = None
     try:
-        ingress_request = runtime_turn_request_from_manager_request(
-            runtime=runtime,
-            request=request,
-        )
-        turn_result = execute_runtime_turn(
-            runtime=runtime,
-            request=ingress_request,
-            progress_callback=_emit_phase_status,
-        )
+        with phase_timing.use_chat_phase_timer(timer):
+            with phase_timing.active_chat_phase("provider_request_build"):
+                ingress_request = runtime_turn_request_from_manager_request(
+                    runtime=runtime,
+                    request=request,
+                )
+            turn_result = execute_runtime_turn(
+                runtime=runtime,
+                request=ingress_request,
+                progress_callback=emit_phase_status,
+            )
     except TurnRequestError as exc:
         duration_ms = max(0, int((perf_counter() - started) * 1000))
         return TurnResponse(
@@ -340,6 +328,13 @@ def execute_turn(
             errors=[TurnError(code="turn_failed", message=str(exc), retryable=False)],
             telemetry=TurnTelemetry(duration_ms=duration_ms),
         )
+    finally:
+        if ingress_request is not None:
+            _emit_chat_phase_timing(
+                runtime=runtime,
+                timer=timer,
+                request=ingress_request,
+            )
 
     metadata = dict(turn_result.metadata)
     tool_calls = _tool_call_summaries(metadata.get("tool_calls"))
@@ -366,6 +361,37 @@ def execute_turn(
             queue_wait_ms=0,
         ),
         errors=[],
+    )
+
+
+def _emit_turn_phase_status(
+    status: object,
+    *,
+    request: Any,
+    cancel_event: Any,
+    emit_chunk: Any,
+) -> None:
+    if cancel_event.is_set():
+        return
+    chunk_kind = "status"
+    if hasattr(status, "model_dump"):
+        try:
+            status_payload = status.model_dump()
+        except Exception:
+            return
+    elif isinstance(status, dict):
+        status_payload = dict(status)
+    else:
+        return
+    candidate_kind = str(status_payload.get("kind", "") or "").strip()
+    if candidate_kind in {"tool_started", "tool_completed", "budget_event"}:
+        chunk_kind = candidate_kind
+    emit_chunk(
+        TurnChunk(
+            trace_id=request.trace_id,
+            kind=chunk_kind,
+            data=status_payload,
+        )
     )
 
 

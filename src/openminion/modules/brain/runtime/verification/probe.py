@@ -11,10 +11,12 @@ from ...schemas.closure import (
     ClosureJudgment,
     VerificationFact,
 )
+from openminion.modules.tool import (
+    blast_radius_requires_verification,
+    tool_result_blast_radius,
+)
+from openminion.modules.tool.errors import ToolRuntimeError
 from ..budget.continuation import has_continuation_budget
-
-
-VERIFIABLE_TOOL_PREFIXES: tuple[str, ...] = ("exec.", "file.", "code.", "git.")
 
 _TEST_RUNNER_PATTERNS: tuple[str, ...] = (
     "pytest",
@@ -63,11 +65,26 @@ def evaluate_verification(
     tool_results: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
     user_verification_exit_code: int | None = None,
 ) -> VerificationFact:
+    fact = verification_fact_for_results(
+        tool_results=tool_results,
+        user_verification_exit_code=user_verification_exit_code,
+    )
+    return fact if fact is not None else VerificationFact()
+
+
+def verification_fact_for_results(
+    *,
+    tool_results: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+    user_verification_exit_code: int | None = None,
+) -> VerificationFact | None:
     results = _normalize_tool_results(tool_results)
     if not results:
-        return VerificationFact()
-    if not _has_verifiable_side_effects(results):
-        return VerificationFact()
+        return None
+    side_effect_state = _side_effect_state(results)
+    if isinstance(side_effect_state, VerificationFact):
+        return side_effect_state
+    if not side_effect_state:
+        return None
     for signal, finder in (
         ("tests", _find_last_test_invocation),
         ("types", _find_last_type_check_invocation),
@@ -90,7 +107,7 @@ def evaluate_verification(
 def is_verification_failed(fact: VerificationFact | None) -> bool:
     if fact is None:
         return False
-    if fact.signal == "unavailable":
+    if fact.signal == "unavailable" and fact.ok:
         return False
     return not fact.ok
 
@@ -126,12 +143,21 @@ def _normalize_tool_results(
     return [item for item in raw if isinstance(item, dict)]
 
 
-def _has_verifiable_side_effects(results: list[dict[str, Any]]) -> bool:
+def _side_effect_state(
+    results: list[dict[str, Any]],
+) -> bool | VerificationFact:
     for result in results:
         if not bool(result.get("ok")):
             continue
-        tool_name = str(result.get("tool_name") or "").strip().lower()
-        if any(tool_name.startswith(prefix) for prefix in VERIFIABLE_TOOL_PREFIXES):
+        try:
+            radius = tool_result_blast_radius(result)
+        except ToolRuntimeError:
+            return VerificationFact(
+                signal="unavailable",
+                ok=False,
+                probed_tool=str(result.get("tool_name") or "").strip(),
+            )
+        if radius is not None and blast_radius_requires_verification(radius):
             return True
     return False
 
@@ -246,8 +272,8 @@ def _fact_from_result(*, signal: str, result: dict[str, Any]) -> VerificationFac
 
 __all__ = [
     "VERIFICATION_FAILED_REASON",
-    "VERIFIABLE_TOOL_PREFIXES",
     "apply_verification_to_judgment",
     "evaluate_verification",
     "is_verification_failed",
+    "verification_fact_for_results",
 ]

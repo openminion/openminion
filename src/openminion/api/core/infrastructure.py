@@ -107,7 +107,7 @@ def build_runtime_infrastructure(
     apply_runtime_environment(base_config.runtime.env)
     telemetry_service = TelemetryService(
         home_root=paths.home,
-        env=getattr(base_config.runtime, "env", None),
+        env=manager.env.snapshot(),
         otel_exporter_config=getattr(base_config.runtime, "telemetry_exporter", None),
     )
     runtime_storage = build_runtime_storage(

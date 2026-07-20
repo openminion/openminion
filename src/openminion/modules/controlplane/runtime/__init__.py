@@ -4,6 +4,24 @@ from typing import Callable
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.controlplane.runtime.dispatcher import ControlPlaneDispatcher
+from openminion.modules.controlplane.runtime.health_probe import (
+    ControlPlaneHealthProbeConfig,
+    ControlPlaneHealthProbeSidecar,
+)
+from openminion.modules.controlplane.runtime.janitor import (
+    ControlPlaneJanitor,
+    ControlPlaneJanitorSidecar,
+    ControlPlaneRetentionPolicy,
+)
+from openminion.modules.controlplane.runtime.metrics import (
+    MetricsAuditSink,
+    MetricsRegistry,
+    compose_audit_sinks,
+)
+from openminion.modules.controlplane.runtime.sidecar_specs import (
+    ControlPlaneSidecarSpec,
+    build_controlplane_sidecar_specs,
+)
 from openminion.modules.controlplane.interfaces import (
     CONTROLPLANE_INTERFACE_VERSION,
     ensure_controlplane_component_compatibility,
@@ -115,3 +133,20 @@ class EchoBrain(BrainClient):  # pragma: no cover - trivial behavior
             "trace_id": trace_id,
             "attachments": attachment_refs,
         }
+
+
+__all__ = [
+    "ControlPlaneDispatcher",
+    "ControlPlaneHealthProbeConfig",
+    "ControlPlaneHealthProbeSidecar",
+    "ControlPlaneJanitor",
+    "ControlPlaneJanitorSidecar",
+    "ControlPlaneRetentionPolicy",
+    "ControlPlaneSidecarSpec",
+    "EchoBrain",
+    "MetricsAuditSink",
+    "MetricsRegistry",
+    "RuntimeCoordinator",
+    "build_controlplane_sidecar_specs",
+    "compose_audit_sinks",
+]

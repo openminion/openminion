@@ -11,6 +11,7 @@ from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_ALLOWED_TOOLS,
 )
 from openminion.modules.brain.loop.tools.runtime import build_runtime_tool_specs
+from openminion.modules.brain.loop.tools.shortlisting import build_tool_request_spec
 from openminion.modules.brain.loop.tools.plan_control import build_plan_tool_spec
 from openminion.modules.brain.loop.tools.review_control import build_review_tool_spec
 from openminion.modules.llm.schemas import ToolSpec
@@ -19,6 +20,7 @@ ENTRY_CLARIFY_TOOL_NAME = "clarify"
 ENTRY_CODING_TOOL_NAME = "coding"
 ENTRY_DECOMPOSE_TOOL_NAME = "decompose"
 ENTRY_RESEARCH_TOOL_NAME = "research"
+ENTRY_RESPOND_TOOL_NAME = "respond"
 EntryPath = Literal["act", "respond", "clarify"]
 
 
@@ -154,6 +156,84 @@ def research_tool_spec() -> ToolSpec:
     )
 
 
+def respond_tool_spec() -> ToolSpec:
+    return ToolSpec(
+        name=ENTRY_RESPOND_TOOL_NAME,
+        description=(
+            "Return the complete answer when no execution tool or clarification is "
+            "needed. Include the typed freshness assessment for this request."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "answer": {
+                    "type": "string",
+                    "description": "The complete truthful answer to show the user.",
+                },
+                "freshness": _freshness_input_schema(),
+            },
+            "required": ["answer", "freshness"],
+            "additionalProperties": False,
+        },
+    )
+
+
+def _freshness_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "domain": {
+                "type": "string",
+                "enum": [
+                    "general",
+                    "finance",
+                    "news",
+                    "weather",
+                    "regulation",
+                    "shopping",
+                    "sports",
+                    "other",
+                ],
+            },
+            "time_sensitive": {"type": "boolean"},
+            "needs_live_data": {"type": "boolean"},
+            "needs_sources": {"type": "boolean"},
+            "needs_exact_date": {"type": "boolean"},
+            "answer_mode": {
+                "type": "string",
+                "enum": ["local_only", "browse_then_answer"],
+            },
+        },
+        "required": [
+            "domain",
+            "time_sensitive",
+            "needs_live_data",
+            "needs_sources",
+            "needs_exact_date",
+            "answer_mode",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def _with_freshness_contract(spec: ToolSpec) -> ToolSpec:
+    schema = dict(spec.input_schema or {})
+    properties = dict(schema.get("properties") or {})
+    properties["freshness"] = _freshness_input_schema()
+    required = [str(item) for item in schema.get("required", [])]
+    if "freshness" not in required:
+        required.append("freshness")
+    schema.update(
+        {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        }
+    )
+    return spec.model_copy(update={"input_schema": schema})
+
+
 def extract_response_text(response: Any) -> str:
     text = str(getattr(response, "output_text", "") or "").strip()
     if text:
@@ -175,9 +255,22 @@ def detect_entry_path(response: Any) -> EntryPathDetection:
     response_text = extract_response_text(response)
     clarify_question = ""
     for call in tool_calls:
-        if str(getattr(call, "name", "") or "").strip() != ENTRY_CLARIFY_TOOL_NAME:
-            continue
+        call_name = str(getattr(call, "name", "") or "").strip()
         arguments = getattr(call, "arguments", {}) or {}
+        if call_name == ENTRY_RESPOND_TOOL_NAME:
+            answer = (
+                str(arguments.get("answer", "") or "").strip()
+                if isinstance(arguments, dict)
+                else ""
+            )
+            return EntryPathDetection(
+                path="respond",
+                response_text=answer or response_text,
+                clarify_question="",
+                tool_call_names=tool_call_names,
+            )
+        if call_name != ENTRY_CLARIFY_TOOL_NAME:
+            continue
         if isinstance(arguments, dict):
             clarify_question = str(arguments.get("question", "") or "").strip()
         if not clarify_question:
@@ -233,19 +326,39 @@ def build_entry_tool_specs(
         act_profile=normalized_profile,
         execution_target_kind=normalized_target,
     )
-    allowed_tools: frozenset[str] = frozenset()
-    if supports_seed:
-        allowed_tools = (
-            CODING_ALLOWED_TOOLS
-            if normalized_profile == BRAIN_ACT_PROFILE_CODING
-            else ACT_ADAPTIVE_ALLOWED_TOOLS
-        )
-    tool_specs = build_runtime_tool_specs(runner, allowed_tools=allowed_tools)
+    requestable_specs = build_entry_requestable_tool_specs(
+        runner,
+        act_profile=normalized_profile,
+        execution_target_kind=normalized_target,
+    )
+    tool_specs: list[ToolSpec] = []
+    if requestable_specs:
+        tool_specs.append(_with_freshness_contract(build_tool_request_spec()))
     if include_control_tools:
-        tool_specs.append(coding_tool_spec())
-        tool_specs.append(build_plan_tool_spec())
-        tool_specs.append(research_tool_spec())
-        tool_specs.append(decompose_tool_spec())
-        tool_specs.append(clarify_tool_spec())
-        tool_specs.append(build_review_tool_spec())
+        tool_specs.append(respond_tool_spec())
+        tool_specs.append(_with_freshness_contract(coding_tool_spec()))
+        tool_specs.append(_with_freshness_contract(build_plan_tool_spec()))
+        tool_specs.append(_with_freshness_contract(research_tool_spec()))
+        tool_specs.append(_with_freshness_contract(decompose_tool_spec()))
+        tool_specs.append(_with_freshness_contract(clarify_tool_spec()))
+        tool_specs.append(_with_freshness_contract(build_review_tool_spec()))
     return tool_specs, supports_seed
+
+
+def build_entry_requestable_tool_specs(
+    runner: Any | None,
+    *,
+    act_profile: str,
+    execution_target_kind: str,
+) -> list[ToolSpec]:
+    if not entry_supports_seed_response(
+        act_profile=act_profile,
+        execution_target_kind=execution_target_kind,
+    ):
+        return []
+    allowed_tools = (
+        CODING_ALLOWED_TOOLS
+        if str(act_profile or "").strip().lower() == BRAIN_ACT_PROFILE_CODING
+        else ACT_ADAPTIVE_ALLOWED_TOOLS
+    )
+    return build_runtime_tool_specs(runner, allowed_tools=allowed_tools)

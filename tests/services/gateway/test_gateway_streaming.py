@@ -5,6 +5,8 @@ import time
 from unittest import mock
 
 from openminion.base.types import Message
+from openminion.modules.brain.streaming import turn_progress_from_llm_stream_event
+from openminion.modules.llm.schemas import LLMStreamEvent
 from openminion.services.gateway.streaming import (
     gateway_stream_event_from_turn_chunk,
 )
@@ -73,6 +75,64 @@ class GatewayServiceStreamingTests(GatewayServiceTestCase):
         assert events[-1].final_message is not None
         assert events[-1].final_message["body"] == "final answer"
 
+    def test_handle_message_streaming_maps_turn_token_chunks_before_final(self) -> None:
+        async def _fake_handle_message(**kwargs):  # type: ignore[no-untyped-def]
+            progress_callback = kwargs.get("progress_callback")
+            assert callable(progress_callback)
+            provider_events = (
+                LLMStreamEvent(type="delta", delta_text="Hello"),
+                LLMStreamEvent(type="delta", delta_text=" world"),
+                LLMStreamEvent(type="done"),
+            )
+            for provider_event in provider_events:
+                chunk = turn_progress_from_llm_stream_event(
+                    provider_event,
+                    trace_id="trace-token",
+                )
+                if chunk is not None:
+                    progress_callback(chunk)
+            return Message(
+                channel="console",
+                target="cli-chat",
+                body="Hello world",
+                metadata={"run_id": "trace-token"},
+            )
+
+        with mock.patch.object(
+            self.gateway, "handle_message", side_effect=_fake_handle_message
+        ):
+            events = asyncio.run(
+                _collect_stream(
+                    self.gateway.handle_message_streaming(
+                        channel="console",
+                        target="cli-chat",
+                        body="hello",
+                    )
+                )
+            )
+
+        assert [event.kind for event in events] == [
+            "assistant_token",
+            "assistant_token",
+            "final_message",
+        ]
+        assert [event.text for event in events[:2]] == ["Hello", " world"]
+
+    def test_brain_stream_mapping_ignores_non_delta_and_empty_events(self) -> None:
+        assert (
+            turn_progress_from_llm_stream_event(
+                LLMStreamEvent(type="done"), trace_id="trace-token"
+            )
+            is None
+        )
+        assert (
+            turn_progress_from_llm_stream_event(
+                LLMStreamEvent(type="delta", delta_text=""),
+                trace_id="trace-token",
+            )
+            is None
+        )
+
     def test_gateway_stream_event_from_turn_chunk_maps_chunk_kinds(self) -> None:
         tool_started = gateway_stream_event_from_turn_chunk(
             {
@@ -97,6 +157,22 @@ class GatewayServiceStreamingTests(GatewayServiceTestCase):
         assert budget is not None
         assert budget.kind == "budget_event"
         assert budget.budget_event_type == "budget.extended"
+
+        flat_delta = gateway_stream_event_from_turn_chunk(
+            {
+                "trace_id": "trace-2",
+                "kind": "delta",
+                "delta_text": "streamed",
+            }
+        )
+        assert flat_delta is not None
+        assert flat_delta.kind == "assistant_token"
+        assert flat_delta.text == "streamed"
+
+        malformed_delta = gateway_stream_event_from_turn_chunk(
+            {"trace_id": "trace-2", "kind": "delta", "data": {}}
+        )
+        assert malformed_delta is None
 
     def test_handle_message_streaming_flushes_progress_during_blocking_turn(
         self,

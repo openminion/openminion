@@ -7,6 +7,11 @@ from typing import Any
 
 from openminion.modules.brain.schemas import FinalizationStatus
 from openminion.modules.llm.providers.base import ProviderResponse
+from openminion.modules.tool import (
+    blast_radius_requires_verification,
+    tool_result_blast_radius,
+)
+from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 from openminion.modules.prompting.finalization import (
@@ -34,43 +39,12 @@ _STATUS_ATTR_RE = re.compile(
 FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE: str = _FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE
 FINALIZATION_STATUS_RETRY_GUIDANCE: str = _FINALIZATION_STATUS_RETRY_GUIDANCE
 
-
-_MUTATING_TOOL_NAME_PREFIXES: tuple[str, ...] = (
-    "file.write",
-    "file.append",
-    "file.delete",
-    "file.move",
-    "file.copy",
-    "file.patch",
-    "exec.run",
-    "shell.run",
-    "git.commit",
-    "git.add",
-    "git.reset",
-    "git.checkout",
-    "git.branch",
-    "git.stash",
-    "git.push",
-    "browser.click",
-    "browser.fill",
-    "browser.submit",
-    "memory.write",
-    "memory.put",
-    "memory.delete",
-)
-
-
 def _is_mutating_result(result: Any) -> bool:
-    data = getattr(result, "data", {}) or {}
-    if isinstance(data, Mapping):
-        min_scope = str(data.get("tool_min_scope", "") or "").strip().upper()
-        if min_scope:
-            return min_scope in {"WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"}
-
-    name = str(getattr(result, "tool_name", "") or "").strip().lower()
-    return bool(name) and any(
-        name.startswith(prefix) for prefix in _MUTATING_TOOL_NAME_PREFIXES
-    )
+    try:
+        radius = tool_result_blast_radius(result)
+    except ToolRuntimeError:
+        return True
+    return radius is not None and blast_radius_requires_verification(radius)
 
 
 def requires_typed_finalization_contract_for_results(results: Iterable[Any]) -> bool:

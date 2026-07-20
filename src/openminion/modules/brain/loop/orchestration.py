@@ -1,3 +1,4 @@
+import json
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -8,8 +9,8 @@ from openminion.modules.brain.adapters.llm.request import (
 from openminion.modules.brain.bootstrap.budget import trim_decide_context_to_budget
 from openminion.modules.brain.bootstrap.context import _inject_decide_prompt_contract
 from openminion.modules.brain.bootstrap.freshness_classify import (
-    build_freshness_hints,
     classify_request_freshness,
+    freshness_from_entry_response,
 )
 from openminion.modules.brain.bootstrap.guards import _tier_0_restriction_decision
 from openminion.modules.brain.bootstrap.recovery import (
@@ -58,6 +59,7 @@ from .entry_routing import (
     _should_bypass_unified_entry,
 )
 from .entry import (
+    build_entry_requestable_tool_specs,
     build_entry_tool_specs,
     detect_entry_path,
 )
@@ -73,6 +75,164 @@ _BACKOFF_SLEEP = time.sleep
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from openminion.modules.brain.runner import BrainRunner
+
+
+def _apply_freshness_result(
+    *,
+    state: WorkingState,
+    logger: CanonicalEventLogger,
+    result: tuple[Any, Any, Any],
+) -> None:
+    contract, obligations, diagnostics = result
+    state.freshness_contract = contract
+    state.freshness_obligations = obligations
+    state.freshness_diagnostics = diagnostics
+    logger.emit(
+        "brain.freshness.classified",
+        {
+            "domain": contract.domain.value,
+            "time_sensitive": contract.time_sensitive,
+            "needs_live_data": contract.needs_live_data,
+            "needs_sources": contract.needs_sources,
+            "needs_exact_date": contract.needs_exact_date,
+            "answer_mode": contract.answer_mode.value,
+            "classifier_mode": diagnostics.classifier_mode,
+            "classifier_model": diagnostics.classifier_model,
+        },
+        trace_id=state.trace_id,
+    )
+
+
+def _compact_entry_tool_directory(tool_specs: list[Any]) -> str:
+    lines = [
+        "Execution tool schemas are inactive until requested. If execution is "
+        "needed, call tool.request with one exact name from this directory."
+    ]
+    for spec in tool_specs:
+        name = str(getattr(spec, "name", "") or "").strip()
+        if not name:
+            continue
+        description = " ".join(str(getattr(spec, "description", "") or "").split())
+        if len(description) > 120:
+            description = f"{description[:117].rstrip()}..."
+        lines.append(f"- {name}: {description or name}")
+    return "\n".join(lines)
+
+
+def _json_size(value: Any) -> int:
+    return len(
+        json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    )
+
+
+def _entry_request_metrics(
+    *,
+    messages: list[Any],
+    tool_specs: list[Any],
+    context_tokens: int,
+) -> dict[str, int]:
+    message_payload = [
+        message.model_dump(mode="json") if hasattr(message, "model_dump") else message
+        for message in messages
+    ]
+    tool_payload = [
+        spec.model_dump(mode="json") if hasattr(spec, "model_dump") else spec
+        for spec in tool_specs
+    ]
+    segment_ids = {
+        str(segment_id)
+        for message in messages
+        for part in list(getattr(message, "content_parts", []) or [])
+        for segment_id in list(getattr(part, "segment_ids", []) or [])
+        if str(segment_id).strip()
+    }
+    return {
+        "request_bytes": _json_size(
+            {"messages": message_payload, "tools": tool_payload}
+        ),
+        "context_bytes": _json_size(message_payload),
+        "context_tokens": max(0, int(context_tokens or 0)),
+        "context_segment_count": len(segment_ids),
+        "tool_schema_count": len(tool_specs),
+        "tool_schema_bytes": _json_size(tool_payload),
+        "exposed_tool_count": len(tool_specs),
+    }
+
+
+def _entry_response_bytes(response: Any) -> int:
+    return _json_size(
+        {
+            "output_text": str(getattr(response, "output_text", "") or ""),
+            "tool_calls": [
+                call.model_dump(mode="json") if hasattr(call, "model_dump") else call
+                for call in list(getattr(response, "tool_calls", []) or [])
+            ],
+            "finish_reason": str(getattr(response, "finish_reason", "") or ""),
+        }
+    )
+
+
+def _apply_entry_freshness(
+    *,
+    runner: Any,
+    state: WorkingState,
+    logger: CanonicalEventLogger,
+    response: Any,
+    user_input: str | None,
+    model: str,
+    llm_call_id: str,
+) -> None:
+    result = freshness_from_entry_response(
+        response,
+        user_input=str(user_input or ""),
+        model=model,
+    )
+    if result is not None:
+        _apply_freshness_result(state=state, logger=logger, result=result)
+        return
+
+    fallback_call_id = new_uuid()
+    result = classify_request_freshness(
+        runner,
+        state=state,
+        user_input=user_input,
+        logger=logger,
+    )
+    result[2].notes.append(
+        "Compatibility fallback was required because the entry response did not "
+        "contain a valid typed freshness contract."
+    )
+    logger.emit(
+        "brain.freshness.entry_fallback",
+        {"llm_call_id": llm_call_id, "reason": "missing_or_invalid_contract"},
+        trace_id=state.trace_id,
+    )
+    if callable(getattr(runner.llm_api, "call_structured", None)) and result[
+        2
+    ].classifier_mode not in {
+        "skipped_direct_tool_request",
+        "skipped_empty_request",
+        "skipped_missing_llm",
+    }:
+        fallback_payload = {
+            "llm_call_id": fallback_call_id,
+            "purpose": "freshness_classify_fallback",
+            "model": model,
+            "auxiliary": True,
+        }
+        logger.emit("llm.call.started", fallback_payload, trace_id=state.trace_id)
+        logger.emit(
+            "llm.call.completed",
+            {
+                **fallback_payload,
+                "usage": {},
+                "fallback_reason": "missing_or_invalid_entry_contract",
+            },
+            trace_id=state.trace_id,
+        )
+    _apply_freshness_result(state=state, logger=logger, result=result)
 
 
 def _with_forced_runtime_tool_specs(
@@ -221,47 +381,18 @@ def decide(
             logger=logger,
         )
 
-    freshness_hints: dict[str, Any] = {}
-    freshness_style_overrides: dict[str, str] = {}
-    if user_input is not None:
-        freshness_contract, freshness_obligations, freshness_diagnostics = (
-            classify_request_freshness(
-                runner,
-                state=state,
-                user_input=user_input,
-                logger=logger,
-            )
-        )
-        state.freshness_contract = freshness_contract
-        state.freshness_obligations = freshness_obligations
-        state.freshness_diagnostics = freshness_diagnostics
-        freshness_hints = build_freshness_hints(
-            contract=freshness_contract,
-            obligations=freshness_obligations,
-        )
-        raw_style_overrides = freshness_hints.pop("style_overrides", None)
-        if isinstance(raw_style_overrides, dict):
-            freshness_style_overrides = {
-                str(key): str(value)
-                for key, value in raw_style_overrides.items()
-                if str(key or "").strip()
-            }
-        logger.emit(
-            "brain.freshness.classified",
-            {
-                "domain": freshness_contract.domain.value,
-                "time_sensitive": freshness_contract.time_sensitive,
-                "needs_live_data": freshness_contract.needs_live_data,
-                "needs_sources": freshness_contract.needs_sources,
-                "needs_exact_date": freshness_contract.needs_exact_date,
-                "answer_mode": freshness_contract.answer_mode.value,
-                "classifier_mode": freshness_diagnostics.classifier_mode,
-                "classifier_model": freshness_diagnostics.classifier_model,
-            },
-            trace_id=state.trace_id,
-        )
-
     if runner.llm_api is None or runner.context_api is None:
+        if user_input is not None:
+            _apply_freshness_result(
+                state=state,
+                logger=logger,
+                result=classify_request_freshness(
+                    runner,
+                    state=state,
+                    user_input=user_input,
+                    logger=logger,
+                ),
+            )
         decision = heuristic_decision(runner, state=state, user_input=user_input)
         if state.tier == "T0_direct" and decision.route in {BRAIN_DECISION_ROUTE_ACT}:
             return _tier_0_restriction_decision(
@@ -320,6 +451,14 @@ def decide(
         include_control_tools=(
             str(getattr(state, "decision_reason_code", "") or "").strip()
             != "research_iteration_fallback"
+        ),
+    )
+    requestable_tool_specs = build_entry_requestable_tool_specs(
+        runner,
+        act_profile=str(getattr(provisional_route, "act_profile", "") or ""),
+        execution_target_kind=str(
+            getattr(getattr(provisional_route, "execution_target", None), "kind", "")
+            or ""
         ),
     )
     explicit_runtime_tools = [
@@ -401,26 +540,20 @@ def decide(
         hints["entry_tool_restriction"] = "clarify_only"
     if state.step_outputs:
         hints["has_prior_results"] = True
+    if requestable_tool_specs and any(
+        spec.name == "tool.request" for spec in tool_specs
+    ):
+        style_overrides = hints.setdefault("style_overrides", {})
+        if isinstance(style_overrides, dict):
+            style_overrides["entry_inactive_tool_directory"] = (
+                _compact_entry_tool_directory(requestable_tool_specs)
+            )
     if normalized_capability_category:
         hints["capability_category"] = normalized_capability_category
     if str(getattr(state, "run_trigger", "") or "") == "idle_tick":
         hints["idle_tick_entry"] = True
         hints["idle_tick_v1_actions"] = ["continue_plan", "no_op"]
     hints.update(skill_hints)
-    hints.update(freshness_hints)
-    if freshness_style_overrides:
-        existing_style_overrides = hints.get("style_overrides")
-        merged_style_overrides: dict[str, str] = {}
-        if isinstance(existing_style_overrides, dict):
-            merged_style_overrides.update(
-                {
-                    str(key): str(value)
-                    for key, value in existing_style_overrides.items()
-                    if str(key or "").strip()
-                }
-            )
-        merged_style_overrides.update(freshness_style_overrides)
-        hints["style_overrides"] = merged_style_overrides
     _inject_decide_prompt_contract(hints, runner=runner)
 
     logger.emit(
@@ -478,6 +611,11 @@ def decide(
     max_retries = retry_policy.max_retries
     last_detection = None
     base_messages = list(_messages_from_context(context))
+    request_metrics = _entry_request_metrics(
+        messages=base_messages,
+        tool_specs=tool_specs,
+        context_tokens=int(_estimate or 0),
+    )
     has_real_tools = any(spec.name != "clarify" for spec in tool_specs)
     entry_metadata: dict[str, Any] = {
         "purpose": "entry",
@@ -546,6 +684,7 @@ def decide(
                 tools=tool_specs,
                 model=model,
                 tool_choice="auto",
+                max_output_tokens=budget_max_tokens,
                 metadata=entry_metadata,
             )
         except Exception as exc:  # noqa: BLE001
@@ -646,6 +785,16 @@ def decide(
             answer=_internal_failure_answer(detail="entry_missing_response"),
         )
 
+    _apply_entry_freshness(
+        runner=runner,
+        state=state,
+        logger=logger,
+        response=response,
+        user_input=user_input,
+        model=model,
+        llm_call_id=llm_call_id,
+    )
+
     usage_payload = _response_usage_payload(response)
     state.llm_calls_used += 1
     _runner_delegate("_debit_tokens", runner, state, {"usage": usage_payload}, logger)
@@ -696,6 +845,11 @@ def decide(
             "prompt_context_id": context.get("prompt_context_id"),
             "usage": usage_payload,
             "entry_tool_spec_count": len(tool_specs),
+            **request_metrics,
+            "response_bytes": _entry_response_bytes(response),
+            "retry_count": attempt,
+            "finish_reason": str(getattr(response, "finish_reason", "") or ""),
+            "configured_output_limit": budget_max_tokens,
         },
         trace_id=state.trace_id,
     )

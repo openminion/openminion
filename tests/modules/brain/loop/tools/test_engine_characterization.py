@@ -94,7 +94,6 @@ from openminion.modules.brain.loop.tools.iteration.termination import (
 )
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
-    ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_DECOMPOSE_INVALID,
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
@@ -2073,7 +2072,10 @@ def test_loop_iteration_cap_terminates_with_cap_reason() -> None:
         ADAPTIVE_TERM_ITERATION_CAP,
         ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
         ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+        ADAPTIVE_TERM_FINAL_TEXT,
     }
+    if outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT:
+        assert "tool evidence" in str(outcome.final_text or "").lower()
 
 
 def test_loop_llm_error_terminates_with_llm_error_reason() -> None:
@@ -4183,6 +4185,64 @@ class TestFinalizeIterationCapExit:
 
         assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
         assert outcome.final_text.startswith("SOURCES")
+
+    def test_iteration_cap_preserves_tool_evidence_when_finalization_fails(
+        self,
+    ) -> None:
+        prof = _profile(allowed_tools=frozenset({"file.read"}))
+        st_loop = AdaptiveToolLoopState(
+            messages=[
+                Message(
+                    role="user",
+                    content="Finish with exact labels `files:`, `validation:`, and `follow-ups:`.",
+                )
+            ],
+            total_tool_calls=1,
+        )
+        st_loop.scratchpad["adaptive.tool_results"] = [
+            {
+                "tool_name": "file.read",
+                "ok": True,
+                "content": "read back loopcalc.py",
+                "data": {"path": "loopcalc.py"},
+            }
+        ]
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="I hit an internal decision error before I could continue safely on this turn.",
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        outcome = finalize_iteration_cap_exit(
+            loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            allowed_tools=frozenset({"file.read"}),
+            public_mode_name="Act",
+            public_mode_tag="act",
+            max_output_tokens=100,
+            metadata=None,
+            loop_profiler=SimpleNamespace(summary=dict),
+            trigger_macro_correction=lambda **_: None,
+            dispatch_correction_plan=lambda **_: None,
+        )
+
+        assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert "files: loopcalc.py" in str(outcome.final_text)
+        assert "validation:" in str(outcome.final_text)
+        assert (
+            st_loop.scratchpad.get("iteration_cap_used_evidence_fallback") is True
+            or st_loop.scratchpad.get("budget_stop_used_evidence_fallback") is True
+        )
         assert runtime.calls[-1]["tool_choice"] == "none"
 
     def test_force_finalization_llm_exception_returns_llm_error(self) -> None:
@@ -4846,6 +4906,24 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         )
         return st
 
+    def _prepare_state_with_requested_evidence(
+        self,
+        signature: str,
+        *,
+        request: str = "finish with `result:` and `validation:`",
+    ) -> AdaptiveToolLoopState:
+        st = self._prepare_state_with_facts(signature)
+        st.messages = [Message(role="user", content=request)]
+        st.scratchpad["adaptive.tool_results"] = [
+            {
+                "tool_name": "file.read",
+                "ok": True,
+                "content": "read back created file successfully",
+                "data": {"path": "module.py"},
+            }
+        ]
+        return st
+
     def test_returns_none_when_no_facts(self) -> None:
         prof = _profile(allowed_tools=frozenset({"x"}))
         st_loop = AdaptiveToolLoopState(messages=[])
@@ -5080,6 +5158,85 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         )
         assert out is not None
         assert out.termination_reason == ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
+
+    def test_falls_back_to_evidence_on_empty_final_text_with_tool_evidence(
+        self,
+    ) -> None:
+        signature = "sig-6-evidence"
+        st_loop = self._prepare_state_with_requested_evidence(signature)
+        prof = _profile(allowed_tools=frozenset({"file.read"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="",
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="file.read", arguments={})],
+            tool_specs=_tool_specs("file.read"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.read"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is not None
+        assert out.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert "result:" in str(out.final_text or "").lower()
+        assert "validation:" in str(out.final_text or "").lower()
+        assert "tool evidence:" in str(out.final_text or "").lower()
+
+    def test_falls_back_to_evidence_when_duplicate_closure_misses_labels(
+        self,
+    ) -> None:
+        signature = "sig-missing-labels"
+        st_loop = self._prepare_state_with_requested_evidence(signature)
+        prof = _profile(allowed_tools=frozenset({"file.read"}))
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="I read the file successfully.",
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        out, dur, tok = _force_duplicate_batch_answer_only_closure(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            tool_calls=[ToolCall(id="c", name="file.read", arguments={})],
+            tool_specs=_tool_specs("file.read"),
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.read"}),
+            public_mode_tag="act",
+            signature=signature,
+        )
+
+        assert out is not None
+        assert out.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert "result:" in str(out.final_text or "").lower()
+        assert "validation:" in str(out.final_text or "").lower()
 
     def test_returns_none_on_provider_fallback_final_text(self) -> None:
         signature = "sig-provider-fallback"
@@ -5742,7 +5899,9 @@ def test_loop_circular_pattern_rejects_internal_failure_answer_text() -> None:
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert "tool evidence:" in str(outcome.final_text or "").lower()
+    assert bool(outcome.state.scratchpad.get("circular_pattern_used_evidence_fallback"))
 
 
 def test_loop_iteration_cap_exit_path() -> None:
@@ -6138,6 +6297,188 @@ def test_loop_retries_when_final_answer_is_execution_preface_draft() -> None:
     assert "SOURCES" in str(outcome.final_text or "")
 
 
+def test_loop_retries_snippet_only_answer_when_file_artifacts_were_requested() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="c1", name="file.list_dir", arguments={"path": "."}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "implementation:\n\n"
+                    "import sys\n\n"
+                    "def main():\n"
+                    "    print('hello')\n\n"
+                    "validation:\n"
+                    "Read back the created file."
+                ),
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c2",
+                        name="file.write",
+                        arguments={"path": "cli.py", "content": "print('hello')\n"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="result: wrote cli.py",
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "design: simple CLI\n"
+                    "implementation: wrote cli.py\n"
+                    "validation: file.write succeeded\n"
+                    "follow-ups: none"
+                ),
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4, llm_calls_max=6),
+        outcomes=[
+            _success_outcome("file.list_dir", "empty directory"),
+            _success_outcome("file.write", "wrote cli.py"),
+        ],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.list_dir", "file.write"}),
+            profile_name="general_adaptive_v1",
+            max_iterations=6,
+        ),
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(
+                role="user",
+                content=(
+                    "Build a tiny Python CLI project. Use file.write for files; "
+                    "do not only show code snippets."
+                ),
+            )
+        ],
+        tool_specs=_tool_specs("file.list_dir", "file.write"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        "file.list_dir",
+        "file.write",
+    ]
+    assert bool(outcome.state.scratchpad.get("snippet_only_file_artifact_retry_used"))
+
+
+def test_loop_retries_prose_closeout_when_file_artifacts_were_not_created() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "design: simple CLI\n"
+                    "implementation: create a parser and summarize sections\n"
+                    "validation: read back the generated file\n"
+                    "follow-ups: none"
+                ),
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="file.write",
+                        arguments={"path": "cli.py", "content": "print('ok')\n"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="result: wrote cli.py",
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "design: simple CLI\n"
+                    "implementation: wrote cli.py\n"
+                    "validation: file.write succeeded\n"
+                    "follow-ups: none"
+                ),
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4, llm_calls_max=5),
+        outcomes=[_success_outcome("file.write", "wrote cli.py")],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.write"}),
+            profile_name="general_adaptive_v1",
+            max_iterations=5,
+        ),
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(
+                role="user",
+                content=(
+                    "Implement a tiny CLI with file.write. Close with "
+                    "`design:`, `implementation:`, `validation:`, and `follow-ups:`."
+                ),
+            )
+        ],
+        tool_specs=_tool_specs("file.write"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
+    assert bool(outcome.state.scratchpad.get("snippet_only_file_artifact_retry_used"))
+
+
 def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> None:
     runtime = _FakeRuntime(
         responses=[
@@ -6194,7 +6535,7 @@ def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> 
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "Validation:" in str(outcome.final_text or "")
+    assert "tool evidence:" in str(outcome.final_text or "").lower()
     assert "file.read" in str(outcome.final_text or "")
     assert "core module content present" in str(outcome.final_text or "")
     assert bool(
@@ -6281,6 +6622,98 @@ def test_loop_retries_empty_finalization_after_successful_tool_evidence() -> Non
     )
     assert bool(
         outcome.state.scratchpad.get("empty_final_after_tool_results_final_retry_used")
+    )
+
+
+def test_loop_falls_back_to_evidence_when_typed_finalization_contract_is_missing() -> (
+    None
+):
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="web.search",
+                        arguments={"query": "python packaging metadata"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "PEP 621 keeps project metadata in pyproject.toml, and core "
+                    "metadata remains the exchange format."
+                ),
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "PEP 621 keeps project metadata in pyproject.toml, and core "
+                    "metadata remains the exchange format."
+                ),
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=3, llm_calls_max=6),
+        outcomes=[
+            _success_outcome("web.search", "PEP 621 and core metadata evidence"),
+        ],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"web.search"}),
+            profile_name="general_adaptive_v1",
+            max_iterations=6,
+        ),
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(
+                role="user",
+                content=(
+                    "Compare Python packaging metadata best practices and end "
+                    "with a short recommended direction."
+                ),
+            )
+        ],
+        tool_specs=_tool_specs("web.search"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert "recommendation:" in str(outcome.final_text or "").lower()
+    assert "web.search" in str(outcome.final_text or "")
+    assert bool(
+        outcome.state.scratchpad.get(
+            "typed_finalization_contract_used_evidence_fallback"
+        )
     )
 
 

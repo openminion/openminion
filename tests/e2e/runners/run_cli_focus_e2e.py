@@ -47,6 +47,27 @@ SUITES: dict[str, Suite] = {
             "tests/tools/test_approval_pending.py",
             "tests/tools/exec/test_interfaces_contract.py",
             "tests/e2e/test_cli_chat_probe_runner.py",
+            "tests/brain/modes/test_delegate_e2e.py",
+            "tests/brain/modes/test_decompose_e2e.py",
+            "tests/brain/modes/test_delegate_integration.py",
+            "tests/brain/modes/test_decompose_integration.py",
+            "tests/brain/modes/test_async_delegate_unit.py",
+            "tests/brain/modes/test_async_delegate_integration.py",
+            "tests/brain/tool_loops/test_plan_control.py",
+            "tests/brain/loop/test_plan_control_progress_bridge.py",
+            "tests/tools/test_agent_delegation.py",
+            "tests/modules/brain/loop/tools/test_engine_characterization.py",
+            "tests/modules/brain/loop/tools/test_mutating_file_repetition.py",
+            "tests/brain/tools/test_readonly_gate.py",
+            "tests/cli/interactive/terminal/test_fpc_readonly_mode.py",
+            "tests/tools/git/test_git_recovery.py",
+            "tests/tools/github/test_write_policy.py",
+            "tests/brain/loop/test_provider_retry_policy.py",
+            "tests/brain/runtime/test_recovery_pipeline.py",
+            "tests/tools/search/test_provider_chain.py",
+            "tests/tools/fetch/test_plugin.py",
+            "tests/tools/weather/test_plugin.py",
+            "tests/tools/time/test_plugin.py",
         ),
     ),
     "core": Suite(("tests/e2e/cli/focus/test_live_basic.py",), live=True),
@@ -173,10 +194,8 @@ def main(argv: list[str] | None = None) -> int:
     suite = SUITES[mode]
     if suite.live:
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
-        env.setdefault("OPENMINION_LIVE_TUI_FOCUS_E2E", "1")
     if suite.complex:
         env["OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E"] = "1"
-        env.setdefault("OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E", "1")
     return _run(suite.paths, env=env, extra_args=suite.extra_args)
 
 

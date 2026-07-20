@@ -286,8 +286,14 @@ def _coerce_thinking_blocks(raw: Any) -> list:
     return out
 
 
-def _normalize_usage(raw_usage: Any) -> dict[str, int]:
-    usage: dict[str, int] = {}
+def _normalize_total_source(raw_usage: Any) -> str:
+    value = _extract_usage_value(raw_usage, ("total_source", "total_tokens_source"))
+    normalized = str(value or "").strip()
+    return normalized if normalized in {"provider", "derived"} else ""
+
+
+def _normalize_usage(raw_usage: Any) -> dict[str, Any]:
+    usage: dict[str, Any] = {}
     usage_keys = {
         "prompt_tokens": ("prompt_tokens", "input_tokens"),
         "completion_tokens": ("completion_tokens", "output_tokens"),
@@ -305,10 +311,14 @@ def _normalize_usage(raw_usage: Any) -> dict[str, int]:
         if isinstance(value, (int, float)):
             usage[key] = max(0, int(value))
 
-    if "total_tokens" not in usage:
+    total_source = _normalize_total_source(raw_usage)
+    if "total_tokens" in usage:
+        usage["total_source"] = total_source or "provider"
+    elif "prompt_tokens" in usage or "completion_tokens" in usage:
         usage["total_tokens"] = int(usage.get("prompt_tokens", 0)) + int(
             usage.get("completion_tokens", 0)
         )
+        usage["total_source"] = "derived"
     return usage
 
 

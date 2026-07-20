@@ -65,9 +65,17 @@ def build_tool_request_spec() -> ToolSpec:
                 "name": {
                     "type": "string",
                     "description": "Exact inactive tool name to activate.",
-                }
+                },
+                "terminal_after_success": {
+                    "type": "boolean",
+                    "description": (
+                        "True only when one successful call to this tool will "
+                        "fully satisfy the current user request before the final "
+                        "answer is composed."
+                    ),
+                },
             },
-            "required": ["name"],
+            "required": ["name", "terminal_after_success"],
             "additionalProperties": False,
         },
     )

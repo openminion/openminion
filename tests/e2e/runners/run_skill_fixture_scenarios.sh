@@ -9,7 +9,7 @@ FRAMEWORK_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
 OPENMINION_DIR="${FRAMEWORK_ROOT}/openminion"
 FIXTURES_DIR="${FRAMEWORK_ROOT}/openminion/examples/skills/cli-chat-smoke"
 INVALID_FIXTURES_DIR="${FRAMEWORK_ROOT}/openminion/examples/skills/cli-chat-smoke-invalid"
-export OPENMINION_HOME="${OPENMINION_HOME:-$FRAMEWORK_ROOT}"
+export OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}"
 export OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"
 
 # Colors for output
@@ -44,8 +44,8 @@ run_scenario() {
     echo -n "Running $name... "
 
     output=$(cd "$OPENMINION_DIR" && OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" PYTHONPATH=src "$PY" -m openminion \
-        --config test-configs/per-agent.json chat \
-        --agent test-agent --session "$session" --quiet 2>&1 <<< "$commands" || true)
+        --config test-configs/per-agent.json \
+        --agent test-agent --session "$session" --verbosity quiet 2>&1 <<< "$commands" || true)
 
     if [ "$expect_fail" = "true" ]; then
         # For negative tests, we expect an error message

@@ -284,7 +284,9 @@ def test_unified_entry_time_prompt_prefers_explicit_tool_sequence(
     assert len(llm.requests) == 1
     tool_names = [tool.name for tool in list(llm.requests[0].tools or [])]
     assert "clarify" in tool_names
-    assert "time" in tool_names
+    assert "tool.request" in tool_names
+    assert "respond" in tool_names
+    assert "time" not in tool_names
 
 
 def test_unified_entry_coding_category_exposes_only_coding_and_clarify(
@@ -776,9 +778,49 @@ def test_fixed_coding_profile_constrains_entry_tool_surface(tmp_path: Path) -> N
     assert decision.mode == "respond"
     tool_names = {tool.name for tool in list(llm.requests[0].tools or [])}
     assert "clarify" in tool_names
-    assert "file.read" in tool_names
+    assert "tool.request" in tool_names
+    assert "file.read" not in tool_names
     assert "web.search" not in tool_names
     assert "time" not in tool_names
+
+
+def test_entry_respond_tool_carries_freshness_without_auxiliary_call(
+    tmp_path: Path,
+) -> None:
+    llm = _RecordingEntryLLM(
+        _tool_response(
+            "respond",
+            {
+                "answer": "Hi there.",
+                "freshness": {
+                    "intent": "greeting",
+                    "domain": "general",
+                    "time_sensitive": False,
+                    "needs_live_data": False,
+                    "needs_sources": False,
+                    "needs_exact_date": False,
+                    "answer_mode": "local_only",
+                    "reason": "No current facts are needed.",
+                    "confidence": 0.99,
+                },
+            },
+        )
+    )
+    runner = _build_runner(tmp_path, llm_api=llm)
+    state = _state("entry-typed-freshness")
+
+    decision = runner._decide(
+        state=state,
+        user_input="hi",
+        logger=fake_logger(),
+    )
+
+    assert decision.mode == "respond"
+    assert decision.answer == "Hi there."
+    assert state.freshness_contract is not None
+    assert state.freshness_diagnostics is not None
+    assert state.freshness_diagnostics.classifier_mode == "entry_contract"
+    assert len(llm.requests) == 1
 
 
 def test_plan_resume_bypasses_unified_entry_call(tmp_path: Path) -> None:

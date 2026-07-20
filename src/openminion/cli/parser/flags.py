@@ -27,7 +27,7 @@ def add_tool_session_arg(
 
 
 def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
-    """Add the canonical interactive-session options shared by root and aliases."""
+    """Add options for the canonical root interactive surface."""
     parser.add_argument(
         "--agent",
         default=None,

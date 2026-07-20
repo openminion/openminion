@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,15 +17,13 @@ def _emit_chat_phase_timing(
 ) -> None:
     try:
         from openminion.modules.telemetry.events.catalog import CHAT_PHASE_TIMING
-        from openminion.modules.telemetry.schemas import TelemetryEvent
+        from openminion.modules.telemetry.trace import phase_timing
 
-        telemetry_service = getattr(runtime, "telemetry_service", None)
-        if telemetry_service is None:
+        if (telemetry_service := getattr(runtime, "telemetry_service", None)) is None:
             return
         session_id_str = str(getattr(request, "session_id", "") or "")
         turn_id_str = str(getattr(request, "request_id", "") or "")
-        runtime_config = getattr(runtime, "config", None)
-        runtime_settings = getattr(runtime_config, "runtime", None)
+        runtime_settings = getattr(getattr(runtime, "config", None), "runtime", None)
         process_mode = getattr(runtime_settings, "process_mode", "")
         payload = timer.build_payload(  # type: ignore[attr-defined]
             turn_id=turn_id_str,
@@ -32,19 +31,9 @@ def _emit_chat_phase_timing(
             agent_id=str(getattr(request, "agent_id", "") or ""),
             process_mode=str(process_mode or ""),
         )
-        record_sync = getattr(telemetry_service, "record_event_sync", None)
-        if record_sync is not None:
-            record_sync(
-                TelemetryEvent(
-                    session_id=session_id_str,
-                    turn_id=turn_id_str,
-                    event_type=CHAT_PHASE_TIMING,
-                    data=payload.as_dict(),
-                )
-            )
+        if phase_timing.record_chat_phase_timing_payload(telemetry_service, payload):
             return
-        emit = getattr(telemetry_service, "emit_canonical_event", None)
-        if emit is None:
+        if (emit := getattr(telemetry_service, "emit_canonical_event", None)) is None:
             return
         result = emit(
             session_id_str,
@@ -54,15 +43,10 @@ def _emit_chat_phase_timing(
         )
         if inspect.iscoroutine(result):
             try:
-                asyncio.get_running_loop()
-                asyncio.ensure_future(result)
+                loop = asyncio.get_running_loop()
             except RuntimeError:
-                try:
-                    asyncio.run(result)
-                except Exception:
-                    try:
-                        result.close()
-                    except Exception:
-                        pass
+                asyncio.run(result)
+            else:
+                loop.create_task(result)
     except Exception:
-        pass
+        logging.getLogger(__name__).warning("phase timing emit failed", exc_info=True)

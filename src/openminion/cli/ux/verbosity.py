@@ -9,8 +9,6 @@ ProgressLevel = Literal["full", "minimal", "off"]
 
 _VERBOSITY_VALUES: tuple[str, ...] = ("quiet", "normal", "verbose")
 _PROGRESS_VALUES: tuple[str, ...] = ("full", "minimal", "off")
-_TRUTHY_VALUES: tuple[str, ...] = ("1", "true", "yes", "on")
-
 _PREFS_FILE_BASENAME = "focus_prefs.toml"
 _PREFS_RECOGNIZED_KEYS: tuple[str, ...] = (
     "verbosity",
@@ -26,14 +24,6 @@ def _read_env_value(key: str) -> str:
 
     env = EnvironmentConfig.from_sources()
     return str(env.get(key, "") or "")
-
-
-def _emit_deprecation_warning(old: str, new: str) -> None:
-    print(
-        f"openminion: {old} is deprecated; use {new} instead. "
-        f"Both still work, but {old} will be removed in a future release.",
-        file=sys.stderr,
-    )
 
 
 def _resolve_preferences_file_path() -> Path:
@@ -87,7 +77,9 @@ def write_focus_preferences(updates: Mapping[str, str | None]) -> Path:
         else:
             prefs.pop(key, None)
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f'{key} = "{prefs[key]}"' for key in _PREFS_RECOGNIZED_KEYS if key in prefs]
+    lines = [
+        f'{key} = "{prefs[key]}"' for key in _PREFS_RECOGNIZED_KEYS if key in prefs
+    ]
     path.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
     return path
 
@@ -126,20 +118,6 @@ def resolve_verbosity(
             raw_env.strip().lower(),
             "quiet, normal, verbose",
             "default",
-        )
-
-    legacy_env = _read_env_value("OPENMINION_FOCUS_VERBOSITY")
-    normalized_legacy = _normalize_choice(legacy_env, _VERBOSITY_VALUES)
-    if normalized_legacy is not None:
-        _emit_deprecation_warning("OPENMINION_FOCUS_VERBOSITY", "OPENMINION_VERBOSITY")
-        return cast(VerbosityLevel, normalized_legacy)
-    if legacy_env:
-        print(
-            f"openminion: unrecognized OPENMINION_FOCUS_VERBOSITY={legacy_env.strip().lower()!r}; "
-            f"falling back to 'normal'. Valid values: quiet, normal, verbose. "
-            f"(Use OPENMINION_VERBOSITY going forward — "
-            f"OPENMINION_FOCUS_VERBOSITY is deprecated.)",
-            file=sys.stderr,
         )
 
     prefs = _read_preferences_file()
@@ -213,13 +191,6 @@ def resolve_progress(
             "default",
         )
 
-    legacy_plain = _read_env_value("OPENMINION_FOCUS_PLAIN_SPINNER").strip().lower()
-    if legacy_plain in _TRUTHY_VALUES:
-        _emit_deprecation_warning(
-            "OPENMINION_FOCUS_PLAIN_SPINNER", "OPENMINION_PROGRESS=minimal"
-        )
-        return "minimal"
-
     no_color = _read_env_value("NO_COLOR").strip()
     if no_color:
         return "minimal"
@@ -254,9 +225,7 @@ def add_verbosity_flag(parser: argparse.ArgumentParser) -> None:
             "(end-of-turn summary still shown); normal truncates to "
             "6 lines with /expand affordance (default); verbose shows "
             "full output up to a 200-line cap. Same effect as "
-            "OPENMINION_VERBOSITY=<level>. "
-            "OPENMINION_FOCUS_VERBOSITY (legacy) still honored with "
-            "deprecation warning."
+            "OPENMINION_VERBOSITY=<level>."
         ),
     )
 
@@ -281,18 +250,18 @@ def add_progress_flag(
         parser.add_argument(
             "--no-progress",
             action="store_true",
-            help="Legacy alias for --progress off.",
+            help="Shortcut for --progress off.",
         )
         parser.add_argument(
             "--no-activity-indicator",
             action="store_true",
-            help="Legacy alias for --progress off.",
+            help="Shortcut for --progress off.",
         )
         parser.add_argument(
             "--plain-spinner",
             action="store_true",
             help=(
-                "Legacy alias for --progress minimal. Drops verb "
+                "Shortcut for --progress minimal. Drops verb "
                 "rotation but keeps the elapsed counter."
             ),
         )

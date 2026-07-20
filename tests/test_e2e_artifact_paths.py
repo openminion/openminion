@@ -76,20 +76,44 @@ def _load_live_skill_dense_probe_module():
     )
 
 
-def test_live_cli_chat_helper_artifacts_ignore_openminion_home(
+def _load_autonomy_smoke_module():
+    return _load_module_from_repo_path(
+        "run_autonomy_smoke",
+        "openminion",
+        "tests",
+        "e2e",
+        "runners",
+        "run_autonomy_smoke.py",
+    )
+
+
+def _load_cortensor_e2e_suite_module():
+    return _load_module_from_repo_path(
+        "run_cortensor_e2e_suite",
+        "openminion",
+        "tests",
+        "e2e",
+        "runners",
+        "run_cortensor_e2e_suite.py",
+    )
+
+
+def test_live_cli_chat_helper_artifacts_use_openminion_package_home(
     monkeypatch, tmp_path: Path
 ) -> None:
     framework_root = tmp_path / "framework"
     framework_root.mkdir()
-    openminion_home = tmp_path / "openminion-home"
-    openminion_home.mkdir()
+    openminion_root = framework_root / "openminion"
+    openminion_root.mkdir()
 
     monkeypatch.setattr(live_cli_chat_alibaba, "framework_root", lambda: framework_root)
-    monkeypatch.setenv("OPENMINION_HOME", str(openminion_home))
+    monkeypatch.setattr(
+        live_cli_chat_alibaba, "runtime_home_root", lambda: openminion_root
+    )
 
     artifact_dir = live_cli_chat_alibaba.artifact_dir()
 
-    assert artifact_dir == framework_root / ".openminion" / "runtime" / "cli-chat-e2e"
+    assert artifact_dir == openminion_root / ".openminion" / "runtime" / "cli-chat-e2e"
     assert artifact_dir.exists()
 
 
@@ -171,20 +195,20 @@ def test_live_cli_chat_helper_ignores_placeholder_when_env_present(
     assert live_cli_chat_alibaba._config_has_unset_runtime_env(config_path) == ()
 
 
-def test_identity_yaml_matrix_artifacts_ignore_openminion_home(
+def test_identity_yaml_matrix_artifacts_use_openminion_package_home(
     monkeypatch, tmp_path: Path
 ) -> None:
     framework_root = tmp_path / "framework"
     framework_root.mkdir()
-    openminion_home = tmp_path / "openminion-home"
-    openminion_home.mkdir()
+    openminion_root = framework_root / "openminion"
+    openminion_root.mkdir()
 
     monkeypatch.setattr(identity_matrix, "_framework_root", lambda: framework_root)
-    monkeypatch.setenv("OPENMINION_HOME", str(openminion_home))
+    monkeypatch.setattr(identity_matrix, "_runtime_home_root", lambda: openminion_root)
 
     artifact_dir = identity_matrix._artifact_dir()
 
-    assert artifact_dir == framework_root / ".openminion" / "runtime" / "cli-chat-e2e"
+    assert artifact_dir == openminion_root / ".openminion" / "runtime" / "cli-chat-e2e"
     assert artifact_dir.exists()
 
 
@@ -242,7 +266,7 @@ def test_cli_chat_gate_rewrites_absolute_repo_artifacts_path(
     )
 
 
-def test_cli_chat_probe_defaults_home_and_data_root_to_framework_root(
+def test_cli_chat_probe_defaults_home_and_data_root_to_openminion_package_root(
     monkeypatch, tmp_path: Path
 ) -> None:
     probe = _load_cli_chat_probe_module()
@@ -255,8 +279,26 @@ def test_cli_chat_probe_defaults_home_and_data_root_to_framework_root(
     monkeypatch.setattr(probe, "OPENMINION_ROOT", openminion_root)
     monkeypatch.delenv("OPENMINION_HOME", raising=False)
 
-    assert probe._resolve_home_root() == framework_root
-    assert probe._resolve_data_root(framework_root) == framework_root / ".openminion"
+    assert probe._resolve_home_root() == openminion_root
+    assert probe._resolve_data_root(openminion_root) == openminion_root / ".openminion"
+
+
+@pytest.mark.parametrize(
+    "loader",
+    [_load_autonomy_smoke_module, _load_cortensor_e2e_suite_module],
+)
+def test_e2e_runners_derive_openminion_home_from_nested_package(
+    loader, monkeypatch, tmp_path: Path
+) -> None:
+    runner = loader()
+    framework_root = tmp_path / "framework"
+    openminion_root = framework_root / "openminion"
+    openminion_root.mkdir(parents=True)
+
+    monkeypatch.delenv("OPENMINION_HOME", raising=False)
+
+    assert runner._derive_openminion_home(framework_root) == openminion_root
+    assert runner._derive_openminion_home(openminion_root) == openminion_root
 
 
 def test_cli_chat_probe_rewrites_relative_legacy_artifact_paths(
@@ -274,12 +316,16 @@ def test_cli_chat_probe_rewrites_relative_legacy_artifact_paths(
 
     normalized = probe._normalize_probe_path(
         raw_path=Path("artifacts/cli-chat-e2e/transcript.txt"),
-        home_root=framework_root,
+        home_root=openminion_root,
         cwd=cwd,
     )
 
     assert normalized == (
-        framework_root / ".openminion" / "runtime" / "cli-chat-e2e" / "transcript.txt"
+        openminion_root
+        / ".openminion"
+        / "runtime"
+        / "cli-chat-e2e"
+        / "transcript.txt"
     )
 
 
@@ -300,12 +346,12 @@ def test_cli_chat_probe_rewrites_absolute_package_legacy_artifact_paths(
     )
     normalized = probe._normalize_probe_path(
         raw_path=absolute_legacy_path,
-        home_root=framework_root,
+        home_root=openminion_root,
         cwd=openminion_root,
     )
 
     assert normalized == (
-        framework_root
+        openminion_root
         / ".openminion"
         / "runtime"
         / "cli-chat-e2e"
@@ -328,7 +374,7 @@ def test_cli_chat_probe_leaves_nonlegacy_relative_output_under_cwd(
 
     normalized = probe._normalize_probe_path(
         raw_path=Path("probe-output.txt"),
-        home_root=framework_root,
+        home_root=openminion_root,
         cwd=openminion_root,
     )
 
@@ -401,17 +447,18 @@ def test_chat_permutations_runner_artifacts_use_generated_root(
     runner = _load_chat_permutations_module()
     framework_root = tmp_path / "framework"
     framework_root.mkdir()
-    openminion_home = tmp_path / "openminion-home"
+    openminion_home = framework_root / "openminion"
     openminion_home.mkdir()
 
     monkeypatch.setattr(runner, "REPO_ROOT", framework_root)
+    monkeypatch.setattr(runner, "OPENMINION_DIR", openminion_home)
     monkeypatch.setenv("OPENMINION_HOME", str(openminion_home))
     monkeypatch.delenv(OPENMINION_DATA_ROOT_ENV, raising=False)
     monkeypatch.delenv(OPENMINION_GENERATED_ROOT_ENV, raising=False)
 
     artifacts_root = runner._default_artifacts_root()
 
-    assert artifacts_root == framework_root / ".openminion" / "runtime" / "e2e"
+    assert artifacts_root == openminion_home / ".openminion" / "runtime" / "e2e"
     assert runner._default_log_root() == artifacts_root / "chat-logs"
     assert runner._default_config_root() == artifacts_root / "chat-configs"
 
@@ -422,10 +469,11 @@ def test_live_skill_dense_probe_runner_artifacts_use_generated_root(
     runner = _load_live_skill_dense_probe_module()
     framework_root = tmp_path / "framework"
     framework_root.mkdir()
-    openminion_home = tmp_path / "openminion-home"
+    openminion_home = framework_root / "openminion"
     openminion_home.mkdir()
 
     monkeypatch.setattr(runner, "REPO_ROOT", framework_root)
+    monkeypatch.setattr(runner, "OPENMINION_DIR", openminion_home)
     monkeypatch.setenv("OPENMINION_HOME", str(openminion_home))
     monkeypatch.delenv(OPENMINION_DATA_ROOT_ENV, raising=False)
     monkeypatch.delenv(OPENMINION_GENERATED_ROOT_ENV, raising=False)
@@ -433,7 +481,10 @@ def test_live_skill_dense_probe_runner_artifacts_use_generated_root(
     artifacts_root = runner._artifact_root()
 
     assert artifacts_root == (
-        framework_root / ".openminion" / "runtime" / "skill-complex-official-matrix"
+        openminion_home
+        / ".openminion"
+        / "runtime"
+        / "skill-complex-official-matrix"
     )
 
 
@@ -493,7 +544,7 @@ def test_ci_script_defaults_use_generated_runtime_tree(monkeypatch) -> None:
         assert Path(getattr(args, attr_name)) == expected
 
 
-def test_shell_e2e_runners_default_home_to_framework_root() -> None:
+def test_shell_e2e_runners_default_home_to_openminion_package_root() -> None:
     repo_root = _repo_root()
     shell_paths = [
         repo_root
@@ -517,7 +568,10 @@ def test_shell_e2e_runners_default_home_to_framework_root() -> None:
     ]
     for path in shell_paths:
         text = path.read_text(encoding="utf-8")
-        assert 'OPENMINION_HOME="${OPENMINION_HOME:-$FRAMEWORK_ROOT}"' in text
+        assert (
+            'OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}"' in text
+            or 'OPENMINION_HOME="${OPENMINION_HOME:-$ROOT}"' in text
+        )
         assert (
             'OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"'
             in text

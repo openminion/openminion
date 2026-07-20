@@ -24,7 +24,6 @@ def test_terminal_and_rich_share_core_slash_vocabulary() -> None:
         "/details",
         "/export",
         "/editor",
-        "/dashboard",
     ):
         assert command in terminal
         assert command in rich

@@ -46,7 +46,9 @@ def continuation_prompt(*, original_request: str = "") -> str:
     return str(build_active_task_continuation_prompt(original_request=original_request))
 
 
-def serialize_thinking_blocks_payload(raw_blocks: list[Any] | None) -> list[dict[str, Any]]:
+def serialize_thinking_blocks_payload(
+    raw_blocks: list[Any] | None,
+) -> list[dict[str, Any]]:
     return serialize_thinking_blocks(raw_blocks)
 
 
@@ -64,7 +66,14 @@ def extract_structured_response_fields(raw_response: Any) -> dict[str, Any]:
     return extracted
 
 
-def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, int]:
+def _normalized_total_source(source: dict[str, Any]) -> str:
+    normalized = str(
+        source.get("total_source") or source.get("total_tokens_source") or ""
+    ).strip()
+    return normalized if normalized in {"provider", "derived"} else ""
+
+
+def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, Any]:
     if raw_usage is None:
         return {}
     if isinstance(raw_usage, dict):
@@ -87,7 +96,7 @@ def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, int]:
             ),
         }
 
-    usage: dict[str, int] = {}
+    usage: dict[str, Any] = {}
     key_pairs = (
         ("prompt_tokens", ("prompt_tokens", "input_tokens")),
         ("completion_tokens", ("completion_tokens", "output_tokens")),
@@ -106,12 +115,14 @@ def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, int]:
             if isinstance(value, (int, float)):
                 usage[output_key] = max(0, int(value))
                 break
-    if "total_tokens" not in usage and (
-        "prompt_tokens" in usage or "completion_tokens" in usage
-    ):
+    total_source = _normalized_total_source(source)
+    if "total_tokens" in usage:
+        usage["total_source"] = total_source or "provider"
+    elif "prompt_tokens" in usage or "completion_tokens" in usage:
         usage["total_tokens"] = int(usage.get("prompt_tokens", 0)) + int(
             usage.get("completion_tokens", 0)
         )
+        usage["total_source"] = "derived"
     return usage
 
 
@@ -163,7 +174,9 @@ def continuation_prompt_with_history(
 def request_metadata(req: Any) -> dict[str, str]:
     if not isinstance(getattr(req, "metadata", None), dict):
         return {}
-    return {str(key): str(value) for key, value in req.metadata.items() if str(key).strip()}
+    return {
+        str(key): str(value) for key, value in req.metadata.items() if str(key).strip()
+    }
 
 
 def normalized_messages(req: Any) -> list[tuple[str, str, dict[str, Any]]]:
@@ -189,7 +202,9 @@ def split_system_and_conversation(
             system_chunks.append(content)
         else:
             conversational.append((role, content, meta))
-    return "\n\n".join(chunk for chunk in system_chunks if chunk.strip()).strip(), conversational
+    return "\n\n".join(
+        chunk for chunk in system_chunks if chunk.strip()
+    ).strip(), conversational
 
 
 def latest_prompt_and_history(
@@ -258,9 +273,7 @@ def request_purpose(metadata: dict[str, str]) -> str:
 
 def request_mode_name(metadata: dict[str, str]) -> str | None:
     return (
-        str(metadata.get("mode_name") or metadata.get("mode") or "")
-        .strip()
-        .lower()
+        str(metadata.get("mode_name") or metadata.get("mode") or "").strip().lower()
         or None
     )
 
@@ -271,7 +284,9 @@ def trim_submit_output_history(
     history: list[ProviderHistoryMessage],
     purpose: str,
 ) -> list[ProviderHistoryMessage]:
-    if not tools or not all(str(spec.name).strip() == "submit_output" for spec in tools):
+    if not tools or not all(
+        str(spec.name).strip() == "submit_output" for spec in tools
+    ):
         return history
     if not history:
         return history
@@ -302,22 +317,34 @@ def normalized_provider_response(
     )
 
 
-def token_usage_values(usage_payload: dict[str, int]) -> tuple[int | None, int | None, int, int, int, int]:
+def token_usage_values(
+    usage_payload: dict[str, Any],
+) -> tuple[int | None, int | None, int, int, int, int]:
     prompt_tokens = usage_payload.get("prompt_tokens")
     completion_tokens = usage_payload.get("completion_tokens")
     total_tokens = usage_payload.get("total_tokens")
     if total_tokens is None:
-        total_tokens = sum(
-            int(value)
-            for value in usage_payload.values()
-            if isinstance(value, (int, float))
-        ) or 0
+        total_tokens = (
+            sum(
+                int(value)
+                for value in usage_payload.values()
+                if isinstance(value, (int, float))
+            )
+            or 0
+        )
     input_tokens = int(prompt_tokens) if isinstance(prompt_tokens, (int, float)) else 0
     output_tokens = (
         int(completion_tokens) if isinstance(completion_tokens, (int, float)) else 0
     )
     cached_tokens = int(usage_payload.get("cached_tokens", 0) or 0)
-    return prompt_tokens, completion_tokens, total_tokens, input_tokens, output_tokens, cached_tokens
+    return (
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+    )
 
 
 def llm_response_kwargs(
@@ -351,6 +378,7 @@ def llm_response_kwargs(
             input_tokens=optional_int(prompt_tokens),
             output_tokens=optional_int(completion_tokens),
             total_tokens=optional_int(total_tokens),
+            total_source=str(usage_payload.get("total_source") or "") or None,
             cached_tokens=cached_tokens,
             cache_creation_tokens=usage_payload.get("cache_creation_tokens"),
         ),
@@ -359,6 +387,7 @@ def llm_response_kwargs(
         "provider_raw": None,
         "telemetry": {"trace_context": trace_context},
     }
+
 
 __all__ = [
     "extract_structured_response_fields",

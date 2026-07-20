@@ -8,69 +8,23 @@ from openminion.cli.commands.interactive import _resolve_interactive_backend
 
 
 def _args(**overrides) -> SimpleNamespace:
-    base = {"rich": False, "terminal": False}
+    base = {"rich": False}
     base.update(overrides)
     return SimpleNamespace(**base)
 
 
 @pytest.mark.parametrize(
-    ("env_value", "terminal_flag", "rich_flag", "expected"),
+    ("rich_flag", "expected"),
     [
-        (None, False, False, "terminal"),
-        ("textual", False, False, "textual"),
-        ("rich", False, False, "textual"),
-        ("garbage", False, False, "terminal"),
-        ("terminal", False, False, "terminal"),
-        ("flow", False, False, "terminal"),
-        ("terminal-flow", False, False, "terminal"),
-        (None, True, False, "terminal"),
-        (None, False, True, "textual"),
+        (False, "terminal"),
+        (True, "textual"),
     ],
 )
 def test_interactive_backend_resolution(
-    monkeypatch,
-    env_value: str | None,
-    terminal_flag: bool,
     rich_flag: bool,
     expected: str,
 ) -> None:
-    if env_value is None:
-        monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
-    else:
-        monkeypatch.setenv("OPENMINION_FOCUS_BACKEND", env_value)
-    assert (
-        _resolve_interactive_backend(_args(terminal=terminal_flag, rich=rich_flag))
-        == expected
-    )
-
-
-def test_focus_alias_registers_legacy_backend_flags() -> None:
-    import argparse
-
-    from openminion.cli.commands import interactive as interactive_cmd
-
-    parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers()
-    interactive_cmd.register(subparsers)
-    parsed = parser.parse_args(["focus", "--rich"])
-    assert parsed.rich is True
-    assert parsed.terminal is False
-
-    parsed_terminal = parser.parse_args(["focus", "--terminal"])
-    assert parsed_terminal.terminal is True
-    assert parsed_terminal.rich is False
-
-    parsed_no_flag = parser.parse_args(["focus"])
-    assert parsed_no_flag.rich is False
-    assert parsed_no_flag.terminal is False
-    assert parsed_no_flag.animation_provider is None
-    assert parsed_no_flag.animation is None
-
-    parsed_animation = parser.parse_args(
-        ["focus", "--animation-provider", "unicode", "--animation", "helix"]
-    )
-    assert parsed_animation.animation_provider == "unicode"
-    assert parsed_animation.animation == "helix"
+    assert _resolve_interactive_backend(_args(rich=rich_flag)) == expected
 
 
 def test_default_backend_launches_terminal_flow_without_textual_tty_gate(
@@ -78,7 +32,6 @@ def test_default_backend_launches_terminal_flow_without_textual_tty_gate(
 ) -> None:
     from openminion.cli.commands import interactive as interactive_cmd
 
-    monkeypatch.delenv("OPENMINION_FOCUS_BACKEND", raising=False)
     monkeypatch.setattr(
         interactive_cmd,
         "_inspect_interactive_onboarding",
@@ -119,7 +72,6 @@ def test_default_backend_launches_terminal_flow_without_textual_tty_gate(
         no_context=False,
         no_update_check=True,
         theme=None,
-        terminal=False,
     )
     assert interactive_cmd.run_interactive(args) == 0
     assert len(launched) == 1
@@ -208,7 +160,6 @@ def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:
         dir=None,
         no_interactive=False,
         theme=None,
-        terminal=False,
     )
     rc = interactive_cmd.run_interactive(args)
     assert rc == 2
@@ -251,7 +202,6 @@ def test_rich_with_tty_does_not_short_circuit(monkeypatch) -> None:
         dir=".",
         no_interactive=False,
         theme=None,
-        terminal=False,
     )
     try:
         interactive_cmd.run_interactive(args)

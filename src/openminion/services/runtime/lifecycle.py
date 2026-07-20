@@ -146,6 +146,9 @@ class LifecycleService:
             policy=security_policy,
             agent_id=resolve_default_agent_id(self._config),
             logger=self._logger,
+            extra_specs=controlplane_components.sidecar_specs
+            if controlplane_components is not None
+            else (),
         )
         channel_supervisor = None
         if controlplane_components is not None:
@@ -557,20 +560,23 @@ def _build_sidecar_manager(
     policy: SecurityPolicyEngine,
     agent_id: str,
     logger: logging.Logger,
+    extra_specs: list[Any] | tuple[Any, ...] = (),
 ) -> SidecarManager | None:
-    if not catalog.sidecars:
+    if not catalog.sidecars and not extra_specs:
         return None
     sidecar_logger = logger.getChild("sidecars")
-    base_manager = default_sidecar_manager(
-        config_path=config_path,
-        runtime_env=runtime_env,
-        policy=policy,
-        actor=default_internal_actor(agent_id=agent_id, include_admin=True),
-        context=SecurityPolicyContext(channel="runtime", target="sidecar"),
-        logger=sidecar_logger,
-    )
-    allowed = {record.name for record in catalog.sidecars}
-    specs = [spec for spec in base_manager.specs() if spec.name in allowed]
+    specs = list(extra_specs)
+    if catalog.sidecars:
+        base_manager = default_sidecar_manager(
+            config_path=config_path,
+            runtime_env=runtime_env,
+            policy=policy,
+            actor=default_internal_actor(agent_id=agent_id, include_admin=True),
+            context=SecurityPolicyContext(channel="runtime", target="sidecar"),
+            logger=sidecar_logger,
+        )
+        allowed = {record.name for record in catalog.sidecars}
+        specs.extend(spec for spec in base_manager.specs() if spec.name in allowed)
     if not specs:
         return None
     return SidecarManager(

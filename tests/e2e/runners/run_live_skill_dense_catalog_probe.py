@@ -96,9 +96,9 @@ def _resolve_target(target_id: str) -> SkillLiveTarget:
 
 
 def _artifact_root() -> Path:
-    root = resolve_generated_root(home_root=REPO_ROOT) / dense_skill_artifact_dirname(
-        "official"
-    )
+    root = resolve_generated_root(
+        home_root=OPENMINION_DIR
+    ) / dense_skill_artifact_dirname("official")
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -199,13 +199,14 @@ def _probe_positive_scenario(
             "openminion",
             "--config",
             str(target.config_path),
-            "chat",
             "--agent",
             target.agent_id,
             "--session",
             session_id,
-            "--quiet",
-            "--no-progress",
+            "--verbosity",
+            "quiet",
+            "--progress",
+            "off",
         ],
         cwd=str(matrix.openminion_root()),
         env=matrix._run_env(data_root=data_root, trace_root=trace_root / session_id),
@@ -328,13 +329,14 @@ def _probe_missing_negative(
             "openminion",
             "--config",
             str(target.config_path),
-            "chat",
             "--agent",
             target.agent_id,
             "--session",
             session_id,
-            "--quiet",
-            "--no-progress",
+            "--verbosity",
+            "quiet",
+            "--progress",
+            "off",
         ],
         cwd=str(matrix.openminion_root()),
         env=matrix._run_env(data_root=data_root, trace_root=trace_root / session_id),

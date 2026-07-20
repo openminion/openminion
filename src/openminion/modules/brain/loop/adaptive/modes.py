@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from typing import Any
 
 from openminion.modules.brain.constants import (
@@ -40,14 +39,11 @@ from openminion.modules.brain.loop.tools import (
     AdaptiveToolLoopRuntimeUnavailableError,
     AdaptiveToolLoopState,
     DefaultAdaptiveToolLoopLLMRuntime,
-    build_loop_thinking_metadata,
     build_runtime_tool_specs,
     resolve_loop_model,
     run_adaptive_tool_loop,
     should_shortlist_tool_schemas,
-    shortlist_tool_schemas,
 )
-from openminion.modules.brain.loop.tools.budget import _debit_llm_usage
 from openminion.modules.brain.loop.tools.budget_extension import (
     consume_approved_extension,
 )
@@ -111,6 +107,13 @@ _CONTROL_RESTRICTED_REASON_CODES = frozenset(
         "research_iteration_fallback",
     }
 )
+
+
+def _seed_requests_inactive_tool(seed_response: Any) -> bool:
+    return any(
+        str(getattr(call, "name", "") or "").strip() == "tool.request"
+        for call in list(getattr(seed_response, "tool_calls", []) or [])
+    )
 
 
 from .finalization import ActLoopFinalizationMixin  # noqa: E402
@@ -460,7 +463,19 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
         runtime_tool_registry_available = (
             getattr(getattr(runner, "tool_api", None), "registry", None) is not None
         )
-        if (
+        if _seed_requests_inactive_tool(seed_response):
+            tool_specs = []
+            requestable_tool_specs = list(full_tool_specs)
+            shortlisting_scratchpad.update(
+                {
+                    "tool_schema_shortlisting.enabled": True,
+                    "tool_schema_shortlisting.reason": "entry_exact_name_request",
+                    "tool_schema_shortlisting.candidate_count": len(full_tool_specs),
+                    "tool_schema_shortlisting.active_count": 0,
+                    "tool_schema_shortlisting.llm_call_made": False,
+                }
+            )
+        elif (
             runtime_tool_registry_available
             and self._tool_schema_shortlisting_enabled
             and decision_reason_code != "research_iteration_fallback"
@@ -469,37 +484,24 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 tool_specs=full_tool_specs,
             )
         ):
-            shortlist_result = shortlist_tool_schemas(
-                runtime=runtime,
-                model=model,
-                user_messages=messages,
-                tool_specs=full_tool_specs,
-                metadata=build_loop_thinking_metadata(
-                    ctx,
-                    purpose="tool_schema_shortlist",
-                ),
-            )
-            if shortlist_result.llm_call_made:
-                _debit_llm_usage(
-                    loop_ctx_adapter,
-                    SimpleNamespace(
-                        usage=SimpleNamespace(
-                            input_tokens=shortlist_result.input_tokens,
-                            output_tokens=shortlist_result.output_tokens,
-                        )
-                    ),
-                )
-            shortlisting_scratchpad.update(shortlist_result.scratchpad_payload())
+            tool_specs = []
+            requestable_tool_specs = list(full_tool_specs)
             shortlisting_scratchpad.update(
                 {
-                    "turn_progress_input_tokens_total": shortlist_result.input_tokens,
-                    "turn_progress_output_tokens_total": shortlist_result.output_tokens,
-                    "turn_progress_total_tokens_used": shortlist_result.total_tokens,
+                    "tool_schema_shortlisting.enabled": True,
+                    "tool_schema_shortlisting.reason": "progressive_exact_name",
+                    "tool_schema_shortlisting.candidate_count": len(full_tool_specs),
+                    "tool_schema_shortlisting.active_count": 0,
+                    "tool_schema_shortlisting.selected_tools": [],
+                    "tool_schema_shortlisting.inactive_tools": [
+                        str(spec.name) for spec in full_tool_specs
+                    ],
+                    "tool_schema_shortlisting.input_tokens": 0,
+                    "tool_schema_shortlisting.output_tokens": 0,
+                    "tool_schema_shortlisting.total_tokens": 0,
+                    "tool_schema_shortlisting.llm_call_made": False,
                 }
             )
-            tool_specs = list(shortlist_result.active_tool_specs)
-            if shortlist_result.enabled:
-                requestable_tool_specs = list(shortlist_result.requestable_tool_specs)
         if (
             str(profile.profile_name or "").strip() == "general_adaptive_v1"
             and decision_reason_code != "research_iteration_fallback"

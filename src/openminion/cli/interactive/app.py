@@ -150,6 +150,9 @@ class _DemoFocusRuntime:
         self._permission_overrides[str(tool_name)] = str(mode)
         return str(mode)
 
+    def clear_permission_override(self, tool_name: str) -> bool:
+        return self._permission_overrides.pop(str(tool_name), None) is not None
+
     def bind_session(self, session_id: str) -> None:
         self.switch_session(session_id)
 

@@ -32,6 +32,10 @@ from .evidence import (
     _successful_substantive_tool_results,
 )
 from .postprocess.rules import _looks_like_unexecutable_tool_payload_text
+from .postprocess.evidence_closeout import (
+    missing_requested_closeout_markers,
+    tool_evidence_closeout_text,
+)
 from .runtime import _extract_visible_response_text
 from .status import emit_adaptive_status
 
@@ -233,29 +237,23 @@ def _truncate_duplicate_batch_fallback_text(value: Any, *, limit: int = 400) -> 
 
 
 def _duplicate_batch_fallback_final_text(loop_state: AdaptiveToolLoopState) -> str:
+    fallback = tool_evidence_closeout_text(
+        loop_state,
+        reason=(
+            "tool work completed, but the model repeated an identical tool "
+            "batch before writing a complete final answer."
+        ),
+    )
+    if fallback:
+        return fallback
     tool_results = _successful_substantive_tool_results(loop_state)
     if not tool_results:
         return ""
-    lines = [
-        (
-            "Result: tool work completed, but the model repeated an identical "
-            "tool batch before writing a final answer."
-        ),
-        "",
-        "Successful tool evidence:",
-    ]
-    for item in tool_results[-5:]:
-        tool_name = str(item.get("tool_name") or "tool").strip() or "tool"
-        summary = str(item.get("content") or "").strip()
-        if not summary:
-            data = item.get("data")
-            if isinstance(data, dict):
-                summary = str(data.get("summary") or data.get("stdout") or "").strip()
-        lines.append(
-            f"- {tool_name}: "
-            f"{_truncate_duplicate_batch_fallback_text(summary) or 'success'}"
-        )
-    return "\n".join(lines)
+    summary = _truncate_duplicate_batch_fallback_text(tool_results[-1].get("content"))
+    return (
+        "result: tool work completed, but the model repeated an identical "
+        f"tool batch before writing a final answer.\ntool evidence:\n- {summary or 'success'}"
+    )
 
 
 def _duplicate_batch_evidence_fallback_outcome(
@@ -314,6 +312,78 @@ def _duplicate_batch_budget_exhausted_outcome(
         ),
         0,
         0,
+    )
+
+
+def _duplicate_batch_tool_call_closure_outcome(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+    duration_ms: int,
+    tokens_used: int,
+) -> tuple[AdaptiveToolLoopOutcome, int, int]:
+    loop_state.termination_reason = ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} duplicate batch closure still wanted tools",
+        mode_state="duplicate_tool_calls",
+        termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    )
+    return (
+        AdaptiveToolLoopOutcome(
+            profile_name=profile.profile_name,
+            mode_name=profile.mode_name,
+            termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+            state=loop_state,
+            allowed_tools=allowed_tools,
+            error_message=(
+                "Answer-only closure returned more tool calls after an "
+                "identical successful tool batch had already completed."
+            ),
+        ),
+        duration_ms,
+        tokens_used,
+    )
+
+
+def _duplicate_batch_empty_final_outcome(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+    duration_ms: int,
+    tokens_used: int,
+) -> tuple[AdaptiveToolLoopOutcome, int, int]:
+    loop_state.termination_reason = ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} repeated tool batch",
+        mode_state="duplicate_tool_calls",
+        termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    )
+    return (
+        AdaptiveToolLoopOutcome(
+            profile_name=profile.profile_name,
+            mode_name=profile.mode_name,
+            termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+            state=loop_state,
+            allowed_tools=allowed_tools,
+            error_message=(
+                "Answer-only closure did not return a final answer after an "
+                "identical successful tool batch had already completed."
+            ),
+        ),
+        duration_ms,
+        tokens_used,
     )
 
 
@@ -445,29 +515,14 @@ def _force_duplicate_batch_answer_only_closure(
         )
         if fallback_outcome is not None:
             return fallback_outcome
-        loop_state.termination_reason = ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
-        emit_adaptive_status(
-            loop_ctx,
+        return _duplicate_batch_tool_call_closure_outcome(
+            loop_ctx=loop_ctx,
             profile=profile,
             loop_state=loop_state,
-            detail_text=f"{public_mode_tag} duplicate batch closure still wanted tools",
-            mode_state="duplicate_tool_calls",
-            termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
-        )
-        return (
-            AdaptiveToolLoopOutcome(
-                profile_name=profile.profile_name,
-                mode_name=profile.mode_name,
-                termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
-                state=loop_state,
-                allowed_tools=allowed_tools,
-                error_message=(
-                    "Answer-only closure returned more tool calls after an "
-                    "identical successful tool batch had already completed."
-                ),
-            ),
-            duration_ms,
-            tokens_used,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
+            duration_ms=duration_ms,
+            tokens_used=tokens_used,
         )
     for assistant_message in list(getattr(response, "assistant_messages", []) or []):
         loop_state.messages.append(assistant_message)
@@ -482,29 +537,34 @@ def _force_duplicate_batch_answer_only_closure(
         return None, duration_ms, tokens_used
     if not final_text:
         loop_state.termination_reason = ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS
-        emit_adaptive_status(
-            loop_ctx,
+        fallback_outcome = _duplicate_batch_evidence_fallback_outcome(
             profile=profile,
             loop_state=loop_state,
-            detail_text=f"{public_mode_tag} repeated tool batch",
-            mode_state="duplicate_tool_calls",
-            termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+            allowed_tools=allowed_tools,
+            duration_ms=duration_ms,
+            tokens_used=tokens_used,
         )
-        return (
-            AdaptiveToolLoopOutcome(
-                profile_name=profile.profile_name,
-                mode_name=profile.mode_name,
-                termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
-                state=loop_state,
-                allowed_tools=allowed_tools,
-                error_message=(
-                    "Answer-only closure did not return a final answer after an "
-                    "identical successful tool batch had already completed."
-                ),
-            ),
-            duration_ms,
-            tokens_used,
+        if fallback_outcome is not None:
+            return fallback_outcome
+        return _duplicate_batch_empty_final_outcome(
+            loop_ctx=loop_ctx,
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
+            duration_ms=duration_ms,
+            tokens_used=tokens_used,
         )
+    if missing_requested_closeout_markers(loop_state, final_text):
+        fallback_outcome = _duplicate_batch_evidence_fallback_outcome(
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            duration_ms=duration_ms,
+            tokens_used=tokens_used,
+        )
+        if fallback_outcome is not None:
+            return fallback_outcome
     loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
     return (
         AdaptiveToolLoopOutcome(

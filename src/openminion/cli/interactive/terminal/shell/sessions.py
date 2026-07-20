@@ -6,7 +6,6 @@ from rich.console import Console
 from rich.text import Text
 
 from openminion.cli.presentation.markers import token_rich_style
-from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.styles import StyleToken
 
 from ..overlays import TerminalOverlayPresenter
@@ -86,23 +85,3 @@ def resume_session(
         return
     transcript.set_messages(history)
     console.print(Text(f"(resumed session: {chosen_id})", style=_MUTED_ITALIC_STYLE))
-
-
-async def show_dashboard_retirement(
-    *,
-    runtime: Any,
-    console: Console,
-    transcript: TerminalTranscript,
-) -> None:
-    del console
-    from openminion.cli.commands.aliases import dashboard_deprecation_message
-    from openminion.cli.status.surface import record_surface_event
-
-    transcript.push_message(
-        ChatMessage(
-            kind=MessageKind.SYSTEM,
-            sender="system",
-            body=dashboard_deprecation_message(),
-        )
-    )
-    record_surface_event(runtime, surface="dashboard", action="deprecation")

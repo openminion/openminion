@@ -16,6 +16,12 @@ class FocusScenario:
     include_project_context: bool = True
 
 
+SCRATCH_RELATIVE_PATH_RULE = (
+    "Use relative paths under the current directory only; do not use absolute "
+    "paths and do not create nested scratch directories. "
+)
+
+
 BASE_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
     FocusScenario(
         scenario_id="exact_reply",
@@ -63,10 +69,11 @@ RESEARCH_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "Research terminal-agent UX patterns for long running tasks. Compare "
             "Codex-style, Claude-style, and OpenCode-style interaction patterns "
             "when evidence is available. Use at most four search/fetch calls total, "
-            "then stop searching and produce a concise tradeoff matrix plus a "
-            "practical recommended direction for OpenMinion."
+            "then stop searching and produce exact labels `tradeoffs:` and "
+            "`recommendation:` with a concise tradeoff matrix plus a practical "
+            "recommended direction for OpenMinion."
         ),
-        expected_markers=("tradeoff", "recommendation|recommended|recommend"),
+        expected_markers=("tradeoffs", "recommendation|recommended|recommend"),
         timeout=1200,
     ),
     FocusScenario(
@@ -88,8 +95,10 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="coding_deep_scratch_feature",
         prompt=(
             "In the current directory, create a tiny Python function and one "
-            "minimal check. Use file tools for files and direct exec.run commands "
-            "for checks. Keep it small and finish with the exact label `result:`."
+            "minimal check. "
+            f"{SCRATCH_RELATIVE_PATH_RULE}"
+            "Use file tools for files and direct exec.run commands for checks. "
+            "Keep it small and finish with the exact label `result:`."
         ),
         expected_markers=("result",),
         timeout=900,
@@ -103,8 +112,11 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="coding_complex_debug_loop",
         prompt=(
             "In the current directory, create a tiny Python module and test. "
-            "Include one edge case, fix any issue you find, run a focused check, "
-            "and finish with the exact label `result:` plus the bug and fix."
+            f"{SCRATCH_RELATIVE_PATH_RULE}"
+            "Use file.write for files and direct exec.run commands for checks; "
+            "do not only show code snippets. Include one edge case, fix any "
+            "issue you find, run a focused check, and finish with the exact "
+            "label `result:` plus the bug and fix."
         ),
         expected_markers=("result",),
         timeout=1200,
@@ -118,7 +130,10 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="coding_long_project_slice",
         prompt=(
             "In the current directory, build a tiny Python CLI project with a "
-            "module, CLI entry, tests, and README. Keep it under five files, run "
+            "module, CLI entry, tests, and README. "
+            f"{SCRATCH_RELATIVE_PATH_RULE}"
+            "Use file.write for files and direct exec.run commands for checks; "
+            "do not only show code snippets. Keep it under five files, run "
             "focused validation, and finish with files changed plus the exact "
             "label `result:`."
         ),
@@ -139,10 +154,12 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         prompt=(
             "Treat this as a long-running goal-style coding loop in the current "
             "directory. Build a small zero-dependency Python CLI named "
-            "`loopcalc` using at most five files. Use file.write and file.read; "
+            f"`loopcalc` using at most five files. {SCRATCH_RELATIVE_PATH_RULE}"
+            "Begin by using file.write for `loopcalc.py`; do not inspect the repo "
+            "first. Use file.write and file.read; "
             "do not call exec.run in this soak scenario. Validate by reading back "
-            "one file, then finish with files changed, validation result, and "
-            "remaining follow-ups."
+            "one file, then finish with exact labels `files:`, `validation:`, and "
+            "`follow-ups:`."
         ),
         expected_markers=("validation", "files"),
         timeout=2400,
@@ -156,7 +173,8 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="goal_research_then_code_loop",
         prompt=(
             "Treat this as a long-running self-directed project in the current "
-            "directory. Pick a minimal design for a Python CLI that summarizes "
+            f"directory. {SCRATCH_RELATIVE_PATH_RULE}"
+            "Pick a minimal design for a Python CLI that summarizes "
             "text-file word counts, implement it with file.write/file.read, and "
             "avoid installs and exec.run. Validate by reading back one created "
             "file. Close with `design:`, `implementation:`, `validation:`, and "
@@ -174,7 +192,8 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="goal_deep_research_analysis_code_loop",
         prompt=(
             "Treat this as a long-running mixed research, analysis, and coding "
-            "goal in the current directory. Compare two minimal designs for a "
+            f"goal in the current directory. {SCRATCH_RELATIVE_PATH_RULE}"
+            "Compare two minimal designs for a "
             "Python CLI that summarizes Markdown sections, pick the simpler one, "
             "and implement a tiny package with module code, CLI entry, tests, "
             "and README using file.write/file.read. Avoid installs and exec.run. "

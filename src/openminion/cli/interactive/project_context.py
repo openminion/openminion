@@ -3,12 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-_PROJECT_CONTEXT_FILENAMES: tuple[str, ...] = (
-    "OPENMINION.md",
-    "AGENTS.md",
-    "CLAUDE.md",
+from openminion.modules.runtime.project_instructions import (
+    PROJECT_INSTRUCTION_FILENAMES,
+    PROJECT_INSTRUCTION_MAX_BYTES,
+    ProjectInstructionTarget,
+    resolve_project_instruction_target,
 )
-_PROJECT_CONTEXT_MAX_BYTES = 64 * 1024
+
+_PROJECT_CONTEXT_FILENAMES = PROJECT_INSTRUCTION_FILENAMES
+_PROJECT_CONTEXT_MAX_BYTES = PROJECT_INSTRUCTION_MAX_BYTES
 
 
 @dataclass(frozen=True)
@@ -33,14 +36,9 @@ def resolve_project_context(
     *,
     max_bytes: int = _PROJECT_CONTEXT_MAX_BYTES,
 ) -> ProjectContextInfo | None:
-    start = Path(working_dir or ".").expanduser().resolve(strict=False)
-    probe = start if start.is_dir() else start.parent
-    for current in (probe, *probe.parents):
-        for filename in _PROJECT_CONTEXT_FILENAMES:
-            candidate = current / filename
-            if not candidate.is_file():
-                continue
-            return _read_project_context(candidate, max_bytes=max_bytes)
+    target = resolve_project_instruction_target(working_dir, max_bytes=max_bytes)
+    if target.exists:
+        return _context_info_from_target(target)
     return None
 
 
@@ -48,8 +46,8 @@ def find_project_context_target_root(working_dir: str | Path | None) -> Path:
     info = resolve_project_context(working_dir)
     if info is not None:
         return info.path.parent
-    start = Path(working_dir or ".").expanduser().resolve(strict=False)
-    return start if start.is_dir() else start.parent
+    target = resolve_project_instruction_target(working_dir)
+    return target.project_root
 
 
 def build_project_context_metadata(
@@ -134,6 +132,16 @@ def _read_project_context(path: Path, *, max_bytes: int) -> ProjectContextInfo:
         size_bytes=size_bytes,
         content=content,
         truncated=truncated,
+    )
+
+
+def _context_info_from_target(target: ProjectInstructionTarget) -> ProjectContextInfo:
+    return ProjectContextInfo(
+        path=target.path,
+        source_name=target.target_name,
+        size_bytes=target.size_bytes,
+        content=target.content,
+        truncated=target.truncated,
     )
 
 

@@ -11,7 +11,9 @@ from openminion.base.channel import ChannelRegistry
 from openminion.base.types import Message
 from openminion.base.user_io import UserIO
 from openminion.services.agent import AgentService
-from openminion.modules.controlplane.channels.authenticity import ChannelAuthenticityPolicy
+from openminion.modules.controlplane.channels.authenticity import (
+    ChannelAuthenticityPolicy,
+)
 from openminion.modules.task.run import append_run_state_event
 from openminion.services.context.session import SessionContextService
 from openminion.services.gateway.config import (
@@ -22,7 +24,7 @@ from openminion.services.gateway.security import GatewaySecurity
 from openminion.services.gateway.streaming import (
     GatewayStreamEvent,
     gateway_stream_event_from_message,
-    gateway_stream_event_from_progress,
+    gateway_stream_event_from_turn_chunk,
 )
 from openminion.services.gateway.turn_intent import TypedTurnIntent
 from openminion.services.gateway.turn import GatewayTurnRunner
@@ -204,7 +206,7 @@ class GatewayService:
                         return
                 else:
                     return
-            event = gateway_stream_event_from_progress(
+            event = gateway_stream_event_from_turn_chunk(
                 dict(cast(dict[Any, Any], payload))
             )
             if event is None:
@@ -443,7 +445,9 @@ class GatewayService:
             )
         finally:
             if lease is not None:
-                release_lease = getattr(self._sessions, "release_session_turn_lease", None)
+                release_lease = getattr(
+                    self._sessions, "release_session_turn_lease", None
+                )
                 if callable(release_lease):
                     release_lease(
                         session_value,

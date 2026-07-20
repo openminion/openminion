@@ -113,8 +113,6 @@ def _run_default_interactive(
                 verbosity=getattr(args, "verbosity", None),
                 progress=getattr(args, "progress", None),
                 rich=bool(getattr(args, "rich", False)),
-                terminal=bool(getattr(args, "terminal", False)),
-                surface="interactive",
             )
         )
         or 0

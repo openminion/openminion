@@ -66,7 +66,7 @@ class ProviderHistoryMessage:
 class ProviderResponse:
     text: str
     model: str
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
     tool_calls: list[ProviderToolCall] = field(default_factory=list)
     finish_reason: str = ""
     normalization: dict[str, Any] = field(default_factory=dict)

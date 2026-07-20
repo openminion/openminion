@@ -40,6 +40,7 @@ from ..schemas import (
     ResponseError,
     ToolCall,
     ToolSpec,
+    UsageInfo,
 )
 from .flow import (
     ToolPolicyContext as _ToolPolicyContext,
@@ -62,6 +63,11 @@ from .flow import (
 from .sync import run_async_compat
 
 ToolPolicyContext = _ToolPolicyContext
+
+
+def _usage_with_derived_total(usage: UsageInfo) -> UsageInfo:
+    total = (usage.input_tokens or 0) + (usage.output_tokens or 0)
+    return usage.model_copy(update={"total_tokens": total, "total_source": "derived"})
 
 
 class LLMCTL:
@@ -520,8 +526,7 @@ class LLMClient:
 
         usage = normalized.usage
         if usage.total_tokens is None:
-            total = (usage.input_tokens or 0) + (usage.output_tokens or 0)
-            usage = usage.model_copy(update={"total_tokens": total})
+            usage = _usage_with_derived_total(usage)
             normalized = normalized.model_copy(update={"usage": usage})
 
         return normalized

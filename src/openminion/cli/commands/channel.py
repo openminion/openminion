@@ -28,6 +28,10 @@ from openminion.cli.transport.daemon_client import (
 from openminion.cli.commands.telegram_status import (
     build_telegram_status_payload,
 )
+from openminion.cli.commands.channel_pairings import (
+    register_pairings_subcommands,
+    run_channel_pairings,
+)
 from openminion.modules.controlplane.config import (
     ControlPlaneConfig,
     from_base_config as controlplane_from_base_config,
@@ -104,6 +108,8 @@ class _ForegroundChannelRuntime:
 
 def run_channel(args: argparse.Namespace) -> int:
     channel = str(getattr(args, "channel_name", "") or "").strip().lower()
+    if channel == "pairings":
+        return run_channel_pairings(args)
     if channel == "telegram":
         action = str(getattr(args, "telegram_command", "") or "").strip().lower()
         handler = {
@@ -943,6 +949,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
 
     register_slack_subcommands(channel_subcommands, handler=run_channel)
+    register_pairings_subcommands(channel_subcommands, handler=run_channel)
 
 
 def _add_config_arg(parser: argparse.ArgumentParser) -> None:

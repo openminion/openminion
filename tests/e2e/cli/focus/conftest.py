@@ -31,12 +31,7 @@ def python_bin(openminion_root: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def minimax_config_path(framework_root: Path) -> Path:
-    override = str(
-        os.getenv(
-            "OPENMINION_CLI_FOCUS_E2E_CONFIG",
-            os.getenv("OPENMINION_TUI_FOCUS_E2E_CONFIG", ""),
-        )
-    ).strip()
+    override = str(os.getenv("OPENMINION_CLI_FOCUS_E2E_CONFIG", "")).strip()
     if override:
         return Path(override).expanduser()
     return framework_root / "test-configs" / "per-agent-minimax-official.json"
@@ -44,12 +39,7 @@ def minimax_config_path(framework_root: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def minimax_agent_id() -> str:
-    return str(
-        os.getenv(
-            "OPENMINION_CLI_FOCUS_E2E_AGENT",
-            os.getenv("OPENMINION_TUI_FOCUS_E2E_AGENT", "minimax-m2-7"),
-        )
-    ).strip()
+    return str(os.getenv("OPENMINION_CLI_FOCUS_E2E_AGENT", "minimax-m2-7")).strip()
 
 
 @pytest.fixture
@@ -84,24 +74,14 @@ def focus_probe(
 
 
 def require_live_focus() -> None:
-    enabled = str(
-        os.getenv(
-            "OPENMINION_LIVE_CLI_FOCUS_E2E",
-            os.getenv("OPENMINION_LIVE_TUI_FOCUS_E2E", ""),
-        )
-    ).strip()
+    enabled = str(os.getenv("OPENMINION_LIVE_CLI_FOCUS_E2E", "")).strip()
     if enabled != "1":
         pytest.skip("OPENMINION_LIVE_CLI_FOCUS_E2E=1 not set; skipping live focus E2E.")
 
 
 def require_complex_focus() -> None:
     require_live_focus()
-    enabled = str(
-        os.getenv(
-            "OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E",
-            os.getenv("OPENMINION_LIVE_TUI_FOCUS_COMPLEX_E2E", ""),
-        )
-    ).strip()
+    enabled = str(os.getenv("OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E", "")).strip()
     if enabled != "1":
         pytest.skip(
             "OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E=1 not set; skipping complex focus E2E."

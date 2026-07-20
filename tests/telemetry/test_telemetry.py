@@ -1,10 +1,12 @@
 import asyncio
 import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from openminion.base.config import OTELExporterConfig
+from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.telemetry.lifecycle import (
     build_component_identity,
     build_lifecycle_telemetry_event,
@@ -19,6 +21,19 @@ from openminion.modules.telemetry.service import (
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_environment_snapshot_keeps_telemetry_under_runtime_data_root(tmp_path):
+    data_root = tmp_path / "run-data"
+    env = EnvironmentConfig.from_sources(
+        process_env={"OPENMINION_DATA_ROOT": str(data_root)},
+        runtime_env={"OPENMINION_DATA_ROOT": str(tmp_path / "config-default")},
+    )
+
+    service = TelemetryService(home_root=tmp_path / "home", env=env.snapshot())
+
+    assert Path(service._db_path) == data_root / "telemetry" / "telemetry.db"
+    service.close_sync()
 
 
 @pytest.fixture

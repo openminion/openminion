@@ -1,13 +1,11 @@
 # OpenMinion Terminal Surfaces
 
 Status: active
-Last updated: 2026-07-14
+Last updated: 2026-07-19
 
 OpenMinion has one canonical interactive CLI: `openminion`. It uses the
 terminal renderer by default. Textual remains available through explicit
 `openminion --rich`, not as the default.
-Compatibility aliases remain only to give existing operators a bounded
-migration path.
 
 ## Canonical routes
 
@@ -20,12 +18,9 @@ migration path.
 | Embedded runtime | `openminion` and `openminion.api` imports | Use typed Python APIs without CLI or widget imports. |
 | HTTP integration | `openminion api` and `openminion.api.APIRuntime` | Use the package-owned API runtime and schemas. |
 
-`openminion focus`, `openminion chat`, and `openminion tui` are hidden
-compatibility aliases that forward to the canonical owner. Piped chat input
-forwards to the one-shot owner. `openminion dashboard` is a hidden bounded
-tombstone that prints replacement commands without launching an interactive
-runtime. Unsupported legacy flags fail with migration help instead of silently
-changing behavior.
+Legacy `openminion focus`, `openminion chat`, `openminion tui`, and
+`openminion dashboard` commands are retired and rejected. There is no hidden
+forwarding layer or dashboard tombstone. Use the canonical routes above.
 
 Without `--session`, interactive startup creates a fresh session. Use
 `--session <id>` when resuming or naming a session is intentional.
@@ -81,24 +76,17 @@ canonical CLI, bounded resource commands, and typed APIs:
 | Agents | Interactive `/agents`, `openminion agent`, and agent APIs. |
 | Third Brain | Its optional provider/API integration; it is not a core terminal owner. |
 
-The `tui` alias notice can be suppressed with
-`OPENMINION_TUI_NO_DEPRECATION=1`. Suppression hides that forwarding notice
-only. The dashboard tombstone always prints its migration map.
-
 ## Privacy-safe usage evidence
 
-When a live telemetry service exists, OpenMinion records only a fixed surface
-name and, for dashboard navigation, a fixed tab identifier. It never records
-prompts, command arguments, content, paths, credentials, or resource payloads.
+When a live telemetry service exists, OpenMinion records only the fixed
+`interactive` surface name. It never records prompts, command arguments,
+content, paths, credentials, or resource payloads.
 
-Runtime-backed interactive sessions, compatibility aliases, dashboard launches,
-and dashboard tab activation can emit counters. Demo dashboard sessions and
-piped one-shot compatibility paths do not own a live telemetry service, so
-their usage is explicitly unavailable rather than inferred as zero. Operators
-must consider that limitation during release review.
+Runtime-backed interactive sessions can emit that counter. Paths without a live
+telemetry service report no event rather than inferring usage as zero.
 
 ## Retirement status
 
 The operator approved dashboard deletion on 2026-07-14 after the replacement
-map and compatibility routes were reviewed. The `dashboard` alias now forwards
-to the canonical CLI without importing retired dashboard code.
+map was reviewed. The remaining command tombstone and interactive aliases were
+removed on 2026-07-19; the root command is now the sole interactive entry.

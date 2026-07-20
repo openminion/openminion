@@ -35,6 +35,9 @@ def test_execute_turn_enters_shared_runtime_ingress() -> None:
                 agent_id="main",
             ),
         ) as execute_ingress,
+        mock.patch(
+            "openminion.services.runtime.daemon._emit_chat_phase_timing"
+        ) as emit_timing,
     ):
         response = execute_turn(
             runtime=runtime,
@@ -46,6 +49,8 @@ def test_execute_turn_enters_shared_runtime_ingress() -> None:
     build_request.assert_called_once_with(runtime=runtime, request=request)
     execute_ingress.assert_called_once()
     assert execute_ingress.call_args.kwargs["request"] == "ingress-request"
+    emit_timing.assert_called_once()
+    assert emit_timing.call_args.kwargs["request"] == "ingress-request"
     assert response.final_text == "shared ingress ok"
 
 

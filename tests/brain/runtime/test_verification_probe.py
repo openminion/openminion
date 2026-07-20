@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from openminion.modules.brain.runtime.verification.probe import (
-    VERIFIABLE_TOOL_PREFIXES,
     VERIFICATION_FAILED_REASON,
     apply_verification_to_judgment,
     evaluate_verification,
@@ -19,7 +18,11 @@ def _exec_run_result(*, argv: list[str], exit_code: int = 0, ok: bool = True) ->
     return {
         "tool_name": "exec.run",
         "ok": ok,
-        "data": {"argv": list(argv), "exit_code": exit_code},
+        "data": {
+            "argv": list(argv),
+            "exit_code": exit_code,
+            "tool_blast_radius": "code_execution",
+        },
     }
 
 
@@ -27,7 +30,7 @@ def _file_write_result(*, path: str, ok: bool = True) -> dict:
     return {
         "tool_name": "file.write",
         "ok": ok,
-        "data": {"path": path},
+        "data": {"path": path, "tool_blast_radius": "local_mutation"},
     }
 
 
@@ -35,7 +38,7 @@ def _git_status_result(*, ok: bool = True) -> dict:
     return {
         "tool_name": "git.status",
         "ok": ok,
-        "data": {"argv": ["git", "status"]},
+        "data": {"argv": ["git", "status"], "tool_blast_radius": "read_only"},
     }
 
 
@@ -100,8 +103,49 @@ def test_file_write_alone_fires_turn_shape_gate_but_no_probe_found() -> None:
     assert fact.ok is True
 
 
-def test_verifiable_tool_prefixes_pinned() -> None:
-    assert VERIFIABLE_TOOL_PREFIXES == ("exec.", "file.", "code.", "git.")
+def test_mutation_looking_prefix_without_typed_metadata_stays_pure() -> None:
+    fact = evaluate_verification(
+        tool_results=[
+            {
+                "tool_name": "file.write",
+                "ok": True,
+                "data": {"path": "foo.py"},
+            }
+        ]
+    )
+    assert fact.signal == "unavailable"
+    assert fact.ok is True
+    assert fact.probed_tool == ""
+
+
+def test_remote_mutation_without_probe_records_unavailable() -> None:
+    fact = evaluate_verification(
+        tool_results=[
+            {
+                "tool_name": "deploy.release",
+                "ok": True,
+                "data": {"tool_blast_radius": "remote_mutation"},
+            }
+        ]
+    )
+    assert fact.signal == "unavailable"
+    assert fact.ok is True
+
+
+def test_malformed_typed_radius_records_blocked_unavailable_fact() -> None:
+    fact = evaluate_verification(
+        tool_results=[
+            {
+                "tool_name": "custom.mutate",
+                "ok": True,
+                "data": {"tool_blast_radius": "unknown"},
+            }
+        ]
+    )
+    assert fact.signal == "unavailable"
+    assert fact.ok is False
+    assert fact.probed_tool == "custom.mutate"
+    assert is_verification_failed(fact) is True
 
 
 def test_detects_pytest_invocation() -> None:
@@ -325,9 +369,7 @@ def test_unavailable_when_side_effect_but_no_probe() -> None:
     assert fact.ok is True
 
 
-def test_git_status_alone_fires_gate_but_unavailable_signal() -> None:
-    # git.status is a verifiable-prefix tool but reading git state
-    # isn't a verification probe. Gate fires, no probe found.
+def test_typed_read_only_git_status_does_not_create_verification_target() -> None:
     results = [_git_status_result()]
     fact = evaluate_verification(tool_results=results)
     assert fact.signal == "unavailable"
@@ -398,10 +440,13 @@ def test_is_failed_predicate_false_for_passed_probe() -> None:
 
 
 def test_is_failed_predicate_false_for_unavailable() -> None:
-    # Even with ok=False, ``unavailable`` should NOT trigger override
-    # because no real probe ran. Defensive.
-    fact = VerificationFact(signal="unavailable", exit_code=None, ok=False)
+    fact = VerificationFact(signal="unavailable", exit_code=None, ok=True)
     assert is_verification_failed(fact) is False
+
+
+def test_is_failed_predicate_true_for_malformed_unavailable() -> None:
+    fact = VerificationFact(signal="unavailable", exit_code=None, ok=False)
+    assert is_verification_failed(fact) is True
 
 
 def test_is_failed_predicate_false_for_none() -> None:

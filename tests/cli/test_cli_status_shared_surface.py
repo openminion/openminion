@@ -244,10 +244,7 @@ _SHARED_STATUS_MODULES = [
     "openminion/src/openminion/cli/status/formatting.py",
 ]
 
-_FORBIDDEN_PREFIXES = (
-    "openminion.cli.interactive.",
-    "openminion.cli.commands.aliases.",
-)
+_FORBIDDEN_PREFIXES = ("openminion.cli.interactive.",)
 
 
 def _collect_import_names(path: Path) -> set[str]:

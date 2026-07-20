@@ -45,6 +45,7 @@ def test_usage_from_openai_like_without_prompt_tokens_details_returns_none():
     usage = _usage_from_openai_like(payload)
     assert usage.cached_tokens is None
     assert usage.cache_creation_tokens is None
+    assert usage.total_source == "provider"
 
 
 def test_usage_from_anthropic_without_cache_fields_returns_none():
@@ -52,6 +53,7 @@ def test_usage_from_anthropic_without_cache_fields_returns_none():
     usage = _usage_from_anthropic(payload)
     assert usage.cached_tokens is None
     assert usage.cache_creation_tokens is None
+    assert usage.total_source == "derived"
 
 
 def test_token_usage_totals_default_cached_tokens_is_none():
@@ -95,6 +97,7 @@ def test_usage_from_openai_like_extracts_cached_tokens_from_details():
     assert usage.cached_tokens == 64
     assert usage.input_tokens == 100
     assert usage.output_tokens == 20
+    assert usage.total_source == "provider"
 
 
 def test_usage_from_openai_like_handles_malformed_details_gracefully():
@@ -102,6 +105,15 @@ def test_usage_from_openai_like_handles_malformed_details_gracefully():
     p2 = {"prompt_tokens": 50, "prompt_tokens_details": {"cached_tokens": "many"}}
     assert _usage_from_openai_like(p1).cached_tokens is None
     assert _usage_from_openai_like(p2).cached_tokens is None
+
+
+def test_usage_from_openai_like_derives_malformed_total() -> None:
+    usage = _usage_from_openai_like(
+        {"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": "bad"}
+    )
+
+    assert usage.total_tokens == 60
+    assert usage.total_source == "derived"
 
 
 def test_usage_from_anthropic_extracts_cache_read_input_tokens():

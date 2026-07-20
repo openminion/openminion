@@ -2213,6 +2213,88 @@ def test_tool_request_activates_inactive_schema_for_next_loop_call() -> None:
     assert outcome.final_text == "done"
 
 
+def test_terminal_tool_request_uses_existing_direct_tool_closure() -> None:
+    seed_response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="fake-model",
+        output_text="",
+        tool_calls=[
+            ToolCall(
+                id="request-time",
+                name=TOOL_REQUEST_TOOL_NAME,
+                arguments={"name": "time", "terminal_after_success": True},
+            )
+        ],
+        finish_reason="tool_calls",
+    )
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="time",
+                        name="time",
+                        arguments={"timezone": "UTC"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="The current UTC time is 09:10.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=5, llm_calls_max=10),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="time",
+                    args={"timezone": "UTC"},
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="09:10 UTC",
+                ),
+            )
+        ],
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"time"}),
+            max_iterations=4,
+            profile_name="general_adaptive_v1",
+        ),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="Tell me the UTC time")],
+        tool_specs=[],
+        requestable_tool_specs=_tool_specs("time"),
+        seed_response=seed_response,
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "The current UTC time is 09:10."
+    assert [command.tool_name for command in loop_ctx.commands] == ["time"]
+    assert [spec.name for spec in runtime.calls[0]["tools"]] == ["time"]
+    assert runtime.calls[1]["tool_choice"] == "none"
+    assert outcome.state.scratchpad["tool_schema_shortlisting.terminal_tool"] == (
+        "time"
+    )
+
+
 def test_engine_confident_complete_exits_early_with_final_text() -> None:
     runtime = _FakeRuntime(
         responses=[

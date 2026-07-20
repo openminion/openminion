@@ -484,22 +484,19 @@ def _ready_onboarding_status() -> OnboardingStatus:
     )
 
 
-def test_focus_parser_registers_options_and_handler() -> None:
-    from openminion.cli.commands.interactive import run_interactive
+def test_root_parser_registers_interactive_options() -> None:
     from openminion.cli.parser.base import build_parser
 
     parser = build_parser()
     args = parser.parse_args(
-        ["focus", "--agent", "alpha", "--session", "focus-1", "--dir", "/tmp/work"]
+        ["--agent", "alpha", "--session", "focus-1", "--dir", "/tmp/work"]
     )
 
-    assert args.command == "focus"
+    assert args.command is None
     assert args.agent == "alpha"
     assert args.session == "focus-1"
     assert args.dir == "/tmp/work"
     assert args.no_interactive is False
-    assert args.handler is run_interactive
-    assert args.needs_app is False
 
 
 @pytest.mark.asyncio
@@ -1113,9 +1110,7 @@ def test_run_interactive_live_wires_shared_runtime_and_closes(monkeypatch) -> No
     # them True to clear the guard before reaching the FocusApp stub.
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-    interactive_command = importlib.import_module(
-        "openminion.cli.commands.interactive"
-    )
+    interactive_command = importlib.import_module("openminion.cli.commands.interactive")
     from openminion.api.runtime import APIRuntime
 
     captured: dict[str, Any] = {}
@@ -1181,9 +1176,7 @@ def test_run_interactive_missing_config_launches_inline_setup(monkeypatch) -> No
     # clear the non-TTY guard so the --rich path proceeds.
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-    interactive_command = importlib.import_module(
-        "openminion.cli.commands.interactive"
-    )
+    interactive_command = importlib.import_module("openminion.cli.commands.interactive")
 
     captured: dict[str, Any] = {}
 
@@ -1254,9 +1247,7 @@ def test_run_interactive_missing_config_uses_inline_setup(monkeypatch) -> None:
     # clear the non-TTY guard so the --rich path proceeds.
     monkeypatch.setattr("sys.stdin.isatty", lambda: True)
     monkeypatch.setattr("sys.stdout.isatty", lambda: True)
-    interactive_command = importlib.import_module(
-        "openminion.cli.commands.interactive"
-    )
+    interactive_command = importlib.import_module("openminion.cli.commands.interactive")
 
     monkeypatch.setattr(
         "openminion.cli.commands.interactive._inspect_interactive_onboarding",

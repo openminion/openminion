@@ -106,6 +106,10 @@ def _framework_root() -> Path:
     return _openminion_root().parent
 
 
+def _runtime_home_root() -> Path:
+    return _openminion_root()
+
+
 def _config_path() -> Path:
     configured = str(os.getenv("OPENMINION_LIVE_CLI_CHAT_CONFIG", "")).strip()
     if configured:
@@ -145,7 +149,7 @@ def _timeout_seconds() -> int:
 
 
 def _artifact_dir() -> Path:
-    artifact_dir = _framework_root() / ".openminion" / "runtime" / "cli-chat-e2e"
+    artifact_dir = _runtime_home_root() / ".openminion" / "runtime" / "cli-chat-e2e"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     return artifact_dir
 
@@ -252,9 +256,8 @@ def _run_cli_turn(
         "OPENMINION_TRACE_REQUESTS_DIR",
     ):
         env.pop(key, None)
-    framework_root = _framework_root()
     openminion_root = _openminion_root()
-    env["OPENMINION_HOME"] = str(framework_root)
+    env["OPENMINION_HOME"] = str(_runtime_home_root())
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     env["OPENMINION_IDENTITY_ROOT"] = str(identity_root)
     env["OPENMINION_TRACE_REQUESTS"] = "1"
@@ -272,13 +275,14 @@ def _run_cli_turn(
         "openminion",
         "--config",
         str(config_path),
-        "chat",
         "--agent",
         scenario.agent_id,
         "--session",
         session_id,
-        "--quiet",
-        "--no-progress",
+        "--verbosity",
+        "quiet",
+        "--progress",
+        "off",
     ]
     user_input = "\n".join((*prompt_lines, "/debug", "/exit")) + "\n"
     completed = subprocess.run(

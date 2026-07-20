@@ -17,6 +17,13 @@ def _scopes_list(raw: Any) -> list[str]:
     ]
 
 
+def _normalize_binding_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    out["scopes"] = _scopes_list(out.get("scopes_json"))
+    out["meta"] = _json_load(out.get("meta_json"))
+    return out
+
+
 def _binding_meta(source: str, *, user_id: Any, session_id: Any) -> str:
     return _json_dump({"source": source, "user_id": user_id, "session_id": session_id})
 
@@ -429,10 +436,91 @@ class PrincipalsStore:
         )
         if not rows:
             return None
-        out = rows[0]
-        out["scopes"] = _scopes_list(out.get("scopes_json"))
-        out["meta"] = _json_load(out.get("meta_json"))
-        return out
+        return _normalize_binding_row(rows[0])
+
+    def list_channel_subjects(
+        self,
+        *,
+        channel: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        where = ["1=1"]
+        params: list[Any] = []
+        chan = str(channel or "").strip()
+        if chan:
+            where.append("channel = ?")
+            params.append(chan)
+        state = str(status or "").strip()
+        if state:
+            where.append("status = ?")
+            params.append(state)
+        params.append(max(1, int(limit)))
+        rows = self._rs.query_dicts(
+            f"""
+            SELECT principal_id, channel, subject_id, status, scopes_json, note,
+                   created_at, last_seen_at, meta_json
+            FROM cp_channel_subjects
+            WHERE {" AND ".join(where)}
+            ORDER BY last_seen_at DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
+        return [_normalize_binding_row(row) for row in rows]
+
+    def update_channel_subject(
+        self,
+        *,
+        channel: str,
+        subject_id: str,
+        status: str | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
+        note: str | None = None,
+    ) -> bool:
+        chan = str(channel or "").strip()
+        sub = str(subject_id or "").strip()
+        if not chan or not sub:
+            return False
+        assignments = ["last_seen_at = ?"]
+        legacy_assignments = ["last_seen_at = ?"]
+        params: list[Any] = [_iso_now()]
+        legacy_params: list[Any] = [params[0]]
+        if status is not None:
+            assignments.append("status = ?")
+            params.append(str(status))
+            legacy_assignments.append("status = ?")
+            legacy_params.append(str(status))
+        if scopes is not None:
+            assignments.append("scopes_json = ?")
+            params.append(_scopes_json(scopes))
+            legacy_assignments.append("scopes_json = ?")
+            legacy_params.append(_scopes_json(scopes))
+        if note is not None:
+            assignments.append("note = ?")
+            params.append(note)
+            legacy_assignments.append("note = ?")
+            legacy_params.append(note)
+        params.extend([chan, sub])
+        legacy_params.extend([chan, sub])
+        with self._rs.transaction():
+            changed = self._rs.execute_count(
+                f"""
+                UPDATE cp_channel_subjects
+                SET {", ".join(assignments)}
+                WHERE channel = ? AND subject_id = ?
+                """,
+                tuple(params),
+            )
+            self._rs.execute_count(
+                f"""
+                UPDATE cp_pairings
+                SET {", ".join(legacy_assignments)}
+                WHERE channel = ? AND chat_id = ?
+                """,
+                tuple(legacy_params),
+            )
+        return changed > 0
 
     def touch_channel_subject(self, *, channel: str, subject_id: str) -> None:
         chan = str(channel or "").strip()

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -22,6 +23,12 @@ SCAN_ROOTS = (
     REPO_ROOT / "src" / "openminion",
     REPO_ROOT / "tests",
     REPO_ROOT / "pyproject.toml",
+)
+DOC_SCAN_ROOTS = (
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "CONTRIBUTING.md",
+    REPO_ROOT / "docs",
+    REPO_ROOT / "src" / "openminion",
 )
 ALLOWED_ROOT_FILES = {
     "README.md",
@@ -64,6 +71,21 @@ TOKEN_EXEMPT_FILES = {
 }
 RETIRED_FLAT_FILES = {
     f"{name}.py" for names in GROUPED_MODULES.values() for name in names
+}
+RETIRED_DOC_PATTERNS = {
+    "deleted command owner": re.compile(r"cli/commands/aliases\.py"),
+    "deleted deprecation owner": re.compile(r"cli/ux/deprecation\.py"),
+    "removed internal flag": re.compile(r"`--terminal`"),
+    "removed chat notice env": re.compile(r"OPENMINION_CHAT_NO_DEPRECATION"),
+    "removed tui notice env": re.compile(r"OPENMINION_TUI_NO_DEPRECATION"),
+    "removed focus backend env": re.compile(r"OPENMINION_FOCUS_BACKEND"),
+    "removed focus verbosity env": re.compile(r"OPENMINION_FOCUS_VERBOSITY"),
+    "removed focus progress env": re.compile(r"OPENMINION_FOCUS_PROGRESS"),
+    "removed focus spinner env": re.compile(r"OPENMINION_FOCUS_PLAIN_SPINNER"),
+    "hidden alias claim": re.compile(r"hidden compatibility alias(?:es)?", re.I),
+    "live alias claim": re.compile(
+        r"compatibility alias(?:es)?\s+(?:remain|exist|forward|are tested)", re.I
+    ),
 }
 
 
@@ -126,6 +148,32 @@ def scan_text_file(path: Path) -> list[str]:
     return errors
 
 
+def scan_current_doc(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    try:
+        display_path = path.relative_to(REPO_ROOT)
+    except ValueError:
+        display_path = path
+    errors: list[str] = []
+    for label, pattern in RETIRED_DOC_PATTERNS.items():
+        for match in pattern.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            errors.append(f"{display_path}:{line}: {label}")
+    return errors
+
+
+def iter_current_docs() -> list[Path]:
+    paths: list[Path] = []
+    package_root = REPO_ROOT / "src" / "openminion"
+    for scan_root in DOC_SCAN_ROOTS:
+        if scan_root.is_file():
+            paths.append(scan_root)
+            continue
+        pattern = "README.md" if scan_root == package_root else "*.md"
+        paths.extend(sorted(scan_root.rglob(pattern)))
+    return paths
+
+
 def main() -> int:
     errors = validate_root_layout()
     for scan_root in SCAN_ROOTS:
@@ -138,11 +186,16 @@ def main() -> int:
             if path.suffix == ".pyc":
                 continue
             errors.extend(scan_text_file(path))
+    current_docs = iter_current_docs()
+    for path in current_docs:
+        errors.extend(scan_current_doc(path))
     result = {
         "ok": not errors,
         "allowed_root_files": sorted(ALLOWED_ROOT_FILES),
         "grouped_dirs": sorted(GROUPED_LAYOUT),
         "legacy_token_count": len(LEGACY_PATH_TOKENS),
+        "current_doc_count": len(current_docs),
+        "retired_doc_pattern_count": len(RETIRED_DOC_PATTERNS),
     }
     emit_json_report(
         "validate/cli_layout.py",
@@ -152,6 +205,7 @@ def main() -> int:
             ("scan roots", len(SCAN_ROOTS)),
             ("grouped dirs", len(GROUPED_LAYOUT)),
             ("legacy path tokens", len(LEGACY_PATH_TOKENS)),
+            ("current docs", len(current_docs)),
         ),
         findings=errors,
         ok_message="cli root layout and legacy token scan are clean.",

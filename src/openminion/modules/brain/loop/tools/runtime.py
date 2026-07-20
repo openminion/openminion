@@ -21,6 +21,9 @@ from openminion.modules.brain.schemas.decisions import (
     GoalRevision,
 )
 from openminion.modules.llm.schemas import LLMRequest, LLMResponse, Message, ToolSpec
+from openminion.modules.telemetry.trace.phase_timing import (
+    record_active_chat_provider_call,
+)
 from openminion.modules.brain.runtime.reasoning import (
     ThinkingCtl,
     ThinkingRequest,
@@ -470,6 +473,12 @@ class DefaultAdaptiveToolLoopLLMRuntime:
                 metadata=metadata,
             )
             response = self._client.call(request)
+            record_active_chat_provider_call(
+                purpose=str((metadata or {}).get("purpose", "adaptive")),
+                messages=list(messages),
+                tools=list(tools),
+                response=response,
+            )
             response = _normalize_confident_complete_response(response)
             response = _normalize_finalization_status_response(response)
             response = _normalize_pending_turn_context_response(response)
@@ -495,6 +504,12 @@ class DefaultAdaptiveToolLoopLLMRuntime:
             overrides["metadata"] = metadata
         response = self._client.complete(
             messages, tools if tools else None, **overrides
+        )
+        record_active_chat_provider_call(
+            purpose=str((metadata or {}).get("purpose", "adaptive")),
+            messages=list(messages),
+            tools=list(tools),
+            response=response,
         )
         response = _normalize_confident_complete_response(response)
         response = _normalize_finalization_status_response(response)

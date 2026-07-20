@@ -15,6 +15,9 @@ from openminion.modules.brain.runtime.reasoning import (
     ThinkingRequest,
     ThinkingResolutionInput,
 )
+from openminion.modules.llm.client_call import (
+    usage_payload_from_response_usage as _provider_usage_payload,
+)
 from openminion.modules.llm.providers.base import (
     ProviderError,
     ProviderRequest,
@@ -55,47 +58,8 @@ from .identity_binding import bind_agent_identity_runtime_api
 from .execution.fallbacks import AgentToolFallbacks
 from .execution import AgentTurnFlowMixin
 from .execution.finalization import normalize_provider_response_finalization_status
+from openminion.modules.brain import verification_fact_for_results
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
-
-
-def _provider_usage_payload(raw_usage: Any) -> dict[str, int]:
-    if raw_usage is None:
-        return {}
-    if isinstance(raw_usage, dict):
-        source = raw_usage
-    elif hasattr(raw_usage, "model_dump"):
-        dumped = raw_usage.model_dump(mode="json")
-        source = dumped if isinstance(dumped, dict) else {}
-    else:
-        source = {
-            "prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
-            "completion_tokens": getattr(raw_usage, "completion_tokens", None),
-            "total_tokens": getattr(raw_usage, "total_tokens", None),
-            "input_tokens": getattr(raw_usage, "input_tokens", None),
-            "output_tokens": getattr(raw_usage, "output_tokens", None),
-        }
-
-    usage_payload: dict[str, int] = {}
-    key_pairs = (
-        ("prompt_tokens", ("prompt_tokens", "input_tokens")),
-        ("completion_tokens", ("completion_tokens", "output_tokens")),
-        ("total_tokens", ("total_tokens",)),
-    )
-    for output_key, candidate_keys in key_pairs:
-        for key in candidate_keys:
-            value = source.get(key)
-            if isinstance(value, bool):
-                continue
-            if isinstance(value, (int, float)):
-                usage_payload[output_key] = max(0, int(value))
-                break
-    if "total_tokens" not in usage_payload and (
-        "prompt_tokens" in usage_payload or "completion_tokens" in usage_payload
-    ):
-        usage_payload["total_tokens"] = int(
-            usage_payload.get("prompt_tokens", 0)
-        ) + int(usage_payload.get("completion_tokens", 0))
-    return usage_payload
 
 
 def _explicit_tool_artifact_refs(data: object) -> list[dict[str, str]]:
@@ -164,7 +128,9 @@ def _thinking_on_default_profile(cfg: OpenMinionConfig) -> str:
     return str(getattr(profile, "thinking", "") or "")
 
 
-def _provider_facade(provider: object | None, llm_runtime: object | None) -> object | None:
+def _provider_facade(
+    provider: object | None, llm_runtime: object | None
+) -> object | None:
     if provider is not None or llm_runtime is None:
         return provider
     return SimpleNamespace(
@@ -179,7 +145,9 @@ def _default_identity_name(config: OpenMinionConfig) -> str:
 
     try:
         default_agent_id = resolve_default_agent_id(config)
-        return str(config.agents[default_agent_id].name or "").strip() or default_agent_id
+        return (
+            str(config.agents[default_agent_id].name or "").strip() or default_agent_id
+        )
     except Exception:  # noqa: BLE001
         return "openminion"
 
@@ -196,8 +164,12 @@ def _tool_result_resolution_metadata(data: dict[str, Any]) -> dict[str, str]:
         "runtime_binding_id": str(data.get("runtime_binding_id", "") or ""),
         "runtime_tool_name": str(data.get("runtime_tool_name", "") or ""),
         "runtime_fallback_chain": runtime_fallback_chain,
-        "runtime_fallback_used": str(bool(data.get("runtime_fallback_used", False))).lower(),
-        "runtime_resolution_source": str(data.get("runtime_resolution_source", "") or ""),
+        "runtime_fallback_used": str(
+            bool(data.get("runtime_fallback_used", False))
+        ).lower(),
+        "runtime_resolution_source": str(
+            data.get("runtime_resolution_source", "") or ""
+        ),
     }
 
 
@@ -234,7 +206,9 @@ def _tool_result_payload_entry(item: Any) -> dict[str, Any]:
         "runtime_tool_name": str(entry_data.get("runtime_tool_name", "") or ""),
         "runtime_fallback_chain": list(entry_chain),
         "runtime_fallback_used": bool(entry_data.get("runtime_fallback_used", False)),
-        "runtime_resolution_source": str(entry_data.get("runtime_resolution_source", "") or ""),
+        "runtime_resolution_source": str(
+            entry_data.get("runtime_resolution_source", "") or ""
+        ),
         "fallback_index": int(getattr(item, "fallback_index", 0) or 0),
         "state": str(getattr(item, "state", "ok") or "ok"),
         "duration_ms": (
@@ -766,6 +740,18 @@ class AgentService(AgentTurnFlowMixin):
             if isinstance(data, dict) and str(data.get("model_tool_name", "") or ""):
                 resolution_metadata = _tool_result_resolution_metadata(data)
                 break
+        verification_fact = verification_fact_for_results(
+            tool_results=tool_results_payload
+        )
+        verification_metadata = (
+            {}
+            if verification_fact is None
+            else {
+                "verification_fact": json.dumps(
+                    verification_fact.model_dump(mode="json"), sort_keys=True
+                )
+            }
+        )
         return {
             "tool_contract_version": CONTRACT_VERSION_V2,
             "tool_calls_count": str(max(0, int(tool_calls_count))),
@@ -775,6 +761,7 @@ class AgentService(AgentTurnFlowMixin):
                 tool_results_payload, sort_keys=True, default=str
             ),
             **resolution_metadata,
+            **verification_metadata,
         }
 
     def _get_spec_for_tool(self, tool_name: str) -> ProviderToolSpec | None:

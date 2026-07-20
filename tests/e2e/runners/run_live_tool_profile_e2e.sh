@@ -11,6 +11,7 @@ fi
 
 export OPENMINION_LIVE_TOOL_E2E=1
 export PYTHONPATH="${PYTHONPATH:-$ROOT/src}"
-export OPENMINION_HOME="${OPENMINION_HOME:-$(cd "$ROOT/.." && pwd)}"
+export OPENMINION_HOME="${OPENMINION_HOME:-$ROOT}"
+export OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"
 
 exec "$PY_BIN" -m pytest -q "$ROOT/tests/e2e/test_live_tool_profile_matrix.py" "$@"

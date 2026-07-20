@@ -22,6 +22,7 @@ from .coverage import (
     OUTPUT_TOKEN_KEYS,
     TOTAL_TOKEN_KEYS,
     TokenUsageCoverage,
+    explicit_total_source,
     observed_token_value,
 )
 from .types import coerce_non_negative_int
@@ -346,6 +347,16 @@ class TokenUsageSummary:
             record.total_tokens
             for record in self.records
             if record.surface == SURFACE_LLM_TOTAL
+            and record.total_source == TOTAL_SOURCE_PROVIDER
+        )
+
+    @property
+    def total_derived_tokens(self) -> int:
+        return sum(
+            record.total_tokens
+            for record in self.records
+            if record.surface == SURFACE_LLM_TOTAL
+            and record.total_source == TOTAL_SOURCE_DERIVED
         )
 
     @property
@@ -421,6 +432,7 @@ class TokenUsageSummary:
             "records": [record.as_payload() for record in self.records],
             "totals": {
                 "provider_tokens": self.total_provider_tokens,
+                "derived_tokens": self.total_derived_tokens,
                 "input_tokens": self.total_input_tokens,
                 "output_tokens": self.total_output_tokens,
                 "cache_read_tokens": self.total_cache_read_tokens,
@@ -465,18 +477,19 @@ def _records_from_llm_completed(
     input_tokens = _first_token_int(usage, INPUT_TOKEN_KEYS)
     output_tokens = _first_token_int(usage, OUTPUT_TOKEN_KEYS)
     observed_total = observed_token_value(usage, TOTAL_TOKEN_KEYS)
-    total_is_provider_reported = observed_total.state == "reported"
+    total_source = explicit_total_source(usage)
     total_tokens = observed_total.value
-    if not total_is_provider_reported:
+    if observed_total.state == "reported":
+        total_source = total_source or TOTAL_SOURCE_PROVIDER
+    else:
         total_tokens = input_tokens + output_tokens
+        total_source = TOTAL_SOURCE_DERIVED if total_tokens > 0 else ""
     records = (
         _record_with_tokens(
             base,
             surface=SURFACE_LLM_TOTAL,
             total_tokens=total_tokens,
-            total_source=TOTAL_SOURCE_PROVIDER
-            if total_is_provider_reported
-            else TOTAL_SOURCE_DERIVED,
+            total_source=total_source,
         ),
         _record_with_tokens(
             base,

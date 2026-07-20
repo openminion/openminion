@@ -8,6 +8,7 @@ from textual.widgets import Label, OptionList
 from openminion.cli.presentation.permissions import (
     PERMISSION_CHOICE_FULL_ACCESS,
     PERMISSION_MENU_CHOICES,
+    format_permission_overrides_label,
 )
 
 
@@ -17,14 +18,15 @@ class PermissionsOverlay(ModalScreen[tuple[str, bool] | None]):
         ("enter", "select_permission", "Select"),
     ]
 
-    def __init__(self) -> None:
+    def __init__(self, *, overrides: dict[str, str] | None = None) -> None:
         super().__init__()
         self._full_access_armed = False
+        self._overrides = dict(overrides or {})
 
     def compose(self) -> ComposeResult:
         yield Label("Session permissions", id="focus-permissions-overlay-title")
         yield Label(
-            "Choose a session posture. Full access requires selecting it twice.",
+            self._note_text(),
             id="focus-permissions-overlay-note",
         )
         yield OptionList(
@@ -66,3 +68,11 @@ class PermissionsOverlay(ModalScreen[tuple[str, bool] | None]):
             self.query_one("#focus-permissions-overlay-note", Label).update(text)
         except QueryError:
             pass
+
+    def _note_text(self) -> str:
+        overrides = format_permission_overrides_label(self._overrides)
+        suffix = f" Active tool overrides: {overrides}." if overrides else ""
+        return (
+            "Choose a session posture. Full access requires selecting it twice."
+            f"{suffix}"
+        )

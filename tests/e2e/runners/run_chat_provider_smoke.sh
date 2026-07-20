@@ -7,10 +7,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FRAMEWORK_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-OPENMINION_HOME="${OPENMINION_HOME:-$FRAMEWORK_ROOT}"
+OPENMINION_DIR="${FRAMEWORK_ROOT}/openminion"
+OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}"
 OPENMINION_DATA_ROOT="${OPENMINION_DATA_ROOT:-$OPENMINION_HOME/.openminion}"
-OPENMINION_DIR="${OPENMINION_HOME}/openminion"
-OPENMINION_CONFIG="${OPENMINION_HOME}/.tmp/per-agent.json"
+OPENMINION_CONFIG="${OPENMINION_CONFIG:-$FRAMEWORK_ROOT/.tmp/per-agent.json}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -58,7 +58,7 @@ run_one_turn() {
     export PYTHONPATH="$OPENMINION_DIR/src"
 
     # Use echo provider for smoke test (no external dependencies)
-    printf 'hi\n/exit\n' | OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" python3.11 -m openminion --config "$OPENMINION_CONFIG" chat --agent echo-agent --session smoke-test --quiet 2>&1
+    printf 'hi\n/exit\n' | OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" python3.11 -m openminion --config "$OPENMINION_CONFIG" --agent echo-agent --session smoke-test --verbosity quiet 2>&1
 
     if [ $? -eq 0 ]; then
         log_info "One-turn smoke test PASSED for $provider"
@@ -77,7 +77,7 @@ run_tool_intent() {
     export PYTHONPATH="$OPENMINION_DIR/src"
 
     # Test with a prompt that might trigger tool calling
-    printf 'what is the weather in tokyo\n/exit\n' | OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" python3.11 -m openminion --config "$OPENMINION_CONFIG" chat --agent echo-agent --session smoke-tool-test --quiet 2>&1
+    printf 'what is the weather in tokyo\n/exit\n' | OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" python3.11 -m openminion --config "$OPENMINION_CONFIG" --agent echo-agent --session smoke-tool-test --verbosity quiet 2>&1
 
     if [ $? -eq 0 ]; then
         log_info "Tool-intent smoke test PASSED for $provider"
@@ -96,7 +96,7 @@ run_error_intent() {
     export PYTHONPATH="$OPENMINION_DIR/src"
 
     # Test with invalid configuration to trigger error handling
-    printf 'hello\n/exit\n' | OPENMINION_DISABLE_LLMCTL_BRIDGE=1 OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" python3.11 -m openminion --config "$OPENMINION_CONFIG" chat --agent echo-agent --session smoke-error-test --quiet 2>&1
+    printf 'hello\n/exit\n' | OPENMINION_DISABLE_LLMCTL_BRIDGE=1 OPENMINION_HOME="$OPENMINION_HOME" OPENMINION_DATA_ROOT="$OPENMINION_DATA_ROOT" python3.11 -m openminion --config "$OPENMINION_CONFIG" --agent echo-agent --session smoke-error-test --verbosity quiet 2>&1
 
     # This should fail with a clear error message
     log_info "Error-intent smoke test completed for $provider (expected failure)"

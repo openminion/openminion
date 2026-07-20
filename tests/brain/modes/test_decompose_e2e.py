@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_GIT_ADD,
     MODEL_GIT_BRANCH,
@@ -15,6 +17,7 @@ from openminion.modules.brain.execution.orchestrate.handler import (
 from openminion.modules.brain.loop import orchestration
 from openminion.modules.brain.bootstrap.route_catalog import get_route_descriptor
 from openminion.modules.brain.loop.entry import (
+    build_entry_requestable_tool_specs,
     build_entry_tool_specs,
     detect_entry_path,
 )
@@ -113,7 +116,7 @@ def test_decompose_control_tool_schema_is_model_visible_but_not_a_route() -> Non
     assert get_route_descriptor("decompose") is None
     assert "decompose" in by_name
     schema = by_name["decompose"].input_schema
-    assert schema["required"] == ["subtasks"]
+    assert schema["required"] == ["subtasks", "freshness"]
     subtask_schema = schema["properties"]["subtasks"]["items"]
     assert subtask_schema["required"] == ["id", "description"]
     assert "decompose_rationale" not in subtask_schema["properties"]
@@ -147,7 +150,7 @@ def test_general_entry_exposes_git_and_plan_runtime_tools_when_registered(
     by_name = {tool.name for tool in tool_specs}
 
     assert supports_seed is True
-    assert {
+    registered_names = {
         MODEL_GIT_BRANCH,
         MODEL_GIT_ADD,
         MODEL_GIT_COMMIT,
@@ -155,9 +158,23 @@ def test_general_entry_exposes_git_and_plan_runtime_tools_when_registered(
         MODEL_PLAN_SET,
         MODEL_PLAN_UPDATE,
         MODEL_PLAN_COMPLETE,
-    }.issubset(by_name)
+    }
+    assert registered_names.isdisjoint(by_name)
+    assert "tool.request" in by_name
     assert "plan" in by_name
     assert "clarify" in by_name
+    serialized = json.dumps(
+        [tool.model_dump(mode="json") for tool in tool_specs],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    assert len(serialized.encode("utf-8")) < 12_000
+    requestable = build_entry_requestable_tool_specs(
+        object(),
+        act_profile="general",
+        execution_target_kind="local",
+    )
+    assert registered_names.issubset({tool.name for tool in requestable})
 
 
 def test_forced_dynamic_runtime_tool_specs_are_added_before_entry_filter(

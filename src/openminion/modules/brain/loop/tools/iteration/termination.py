@@ -13,9 +13,78 @@ from ..contracts import (
     AdaptiveToolLoopOutcome,
 )
 from ..budget_control import _force_budget_answer_only_finalization
+from ..postprocess.evidence_closeout import tool_evidence_closeout_outcome
 from ..startup import _loop_template_match_tags
 from ..status import emit_adaptive_status
 from ..telemetry import _emit_iteration_event
+
+
+def _iteration_cap_evidence_fallback(
+    *,
+    profile: Any,
+    loop_state: Any,
+    allowed_tools: frozenset[str],
+) -> AdaptiveToolLoopOutcome | None:
+    return tool_evidence_closeout_outcome(
+        profile=profile,
+        loop_state=loop_state,
+        allowed_tools=allowed_tools,
+        reason=(
+            "the loop reached its iteration cap before a polished final answer, "
+            "so preserved tool evidence is returned."
+        ),
+        scratchpad_key="iteration_cap_used_evidence_fallback",
+    )
+
+
+def _iteration_cap_macro_correction_outcome(
+    *,
+    loop_ctx: Any,
+    profile: Any,
+    loop_state: Any,
+    runtime: Any,
+    model: str,
+    allowed_tools: frozenset[str],
+    trigger_macro_correction: Any,
+    dispatch_correction_plan: Any,
+) -> AdaptiveToolLoopOutcome | None:
+    if profile.max_macro_corrections <= 0:
+        return None
+    cap_plan = trigger_macro_correction(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        failure_context=(
+            f"Loop reached iteration cap ({profile.max_iterations}) "
+            "without producing a final text response."
+        ),
+        model=model,
+        runtime=runtime,
+        messages=loop_state.messages,
+    )
+    if cap_plan is None:
+        return None
+    try:
+        cap_dispatch = dispatch_correction_plan(
+            plan=cap_plan,
+            loop_ctx=loop_ctx,
+            loop_state=loop_state,
+            messages=loop_state.messages,
+            last_tool_call=None,
+            profile=profile,
+        )
+    except ValueError:
+        cap_dispatch = ADAPTIVE_TERM_LLM_ERROR
+    if cap_dispatch is None:
+        return None
+    loop_state.termination_reason = cap_dispatch
+    return AdaptiveToolLoopOutcome(
+        profile_name=profile.profile_name,
+        mode_name=profile.mode_name,
+        termination_reason=cap_dispatch,
+        state=loop_state,
+        allowed_tools=allowed_tools,
+    )
 
 
 def finalize_iteration_cap_exit(
@@ -52,41 +121,26 @@ def finalize_iteration_cap_exit(
             )
             return finalization_outcome
 
-    if profile.max_macro_corrections > 0:
-        cap_failure_ctx = (
-            f"Loop reached iteration cap ({profile.max_iterations}) "
-            "without producing a final text response."
-        )
-        cap_plan = trigger_macro_correction(
-            loop_ctx=loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            failure_context=cap_failure_ctx,
-            model=model,
-            runtime=runtime,
-            messages=loop_state.messages,
-        )
-        if cap_plan is not None:
-            try:
-                cap_dispatch = dispatch_correction_plan(
-                    plan=cap_plan,
-                    loop_ctx=loop_ctx,
-                    loop_state=loop_state,
-                    messages=loop_state.messages,
-                    last_tool_call=None,
-                    profile=profile,
-                )
-            except ValueError:
-                cap_dispatch = ADAPTIVE_TERM_LLM_ERROR
-            if cap_dispatch is not None:
-                loop_state.termination_reason = cap_dispatch
-                return AdaptiveToolLoopOutcome(
-                    profile_name=profile.profile_name,
-                    mode_name=profile.mode_name,
-                    termination_reason=cap_dispatch,
-                    state=loop_state,
-                    allowed_tools=allowed_tools,
-                )
+    macro_outcome = _iteration_cap_macro_correction_outcome(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        runtime=runtime,
+        model=model,
+        allowed_tools=allowed_tools,
+        trigger_macro_correction=trigger_macro_correction,
+        dispatch_correction_plan=dispatch_correction_plan,
+    )
+    if macro_outcome is not None:
+        return macro_outcome
+
+    fallback_outcome = _iteration_cap_evidence_fallback(
+        profile=profile,
+        loop_state=loop_state,
+        allowed_tools=allowed_tools,
+    )
+    if fallback_outcome is not None:
+        return fallback_outcome
 
     profiler_summary = loop_profiler.summary()
     loop_state.scratchpad["loop.session_profile_summary"] = profiler_summary

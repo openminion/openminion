@@ -7,7 +7,6 @@ from tests.e2e.cli.focus.harness.artifacts import artifact_root
 
 def test_artifact_root_defaults_to_workspace_tmp(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("OPENMINION_CLI_FOCUS_E2E_ARTIFACT_ROOT", raising=False)
-    monkeypatch.delenv("OPENMINION_TUI_FOCUS_E2E_ARTIFACT_ROOT", raising=False)
 
     root = artifact_root(tmp_path)
 

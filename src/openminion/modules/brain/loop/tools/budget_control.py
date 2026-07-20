@@ -30,10 +30,11 @@ from .runtime import _normalize_finalization_status_response
 from .budget import _debit_llm_usage
 from .budget_finalization import (
     _finalization_status_from_response,
-    _recover_budget_finalization_status,
-    _reject_invalid_answer_only_final_text,
     _retry_answer_only_completion_if_needed,
-    _termination_reason_for_status,
+)
+from .budget_answer import (
+    answer_only_final_text_outcome,
+    budget_evidence_outcome,
 )
 from .budget_extension import (
     apply_extension,
@@ -46,7 +47,6 @@ from .budget_extension import (
 from .contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_FINAL_TEXT,
-    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_NEEDS_USER,
     AdaptiveToolLoopContext,
@@ -60,6 +60,7 @@ from .evidence import (
     _substantive_tool_results,
     _successful_substantive_tool_results,
 )
+from .postprocess.evidence_closeout import tool_evidence_closeout_outcome
 from .status import emit_adaptive_status
 
 
@@ -192,6 +193,19 @@ def _budget_stop_outcome(
     public_mode_tag: str,
     reason: str,
 ) -> AdaptiveToolLoopOutcome:
+    if reason not in {STOP_USER_DECLINED, STOP_USER_TIMEOUT}:
+        fallback_outcome = tool_evidence_closeout_outcome(
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            reason=(
+                "the loop budget stopped before a polished final answer, "
+                "so preserved tool evidence is returned."
+            ),
+            scratchpad_key="budget_stop_used_evidence_fallback",
+        )
+        if fallback_outcome is not None:
+            return fallback_outcome
     loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
     _emit_budget_event(
         loop_ctx,
@@ -486,6 +500,16 @@ def _force_budget_answer_only_finalization(
         loop_state=loop_state,
         reserve_final_answer=True,
     ):
+        if has_tool_evidence:
+            return budget_evidence_outcome(
+                profile=profile,
+                loop_state=loop_state,
+                allowed_tools=allowed_tools,
+                reason=(
+                    "the tool or model budget was exhausted before a polished "
+                    "final answer, so preserved tool evidence is returned."
+                ),
+            )
         return None
     restore_index = len(list(getattr(loop_state, "messages", []) or []))
     loop_state.scratchpad["budget_answer_only_finalization_forced"] = True
@@ -634,84 +658,23 @@ def _force_budget_answer_only_finalization(
             reason="answer_only_finalization_internal_failure_text",
         )
     finalization_status = _finalization_status_from_response(response)
-    has_finalization_contract = finalization_status is not None or (
-        f"<{STATE_KEY_FINALIZATION_STATUS}>" in final_text
-        and f"</{STATE_KEY_FINALIZATION_STATUS}>" in final_text
-    )
-    if (
-        _answer_only_finalization_contract_requested(loop_ctx, loop_state)
-        and not has_finalization_contract
-    ):
-        if final_text and not list(getattr(response, "tool_calls", []) or []):
-            finalization_status = _recover_budget_finalization_status(
-                loop_ctx=loop_ctx,
-                profile=profile,
-                loop_state=loop_state,
-                runtime=runtime,
-                model=model,
-                max_output_tokens=max_output_tokens,
-                metadata=metadata,
-                final_text=final_text,
-                public_mode_tag=public_mode_tag,
-            )
-            if finalization_status is not None:
-                status = str(finalization_status.get("status", "") or "")
-                loop_state.termination_reason = _termination_reason_for_status(status)
-                return AdaptiveToolLoopOutcome(
-                    profile_name=profile.profile_name,
-                    mode_name=profile.mode_name,
-                    termination_reason=loop_state.termination_reason,
-                    state=loop_state,
-                    allowed_tools=allowed_tools,
-                    final_text=final_text,
-                    finalization_status=finalization_status,
-                )
-        loop_state.termination_reason = ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
-        return AdaptiveToolLoopOutcome(
-            profile_name=profile.profile_name,
-            mode_name=profile.mode_name,
-            termination_reason=ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
-            state=loop_state,
-            allowed_tools=allowed_tools,
-            error_message=(
-                "This act turn required typed finalization_status contract."
-            ),
-        )
-    rejected_outcome = _reject_invalid_answer_only_final_text(
-        final_text=final_text,
-        response=response,
+    return answer_only_final_text_outcome(
+        loop_ctx=loop_ctx,
         profile=profile,
         loop_state=loop_state,
+        runtime=runtime,
+        model=model,
+        max_output_tokens=max_output_tokens,
+        metadata=metadata,
         allowed_tools=allowed_tools,
+        public_mode_tag=public_mode_tag,
+        response=response,
+        final_text=final_text,
+        finalization_status=finalization_status,
         has_tool_evidence=has_tool_evidence,
-    )
-    if rejected_outcome is not None:
-        return rejected_outcome
-    if final_text and not list(getattr(response, "tool_calls", []) or []):
-        loop_state.termination_reason = (
-            _termination_reason_for_status(
-                str(finalization_status.get("status", "") or "")
-            )
-            if finalization_status is not None
-            else ADAPTIVE_TERM_FINAL_TEXT
-        )
-        return AdaptiveToolLoopOutcome(
-            profile_name=profile.profile_name,
-            mode_name=profile.mode_name,
-            termination_reason=loop_state.termination_reason,
-            state=loop_state,
-            allowed_tools=allowed_tools,
-            final_text=final_text,
-            finalization_status=finalization_status,
-        )
-    loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
-    return AdaptiveToolLoopOutcome(
-        profile_name=profile.profile_name,
-        mode_name=profile.mode_name,
-        termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
-        state=loop_state,
-        allowed_tools=allowed_tools,
-        error_message="Answer-only budget finalization did not produce final text.",
+        contract_requested=_answer_only_finalization_contract_requested(
+            loop_ctx, loop_state
+        ),
     )
 
 

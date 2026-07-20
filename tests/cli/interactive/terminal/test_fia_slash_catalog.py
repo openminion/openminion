@@ -103,7 +103,6 @@ def test_implemented_slashes_in_catalog() -> None:
     # the catalog.
     pre_fia = {
         "/clear",
-        "/dashboard",
         "/exit",
         "/expand",
         "/help",

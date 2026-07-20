@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 
@@ -11,6 +10,7 @@ from tests.helpers.live_cli_chat_alibaba import (
     artifact_dir,
     framework_root,
     require_live_flag,
+    runtime_home_root,
 )
 from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
@@ -35,7 +35,7 @@ def _run_probe(*, config_basename: str, run_id: str) -> list[PhaseStatus]:
 
     rt = APIRuntime.from_config_path(
         str(config_path),
-        home_root=Path(framework_root()),
+        home_root=runtime_home_root(),
         data_root=data_root,
     )
     try:

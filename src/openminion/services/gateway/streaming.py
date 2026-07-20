@@ -161,7 +161,7 @@ def gateway_stream_event_from_turn_chunk(
 ) -> GatewayStreamEvent | None:
     kind = str(chunk_payload.get("kind", "") or "").strip()
     data = chunk_payload.get("data")
-    payload = dict(data) if isinstance(data, Mapping) else {}
+    payload = dict(data) if isinstance(data, Mapping) else dict(chunk_payload)
     trace_id = _coerce_trace_id(chunk_payload)
     ts = str(chunk_payload.get("ts", "") or "").strip() or None
     if kind in {"status", "tool_started", "tool_completed", "budget_event"}:
@@ -174,9 +174,7 @@ def gateway_stream_event_from_turn_chunk(
             ts=ts,
         )
     if kind in {"token", "delta", "final_text"}:
-        text = str(
-            payload.get("text", "") or payload.get("delta_text", "") or ""
-        ).strip()
+        text = str(payload.get("text", "") or payload.get("delta_text", "") or "")
         if not text:
             return None
         return GatewayStreamEvent(
@@ -185,7 +183,7 @@ def gateway_stream_event_from_turn_chunk(
             ts=ts,
             text=text,
         )
-    return None
+    return gateway_stream_event_from_progress(chunk_payload)
 
 
 def gateway_stream_event_from_message(

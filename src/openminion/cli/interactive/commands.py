@@ -22,6 +22,7 @@ from openminion.cli.interactive.project_context import (
 )
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.permissions import (
+    apply_permission_override,
     apply_permission_menu_choice,
     format_permission_status_label,
 )
@@ -353,6 +354,22 @@ class SlashCommandMixin:
 
         self._push_system_body(render_context_report(self._runtime))
 
+    def _slash_goal(self: Any, args: str) -> None:
+        executor = getattr(self._runtime, "execute_goal_command", None)
+        if not callable(executor):
+            self._push_system_body("This runtime does not expose goal commands.")
+            return
+        line = "/goal" if not str(args or "").strip() else f"/goal {args.strip()}"
+        try:
+            tone, body = executor(line)
+        except (OSError, RuntimeError, ValueError) as exc:
+            tone, body = ("error", f"/goal failed: {exc}")
+        kind = MessageKind.ERROR if tone == "error" else MessageKind.SYSTEM
+        self.query_one(FocusTranscript).push_message(
+            ChatMessage(kind=kind, sender="system", body=body)
+        )
+        self._push_status_line()
+
     def _slash_memory(self, _args: str) -> None:
         from openminion.cli.presentation.visible_parity import render_memory_report
 
@@ -391,10 +408,23 @@ class SlashCommandMixin:
         self._load_history()
 
     def _slash_permissions(self, args: str) -> None:
-        """Show or set the session-scoped permission mode."""
-        arg = str(args or "").strip().lower()
+        """Show or set session or tool-scoped permission posture."""
+        raw_arg = str(args or "").strip()
+        arg = raw_arg.lower()
         if not arg:
             self._open_permissions_overlay()
+            return
+        parts = raw_arg.split()
+        if len(parts) == 2:
+            tool_name, mode = parts
+            try:
+                result = apply_permission_override(self._runtime, tool_name, mode)
+            except (RuntimeError, ValueError) as exc:
+                body = f"/permissions: {exc}"
+            else:
+                body = result.message
+            self._push_status_line()
+            self._push_permissions_message(body)
             return
         if arg == "cycle":
             body = f"permissions → {self._cycle_permission_mode_from_ui()}"
@@ -425,7 +455,11 @@ class SlashCommandMixin:
             self._apply_permission_menu_choice(choice_id, confirmed=confirmed)
 
         try:
-            self.app.push_screen(PermissionsOverlay(), _on_selected)
+            overrides = getattr(self._runtime, "permission_overrides", {})
+            self.app.push_screen(
+                PermissionsOverlay(overrides=dict(overrides or {})),
+                _on_selected,
+            )
         except (AttributeError, QueryError, RuntimeError, ValueError) as exc:
             self._push_permissions_message(
                 f"/permissions: unable to open chooser: {exc}"
@@ -723,18 +757,6 @@ class SlashCommandMixin:
                 sender="system",
                 body=f"Wrote {target_path}. Restart or start a new session to load it.",
             )
-        )
-
-    def _slash_dashboard(self, _args: str) -> None:
-        from openminion.cli.commands.aliases import dashboard_deprecation_message
-        from openminion.cli.status.surface import record_surface_event
-
-        notice = dashboard_deprecation_message()
-        self._push_system_body(notice)
-        record_surface_event(
-            self._runtime,
-            surface="dashboard",
-            action="deprecation",
         )
 
     def _slash_copy(self, _args: str) -> None:

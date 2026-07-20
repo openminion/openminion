@@ -99,7 +99,7 @@ class AdaptiveLoopRunnerClosureMixin:
                 self.loop_state,
                 signature=signature,
             )
-            if eligible_facts is not None:
+            if eligible_facts is not None and duplicate_retry_count > 0:
                 duplicate_outcome, duration_ms, duplicate_tokens = (
                     _force_duplicate_batch_answer_only_closure(
                         loop_ctx=self.loop_ctx,

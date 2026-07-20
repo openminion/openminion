@@ -221,7 +221,7 @@ def _fixture_root() -> Path:
 
 def _default_output_path() -> Path:
     return (
-        resolve_generated_root(home_root=Path(__file__).resolve().parents[3])
+        resolve_generated_root(home_root=Path(__file__).resolve().parents[2])
         / "flagship-differentiation"
         / "flagship-proof.json"
     ).resolve(strict=False)

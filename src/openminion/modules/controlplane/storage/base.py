@@ -328,6 +328,26 @@ class ControlplaneStore(ABC):
     ) -> dict[str, Any] | None: ...
 
     @abstractmethod
+    def list_channel_subjects(
+        self,
+        *,
+        channel: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    def update_channel_subject(
+        self,
+        *,
+        channel: str,
+        subject_id: str,
+        status: str | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
+        note: str | None = None,
+    ) -> bool: ...
+
+    @abstractmethod
     def touch_channel_subject(self, *, channel: str, subject_id: str) -> None: ...
 
     # -- Rate limits -------------------------------------------------------

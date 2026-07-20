@@ -11,6 +11,10 @@ from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResu
 from openminion.modules.tool.contracts import ProviderToolCall
 from openminion.modules.tool.constants import OPENMINION_CONFIG_PATH_ENV
 from openminion.modules.tool.registry.catalog import ToolSpec
+from openminion.modules.tool.runtime.blast_radius import (
+    TOOL_RESULT_BLAST_RADIUS_KEY,
+    classify_tool_blast_radius,
+)
 from openminion.modules.tool.runtime.dispatch import (
     adapt_arguments_for_runtime_call,
     reorder_runtime_chain,
@@ -184,10 +188,13 @@ def _runtime_resolution_data(
 def _tool_contract_metadata(tool: Any) -> dict[str, Any]:
     if not isinstance(tool, ToolSpec):
         return {}
+    metadata: dict[str, Any] = {
+        TOOL_RESULT_BLAST_RADIUS_KEY: classify_tool_blast_radius(tool).blast_radius,
+    }
     min_scope = str(getattr(tool, "min_scope", "") or "").strip().upper()
-    if not min_scope:
-        return {}
-    return {"tool_min_scope": min_scope}
+    if min_scope:
+        metadata["tool_min_scope"] = min_scope
+    return metadata
 
 
 def _unknown_tool_result(

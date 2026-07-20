@@ -123,7 +123,7 @@ _CONFIRMING_MESSAGE_RE = re.compile(
 
 
 def _default_artifacts_root() -> Path:
-    return resolve_generated_root(home_root=REPO_ROOT) / "e2e"
+    return resolve_generated_root(home_root=OPENMINION_DIR) / "e2e"
 
 
 def _default_log_root() -> Path:
@@ -420,7 +420,8 @@ def _run_chat(
         session_id,
         "--verbosity",
         "quiet",
-        "--no-progress",
+        "--progress",
+        "off",
     ]
     master_fd, slave_fd = _open_probe_pty()
     proc = subprocess.Popen(

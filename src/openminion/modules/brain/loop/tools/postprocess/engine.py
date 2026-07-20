@@ -49,10 +49,64 @@ from .rules import (
     _looks_like_execution_preface_draft,
     _looks_like_unexecutable_tool_payload_text,
 )
+from .evidence_closeout import (
+    MUTATING_FILE_CLOSEOUT_KEY,
+    mutating_file_evidence_fallback_text,
+)
 from ..response_payloads import _pending_finalization_salvage_text
 from ..runtime import _extract_visible_response_text
 from ..seeded import _run_seeded_command_step
 from ..status import emit_adaptive_status
+
+
+def _suppressed_tool_retry_message(
+    *,
+    direct_tool_closure_active: bool,
+    pending_finalization_active: bool,
+    final_answer_reserve_active: bool,
+    budget_answer_only_active: bool,
+    mutating_file_closeout_active: bool,
+) -> str:
+    if direct_tool_closure_active:
+        return (
+            "The requested tool batch already completed successfully. "
+            "Do not call any more tools. Return only the final user-facing answer now."
+        )
+    if pending_finalization_active:
+        return "Do not call tools. Return only the structured finalization_status signal now."
+    if final_answer_reserve_active or budget_answer_only_active:
+        return (
+            "Do not call tools. Return only the final user-facing answer now. "
+            "Preserve any explicit labels, result markers, headings, validation "
+            "notes, files-changed summaries, and other requested final-output "
+            "constraints."
+        )
+    if mutating_file_closeout_active:
+        return (
+            "The same file path has already been successfully updated multiple "
+            "times. Do not call tools. Return only the final user-facing answer "
+            "now, preserving requested result labels, files-changed summaries, "
+            "validation status, and follow-up labels."
+        )
+    return "This turn cannot call tools. Return a user-facing answer without any tool calls."
+
+
+def _mutating_file_fallback_outcome(runner: Any) -> AdaptiveToolLoopOutcome | None:
+    fallback_text = mutating_file_evidence_fallback_text(runner.loop_state)
+    if not fallback_text:
+        return None
+    runner.loop_state.scratchpad["mutating_file_closeout_used_evidence_fallback"] = (
+        True
+    )
+    runner.loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
+    return AdaptiveToolLoopOutcome(
+        profile_name=runner.profile.profile_name,
+        mode_name=runner.profile.mode_name,
+        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+        state=runner.loop_state,
+        allowed_tools=runner.allowed_tools,
+        final_text=fallback_text,
+    )
 
 
 class AdaptiveLoopRunnerPostprocessMixin(
@@ -274,6 +328,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             or self.loop_state.scratchpad.get(
                 "duplicate_batch_answer_only_closure_pending", False
             )
+            or self.loop_state.scratchpad.get(MUTATING_FILE_CLOSEOUT_KEY, False)
         )
         if _should_force_direct_tool_closure(self.loop_state):
             self.loop_state.direct_tool_closure_consumed = True
@@ -469,6 +524,9 @@ class AdaptiveLoopRunnerPostprocessMixin(
             )
         ):
             return False, self._retry_pending_duplicate_batch_closeout()
+        mutating_file_closeout_active = bool(
+            self.loop_state.scratchpad.get(MUTATING_FILE_CLOSEOUT_KEY, False)
+        )
         retry_key = "tool_choice_none_retry_used"
         direct_tool_closure_active = bool(
             self.loop_state.scratchpad.get("direct_tool_closure_forced", False)
@@ -486,39 +544,28 @@ class AdaptiveLoopRunnerPostprocessMixin(
         )
         if not bool(self.loop_state.scratchpad.get(retry_key, False)):
             self.loop_state.scratchpad[retry_key] = True
-            if direct_tool_closure_active:
-                message = (
-                    "The requested tool batch already completed successfully. "
-                    "Do not call any more tools. Return only the final "
-                    "user-facing answer now."
-                )
-            elif pending_finalization_text is not None:
-                message = (
-                    "Do not call tools. Return only the structured "
-                    "finalization_status signal now."
-                )
-            elif final_answer_reserve_active or budget_answer_only_active:
-                message = (
-                    "Do not call tools. Return only the final user-facing "
-                    "answer now. Preserve any explicit labels, result markers, "
-                    "headings, validation notes, files-changed summaries, and "
-                    "other requested final-output constraints."
-                )
-            else:
-                message = (
-                    "This turn cannot call tools. Return a user-facing "
-                    "answer without any tool calls."
-                )
+            message = _suppressed_tool_retry_message(
+                direct_tool_closure_active=direct_tool_closure_active,
+                pending_finalization_active=pending_finalization_text is not None,
+                final_answer_reserve_active=final_answer_reserve_active,
+                budget_answer_only_active=budget_answer_only_active,
+                mutating_file_closeout_active=mutating_file_closeout_active,
+            )
             self.loop_state.messages.append(Message(role="system", content=message))
             return True, None
         if (
             pending_finalization_text is not None
             or budget_answer_only_active
             or final_answer_reserve_active
+            or mutating_file_closeout_active
         ):
             compact_closeout = self._force_compact_answer_only_closeout()
             if compact_closeout is not None:
                 return False, compact_closeout
+            if mutating_file_closeout_active:
+                fallback_outcome = _mutating_file_fallback_outcome(self)
+                if fallback_outcome is not None:
+                    return False, fallback_outcome
             termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
             error_message = "Answer-only finalization kept returning tool calls."
         else:

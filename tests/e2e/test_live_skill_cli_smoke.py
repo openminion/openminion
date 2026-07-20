@@ -17,11 +17,11 @@ from tests.helpers.live_cli_chat_alibaba import (
     artifact_dir,
     extract_assistant_messages,
     extract_last_debug_payload,
-    framework_root,
     has_completion_contract_failure,
     openminion_root,
     python_bin,
     require_live_flag,
+    runtime_home_root,
     skip_if_completion_contract_failed,
     timeout_seconds,
 )
@@ -48,19 +48,19 @@ _LINEAR_FIXTURE = (
 def _ingest_linear_skill(*, data_root: Path) -> tuple[str, str]:
     base_config = load_cli_config(
         _SKILL_CONFIG_PATH,
-        home_root=framework_root(),
+        home_root=runtime_home_root(),
         data_root=data_root,
     )
     skill_cfg = skill_from_base_config(
         base_config=base_config,
-        home_root=framework_root(),
+        home_root=runtime_home_root(),
         data_root=data_root,
     )
     skill_cfg.wal = False
     skill_cfg.known_tools = ["http_request"]
     ctl = Skill(
         config=skill_cfg,
-        home_root=framework_root(),
+        home_root=runtime_home_root(),
     )
     try:
         skill_id, version_hash, warnings = ctl.ingest_file(
@@ -92,7 +92,7 @@ def _run_skill_cli_smoke(*, data_root: Path) -> tuple[str, Path, str]:
     ):
         env.pop(key, None)
 
-    env["OPENMINION_HOME"] = str(framework_root())
+    env["OPENMINION_HOME"] = str(runtime_home_root())
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     env["OPENMINION_TRACE_REQUESTS"] = "1"
     env["OPENMINION_TRACE_REQUESTS_DIR"] = str(trace_root)
@@ -110,13 +110,14 @@ def _run_skill_cli_smoke(*, data_root: Path) -> tuple[str, Path, str]:
         "openminion",
         "--config",
         str(_SKILL_CONFIG_PATH),
-        "chat",
         "--agent",
         "hello-agent",
         "--session",
         session_id,
-        "--quiet",
-        "--no-progress",
+        "--verbosity",
+        "quiet",
+        "--progress",
+        "off",
     ]
     completed = subprocess.run(
         command,

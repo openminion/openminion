@@ -50,7 +50,7 @@ from .renderers import (
     _switch_theme,
     _switch_theme_variant,
 )
-from .sessions import resume_session, show_dashboard_retirement, start_new_session
+from .sessions import resume_session, start_new_session
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -525,6 +525,36 @@ def _handle_visible_parity_slash(
                 style=_MUTED_ITALIC_STYLE,
             )
         )
+    elif cmd == "/goal":
+        _handle_slash_goal(
+            text,
+            runtime=runtime,
+            console=console,
+            status_line=status_line,
+        )
+
+
+def _handle_slash_goal(
+    text: str,
+    *,
+    runtime: Any,
+    console: Console,
+    status_line: TerminalStatusLine,
+) -> None:
+    executor = getattr(runtime, "execute_goal_command", None)
+    if not callable(executor):
+        console.print(
+            Text("(/goal: runtime does not expose goal commands)", style=_ERR_STYLE)
+        )
+        return
+    try:
+        tone, body = executor(text)
+    except (OSError, RuntimeError, ValueError) as exc:
+        tone, body = ("error", f"/goal failed: {exc}")
+    console.print(Text(body, style=_ERR_STYLE if tone == "error" else _SYSTEM_STYLE))
+    label_getter = getattr(runtime, "goal_statusline_label", None)
+    if callable(label_getter):
+        status_line.set_state(custom=label_getter())
 
 
 async def _handle_session_slash(
@@ -548,10 +578,6 @@ async def _handle_session_slash(
         )
     elif cmd == "/new":
         start_new_session(runtime=runtime, console=console, transcript=transcript)
-    elif cmd == "/dashboard":
-        await show_dashboard_retirement(
-            runtime=runtime, console=console, transcript=transcript
-        )
     elif cmd == "/diff":
         _handle_slash_diff(
             text,
@@ -614,6 +640,7 @@ async def _handle_slash(
         "/effort",
         "/statusline",
         "/undo",
+        "/goal",
     ):
         _handle_visible_parity_slash(
             cmd,

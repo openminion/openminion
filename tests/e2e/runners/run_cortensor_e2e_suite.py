@@ -224,9 +224,9 @@ def _derive_openminion_home(root: Path) -> Path:
     if env_home:
         return Path(env_home).expanduser().resolve()
     if (root / "openminion").is_dir():
-        return root.resolve()
+        return (root / "openminion").resolve()
     if root.name == "openminion" and (root.parent / "openminion").is_dir():
-        return root.parent.resolve()
+        return root.resolve()
     return root.resolve()
 
 

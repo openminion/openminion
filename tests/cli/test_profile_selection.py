@@ -10,20 +10,6 @@ from openminion.cli.parser.base import build_parser
     [
         (
             [
-                "chat",
-                "--profile",
-                "planner-safe",
-                "--override-provider",
-                "anthropic",
-                "--override-model",
-                "claude-3-5-haiku-latest",
-                "--override-system-prompt",
-                "Stay concise.",
-            ],
-            "agent",
-        ),
-        (
-            [
                 "doctor",
                 "--profile",
                 "planner-safe",

@@ -45,6 +45,7 @@ _ANSWER_ONLY_FINALIZATION_KEYS = frozenset(
         "duplicate_batch_answer_only_closure_forced",
         "duplicate_batch_answer_only_closure_pending",
         "iteration_cap_answer_only_finalization_forced",
+        "mutating_file_answer_only_closure_pending",
     }
 )
 _MUTATING_FILE_TOOLS = frozenset(

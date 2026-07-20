@@ -687,6 +687,36 @@ class _ControlPlaneStoreMixin(PairTokenStoreMixin, ControlplaneStore):
             channel=channel, subject_id=subject_id
         )
 
+    def list_channel_subjects(
+        self,
+        *,
+        channel: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return self._principals.list_channel_subjects(
+            channel=channel,
+            status=status,
+            limit=limit,
+        )
+
+    def update_channel_subject(
+        self,
+        *,
+        channel: str,
+        subject_id: str,
+        status: str | None = None,
+        scopes: list[str] | tuple[str, ...] | None = None,
+        note: str | None = None,
+    ) -> bool:
+        return self._principals.update_channel_subject(
+            channel=channel,
+            subject_id=subject_id,
+            status=status,
+            scopes=scopes,
+            note=note,
+        )
+
     def touch_channel_subject(self, *, channel: str, subject_id: str) -> None:
         self._principals.touch_channel_subject(channel=channel, subject_id=subject_id)
 
