@@ -30,6 +30,7 @@ from .runtime.goal.loop import (
 )
 from .runtime.goal.verification import GoalVerificationResult
 from .runtime.improvement.notes import ImprovementNote, SelfImprovementEngine
+from .runtime.verification.probe import verification_fact_for_results
 from .schemas.agent import AgentProfile
 from .schemas.decisions import Decision
 from .schemas.plan import Plan
@@ -75,4 +76,5 @@ __all__ = [
     "render_goal_context_card",
     "render_goal_summary",
     "render_goal_verification",
+    "verification_fact_for_results",
 ]

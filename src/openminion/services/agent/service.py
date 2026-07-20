@@ -58,6 +58,7 @@ from .identity_binding import bind_agent_identity_runtime_api
 from .execution.fallbacks import AgentToolFallbacks
 from .execution import AgentTurnFlowMixin
 from .execution.finalization import normalize_provider_response_finalization_status
+from openminion.modules.brain import verification_fact_for_results
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
 
 
@@ -739,6 +740,18 @@ class AgentService(AgentTurnFlowMixin):
             if isinstance(data, dict) and str(data.get("model_tool_name", "") or ""):
                 resolution_metadata = _tool_result_resolution_metadata(data)
                 break
+        verification_fact = verification_fact_for_results(
+            tool_results=tool_results_payload
+        )
+        verification_metadata = (
+            {}
+            if verification_fact is None
+            else {
+                "verification_fact": json.dumps(
+                    verification_fact.model_dump(mode="json"), sort_keys=True
+                )
+            }
+        )
         return {
             "tool_contract_version": CONTRACT_VERSION_V2,
             "tool_calls_count": str(max(0, int(tool_calls_count))),
@@ -748,6 +761,7 @@ class AgentService(AgentTurnFlowMixin):
                 tool_results_payload, sort_keys=True, default=str
             ),
             **resolution_metadata,
+            **verification_metadata,
         }
 
     def _get_spec_for_tool(self, tool_name: str) -> ProviderToolSpec | None:

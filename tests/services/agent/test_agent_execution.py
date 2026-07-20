@@ -192,6 +192,70 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
         self.assertEqual(payload[0]["content"], "short output")
         self.assertNotIn("tool_output_frame", payload[0])
 
+    def test_tool_batch_metadata_records_typed_verification_fact(self) -> None:
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config)  # type: ignore[attr-defined]
+        service = AgentService(
+            config,
+            PluginRegistry([]),
+            FakeNoToolCallProvider(),
+            logging.getLogger("openminion.tests"),
+        )
+        batch = ToolExecutionBatch(
+            results=[
+                ToolExecutionResult(
+                    tool_name="file.write",
+                    ok=True,
+                    verified=True,
+                    content="wrote file",
+                    data={"tool_blast_radius": "local_mutation"},
+                ),
+                ToolExecutionResult(
+                    tool_name="exec.run",
+                    ok=True,
+                    verified=True,
+                    content="tests passed",
+                    data={
+                        "argv": ["pytest", "-q"],
+                        "exit_code": 0,
+                        "tool_blast_radius": "code_execution",
+                    },
+                ),
+            ]
+        )
+
+        metadata = service._tool_batch_metadata(batch=batch, tool_calls_count=2)
+        fact = json.loads(metadata["verification_fact"])
+
+        self.assertEqual(fact["signal"], "tests")
+        self.assertEqual(fact["exit_code"], 0)
+        self.assertTrue(fact["ok"])
+
+    def test_tool_batch_metadata_omits_proof_for_read_only_result(self) -> None:
+        config = OpenMinionConfig()
+        _csc_install_default_agent(config)  # type: ignore[attr-defined]
+        service = AgentService(
+            config,
+            PluginRegistry([]),
+            FakeNoToolCallProvider(),
+            logging.getLogger("openminion.tests"),
+        )
+        batch = ToolExecutionBatch(
+            results=[
+                ToolExecutionResult(
+                    tool_name="file.write",
+                    ok=True,
+                    verified=True,
+                    content="read only",
+                    data={"tool_blast_radius": "read_only"},
+                )
+            ]
+        )
+
+        metadata = service._tool_batch_metadata(batch=batch, tool_calls_count=1)
+
+        self.assertNotIn("verification_fact", metadata)
+
     def test_tool_batch_metadata_keeps_unbacked_large_tool_output_inline(self) -> None:
         config = OpenMinionConfig()
         _csc_install_default_agent(config)  # type: ignore[attr-defined]

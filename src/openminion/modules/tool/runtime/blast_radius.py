@@ -171,6 +171,7 @@ def _resolve_family_fallback(
 
 TOOLSPEC_BLAST_RADIUS_ATTR = "blast_radius"
 TOOLSPEC_SANDBOX_KIND_ATTR = "sandbox_kind"
+TOOL_RESULT_BLAST_RADIUS_KEY = "tool_blast_radius"
 
 
 _MIN_SCOPE_DEFAULT_RADIUS: Mapping[str, ToolBlastRadius] = MappingProxyType(
@@ -197,6 +198,22 @@ def _validate_blast_radius(radius: Any) -> ToolBlastRadius:
             {"radius": str(radius)},
         )
     return radius  # type: ignore[return-value]
+
+
+def blast_radius_requires_verification(radius: ToolBlastRadius) -> bool:
+    """Return whether a typed radius represents an observable side effect."""
+    return _validate_blast_radius(radius) != "read_only"
+
+
+def tool_result_blast_radius(result: Any) -> ToolBlastRadius | None:
+    """Read validated blast-radius metadata from a tool-result envelope."""
+    if isinstance(result, Mapping):
+        data = result.get("data")
+    else:
+        data = getattr(result, "data", None)
+    if not isinstance(data, Mapping) or TOOL_RESULT_BLAST_RADIUS_KEY not in data:
+        return None
+    return _validate_blast_radius(data[TOOL_RESULT_BLAST_RADIUS_KEY])
 
 
 def _validate_sandbox_kind(kind: Any) -> SandboxKind:
@@ -445,11 +462,13 @@ __all__ = [
     "SANDBOX_KINDS",
     "SandboxKind",
     "TOOL_BLAST_RADIUSES",
+    "TOOL_RESULT_BLAST_RADIUS_KEY",
     "TOOLSPEC_BLAST_RADIUS_ATTR",
     "TOOLSPEC_SANDBOX_KIND_ATTR",
     "ToolBlastRadius",
     "ToolBlastRadiusProfile",
     "blast_radius_rank",
+    "blast_radius_requires_verification",
     "build_composition_policy",
     "classify_composed_blast_radius",
     "classify_tool_blast_radius",
@@ -457,4 +476,5 @@ __all__ = [
     "min_scope_default_radius",
     "record_composition_boundary_event",
     "requires_composition_approval",
+    "tool_result_blast_radius",
 ]

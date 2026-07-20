@@ -17,8 +17,10 @@ from openminion.modules.tool.runtime.blast_radius import (
     InMemoryCompositionAuditLog,
     SANDBOX_KINDS,
     TOOL_BLAST_RADIUSES,
+    TOOL_RESULT_BLAST_RADIUS_KEY,
     ToolBlastRadiusProfile,
     blast_radius_rank,
+    blast_radius_requires_verification,
     build_composition_policy,
     classify_composed_blast_radius,
     classify_tool_blast_radius,
@@ -26,6 +28,7 @@ from openminion.modules.tool.runtime.blast_radius import (
     min_scope_default_radius,
     record_composition_boundary_event,
     requires_composition_approval,
+    tool_result_blast_radius,
 )
 
 
@@ -90,6 +93,19 @@ def test_blast_radius_rank_strictly_ordered() -> None:
     ranks = [blast_radius_rank(r) for r in TOOL_BLAST_RADIUSES]
     assert ranks == sorted(ranks)
     assert len(set(ranks)) == len(ranks)
+
+
+def test_result_metadata_uses_canonical_typed_radius() -> None:
+    result = {"data": {TOOL_RESULT_BLAST_RADIUS_KEY: "remote_mutation"}}
+    assert tool_result_blast_radius(result) == "remote_mutation"
+    assert blast_radius_requires_verification("remote_mutation") is True
+    assert blast_radius_requires_verification("read_only") is False
+
+
+def test_result_metadata_rejects_unknown_radius() -> None:
+    result = {"data": {TOOL_RESULT_BLAST_RADIUS_KEY: "unknown"}}
+    with pytest.raises(ToolRuntimeError):
+        tool_result_blast_radius(result)
 
 
 def test_classify_read_only_tool_default_radius() -> None:

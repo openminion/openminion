@@ -87,6 +87,11 @@ from openminion.modules.tool.runtime.registrar import (
     ToolRegisterContext,
     ToolModuleRegistrar,
 )
+from openminion.modules.tool.runtime.blast_radius import (
+    TOOL_RESULT_BLAST_RADIUS_KEY,
+    blast_radius_requires_verification,
+    tool_result_blast_radius,
+)
 
 __version__ = OPENMINION_VERSION
 
@@ -163,6 +168,7 @@ __all__ = [
     "ToolRegistryManager",
     "ToolRuntime",
     "ToolSpec",
+    "TOOL_RESULT_BLAST_RADIUS_KEY",
     "_MODULES_ONLY",
     "_TAVILY_SOURCE",
     "_WEATHER_SOURCE",
@@ -170,11 +176,13 @@ __all__ = [
     "build_default_tool_registry_debug_report",
     "build_runtime_bootstrap",
     "build_runtime_repositories",
+    "blast_radius_requires_verification",
     "canonical_tool_name",
     "create_run_root",
     "new_run_id",
     "preferred_artifact_ref",
     "reorder_runtime_chain",
     "resolve_binding_for_call",
+    "tool_result_blast_radius",
     "validate_plugin_contract",
 ]
