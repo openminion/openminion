@@ -4,7 +4,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
-from openminion.modules.brain.loop.constants import MUTATING_FILE_REPEAT_CLOSEOUT_LIMIT
+from openminion.modules.brain.loop.constants import (
+    CIRCULAR_TOOL_SEQUENCE_LIMIT,
+    MUTATING_FILE_REPEAT_CLOSEOUT_LIMIT,
+)
 from openminion.modules.llm.schemas import Message
 
 from ..duplicate_batch import _reset_duplicate_batch_tracking
@@ -16,7 +19,6 @@ from .evidence_closeout import (
 )
 from ..snapshot import LoopSnapshot, LoopToolCallRecord, compress_transcript
 from ..telemetry import _emit_iteration_event
-
 
 def _has_successful_mutating_file_tool_result(
     ordered_tool_results: list[tuple[Any, Any]],
@@ -35,7 +37,7 @@ def _has_successful_mutating_file_tool_result(
 def _reset_successful_mutation_repetition_tracking(
     loop_state: Any,
     *,
-    iteration_tool_sequences: list[str],
+    iteration_tool_sequences: list[tuple[str, ...]],
 ) -> None:
     _reset_duplicate_batch_tracking(loop_state)
     loop_state.seen_signatures = []
@@ -121,7 +123,7 @@ def _track_successful_mutating_file_progress(
     loop_state: Any,
     ordered_tool_results: list[tuple[Any, Any]],
     *,
-    iteration_tool_sequences: list[str],
+    iteration_tool_sequences: list[tuple[str, ...]],
 ) -> None:
     if not _has_successful_mutating_file_tool_result(ordered_tool_results):
         return
@@ -135,6 +137,79 @@ def _track_successful_mutating_file_progress(
     )
     if repeated_mutation:
         loop_state.messages.append(_mutating_file_closeout_message(loop_state))
+
+
+def _track_repeated_tool_sequence(
+    loop_state: Any,
+    tool_calls: list[Any],
+    *,
+    iteration_tool_sequences: list[tuple[str, ...]],
+) -> None:
+    sequence = tuple(
+        name
+        for name in (
+            str(getattr(tool_call, "name", "") or "").strip()
+            for tool_call in tool_calls
+        )
+        if name
+    )
+    if not sequence:
+        return
+    iteration_tool_sequences.append(sequence)
+    if len(iteration_tool_sequences) > CIRCULAR_TOOL_SEQUENCE_LIMIT:
+        del iteration_tool_sequences[:-CIRCULAR_TOOL_SEQUENCE_LIMIT]
+    recent = iteration_tool_sequences[-CIRCULAR_TOOL_SEQUENCE_LIMIT:]
+    if len(recent) == CIRCULAR_TOOL_SEQUENCE_LIMIT and len(set(recent)) == 1:
+        scratchpad = dict(loop_state.scratchpad or {})
+        scratchpad["circular_pattern_detected"] = True
+        scratchpad["circular_pattern_tool_sequence"] = list(sequence)
+        loop_state.scratchpad = scratchpad
+
+
+def _track_iteration_progress(
+    loop_state: Any,
+    ordered_tool_results: list[tuple[Any, Any]],
+    tool_calls: list[Any],
+    *,
+    iteration_tool_sequences: list[tuple[str, ...]],
+) -> None:
+    _track_successful_mutating_file_progress(
+        loop_state,
+        ordered_tool_results,
+        iteration_tool_sequences=iteration_tool_sequences,
+    )
+    if ordered_tool_results:
+        _track_repeated_tool_sequence(
+            loop_state,
+            tool_calls,
+            iteration_tool_sequences=iteration_tool_sequences,
+        )
+
+
+def _record_iteration_batch_progress(
+    loop_state: Any,
+    *,
+    batch_had_progress: bool,
+    signature: str,
+    ordered_tool_results: list[tuple[Any, Any]],
+    tool_calls: list[Any],
+    record_duplicate_batch_execution_facts: Any,
+    iteration_tool_sequences: list[tuple[str, ...]],
+) -> None:
+    _track_iteration_progress(
+        loop_state,
+        ordered_tool_results,
+        tool_calls,
+        iteration_tool_sequences=iteration_tool_sequences,
+    )
+    if batch_had_progress and signature not in set(loop_state.seen_signatures):
+        loop_state.seen_signatures.append(signature)
+    if batch_had_progress:
+        record_duplicate_batch_execution_facts(
+            loop_state,
+            signature=signature,
+            ordered_tool_results=ordered_tool_results,
+        )
 
 
 def finalize_iteration_state(
@@ -159,21 +234,17 @@ def finalize_iteration_state(
     public_mode_name: str,
     record_duplicate_batch_execution_facts: Any,
     direct_tool_batch_completed_successfully: Any,
-    iteration_tool_sequences: list[str],
+    iteration_tool_sequences: list[tuple[str, ...]],
 ) -> Any:
-    _track_successful_mutating_file_progress(
+    _record_iteration_batch_progress(
         loop_state,
-        ordered_tool_results,
+        batch_had_progress=batch_had_progress,
+        signature=signature,
+        ordered_tool_results=ordered_tool_results,
+        tool_calls=tool_calls,
+        record_duplicate_batch_execution_facts=record_duplicate_batch_execution_facts,
         iteration_tool_sequences=iteration_tool_sequences,
     )
-    if batch_had_progress and signature not in set(loop_state.seen_signatures):
-        loop_state.seen_signatures.append(signature)
-    if batch_had_progress:
-        record_duplicate_batch_execution_facts(
-            loop_state,
-            signature=signature,
-            ordered_tool_results=ordered_tool_results,
-        )
     if direct_tool_batch_completed_successfully(
         loop_state=loop_state,
         signature=signature,

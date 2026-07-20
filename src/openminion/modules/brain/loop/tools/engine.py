@@ -9,6 +9,7 @@ from openminion.modules.brain.loop.constants import (
 )
 from openminion.modules.llm.schemas import Message
 from .contracts import (
+    ADAPTIVE_TERM_CIRCULAR_PATTERN,
     AdaptiveToolLoopContext,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopProfile,
@@ -34,6 +35,7 @@ from .status import emit_adaptive_status
 from .postprocess.engine import (
     AdaptiveLoopRunnerPostprocessMixin,
 )
+from .postprocess.evidence_closeout import tool_evidence_closeout_outcome
 from .postprocess.rules import _is_empty_plan_lookup_diversion
 from .plan_control import (
     PLAN_TOOL_ACTIONS,
@@ -319,6 +321,52 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
     prefetch_predictor: Any
     prefetch_pending: Any
 
+    def _handle_circular_pattern(self) -> AdaptiveToolLoopOutcome | None:
+        if not bool(self.loop_state.scratchpad.get("circular_pattern_detected")):
+            return None
+        outcome = _force_circular_pattern_answer_only_finalization(
+            loop_ctx=self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            runtime=self.runtime,
+            model=self.model,
+            max_output_tokens=self.max_output_tokens,
+            metadata=self.metadata,
+            allowed_tools=self.allowed_tools,
+            public_mode_tag=self.public_mode_tag,
+        )
+        if outcome is not None:
+            return outcome
+        fallback_outcome = tool_evidence_closeout_outcome(
+            profile=self.profile,
+            loop_state=self.loop_state,
+            allowed_tools=self.allowed_tools,
+            reason=(
+                "the loop repeated the same tool pattern before producing a "
+                "polished final answer, so preserved tool evidence is returned."
+            ),
+            scratchpad_key="circular_pattern_used_evidence_fallback",
+        )
+        if fallback_outcome is not None:
+            return fallback_outcome
+        self.loop_state.termination_reason = ADAPTIVE_TERM_CIRCULAR_PATTERN
+        emit_adaptive_status(
+            self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            detail_text=f"{self.public_mode_tag} repeated tool pattern",
+            mode_state="circular_pattern",
+            termination_reason=ADAPTIVE_TERM_CIRCULAR_PATTERN,
+        )
+        return AdaptiveToolLoopOutcome(
+            profile_name=self.profile.profile_name,
+            mode_name=self.profile.mode_name,
+            termination_reason=ADAPTIVE_TERM_CIRCULAR_PATTERN,
+            state=self.loop_state,
+            allowed_tools=self.allowed_tools,
+            error_message="Repeated tool pattern did not produce a final answer.",
+        )
+
     @classmethod
     def from_frame(
         cls,
@@ -378,6 +426,10 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 continue
             if outcome is not None:
                 return outcome
+
+            circular_outcome = self._handle_circular_pattern()
+            if circular_outcome is not None:
+                return circular_outcome
 
             prepared = self._prepare_llm_response()
             if isinstance(prepared, AdaptiveToolLoopOutcome):

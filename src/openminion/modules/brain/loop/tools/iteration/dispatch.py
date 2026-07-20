@@ -40,7 +40,7 @@ from ..plan_control import (
     PLAN_TOOL_NAME,
     PLAN_TOOL_USED_SCRATCHPAD_KEY,
     handle_plan_tool_call,
-    with_plan_tool_spec,
+    with_enabled_plan_tool_spec,
 )
 from ..review_control import (
     REVIEW_TOOL_ATTEMPTED_SCRATCHPAD_KEY,
@@ -551,7 +551,7 @@ def _process_tool_request_calls(
             active_tool_specs=active_tool_specs,
         )
         activated_any = activated_any or activated
-        active_tool_specs[:] = with_plan_tool_spec(active_tool_specs)
+        active_tool_specs[:] = with_enabled_plan_tool_spec(profile, active_tool_specs)
         requested_tools.append(requested_name)
         loop_state.messages.append(
             action_result_to_tool_message(

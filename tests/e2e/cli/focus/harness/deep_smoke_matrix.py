@@ -52,6 +52,10 @@ REQUIRED_ITEMS: frozenset[str] = frozenset(
         "workflow.context_heavy_prompt",
         "workflow.session_continuation",
         "workflow.interrupted_session_resume",
+        "workflow.delegate_flow",
+        "workflow.decompose_flow",
+        "workflow.plan_control",
+        "workflow.mixed_research_code_loop",
         "ui.streaming_chunks",
         "ui.first_token_latency",
         "ui.long_transcript",
@@ -67,6 +71,15 @@ REQUIRED_ITEMS: frozenset[str] = frozenset(
         "state.context_traces",
         "state.memory_context",
         "state.config_data_root_isolation",
+        "state.generated_file_assertion",
+        "state.task_plan_projection",
+        "finalization.budget_evidence_closeout",
+        "finalization.iteration_cap_evidence_closeout",
+        "finalization.raw_tool_payload_repair",
+        "finalization.requested_label_preservation",
+        "finalization.provider_fallback_recovery",
+        "safety.dirty_worktree_preservation",
+        "safety.read_only_write_denied",
         "break.malformed_tool_args",
         "break.huge_output",
         "break.slow_command",
@@ -188,6 +201,110 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
         evidence=("sandbox stdout/stderr", "timeout status", "telemetry events"),
     ),
     DeepSmokeRow(
+        scenario_id="agentic-delegate-plan-contracts",
+        summary="Delegate, decompose, async sub-agent, planning, and progress "
+        "bridges preserve typed parent/child work breakdown state.",
+        execution="local",
+        command="PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q "
+        "tests/brain/modes/test_delegate_e2e.py "
+        "tests/brain/modes/test_decompose_e2e.py "
+        "tests/brain/modes/test_delegate_integration.py "
+        "tests/brain/modes/test_decompose_integration.py "
+        "tests/brain/modes/test_async_delegate_unit.py "
+        "tests/brain/modes/test_async_delegate_integration.py "
+        "tests/brain/tool_loops/test_plan_control.py "
+        "tests/brain/loop/test_plan_control_progress_bridge.py "
+        "tests/tools/test_agent_delegation.py -ra",
+        owners=(
+            "tests/brain/modes/test_delegate_e2e.py",
+            "tests/brain/modes/test_decompose_e2e.py",
+            "tests/brain/modes/test_async_delegate_integration.py",
+            "tests/brain/tool_loops/test_plan_control.py",
+            "tests/brain/loop/test_plan_control_progress_bridge.py",
+            "tests/tools/test_agent_delegation.py",
+        ),
+        covers=(
+            "workflow.delegate_flow",
+            "workflow.decompose_flow",
+            "workflow.plan_control",
+            "state.task_plan_projection",
+        ),
+        evidence=("typed delegation payloads", "decompose subtasks", "plan events"),
+    ),
+    DeepSmokeRow(
+        scenario_id="long-loop-finalization-breakers",
+        summary="Long-loop budget, cap, raw payload, requested-label, and provider "
+        "fallback closeouts preserve successful tool evidence generically.",
+        execution="local",
+        command="PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q "
+        "tests/modules/brain/loop/tools/test_engine_characterization.py "
+        "tests/modules/brain/loop/tools/test_mutating_file_repetition.py "
+        "-k 'FinalizeIterationCapExit or budget_exhaustion_forces_answer_only_from_prior_tool_evidence "
+        "or force_finalization_rejects_raw_tool_markup or raw_tool_markup "
+        "or mutating_file or tool_evidence_closeout' -ra",
+        owners=(
+            "tests/modules/brain/loop/tools/test_engine_characterization.py",
+            "tests/modules/brain/loop/tools/test_mutating_file_repetition.py",
+        ),
+        covers=(
+            "finalization.budget_evidence_closeout",
+            "finalization.iteration_cap_evidence_closeout",
+            "finalization.raw_tool_payload_repair",
+            "finalization.requested_label_preservation",
+            "finalization.provider_fallback_recovery",
+        ),
+        evidence=("termination reason", "scratchpad flags", "final evidence text"),
+    ),
+    DeepSmokeRow(
+        scenario_id="workspace-safety-breakers",
+        summary="Read-only modes, policy gates, and git recovery keep agents from "
+        "claiming or overwriting unapproved workspace changes.",
+        execution="local",
+        command="PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q "
+        "tests/brain/tools/test_readonly_gate.py "
+        "tests/cli/interactive/terminal/test_fpc_readonly_mode.py "
+        "tests/tools/git/test_git_recovery.py "
+        "tests/tools/github/test_write_policy.py -ra",
+        owners=(
+            "tests/brain/tools/test_readonly_gate.py",
+            "tests/cli/interactive/terminal/test_fpc_readonly_mode.py",
+            "tests/tools/git/test_git_recovery.py",
+            "tests/tools/github/test_write_policy.py",
+        ),
+        covers=(
+            "safety.read_only_write_denied",
+            "safety.dirty_worktree_preservation",
+            "permission.policy_blocked_tool",
+        ),
+        evidence=("policy result", "read-only denial", "git recovery hint"),
+    ),
+    DeepSmokeRow(
+        scenario_id="tool-fallback-provider-chain",
+        summary="Provider retry, recovery pipeline, and common tool-provider chains "
+        "surface fallback success without hiding policy denials.",
+        execution="local",
+        command="PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q "
+        "tests/brain/loop/test_provider_retry_policy.py "
+        "tests/brain/runtime/test_recovery_pipeline.py "
+        "tests/tools/search/test_provider_chain.py "
+        "tests/tools/fetch/test_plugin.py "
+        "tests/tools/weather/test_plugin.py "
+        "tests/tools/time/test_plugin.py -ra",
+        owners=(
+            "tests/brain/loop/test_provider_retry_policy.py",
+            "tests/brain/runtime/test_recovery_pipeline.py",
+            "tests/tools/search/test_provider_chain.py",
+            "tests/tools/fetch/test_plugin.py",
+            "tests/tools/weather/test_plugin.py",
+            "tests/tools/time/test_plugin.py",
+        ),
+        covers=(
+            "workflow.failed_tool_retry",
+            "finalization.provider_fallback_recovery",
+        ),
+        evidence=("retry decision", "recovery facts", "fallback provider result"),
+    ),
+    DeepSmokeRow(
         scenario_id="terminal-rendering-pressure",
         summary="Terminal renderer handles streaming, latency indicators, long "
         "scrollback, copy/select behavior, verbosity, and status rendering.",
@@ -294,7 +411,9 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
         ),
         covers=(
             "workflow.long_coding_loop",
+            "workflow.mixed_research_code_loop",
             "state.artifacts",
+            "state.generated_file_assertion",
             "ui.long_transcript",
         ),
         evidence=("generated scratch files", "live ansi snapshots", "final transcript"),

@@ -94,7 +94,6 @@ from openminion.modules.brain.loop.tools.iteration.termination import (
 )
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
-    ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_DECOMPOSE_INVALID,
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
@@ -2073,7 +2072,10 @@ def test_loop_iteration_cap_terminates_with_cap_reason() -> None:
         ADAPTIVE_TERM_ITERATION_CAP,
         ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
         ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+        ADAPTIVE_TERM_FINAL_TEXT,
     }
+    if outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT:
+        assert "tool evidence" in str(outcome.final_text or "").lower()
 
 
 def test_loop_llm_error_terminates_with_llm_error_reason() -> None:
@@ -5800,7 +5802,9 @@ def test_loop_circular_pattern_rejects_internal_failure_answer_text() -> None:
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_CIRCULAR_PATTERN
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert "tool evidence:" in str(outcome.final_text or "").lower()
+    assert bool(outcome.state.scratchpad.get("circular_pattern_used_evidence_fallback"))
 
 
 def test_loop_iteration_cap_exit_path() -> None:
@@ -6252,7 +6256,7 @@ def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> 
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "Validation:" in str(outcome.final_text or "")
+    assert "tool evidence:" in str(outcome.final_text or "").lower()
     assert "file.read" in str(outcome.final_text or "")
     assert "core module content present" in str(outcome.final_text or "")
     assert bool(

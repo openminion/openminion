@@ -217,6 +217,21 @@ def with_plan_tool_spec(tool_specs: list[Any] | tuple[Any, ...]) -> list[Any]:
     return specs
 
 
+def plan_tool_enabled(profile: Any) -> bool:
+    return bool(getattr(profile, "allow_plan_tool", True)) and (
+        getattr(profile, "tool_choice", "auto") != "none"
+    )
+
+
+def with_enabled_plan_tool_spec(
+    profile: Any,
+    tool_specs: list[Any] | tuple[Any, ...],
+) -> list[Any]:
+    if not plan_tool_enabled(profile):
+        return list(tool_specs or [])
+    return with_plan_tool_spec(tool_specs)
+
+
 def handle_plan_tool_call(
     *,
     loop_ctx: Any,

@@ -21,7 +21,7 @@ from ..contracts import (
     AdaptiveToolLoopState,
     resolve_allowed_tools,
 )
-from ..plan_control import PLAN_TOOL_NAME, with_plan_tool_spec
+from ..plan_control import PLAN_TOOL_NAME, plan_tool_enabled, with_enabled_plan_tool_spec
 from ..response_payloads import (
     _CONFIDENT_COMPLETE_GUIDANCE,
     _DELEGATION_RESULT_SUMMARY_GUIDANCE,
@@ -210,8 +210,7 @@ def prepare_loop_frame(
     active_tool_specs = (
         with_tool_request_spec(tool_specs) if tool_request_enabled else list(tool_specs)
     )
-    if bool(getattr(profile, "allow_plan_tool", True)):
-        active_tool_specs = with_plan_tool_spec(active_tool_specs)
+    active_tool_specs = with_enabled_plan_tool_spec(profile, active_tool_specs)
     active_tool_names = {
         str(getattr(spec, "name", "") or "").strip()
         for spec in active_tool_specs
@@ -227,7 +226,7 @@ def prepare_loop_frame(
     )
     if tool_request_enabled:
         allowed_tools = frozenset({*allowed_tools, TOOL_REQUEST_TOOL_NAME})
-    if bool(getattr(profile, "allow_plan_tool", True)):
+    if plan_tool_enabled(profile):
         allowed_tools = frozenset({*allowed_tools, PLAN_TOOL_NAME})
     seeded_queue = list(seeded_commands or [])
     if not active_tool_specs and allowed_tools and not seeded_queue:
