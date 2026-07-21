@@ -8,7 +8,7 @@ from openminion.modules.controlplane.channels.telegram.polling import (
 from openminion.services.runtime.lifecycle import LifecycleService
 from openminion.services.security.policy import SecurityPolicyEngine
 
-from tests.controlplane.telegram.integration.fixtures import drain_outbox
+from tests.controlplane.telegram.integration.fixtures import drain_inbox, drain_outbox
 from tests.controlplane.telegram.integration.transports import (
     DeterministicTelegramTransport,
 )
@@ -62,8 +62,10 @@ def test_unified_config_polling_runner_dispatches_inbound_to_outbound(
         processed = runner.run_once()
 
         assert processed == 1
-        # outbound is now async via OutboxWorker. Drive the worker
-        # attached by lifecycle so the enqueued reply lands on the transport.
+        assert runtime.controlplane_components is not None
+        drain_inbox(runtime.controlplane_components.inbox_worker)
+        # outbound is async via OutboxWorker. Drive the worker attached by
+        # lifecycle so the enqueued reply lands on the transport.
         outbox_worker = getattr(runner, "_outbox_worker", None)
         assert outbox_worker is not None, (
             "lifecycle did not wire outbox worker into telegram runner"

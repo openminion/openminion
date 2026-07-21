@@ -318,6 +318,84 @@ def _enqueue_outbox(
     )
 
 
+def _enqueue_inbox(
+    runner: Any,
+    *,
+    inbound: Any,
+    envelope: TelegramInboundEnvelope,
+) -> bool:
+    store = runner._store  # noqa: SLF001
+    if store is None or not hasattr(store, "enqueue_inbox"):
+        return False
+    thread_id = str(envelope.topic_id) if envelope.topic_id is not None else None
+    reply_to = str(envelope.message_id) if envelope.message_id is not None else None
+    inbox_id, inserted = store.enqueue_inbox(
+        channel=runner.channel_id,
+        chat_id=str(envelope.chat_id),
+        channel_message_id=str(envelope.update_id),
+        user_id=str(envelope.from_user.id),
+        thread_id=thread_id,
+        inbound_id=f"telegram:{envelope.update_id}",
+        payload=_inbox_payload_from_inbound(
+            inbound,
+            channel=runner.channel_id,
+            reply_to=reply_to,
+        ),
+    )
+    if inserted:
+        runner._audit_event(  # noqa: SLF001
+            "cp.inbox.enqueued",
+            reason="enqueued",
+            inbox_id=inbox_id,
+            update_id=envelope.update_id,
+            chat_id=str(envelope.chat_id),
+        )
+    return True
+
+
+def _inbox_payload_from_inbound(
+    inbound: Any,
+    *,
+    channel: str,
+    reply_to: str | None,
+) -> dict[str, Any]:
+    timestamp = getattr(inbound, "timestamp", None)
+    meta = dict(getattr(inbound, "meta", {}) or {})
+    meta["controlplane_rate_limit_checked"] = True
+    metadata = dict(getattr(inbound, "metadata", {}) or {})
+    metadata["controlplane_rate_limit_checked"] = True
+    return {
+        "text": str(getattr(inbound, "text", "") or ""),
+        "user_key": str(getattr(inbound, "user_key", "") or ""),
+        "chat_key": str(getattr(inbound, "chat_key", "") or ""),
+        "channel": str(getattr(inbound, "channel", "") or channel),
+        "thread_key": _as_str_or_none(getattr(inbound, "thread_key", None)),
+        "chat_id": _as_str_or_none(getattr(inbound, "chat_id", None)),
+        "user_id": _as_str_or_none(getattr(inbound, "user_id", None)),
+        "thread_id": _as_str_or_none(getattr(inbound, "thread_id", None)),
+        "timestamp": (
+            timestamp.isoformat()
+            if hasattr(timestamp, "isoformat")
+            else _as_str_or_none(timestamp)
+        ),
+        "reply_to": reply_to or _as_str_or_none(getattr(inbound, "reply_to", None)),
+        "metadata": metadata,
+        "meta": meta,
+        "auth": _auth_payload(getattr(inbound, "auth", None)),
+    }
+
+
+def _auth_payload(auth: Any) -> dict[str, Any] | None:
+    if auth is None:
+        return None
+    return {
+        "role": str(getattr(auth, "role", "") or ""),
+        "scopes": list(getattr(auth, "scopes", ()) or ()),
+        "principal_id": _as_str_or_none(getattr(auth, "principal_id", None)),
+        "metadata": dict(getattr(auth, "metadata", {}) or {}),
+    }
+
+
 def _has_active_principal_binding(
     runner: Any, envelope: TelegramInboundEnvelope
 ) -> bool:

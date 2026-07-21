@@ -175,6 +175,19 @@ class ControlplaneStore(ABC):
     def fail_inbox(self, inbox_id: str, error: str) -> None: ...
 
     @abstractmethod
+    def mark_inbox_retry(
+        self,
+        inbox_id: str,
+        *,
+        error: str,
+        max_attempts: int = 8,
+        max_backoff_s: int = 300,
+    ) -> str: ...
+
+    @abstractmethod
+    def get_inbox(self, inbox_id: str) -> dict[str, Any] | None: ...
+
+    @abstractmethod
     def enqueue_outbox(
         self,
         *,

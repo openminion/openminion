@@ -575,6 +575,24 @@ class _ControlPlaneStoreMixin(PairTokenStoreMixin, ControlplaneStore):
     def fail_inbox(self, inbox_id: str, error: str) -> None:
         self._inbox_outbox.fail_inbox(inbox_id, error)
 
+    def mark_inbox_retry(
+        self,
+        inbox_id: str,
+        *,
+        error: str,
+        max_attempts: int = 8,
+        max_backoff_s: int = 300,
+    ) -> str:
+        return self._inbox_outbox.mark_inbox_retry(
+            inbox_id,
+            error=error,
+            max_attempts=max_attempts,
+            max_backoff_s=max_backoff_s,
+        )
+
+    def get_inbox(self, inbox_id: str) -> dict[str, Any] | None:
+        return self._inbox_outbox.get_inbox(inbox_id)
+
     def enqueue_outbox(
         self,
         *,

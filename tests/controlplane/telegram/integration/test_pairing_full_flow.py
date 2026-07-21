@@ -25,13 +25,16 @@ from openminion.modules.controlplane.channels.telegram.state import (
     TelegramPollStateStore,
 )
 
+from openminion.modules.controlplane.runtime.worker.inbox import InboxWorker
 from openminion.modules.controlplane.runtime.worker.outbox import OutboxWorker
 
 from tests.controlplane.telegram.integration.fixtures import (
     CapturingOutboundSender,
     MockCommandParser,
     MockCommandRegistry,
+    attach_inbox_worker,
     attach_outbox_worker,
+    drain_inbox,
     drain_outbox,
 )
 from tests.controlplane.telegram.integration.transports import (
@@ -79,7 +82,13 @@ def _build_runner(
     transport: DeterministicTelegramTransport,
     poll_state_store: TelegramPollStateStore,
     sqlite_store: SQLiteControlPlaneStore,
-) -> tuple[TelegramPollingRunner, CapturingOutboundSender, AuditLogger, OutboxWorker]:
+) -> tuple[
+    TelegramPollingRunner,
+    CapturingOutboundSender,
+    AuditLogger,
+    InboxWorker,
+    OutboxWorker,
+]:
     from openminion.modules.controlplane.runtime.dispatcher import (
         ControlPlaneDispatcher,
     )
@@ -123,8 +132,9 @@ def _build_runner(
     runner._initialized = True
     runner._bot_username = "testbot"
     runner._account_id = "telegram-bot:123456789"
-    worker = attach_outbox_worker(runner, store=sqlite_store, audit_logger=audit)
-    return runner, outbound, audit, worker
+    inbox_worker = attach_inbox_worker(runner, store=sqlite_store, audit_logger=audit)
+    outbox_worker = attach_outbox_worker(runner, store=sqlite_store, audit_logger=audit)
+    return runner, outbound, audit, inbox_worker, outbox_worker
 
 
 def test_pairing_full_flow_happy_and_rejected_replay(tmp_path: Path) -> None:
@@ -165,7 +175,7 @@ def test_pairing_full_flow_happy_and_rejected_replay(tmp_path: Path) -> None:
         )
 
         transport = DeterministicTelegramTransport(bot_token="test-token")
-        runner, outbound, audit, worker = _build_runner(
+        runner, _outbound, audit, inbox_worker, outbox_worker = _build_runner(
             config=config,
             transport=transport,
             poll_state_store=poll_state_store,
@@ -179,7 +189,7 @@ def test_pairing_full_flow_happy_and_rejected_replay(tmp_path: Path) -> None:
         )
         processed = runner.run_once()
         assert processed == 1
-        drain_outbox(worker)
+        drain_outbox(outbox_worker)
 
         pairing_texts = transport.get_outbound_texts()
         assert any("Paired" in t for t in pairing_texts), pairing_texts
@@ -201,7 +211,8 @@ def test_pairing_full_flow_happy_and_rejected_replay(tmp_path: Path) -> None:
         )
         processed = runner.run_once()
         assert processed == 1
-        drain_outbox(worker)
+        drain_inbox(inbox_worker)
+        drain_outbox(outbox_worker)
 
         dispatched_events = [
             e for e in audit.events if e.get("event") == "cp.chat.dispatched"
@@ -210,8 +221,6 @@ def test_pairing_full_flow_happy_and_rejected_replay(tmp_path: Path) -> None:
         assert str(dispatched_events[-1].get("agent_id") or "").strip() != ""
 
         assert any("hello paired world" in c for c in transport.get_outbound_texts())
-        outbound_payloads = outbound.get_all()
-        assert outbound_payloads, "runtime should have emitted an outbound payload"
 
         transport.inject_message(
             chat_id=PAIRED_CHAT_ID,
@@ -227,7 +236,7 @@ def test_pairing_full_flow_happy_and_rejected_replay(tmp_path: Path) -> None:
 
         processed = runner.run_once()
         assert processed == 1
-        drain_outbox(worker)
+        drain_outbox(outbox_worker)
 
         all_texts = transport.get_outbound_texts()
         assert any("failed or expired" in t.lower() for t in all_texts), all_texts

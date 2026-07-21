@@ -97,11 +97,13 @@ def test_durable_pipeline_full_flow(tmp_path: Path) -> None:
         runner = runtime.channels.get("telegram")
         assert isinstance(runner, TelegramPollingRunner)
 
-        worker = runner._outbox_worker
-        assert worker is not None, (
+        outbox_worker = runner._outbox_worker
+        assert outbox_worker is not None, (
             "lifecycle did not wire outbox worker into telegram runner"
         )
-        worker.max_backoff_s = 0
+        outbox_worker.max_backoff_s = 0
+        assert runtime.controlplane_components is not None
+        inbox_worker = runtime.controlplane_components.inbox_worker
 
         runner._delivery._delivery = dataclasses.replace(
             runner._delivery._delivery,
@@ -128,7 +130,50 @@ def test_durable_pipeline_full_flow(tmp_path: Path) -> None:
 
         assert transport.get_outbound_texts() == [], (
             "outbound was delivered synchronously from handle_inbound; "
-            "CPD-02 cutover did not take effect"
+            "CUS-02 durable-inbox cutover did not take effect"
+        )
+        pre_inbox_outbox_rows = store._inbox_outbox._rs.query_dicts(  # type: ignore[attr-defined]
+            "SELECT outbox_id FROM cp_outbox",
+        )
+        assert pre_inbox_outbox_rows == []
+
+        inbox_rows = store._inbox_outbox._rs.query_dicts(  # type: ignore[attr-defined]
+            "SELECT inbox_id, channel, chat_id, status, attempts, payload_json "
+            "FROM cp_inbox",
+        )
+        assert len(inbox_rows) == 1, inbox_rows
+        inbox_row = inbox_rows[0]
+        assert inbox_row["channel"] == "telegram"
+        assert str(inbox_row["chat_id"]) == "123"
+        assert inbox_row["status"] == "new"
+        assert int(inbox_row["attempts"]) == 0
+        assert "cpd-e2e hello" in str(inbox_row["payload_json"])
+
+        inbox_result = inbox_worker.run_once()
+        assert inbox_result is not None
+        assert inbox_result.get("status") == "done", inbox_result
+        assert inbox_result.get("inbox_id") == inbox_row["inbox_id"]
+
+        inbox_after = store.get_inbox(str(inbox_row["inbox_id"]))
+        assert inbox_after is not None
+        assert inbox_after["status"] == "done"
+
+        inbox_enqueue_events = [
+            ev for ev in audit_logger.events if ev.event_type == "cp.inbox.enqueued"
+        ]
+        assert inbox_enqueue_events, _audit_event_types(audit_logger)
+        assert (
+            inbox_enqueue_events[-1].details or {}
+        ).get("inbox_id") == inbox_row["inbox_id"]
+
+        inbox_dispatch_events = [
+            ev for ev in audit_logger.events if ev.event_type == "cp.chat.dispatched"
+        ]
+        assert inbox_dispatch_events, _audit_event_types(audit_logger)
+
+        assert transport.get_outbound_texts() == [], (
+            "outbound was delivered synchronously from inbox dispatch; "
+            "CPD-02 outbox cutover did not take effect"
         )
 
         rows = store._inbox_outbox._rs.query_dicts(  # type: ignore[attr-defined]
@@ -154,7 +199,7 @@ def test_durable_pipeline_full_flow(tmp_path: Path) -> None:
         assert str(enqueue_details.get("chat_id")) == "123"
 
         events_before_drain1 = len(audit_logger.events)
-        first_result = worker.run_once()
+        first_result = outbox_worker.run_once()
         assert first_result is not None
         assert first_result.get("status") == "retry", first_result
         assert first_result.get("outbox_id") == outbox_id
@@ -178,7 +223,7 @@ def test_durable_pipeline_full_flow(tmp_path: Path) -> None:
         assert worker_failed, [ev.event_type for ev in events_after_drain1]
 
         events_before_drain2 = len(audit_logger.events)
-        second_result = worker.run_once()
+        second_result = outbox_worker.run_once()
         assert second_result is not None
         assert second_result.get("status") == "sent", second_result
         assert second_result.get("outbox_id") == outbox_id
@@ -218,8 +263,10 @@ def test_durable_pipeline_full_flow(tmp_path: Path) -> None:
         supervisor = runtime.channel_supervisor
         assert supervisor is not None
         supervisor.start()
-        thread = supervisor._outbox_thread
-        assert thread is not None and thread.is_alive()
+        inbox_thread = supervisor._inbox_thread
+        outbox_thread = supervisor._outbox_thread
+        assert inbox_thread is not None and inbox_thread.is_alive()
+        assert outbox_thread is not None and outbox_thread.is_alive()
 
         join_started = time.monotonic()
         supervisor.stop()
@@ -227,8 +274,10 @@ def test_durable_pipeline_full_flow(tmp_path: Path) -> None:
         assert join_elapsed < 5.0, (
             f"supervisor.stop() took {join_elapsed:.2f}s — exceeded 5s budget"
         )
+        assert supervisor._inbox_thread is None
         assert supervisor._outbox_thread is None
-        assert not thread.is_alive()
+        assert not inbox_thread.is_alive()
+        assert not outbox_thread.is_alive()
     finally:
         # _close_runtime closes the store + brain client; calling
         # runner.stop() twice is a no-op (thread is already None).

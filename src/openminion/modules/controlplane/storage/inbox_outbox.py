@@ -40,8 +40,9 @@ class InboxOutboxStore:
                 """
                 INSERT INTO cp_inbox(
                     inbox_id, channel, chat_id, channel_message_id, user_id, thread_id,
-                    received_at, payload_json, status, error, attempts, locked_at, lock_owner
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    received_at, payload_json, status, error, attempts, next_attempt_at,
+                    locked_at, lock_owner
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(channel, chat_id, channel_message_id) DO NOTHING
                 """,
                 (
@@ -56,6 +57,7 @@ class InboxOutboxStore:
                     "new",
                     None,
                     0,
+                    now,
                     None,
                     None,
                 ),
@@ -74,6 +76,7 @@ class InboxOutboxStore:
     def claim_inbox(
         self, *, lock_owner: str, reclaim_ttl_s: int = 120
     ) -> dict[str, Any] | None:
+        now = _iso_now()
         with self._rs.transaction():
             reclaim_before = _iso_ago(reclaim_ttl_s)
             self._rs.execute_count(
@@ -87,15 +90,16 @@ class InboxOutboxStore:
             rows = self._rs.query_dicts(
                 """
                 SELECT * FROM cp_inbox
-                WHERE status='new'
+                WHERE status IN ('new', 'failed')
+                  AND next_attempt_at <= ?
                 ORDER BY received_at ASC
                 LIMIT 1
                 """,
+                (now,),
             )
             if not rows:
                 return None
             inbox_id = str(rows[0]["inbox_id"])
-            now = _iso_now()
             count = self._rs.execute_count(
                 """
                 UPDATE cp_inbox
@@ -103,7 +107,7 @@ class InboxOutboxStore:
                     attempts=attempts+1,
                     lock_owner=?,
                     locked_at=?
-                WHERE inbox_id=? AND status='new'
+                WHERE inbox_id=? AND status IN ('new', 'failed')
                 """,
                 (lock_owner, now, inbox_id),
             )
@@ -134,6 +138,53 @@ class InboxOutboxStore:
             """,
             (error[:2000], inbox_id),
         )
+
+    def mark_inbox_retry(
+        self,
+        inbox_id: str,
+        *,
+        error: str,
+        max_attempts: int = 8,
+        max_backoff_s: int = 300,
+    ) -> str:
+        """Record an inbox processing failure and decide retry vs dead-letter."""
+        with self._rs.transaction():
+            rows = self._rs.query_dicts(
+                "SELECT attempts FROM cp_inbox WHERE inbox_id = ?",
+                (inbox_id,),
+            )
+            attempts = int(rows[0]["attempts"] if rows else 0)
+            if attempts >= max_attempts:
+                self._rs.execute_count(
+                    """
+                    UPDATE cp_inbox
+                    SET status='dead', error=?, lock_owner=NULL, locked_at=NULL
+                    WHERE inbox_id=?
+                    """,
+                    (error[:2000], inbox_id),
+                )
+                return "dead"
+            delay = min(max_backoff_s, 2 ** max(0, attempts - 1))
+            self._rs.execute_count(
+                """
+                UPDATE cp_inbox
+                SET status='failed',
+                    next_attempt_at=?,
+                    error=?,
+                    lock_owner=NULL,
+                    locked_at=NULL
+                WHERE inbox_id=?
+                """,
+                (_iso_after(delay), error[:2000], inbox_id),
+            )
+        return "retry"
+
+    def get_inbox(self, inbox_id: str) -> dict[str, Any] | None:
+        rows = self._rs.query_dicts(
+            "SELECT * FROM cp_inbox WHERE inbox_id = ?",
+            (inbox_id,),
+        )
+        return rows[0] if rows else None
 
     # Outbox
 

@@ -6,6 +6,7 @@ from typing import Any
 from openminion.modules.controlplane.runtime.dispatcher import ControlPlaneDispatcher
 from openminion.modules.controlplane.runtime.router import Router
 from openminion.modules.controlplane.runtime import EchoBrain
+from openminion.modules.controlplane.runtime.worker.inbox import InboxWorker
 from openminion.modules.controlplane.runtime.worker.outbox import OutboxWorker
 from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
 from openminion.modules.controlplane.channels.telegram.config import (
@@ -26,7 +27,9 @@ from tests.controlplane.telegram.integration.fixtures import (
     CapturingOutboundSender,
     MockCommandParser,
     MockCommandRegistry,
+    attach_inbox_worker,
     attach_outbox_worker,
+    drain_inbox,
     drain_outbox,
 )
 from tests.controlplane.telegram.integration.transports import (
@@ -92,6 +95,7 @@ def _build_runner(
     TelegramPollingRunner,
     CapturingOutboundSender,
     SQLiteControlPlaneStore,
+    InboxWorker,
     OutboxWorker,
 ]:
     sqlite_store = SQLiteControlPlaneStore(str(tmp_path / "cp.db"))
@@ -125,8 +129,9 @@ def _build_runner(
     runner._initialized = True
     runner._bot_username = "testbot"
     runner._account_id = "telegram-bot:123456789"
-    worker = attach_outbox_worker(runner, store=sqlite_store, audit_logger=audit)
-    return runner, outbound, sqlite_store, worker
+    inbox_worker = attach_inbox_worker(runner, store=sqlite_store, audit_logger=audit)
+    outbox_worker = attach_outbox_worker(runner, store=sqlite_store, audit_logger=audit)
+    return runner, outbound, sqlite_store, inbox_worker, outbox_worker
 
 
 def test_group_chat_allowlisted_dispatches_and_denied_short_circuits(tmp_path) -> None:
@@ -161,7 +166,7 @@ def test_group_chat_allowlisted_dispatches_and_denied_short_circuits(tmp_path) -
 
     transport = DeterministicTelegramTransport(bot_token="test-token")
     audit = CapturingAuditLogger()
-    runner, outbound, sqlite_store, worker = _build_runner(
+    runner, outbound, sqlite_store, inbox_worker, outbox_worker = _build_runner(
         tmp_path=tmp_path,
         config=config,
         transport=transport,
@@ -186,7 +191,8 @@ def test_group_chat_allowlisted_dispatches_and_denied_short_circuits(tmp_path) -
 
         processed = runner.run_once()
         assert processed == 2
-        drain_outbox(worker)
+        drain_inbox(inbox_worker)
+        drain_outbox(outbox_worker)
 
         outbound_texts = transport.get_outbound_texts()
         assert any("hello group" in t for t in outbound_texts), outbound_texts
@@ -209,9 +215,6 @@ def test_group_chat_allowlisted_dispatches_and_denied_short_circuits(tmp_path) -
         ]
         assert len(allow_events) == 1, audit.events
 
-        captured = outbound.get_all()
-        assert any(
-            "hello group" in str(payload.get("text", "")) for payload in captured
-        ), captured
+        assert outbound.get_all() == []
     finally:
         sqlite_store.close()

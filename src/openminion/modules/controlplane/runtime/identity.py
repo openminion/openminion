@@ -1,5 +1,7 @@
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any
+from time import monotonic
+from typing import Any, Callable
 
 from ..constants import (
     DEFAULT_MINIMAL_SCOPES,
@@ -282,3 +284,110 @@ class StoreBackedIdentityAPI:
                 },
             },
         )
+
+
+class CachedIdentityAPI:
+    """Small positive-result cache for channel-subject principal lookups."""
+
+    contract_version = CONTROLPLANE_INTERFACE_VERSION
+
+    def __init__(
+        self,
+        inner: StoreBackedIdentityAPI,
+        *,
+        maxsize: int = 1024,
+        ttl_seconds: int = 300,
+        clock: Callable[[], float] = monotonic,
+    ) -> None:
+        self._inner = inner
+        self._maxsize = max(1, int(maxsize))
+        self._ttl_seconds = max(0, int(ttl_seconds))
+        self._clock = clock
+        self._resolve_cache: OrderedDict[tuple[str, str], tuple[str, float]] = (
+            OrderedDict()
+        )
+
+    def resolve(self, *, channel: str, subject_id: str) -> str | None:
+        key = (str(channel), str(subject_id))
+        now = self._clock()
+        cached = self._resolve_cache.get(key)
+        if cached is not None:
+            principal_id, expires_at = cached
+            if expires_at >= now:
+                self._resolve_cache.move_to_end(key)
+                return principal_id
+            self._resolve_cache.pop(key, None)
+        principal_id = self._inner.resolve(channel=channel, subject_id=subject_id)
+        if principal_id is not None:
+            self._remember(key, principal_id, now)
+        return principal_id
+
+    def bind(
+        self,
+        *,
+        principal_id: str,
+        channel: str,
+        subject_id: str,
+        scopes: tuple[str, ...] | list[str] | None = None,
+        status: str = PRINCIPAL_BINDING_STATUS_ACTIVE,
+        note: str | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        key = (str(channel), str(subject_id))
+        self._resolve_cache.pop(key, None)
+        self._inner.bind(
+            principal_id=principal_id,
+            channel=channel,
+            subject_id=subject_id,
+            scopes=scopes,
+            status=status,
+            note=note,
+            meta=meta,
+        )
+
+    def get_binding(self, *, channel: str, subject_id: str) -> PrincipalBinding | None:
+        return self._inner.get_binding(channel=channel, subject_id=subject_id)
+
+    def auth_context(
+        self,
+        *,
+        channel: str,
+        subject_id: str,
+        default_scopes: tuple[str, ...] = DEFAULT_MINIMAL_SCOPES,
+    ) -> AuthContext | None:
+        return self._inner.auth_context(
+            channel=channel,
+            subject_id=subject_id,
+            default_scopes=default_scopes,
+        )
+
+    def _remember(
+        self, key: tuple[str, str], principal_id: str, now: float
+    ) -> None:
+        self._resolve_cache[key] = (principal_id, now + self._ttl_seconds)
+        self._resolve_cache.move_to_end(key)
+        while len(self._resolve_cache) > self._maxsize:
+            self._resolve_cache.popitem(last=False)
+
+
+def build_identity_api(
+    *,
+    store: object,
+    config: object | None = None,
+    cache_enabled: bool | None = None,
+    cache_maxsize: int | None = None,
+    cache_ttl_seconds: int | None = None,
+) -> StoreBackedIdentityAPI | CachedIdentityAPI:
+    api = StoreBackedIdentityAPI(store)
+    enabled = bool(
+        cache_enabled
+        if cache_enabled is not None
+        else getattr(config, "identity_cache_enabled", False)
+    )
+    maxsize = cache_maxsize or int(getattr(config, "identity_cache_maxsize", 1024))
+    ttl = cache_ttl_seconds or int(
+        getattr(config, "identity_cache_ttl_seconds", 300)
+    )
+    if not enabled:
+        return api
+    return CachedIdentityAPI(api, maxsize=maxsize, ttl_seconds=ttl)

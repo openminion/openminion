@@ -16,6 +16,7 @@ from openminion.services.security.policy import SecurityPolicyEngine
 from tests.controlplane.telegram.integration.transports import (
     DeterministicTelegramTransport,
 )
+from tests.controlplane.telegram.integration.fixtures import drain_inbox
 from tests.integration.test_unified_config_bootstrap import (
     _close_runtime,
     _make_config,
@@ -93,6 +94,7 @@ def test_inbound_enqueues_outbox_and_worker_drains(tmp_path: Path) -> None:
         assert processed == 1
 
         store = runner._store
+        assert drain_inbox(runtime.controlplane_components.inbox_worker) == 1
         rows = store._inbox_outbox._rs.query_dicts(  # type: ignore[attr-defined]
             "SELECT outbox_id, channel, chat_id, status FROM cp_outbox",
         )

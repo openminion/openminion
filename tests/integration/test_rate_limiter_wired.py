@@ -14,6 +14,7 @@ from openminion.services.security.policy import SecurityPolicyEngine
 from tests.controlplane.telegram.integration.transports import (
     DeterministicTelegramTransport,
 )
+from tests.controlplane.telegram.integration.fixtures import drain_inbox
 from tests.integration.test_unified_config_bootstrap import (
     _close_runtime,
     _make_config,
@@ -110,6 +111,7 @@ def test_rate_limiter_wired_chat_limit_blocks_excess(tmp_path: Path) -> None:
         assert processed == 3
 
         store = runner._store
+        assert drain_inbox(runtime.controlplane_components.inbox_worker) == 2
         rows = _outbox_rows(store)
         assert len(rows) == 2, rows
 
@@ -243,6 +245,7 @@ def test_rate_limiter_disabled_when_store_lacks_increment(tmp_path: Path) -> Non
         assert rl_events == [], events
 
         store = runner._store
+        assert drain_inbox(runtime.controlplane_components.inbox_worker) == 3
         rows = _outbox_rows(store)
         assert len(rows) == 3, rows
     finally:

@@ -22,7 +22,7 @@ from openminion.modules.controlplane.runtime.audit import AuditLogger
 from openminion.modules.controlplane.runtime.auth import AuthEvaluator
 from openminion.modules.controlplane.runtime.channels import ChannelRegistry
 from openminion.modules.controlplane.runtime.dispatcher import ControlPlaneDispatcher
-from openminion.modules.controlplane.runtime.identity import StoreBackedIdentityAPI
+from openminion.modules.controlplane.runtime.identity import build_identity_api
 from openminion.modules.controlplane.runtime.parser import SlashCommandParser
 from openminion.modules.controlplane.runtime.rate_limit import (
     ControlPlaneRateLimiter,
@@ -48,8 +48,7 @@ class ControlPlaneRuntimeComponents:
     config: ControlPlaneConfig
     store: Any
     audit_logger: AuditLogger
-    auth: AuthEvaluator
-    identity_api: StoreBackedIdentityAPI
+    identity_api: Any
     router: Router
     parser: SlashCommandParser
     command_registry: CommandRegistry
@@ -105,7 +104,7 @@ def build_controlplane_runtime_components(
         home_root=home_root,
         data_root=data_root,
     )
-    identity_api = StoreBackedIdentityAPI(store)
+    identity_api = build_identity_api(store=store, config=cp_cfg)
     dispatcher = ControlPlaneDispatcher(
         store=store,
         router=router,
@@ -131,9 +130,11 @@ def build_controlplane_runtime_components(
     inbox_worker = InboxWorker(
         store=store,
         dispatcher=dispatcher,
-        authorizer=ScopeAuthorizer(store=store),
+        authorizer=ScopeAuthorizer(store=store, identity_api=identity_api),
         rate_limiter=rate_limiter,
         audit_logger=audit_logger,
+        max_attempts=cp_cfg.inbox_max_attempts,
+        max_backoff_s=cp_cfg.inbox_max_backoff_s,
     )
     outbox_worker = OutboxWorker(
         store=store,
@@ -146,7 +147,6 @@ def build_controlplane_runtime_components(
         config=cp_cfg,
         store=store,
         audit_logger=audit_logger,
-        auth=auth,
         identity_api=identity_api,
         router=router,
         parser=parser,

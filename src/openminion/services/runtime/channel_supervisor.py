@@ -282,36 +282,27 @@ class ChannelRuntimeSupervisor:
             self._emit("controlplane.runtime.close_failed", error=self._last_error)
 
     def _run_inbox_loop(self) -> None:
-        while True:
-            try:
-                result = self._inbox_worker.run_once()  # type: ignore[union-attr]
-            except Exception as exc:  # noqa: BLE001
-                self._last_error = _redact(str(exc))
-                self._log.warning(
-                    "controlplane inbox worker failed: %s",
-                    exc,
-                    exc_info=True,
-                )
-                self._emit("controlplane.inbox_worker.failed", error=self._last_error)
-                time.sleep(0.1)
-                continue
-            if result is None:
-                if self._stop_event.is_set():
-                    return
-                time.sleep(0.1)
+        self._run_worker_loop(self._inbox_worker, event_prefix="inbox")
 
     def _run_outbox_loop(self) -> None:
+        self._run_worker_loop(self._outbox_worker, event_prefix="outbox")
+
+    def _run_worker_loop(self, worker: Any, *, event_prefix: str) -> None:
         while True:
             try:
-                result = self._outbox_worker.run_once()  # type: ignore[union-attr]
+                result = worker.run_once()
             except Exception as exc:  # noqa: BLE001
                 self._last_error = _redact(str(exc))
                 self._log.warning(
-                    "controlplane outbox worker failed: %s",
+                    "controlplane %s worker failed: %s",
+                    event_prefix,
                     exc,
                     exc_info=True,
                 )
-                self._emit("controlplane.outbox_worker.failed", error=self._last_error)
+                self._emit(
+                    f"controlplane.{event_prefix}_worker.failed",
+                    error=self._last_error,
+                )
                 time.sleep(0.1)
                 continue
             if result is None:

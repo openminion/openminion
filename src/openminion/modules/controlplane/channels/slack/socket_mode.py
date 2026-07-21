@@ -17,9 +17,9 @@ from openminion.modules.controlplane.channels.slack.normalization import (
 )
 from openminion.modules.controlplane.channels.slack.runtime.helpers import (
     process_envelope,
+    process_slash_command,
 )
 from openminion.modules.controlplane.channels.slack.slash_commands import (
-    inbound_from_slash,
     parse_slash_payload,
 )
 from openminion.modules.controlplane.contracts.models import DeliveryContext
@@ -119,15 +119,7 @@ class SlackSocketModeRunner:
             return
         if envelope.get("type") == "slash_commands":
             slash = parse_slash_payload(payload)
-            inbound = inbound_from_slash(slash)
-            result = self._runtime.handle_inbound(inbound)
-            if isinstance(result, dict):
-                self._delivery.deliver(
-                    result,
-                    {
-                        "channel_id": slash.channel_id,
-                    },
-                )
+            process_slash_command(self, slash)
             return
         callback = event_callback_from_payload(payload)
         if callback is None:

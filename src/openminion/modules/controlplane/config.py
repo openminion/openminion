@@ -47,8 +47,13 @@ class ControlPlaneConfig:
     path_mode: str = "module_standalone"
     path_source: str = "standalone_default"
     home_root: str | None = None
+    inbox_max_attempts: int = 8
+    inbox_max_backoff_s: int = 300
     outbox_max_attempts: int = 8
     outbox_max_backoff_s: int = 300
+    identity_cache_enabled: bool = False
+    identity_cache_maxsize: int = 1024
+    identity_cache_ttl_seconds: int = 300
     rate_limit_chat_window_s: int = 60
     rate_limit_chat_limit: int = 30
     rate_limit_user_window_s: int = 60
@@ -221,8 +226,15 @@ def _from_dict(
         path_mode=default_path_mode,
         path_source=path_source,
         home_root=str(home_root) if home_root else None,
+        inbox_max_attempts=int(raw.get("inbox_max_attempts", 8)),
+        inbox_max_backoff_s=int(raw.get("inbox_max_backoff_s", 300)),
         outbox_max_attempts=int(raw.get("outbox_max_attempts", 8)),
         outbox_max_backoff_s=int(raw.get("outbox_max_backoff_s", 300)),
+        identity_cache_enabled=_as_bool(
+            raw.get("identity_cache_enabled"), default=False
+        ),
+        identity_cache_maxsize=int(raw.get("identity_cache_maxsize", 1024)),
+        identity_cache_ttl_seconds=int(raw.get("identity_cache_ttl_seconds", 300)),
         rate_limit_chat_window_s=int(raw.get("rate_limit_chat_window_s", 60)),
         rate_limit_chat_limit=int(raw.get("rate_limit_chat_limit", 30)),
         rate_limit_user_window_s=int(raw.get("rate_limit_user_window_s", 60)),
