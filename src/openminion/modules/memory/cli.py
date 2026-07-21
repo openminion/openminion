@@ -67,6 +67,7 @@ from openminion.modules.cli_common import (
 from openminion.base.constants import OPENMINION_DATA_ROOT_ENV, OPENMINION_HOME_ENV
 from openminion.modules.storage.cli_registrar import register_storage_commands
 from openminion.modules.storage.module_cli import build_storage_argv, run_storage_argv
+from openminion.modules.memory.review_cli import register_review_commands
 
 
 def _get_service(db: Optional[str] = None) -> MemoryService:
@@ -913,6 +914,7 @@ def _build_app() -> typer.Typer:
     _register_trace_commands(trace_app)
     _register_read_commands(app)
     _register_write_commands(app)
+    register_review_commands(app, service_factory=_get_service)
     app.add_typer(storage_app, name="storage")
     app.add_typer(trace_app, name="trace")
     return app

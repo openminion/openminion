@@ -30,7 +30,7 @@ dependencies = [
   "platformdirs",
   # The public ``openminion`` package imports memory contracts and agent
   # runtime surfaces that depend on the released SophiaGraph package.
-  "sophiagraph>=0.0.1",
+  "sophiagraph>=0.0.4",
   "psutil>=5",
   "pydantic>=2",
   "pyfiglet>=1.0,<2",

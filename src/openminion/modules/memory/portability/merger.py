@@ -5,6 +5,7 @@ from typing import Any
 from openminion.base.time import utc_now_iso as _now_iso
 from openminion.modules.memory.models import (
     MemoryCandidate,
+    MemoryNamespace,
     MemoryRecord,
     MemoryRelation,
     MemoryTierTransition,
@@ -166,10 +167,15 @@ class MemoryMerger:
             }
         )
         new_id = id_map.get(record.id, record.id)
+        rewritten_scope = _rewrite_scope(record.scope, options.scope_rewrites)
+        namespace = record.namespace
+        if namespace == MemoryNamespace.from_scope(record.scope):
+            namespace = MemoryNamespace.from_scope(rewritten_scope)
         return replace(
             record,
             id=new_id,
-            scope=_rewrite_scope(record.scope, options.scope_rewrites),  # type: ignore[arg-type]
+            scope=rewritten_scope,  # type: ignore[arg-type]
+            namespace=namespace,
             meta=rewritten_meta,
             supersedes_id=id_map.get(record.supersedes_id, record.supersedes_id)
             if record.supersedes_id

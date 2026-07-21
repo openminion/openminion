@@ -12,6 +12,7 @@ __all__ = [
     "InboxWorker",
     "OutboxWorker",
     "Router",
+    "ScopeAuthorizer",
     "CONTROLPLANE_INTERFACE_VERSION",
     "ensure_controlplane_component_compatibility",
     "deliver_cron_result",
@@ -33,6 +34,7 @@ from .contracts.models import (
     ResolvedContext,
 )
 from .runtime.router import Router
+from .runtime.security import ScopeAuthorizer
 from .runtime import RuntimeCoordinator
 from .storage.store import SQLiteControlPlaneStore
 from .runtime.store import InMemoryControlPlaneStore

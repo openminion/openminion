@@ -132,7 +132,6 @@ services/runtime/a2a_delegate.py	openminion.modules.tool.runtime.delegation
 services/runtime/bootstrap.py	openminion.modules.policy.runtime.action_policy
 services/runtime/bootstrap.py	openminion.modules.storage.runtime.idempotency_store
 services/runtime/bootstrap.py	openminion.modules.storage.runtime.session_store
-services/runtime/channel_supervisor.py	openminion.modules.controlplane.runtime.worker.outbox
 services/runtime/controlplane.py	openminion.modules.controlplane.runtime
 services/runtime/controlplane.py	openminion.modules.controlplane.runtime.audit
 services/runtime/controlplane.py	openminion.modules.controlplane.runtime.auth

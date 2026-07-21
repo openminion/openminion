@@ -30,6 +30,7 @@ from openminion.modules.controlplane.runtime.rate_limit import (
 )
 from openminion.modules.controlplane.runtime.router import Router
 from openminion.modules.controlplane.runtime.worker.outbox import OutboxWorker
+from openminion.modules.controlplane import InboxWorker, ScopeAuthorizer
 from openminion.modules.controlplane.storage import (
     SQLiteControlPlaneStore,
     build_controlplane_store,
@@ -56,6 +57,7 @@ class ControlPlaneRuntimeComponents:
     dispatcher: ControlPlaneDispatcher
     rate_limiter: ControlPlaneRateLimiter
     delivery_registry: ChannelRegistry
+    inbox_worker: InboxWorker
     outbox_worker: OutboxWorker
     metrics: MetricsRegistry
     sidecar_specs: list[Any]
@@ -114,14 +116,6 @@ def build_controlplane_runtime_components(
         audit_logger=audit_logger,
         identity_api=identity_api,
     )
-    delivery_registry = ChannelRegistry()
-    outbox_worker = OutboxWorker(
-        store=store,
-        registry=delivery_registry,
-        audit_logger=audit_logger,
-        max_attempts=cp_cfg.outbox_max_attempts,
-        max_backoff_s=cp_cfg.outbox_max_backoff_s,
-    )
     rate_limiter = ControlPlaneRateLimiter(
         store=store,
         policy=RateLimitPolicy(
@@ -132,6 +126,21 @@ def build_controlplane_runtime_components(
             session_window_s=cp_cfg.rate_limit_session_window_s,
             session_limit=cp_cfg.rate_limit_session_limit,
         ),
+    )
+    delivery_registry = ChannelRegistry()
+    inbox_worker = InboxWorker(
+        store=store,
+        dispatcher=dispatcher,
+        authorizer=ScopeAuthorizer(store=store),
+        rate_limiter=rate_limiter,
+        audit_logger=audit_logger,
+    )
+    outbox_worker = OutboxWorker(
+        store=store,
+        registry=delivery_registry,
+        audit_logger=audit_logger,
+        max_attempts=cp_cfg.outbox_max_attempts,
+        max_backoff_s=cp_cfg.outbox_max_backoff_s,
     )
     return ControlPlaneRuntimeComponents(
         config=cp_cfg,
@@ -146,6 +155,7 @@ def build_controlplane_runtime_components(
         dispatcher=dispatcher,
         rate_limiter=rate_limiter,
         delivery_registry=delivery_registry,
+        inbox_worker=inbox_worker,
         outbox_worker=outbox_worker,
         metrics=metrics,
         sidecar_specs=build_controlplane_sidecar_specs(

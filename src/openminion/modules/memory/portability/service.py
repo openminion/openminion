@@ -5,11 +5,24 @@ from datetime import datetime, timezone
 from typing import Any
 import uuid
 
+from sophiagraph.portability import (
+    MemoryReviewArtifact,
+    MemoryReviewDecisionReceipt,
+    MemoryReviewPlan,
+)
+
 from openminion.base.time import utc_now_iso as _now_iso
 from openminion.modules.memory.contracts.provenance import TurnProvenanceTrace
 from openminion.modules.memory.errors import InvalidArgumentError
 from openminion.modules.memory.portability.codec import build_manifest
 from openminion.modules.memory.portability.merger import MemoryMerger
+from openminion.modules.memory.portability.review import (
+    apply_review_plan,
+    build_review_plan,
+    decide_review_plan,
+    emit_review_event,
+    export_review_artifact,
+)
 from openminion.modules.memory.portability.models import (
     MemoryBundleExportOptions,
     MemoryBundleImportOptions,
@@ -162,6 +175,66 @@ class MemoryBundleServiceOps:
         options: MemoryBundleImportOptions,
     ) -> MemoryBundleImportResult:
         return MemoryMerger(self._service).import_snapshot(snapshot, options)
+
+    def export_review_artifact(
+        self, options: MemoryBundleExportOptions
+    ) -> MemoryReviewArtifact:
+        return export_review_artifact(self._service, options)
+
+    def plan_review_import(
+        self,
+        artifact: MemoryReviewArtifact,
+        options: MemoryBundleImportOptions,
+    ) -> MemoryReviewPlan:
+        plan = build_review_plan(self._service, artifact, options)
+        emit_review_event(
+            self._service,
+            "memory.review.planned",
+            plan_id=plan.plan_id,
+            artifact_sha256=plan.artifact_sha256,
+            plan_sha256=plan.plan_sha256,
+            target_identity=plan.target_identity,
+        )
+        return plan
+
+    def decide_review_import(
+        self,
+        plan: MemoryReviewPlan,
+        *,
+        reviewer: str,
+        decision: str,
+        note: str | None = None,
+    ) -> MemoryReviewDecisionReceipt:
+        receipt = decide_review_plan(
+            plan, reviewer=reviewer, decision=decision, note=note
+        )
+        emit_review_event(
+            self._service,
+            "memory.review.decided",
+            plan_id=plan.plan_id,
+            artifact_sha256=plan.artifact_sha256,
+            reviewer=receipt.reviewer,
+            decision=receipt.decision,
+        )
+        return receipt
+
+    def apply_review_import(
+        self,
+        artifact: MemoryReviewArtifact,
+        plan: MemoryReviewPlan,
+        receipt: MemoryReviewDecisionReceipt | None,
+        options: MemoryBundleImportOptions,
+        *,
+        generated_root=None,
+    ) -> MemoryBundleImportResult:
+        return apply_review_plan(
+            self._service,
+            artifact,
+            plan,
+            receipt,
+            options,
+            generated_root=generated_root,
+        )
 
     def delete_record(
         self,

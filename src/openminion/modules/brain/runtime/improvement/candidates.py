@@ -31,6 +31,7 @@ ImprovementCandidateState = Literal[
 ]
 ImprovementCandidateRisk = Literal["low", "medium", "high"]
 ImprovementCandidateReviewMode = Literal["review_first", "manual", "automatic"]
+ImprovementCandidateSemanticAuthorSource = Literal["llm", "operator", "imported"]
 
 IMPROVEMENT_CANDIDATE_TARGETS: tuple[ImprovementCandidateTarget, ...] = (
     "memory",
@@ -75,6 +76,7 @@ class ImprovementCandidate(BaseModel):
     updated_at: str = Field(default_factory=_utc_now_iso)
     actor_id: str = "runtime"
     source: str = "self_improvement"
+    semantic_author_source: ImprovementCandidateSemanticAuthorSource | None = None
 
     def transition(self, state: ImprovementCandidateState) -> "ImprovementCandidate":
         if state in {"promoted", "rolled_back"} and not self.evidence_refs:
@@ -238,6 +240,57 @@ def stage_memory_candidate(
     }
 
 
+def stage_learning_memory_candidate(
+    candidate: ImprovementCandidate | Mapping[str, Any],
+    *,
+    memory_service: Any,
+    session_id: str,
+    agent_id: str,
+    trace_id: str | None = None,
+) -> ImprovementCandidateStageResult:
+    """Stage an explicitly authored semantic lesson as a memory candidate."""
+
+    candidate_obj = (
+        candidate
+        if isinstance(candidate, ImprovementCandidate)
+        else ImprovementCandidate.model_validate(candidate)
+    )
+    if candidate_obj.target_type != "memory":
+        return ImprovementCandidateStageResult(
+            candidate_id=candidate_obj.candidate_id,
+            target_type=candidate_obj.target_type,
+            status="skipped",
+            reason_code="memory_learning_target_required",
+        )
+    if candidate_obj.semantic_author_source is None:
+        return ImprovementCandidateStageResult(
+            candidate_id=candidate_obj.candidate_id,
+            target_type=candidate_obj.target_type,
+            status="skipped",
+            reason_code="semantic_author_source_required",
+        )
+    if candidate_obj.state != "staged":
+        return ImprovementCandidateStageResult(
+            candidate_id=candidate_obj.candidate_id,
+            target_type=candidate_obj.target_type,
+            status="skipped",
+            reason_code="candidate_state_not_stageable",
+        )
+    owner_result = stage_memory_candidate(
+        candidate_obj,
+        memory_service=memory_service,
+        session_id=session_id,
+        agent_id=agent_id,
+        trace_id=trace_id,
+    )
+    return ImprovementCandidateStageResult(
+        candidate_id=candidate_obj.candidate_id,
+        target_type=candidate_obj.target_type,
+        status="staged",
+        owner_result=dict(owner_result),
+    )
+
+
 def stage_skill_candidate(
     candidate: ImprovementCandidate,
     *,
@@ -356,6 +409,7 @@ __all__ = [
     "ImprovementCandidateRegistry",
     "ImprovementCandidateReviewMode",
     "ImprovementCandidateRisk",
+    "ImprovementCandidateSemanticAuthorSource",
     "ImprovementCandidateStageResult",
     "ImprovementCandidateState",
     "ImprovementCandidateTarget",
@@ -364,6 +418,7 @@ __all__ = [
     "stage_candidate_with_owner",
     "stage_docs_candidate",
     "stage_instruction_candidate",
+    "stage_learning_memory_candidate",
     "stage_memory_candidate",
     "stage_skill_candidate",
 ]

@@ -128,6 +128,35 @@ def test_unwrap_final_answer_envelope_handles_whitespace_padding() -> None:
     assert payload["status"] == "incomplete"
 
 
+@pytest.mark.parametrize(
+    "body",
+    (
+        '<respond({"answer": "Groq smoke OK", "freshness": {"answer_mode": "local_only"}})',
+        '<respond({"answer": "Groq smoke OK", "summary": "completed"})>',
+        '<respond>{"answer": "Groq smoke OK", "freshness": {"answer_mode": "local_only"}}</respond>',
+    ),
+)
+def test_unwrap_final_answer_envelope_accepts_respond_wrapper(body: str) -> None:
+    result = unwrap_final_answer_envelope(body)
+
+    assert result is not None
+    output_text, payload = result
+    assert output_text == "Groq smoke OK"
+    assert payload["status"] == "final_answer"
+    assert payload["output"] == "Groq smoke OK"
+
+
+def test_unwrap_final_answer_envelope_preserves_non_exact_respond_wrapper() -> None:
+    assert (
+        unwrap_final_answer_envelope(
+            'Sure: <respond({"answer": "Groq smoke OK"})>'
+        )
+        is None
+    )
+    assert unwrap_final_answer_envelope("<respond({not-json})>") is None
+    assert unwrap_final_answer_envelope('<respond({"answer": ""})>') is None
+
+
 def test_unwrap_final_answer_envelope_returns_none_for_empty_text() -> None:
     assert unwrap_final_answer_envelope("") is None
     assert unwrap_final_answer_envelope("   ") is None

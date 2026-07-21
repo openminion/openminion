@@ -7,6 +7,7 @@ from openminion.modules.brain.runtime.improvement.candidates import (
     IMPROVEMENT_CANDIDATE_TARGETS,
     ImprovementCandidate,
     ImprovementCandidateRegistry,
+    stage_learning_memory_candidate,
     stage_candidate_with_default_owners,
     stage_candidate_with_owner,
 )
@@ -35,6 +36,22 @@ def test_improvement_candidate_accepts_every_closed_target_type() -> None:
 def test_improvement_candidate_rejects_unknown_target_type() -> None:
     with pytest.raises(ValidationError):
         ImprovementCandidate.model_validate(_candidate("runtime_guess"))
+
+
+def test_improvement_candidate_semantic_author_source_is_additive_and_closed() -> None:
+    legacy = ImprovementCandidate.model_validate(_candidate())
+    assert legacy.semantic_author_source is None
+
+    for author_source in ("llm", "operator", "imported"):
+        candidate = ImprovementCandidate.model_validate(
+            {**_candidate(), "semantic_author_source": author_source}
+        )
+        assert candidate.model_dump(mode="json")["semantic_author_source"] == author_source
+
+    with pytest.raises(ValidationError):
+        ImprovementCandidate.model_validate(
+            {**_candidate(), "semantic_author_source": "runtime"}
+        )
 
 
 def test_improvement_candidate_requires_evidence_for_promotion_and_rollback() -> None:
@@ -107,6 +124,97 @@ def test_default_owner_adapter_stages_memory_candidate_through_memory_service() 
     assert calls[0]["scope"] == "agent:mini"
     assert calls[0]["record_type"] == "fact"
     assert "self_improvement" in calls[0]["tags"]
+
+
+@pytest.mark.parametrize("author_source", ["llm", "operator", "imported"])
+def test_learning_memory_candidate_requires_explicit_semantic_author(
+    author_source: str,
+) -> None:
+    calls: list[dict] = []
+
+    class MemoryService:
+        def stage_candidate(self, **kwargs):
+            calls.append(kwargs)
+            return "mem-candidate-1"
+
+    result = stage_learning_memory_candidate(
+        ImprovementCandidate.model_validate(
+            {
+                **_candidate("memory", evidence=["trace:1"]),
+                "semantic_author_source": author_source,
+            }
+        ),
+        memory_service=MemoryService(),
+        session_id="s1",
+        agent_id="mini",
+        trace_id="trace:1",
+    )
+
+    assert result.status == "staged"
+    assert result.owner_result["candidate_ids"] == ["mem-candidate-1"]
+    assert calls[0]["record_type"] == "fact"
+
+
+def test_learning_memory_candidate_missing_author_does_not_call_owner() -> None:
+    class MemoryService:
+        def stage_candidate(self, **kwargs):
+            raise AssertionError(f"unexpected memory owner call: {kwargs}")
+
+        def promote_candidate(self, *args, **kwargs):
+            raise AssertionError(f"unexpected promotion call: {args}, {kwargs}")
+
+    result = stage_learning_memory_candidate(
+        ImprovementCandidate.model_validate(_candidate("memory")),
+        memory_service=MemoryService(),
+        session_id="s1",
+        agent_id="mini",
+    )
+
+    assert result.status == "skipped"
+    assert result.reason_code == "semantic_author_source_required"
+
+
+def test_learning_memory_candidate_rejects_non_memory_target_without_owner_call() -> None:
+    class MemoryService:
+        def stage_candidate(self, **kwargs):
+            raise AssertionError(f"unexpected memory owner call: {kwargs}")
+
+    result = stage_learning_memory_candidate(
+        ImprovementCandidate.model_validate(
+            {**_candidate("skill"), "semantic_author_source": "llm"}
+        ),
+        memory_service=MemoryService(),
+        session_id="s1",
+        agent_id="mini",
+    )
+
+    assert result.status == "skipped"
+    assert result.reason_code == "memory_learning_target_required"
+
+
+@pytest.mark.parametrize("state", ["under_review", "suppressed", "promoted", "rolled_back", "rejected"])
+def test_learning_memory_candidate_rejects_non_staged_state_without_owner_call(
+    state: str,
+) -> None:
+    class MemoryService:
+        def stage_candidate(self, **kwargs):
+            raise AssertionError(f"unexpected memory owner call: {kwargs}")
+
+    result = stage_learning_memory_candidate(
+        ImprovementCandidate.model_validate(
+            {
+                **_candidate("memory", evidence=["trace:1"]),
+                "semantic_author_source": "operator",
+                "state": state,
+            }
+        ),
+        memory_service=MemoryService(),
+        session_id="s1",
+        agent_id="mini",
+    )
+
+    assert result.status == "skipped"
+    assert result.reason_code == "candidate_state_not_stageable"
 
 
 def test_default_owner_adapter_stages_skill_candidate_through_proposal_queue() -> None:

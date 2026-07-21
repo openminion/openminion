@@ -5,8 +5,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 import uuid
+
+from sophiagraph.portability import (
+    MemoryReviewArtifact,
+    MemoryReviewDecisionReceipt,
+    MemoryReviewPlan,
+)
 
 from openminion.modules.memory.errors import InvalidArgumentError, NotFoundError
 from openminion.modules.memory.models import (
@@ -157,6 +164,47 @@ class MemoryServiceMutationMixin:
         options: MemoryBundleImportOptions,
     ) -> MemoryBundleImportResult:
         return self._bundle_helper().import_bundle_snapshot(snapshot, options)
+
+    def export_review_artifact(
+        self, options: MemoryBundleExportOptions
+    ) -> MemoryReviewArtifact:
+        return self._bundle_helper().export_review_artifact(options)
+
+    def plan_review_import(
+        self,
+        artifact: MemoryReviewArtifact,
+        options: MemoryBundleImportOptions,
+    ) -> MemoryReviewPlan:
+        return self._bundle_helper().plan_review_import(artifact, options)
+
+    def decide_review_import(
+        self,
+        plan: MemoryReviewPlan,
+        *,
+        reviewer: str,
+        decision: str,
+        note: str | None = None,
+    ) -> MemoryReviewDecisionReceipt:
+        return self._bundle_helper().decide_review_import(
+            plan, reviewer=reviewer, decision=decision, note=note
+        )
+
+    def apply_review_import(
+        self,
+        artifact: MemoryReviewArtifact,
+        plan: MemoryReviewPlan,
+        receipt: MemoryReviewDecisionReceipt | None,
+        options: MemoryBundleImportOptions,
+        *,
+        generated_root: str | Path | None = None,
+    ) -> MemoryBundleImportResult:
+        return self._bundle_helper().apply_review_import(
+            artifact,
+            plan,
+            receipt,
+            options,
+            generated_root=generated_root,
+        )
 
     def delete_record(
         self,

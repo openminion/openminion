@@ -48,6 +48,16 @@ class _FakeOutboxWorker:
         return None
 
 
+class _FakeInboxWorker:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run_once(self) -> None:
+        self.calls += 1
+        time.sleep(0.01)
+        return None
+
+
 class _TelemetrySpy:
     def __init__(self) -> None:
         self.events = []
@@ -59,6 +69,7 @@ class _TelemetrySpy:
 def test_supervisor_starts_and_stops_channels_and_outbox() -> None:
     telegram = _FakeChannel("telegram")
     slack = _FakeChannel("slack")
+    inbox = _FakeInboxWorker()
     outbox = _FakeOutboxWorker()
     closed: list[str] = []
     registry = ChannelRegistry()
@@ -66,15 +77,22 @@ def test_supervisor_starts_and_stops_channels_and_outbox() -> None:
     registry.register(slack)
     supervisor = ChannelRuntimeSupervisor(
         channels=registry,
+        inbox_worker=inbox,  # type: ignore[arg-type]
         outbox_worker=outbox,  # type: ignore[arg-type]
         close_runtime=lambda: closed.append("closed"),
     )
 
     supervisor.start()
-    wait_until(lambda: telegram.started and slack.started and outbox.calls > 0)
+    wait_until(
+        lambda: telegram.started
+        and slack.started
+        and inbox.calls > 0
+        and outbox.calls > 0
+    )
     running = supervisor.status()
 
     assert running.state == "running"
+    assert running.inbox_worker_alive is True
     assert running.outbox_worker_alive is True
     assert telegram._outbox_managed_by_supervisor is True
     assert slack._outbox_managed_by_supervisor is True
@@ -88,6 +106,8 @@ def test_supervisor_starts_and_stops_channels_and_outbox() -> None:
     assert slack.stopped is True
     assert closed == ["closed"]
     assert supervisor.status().state == "stopped"
+    assert supervisor.status().inbox_worker_alive is False
+    assert supervisor.status().outbox_worker_alive is False
 
 
 def test_supervisor_redacts_channel_failure_details() -> None:

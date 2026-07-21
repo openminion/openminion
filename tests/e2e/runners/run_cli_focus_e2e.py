@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 
 _ROOT = Path(__file__).resolve().parents[3]
 _PYTHON = _ROOT / ".venv" / "bin" / "python3.11"
+_SUMMARY_ENV = "OPENMINION_CLI_FOCUS_E2E_SUMMARY_OUTPUT"
 
 
 @dataclass(frozen=True)
@@ -178,6 +181,36 @@ def _run(
     return subprocess.call(command, cwd=_ROOT, env=env)
 
 
+def _write_run_summary(
+    *,
+    path: Path | None,
+    mode: str,
+    suite: Suite,
+    exit_code: int,
+    elapsed_seconds: float,
+) -> None:
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "mode": mode,
+                "paths": list(suite.paths),
+                "extra_args": list(suite.extra_args),
+                "live": suite.live,
+                "complex": suite.complex,
+                "exit_code": exit_code,
+                "elapsed_seconds": round(elapsed_seconds, 3),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     mode = args[0] if args else "local"
@@ -196,7 +229,18 @@ def main(argv: list[str] | None = None) -> int:
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
     if suite.complex:
         env["OPENMINION_LIVE_CLI_FOCUS_COMPLEX_E2E"] = "1"
-    return _run(suite.paths, env=env, extra_args=suite.extra_args)
+    summary_path_raw = str(env.get(_SUMMARY_ENV, "")).strip()
+    summary_path = Path(summary_path_raw).expanduser() if summary_path_raw else None
+    started = time.monotonic()
+    exit_code = _run(suite.paths, env=env, extra_args=suite.extra_args)
+    _write_run_summary(
+        path=summary_path,
+        mode=mode,
+        suite=suite,
+        exit_code=exit_code,
+        elapsed_seconds=time.monotonic() - started,
+    )
+    return exit_code
 
 
 if __name__ == "__main__":

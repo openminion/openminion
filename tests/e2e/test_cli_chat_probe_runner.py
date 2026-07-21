@@ -12,6 +12,7 @@ from tests.e2e.runners.run_cli_chat_probe import (
     _latest_prompt_requires_confirmation,
     main,
     _parse_probe_status,
+    _probe_requirement_failure,
     _shutdown_timeout_can_count_as_success,
     _turn_response_boundary_detected,
 )
@@ -161,6 +162,20 @@ def test_build_summary_collects_typed_strategy_fields() -> None:
             "type": "brain.research.progress",
             "payload": {"resume_count": 1, "last_checkpoint_id": "cp-1"},
         },
+        {
+            "type": "tool.request",
+            "payload": {
+                "tool_name": "file.read",
+                "act_profile": "coding",
+            },
+        },
+        {
+            "type": "tool.completed",
+            "payload": {
+                "tool_name": "file.read",
+                "status": "success",
+            },
+        },
     ]
     audit_rows = [
         {
@@ -185,6 +200,9 @@ def test_build_summary_collects_typed_strategy_fields() -> None:
     assert summary["observed_act_profiles"] == ["coding"]
     assert summary["observed_routes"] == ["act_loop_adaptive"]
     assert summary["tool_names"] == ["file.read"]
+    assert summary["tool_audit_event_count"] == 1
+    assert summary["tool_session_event_count"] == 2
+    assert summary["tool_event_count"] == 3
     assert summary["tool_failure_count"] == 0
     assert summary["coding_payload_hits"] == [
         {
@@ -347,3 +365,86 @@ def test_main_writes_preflight_artifacts_for_missing_live_provider_env(
     assert json.loads(events_path.read_text(encoding="utf-8")) == []
     assert summary["probe_status"] == {"phase": "config_env_missing", "exit_code": 2}
     assert summary["tool_event_count"] == 0
+
+
+def test_probe_requirement_accepts_required_tool_events_and_names() -> None:
+    summary = {"tool_event_count": 2, "tool_names": ["time.current", "file.read"]}
+
+    assert (
+        _probe_requirement_failure(
+            summary,
+            min_tool_events=1,
+            required_tool_names=("time.current",),
+        )
+        is None
+    )
+
+
+def test_probe_requirement_rejects_missing_tool_events() -> None:
+    assert (
+        _probe_requirement_failure(
+            {"tool_event_count": 0, "tool_names": []},
+            min_tool_events=1,
+        )
+        == "expected at least 1 tool event(s), observed 0"
+    )
+
+
+def test_probe_requirement_rejects_missing_tool_name() -> None:
+    message = _probe_requirement_failure(
+        {"tool_event_count": 2, "tool_names": ["time.current"]},
+        min_tool_events=1,
+        required_tool_names=("file.read",),
+    )
+
+    assert message == (
+        "missing required tool name(s): file.read; observed: time.current"
+    )
+
+
+def test_probe_requirement_accepts_assistant_output_marker() -> None:
+    assert (
+        _probe_requirement_failure(
+            {"tool_event_count": 0, "tool_names": []},
+            output=(
+                "❯ Reply with exactly: Groq smoke OK\n"
+                "Reply with exactly: Groq smoke OK\n"
+                "⏺ Groq smoke OK\n"
+            ),
+            messages=("Reply with exactly: Groq smoke OK",),
+            required_output_markers=("Groq smoke OK",),
+        )
+        is None
+    )
+
+
+def test_probe_requirement_accepts_prompt_prefixed_assistant_output_marker() -> None:
+    assert (
+        _probe_requirement_failure(
+            {"tool_event_count": 0, "tool_names": []},
+            output=(
+                "❯ Reply with exactly: Groq smoke OK\n"
+                "Reply with exactly: Groq smoke OK\n"
+                "❯ ⏺ <respond>{\"answer\": \"Groq smoke OK\"}</respond>\n"
+            ),
+            messages=("Reply with exactly: Groq smoke OK",),
+            required_output_markers=("Groq smoke OK",),
+        )
+        is None
+    )
+
+
+def test_probe_requirement_rejects_marker_that_only_appears_in_echoed_prompt() -> None:
+    assert (
+        _probe_requirement_failure(
+            {"tool_event_count": 0, "tool_names": []},
+            output=(
+                "❯ Reply with exactly: OpenRouter GPT smoke OK\n"
+                "Reply with exactly: OpenRouter GPT smoke OK\n"
+                "⏺ Provider quota exceeded.\n"
+            ),
+            messages=("Reply with exactly: OpenRouter GPT smoke OK",),
+            required_output_markers=("OpenRouter GPT smoke OK",),
+        )
+        == "missing required assistant output marker(s): OpenRouter GPT smoke OK"
+    )
