@@ -79,9 +79,12 @@ def adapter_result_to_llm_response(result: ProviderAdapterResult) -> LLMResponse
         usage = usage.model_copy(
             update={
                 "total_tokens": int(usage.input_tokens or 0)
-                + int(usage.output_tokens or 0)
+                + int(usage.output_tokens or 0),
+                "total_source": "derived",
             }
         )
+    elif usage.total_source is None:
+        usage = usage.model_copy(update={"total_source": "provider"})
 
     telemetry = dict(result.telemetry or {})
     if result.normalization_meta:

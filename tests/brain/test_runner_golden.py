@@ -79,8 +79,14 @@ def test_golden_no_tool_turn_event_order(tmp_path: Path) -> None:
     assert "brain.entry" in types
     assert "summary.updated" in types
 
-    completed = next(event for event in events if event["type"] == "llm.call.completed")
+    completed = next(
+        event
+        for event in events
+        if event["type"] == "llm.call.completed"
+        and event["payload"].get("purpose") == "entry"
+    )
     assert completed["payload"]["provider"] == "local"
+    assert completed["payload"]["usage"]["total_source"] == "derived"
 
     assert _index_of(types, "brain.interpret") < _index_of(types, "llm.call.started")
     assert _index_of(types, "llm.call.started") < _index_of(types, "llm.call.completed")

@@ -422,7 +422,12 @@ def _llm_response(
             [Message(role="assistant", content=output_text)] if output_text else []
         ),
         tool_calls=list(tool_calls or []),
-        usage=UsageInfo(input_tokens=1, output_tokens=1, total_tokens=2),
+        usage=UsageInfo(
+            input_tokens=1,
+            output_tokens=1,
+            total_tokens=2,
+            total_source="derived",
+        ),
         latency_ms=0,
         finish_reason="tool_calls" if tool_calls else "stop",
         provider_raw={},

@@ -36,6 +36,16 @@ def _format_summary(summary: TokenUsageSummary) -> str:
     ]
     if not summary.records:
         lines.append("no token usage events")
+    else:
+        lines.append(
+            "totals: "
+            f"provider={summary.total_provider_tokens} "
+            f"derived={summary.total_derived_tokens} "
+            f"input={summary.total_input_tokens} "
+            f"output={summary.total_output_tokens} "
+            f"cache_read={summary.total_cache_read_tokens} "
+            f"cache_write={summary.total_cache_write_tokens}"
+        )
     grouped: dict[tuple[str, str, str, str, str], int] = defaultdict(int)
     for record in summary.records:
         key = (

@@ -19,6 +19,7 @@ from openminion.modules.brain.schemas import (
     ExecutionTargetPayload,
     WorkingState,
 )
+from openminion.modules.llm.client_call import usage_payload_from_response_usage
 
 from .entry import (
     ENTRY_CODING_TOOL_NAME,
@@ -31,18 +32,19 @@ from .failures import _internal_failure_answer
 
 def _response_usage_payload(response: Any) -> dict[str, Any]:
     usage = getattr(response, "usage", None)
-    if usage is None:
-        return {}
-    if hasattr(usage, "model_dump"):
-        payload = usage.model_dump(mode="json")
-        if isinstance(payload, dict):
-            return payload
-    if isinstance(usage, dict):
-        return dict(usage)
+    normalized = usage_payload_from_response_usage(usage)
+    field_map = {
+        "prompt_tokens": "input_tokens",
+        "completion_tokens": "output_tokens",
+        "total_tokens": "total_tokens",
+        "total_source": "total_source",
+        "cached_tokens": "cached_tokens",
+        "cache_creation_tokens": "cache_creation_tokens",
+    }
     return {
-        "input_tokens": int(getattr(usage, "input_tokens", 0) or 0),
-        "output_tokens": int(getattr(usage, "output_tokens", 0) or 0),
-        "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+        output_key: normalized[source_key]
+        for source_key, output_key in field_map.items()
+        if source_key in normalized
     }
 
 

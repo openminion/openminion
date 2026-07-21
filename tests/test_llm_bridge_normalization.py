@@ -3,9 +3,13 @@ from __future__ import annotations
 import pytest
 from unittest.mock import patch
 
-from openminion.modules.llm.providers.bridge import LLMCTLBridgeProvider
+from openminion.modules.llm.providers.bridge import (
+    LLMCTLBridgeProvider,
+    _bridge_usage_payload,
+)
 from openminion.modules.llm.providers.base import ProviderRequest, ProviderToolSpec
 from openminion.modules.llm.providers.contracts import ProviderError
+from openminion.modules.llm.schemas import UsageInfo
 
 
 class _FakeUsage:
@@ -15,6 +19,28 @@ class _FakeUsage:
         self.input_tokens = input_tokens
         self.output_tokens = output_tokens
         self.total_tokens = total_tokens
+
+
+def test_bridge_usage_preserves_total_provenance_and_cache_dimensions() -> None:
+    usage = _bridge_usage_payload(
+        UsageInfo(
+            input_tokens=10,
+            output_tokens=5,
+            total_tokens=15,
+            total_source="derived",
+            cached_tokens=4,
+            cache_creation_tokens=2,
+        )
+    )
+
+    assert usage == {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "total_source": "derived",
+        "cached_tokens": 4,
+        "cache_creation_tokens": 2,
+    }
 
 
 class _FakeToolCall:

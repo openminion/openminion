@@ -77,6 +77,20 @@ def test_adapter_result_to_llm_response_infers_assistant_message() -> None:
     assert len(response.assistant_messages) == 1
     assert response.assistant_messages[0].content == "hello"
     assert response.finish_reason == "stop"
+    assert response.usage.total_source == "provider"
+
+
+def test_adapter_result_marks_inferred_total_as_derived() -> None:
+    response = adapter_result_to_llm_response(
+        ProviderAdapterResult(
+            provider="adapter",
+            model="v1",
+            usage=UsageInfo(input_tokens=2, output_tokens=3),
+        )
+    )
+
+    assert response.usage.total_tokens == 5
+    assert response.usage.total_source == "derived"
 
 
 def test_coerce_provider_output_accepts_adapter_result_dict_shape() -> None:
