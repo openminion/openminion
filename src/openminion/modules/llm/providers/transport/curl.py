@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import uuid
+from collections.abc import Callable
 from typing import Any, Mapping
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
@@ -15,6 +16,8 @@ from .debug import (
     write_llm_debug_event,
 )
 from .trace import trace_http_json_request, trace_http_json_response
+
+_DebugWriter = Callable[[dict[str, Any]], None]
 
 
 def curl_json_post(
@@ -32,26 +35,21 @@ def curl_json_post(
 ) -> dict[str, Any]:
     env_owner = resolve_environment_config(env=env)
     request_headers = with_default_user_agent_fn(headers)
-
-    def _write(event: dict[str, Any]) -> None:
-        write_llm_debug_event(event, env=env_owner)
-
+    write_event = _curl_debug_writer(env_owner)
     trace_id = uuid.uuid4().hex
     max_chars = llm_debug_max_chars(env=env_owner)
-    _write(
-        {
-            "event": "request",
-            "provider": provider_name,
-            "trace_id": trace_id,
-            "url": url,
-            "timeout_seconds": timeout_seconds,
-            "payload": truncate_debug_value(payload, max_chars),
-            "transport": "curl",
-        }
-    )
-
     serialized_body = body_json if body_json is not None else json.dumps(payload)
-    trace_http_json_request(
+
+    _write_curl_request_event(
+        write_event=write_event,
+        provider_name=provider_name,
+        trace_id=trace_id,
+        url=url,
+        timeout_seconds=timeout_seconds,
+        payload=payload,
+        max_chars=max_chars,
+    )
+    _trace_curl_request(
         trace_metadata=trace_metadata,
         provider_name=provider_name,
         url=url,
@@ -59,36 +57,27 @@ def curl_json_post(
         payload=payload,
         headers=request_headers,
         timeout_seconds=timeout_seconds,
-        transport="curl",
         env=env_owner,
     )
 
     if shutil.which("curl") is None:
         raise LLMCtlError("PROVIDER_ERROR", f"{provider_name} request failed: {reason}")
 
-    result = subprocess.run(
-        _curl_args(
-            url=url,
-            request_headers=request_headers,
-            serialized_body=serialized_body,
-            timeout_seconds=timeout_seconds,
-        ),
-        text=True,
-        capture_output=True,
+    result = _run_curl_post(
+        url=url,
+        request_headers=request_headers,
+        serialized_body=serialized_body,
+        timeout_seconds=timeout_seconds,
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip() or reason
-        _write(
-            {
-                "event": "error",
-                "provider": provider_name,
-                "trace_id": trace_id,
-                "url": url,
-                "error": detail[:max_chars],
-                "transport": "curl",
-            }
-        )
-        raise LLMCtlError("PROVIDER_ERROR", f"{provider_name} request failed: {detail}")
+    _raise_curl_process_error(
+        result=result,
+        reason=reason,
+        provider_name=provider_name,
+        trace_id=trace_id,
+        url=url,
+        max_chars=max_chars,
+        write_event=write_event,
+    )
 
     raw_body, status_code = _split_curl_response(result.stdout)
     if status_code >= 400:
@@ -101,7 +90,7 @@ def curl_json_post(
             trace_id=trace_id,
             max_chars=max_chars,
             env_owner=env_owner,
-            write_event=_write,
+            write_event=write_event,
         )
         _raise_status_error(
             provider_name=provider_name,
@@ -118,9 +107,128 @@ def curl_json_post(
         trace_id=trace_id,
         max_chars=max_chars,
         env_owner=env_owner,
-        write_event=_write,
+        write_event=write_event,
     )
-    _write(
+    _write_curl_response_event(
+        write_event=write_event,
+        provider_name=provider_name,
+        trace_id=trace_id,
+        url=url,
+        parsed=parsed,
+        max_chars=max_chars,
+    )
+    return parsed
+
+
+def _curl_debug_writer(env_owner: EnvironmentConfig) -> _DebugWriter:
+    def _write(event: dict[str, Any]) -> None:
+        write_llm_debug_event(event, env=env_owner)
+
+    return _write
+
+
+def _write_curl_request_event(
+    *,
+    write_event: _DebugWriter,
+    provider_name: str,
+    trace_id: str,
+    url: str,
+    timeout_seconds: int,
+    payload: dict[str, Any],
+    max_chars: int,
+) -> None:
+    write_event(
+        {
+            "event": "request",
+            "provider": provider_name,
+            "trace_id": trace_id,
+            "url": url,
+            "timeout_seconds": timeout_seconds,
+            "payload": truncate_debug_value(payload, max_chars),
+            "transport": "curl",
+        }
+    )
+
+
+def _trace_curl_request(
+    *,
+    trace_metadata: dict[str, Any] | None,
+    provider_name: str,
+    url: str,
+    body_json: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout_seconds: int,
+    env: EnvironmentConfig,
+) -> None:
+    trace_http_json_request(
+        trace_metadata=trace_metadata,
+        provider_name=provider_name,
+        url=url,
+        body_json=body_json,
+        payload=payload,
+        headers=headers,
+        timeout_seconds=timeout_seconds,
+        transport="curl",
+        env=env,
+    )
+
+
+def _run_curl_post(
+    *,
+    url: str,
+    request_headers: dict[str, str],
+    serialized_body: str,
+    timeout_seconds: int,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        _curl_args(
+            url=url,
+            request_headers=request_headers,
+            serialized_body=serialized_body,
+            timeout_seconds=timeout_seconds,
+        ),
+        text=True,
+        capture_output=True,
+    )
+
+
+def _raise_curl_process_error(
+    *,
+    result: subprocess.CompletedProcess[str],
+    reason: str,
+    provider_name: str,
+    trace_id: str,
+    url: str,
+    max_chars: int,
+    write_event: _DebugWriter,
+) -> None:
+    if result.returncode == 0:
+        return
+    detail = (result.stderr or result.stdout or "").strip() or reason
+    write_event(
+        {
+            "event": "error",
+            "provider": provider_name,
+            "trace_id": trace_id,
+            "url": url,
+            "error": detail[:max_chars],
+            "transport": "curl",
+        }
+    )
+    raise LLMCtlError("PROVIDER_ERROR", f"{provider_name} request failed: {detail}")
+
+
+def _write_curl_response_event(
+    *,
+    write_event: _DebugWriter,
+    provider_name: str,
+    trace_id: str,
+    url: str,
+    parsed: dict[str, Any],
+    max_chars: int,
+) -> None:
+    write_event(
         {
             "event": "response",
             "provider": provider_name,
@@ -130,7 +238,6 @@ def curl_json_post(
             "transport": "curl",
         }
     )
-    return parsed
 
 
 def _curl_args(

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 from urllib.parse import urlparse
 
 from ..errors import LLMCtlError

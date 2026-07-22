@@ -1,7 +1,8 @@
 """Typed contracts for provider behavior profiles."""
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.llm.providers.behavior.constants import (
     DEFAULT_FALLBACK_PARSER_POLICY,

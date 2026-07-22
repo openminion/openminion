@@ -1,7 +1,8 @@
 import json
 from pathlib import Path
 import time
-from typing import Any, Dict, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.telemetry.constants import TRACE_HOME_ROOT_METADATA_KEY
@@ -14,8 +15,8 @@ from openminion.modules.telemetry.trace.layout import (
 )
 
 
-def _redact_headers(headers: Dict[str, str]) -> Dict[str, str]:
-    redacted: Dict[str, str] = {}
+def _redact_headers(headers: dict[str, str]) -> dict[str, str]:
+    redacted: dict[str, str] = {}
     for key, value in dict(headers or {}).items():
         lowered = str(key).strip().lower()
         if lowered in {"authorization", "x-api-key", "api-key"}:
@@ -76,12 +77,12 @@ def _resolve_trace_path(
 
 def trace_http_json_request(
     *,
-    trace_metadata: Dict[str, Any] | None,
+    trace_metadata: dict[str, Any] | None,
     provider_name: str,
     url: str,
     body_json: str,
-    payload: Dict[str, Any] | None,
-    headers: Dict[str, str],
+    payload: dict[str, Any] | None,
+    headers: dict[str, str],
     timeout_seconds: int,
     transport: str,
     method: str = "POST",
@@ -138,7 +139,7 @@ def trace_http_json_request(
 
 def trace_http_json_response(
     *,
-    trace_metadata: Dict[str, Any] | None,
+    trace_metadata: dict[str, Any] | None,
     provider_name: str,
     url: str,
     status_code: int,

@@ -1,6 +1,4 @@
 from difflib import SequenceMatcher
-from typing import Optional
-
 from ..constants import LLM_CANDIDATE_STATUS_SUCCESS
 from .coercion import _normalize_text
 from .schemas import (
@@ -14,8 +12,8 @@ from .schemas import (
 
 def compute_disagreement(
     candidates: list[CandidateResponse],
-    config: Optional[DisagreementConfig],
-) -> Optional[DisagreementReport]:
+    config: DisagreementConfig | None,
+) -> DisagreementReport | None:
     if config is None or not config.enabled:
         return None
     successful = [

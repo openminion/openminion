@@ -35,14 +35,9 @@ def resolve_cortensor_runtime_config(
     ).strip()
     max_tokens_override_raw = str(resolved_env.get("CORTENSOR_MAX_TOKENS", "")).strip()
 
-    session_id_override = provider_config.session_id
-    if session_id_override_raw:
-        try:
-            parsed = int(session_id_override_raw)
-            if parsed > 0:
-                session_id_override = parsed
-        except ValueError:
-            pass
+    session_id_override = _positive_int_override(
+        provider_config.session_id, session_id_override_raw
+    )
 
     session_ids_override = list(provider_config.session_ids)
     if session_ids_override_raw:
@@ -70,32 +65,19 @@ def resolve_cortensor_runtime_config(
         if parsed_ephemeral_ids:
             ephemeral_session_ids_override = parsed_ephemeral_ids
 
-    session_parallel_requests_override = provider_config.session_parallel_requests
-    if session_parallel_requests_override_raw:
-        try:
-            parsed_parallel = int(session_parallel_requests_override_raw)
-            if parsed_parallel > 0:
-                session_parallel_requests_override = parsed_parallel
-        except ValueError:
-            pass
+    session_parallel_requests_override = _positive_int_override(
+        provider_config.session_parallel_requests,
+        session_parallel_requests_override_raw,
+    )
 
-    session_retry_rounds_override = provider_config.session_retry_rounds
-    if session_retry_rounds_override_raw:
-        try:
-            parsed_retry_rounds = int(session_retry_rounds_override_raw)
-            if parsed_retry_rounds > 0:
-                session_retry_rounds_override = parsed_retry_rounds
-        except ValueError:
-            pass
+    session_retry_rounds_override = _positive_int_override(
+        provider_config.session_retry_rounds,
+        session_retry_rounds_override_raw,
+    )
 
-    max_tokens_override = provider_config.max_tokens
-    if max_tokens_override_raw:
-        try:
-            parsed_max_tokens = int(max_tokens_override_raw)
-            if parsed_max_tokens > 0:
-                max_tokens_override = parsed_max_tokens
-        except ValueError:
-            pass
+    max_tokens_override = _positive_int_override(
+        provider_config.max_tokens, max_tokens_override_raw
+    )
 
     return replace(
         provider_config,
@@ -110,6 +92,16 @@ def resolve_cortensor_runtime_config(
         session_retry_rounds=session_retry_rounds_override,
         max_tokens=max_tokens_override,
     )
+
+
+def _positive_int_override(default: int, raw_value: str) -> int:
+    if not raw_value:
+        return default
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _parse_positive_session_ids_csv(raw_value: str) -> list[int]:

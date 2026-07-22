@@ -1,7 +1,8 @@
 """Provider tool-choice compatibility and retry helpers."""
 
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from openminion.base.config.env import EnvironmentConfig
@@ -95,6 +96,8 @@ def complete_with_provider_override_retry(
         "tool_choice": normalized_tool_choice,
         "metadata": metadata_payload,
     }
+    if not tool_payload and normalized_tool_choice == "required":
+        request_kwargs["tool_choice"] = "auto"
     response = complete_fn(**request_kwargs)
     retry_override_id = ""
     if (

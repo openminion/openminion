@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping, Sequence
 
 from openminion.base.config.env import resolve_environment_config
 

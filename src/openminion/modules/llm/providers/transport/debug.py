@@ -4,7 +4,8 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 

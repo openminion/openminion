@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from .constants import (
     THINKING_REASONING_PROFILE_MINIMAL,

@@ -1,6 +1,7 @@
 import dataclasses
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Mapping, Optional, Union
+from typing import Any, Literal, Optional
+from collections.abc import Mapping
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -61,14 +62,14 @@ class RoutingTarget(BaseModel):
 class RoutingFallback(RoutingTarget):
     model_config = ConfigDict(extra="forbid")
 
-    on: List[ErrorCode] = Field(default_factory=list)
+    on: list[ErrorCode] = Field(default_factory=list)
 
 
 class RoutingPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     primary: Optional[RoutingTarget] = None
-    fallbacks: List[RoutingFallback] = Field(default_factory=list)
+    fallbacks: list[RoutingFallback] = Field(default_factory=list)
 
 
 class GenerationDefaults(BaseModel):
@@ -77,7 +78,7 @@ class GenerationDefaults(BaseModel):
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     max_output_tokens: Optional[int] = None
-    stop: Optional[List[str]] = None
+    stop: Optional[list[str]] = None
 
 
 class BudgetPolicy(BaseModel):
@@ -93,7 +94,7 @@ class ToolPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enable_tools: bool = False
-    allowed_tools: Optional[List[str]] = None
+    allowed_tools: Optional[list[str]] = None
     tool_choice_default: Optional[ToolChoice] = LLM_TOOL_CHOICE_AUTO
     block_on_disallowed_tool_call: bool = True
 
@@ -145,7 +146,7 @@ class ProviderConfig(BaseModel):
     base_url: Optional[str] = None
     org: Optional[str] = None
     project: Optional[str] = None
-    headers: Dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
     provider_identity: Optional[ProviderIdentityConfig] = None
     cost_hint: Optional["ProviderCostHint"] = None
 
@@ -175,8 +176,8 @@ class LLMCTLConfig(BaseModel):
 
     version: int = 1
     llmctl: GlobalConfig = Field(default_factory=GlobalConfig)
-    providers: Dict[str, ProviderConfig] = Field(default_factory=dict)
-    agents: Dict[str, AgentProfile] = Field(default_factory=dict)
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+    agents: dict[str, AgentProfile] = Field(default_factory=dict)
 
 
 def resolve_provider_identity_translation(
@@ -184,7 +185,7 @@ def resolve_provider_identity_translation(
     *,
     model: str = "",
     base_url: str = "",
-) -> Dict[str, str]:
+) -> dict[str, str]:
     normalized_provider = str(provider_name or "").strip().lower()
     if normalized_provider != "openai":
         return {}
@@ -214,7 +215,7 @@ def from_base_config(
     for candidate in candidates:
         if candidate.exists():
             return load_config(candidate)
-    providers: Dict[str, ProviderConfig] = {}
+    providers: dict[str, ProviderConfig] = {}
     provider_names = (
         "openai",
         "anthropic",
@@ -281,7 +282,7 @@ def from_base_config(
 
 
 def load_config(
-    path_or_dict: Union[str, Path, Dict[str, Any], LLMCTLConfig],
+    path_or_dict: str | Path | dict[str, Any] | LLMCTLConfig,
 ) -> LLMCTLConfig:
     if isinstance(path_or_dict, LLMCTLConfig):
         config = path_or_dict
@@ -306,7 +307,7 @@ def load_config(
             )
         config = LLMCTLConfig.model_validate(parsed)
 
-    fixed_agents: Dict[str, AgentProfile] = {}
+    fixed_agents: dict[str, AgentProfile] = {}
     for name, profile in config.agents.items():
         fixed_agents[name] = profile.model_copy(update={"name": profile.name or name})
 
@@ -318,7 +319,7 @@ def resolve_provider_config(
     provider_name: str,
     *,
     env: Mapping[str, Any] | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     provider_cfg = config.providers.get(provider_name)
     if provider_cfg is None:
         return {}

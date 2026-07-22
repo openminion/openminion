@@ -46,6 +46,62 @@ class AnthropicProvider:
         cache_system_prompt = bool(raw.get("cache_system_prompt", True))
         return enabled, cache_system_prompt
 
+    def _response_from_payload(
+        self,
+        *,
+        request: LLMRequest,
+        model: str,
+        response_payload: Dict[str, Any],
+        started: float,
+        behavior_profile_id: str,
+        tool_call_strategy: str,
+        prompt_cache_enabled: bool,
+    ) -> LLMResponse:
+        text = _extract_message_text(response_payload.get("content"))
+        thinking_blocks = _extract_anthropic_thinking_blocks(response_payload)
+        tool_calls: list[Any] = []
+        if (
+            request.tools
+            and text
+            and (detect_raw_envelope(text) or detect_raw_tool_markup(text))
+        ):
+            text = sanitize_envelope_leak(text)
+        tool_calls = _coerce_tool_calls(tool_calls)
+        if not text and not tool_calls:
+            raise LLMCtlError(
+                "EMPTY_PAYLOAD",
+                f"{self.name} response did not include text or tool calls",
+                details={"retryable": True},
+            )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        assistant_messages = [Message(role="assistant", content=text)] if text else []
+        return adapter_result_to_llm_response(
+            ProviderAdapterResult(
+                provider=self.name,
+                model=str(response_payload.get("model") or model),
+                output_text=text,
+                assistant_messages=assistant_messages,
+                tool_calls=tool_calls,
+                thinking=thinking_blocks,
+                usage=_usage_from_anthropic(response_payload.get("usage")),
+                latency_ms=elapsed_ms,
+                finish_reason=str(response_payload.get("stop_reason", "")).strip(),
+                provider_raw=response_payload,
+                normalization_meta={
+                    "adapter": "anthropic",
+                    "behavior_profile_id": behavior_profile_id,
+                    "tool_call_strategy": tool_call_strategy,
+                    "prompt_cache_enabled": prompt_cache_enabled,
+                    **(
+                        {"envelope_sanitized": True}
+                        if request.tools
+                        and text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
+                        else {}
+                    ),
+                },
+            )
+        )
+
     def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
         started = time.perf_counter()
         model = _resolve_model(request, config, "claude-3-5-sonnet-latest")
@@ -102,54 +158,14 @@ class AnthropicProvider:
             env=config.get("__env__") if isinstance(config, dict) else None,
         )
 
-        text = _extract_message_text(response_payload.get("content"))
-        thinking_blocks = _extract_anthropic_thinking_blocks(response_payload)
-        tool_calls = []
-        if (
-            request.tools
-            and text
-            and (detect_raw_envelope(text) or detect_raw_tool_markup(text))
-        ):
-            text = sanitize_envelope_leak(text)
-        tool_calls = _coerce_tool_calls(tool_calls)
-
-        if not text and not tool_calls:
-            # Classify into explicit error codes; CER-04: Tool-call-only is valid
-            raise LLMCtlError(
-                "EMPTY_PAYLOAD",
-                f"{self.name} response did not include text or tool calls",
-                details={"retryable": True},
-            )
-
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        assistant_messages = [Message(role="assistant", content=text)] if text else []
-        usage = _usage_from_anthropic(response_payload.get("usage"))
-
-        return adapter_result_to_llm_response(
-            ProviderAdapterResult(
-                provider=self.name,
-                model=str(response_payload.get("model") or model),
-                output_text=text,
-                assistant_messages=assistant_messages,
-                tool_calls=tool_calls,
-                thinking=thinking_blocks,
-                usage=usage,
-                latency_ms=elapsed_ms,
-                finish_reason=str(response_payload.get("stop_reason", "")).strip(),
-                provider_raw=response_payload,
-                normalization_meta={
-                    "adapter": "anthropic",
-                    "behavior_profile_id": behavior_profile.profile_id,
-                    "tool_call_strategy": tool_call_strategy,
-                    "prompt_cache_enabled": prompt_cache_enabled,
-                    **(
-                        {"envelope_sanitized": True}
-                        if request.tools
-                        and text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
-                        else {}
-                    ),
-                },
-            )
+        return self._response_from_payload(
+            request=request,
+            model=model,
+            response_payload=response_payload,
+            started=started,
+            behavior_profile_id=behavior_profile.profile_id,
+            tool_call_strategy=tool_call_strategy,
+            prompt_cache_enabled=prompt_cache_enabled,
         )
 
     def list_models(self, config: Dict[str, Any]) -> List[str]:

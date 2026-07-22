@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -13,20 +13,20 @@ class ProviderAdapterResult(BaseModel):
     provider: str = Field(..., min_length=1)
     model: str = Field(..., min_length=1)
     output_text: str = ""
-    assistant_messages: List[Message] = Field(default_factory=list)
-    tool_calls: List[ToolCall] = Field(default_factory=list)
-    thinking: List[Dict[str, Any]] = Field(default_factory=list)
+    assistant_messages: list[Message] = Field(default_factory=list)
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    thinking: list[dict[str, Any]] = Field(default_factory=list)
     usage: UsageInfo = Field(default_factory=UsageInfo)
     latency_ms: int = 0
     cost_usd: Optional[float] = None
     finish_reason: str = ""
-    provider_raw: Optional[Dict[str, Any]] = None
+    provider_raw: Optional[dict[str, Any]] = None
     error: Optional[ResponseError] = None
-    telemetry: Dict[str, Any] = Field(default_factory=dict)
-    normalization_meta: Dict[str, Any] = Field(default_factory=dict)
+    telemetry: dict[str, Any] = Field(default_factory=dict)
+    normalization_meta: dict[str, Any] = Field(default_factory=dict)
 
 
-ProviderOutput = Union[LLMResponse, ProviderAdapterResult, Dict[str, Any]]
+ProviderOutput = LLMResponse | ProviderAdapterResult | dict[str, Any]
 
 
 def _coerce_positive_float(value: Any) -> float | None:
@@ -38,12 +38,12 @@ def _coerce_positive_float(value: Any) -> float | None:
 
 
 def _extract_cache_telemetry_from_provider_raw(
-    provider_raw: Dict[str, Any] | None,
-) -> Dict[str, Any]:
+    provider_raw: dict[str, Any] | None,
+) -> dict[str, Any]:
     if not isinstance(provider_raw, dict):
         return {}
 
-    payload: Dict[str, Any] = {}
+    payload: dict[str, Any] = {}
     cache_hit = provider_raw.get("cache_hit")
     if isinstance(cache_hit, bool) and cache_hit:
         payload["cache_hit"] = True

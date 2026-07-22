@@ -1,5 +1,6 @@
 import socket
-from typing import Any, Dict, Iterator, Mapping
+from collections.abc import Iterator, Mapping
+from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -13,11 +14,11 @@ from .trace import trace_http_json_request
 def iter_sse_post_lines(
     *,
     url: str,
-    payload: Dict[str, Any],
-    headers: Dict[str, str],
+    payload: dict[str, Any],
+    headers: dict[str, str],
     timeout_seconds: int,
     provider_name: str,
-    trace_metadata: Dict[str, Any] | None = None,
+    trace_metadata: dict[str, Any] | None = None,
     transport: str = "urllib_stream",
     env: EnvironmentConfig | Mapping[str, object] | None = None,
 ) -> Iterator[str]:

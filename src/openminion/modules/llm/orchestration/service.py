@@ -21,7 +21,7 @@ from ..constants import (
 )
 from ..errors import LLMCtlError
 from ..interfaces import ensure_llm_response_compatibility
-from ..schemas import LLMRequest, Message, ResponseError
+from ..schemas import LLMRequest, LLMResponse, Message, ResponseError
 from .coercion import (
     _candidate_profile_id,
     _extract_json_dict,
@@ -217,143 +217,210 @@ class LLMOrchestrator:
         semaphore = asyncio.Semaphore(max_parallel)
         task_map: Dict[asyncio.Task[CandidateResponse], Tuple[int, str]] = {}
 
-        async def _run_candidate(index: int, profile_id: str) -> CandidateResponse:
-            async with semaphore:
-                coro = asyncio.to_thread(
-                    self._call_candidate_sync,
-                    req,
-                    profile_id,
-                    f"cand-{index}",
-                )
-                timeout_s = max(0.001, float(per_candidate_timeout_ms) / 1000.0)
-                try:
-                    if self._inflight_semaphore is None:
-                        return await asyncio.wait_for(coro, timeout=timeout_s)
-                    async with self._inflight_semaphore:
-                        return await asyncio.wait_for(coro, timeout=timeout_s)
-                except asyncio.TimeoutError:
-                    return CandidateResponse(
-                        candidate_id=f"cand-{index}",
-                        profile_id=profile_id,
-                        provider=self._profile_provider(profile_id),
-                        model=self._profile_model(profile_id),
-                        status=LLM_CANDIDATE_STATUS_TIMEOUT,
-                        text=None,
-                        json_output=None,
-                        usage=Usage(latency_ms=per_candidate_timeout_ms),
-                        error=ResponseError(
-                            code="TIMEOUT",
-                            message="Candidate timed out",
-                            details={
-                                "timeout_ms": per_candidate_timeout_ms,
-                                "profile_id": profile_id,
-                            },
-                        ),
-                        raw_artifact_ref=None,
-                    )
-                except Exception as exc:
-                    profile = self._get_profile(profile_id)
-                    return CandidateResponse(
-                        candidate_id=f"cand-{index}",
-                        profile_id=profile_id,
-                        provider=profile.provider,
-                        model=profile.model,
-                        status=LLM_CANDIDATE_STATUS_FAILED,
-                        text=None,
-                        json_output=None,
-                        usage=Usage(latency_ms=0),
-                        error=ResponseError(
-                            code="PROVIDER_ERROR",
-                            message=f"{type(exc).__name__}: {exc}",
-                            details={"profile_id": profile_id},
-                        ),
-                        raw_artifact_ref=None,
-                    )
-
         for index, profile_id in indexed_candidates:
-            task = asyncio.create_task(_run_candidate(index, profile_id))
+            task = asyncio.create_task(
+                self._run_parallel_candidate(
+                    request=req,
+                    index=index,
+                    profile_id=profile_id,
+                    semaphore=semaphore,
+                    timeout_ms=per_candidate_timeout_ms,
+                )
+            )
             task_map[task] = (index, profile_id)
 
         completed: Dict[int, CandidateResponse] = {}
         try:
             for finished in asyncio.as_completed(task_map.keys()):
                 result = await finished
-                index = (
-                    int(result.candidate_id.split("-")[-1])
-                    if result.candidate_id.startswith("cand-")
-                    else -1
-                )
-                if index >= 0:
-                    completed[index] = result
+                index = self._record_completed_candidate(completed, result)
                 if (
                     resolved_strategy.stop_early
                     and resolved_strategy.selection_policy == "pick_primary_if_ok"
                     and index == 0
                     and result.status == LLM_CANDIDATE_STATUS_SUCCESS
                 ):
-                    for task in task_map:
-                        if not task.done():
-                            task.cancel()
+                    self._cancel_pending_candidates(task_map)
                     break
         finally:
-            for task, (index, profile_id) in task_map.items():
-                if task.done():
-                    continue
-                task.cancel()
-                completed[index] = CandidateResponse(
-                    candidate_id=f"cand-{index}",
-                    profile_id=profile_id,
-                    provider=self._profile_provider(profile_id),
-                    model=self._profile_model(profile_id),
-                    status=LLM_CANDIDATE_STATUS_FAILED,
-                    text=None,
-                    json_output=None,
-                    usage=Usage(latency_ms=0),
-                    error=ResponseError(
-                        code="PROVIDER_ERROR",
-                        message="Candidate cancelled by stop_early",
-                        details={"profile_id": profile_id},
-                    ),
-                    raw_artifact_ref=None,
-                )
+            self._record_cancelled_candidates(task_map, completed)
 
         ordered_candidates = [
             completed[index] for index, _ in indexed_candidates if index in completed
         ]
-        selection = self._select_candidate(
+        result = self._ensemble_result(
             request=req,
             candidates=ordered_candidates,
             strategy=resolved_strategy,
         )
-        disagreement = self._compute_disagreement(
-            ordered_candidates, resolved_strategy.disagreement
-        )
-        usage_total = self._aggregate_usage(ordered_candidates)
-        result = EnsembleResult(
-            request_id=req.request_id,
-            mode=resolved_strategy.mode,
-            candidates=ordered_candidates,
-            selection=selection,
-            disagreement=disagreement,
-            usage_total=usage_total,
-        )
-
         self._emit_event(
             "llm.ensemble.completed",
             {
                 "request_id": req.request_id,
                 "mode": resolved_strategy.mode,
-                "winner_candidate_id": selection.winner_candidate_id
-                if selection
+                "winner_candidate_id": result.selection.winner_candidate_id
+                if result.selection
                 else None,
             },
         )
-        if self.catalog.logging.store_ensemble_report:
-            self._store_artifact(
-                alias=f"session:{req.trace.session_id or 'none'}/llm/{req.request_id}/ensemble",
-                payload=result.model_dump(mode="json"),
-            )
+        self._store_ensemble_report_if_enabled(request=req, result=result)
         return result
+
+    async def _run_parallel_candidate(
+        self,
+        *,
+        request: RuntimeLLMRequest,
+        index: int,
+        profile_id: str,
+        semaphore: asyncio.Semaphore,
+        timeout_ms: int,
+    ) -> CandidateResponse:
+        async with semaphore:
+            coro = asyncio.to_thread(
+                self._call_candidate_sync,
+                request,
+                profile_id,
+                f"cand-{index}",
+            )
+            timeout_s = max(0.001, float(timeout_ms) / 1000.0)
+            try:
+                if self._inflight_semaphore is None:
+                    return await asyncio.wait_for(coro, timeout=timeout_s)
+                async with self._inflight_semaphore:
+                    return await asyncio.wait_for(coro, timeout=timeout_s)
+            except asyncio.TimeoutError:
+                return self._parallel_timeout_candidate(index, profile_id, timeout_ms)
+            except Exception as exc:
+                return self._parallel_failed_candidate(index, profile_id, exc)
+
+    def _parallel_timeout_candidate(
+        self, index: int, profile_id: str, timeout_ms: int
+    ) -> CandidateResponse:
+        return CandidateResponse(
+            candidate_id=f"cand-{index}",
+            profile_id=profile_id,
+            provider=self._profile_provider(profile_id),
+            model=self._profile_model(profile_id),
+            status=LLM_CANDIDATE_STATUS_TIMEOUT,
+            text=None,
+            json_output=None,
+            usage=Usage(latency_ms=timeout_ms),
+            error=ResponseError(
+                code="TIMEOUT",
+                message="Candidate timed out",
+                details={"timeout_ms": timeout_ms, "profile_id": profile_id},
+            ),
+            raw_artifact_ref=None,
+        )
+
+    def _parallel_failed_candidate(
+        self, index: int, profile_id: str, exc: Exception
+    ) -> CandidateResponse:
+        profile = self._get_profile(profile_id)
+        return CandidateResponse(
+            candidate_id=f"cand-{index}",
+            profile_id=profile_id,
+            provider=profile.provider,
+            model=profile.model,
+            status=LLM_CANDIDATE_STATUS_FAILED,
+            text=None,
+            json_output=None,
+            usage=Usage(latency_ms=0),
+            error=ResponseError(
+                code="PROVIDER_ERROR",
+                message=f"{type(exc).__name__}: {exc}",
+                details={"profile_id": profile_id},
+            ),
+            raw_artifact_ref=None,
+        )
+
+    @staticmethod
+    def _record_completed_candidate(
+        completed: Dict[int, CandidateResponse],
+        result: CandidateResponse,
+    ) -> int:
+        index = (
+            int(result.candidate_id.split("-")[-1])
+            if result.candidate_id.startswith("cand-")
+            else -1
+        )
+        if index >= 0:
+            completed[index] = result
+        return index
+
+    @staticmethod
+    def _cancel_pending_candidates(
+        task_map: Dict[asyncio.Task[CandidateResponse], Tuple[int, str]],
+    ) -> None:
+        for task in task_map:
+            if not task.done():
+                task.cancel()
+
+    def _record_cancelled_candidates(
+        self,
+        task_map: Dict[asyncio.Task[CandidateResponse], Tuple[int, str]],
+        completed: Dict[int, CandidateResponse],
+    ) -> None:
+        for task, (index, profile_id) in task_map.items():
+            if task.done():
+                continue
+            task.cancel()
+            completed[index] = self._parallel_cancelled_candidate(index, profile_id)
+
+    def _parallel_cancelled_candidate(
+        self, index: int, profile_id: str
+    ) -> CandidateResponse:
+        return CandidateResponse(
+            candidate_id=f"cand-{index}",
+            profile_id=profile_id,
+            provider=self._profile_provider(profile_id),
+            model=self._profile_model(profile_id),
+            status=LLM_CANDIDATE_STATUS_FAILED,
+            text=None,
+            json_output=None,
+            usage=Usage(latency_ms=0),
+            error=ResponseError(
+                code="PROVIDER_ERROR",
+                message="Candidate cancelled by stop_early",
+                details={"profile_id": profile_id},
+            ),
+            raw_artifact_ref=None,
+        )
+
+    def _ensemble_result(
+        self,
+        *,
+        request: RuntimeLLMRequest,
+        candidates: List[CandidateResponse],
+        strategy: EnsembleTemplate,
+    ) -> EnsembleResult:
+        return EnsembleResult(
+            request_id=request.request_id,
+            mode=strategy.mode,
+            candidates=candidates,
+            selection=self._select_candidate(
+                request=request,
+                candidates=candidates,
+                strategy=strategy,
+            ),
+            disagreement=self._compute_disagreement(
+                candidates, strategy.disagreement
+            ),
+            usage_total=self._aggregate_usage(candidates),
+        )
+
+    def _store_ensemble_report_if_enabled(
+        self,
+        *,
+        request: RuntimeLLMRequest,
+        result: EnsembleResult,
+    ) -> None:
+        if not self.catalog.logging.store_ensemble_report:
+            return
+        self._store_artifact(
+            alias=f"session:{request.trace.session_id or 'none'}/llm/{request.request_id}/ensemble",
+            payload=result.model_dump(mode="json"),
+        )
 
     async def call_for_agent(
         self,
@@ -484,7 +551,6 @@ class LLMOrchestrator:
         provider_name = profile.provider
         model_name = profile.model
         call_request = self._build_provider_request(request, profile)
-        provider_raw: Optional[Dict[str, Any]] = None
         client = self._get_profile_client(profile_id)
 
         try:
@@ -518,52 +584,14 @@ class LLMOrchestrator:
                 started=started,
             )
 
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        status: CandidateStatus
-        if response.ok:
-            status = LLM_CANDIDATE_STATUS_SUCCESS
-        elif response.error is not None and response.error.code == "TIMEOUT":
-            status = LLM_CANDIDATE_STATUS_TIMEOUT
-        else:
-            status = LLM_CANDIDATE_STATUS_FAILED
-
-        usage = response.usage
-        cost_estimate = response.cost_usd
-        if cost_estimate is None:
-            cost_estimate = estimate_usage_cost_usd(
-                usage=usage, cost_hint=profile.cost_hint
-            )
-        parsed_json = _extract_json_dict(response.output_text or "")
-        if request.output_schema is None:
-            parsed_json = None
-
-        raw_ref: Optional[str] = None
-        if (
-            self.catalog.logging.store_raw_provider_payloads
-            and response.provider_raw is not None
-        ):
-            provider_raw = response.provider_raw
-            raw_ref = self._store_artifact(
-                alias=f"session:{request.trace.session_id or 'none'}/llm/{request.request_id}/candidate/{candidate_id}",
-                payload=provider_raw,
-            )
-
-        candidate = CandidateResponse(
+        candidate = self._candidate_from_response(
+            request=request,
+            profile=profile,
             candidate_id=candidate_id,
-            profile_id=profile.id,
-            provider=response.provider or provider_name,
-            model=response.model or model_name,
-            status=status,
-            text=response.output_text or None,
-            json_output=parsed_json,
-            usage=Usage(
-                latency_ms=max(elapsed_ms, response.latency_ms),
-                input_tokens=int(usage.input_tokens or 0),
-                output_tokens=int(usage.output_tokens or 0),
-                cost_estimate=cost_estimate,
-            ),
-            error=response.error,
-            raw_artifact_ref=raw_ref,
+            provider_name=provider_name,
+            model_name=model_name,
+            response=response,
+            started=started,
         )
         self._emit_event(
             "llm.candidate.finished",
@@ -571,11 +599,96 @@ class LLMOrchestrator:
                 "request_id": request.request_id,
                 "candidate_id": candidate_id,
                 "profile_id": profile.id,
-                "status": status,
+                "status": candidate.status,
                 "latency_ms": candidate.usage.latency_ms,
             },
         )
         return candidate
+
+    def _candidate_status_from_response(self, response: LLMResponse) -> CandidateStatus:
+        if response.ok:
+            return LLM_CANDIDATE_STATUS_SUCCESS
+        if response.error is not None and response.error.code == "TIMEOUT":
+            return LLM_CANDIDATE_STATUS_TIMEOUT
+        return LLM_CANDIDATE_STATUS_FAILED
+
+    def _candidate_json_output(
+        self, request: RuntimeLLMRequest, response: LLMResponse
+    ) -> dict[str, Any] | None:
+        if request.output_schema is None:
+            return None
+        return _extract_json_dict(response.output_text or "")
+
+    def _candidate_raw_artifact_ref(
+        self,
+        *,
+        request: RuntimeLLMRequest,
+        response: LLMResponse,
+        candidate_id: str,
+    ) -> str | None:
+        if (
+            not self.catalog.logging.store_raw_provider_payloads
+            or response.provider_raw is None
+        ):
+            return None
+        alias = (
+            f"session:{request.trace.session_id or 'none'}"
+            f"/llm/{request.request_id}/candidate/{candidate_id}"
+        )
+        return self._store_artifact(alias=alias, payload=response.provider_raw)
+
+    def _candidate_usage(
+        self,
+        *,
+        profile: ProviderProfile,
+        response: LLMResponse,
+        started: float,
+    ) -> Usage:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        usage = response.usage
+        cost_estimate = response.cost_usd
+        if cost_estimate is None:
+            cost_estimate = estimate_usage_cost_usd(
+                usage=usage, cost_hint=profile.cost_hint
+            )
+        return Usage(
+            latency_ms=max(elapsed_ms, response.latency_ms),
+            input_tokens=int(usage.input_tokens or 0),
+            output_tokens=int(usage.output_tokens or 0),
+            cost_estimate=cost_estimate,
+        )
+
+    def _candidate_from_response(
+        self,
+        *,
+        request: RuntimeLLMRequest,
+        profile: ProviderProfile,
+        candidate_id: str,
+        provider_name: str,
+        model_name: str,
+        response: LLMResponse,
+        started: float,
+    ) -> CandidateResponse:
+        return CandidateResponse(
+            candidate_id=candidate_id,
+            profile_id=profile.id,
+            provider=response.provider or provider_name,
+            model=response.model or model_name,
+            status=self._candidate_status_from_response(response),
+            text=response.output_text or None,
+            json_output=self._candidate_json_output(request, response),
+            usage=self._candidate_usage(
+                profile=profile,
+                response=response,
+                started=started,
+            ),
+            error=response.error,
+            raw_artifact_ref=self._candidate_raw_artifact_ref(
+                request=request,
+                response=response,
+                candidate_id=candidate_id,
+            ),
+        )
 
     def _build_provider_request(
         self, request: RuntimeLLMRequest, profile: ProviderProfile
