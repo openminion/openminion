@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Sequence
+from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
 
 from .policy_normalization import dedupe as _dedupe, dedupe_normalized as _dedupe_normalized
 
@@ -10,7 +11,7 @@ def reorder_runtime_chain(
     *,
     runtime_binding_id: str,
     default_chain: Iterable[str],
-    runtime_binding_policies: Dict[str, Any] | None,
+    runtime_binding_policies: dict[str, Any] | None,
     available_tool_names: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
     manager = ToolBindingPolicyManager.from_runtime_binding_policy_payload(

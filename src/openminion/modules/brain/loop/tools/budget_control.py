@@ -279,104 +279,124 @@ def _answer_only_finalization_contract_requested(
     return any(STATE_KEY_FINALIZATION_STATUS in text for text in texts)
 
 
-def _maybe_extend_iteration_budget(
+def _ensure_effective_cap_initialized(
     *,
-    loop_ctx: AdaptiveToolLoopContext,
     profile: AdaptiveToolLoopProfile,
     loop_state: AdaptiveToolLoopState,
-    allowed_tools: frozenset[str],
-    public_mode_tag: str,
-) -> AdaptiveToolLoopOutcome | bool:
-    config = _adaptive_budget_config(profile)
-    if config is None:
-        return False
+) -> None:
     if int(getattr(loop_state, "effective_max_iterations", 0) or 0) <= 0:
         loop_state.effective_max_iterations = int(profile.max_iterations)
+
+
+def _budget_stop_reason(
+    *,
+    config: AdaptiveBudgetConfig,
+    loop_ctx: AdaptiveToolLoopContext,
+    loop_state: AdaptiveToolLoopState,
+) -> str | None:
     state = getattr(loop_ctx, "state", None)
     session_extensions_used = (
         get_session_extensions_used(state=state) if state is not None else 0
     )
-    stop_reason = check_safety_rails(
+    return check_safety_rails(
         config=config,
         loop_state=loop_state,
         session_extensions_used=session_extensions_used,
         tokens_used=0,
         max_total_llm_tokens=0,
     )
-    if stop_reason is not None:
-        return _budget_stop_outcome(
-            loop_ctx=loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            allowed_tools=allowed_tools,
-            public_mode_tag=public_mode_tag,
-            reason=stop_reason,
-        )
 
-    mode = str(getattr(config, "mode", "") or "interactive").strip().lower()
-    if mode == "autonomous":
-        old_cap = _effective_cap(profile, loop_state)
-        new_cap = apply_extension(config=config, loop_state=loop_state)
-        if state is not None:
-            record_session_extension(state=state)
-        _emit_budget_event(
-            loop_ctx,
-            "budget.extended",
-            {
-                "by": int(new_cap) - int(old_cap),
-                "total": int(new_cap),
-                "extensions_used": int(getattr(loop_state, "extensions_used", 0) or 0),
-                "trigger": "auto",
-            },
-        )
-        _emit_high_watermark_if_needed(
-            loop_ctx=loop_ctx,
-            loop_state=loop_state,
-            cap=int(new_cap),
-        )
-        emit_adaptive_status(
-            loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            detail_text=f"{public_mode_tag} budget extended",
-            mode_state="budget_extended",
-        )
-        return True
 
+def _extend_budget_autonomously(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    config: AdaptiveBudgetConfig,
+    public_mode_tag: str,
+) -> bool:
+    old_cap = _effective_cap(profile, loop_state)
+    new_cap = apply_extension(config=config, loop_state=loop_state)
+    state = getattr(loop_ctx, "state", None)
     if state is not None:
-        cap = _effective_cap(profile, loop_state)
-        question = compose_pause_question(
-            config=config,
-            loop_state=loop_state,
-            active_work_summary=_active_work_summary_from_state(loop_ctx),
-            step_summaries=_step_summaries_from_state(loop_ctx),
-            max_steps_hint=_max_steps_hint_from_state(loop_ctx),
-        )
-        command = AskUserCommand(
-            title="Iteration budget reached",
-            question=question,
-            inputs={"adaptive_budget_extension": True, "cap": cap},
-            success_criteria={"extension_approved": True},
-            timeout_ms=int(config.idle_timeout_s) * 1000,
-        )
-        state.pending_confirmation_command = command
-        state.post_action_user_message = question
-        state.status = BRAIN_STATE_WAITING_USER
-        mark_pending_extension(
-            state=state,
-            cap_at_pause=cap,
-            extend_by=int(config.extend_by),
-            idle_timeout_s=int(config.idle_timeout_s),
-        )
-        _emit_budget_event(
-            loop_ctx,
-            "budget.exhausted",
-            {
-                "cap": cap,
-                "extensions_used": int(getattr(loop_state, "extensions_used", 0) or 0),
-                "reason": "awaiting_user_extension_approval",
-            },
-        )
+        record_session_extension(state=state)
+    _emit_budget_event(
+        loop_ctx,
+        "budget.extended",
+        {
+            "by": int(new_cap) - int(old_cap),
+            "total": int(new_cap),
+            "extensions_used": int(getattr(loop_state, "extensions_used", 0) or 0),
+            "trigger": "auto",
+        },
+    )
+    _emit_high_watermark_if_needed(
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
+        cap=int(new_cap),
+    )
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} budget extended",
+        mode_state="budget_extended",
+    )
+    return True
+
+
+def _pause_for_budget_extension(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    config: AdaptiveBudgetConfig,
+) -> None:
+    state = getattr(loop_ctx, "state", None)
+    if state is None:
+        return
+    cap = _effective_cap(profile, loop_state)
+    question = compose_pause_question(
+        config=config,
+        loop_state=loop_state,
+        active_work_summary=_active_work_summary_from_state(loop_ctx),
+        step_summaries=_step_summaries_from_state(loop_ctx),
+        max_steps_hint=_max_steps_hint_from_state(loop_ctx),
+    )
+    state.pending_confirmation_command = AskUserCommand(
+        title="Iteration budget reached",
+        question=question,
+        inputs={"adaptive_budget_extension": True, "cap": cap},
+        success_criteria={"extension_approved": True},
+        timeout_ms=int(config.idle_timeout_s) * 1000,
+    )
+    state.post_action_user_message = question
+    state.status = BRAIN_STATE_WAITING_USER
+    mark_pending_extension(
+        state=state,
+        cap_at_pause=cap,
+        extend_by=int(config.extend_by),
+        idle_timeout_s=int(config.idle_timeout_s),
+    )
+    _emit_budget_event(
+        loop_ctx,
+        "budget.exhausted",
+        {
+            "cap": cap,
+            "extensions_used": int(getattr(loop_state, "extensions_used", 0) or 0),
+            "reason": "awaiting_user_extension_approval",
+        },
+    )
+
+
+def _budget_extension_approval_outcome(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+) -> AdaptiveToolLoopOutcome:
     loop_state.termination_reason = ADAPTIVE_TERM_NEEDS_USER
     emit_adaptive_status(
         loop_ctx,
@@ -392,6 +412,59 @@ def _maybe_extend_iteration_budget(
         termination_reason=ADAPTIVE_TERM_NEEDS_USER,
         state=loop_state,
         allowed_tools=allowed_tools,
+    )
+
+
+def _maybe_extend_iteration_budget(
+    *,
+    loop_ctx: AdaptiveToolLoopContext,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    allowed_tools: frozenset[str],
+    public_mode_tag: str,
+) -> AdaptiveToolLoopOutcome | bool:
+    config = _adaptive_budget_config(profile)
+    if config is None:
+        return False
+    _ensure_effective_cap_initialized(profile=profile, loop_state=loop_state)
+
+    stop_reason = _budget_stop_reason(
+        config=config,
+        loop_ctx=loop_ctx,
+        loop_state=loop_state,
+    )
+    if stop_reason is not None:
+        return _budget_stop_outcome(
+            loop_ctx=loop_ctx,
+            profile=profile,
+            loop_state=loop_state,
+            allowed_tools=allowed_tools,
+            public_mode_tag=public_mode_tag,
+            reason=stop_reason,
+        )
+
+    mode = str(getattr(config, "mode", "") or "interactive").strip().lower()
+    if mode == "autonomous":
+        return _extend_budget_autonomously(
+            loop_ctx=loop_ctx,
+            profile=profile,
+            loop_state=loop_state,
+            config=config,
+            public_mode_tag=public_mode_tag,
+        )
+
+    _pause_for_budget_extension(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        config=config,
+    )
+    return _budget_extension_approval_outcome(
+        loop_ctx=loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        allowed_tools=allowed_tools,
+        public_mode_tag=public_mode_tag,
     )
 
 

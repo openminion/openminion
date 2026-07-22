@@ -40,6 +40,157 @@ def _evaluate_with_checkpoint(
     return fn(metrics)
 
 
+def _meta_override_for_hook(runner: "BrainRunner", hook: str) -> MetaResult | None:
+    if runner._meta_overrides and hook in runner._meta_overrides:
+        return runner._meta_overrides.pop(hook)
+    return None
+
+
+def _meta_is_disabled(runner: "BrainRunner", *, override: MetaResult | None) -> bool:
+    return (
+        not runner.options.metactl_enabled
+        and override is None
+        and runner.meta_api is None
+        and runner.meta_engine is None
+    )
+
+
+def _budget_caps_for_runner(runner: "BrainRunner") -> BudgetCounters:
+    return BudgetCounters(
+        ticks=runner.profile.budgets.max_ticks_per_user_turn,
+        tool_calls=runner.profile.budgets.max_tool_calls,
+        a2a_calls=runner.profile.budgets.max_a2a_calls,
+        tokens=runner.profile.budgets.max_total_llm_tokens,
+        time_ms=runner.profile.budgets.max_elapsed_ms,
+    )
+
+
+def _resolve_meta_result(
+    runner: "BrainRunner",
+    *,
+    hook: str,
+    metrics: MetaMetrics,
+    override: MetaResult | None,
+) -> MetaResult:
+    if override is not None:
+        return override
+    if runner.meta_api is not None:
+        return runner.meta_api.evaluate(metrics)
+    return _evaluate_with_checkpoint(
+        CheckpointAdapter(runner.meta_engine),
+        engine=runner.meta_engine,
+        hook=hook,
+        metrics=metrics,
+    )
+
+
+def _meta_metric_aliases(metrics: MetaMetrics) -> dict[str, float | int]:
+    grounding_confidence = getattr(
+        metrics, "grounding_confidence", getattr(metrics, "grounding_score", 1.0)
+    )
+    grounding_score = getattr(metrics, "grounding_score", grounding_confidence)
+    recent_failures = getattr(
+        metrics, "recent_failures", getattr(metrics, "repeat_error_count", 0)
+    )
+    loop_count = getattr(metrics, "loop_count", getattr(metrics, "ticks_without_progress", 0))
+    replan_count = getattr(
+        metrics, "replan_count", getattr(metrics, "no_new_facts_streak", 0)
+    )
+    budget_remaining = getattr(
+        metrics, "budget_remaining", 1.0 - getattr(metrics, "budget_pressure", 0.0)
+    )
+    budget_pressure = getattr(metrics, "budget_pressure", 1.0 - budget_remaining)
+    return {
+        "grounding_confidence": grounding_confidence,
+        "grounding_score": grounding_score,
+        "recent_failures": recent_failures,
+        "loop_count": loop_count,
+        "replan_count": replan_count,
+        "budget_remaining": budget_remaining,
+        "budget_pressure": budget_pressure,
+    }
+
+
+def _meta_metrics_payload(
+    *,
+    metrics: MetaMetrics,
+    result: MetaResult,
+    hook: str,
+    aliases: dict[str, float | int],
+) -> dict:
+    payload = metrics.model_dump(mode="json")
+    payload["_telemetry_schema_version"] = "meta.metrics.v2"
+    payload["grounding_score"] = aliases["grounding_score"]
+    payload["repeat_error_count"] = aliases["recent_failures"]
+    payload["ticks_without_progress"] = aliases["loop_count"]
+    payload["no_new_facts_streak"] = aliases["replan_count"]
+    payload["budget_pressure"] = aliases["budget_pressure"]
+    payload["hook"] = hook
+    payload["ruleset_version"] = result.ruleset_version
+    return payload
+
+
+def _meta_directive_payload(
+    *,
+    metrics: MetaMetrics,
+    result: MetaResult,
+    hook: str,
+    aliases: dict[str, float | int],
+) -> dict:
+    return {
+        "_telemetry_schema_version": "meta.directive.v2",
+        "hook": hook,
+        "meta_state": result.meta_state.value,
+        "reasons": result.reasons,
+        "ruleset_version": result.ruleset_version,
+        "risk_score": metrics.risk_score,
+        "grounding_confidence": aliases["grounding_confidence"],
+        "grounding_score": aliases["grounding_score"],
+        "progress": {
+            "recent_failures": aliases["recent_failures"],
+            "loop_count": aliases["loop_count"],
+            "replan_count": aliases["replan_count"],
+            "repeat_error_count": aliases["recent_failures"],
+            "ticks_without_progress": aliases["loop_count"],
+            "no_new_facts_streak": aliases["replan_count"],
+        },
+        "budget_remaining": aliases["budget_remaining"],
+        "budget_pressure": aliases["budget_pressure"],
+        "directive": result.directive.model_dump(mode="json"),
+    }
+
+
+def _emit_meta_telemetry(
+    *,
+    logger: CanonicalEventLogger,
+    state: WorkingState,
+    hook: str,
+    metrics: MetaMetrics,
+    result: MetaResult,
+) -> None:
+    aliases = _meta_metric_aliases(metrics)
+    logger.emit(
+        "meta.metrics",
+        _meta_metrics_payload(metrics=metrics, result=result, hook=hook, aliases=aliases),
+        trace_id=state.trace_id,
+    )
+    logger.emit(
+        "meta.directive",
+        _meta_directive_payload(metrics=metrics, result=result, hook=hook, aliases=aliases),
+        trace_id=state.trace_id,
+    )
+    logger.emit(
+        "policy.evaluated",
+        {
+            "hook": hook,
+            "outcome": result.meta_state.value,
+            "reason": result.reasons[0] if result.reasons else "standard evaluation",
+            "ruleset_version": result.ruleset_version,
+        },
+        trace_id=state.trace_id,
+    )
+
+
 def evaluate_meta(
     runner: "BrainRunner",
     *,
@@ -52,28 +203,13 @@ def evaluate_meta(
     command: Command | None = None,
     action_result: ActionResult | None = None,
 ) -> MetaResult | None:
-    override: MetaResult | None = None
-    if runner._meta_overrides and hook in runner._meta_overrides:
-        override = runner._meta_overrides.pop(hook)
-
-    if (
-        not runner.options.metactl_enabled
-        and override is None
-        and runner.meta_api is None
-        and runner.meta_engine is None
-    ):
+    override = _meta_override_for_hook(runner, hook)
+    if _meta_is_disabled(runner, override=override):
         return None
 
-    budget_caps = BudgetCounters(
-        ticks=runner.profile.budgets.max_ticks_per_user_turn,
-        tool_calls=runner.profile.budgets.max_tool_calls,
-        a2a_calls=runner.profile.budgets.max_a2a_calls,
-        tokens=runner.profile.budgets.max_total_llm_tokens,
-        time_ms=runner.profile.budgets.max_elapsed_ms,
-    )
     metrics = build_meta_metrics(
         state=state,
-        budget_caps=budget_caps,
+        budget_caps=_budget_caps_for_runner(runner),
         decision=decision,
         command=command,
         action_result=action_result,
@@ -81,80 +217,14 @@ def evaluate_meta(
         user_feedback_flags=user_feedback_flags,
         cfg=runner.options.metactl_config,
     )
-    if override is not None:
-        result = override
-    elif runner.meta_api is not None:
-        result = runner.meta_api.evaluate(metrics)
-    else:
-        result = _evaluate_with_checkpoint(
-            CheckpointAdapter(runner.meta_engine),
-            engine=runner.meta_engine,
-            hook=hook,
-            metrics=metrics,
-        )
+    result = _resolve_meta_result(runner, hook=hook, metrics=metrics, override=override)
     state.meta_state = result.meta_state.value
-
-    grounding_confidence = getattr(
-        metrics, "grounding_confidence", getattr(metrics, "grounding_score", 1.0)
-    )
-    grounding_score = getattr(metrics, "grounding_score", grounding_confidence)
-    recent_failures = getattr(
-        metrics, "recent_failures", getattr(metrics, "repeat_error_count", 0)
-    )
-    loop_count = getattr(
-        metrics, "loop_count", getattr(metrics, "ticks_without_progress", 0)
-    )
-    replan_count = getattr(
-        metrics, "replan_count", getattr(metrics, "no_new_facts_streak", 0)
-    )
-    budget_remaining = getattr(
-        metrics, "budget_remaining", 1.0 - getattr(metrics, "budget_pressure", 0.0)
-    )
-    budget_pressure = getattr(metrics, "budget_pressure", 1.0 - budget_remaining)
-
-    metrics_payload = metrics.model_dump(mode="json")
-    metrics_payload["_telemetry_schema_version"] = "meta.metrics.v2"
-    metrics_payload["grounding_score"] = grounding_score
-    metrics_payload["repeat_error_count"] = recent_failures
-    metrics_payload["ticks_without_progress"] = loop_count
-    metrics_payload["no_new_facts_streak"] = replan_count
-    metrics_payload["budget_pressure"] = budget_pressure
-    metrics_payload["hook"] = hook
-    metrics_payload["ruleset_version"] = result.ruleset_version
-    logger.emit("meta.metrics", metrics_payload, trace_id=state.trace_id)
-
-    directive_payload = {
-        "_telemetry_schema_version": "meta.directive.v2",
-        "hook": hook,
-        "meta_state": result.meta_state.value,
-        "reasons": result.reasons,
-        "ruleset_version": result.ruleset_version,
-        "risk_score": metrics.risk_score,
-        "grounding_confidence": grounding_confidence,
-        "grounding_score": grounding_score,
-        "progress": {
-            "recent_failures": recent_failures,
-            "loop_count": loop_count,
-            "replan_count": replan_count,
-            "repeat_error_count": recent_failures,
-            "ticks_without_progress": loop_count,
-            "no_new_facts_streak": replan_count,
-        },
-        "budget_remaining": budget_remaining,
-        "budget_pressure": budget_pressure,
-        "directive": result.directive.model_dump(mode="json"),
-    }
-    logger.emit("meta.directive", directive_payload, trace_id=state.trace_id)
-
-    logger.emit(
-        "policy.evaluated",
-        {
-            "hook": hook,
-            "outcome": result.meta_state.value,
-            "reason": result.reasons[0] if result.reasons else "standard evaluation",
-            "ruleset_version": result.ruleset_version,
-        },
-        trace_id=state.trace_id,
+    _emit_meta_telemetry(
+        logger=logger,
+        state=state,
+        hook=hook,
+        metrics=metrics,
+        result=result,
     )
     return result
 

@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Sequence
+from typing import Any, Protocol
+from collections.abc import Sequence
 
 from openminion.modules.llm.providers.base import ProviderToolCall
 

@@ -313,6 +313,11 @@ class CodingProfileRunner(
             iteration_allowed_tools = self._allowed_tools_for_current_phase(
                 default_allowed_tools=allowed_tools
             )
+            required_write_tool = str(
+                loop.scratchpad.get("coding.required_write_direct_tool", "") or ""
+            ).strip()
+            if required_write_tool:
+                iteration_allowed_tools = frozenset({required_write_tool})
             iteration_tool_specs = tool_specs
             iteration_tool_choice: str | dict[str, Any] = "auto"
             if bool(
@@ -463,6 +468,8 @@ class CodingProfileRunner(
         allowed_tools: frozenset[str],
     ) -> ExecutionResult | None:
         self._sync_loop_state(outcome.state)
+        if self._has_successful_mutating_file_result():
+            self._loop_state.scratchpad.pop("coding.required_write_direct_tool", None)
         if self._last_verifier_candidate_payload is not None:
             self._loop_state.scratchpad["coding.last_verifier_candidate"] = dict(
                 self._last_verifier_candidate_payload
@@ -617,6 +624,7 @@ class CodingProfileRunner(
             tool_calls_made=list(loop_state.tool_calls_made),
             total_tool_calls=int(loop_state.total_tool_calls or 0),
             termination_reason=str(loop_state.termination_reason or ""),
+            direct_tool_turn=loop_state.direct_tool_turn,
             scratchpad=dict(loop_state.scratchpad),
             seen_signatures=list(loop_state.seen_signatures),
         )
@@ -639,6 +647,7 @@ class CodingProfileRunner(
             tool_calls_made=list(adaptive_state.tool_calls_made),
             total_tool_calls=int(adaptive_state.total_tool_calls or 0),
             termination_reason=str(adaptive_state.termination_reason or ""),
+            direct_tool_turn=adaptive_state.direct_tool_turn,
             scratchpad=scratchpad,
             seen_signatures=list(adaptive_state.seen_signatures),
         )

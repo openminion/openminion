@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Optional
+from collections.abc import Callable
 
 import typer
 
@@ -30,8 +31,8 @@ def is_unknown_browser_tool_error(env: ResultEnvelope) -> bool:
 _PINCHTAB_PROVIDER = "pinchtab"
 
 
-def _map_instance_start(src: Dict[str, Any]) -> Dict[str, Any]:
-    call_args: Dict[str, Any] = {"op": "instance.start", "provider": _PINCHTAB_PROVIDER}
+def _map_instance_start(src: dict[str, Any]) -> dict[str, Any]:
+    call_args: dict[str, Any] = {"op": "instance.start", "provider": _PINCHTAB_PROVIDER}
     if src.get("instance_id") is not None:
         call_args["instance_id"] = src.get("instance_id")
     if src.get("profile_id") is not None:
@@ -43,13 +44,13 @@ def _map_instance_start(src: Dict[str, Any]) -> Dict[str, Any]:
     return call_args
 
 
-def _map_snapshot(src: Dict[str, Any]) -> Dict[str, Any]:
-    call_args: Dict[str, Any] = {
+def _map_snapshot(src: dict[str, Any]) -> dict[str, Any]:
+    call_args: dict[str, Any] = {
         "op": "tab.snapshot",
         "provider": _PINCHTAB_PROVIDER,
         "tab_id": src.get("tab_id"),
     }
-    snapshot_options: Dict[str, Any] = {}
+    snapshot_options: dict[str, Any] = {}
     if src.get("mode") is not None:
         snapshot_options["mode"] = src.get("mode")
     if snapshot_options:
@@ -57,13 +58,13 @@ def _map_snapshot(src: Dict[str, Any]) -> Dict[str, Any]:
     return call_args
 
 
-def _map_text(src: Dict[str, Any]) -> Dict[str, Any]:
-    call_args: Dict[str, Any] = {
+def _map_text(src: dict[str, Any]) -> dict[str, Any]:
+    call_args: dict[str, Any] = {
         "op": "tab.text",
         "provider": _PINCHTAB_PROVIDER,
         "tab_id": src.get("tab_id"),
     }
-    text_options: Dict[str, Any] = {}
+    text_options: dict[str, Any] = {}
     if src.get("mode") is not None:
         text_options["mode"] = src.get("mode")
     if src.get("include_text") is not None:
@@ -73,7 +74,7 @@ def _map_text(src: Dict[str, Any]) -> Dict[str, Any]:
     return call_args
 
 
-def _map_action(tool: str, src: Dict[str, Any]) -> Dict[str, Any]:
+def _map_action(tool: str, src: dict[str, Any]) -> dict[str, Any]:
     action_kind_by_tool = {
         "browser.pinchtab.click": "click",
         "browser.pinchtab.fill": "fill",
@@ -84,7 +85,7 @@ def _map_action(tool: str, src: Dict[str, Any]) -> Dict[str, Any]:
         "browser.pinchtab.scroll": "scroll",
         "browser.pinchtab.action": str(src.get("kind", "")).strip().lower() or "click",
     }
-    action: Dict[str, Any] = {"kind": action_kind_by_tool[tool]}
+    action: dict[str, Any] = {"kind": action_kind_by_tool[tool]}
     ref = src.get("ref")
     if ref is not None:
         action["target"] = {"ref": ref}
@@ -104,7 +105,7 @@ def _map_action(tool: str, src: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-_SIMPLE_PINCHTAB_TOOL_MAP: Dict[str, tuple[str, tuple[str, ...]]] = {
+_SIMPLE_PINCHTAB_TOOL_MAP: dict[str, tuple[str, tuple[str, ...]]] = {
     "browser.pinchtab.health": ("daemon.ensure", ()),
     "browser.pinchtab.instance_list": ("instance.list", ()),
     "browser.pinchtab.instance_stop": ("instance.stop", ("instance_id",)),
@@ -132,17 +133,17 @@ _ACTION_PINCHTAB_TOOLS: frozenset[str] = frozenset(
 
 
 def _map_simple(
-    op: str, fields: tuple[str, ...], src: Dict[str, Any]
-) -> Dict[str, Any]:
-    call_args: Dict[str, Any] = {"op": op, "provider": _PINCHTAB_PROVIDER}
+    op: str, fields: tuple[str, ...], src: dict[str, Any]
+) -> dict[str, Any]:
+    call_args: dict[str, Any] = {"op": op, "provider": _PINCHTAB_PROVIDER}
     for field_name in fields:
         call_args[field_name] = src.get(field_name)
     return call_args
 
 
 def map_pinchtab_to_browser_call(
-    *, tool: str, args: Dict[str, Any]
-) -> tuple[str, Dict[str, Any]]:
+    *, tool: str, args: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
     src = dict(args)
     simple = _SIMPLE_PINCHTAB_TOOL_MAP.get(tool)
     if simple is not None:
@@ -162,7 +163,7 @@ def map_pinchtab_to_browser_call(
 def invoke_pinchtab_tool(
     *,
     tool: str,
-    args: Dict[str, Any],
+    args: dict[str, Any],
     policy: Path,
     workspace: Optional[Path],
     scope: Optional[str],
@@ -204,7 +205,7 @@ def pinchtab_daemon_config(
     launch_cmd: Optional[str] = None,
     launch_timeout_s: int = 20,
     launch_env: Optional[str] = None,
-    env: EnvironmentConfig | Dict[str, str] | None = None,
+    env: EnvironmentConfig | dict[str, str] | None = None,
 ) -> Any:
     env_config = resolve_tool_env(env=env)
     data_root = resolve_tool_data_root(env=env_config)
@@ -212,7 +213,7 @@ def pinchtab_daemon_config(
     resolved_base = str(
         base_url or env_config.get(PINCHTAB_URL_ENV, DEFAULT_PINCHTAB_BASE_URL)
     ).strip()
-    env_pairs: Dict[str, str] = {}
+    env_pairs: dict[str, str] = {}
     if launch_env:
         for chunk in str(launch_env).split(","):
             chunk = chunk.strip()
@@ -231,8 +232,8 @@ def pinchtab_daemon_config(
     )
 
 
-def parse_env_pairs(values: list[str]) -> Dict[str, str]:
-    parsed: Dict[str, str] = {}
+def parse_env_pairs(values: list[str]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
     for raw in values:
         token = str(raw)
         if "=" not in token:
@@ -250,7 +251,7 @@ def parse_env_pairs(values: list[str]) -> Dict[str, str]:
 def invoke_exec_tool(
     *,
     tool: str,
-    args: Dict[str, Any],
+    args: dict[str, Any],
     policy: Path,
     workspace: Optional[Path],
     scope: Optional[str],

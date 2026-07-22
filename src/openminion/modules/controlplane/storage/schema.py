@@ -227,6 +227,16 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         "cross_channel_pairing_v1",
         CP_PAIRING_SCHEMA,
     ),
+    (
+        6,
+        "inbox_retry_schedule_v1",
+        """
+        ALTER TABLE cp_inbox
+            ADD COLUMN next_attempt_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00+00:00';
+        CREATE INDEX IF NOT EXISTS idx_cp_inbox_status_next
+            ON cp_inbox(status, next_attempt_at, received_at);
+        """,
+    ),
 ]
 
 

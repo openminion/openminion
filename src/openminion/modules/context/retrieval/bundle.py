@@ -160,61 +160,33 @@ def collect_retrieval_bundle(
     valid_memory_cards = [
         item for item in memory_cards if not _is_operational_tool_failure_item(item)
     ]
-    decision_memory_cards = _extend_unique_record_cards(
-        _cards_by_record_type(valid_memory_cards, "decision"),
-        _state_decision_memory_cards(request=request, session_slice=session_slice),
-    )
-    improvement_note_cards = _extend_unique_record_cards(
-        _cards_by_record_type(valid_memory_cards, "improvement_note"),
-        _cards_from_overlay(
-            request=request,
-            session_slice=session_slice,
-            overlay_key="improvement_note_cards",
-            record_type="improvement_note",
-            default_text="improvement_note_ref",
-        ),
-    )
-    strategy_outcome_cards = _extend_unique_record_cards(
-        _cards_by_record_type(valid_memory_cards, "strategy_outcome"),
-        _cards_from_overlay(
-            request=request,
-            session_slice=session_slice,
-            overlay_key="strategy_outcome_cards",
-            record_type="strategy_outcome",
-            default_text="strategy_outcome_ref",
-        ),
-    )
-    post_completion_critique_cards = _extend_unique_record_cards(
-        _cards_by_record_type(valid_memory_cards, "post_completion_critique"),
-        _cards_from_overlay(
-            request=request,
-            session_slice=session_slice,
-            overlay_key="post_completion_critique_cards",
-            record_type="post_completion_critique",
-            default_text="post_completion_critique_ref",
-        ),
+    (
+        decision_memory_cards,
+        improvement_note_cards,
+        strategy_outcome_cards,
+        post_completion_critique_cards,
+    ) = _typed_memory_cards_for_retrieval(
+        valid_memory_cards,
+        request=request,
+        session_slice=session_slice,
     )
     capped_decision_memory: list[MemoryCard] = []
     capped_improvement_notes: list[MemoryCard] = []
     capped_strategy_outcomes: list[MemoryCard] = []
     capped_post_completion_critiques: list[MemoryCard] = []
     if request.purpose == "decide":
-        capped_decision_memory = _rank_decision_memory_cards(
-            decision_memory_cards,
+        (
+            capped_decision_memory,
+            capped_improvement_notes,
+            capped_strategy_outcomes,
+            capped_post_completion_critiques,
+        ) = _rank_decide_memory_cards(
             request=request,
-        )[:DECISION_MEMORY_LIMIT]
-        capped_improvement_notes = _rank_improvement_note_cards(
-            improvement_note_cards,
-            request=request,
-        )[:CONTEXT_IMPROVEMENT_NOTE_LIMIT]
-        capped_strategy_outcomes = _rank_strategy_outcome_cards(
-            strategy_outcome_cards,
-            request=request,
-        )[:CONTEXT_STRATEGY_OUTCOME_LIMIT]
-        capped_post_completion_critiques = _rank_post_completion_critique_cards(
-            post_completion_critique_cards,
-            request=request,
-        )[:CONTEXT_POST_COMPLETION_CRITIQUE_LIMIT]
+            decision_memory_cards=decision_memory_cards,
+            improvement_note_cards=improvement_note_cards,
+            strategy_outcome_cards=strategy_outcome_cards,
+            post_completion_critique_cards=post_completion_critique_cards,
+        )
     capped_memory = _cap_general_memory(
         valid_memory_cards,
         mode_name=mode_name,
@@ -248,4 +220,73 @@ def collect_retrieval_bundle(
             request=request,
             session_slice=session_slice,
         ),
+    )
+
+
+def _typed_memory_cards_for_retrieval(
+    valid_memory_cards: list[MemoryCard],
+    *,
+    request: BuildPackRequest,
+    session_slice: SessionSlice,
+) -> tuple[list[MemoryCard], list[MemoryCard], list[MemoryCard], list[MemoryCard]]:
+    return (
+        _extend_unique_record_cards(
+            _cards_by_record_type(valid_memory_cards, "decision"),
+            _state_decision_memory_cards(request=request, session_slice=session_slice),
+        ),
+        _extend_unique_record_cards(
+            _cards_by_record_type(valid_memory_cards, "improvement_note"),
+            _cards_from_overlay(
+                request=request,
+                session_slice=session_slice,
+                overlay_key="improvement_note_cards",
+                record_type="improvement_note",
+                default_text="improvement_note_ref",
+            ),
+        ),
+        _extend_unique_record_cards(
+            _cards_by_record_type(valid_memory_cards, "strategy_outcome"),
+            _cards_from_overlay(
+                request=request,
+                session_slice=session_slice,
+                overlay_key="strategy_outcome_cards",
+                record_type="strategy_outcome",
+                default_text="strategy_outcome_ref",
+            ),
+        ),
+        _extend_unique_record_cards(
+            _cards_by_record_type(valid_memory_cards, "post_completion_critique"),
+            _cards_from_overlay(
+                request=request,
+                session_slice=session_slice,
+                overlay_key="post_completion_critique_cards",
+                record_type="post_completion_critique",
+                default_text="post_completion_critique_ref",
+            ),
+        ),
+    )
+
+
+def _rank_decide_memory_cards(
+    *,
+    request: BuildPackRequest,
+    decision_memory_cards: list[MemoryCard],
+    improvement_note_cards: list[MemoryCard],
+    strategy_outcome_cards: list[MemoryCard],
+    post_completion_critique_cards: list[MemoryCard],
+) -> tuple[list[MemoryCard], list[MemoryCard], list[MemoryCard], list[MemoryCard]]:
+    return (
+        _rank_decision_memory_cards(decision_memory_cards, request=request)[
+            :DECISION_MEMORY_LIMIT
+        ],
+        _rank_improvement_note_cards(improvement_note_cards, request=request)[
+            :CONTEXT_IMPROVEMENT_NOTE_LIMIT
+        ],
+        _rank_strategy_outcome_cards(strategy_outcome_cards, request=request)[
+            :CONTEXT_STRATEGY_OUTCOME_LIMIT
+        ],
+        _rank_post_completion_critique_cards(
+            post_completion_critique_cards,
+            request=request,
+        )[:CONTEXT_POST_COMPLETION_CRITIQUE_LIMIT],
     )

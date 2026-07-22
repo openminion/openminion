@@ -1,6 +1,7 @@
 """Tools browser providers playwright snapshot text."""
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.tools.browser.models import SnapshotOptions, TextOptions
 

@@ -12,11 +12,15 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
 )
-from openminion.modules.brain.loop.tools import AdaptiveToolLoopOutcome
+from openminion.modules.brain.loop.tools import (
+    AdaptiveToolLoopOutcome,
+    DirectToolTurnContext,
+)
 from openminion.modules.brain.schemas import ActionResult, Goal, ToolCommand
 from openminion.modules.llm.schemas import Message
 
 from .contracts import (
+    CODING_ALLOWED_TOOLS,
     CODING_TERM_FINAL_TEXT,
     CODING_TERM_TOOL_FAILURE,
     CODING_TERM_VERIFY_CAP_EXCEEDED,
@@ -33,6 +37,21 @@ from .verification import (
 
 class CodingVerificationMixin:
     _VERIFIER_CANDIDATE_TOOLS = frozenset({"exec.run", "file.read"})
+
+    def _stage_required_write_direct_tool(self: Any) -> None:
+        if getattr(self._loop_state, "direct_tool_turn", None) is not None:
+            return
+        requested_name = (
+            "file.write" if "file.write" in CODING_ALLOWED_TOOLS else "code.patch"
+        )
+        self._loop_state.direct_tool_turn = DirectToolTurnContext(
+            requested_tool_names=(requested_name,),
+            requested_batch_signature="",
+            match_by_name_only=True,
+        )
+        self._loop_state.scratchpad["coding.required_write_direct_tool"] = (
+            requested_name
+        )
 
     def _latest_tool_failure_summary(self: Any) -> str:
         for message in reversed(self._loop_state.messages):
@@ -121,6 +140,30 @@ class CodingVerificationMixin:
             payload=payload,
         )
 
+    def _record_verifier_evaluation(
+        self: Any,
+        ctx: ExecutionContext,
+        *,
+        verdict: str,
+        result_count: int,
+        verifier_goal_id: str,
+        goal_source: str,
+    ) -> None:
+        self._loop_state.scratchpad["coding.verifier_goal_id"] = verifier_goal_id
+        self._loop_state.scratchpad["coding.verifier_verdict"] = verdict
+        self._loop_state.scratchpad["coding.verifier_result_count"] = result_count
+        self._emit_verifier_status(
+            ctx,
+            mode_state=verdict,
+            detail_text=f"{_CODING_PUBLIC_TAG} verifier verdict: {verdict}",
+            extra_payload={
+                "coding.verifier_goal_id": verifier_goal_id,
+                "coding.verifier_goal_source": goal_source,
+                "coding.verifier_verdict": verdict,
+                "coding.verifier_result_count": result_count,
+            },
+        )
+
     def _exit_verification_unbound(
         self: Any,
         ctx: ExecutionContext,
@@ -207,23 +250,12 @@ class CodingVerificationMixin:
             logger=ctx.logger,
             budget_exhausted=_is_budget_exhausted(ctx, self._loop_state),
         )
-        self._loop_state.scratchpad["coding.verifier_goal_id"] = verifier_goal.goal_id
-        self._loop_state.scratchpad["coding.verifier_verdict"] = evaluation.verdict
-        self._loop_state.scratchpad["coding.verifier_result_count"] = len(
-            evaluation.results
-        )
-        self._emit_verifier_status(
+        self._record_verifier_evaluation(
             ctx,
-            mode_state=evaluation.verdict,
-            detail_text=(
-                f"{_CODING_PUBLIC_TAG} verifier verdict: {evaluation.verdict}"
-            ),
-            extra_payload={
-                "coding.verifier_goal_id": verifier_goal.goal_id,
-                "coding.verifier_goal_source": goal_source,
-                "coding.verifier_verdict": evaluation.verdict,
-                "coding.verifier_result_count": len(evaluation.results),
-            },
+            verdict=evaluation.verdict,
+            result_count=len(evaluation.results),
+            verifier_goal_id=verifier_goal.goal_id,
+            goal_source=goal_source,
         )
         if evaluation.verdict == CODING_VERIFIER_VERDICT_COMPLETE:
             return None
@@ -312,6 +344,8 @@ class CodingVerificationMixin:
                 "before verify."
             )
             self._coding_plan.record_open_issue(failure_summary)
+            self._coding_plan.current_phase = "implement"
+            self._stage_required_write_direct_tool()
             attempt = self._record_verify_gate_block(
                 ctx,
                 failure_summary=failure_summary,

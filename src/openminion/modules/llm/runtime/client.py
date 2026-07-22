@@ -21,11 +21,7 @@ from ..config import (
 from ..contracts.adapter import ProviderAdapterResult, coerce_provider_output
 from ..errors import LLMCtlError
 from ..interfaces import LLM_RESPONSE_INTERFACE_VERSION
-from ..providers.tool_calling.contracts import (
-    detect_raw_envelope,
-    detect_raw_xml_tool_wrapper,
-    sanitize_envelope_leak,
-)
+from ..providers.tool_calling.contracts import sanitize_envelope_leak
 from ..providers.tool_calling.normalizer import normalize_tool_calls
 from ..providers.plugins import (
     ProviderRegistry,
@@ -68,6 +64,109 @@ ToolPolicyContext = _ToolPolicyContext
 def _usage_with_derived_total(usage: UsageInfo) -> UsageInfo:
     total = (usage.input_tokens or 0) + (usage.output_tokens or 0)
     return usage.model_copy(update={"total_tokens": total, "total_source": "derived"})
+
+
+def _response_with_assistant_message(normalized: LLMResponse) -> LLMResponse:
+    if not normalized.output_text or normalized.assistant_messages:
+        return normalized
+    return normalized.model_copy(
+        update={"assistant_messages": [Message(role="assistant", content=normalized.output_text)]}
+    )
+
+
+def _response_with_valid_tool_statuses(normalized: LLMResponse) -> LLMResponse:
+    fixed_calls: List[ToolCall] = []
+    for call in normalized.tool_calls:
+        if call.status in LLM_TOOL_CALL_STATUS_CHOICES:
+            fixed_calls.append(call)
+            continue
+        fixed_calls.append(
+            call.model_copy(update={"status": LLM_TOOL_CALL_STATUS_REQUESTED})
+        )
+    if fixed_calls == normalized.tool_calls:
+        return normalized
+    return normalized.model_copy(update={"tool_calls": fixed_calls})
+
+
+def _normalized_allowed_tool_names(
+    allowed_tool_names: Iterable[str] | None,
+) -> list[str]:
+    return [
+        str(name).strip() for name in allowed_tool_names or [] if str(name).strip()
+    ]
+
+
+def _response_with_inline_tool_calls(
+    normalized: LLMResponse,
+    *,
+    provider: str,
+    model: str,
+    allowed_names: list[str],
+) -> LLMResponse:
+    if normalized.tool_calls or not normalized.output_text or not allowed_names:
+        return normalized
+    normalized_fallback = normalize_tool_calls(
+        assistant_text=normalized.output_text,
+        provider_name=provider,
+        model_name=model,
+        allowed_tool_names=allowed_names,
+    )
+    if normalized_fallback and normalized_fallback.calls:
+        telemetry = dict(normalized.telemetry or {})
+        normalization_meta = dict(
+            telemetry.get("normalization")
+            if isinstance(telemetry.get("normalization"), dict)
+            else {}
+        )
+        normalization_meta["tool_call_parse_metadata"] = dict(
+            normalized_fallback.metadata
+        )
+        telemetry["normalization"] = normalization_meta
+        return normalized.model_copy(
+            update={
+                "output_text": "",
+                "assistant_messages": [],
+                "tool_calls": [
+                    ToolCall(
+                        id=str(call.id).strip() or None,
+                        name=str(call.name).strip(),
+                        arguments=dict(call.arguments or {}),
+                        status=LLM_TOOL_CALL_STATUS_PARSED,
+                    )
+                    for call in normalized_fallback.calls
+                ],
+                "telemetry": telemetry,
+            }
+        )
+    sanitized_text = sanitize_envelope_leak(
+        normalized.output_text,
+        metadata=normalized_fallback.metadata if normalized_fallback else None,
+    )
+    if sanitized_text == normalized.output_text:
+        return normalized
+    return normalized.model_copy(
+        update={
+            "output_text": sanitized_text,
+            "assistant_messages": [Message(role="assistant", content=sanitized_text)],
+        }
+    )
+
+
+def _response_without_unexecutable_envelope(normalized: LLMResponse) -> LLMResponse:
+    if (
+        normalized.tool_calls
+        and normalized.output_text
+        and normalized.output_text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
+    ):
+        return normalized.model_copy(update={"output_text": "", "assistant_messages": []})
+    return normalized
+
+
+def _response_with_total_usage(normalized: LLMResponse) -> LLMResponse:
+    usage = normalized.usage
+    if usage.total_tokens is not None:
+        return normalized
+    return normalized.model_copy(update={"usage": _usage_with_derived_total(usage)})
 
 
 class LLMCTL:
@@ -433,103 +532,16 @@ class LLMClient:
         normalized = resp.model_copy(
             update={"provider": resp.provider or provider, "model": resp.model or model}
         )
-
-        if normalized.output_text and not normalized.assistant_messages:
-            assistant = Message(role="assistant", content=normalized.output_text)
-            normalized = normalized.model_copy(
-                update={"assistant_messages": [assistant]}
-            )
-
-        fixed_calls: List[ToolCall] = []
-        for call in normalized.tool_calls:
-            call_obj = call
-            if call_obj.status not in LLM_TOOL_CALL_STATUS_CHOICES:
-                call_obj = call_obj.model_copy(
-                    update={"status": LLM_TOOL_CALL_STATUS_REQUESTED}
-                )
-            fixed_calls.append(call_obj)
-
-        if fixed_calls != normalized.tool_calls:
-            normalized = normalized.model_copy(update={"tool_calls": fixed_calls})
-
-        allowed_names = [
-            str(name).strip() for name in allowed_tool_names or [] if str(name).strip()
-        ]
-        if not normalized.tool_calls and normalized.output_text and allowed_names:
-            raw_tool_markup = detect_raw_envelope(
-                normalized.output_text
-            ) or detect_raw_xml_tool_wrapper(normalized.output_text)
-            normalized_fallback = (
-                normalize_tool_calls(
-                    assistant_text=normalized.output_text,
-                    provider_name=provider,
-                    model_name=model,
-                    allowed_tool_names=allowed_names,
-                )
-                if not raw_tool_markup
-                else None
-            )
-            if normalized_fallback and normalized_fallback.calls:
-                telemetry = dict(normalized.telemetry or {})
-                normalization_meta = dict(
-                    telemetry.get("normalization")
-                    if isinstance(telemetry.get("normalization"), dict)
-                    else {}
-                )
-                normalization_meta["tool_call_parse_metadata"] = dict(
-                    normalized_fallback.metadata
-                )
-                telemetry["normalization"] = normalization_meta
-                normalized = normalized.model_copy(
-                    update={
-                        "output_text": "",
-                        "assistant_messages": [],
-                        "tool_calls": [
-                            ToolCall(
-                                id=str(call.id).strip() or None,
-                                name=str(call.name).strip(),
-                                arguments=dict(call.arguments or {}),
-                                status=LLM_TOOL_CALL_STATUS_PARSED,
-                            )
-                            for call in normalized_fallback.calls
-                        ],
-                        "telemetry": telemetry,
-                    }
-                )
-            else:
-                sanitized_text = sanitize_envelope_leak(
-                    normalized.output_text,
-                    metadata=normalized_fallback.metadata
-                    if normalized_fallback
-                    else None,
-                )
-                if sanitized_text != normalized.output_text:
-                    normalized = normalized.model_copy(
-                        update={
-                            "output_text": sanitized_text,
-                            "assistant_messages": [
-                                Message(role="assistant", content=sanitized_text)
-                            ],
-                        }
-                    )
-
-        if (
-            normalized.tool_calls
-            and normalized.output_text
-            and normalized.output_text.startswith(
-                "[system: UNEXECUTABLE_TOOL_ENVELOPE]"
-            )
-        ):
-            normalized = normalized.model_copy(
-                update={"output_text": "", "assistant_messages": []}
-            )
-
-        usage = normalized.usage
-        if usage.total_tokens is None:
-            usage = _usage_with_derived_total(usage)
-            normalized = normalized.model_copy(update={"usage": usage})
-
-        return normalized
+        normalized = _response_with_assistant_message(normalized)
+        normalized = _response_with_valid_tool_statuses(normalized)
+        normalized = _response_with_inline_tool_calls(
+            normalized,
+            provider=provider,
+            model=model,
+            allowed_names=_normalized_allowed_tool_names(allowed_tool_names),
+        )
+        normalized = _response_without_unexecutable_envelope(normalized)
+        return _response_with_total_usage(normalized)
 
 
 __all__ = [

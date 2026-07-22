@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Protocol
 
 
 @dataclass
@@ -30,9 +30,9 @@ class SandboxAdapter(Protocol):
         self,
         command: list[str],
         *,
-        cwd: Optional[str] = None,
-        env: Optional[dict[str, str]] = None,
-        timeout_seconds: Optional[int] = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout_seconds: int | None = None,
     ) -> SandboxExecResult: ...
 
     def close(self) -> None: ...

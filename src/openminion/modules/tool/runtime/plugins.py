@@ -1,12 +1,13 @@
 import inspect
 from importlib.metadata import EntryPoint, entry_points
-from typing import Any, Dict, Iterable, List
+from typing import Any
+from collections.abc import Iterable
 
 from ..interfaces import validate_plugin_contract
 from ..registry import ToolRegistry
 
 
-def _plugin_entry_points() -> List[EntryPoint]:
+def _plugin_entry_points() -> list[EntryPoint]:
     try:
         eps = entry_points(group="openminion.modules.tool.runtime.plugins")
         return sorted(eps, key=lambda ep: ep.name)
@@ -16,11 +17,11 @@ def _plugin_entry_points() -> List[EntryPoint]:
         return sorted(fallback_eps, key=lambda ep: ep.name)
 
 
-def load_plugins(registry: ToolRegistry, policy: Any) -> List[Dict[str, Any]]:
-    statuses: List[Dict[str, Any]] = []
+def load_plugins(registry: ToolRegistry, policy: Any) -> list[dict[str, Any]]:
+    statuses: list[dict[str, Any]] = []
 
     for ep in _plugin_entry_points():
-        status: Dict[str, Any] = {
+        status: dict[str, Any] = {
             "name": ep.name,
             "module": ep.module,
             "installed": True,

@@ -190,6 +190,44 @@ def _tool_state_from_payload(*, kind: str, payload: Mapping[str, Any]) -> str:
     return STATE_RUNNING
 
 
+def _tool_activity_from_payload(
+    payload: Mapping[str, Any], *, kind_raw: str
+) -> TurnActivityEvent:
+    tool_name = _coerce_str(payload.get("tool_name", "")).strip()
+    kind = KIND_SEARCH if _is_search_tool_name(tool_name) else KIND_TOOL
+    return TurnActivityEvent(
+        kind=kind,
+        state=_tool_state_from_payload(kind=kind_raw, payload=payload),
+        title=tool_name,
+        tool_name=tool_name,
+        args=_coerce_visible_args(payload.get("args")),
+        call_id=_coerce_str(payload.get("call_id", "")),
+        duration_ms=_coerce_optional_int(payload.get("duration_ms")),
+        content=_coerce_str(payload.get("content", "")),
+        provenance=_provenance_from_payload(payload),
+        fallback=_fallback_from_payload(payload),
+        effort_level=_coerce_str(payload.get("effort_level", "")),
+        tokens_delta=_coerce_optional_int(payload.get("tokens_delta")),
+        source_payload=dict(payload),
+        timestamp_ms=_coerce_optional_int(payload.get("timestamp_ms")),
+    )
+
+
+def _plan_activity_from_payload(
+    payload: Mapping[str, Any], *, kind_raw: str
+) -> TurnActivityEvent:
+    plan = _coerce_dict(payload.get("plan")) or payload
+    state = STATE_COMPLETED if kind_raw == "task_plan_completed" else STATE_RUNNING
+    return TurnActivityEvent(
+        kind=KIND_PLAN,
+        state=state,
+        title=_coerce_str(plan.get("summary", "")) or "Plan",
+        plan=plan,
+        source_payload=dict(payload),
+        timestamp_ms=_coerce_optional_int(payload.get("timestamp_ms")),
+    )
+
+
 def activity_from_progress_payload(
     payload: Mapping[str, Any] | None,
 ) -> TurnActivityEvent | None:
@@ -206,24 +244,7 @@ def activity_from_progress_payload(
         return None
     kind_raw = _coerce_str(payload_dict.get("kind", "")).strip()
     if kind_raw in {"tool_started", "tool_completed"}:
-        tool_name = _coerce_str(payload_dict.get("tool_name", "")).strip()
-        kind = KIND_SEARCH if _is_search_tool_name(tool_name) else KIND_TOOL
-        return TurnActivityEvent(
-            kind=kind,
-            state=_tool_state_from_payload(kind=kind_raw, payload=payload_dict),
-            title=tool_name,
-            tool_name=tool_name,
-            args=_coerce_visible_args(payload_dict.get("args")),
-            call_id=_coerce_str(payload_dict.get("call_id", "")),
-            duration_ms=_coerce_optional_int(payload_dict.get("duration_ms")),
-            content=_coerce_str(payload_dict.get("content", "")),
-            provenance=_provenance_from_payload(payload_dict),
-            fallback=_fallback_from_payload(payload_dict),
-            effort_level=_coerce_str(payload_dict.get("effort_level", "")),
-            tokens_delta=_coerce_optional_int(payload_dict.get("tokens_delta")),
-            source_payload=payload_dict,
-            timestamp_ms=_coerce_optional_int(payload_dict.get("timestamp_ms")),
-        )
+        return _tool_activity_from_payload(payload_dict, kind_raw=kind_raw)
     if kind_raw == "budget_event":
         event_type = _coerce_str(payload_dict.get("event_type", "budget")) or "budget"
         return TurnActivityEvent(
@@ -235,16 +256,7 @@ def activity_from_progress_payload(
             timestamp_ms=_coerce_optional_int(payload_dict.get("timestamp_ms")),
         )
     if kind_raw in {"task_plan", "task_plan_revision", "task_plan_completed"}:
-        plan = _coerce_dict(payload_dict.get("plan")) or payload_dict
-        state = STATE_COMPLETED if kind_raw == "task_plan_completed" else STATE_RUNNING
-        return TurnActivityEvent(
-            kind=KIND_PLAN,
-            state=state,
-            title=_coerce_str(plan.get("summary", "")) or "Plan",
-            plan=plan,
-            source_payload=payload_dict,
-            timestamp_ms=_coerce_optional_int(payload_dict.get("timestamp_ms")),
-        )
+        return _plan_activity_from_payload(payload_dict, kind_raw=kind_raw)
     if kind_raw in {"task_plan_step_completed", "task_plan_step_blocked"}:
         blocked = kind_raw == "task_plan_step_blocked"
         return TurnActivityEvent(
@@ -349,6 +361,41 @@ def format_per_action_metrics_suffix(
     return f"({' · '.join(parts)})" if parts else ""
 
 
+def _format_tool_or_search_activity_line(event: TurnActivityEvent) -> str | None:
+    if event.tool_name == "todo.write":
+        plan = _todo_write_plan_from_args(event.args or {})
+        if plan is not None:
+            from openminion.cli.presentation.plan_render import render_plan
+
+            return render_plan(plan)
+    if event.kind == KIND_SEARCH:
+        rendered = _format_search_activity_line(event)
+        if rendered and not format_per_action_metrics_suffix(event):
+            return rendered
+
+    from openminion.cli.status.tool_calls import format_tool_call_line
+
+    provenance = event.provenance or {}
+    fallback = event.fallback or {}
+    runtime_tool_name = _coerce_str(provenance.get("runtime_tool_name", ""))
+    canonical = _coerce_str(provenance.get("model_tool_name", "")) or event.tool_name
+    base_line = format_tool_call_line(
+        tool_name=canonical or event.tool_name,
+        args=event.args or {},
+        state=_tool_state_for_formatter(event.state),
+        duration_ms=event.duration_ms,
+        model_tool_name=canonical or event.tool_name,
+        runtime_tool_name=runtime_tool_name,
+        runtime_fallback_used=bool(fallback.get("runtime_fallback_used", False)),
+        runtime_fallback_chain=_coerce_list(fallback.get("runtime_fallback_chain", [])),
+        family_has_multiple_providers=bool(
+            runtime_tool_name and runtime_tool_name != canonical
+        ),
+    )
+    suffix = format_per_action_metrics_suffix(event)
+    return f"{base_line} {suffix}" if suffix else base_line
+
+
 def format_activity_line(event: TurnActivityEvent | None) -> str | None:
     """Render an activity event as a plain-text line.
 
@@ -360,43 +407,7 @@ def format_activity_line(event: TurnActivityEvent | None) -> str | None:
         return None
 
     if event.kind in {KIND_TOOL, KIND_SEARCH}:
-        if event.tool_name == "todo.write":
-            plan = _todo_write_plan_from_args(event.args or {})
-            if plan is not None:
-                from openminion.cli.presentation.plan_render import render_plan
-
-                return render_plan(plan)
-        if event.kind == KIND_SEARCH:
-            rendered = _format_search_activity_line(event)
-            if rendered and not format_per_action_metrics_suffix(event):
-                return rendered
-
-        from openminion.cli.status.tool_calls import format_tool_call_line
-
-        provenance = event.provenance or {}
-        fallback = event.fallback or {}
-        runtime_tool_name = _coerce_str(provenance.get("runtime_tool_name", ""))
-        canonical = (
-            _coerce_str(provenance.get("model_tool_name", "")) or event.tool_name
-        )
-        family_has_multiple_providers = bool(
-            runtime_tool_name and runtime_tool_name != canonical
-        )
-        base_line = format_tool_call_line(
-            tool_name=canonical or event.tool_name,
-            args=event.args or {},
-            state=_tool_state_for_formatter(event.state),
-            duration_ms=event.duration_ms,
-            model_tool_name=canonical or event.tool_name,
-            runtime_tool_name=runtime_tool_name,
-            runtime_fallback_used=bool(fallback.get("runtime_fallback_used", False)),
-            runtime_fallback_chain=_coerce_list(
-                fallback.get("runtime_fallback_chain", [])
-            ),
-            family_has_multiple_providers=family_has_multiple_providers,
-        )
-        suffix = format_per_action_metrics_suffix(event)
-        return f"{base_line} {suffix}" if suffix else base_line
+        return _format_tool_or_search_activity_line(event)
 
     if event.kind == KIND_PLAN:
         from openminion.cli.presentation.plan_render import render_plan

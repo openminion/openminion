@@ -148,14 +148,8 @@ def _execute_parallel_tool_batch_without_prepared_dispatch(
     )
 
 
-def execute_parallel_tool_batch(
-    *,
-    loop_ctx: Any,
-    tool_calls: list[Any],
-    include_reflect: bool,
-    provider_parallel_tool_capacity: int = 1,
-) -> ParallelDispatchResult:
-    if not all(
+def _supports_prepared_parallel_dispatch(loop_ctx: Any) -> bool:
+    return all(
         callable(getattr(loop_ctx, attr, None))
         for attr in (
             "prepare_tool_dispatch",
@@ -163,7 +157,109 @@ def execute_parallel_tool_batch(
             "finalize_tool_result",
             "finalize_prepare_outcome",
         )
-    ):
+    )
+
+
+def _prepare_dispatch_entries(
+    *,
+    loop_ctx: Any,
+    tool_calls: list[Any],
+    include_reflect: bool,
+) -> list[PreparedToolDispatch | PrepareOutcome]:
+    return [
+        _prepare_one(
+            loop_ctx,
+            tool_call=tool_call,
+            include_reflect=include_reflect,
+        )
+        for tool_call in tool_calls
+    ]
+
+
+def _collect_prepared_dispatches(
+    *,
+    loop_ctx: Any,
+    tool_calls: list[Any],
+    prepared_entries: list[PreparedToolDispatch | PrepareOutcome],
+    results_by_index: dict[int, tuple[Any, Any]],
+) -> dict[int, PreparedToolDispatch]:
+    prepared_by_index: dict[int, PreparedToolDispatch] = {}
+    for index, prepared_entry in enumerate(prepared_entries):
+        if isinstance(prepared_entry, PrepareOutcome):
+            results_by_index[index] = (
+                tool_calls[index],
+                loop_ctx.finalize_prepare_outcome(prepare_outcome=prepared_entry),
+            )
+            continue
+        prepared_by_index[index] = prepared_entry
+    return prepared_by_index
+
+
+def _finalized_prepared_result(
+    *,
+    loop_ctx: Any,
+    tool_call: Any,
+    prepared_dispatch: PreparedToolDispatch,
+) -> tuple[Any, Any]:
+    prepared_dispatch, raw_result = _execute_one(
+        loop_ctx,
+        prepared_dispatch=prepared_dispatch,
+    )
+    return (
+        tool_call,
+        loop_ctx.finalize_tool_result(
+            prepared_dispatch=prepared_dispatch,
+            raw_result=raw_result,
+        ),
+    )
+
+
+def _execute_prepared_sub_batch(
+    *,
+    loop_ctx: Any,
+    tool_calls: list[Any],
+    prepared_by_index: dict[int, PreparedToolDispatch],
+    sub_batch: list[int],
+) -> dict[int, tuple[Any, Any]]:
+    if len(sub_batch) == 1:
+        index = sub_batch[0]
+        return {
+            index: _finalized_prepared_result(
+                loop_ctx=loop_ctx,
+                tool_call=tool_calls[index],
+                prepared_dispatch=prepared_by_index[index],
+            )
+        }
+    with ThreadPoolExecutor(max_workers=len(sub_batch)) as executor:
+        futures = {
+            index: executor.submit(
+                _execute_one,
+                loop_ctx,
+                prepared_dispatch=prepared_by_index[index],
+            )
+            for index in sub_batch
+        }
+        results: dict[int, tuple[Any, Any]] = {}
+        for index in sub_batch:
+            prepared_dispatch, raw_result = futures[index].result()
+            results[index] = (
+                tool_calls[index],
+                loop_ctx.finalize_tool_result(
+                    prepared_dispatch=prepared_dispatch,
+                    raw_result=raw_result,
+                ),
+            )
+        return results
+
+
+def execute_parallel_tool_batch(
+    *,
+    loop_ctx: Any,
+    tool_calls: list[Any],
+    include_reflect: bool,
+    provider_parallel_tool_capacity: int = 1,
+) -> ParallelDispatchResult:
+    if not _supports_prepared_parallel_dispatch(loop_ctx):
         return _execute_parallel_tool_batch_without_prepared_dispatch(
             loop_ctx=loop_ctx,
             tool_calls=tool_calls,
@@ -180,25 +276,16 @@ def execute_parallel_tool_batch(
 
     capacity = max(0, int(provider_parallel_tool_capacity or 0))
 
-    prepared_entries = [
-        _prepare_one(
-            loop_ctx,
-            tool_call=tool_call,
+    prepared_by_index = _collect_prepared_dispatches(
+        loop_ctx=loop_ctx,
+        tool_calls=tool_calls,
+        prepared_entries=_prepare_dispatch_entries(
+            loop_ctx=loop_ctx,
+            tool_calls=tool_calls,
             include_reflect=include_reflect,
-        )
-        for tool_call in tool_calls
-    ]
-
-    for index, prepared_entry in enumerate(prepared_entries):
-        if isinstance(prepared_entry, PrepareOutcome):
-            results_by_index[index] = (
-                tool_calls[index],
-                loop_ctx.finalize_prepare_outcome(
-                    prepare_outcome=prepared_entry,
-                ),
-            )
-            continue
-        prepared_by_index[index] = prepared_entry
+        ),
+        results_by_index=results_by_index,
+    )
 
     for group in causal_batch.groups:
         dispatch_indices = [index for index in group if index in prepared_by_index]
@@ -207,16 +294,12 @@ def execute_parallel_tool_batch(
         if len(dispatch_indices) <= 1 or capacity == 1:
             tool_calls_sequential += len(dispatch_indices)
             for index in dispatch_indices:
-                prepared_dispatch, raw_result = _execute_one(
-                    loop_ctx,
-                    prepared_dispatch=prepared_by_index[index],
-                )
                 results_by_index[index] = (
-                    tool_calls[index],
-                    loop_ctx.finalize_tool_result(
-                        prepared_dispatch=prepared_dispatch,
-                        raw_result=raw_result,
-                    ),
+                    _finalized_prepared_result(
+                        loop_ctx=loop_ctx,
+                        tool_call=tool_calls[index],
+                        prepared_dispatch=prepared_by_index[index],
+                    )
                 )
             continue
 
@@ -229,38 +312,17 @@ def execute_parallel_tool_batch(
         for sub_batch in sub_batches:
             if len(sub_batch) == 1:
                 tool_calls_sequential += 1
-                prepared_dispatch, raw_result = _execute_one(
-                    loop_ctx,
-                    prepared_dispatch=prepared_by_index[sub_batch[0]],
-                )
-                results_by_index[sub_batch[0]] = (
-                    tool_calls[sub_batch[0]],
-                    loop_ctx.finalize_tool_result(
-                        prepared_dispatch=prepared_dispatch,
-                        raw_result=raw_result,
-                    ),
-                )
             else:
                 parallel_fan_out_count += 1
                 tool_calls_parallel += len(sub_batch)
-                with ThreadPoolExecutor(max_workers=len(sub_batch)) as executor:
-                    futures = {
-                        index: executor.submit(
-                            _execute_one,
-                            loop_ctx,
-                            prepared_dispatch=prepared_by_index[index],
-                        )
-                        for index in sub_batch
-                    }
-                    for index in sub_batch:
-                        prepared_dispatch, raw_result = futures[index].result()
-                        results_by_index[index] = (
-                            tool_calls[index],
-                            loop_ctx.finalize_tool_result(
-                                prepared_dispatch=prepared_dispatch,
-                                raw_result=raw_result,
-                            ),
-                        )
+            results_by_index.update(
+                _execute_prepared_sub_batch(
+                    loop_ctx=loop_ctx,
+                    tool_calls=tool_calls,
+                    prepared_by_index=prepared_by_index,
+                    sub_batch=sub_batch,
+                )
+            )
 
     return ParallelDispatchResult(
         ordered_results=tuple(

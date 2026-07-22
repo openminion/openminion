@@ -1,4 +1,5 @@
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.storage.record_store import RecordStore
 

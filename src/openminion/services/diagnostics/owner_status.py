@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.services.runtime.interfaces import RuntimeFacade
@@ -30,7 +30,7 @@ def build_owner_status(
     session_limit: int = 20,
     run_limit_per_session: int = 20,
     window_hours: int = 24,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     safe_session_limit = _clamp_int(session_limit, minimum=1, maximum=500)
     safe_run_limit = _clamp_int(run_limit_per_session, minimum=1, maximum=500)
     safe_window_hours = _clamp_int(window_hours, minimum=1, maximum=24 * 14)
@@ -76,10 +76,10 @@ def _summarize_owner_runs(
     safe_run_limit: int,
     window_start: datetime,
 ) -> dict[str, Any]:
-    state_counts: Dict[str, int] = _initial_run_state_counts()
+    state_counts: dict[str, int] = _initial_run_state_counts()
     sessions_with_recent_runs: set[str] = set()
-    recent_failures: list[Dict[str, str]] = []
-    session_summaries: list[Dict[str, Any]] = []
+    recent_failures: list[dict[str, str]] = []
+    session_summaries: list[dict[str, Any]] = []
     runs_total = 0
     latest_activity_at: Optional[datetime] = None
     for session in sessions:
@@ -120,8 +120,8 @@ def _summarize_session_runs(
         active_runtime.sessions, session_id=session.id, limit=safe_run_limit
     )
     recent_runs = _filter_runs_within_window(runs=runs, window_start=window_start)
-    state_counts: Dict[str, int] = {}
-    recent_failures: list[Dict[str, str]] = []
+    state_counts: dict[str, int] = {}
+    recent_failures: list[dict[str, str]] = []
     active_runs = 0
     failed_runs = 0
     latest_activity_at: Optional[datetime] = None
@@ -158,13 +158,13 @@ def _owner_status_payload(
     sessions,
     provider_name: str,
     default_channel: str,
-    state_counts: Dict[str, int],
+    state_counts: dict[str, int],
     sessions_with_recent_runs: set[str],
-    recent_failures: list[Dict[str, str]],
-    session_summaries: list[Dict[str, Any]],
+    recent_failures: list[dict[str, str]],
+    session_summaries: list[dict[str, Any]],
     runs_total: int,
     latest_activity_at: Optional[datetime],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     failed_runs = int(state_counts.get(RUN_STATE_FAILED, 0))
     completed_runs = int(state_counts.get(RUN_STATE_COMPLETED, 0))
     active_runs = sum(int(state_counts.get(state, 0)) for state in _ACTIVE_RUN_STATES)
@@ -217,7 +217,7 @@ def _filter_runs_within_window(*, runs, window_start: datetime):
     return filtered
 
 
-def _initial_run_state_counts() -> Dict[str, int]:
+def _initial_run_state_counts() -> dict[str, int]:
     return {
         RUN_STATE_QUEUED: 0,
         RUN_STATE_RUNNING: 0,
@@ -228,7 +228,7 @@ def _initial_run_state_counts() -> Dict[str, int]:
     }
 
 
-def _merge_state_counts(target: Dict[str, int], source: Dict[str, int]) -> None:
+def _merge_state_counts(target: dict[str, int], source: dict[str, int]) -> None:
     for state, count in source.items():
         target[state] = target.get(state, 0) + int(count)
 
@@ -248,7 +248,7 @@ def _latest_timestamp(
     return current
 
 
-def _failure_payload(run) -> Dict[str, str]:
+def _failure_payload(run) -> dict[str, str]:
     return {
         "session_id": run.session_id,
         "run_id": run.run_id,
@@ -264,7 +264,7 @@ def _session_summary_payload(
     active_runs: int,
     failed_runs: int,
     latest_run,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "id": session.id,
         "channel": session.channel,
@@ -289,8 +289,8 @@ def _owner_alerts(
     active_runs: int,
     runs_total: int,
     safe_window_hours: int,
-) -> list[Dict[str, str]]:
-    alerts: list[Dict[str, str]] = []
+) -> list[dict[str, str]]:
+    alerts: list[dict[str, str]] = []
     if failed_runs > 0:
         alerts.append(
             {
@@ -323,11 +323,11 @@ def _summary_payload(
     active_runs: int,
     failed_runs: int,
     completed_runs: int,
-    state_counts: Dict[str, int],
+    state_counts: dict[str, int],
     latest_activity_at: Optional[datetime],
     sessions_with_recent_runs: set[str],
     success_denominator: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "runs_total": runs_total,
         "active_runs": active_runs,
@@ -348,11 +348,11 @@ def _summary_payload(
 
 def _heartbeat_payload(
     now: datetime,
-    alerts: list[Dict[str, str]],
+    alerts: list[dict[str, str]],
     failed_runs: int,
     active_runs: int,
     runs_total: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     status = "warn" if failed_runs > 0 else "idle" if runs_total == 0 else "ok"
     if status == "ok" and active_runs > 0:
         status = "active"
@@ -371,7 +371,7 @@ def _daily_digest_payload(
     completed_runs: int,
     active_runs: int,
     success_denominator: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     return {
         "window_start": window_start.isoformat(),
         "window_end": now.isoformat(),
@@ -387,7 +387,7 @@ def _daily_digest_payload(
     }
 
 
-def _component_vocabulary(provider_name: str, default_channel: str) -> Dict[str, Any]:
+def _component_vocabulary(provider_name: str, default_channel: str) -> dict[str, Any]:
     return {
         "runtime": {
             "component_kind": "runtime_manager",

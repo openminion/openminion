@@ -27,6 +27,8 @@ def _write_clean_root(root: Path) -> None:
 def test_live_eval_layout_is_admitted() -> None:
     assert MODULE.validate_root_layout() == []
     assert "boundary_artifacts.py" in MODULE.ALLOWED_ROOT_FILES
+    assert "reports.py" in MODULE.ALLOWED_ROOT_FILES
+    assert "subject_adapters.py" in MODULE.ALLOWED_ROOT_FILES
     assert "suite_selection.py" in MODULE.ALLOWED_ROOT_FILES
 
 

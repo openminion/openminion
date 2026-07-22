@@ -85,7 +85,7 @@ def _list_tasks(ctx: APIRouteContext, *, path: str, query: str | None) -> RouteR
                 limit=options.limit,
             ),
         )
-    except (AttributeError, TypeError, ValueError, RuntimeError) as exc:
+    except (AttributeError, TypeError, RuntimeError) as exc:
         return _task_error(exc)
 
 

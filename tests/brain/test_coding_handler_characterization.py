@@ -22,8 +22,10 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
     AdaptiveToolLoopOutcome,
+    AdaptiveToolLoopState,
 )
 from openminion.modules.brain.loop.strategies.coding.contracts import (
+    CODING_TERM_BUDGET_EXHAUSTED,
     CODING_TERM_DISALLOWED_TOOL,
     CODING_TERM_FINAL_TEXT,
     CODING_TERM_TOOL_FAILURE,
@@ -755,6 +757,14 @@ class TestCodingVerificationReserve:
             runner._loop_state.scratchpad["coding.verify_gate_reason"]
             == "missing_implementation_write"
         )
+        assert (
+            runner._loop_state.scratchpad["coding.required_write_direct_tool"]
+            == "file.write"
+        )
+        direct_tool_turn = runner._loop_state.direct_tool_turn
+        assert direct_tool_turn is not None
+        assert direct_tool_turn.requested_tool_names == ("file.write",)
+        assert direct_tool_turn.match_by_name_only is True
         assert "file.write" in runner._loop_state.messages[-1].content
         assert "code.patch" in runner._loop_state.messages[-1].content
         assert any(
@@ -1122,6 +1132,179 @@ class TestCodingVerificationReserve:
             == "missing_implementation_write"
             for status in emitted
         )
+
+    def test_circular_tool_stop_uses_user_file_write_request_as_write_gate(
+        self,
+    ) -> None:
+        emitted: list[dict[str, object]] = []
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = None
+        request = Message(
+            role="user",
+            content=(
+                "Implement it using file.write/file.read in the current "
+                "directory and validate by reading back one created file."
+            ),
+        )
+        runner._loop_state.messages = []
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.list_dir", "ok": True},
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: emitted.append(dict(kwargs)),
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_CIRCULAR_PATTERN,
+            state=AdaptiveToolLoopState(messages=[request]),
+            allowed_tools=frozenset({"file.write", "file.read", "file.list_dir"}),
+            error_message="circular pattern",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+        assert "file.write" in runner._loop_state.messages[-1].content
+        assert runner._loop_state.direct_tool_turn is not None
+        assert runner._loop_state.direct_tool_turn.requested_tool_names == ("file.write",)
+        assert any(
+            status.get("payload", {}).get("coding.verify_gate_reason")
+            == "missing_implementation_write"
+            for status in emitted
+        )
+
+    def test_budget_exhausted_before_file_write_uses_user_request_write_gate(
+        self,
+    ) -> None:
+        emitted: list[dict[str, object]] = []
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = None
+        request = Message(
+            role="user",
+            content=(
+                "Implement a tiny package using file.write/file.read and "
+                "validate by reading back one created file."
+            ),
+        )
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.find", "ok": True},
+                {"tool_name": "file.list_dir", "ok": True},
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: emitted.append(dict(kwargs)),
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_BUDGET_EXHAUSTED,
+            state=AdaptiveToolLoopState(messages=[request]),
+            allowed_tools=frozenset({"file.write", "file.read", "file.find"}),
+            error_message="budget exhausted",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+        assert "file.write" in runner._loop_state.messages[-1].content
+        assert runner._loop_state.direct_tool_turn is not None
+        assert runner._loop_state.direct_tool_turn.requested_tool_names == ("file.write",)
+        assert any(
+            status.get("payload", {}).get("coding.verify_gate_reason")
+            == "missing_implementation_write"
+            for status in emitted
+        )
+
+    def test_budget_exhausted_after_file_write_returns_labeled_evidence_closeout(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        created = "wc_cli.py"
+        runner._loop_state.messages = [
+            Message(
+                role="user",
+                content=(
+                    "Implement it with file.write/file.read. Close with "
+                    "`design:`, `implementation:`, `validation:`, and `next steps:`."
+                ),
+            )
+        ]
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": created},
+                },
+            ],
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            evaluate_turn_closure=lambda **kwargs: None,
+            apply_closure_judgment=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "file.read"}),
+            error_message="budget exhausted",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "done"
+        message = str(result.message or "").lower()
+        assert "design:" in message
+        assert "implementation:" in message
+        assert "validation:" in message
+        assert "next steps:" in message
+        assert "wc_cli.py" in result.message
 
     def test_final_text_allows_read_only_plan_without_write(
         self,

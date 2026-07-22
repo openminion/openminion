@@ -35,20 +35,7 @@ class MetaRulesEngine:
                 [ReasonCode.PANIC_USER_KILL],
             )
 
-        recovery_reasons: list[ReasonCode] = []
-        if metrics.recent_failures >= self.cfg.repeat_failure_threshold:
-            recovery_reasons.append(ReasonCode.RECOVERY_REPEAT_ERROR)
-        if metrics.loop_count >= self.cfg.loop_count_threshold:
-            recovery_reasons.append(ReasonCode.RECOVERY_LOOP)
-        if metrics.replan_count >= self.cfg.replan_count_threshold:
-            recovery_reasons.append(ReasonCode.RECOVERY_REPLAN_LIMIT)
-        if (
-            metrics.ticks_without_progress >= self.cfg.low_progress_ticks_threshold
-            and metrics.no_new_facts_streak
-            >= self.cfg.low_progress_no_new_facts_threshold
-        ):
-            recovery_reasons.append(ReasonCode.RECOVERY_STALL)
-
+        recovery_reasons = self._recovery_reasons(metrics)
         if recovery_reasons:
             directive = MetaDirective(
                 override_next_state="PLAN",
@@ -60,20 +47,7 @@ class MetaRulesEngine:
                 MetaState.RECOVERY, directive, metrics, recovery_reasons
             )
 
-        ha_reasons: list[ReasonCode] = []
-        if metrics.risk_class == "high":
-            ha_reasons.append(ReasonCode.HIGH_ASSURANCE_RISK_CLASS)
-        if metrics.risk_score >= self.cfg.high_risk_score_threshold:
-            ha_reasons.append(ReasonCode.HIGH_ASSURANCE_RISK_SCORE)
-        if metrics.irreversible:
-            ha_reasons.append(ReasonCode.HIGH_ASSURANCE_IRREVERSIBLE)
-        if metrics.grounding_confidence < self.cfg.low_grounding_threshold:
-            ha_reasons.append(ReasonCode.HIGH_ASSURANCE_LOW_GROUNDING)
-        if metrics.last_verify_outcome == "fail":
-            ha_reasons.append(ReasonCode.HIGH_ASSURANCE_LOW_VERIFY_OUTCOME)
-        if metrics.candidate_disagreement_score > 0.6:
-            ha_reasons.append(ReasonCode.HIGH_ASSURANCE_CANDIDATE_DISAGREEMENT)
-
+        ha_reasons = self._high_assurance_reasons(metrics)
         if ha_reasons:
             directive = MetaDirective(
                 tier_override="T3_high_assurance",
@@ -88,28 +62,8 @@ class MetaRulesEngine:
                 MetaState.HIGH_ASSURANCE, directive, metrics, ha_reasons
             )
 
-        cautious_reasons: list[ReasonCode] = []
-        if metrics.risk_class == "medium":
-            cautious_reasons.append(ReasonCode.CAUTIOUS_MEDIUM_RISK_CLASS)
-        if (
-            metrics.needs_clarification
-            or metrics.intent_confidence < self.cfg.low_intent_confidence_threshold
-        ):
-            cautious_reasons.append(
-                ReasonCode.CAUTIOUS_NEEDS_CLARIFICATION
-                if metrics.needs_clarification
-                else ReasonCode.CAUTIOUS_LOW_INTENT_CONFIDENCE
-            )
-        if metrics.ambiguity_score >= self.cfg.high_ambiguity_threshold:
-            cautious_reasons.append(ReasonCode.CAUTIOUS_HIGH_AMBIGUITY)
-        if metrics.policy_recent_denies > 0:
-            cautious_reasons.append(ReasonCode.CAUTIOUS_POLICY_DENIES)
-        if metrics.tool_success_rate_ewma < self.cfg.tool_degraded_threshold:
-            cautious_reasons.append(ReasonCode.CAUTIOUS_TOOL_DEGRADED)
         budget_pressure = 1.0 - metrics.budget_remaining
-        if budget_pressure >= self.cfg.budget_pressure_threshold:
-            cautious_reasons.append(ReasonCode.CAUTIOUS_BUDGET_PRESSURE)
-
+        cautious_reasons = self._cautious_reasons(metrics, budget_pressure)
         if cautious_reasons:
             directive = self._build_cautious_directive(
                 metrics, cautious_reasons, budget_pressure
@@ -124,6 +78,63 @@ class MetaRulesEngine:
             metrics,
             [ReasonCode.NORMAL_DEFAULT],
         )
+
+    def _recovery_reasons(self, metrics: MetaMetrics) -> list[ReasonCode]:
+        reasons: list[ReasonCode] = []
+        if metrics.recent_failures >= self.cfg.repeat_failure_threshold:
+            reasons.append(ReasonCode.RECOVERY_REPEAT_ERROR)
+        if metrics.loop_count >= self.cfg.loop_count_threshold:
+            reasons.append(ReasonCode.RECOVERY_LOOP)
+        if metrics.replan_count >= self.cfg.replan_count_threshold:
+            reasons.append(ReasonCode.RECOVERY_REPLAN_LIMIT)
+        if (
+            metrics.ticks_without_progress >= self.cfg.low_progress_ticks_threshold
+            and metrics.no_new_facts_streak
+            >= self.cfg.low_progress_no_new_facts_threshold
+        ):
+            reasons.append(ReasonCode.RECOVERY_STALL)
+        return reasons
+
+    def _high_assurance_reasons(self, metrics: MetaMetrics) -> list[ReasonCode]:
+        reasons: list[ReasonCode] = []
+        if metrics.risk_class == "high":
+            reasons.append(ReasonCode.HIGH_ASSURANCE_RISK_CLASS)
+        if metrics.risk_score >= self.cfg.high_risk_score_threshold:
+            reasons.append(ReasonCode.HIGH_ASSURANCE_RISK_SCORE)
+        if metrics.irreversible:
+            reasons.append(ReasonCode.HIGH_ASSURANCE_IRREVERSIBLE)
+        if metrics.grounding_confidence < self.cfg.low_grounding_threshold:
+            reasons.append(ReasonCode.HIGH_ASSURANCE_LOW_GROUNDING)
+        if metrics.last_verify_outcome == "fail":
+            reasons.append(ReasonCode.HIGH_ASSURANCE_LOW_VERIFY_OUTCOME)
+        if metrics.candidate_disagreement_score > 0.6:
+            reasons.append(ReasonCode.HIGH_ASSURANCE_CANDIDATE_DISAGREEMENT)
+        return reasons
+
+    def _cautious_reasons(
+        self, metrics: MetaMetrics, budget_pressure: float
+    ) -> list[ReasonCode]:
+        reasons: list[ReasonCode] = []
+        if metrics.risk_class == "medium":
+            reasons.append(ReasonCode.CAUTIOUS_MEDIUM_RISK_CLASS)
+        if (
+            metrics.needs_clarification
+            or metrics.intent_confidence < self.cfg.low_intent_confidence_threshold
+        ):
+            reasons.append(
+                ReasonCode.CAUTIOUS_NEEDS_CLARIFICATION
+                if metrics.needs_clarification
+                else ReasonCode.CAUTIOUS_LOW_INTENT_CONFIDENCE
+            )
+        if metrics.ambiguity_score >= self.cfg.high_ambiguity_threshold:
+            reasons.append(ReasonCode.CAUTIOUS_HIGH_AMBIGUITY)
+        if metrics.policy_recent_denies > 0:
+            reasons.append(ReasonCode.CAUTIOUS_POLICY_DENIES)
+        if metrics.tool_success_rate_ewma < self.cfg.tool_degraded_threshold:
+            reasons.append(ReasonCode.CAUTIOUS_TOOL_DEGRADED)
+        if budget_pressure >= self.cfg.budget_pressure_threshold:
+            reasons.append(ReasonCode.CAUTIOUS_BUDGET_PRESSURE)
+        return reasons
 
     def _build_cautious_directive(
         self,

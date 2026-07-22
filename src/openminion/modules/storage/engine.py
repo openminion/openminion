@@ -32,6 +32,127 @@ def _resolve_sqlite_path(value: str | Path) -> Path:
     return Path(value).expanduser().resolve(strict=False)
 
 
+def _storage_engine_paths(config: StorageEngineConfig) -> tuple[Path, Path, Path]:
+    root = Path(config.root_dir).expanduser().resolve(strict=False)
+    sqlite = _resolve_sqlite_path(config.sqlite_path)
+    fallback = (
+        Path(config.fallback_root).expanduser().resolve(strict=False)
+        if config.fallback_root
+        else root
+    )
+    return root, sqlite, fallback
+
+
+def _record_backend_options(
+    config: StorageEngineConfig,
+    *,
+    sqlite: Path,
+    telemetry_hook: StorageTelemetryHook,
+) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "sqlite_path": sqlite,
+        "wal": bool(config.wal),
+        "synchronous": str(config.synchronous),
+        "busy_timeout_ms": int(config.busy_timeout_ms),
+        "autocheckpoint_pages": int(config.autocheckpoint_pages),
+        "telemetry_hook": telemetry_hook,
+        "slow_query_threshold_ms": int(config.slow_query_threshold_ms),
+    }
+    optional_keys = {
+        "pool_recycle_seconds": config.pg_pool_recycle_seconds,
+        "pool_size": config.pg_pool_size,
+        "pool_max_overflow": config.pg_pool_max_overflow,
+        "pool_timeout_seconds": config.pg_pool_timeout_seconds,
+    }
+    for key, value in optional_keys.items():
+        if value is not None:
+            options[key] = value
+    options.update(config.record_backend_options)
+    return options
+
+
+def _blob_backend_options(config: StorageEngineConfig, *, root: Path) -> dict[str, Any]:
+    options: dict[str, Any] = {"root_dir": root}
+    options.update(config.blob_backend_options)
+    return options
+
+
+def _create_vector_store(
+    config: StorageEngineConfig,
+    *,
+    registry: BackendRegistry,
+    sqlite: Path,
+) -> Any | None:
+    if not config.vector_backend:
+        return None
+    vector_options = dict(config.vector_backend_options)
+    vector_options.setdefault("sqlite_path", sqlite)
+    vector_options.setdefault("wal", bool(config.wal))
+    vector_store = registry.create_vector(config.vector_backend, vector_options)
+    ensure_interface_compatibility(vector_store, interface="vector_store")
+    return vector_store
+
+
+def _effective_storage_engine_config(
+    config: StorageEngineConfig,
+    *,
+    root: Path,
+    sqlite: Path,
+    fallback: Path,
+    namespace: str | None,
+) -> StorageEngineConfig:
+    return StorageEngineConfig(
+        root_dir=root,
+        sqlite_path=sqlite,
+        fallback_root=fallback,
+        wal=bool(config.wal),
+        synchronous=str(config.synchronous),
+        busy_timeout_ms=int(config.busy_timeout_ms),
+        autocheckpoint_pages=int(config.autocheckpoint_pages),
+        default_namespace=namespace,
+        record_backend=str(config.record_backend),
+        blob_backend=str(config.blob_backend),
+        vector_backend=None if config.vector_backend is None else str(config.vector_backend),
+        record_backend_options=dict(config.record_backend_options),
+        blob_backend_options=dict(config.blob_backend_options),
+        vector_backend_options=dict(config.vector_backend_options),
+        pg_pool_recycle_seconds=config.pg_pool_recycle_seconds,
+        pg_pool_size=config.pg_pool_size,
+        pg_pool_max_overflow=config.pg_pool_max_overflow,
+        pg_pool_timeout_seconds=config.pg_pool_timeout_seconds,
+        pool_health_emit_interval_seconds=config.pool_health_emit_interval_seconds,
+        slow_query_threshold_ms=int(config.slow_query_threshold_ms),
+    )
+
+
+def _start_pool_health_emitter(
+    config: StorageEngineConfig,
+    *,
+    record: RecordStore,
+    telemetry_hook: StorageTelemetryHook,
+) -> PoolHealthEmitter | None:
+    if isinstance(telemetry_hook, NoopStorageTelemetryHook):
+        return None
+    try:
+        probe = record.pool_health()
+    except Exception:  # noqa: BLE001
+        probe = None
+    if probe is None:
+        return None
+    interval = (
+        config.pool_health_emit_interval_seconds
+        if config.pool_health_emit_interval_seconds is not None
+        else _POOL_HEALTH_DEFAULT_INTERVAL
+    )
+    emitter = PoolHealthEmitter(
+        record_store=record,
+        hook=telemetry_hook,
+        interval_seconds=interval,
+    )
+    emitter.start()
+    return emitter
+
+
 @dataclass(frozen=True)
 class StorageEngineConfig:
     root_dir: Path
@@ -208,57 +329,30 @@ class StorageEngine:
         registry: BackendRegistry | None = None,
         telemetry_hook: StorageTelemetryHook | None = None,
     ) -> StorageEngine:
-        root = Path(config.root_dir).expanduser().resolve(strict=False)
-        sqlite = _resolve_sqlite_path(config.sqlite_path)
-        fallback = (
-            Path(config.fallback_root).expanduser().resolve(strict=False)
-            if config.fallback_root
-            else root
-        )
+        root, sqlite, fallback = _storage_engine_paths(config)
         namespace = normalize_namespace(config.default_namespace)
-
         backend_registry = (
             registry.copy() if registry is not None else default_backend_registry()
         )
-
-        record_options: dict[str, Any] = {
-            "sqlite_path": sqlite,
-            "wal": bool(config.wal),
-            "synchronous": str(config.synchronous),
-            "busy_timeout_ms": int(config.busy_timeout_ms),
-            "autocheckpoint_pages": int(config.autocheckpoint_pages),
-        }
-        if config.pg_pool_recycle_seconds is not None:
-            record_options["pool_recycle_seconds"] = config.pg_pool_recycle_seconds
-        if config.pg_pool_size is not None:
-            record_options["pool_size"] = config.pg_pool_size
-        if config.pg_pool_max_overflow is not None:
-            record_options["pool_max_overflow"] = config.pg_pool_max_overflow
-        if config.pg_pool_timeout_seconds is not None:
-            record_options["pool_timeout_seconds"] = config.pg_pool_timeout_seconds
         effective_hook: StorageTelemetryHook = (
             telemetry_hook if telemetry_hook is not None else NoopStorageTelemetryHook()
         )
-        record_options["telemetry_hook"] = effective_hook
-        record_options["slow_query_threshold_ms"] = int(config.slow_query_threshold_ms)
-        record_options.update(config.record_backend_options)
 
-        blob_options = {"root_dir": root}
-        blob_options.update(config.blob_backend_options)
-
-        record = backend_registry.create_record(config.record_backend, record_options)
-        blob = backend_registry.create_blob(config.blob_backend, blob_options)
+        record = backend_registry.create_record(
+            config.record_backend,
+            _record_backend_options(config, sqlite=sqlite, telemetry_hook=effective_hook),
+        )
+        blob = backend_registry.create_blob(
+            config.blob_backend,
+            _blob_backend_options(config, root=root),
+        )
         ensure_interface_compatibility(record, interface="record_store")
         ensure_interface_compatibility(blob, interface="blob_store")
-        vector_store = None
-        if config.vector_backend:
-            vector_options = dict(config.vector_backend_options)
-            vector_options.setdefault("sqlite_path", sqlite)
-            vector_options.setdefault("wal", bool(config.wal))
-            vector_store = backend_registry.create_vector(
-                config.vector_backend, vector_options
-            )
-            ensure_interface_compatibility(vector_store, interface="vector_store")
+        vector_store = _create_vector_store(
+            config,
+            registry=backend_registry,
+            sqlite=sqlite,
+        )
         hybrid = HybridStore(
             record_store=record,
             blob_store=blob,
@@ -267,59 +361,23 @@ class StorageEngine:
         )
         ensure_interface_compatibility(hybrid, interface="hybrid_store")
 
-        effective_config = StorageEngineConfig(
-            root_dir=root,
-            sqlite_path=sqlite,
-            fallback_root=fallback,
-            wal=bool(config.wal),
-            synchronous=str(config.synchronous),
-            busy_timeout_ms=int(config.busy_timeout_ms),
-            autocheckpoint_pages=int(config.autocheckpoint_pages),
-            default_namespace=namespace,
-            record_backend=str(config.record_backend),
-            blob_backend=str(config.blob_backend),
-            vector_backend=(
-                None if config.vector_backend is None else str(config.vector_backend)
-            ),
-            record_backend_options=dict(config.record_backend_options),
-            blob_backend_options=dict(config.blob_backend_options),
-            vector_backend_options=dict(config.vector_backend_options),
-            pg_pool_recycle_seconds=config.pg_pool_recycle_seconds,
-            pg_pool_size=config.pg_pool_size,
-            pg_pool_max_overflow=config.pg_pool_max_overflow,
-            pg_pool_timeout_seconds=config.pg_pool_timeout_seconds,
-            pool_health_emit_interval_seconds=(
-                config.pool_health_emit_interval_seconds
-            ),
-            slow_query_threshold_ms=int(config.slow_query_threshold_ms),
-        )
-
-        emitter: PoolHealthEmitter | None = None
-        if not isinstance(effective_hook, NoopStorageTelemetryHook):
-            try:
-                probe = record.pool_health()
-            except Exception:  # noqa: BLE001
-                probe = None
-            if probe is not None:
-                interval = (
-                    config.pool_health_emit_interval_seconds
-                    if config.pool_health_emit_interval_seconds is not None
-                    else _POOL_HEALTH_DEFAULT_INTERVAL
-                )
-                emitter = PoolHealthEmitter(
-                    record_store=record,
-                    hook=effective_hook,
-                    interval_seconds=interval,
-                )
-                emitter.start()
-
         return cls(
-            config=effective_config,
+            config=_effective_storage_engine_config(
+                config,
+                root=root,
+                sqlite=sqlite,
+                fallback=fallback,
+                namespace=namespace,
+            ),
             blob_store=blob,
             record_store=record,
             hybrid_store=hybrid,
             vector_store=vector_store,
-            health_emitter=emitter,
+            health_emitter=_start_pool_health_emitter(
+                config,
+                record=record,
+                telemetry_hook=effective_hook,
+            ),
         )
 
     @classmethod

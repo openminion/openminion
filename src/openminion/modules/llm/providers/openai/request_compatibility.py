@@ -1,7 +1,8 @@
 """OpenAI-dialect request compatibility profiles."""
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.llm.providers.behavior.constants import (
     DEFAULT_REQUEST_DIALECT,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from http import HTTPStatus
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.routes import (
@@ -44,13 +44,13 @@ _ROUTE_HANDLERS = (
 def dispatch_request(
     method: str,
     path: str,
-    config_path: Optional[str],
-    body: Optional[dict[str, Any]] = None,
-    query: Optional[str] = None,
-    runtime: Optional[APIRuntime] = None,
-    runtime_bootstrap_error: Optional[str] = None,
-    request_headers: Optional[Mapping[str, str]] = None,
-    request_id: Optional[str] = None,
+    config_path: str | None,
+    body: dict[str, Any] | None = None,
+    query: str | None = None,
+    runtime: APIRuntime | None = None,
+    runtime_bootstrap_error: str | None = None,
+    request_headers: Mapping[str, str] | None = None,
+    request_id: str | None = None,
 ) -> tuple[HTTPStatus, dict[str, Any]]:
     from openminion.api import server
 

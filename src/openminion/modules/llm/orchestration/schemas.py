@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -51,7 +51,7 @@ class ProviderProfile(BaseModel):
     model: str = Field(..., min_length=1)
     endpoint: Optional[str] = None
     auth_ref: Optional[str] = None
-    params: Dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
     capabilities: ProfileCapabilities = Field(default_factory=ProfileCapabilities)
     supports_json: bool = False
     supports_tools: bool = False
@@ -59,7 +59,7 @@ class ProviderProfile(BaseModel):
     supports_streaming: bool = False
     supports_prompt_caching: bool = False
     cost_hint: Optional[ProfileCostHint] = None
-    tags: List[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _sync_capabilities(self) -> "ProviderProfile":
@@ -88,7 +88,7 @@ class Rubric(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     instructions: str = ""
-    criteria: List[RubricCriterion] = Field(default_factory=list)
+    criteria: list[RubricCriterion] = Field(default_factory=list)
 
 
 class NormalizationRules(BaseModel):
@@ -112,7 +112,7 @@ class EnsembleTemplate(BaseModel):
 
     id: str = Field(..., min_length=1)
     mode: EnsembleMode
-    providers: List[str] = Field(default_factory=list)
+    providers: list[str] = Field(default_factory=list)
     judge_profile_id: Optional[str] = None
     selection_policy: SelectionPolicyName = "pick_primary_if_ok"
     rubric: Optional[Rubric] = None
@@ -159,8 +159,8 @@ class LLMCatalogConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = 1
-    profiles: List[ProviderProfile] = Field(default_factory=list)
-    ensembles: List[EnsembleTemplate] = Field(default_factory=list)
+    profiles: list[ProviderProfile] = Field(default_factory=list)
+    ensembles: list[EnsembleTemplate] = Field(default_factory=list)
     defaults: LLMCatalogDefaults = Field(default_factory=LLMCatalogDefaults)
     limits: GlobalLimits = Field(default_factory=GlobalLimits)
     logging: CatalogLoggingConfig = Field(default_factory=CatalogLoggingConfig)
@@ -186,7 +186,7 @@ class SingleRoute(BaseModel):
 
     mode: Literal["single"]
     profile_id: str = Field(..., min_length=1)
-    params_override: Optional[Dict[str, Any]] = None
+    params_override: Optional[dict[str, Any]] = None
     timeout_ms: Optional[int] = None
 
 
@@ -196,7 +196,7 @@ class EnsembleRoute(BaseModel):
     mode: Literal["ensemble"]
     strategy_id: Optional[str] = None
     strategy_inline: Optional[EnsembleTemplate] = None
-    providers: Optional[List[str]] = None
+    providers: Optional[list[str]] = None
     judge_profile_id: Optional[str] = None
     selection_policy: Optional[SelectionPolicyName] = None
     rubric: Optional[Rubric] = None
@@ -214,7 +214,7 @@ class EnsembleRoute(BaseModel):
         )
 
 
-LLMRoute = Union[SingleRoute, EnsembleRoute]
+LLMRoute = SingleRoute | EnsembleRoute
 
 
 class AgentLLMBudgets(BaseModel):
@@ -231,9 +231,9 @@ class AgentLLMBudgets(BaseModel):
 class FallbackPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    fallback_profile_ids: List[str] = Field(default_factory=list)
+    fallback_profile_ids: list[str] = Field(default_factory=list)
     fallback_mode: FallbackMode = "single"
-    on_error_codes: Optional[List[str]] = None
+    on_error_codes: Optional[list[str]] = None
     max_fallback_attempts: int = 1
 
 
@@ -241,12 +241,12 @@ class AgentLLMPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_route: Optional[LLMRoute] = None
-    by_purpose: Dict[str, LLMRoute] = Field(default_factory=dict)
-    allow_profiles: Optional[List[str]] = None
-    deny_profiles: Optional[List[str]] = None
+    by_purpose: dict[str, LLMRoute] = Field(default_factory=dict)
+    allow_profiles: Optional[list[str]] = None
+    deny_profiles: Optional[list[str]] = None
     budgets: AgentLLMBudgets = Field(default_factory=AgentLLMBudgets)
-    fallbacks: Dict[str, FallbackPolicy] = Field(default_factory=dict)
-    overrides: Dict[str, Any] = Field(default_factory=dict)
+    fallbacks: dict[str, FallbackPolicy] = Field(default_factory=dict)
+    overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 class TraceContext(BaseModel):
@@ -272,13 +272,13 @@ class RuntimeLLMRequest(BaseModel):
 
     request_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     purpose: str = Field(default="act", min_length=1)
-    messages: List[Message] = Field(default_factory=list)
-    output_schema: Optional[Dict[str, Any]] = None
-    required_capabilities: List[ProviderCapabilityName] = Field(default_factory=list)
-    constraints: Optional[Dict[str, Any]] = None
+    messages: list[Message] = Field(default_factory=list)
+    output_schema: Optional[dict[str, Any]] = None
+    required_capabilities: list[ProviderCapabilityName] = Field(default_factory=list)
+    constraints: Optional[dict[str, Any]] = None
     budget: RequestBudget = Field(default_factory=RequestBudget)
     trace: TraceContext = Field(default_factory=TraceContext)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class Usage(BaseModel):
@@ -299,7 +299,7 @@ class CandidateResponse(BaseModel):
     model: str
     status: CandidateStatus
     text: Optional[str] = None
-    json_output: Optional[Dict[str, Any]] = Field(
+    json_output: Optional[dict[str, Any]] = Field(
         default=None, alias="json", serialization_alias="json"
     )
     usage: Usage = Field(default_factory=Usage)
@@ -312,15 +312,15 @@ class SelectionResult(BaseModel):
 
     winner_candidate_id: str
     winner_profile_id: str
-    scores: Optional[Dict[str, float]] = None
-    reasons: List[str] = Field(default_factory=list)
-    risk_flags: Optional[List[str]] = None
+    scores: Optional[dict[str, float]] = None
+    reasons: list[str] = Field(default_factory=list)
+    risk_flags: Optional[list[str]] = None
 
 
 class DisagreementCluster(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidate_ids: List[str] = Field(default_factory=list)
+    candidate_ids: list[str] = Field(default_factory=list)
     excerpt: str = ""
 
 
@@ -328,9 +328,9 @@ class DisagreementReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     summary: str = ""
-    clusters: List[DisagreementCluster] = Field(default_factory=list)
-    json_diffs: Optional[Dict[str, Any]] = None
-    risk_flags: List[str] = Field(default_factory=list)
+    clusters: list[DisagreementCluster] = Field(default_factory=list)
+    json_diffs: Optional[dict[str, Any]] = None
+    risk_flags: list[str] = Field(default_factory=list)
 
 
 class UsageTotal(BaseModel):
@@ -347,7 +347,7 @@ class EnsembleResult(BaseModel):
 
     request_id: str
     mode: EnsembleMode
-    candidates: List[CandidateResponse] = Field(default_factory=list)
+    candidates: list[CandidateResponse] = Field(default_factory=list)
     selection: Optional[SelectionResult] = None
     disagreement: Optional[DisagreementReport] = None
     usage_total: UsageTotal = Field(default_factory=UsageTotal)

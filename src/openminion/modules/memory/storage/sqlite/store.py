@@ -119,6 +119,30 @@ class SQLiteMemoryStore(MemoryStore):
         conn.isolation_level = None
         return conn
 
+    def backup_to(self, path: str | Path) -> Path:
+        """Write a consistent SQLite backup for reviewed import rollback."""
+
+        destination = Path(path).expanduser().resolve(strict=False)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            self._write_lock,
+            self._connect() as source,
+            sqlite3.connect(destination) as target,
+        ):
+            source.backup(target)
+        return destination
+
+    def restore_from(self, path: str | Path) -> None:
+        """Restore this store from a SQLite backup created by ``backup_to``."""
+
+        source_path = Path(path).expanduser().resolve(strict=True)
+        with (
+            self._write_lock,
+            sqlite3.connect(source_path) as source,
+            self._connect() as target,
+        ):
+            source.backup(target)
+
     def _resolve_artifactctl(self) -> Any | None:
         if self._artifactctl is _ARTIFACTCTL_UNSET:
             self._artifactctl = create_default_artifactctl()

@@ -34,7 +34,12 @@ from ..tool_calling import (
     resolve_tool_call_source_precedence,
     supports_fallback_tool_calling,
     supports_native_tool_calling,
-    ToolCallFallbackSource,
+)
+from .response_payloads import (
+    _cortensor_fallback_sources,
+    _cortensor_first_choice,
+    _cortensor_response_text,
+    _raise_empty_cortensor_response,
 )
 
 
@@ -438,49 +443,16 @@ class CortensorProvider:
         fallback_model: str,
         behavior_profile: Any,
     ) -> dict[str, Any]:
-        choices = response_payload.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise LLMCtlError("PROVIDER_ERROR", "Cortensor response missing choices")
-
-        first_choice = choices[0] if isinstance(choices[0], dict) else None
-        if not isinstance(first_choice, dict):
-            raise LLMCtlError(
-                "PROVIDER_ERROR", "Cortensor response has invalid choice payload"
-            )
-
+        first_choice = _cortensor_first_choice(response_payload)
         message_payload = first_choice.get("message")
         allowed_tool_names = _resolve_tool_names(request)
-        fallback_sources: list[ToolCallFallbackSource] = []
-        if isinstance(message_payload, dict):
-            fallback_sources.append(
-                ToolCallFallbackSource(
-                    source="message.content",
-                    text=_extract_message_text(message_payload.get("content")),
-                )
-            )
-        fallback_sources.extend(
-            [
-                ToolCallFallbackSource(
-                    source="choice.text",
-                    text=_extract_message_text(first_choice.get("text")),
-                ),
-                ToolCallFallbackSource(
-                    source="choice.output_text",
-                    text=_extract_message_text(first_choice.get("output_text")),
-                ),
-                ToolCallFallbackSource(
-                    source="response.output_text",
-                    text=_extract_message_text(response_payload.get("output_text")),
-                ),
-                ToolCallFallbackSource(
-                    source="response.text",
-                    text=_extract_message_text(response_payload.get("text")),
-                ),
-            ]
-        )
         tool_call_resolution = resolve_tool_call_source_precedence(
             message_payload=message_payload,
-            fallback_sources=fallback_sources,
+            fallback_sources=_cortensor_fallback_sources(
+                first_choice=first_choice,
+                message_payload=message_payload,
+                response_payload=response_payload,
+            ),
             provider_name=self.name,
             model_name=str(response_payload.get("model") or fallback_model),
             allowed_tool_names=allowed_tool_names if request.tools else None,
@@ -489,47 +461,19 @@ class CortensorProvider:
             fallback_parser_policy=behavior_profile.fallback_parser_policy,
         )
         tool_calls: list[ToolCall] = list(tool_call_resolution.calls)
-
-        text = ""
-        if isinstance(message_payload, dict):
-            text = _extract_message_text(message_payload.get("content"))
-        if not text:
-            text = _extract_message_text(first_choice.get("text"))
-        if not text:
-            text = _extract_message_text(first_choice.get("output_text"))
-        if not text:
-            text = _extract_message_text(response_payload.get("output_text"))
-        if not text:
-            text = _extract_message_text(response_payload.get("text"))
+        text = _cortensor_response_text(
+            first_choice=first_choice,
+            message_payload=message_payload,
+            response_payload=response_payload,
+        )
 
         tool_calls = _coerce_tool_calls(tool_calls)
 
         if not text and not tool_calls:
-            response_str = str(response_payload)
-            has_urn = "urn:" in response_str.lower() or "task_id" in response_str
-            if has_urn:
-                raise LLMCtlError(
-                    "EMPTY_URN_CONTENT",
-                    "Cortensor response contains URN but no resolvable content (off-chain result pending)",
-                    details={"retryable": True, "urn_present": True},
-                )
-            has_text_field = (
-                (isinstance(message_payload, dict) and "content" in message_payload)
-                or (isinstance(first_choice, dict) and "text" in first_choice)
-                or (isinstance(first_choice, dict) and "output_text" in first_choice)
-                or ("text" in response_payload)
-                or ("output_text" in response_payload)
-            )
-            if not has_text_field:
-                raise LLMCtlError(
-                    "MALFORMED_PAYLOAD",
-                    "Cortensor response has malformed or missing payload structure",
-                    details={"retryable": False},
-                )
-            raise LLMCtlError(
-                "EMPTY_PAYLOAD",
-                "Cortensor response did not include text or tool calls",
-                details={"retryable": True},
+            _raise_empty_cortensor_response(
+                first_choice=first_choice,
+                message_payload=message_payload,
+                response_payload=response_payload,
             )
 
         return {

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 from urllib.parse import urlparse
 
 from .models import BrowserCallArgs, TabInfo

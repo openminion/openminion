@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 from uuid import uuid4
 
 from openminion.base.constants import STATE_KEY_WORKING

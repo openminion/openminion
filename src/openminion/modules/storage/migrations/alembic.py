@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import importlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
 
 from openminion.modules.storage.migrations.module_ids import get_module_application_id
 
@@ -94,51 +94,6 @@ def run_module_env(
     def _now_iso() -> str:
         return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-    def _sync_openminion_identity(
-        connection: SAConnection, *, dialect_name: str
-    ) -> None:
-        if dialect_name == "sqlite":
-            connection.execute(
-                text(f"PRAGMA application_id={int(module_application_id)}")
-            )
-            if target_user_version is not None:
-                connection.execute(
-                    text(f"PRAGMA user_version={int(target_user_version)}")
-                )
-
-        connection.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS om_meta (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """
-            )
-        )
-
-        revision_row = connection.execute(
-            text("SELECT version_num FROM alembic_version LIMIT 1")
-        ).fetchone()
-        schema_head = revision_row[0] if revision_row and revision_row[0] else "head"
-        migrated_at = _now_iso()
-
-        for key, value in (
-            ("module_id", module_id),
-            ("schema_head", str(schema_head)),
-            ("last_migrated_at", migrated_at),
-        ):
-            connection.execute(
-                text(
-                    """
-                    INSERT INTO om_meta(key, value)
-                    VALUES (:key, :value)
-                    ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                    """
-                ),
-                {"key": key, "value": value},
-            )
-
     def run_migrations_offline() -> None:
         url = config.get_main_option("sqlalchemy.url")
         context.configure(
@@ -163,7 +118,15 @@ def run_module_env(
         )
         with context.begin_transaction():
             context.run_migrations()
-            _sync_openminion_identity(connection, dialect_name=dialect_name)
+            _sync_openminion_identity(
+                connection,
+                dialect_name=dialect_name,
+                module_id=module_id,
+                module_application_id=module_application_id,
+                target_user_version=target_user_version,
+                now_iso=_now_iso(),
+                text=text,
+            )
 
     def run_migrations_online() -> None:
         external_connection = config.attributes.get("connection")
@@ -185,6 +148,52 @@ def run_module_env(
         run_migrations_offline()
     else:
         run_migrations_online()
+
+
+def _sync_openminion_identity(
+    connection: SAConnection,
+    *,
+    dialect_name: str,
+    module_id: str,
+    module_application_id: int,
+    target_user_version: int | None,
+    now_iso: str,
+    text: Any,
+) -> None:
+    if dialect_name == "sqlite":
+        connection.execute(text(f"PRAGMA application_id={int(module_application_id)}"))
+        if target_user_version is not None:
+            connection.execute(text(f"PRAGMA user_version={int(target_user_version)}"))
+
+    connection.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS om_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+    )
+    revision_row = connection.execute(
+        text("SELECT version_num FROM alembic_version LIMIT 1")
+    ).fetchone()
+    schema_head = revision_row[0] if revision_row and revision_row[0] else "head"
+    for key, value in (
+        ("module_id", module_id),
+        ("schema_head", str(schema_head)),
+        ("last_migrated_at", now_iso),
+    ):
+        connection.execute(
+            text(
+                """
+                INSERT INTO om_meta(key, value)
+                VALUES (:key, :value)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """
+            ),
+            {"key": key, "value": value},
+        )
 
 
 def apply_ddl_statements(statements: Iterable[str]) -> None:

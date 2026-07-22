@@ -163,11 +163,14 @@ def _tools_run(args) -> int:
     if not isinstance(arguments, dict):
         raise RuntimeError("--json payload must be a JSON object")
 
+    session_id = str(getattr(args, "session", "") or "").strip() or "tools"
+    confirm = bool(getattr(args, "confirm", False))
     request_payload = {
         "arguments": arguments,
-        "session_id": str(getattr(args, "session", "") or "").strip() or "tools",
+        "session_id": session_id,
         "channel": "console",
         "target": "cli-tools",
+        "confirm": confirm,
     }
 
     payload = _from_daemon_or_inproc(
@@ -183,7 +186,8 @@ def _tools_run(args) -> int:
             args.config,
             tool_name=tool_name,
             arguments=arguments,
-            session_id=request_payload["session_id"],
+            session_id=session_id,
+            confirm=confirm,
         ),
     )
     print_json_payload(payload)
@@ -317,6 +321,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default="{}",
         help="Tool argument payload as JSON object",
     )
+    tools_run.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Confirm a policy-gated tool call such as a write or admin operation",
+    )
     add_tool_session_arg(tools_run, default="tools")
     tools_run.set_defaults(handler=run_tools, needs_app=False)
 
@@ -384,6 +393,7 @@ def _inproc_tool_run(
     tool_name: str,
     arguments: dict,
     session_id: str,
+    confirm: bool = False,
 ) -> dict:
     runtime = APIRuntime.from_config_path(config_path)
     try:
@@ -431,6 +441,7 @@ def _inproc_tool_run(
                 blast_radius_adapter=build_default_composition_boundary_adapter(
                     seam_id=SEAM_CLI_TOOLS,
                 ),
+                confirm=bool(confirm),
             ),
         )
         result = batch.results[0]

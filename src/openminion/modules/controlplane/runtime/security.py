@@ -22,11 +22,23 @@ def is_pair_command(text: str) -> bool:
 @dataclass
 class ScopeAuthorizer:
     store: object | None = None
+    identity_api: object | None = None
     default_scopes: tuple[str, ...] = DEFAULT_MINIMAL_SCOPES
 
     def _auth_from_principal_mapping(
         self, *, channel: str, chat_id: str
     ) -> AuthContext | None:
+        if self.identity_api is not None:
+            auth_context = getattr(self.identity_api, "auth_context", None)
+            if callable(auth_context):
+                auth = auth_context(
+                    channel=channel,
+                    subject_id=chat_id,
+                    default_scopes=self.default_scopes,
+                )
+                if auth is not None:
+                    self._touch_channel_subject(channel=channel, subject_id=chat_id)
+                    return auth
         if self.store is None:
             return None
         resolve_principal = getattr(self.store, "resolve_principal", None)
@@ -45,9 +57,7 @@ class ScopeAuthorizer:
         if status != PRINCIPAL_BINDING_STATUS_ACTIVE:
             return None
         scopes = binding.get("scopes") or list(self.default_scopes)
-        touch_channel_subject = getattr(self.store, "touch_channel_subject", None)
-        if callable(touch_channel_subject):
-            touch_channel_subject(channel=channel, subject_id=chat_id)
+        self._touch_channel_subject(channel=channel, subject_id=chat_id)
         return AuthContext(
             role="paired",
             scopes=tuple(str(scope) for scope in scopes),
@@ -99,3 +109,10 @@ class ScopeAuthorizer:
         if command.canonical in _COMMAND_SCOPE_OVERRIDES:
             return _COMMAND_SCOPE_OVERRIDES[command.canonical]
         return self.default_scopes
+
+    def _touch_channel_subject(self, *, channel: str, subject_id: str) -> None:
+        if self.store is None:
+            return
+        touch_channel_subject = getattr(self.store, "touch_channel_subject", None)
+        if callable(touch_channel_subject):
+            touch_channel_subject(channel=channel, subject_id=subject_id)

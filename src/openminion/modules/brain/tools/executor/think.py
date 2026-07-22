@@ -46,26 +46,15 @@ def execute_think(
     prompt = str(getattr(command, "prompt", "") or "").strip()
     output_key = str(getattr(command, "output_key", "") or "").strip()
 
-    hints: dict = {"user_input": prompt, "current_datetime": iso_now()}
-    if output_key:
-        hints["output_key"] = output_key
-    if state.last_result is not None and state.last_result.summary:
-        hints["prior_step_result"] = state.last_result.summary
-    if state.step_outputs:
-        hints["step_history"] = [
-            item.model_dump(mode="json") for item in state.step_outputs[-5:]
-        ]
+    hints = _think_hints(state=state, prompt=prompt, output_key=output_key)
 
-    logger.emit(
-        "think.started",
-        {
-            "command_id": command.command_id,
-            "llm_call_id": llm_call_id,
-            "model": model,
-            "output_key": output_key,
-            "step_index": state.cursor,
-        },
-        trace_id=state.trace_id,
+    _emit_think_started(
+        logger=logger,
+        state=state,
+        command=command,
+        llm_call_id=llm_call_id,
+        model=model,
+        output_key=output_key,
     )
     runner._track_call_started(llm_call_id, "think", model)
 
@@ -87,51 +76,137 @@ def execute_think(
         state.llm_calls_used += 1
         runner._debit_tokens(state, raw, logger)
         runner._track_call_completed(llm_call_id)
-        text = (
-            str(raw.get("response") or "").strip()
-            if isinstance(raw, dict)
-            else str(raw or "").strip()
-        )
-        result = ActionResult(
-            command_id=command.command_id,
-            status=BRAIN_ACTION_STATUS_SUCCESS,
-            summary=text or "(no output)",
-        )
-        logger.emit(
-            "think.completed",
-            {
-                "command_id": command.command_id,
-                "llm_call_id": llm_call_id,
-                "output_chars": len(text),
-                "output_key": output_key,
-            },
-            trace_id=state.trace_id,
+        text = _think_response_text(raw)
+        result = _think_success_result(command=command, text=text)
+        _emit_think_completed(
+            logger=logger,
+            state=state,
+            command=command,
+            llm_call_id=llm_call_id,
+            output_key=output_key,
+            text=text,
         )
     except Exception as exc:
         state.llm_calls_used += 1
         runner._track_call_completed(llm_call_id)
-        logger.emit(
-            "think.failed",
-            {
-                "command_id": command.command_id,
-                "llm_call_id": llm_call_id,
-                "error": str(exc),
-            },
-            trace_id=state.trace_id,
-            status="error",
+        _emit_think_failed(
+            logger=logger,
+            state=state,
+            command=command,
+            llm_call_id=llm_call_id,
+            error=exc,
         )
-        result = ActionResult(
-            command_id=command.command_id,
-            status=BRAIN_ACTION_STATUS_FAILED,
-            summary=f"Think step failed: {exc}",
-            error=ActionError(
-                code="THINK_FAILED",
-                message=str(exc),
-                details={"reason_code": "think_llm_call_failed"},
-            ),
-        )
+        result = _think_failed_result(command=command, error=exc)
     runner._remember_idempotency(state=state, command=command, result=result)
     return result, None
+
+
+def _think_hints(
+    *,
+    state: WorkingState,
+    prompt: str,
+    output_key: str,
+) -> dict[str, object]:
+    hints: dict[str, object] = {"user_input": prompt, "current_datetime": iso_now()}
+    if output_key:
+        hints["output_key"] = output_key
+    if state.last_result is not None and state.last_result.summary:
+        hints["prior_step_result"] = state.last_result.summary
+    if state.step_outputs:
+        hints["step_history"] = [
+            item.model_dump(mode="json") for item in state.step_outputs[-5:]
+        ]
+    return hints
+
+
+def _think_response_text(raw: object) -> str:
+    if isinstance(raw, dict):
+        return str(raw.get("response") or "").strip()
+    return str(raw or "").strip()
+
+
+def _think_success_result(*, command: Command, text: str) -> ActionResult:
+    return ActionResult(
+        command_id=command.command_id,
+        status=BRAIN_ACTION_STATUS_SUCCESS,
+        summary=text or "(no output)",
+    )
+
+
+def _think_failed_result(*, command: Command, error: Exception) -> ActionResult:
+    return ActionResult(
+        command_id=command.command_id,
+        status=BRAIN_ACTION_STATUS_FAILED,
+        summary=f"Think step failed: {error}",
+        error=ActionError(
+            code="THINK_FAILED",
+            message=str(error),
+            details={"reason_code": "think_llm_call_failed"},
+        ),
+    )
+
+
+def _emit_think_started(
+    *,
+    logger: CanonicalEventLogger,
+    state: WorkingState,
+    command: Command,
+    llm_call_id: str,
+    model: str,
+    output_key: str,
+) -> None:
+    logger.emit(
+        "think.started",
+        {
+            "command_id": command.command_id,
+            "llm_call_id": llm_call_id,
+            "model": model,
+            "output_key": output_key,
+            "step_index": state.cursor,
+        },
+        trace_id=state.trace_id,
+    )
+
+
+def _emit_think_completed(
+    *,
+    logger: CanonicalEventLogger,
+    state: WorkingState,
+    command: Command,
+    llm_call_id: str,
+    output_key: str,
+    text: str,
+) -> None:
+    logger.emit(
+        "think.completed",
+        {
+            "command_id": command.command_id,
+            "llm_call_id": llm_call_id,
+            "output_chars": len(text),
+            "output_key": output_key,
+        },
+        trace_id=state.trace_id,
+    )
+
+
+def _emit_think_failed(
+    *,
+    logger: CanonicalEventLogger,
+    state: WorkingState,
+    command: Command,
+    llm_call_id: str,
+    error: Exception,
+) -> None:
+    logger.emit(
+        "think.failed",
+        {
+            "command_id": command.command_id,
+            "llm_call_id": llm_call_id,
+            "error": str(error),
+        },
+        trace_id=state.trace_id,
+        status="error",
+    )
 
 
 __all__ = ["execute_think"]

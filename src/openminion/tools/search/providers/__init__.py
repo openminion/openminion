@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from importlib.metadata import EntryPoint, entry_points
-from typing import Any, Callable, Mapping, Protocol, TYPE_CHECKING, runtime_checkable
+from typing import Any, Protocol, TYPE_CHECKING, runtime_checkable
+from collections.abc import Callable, Mapping
 
 from openminion.tools.config import resolve_provider_register_hook as _resolve_hook
 

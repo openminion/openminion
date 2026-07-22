@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 from openminion.modules.controlplane.contracts.policy_client import PolicyClient
 from openminion.modules.controlplane.runtime.client import RuntimeClient
@@ -32,9 +32,9 @@ class CommandRegistry(
     memory_client: Any | None = None
 
     def __post_init__(self) -> None:
-        self._handlers: Dict[str, Handler] = {}
-        self._command_specs: Dict[str, CommandSpec] = {}
-        self.shadowed_commands: Dict[str, CommandSpec] = {}
-        self.loaded_modules: Dict[str, str] = {}
+        self._handlers: dict[str, Handler] = {}
+        self._command_specs: dict[str, CommandSpec] = {}
+        self.shadowed_commands: dict[str, CommandSpec] = {}
+        self.loaded_modules: dict[str, str] = {}
         self.broken_module_tracker: BrokenModuleTracker = BrokenModuleTracker()
         self._register_builtin_commands()

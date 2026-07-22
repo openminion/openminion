@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.storage.telemetry import StorageTelemetryHook
 from openminion.modules.telemetry.events.catalog import (

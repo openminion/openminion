@@ -1,4 +1,5 @@
-from typing import Any, Iterable, Sequence
+from typing import Any
+from collections.abc import Iterable, Sequence
 
 from openminion.modules.llm.providers.tool_calling.base import ToolCallParseResult
 from openminion.modules.llm.providers.tool_calling.models import (

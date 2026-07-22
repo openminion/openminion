@@ -576,58 +576,14 @@ def group_long_units(
             service._delete_units_for_doc(doc_id=doc_id, unit_kind="doc_group")
 
             for idx, (segment, start_token, end_token) in enumerate(spans):
-                unit_id = _stable_id(
-                    "retrievectl-unit",
-                    f"{doc_id}:doc_group:{idx}:{start_token}:{end_token}",
-                )
-                group_id = f"{doc_id}:g{idx + 1}"
-                text_ref = service._write_text_blob(segment)
-                context_text = service._build_context_text(
-                    source_type="doc",
-                    source_ref=group_id,
-                    scope="project",
-                    tags=["longrag", "doc_group", normalized_corpus],
-                    title=f"Doc group {idx + 1}",
-                    chunk_text=segment,
-                )
-                context_ref = (
-                    service._write_text_blob(context_text) if context_text else None
-                )
-                fts_text = f"{context_text}\n\n{segment}" if context_text else segment
-                offsets = {
-                    "index": idx,
-                    "start_token": start_token,
-                    "end_token": end_token,
-                }
-                service.store.execute(
-                    """
-                    INSERT INTO retrievectl_units(
-                        unit_id, doc_id, unit_kind, level, node_id, text_ref, context_text_ref,
-                        fts_text, created_at, token_count, group_id, offsets_json
-                    ) VALUES (?, ?, 'doc_group', NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        unit_id,
-                        doc_id,
-                        text_ref,
-                        context_ref,
-                        fts_text,
-                        _iso_now(),
-                        max(0, end_token - start_token),
-                        group_id,
-                        json.dumps(
-                            offsets,
-                            sort_keys=True,
-                            separators=(",", ":"),
-                            ensure_ascii=True,
-                        ),
-                    ),
-                )
-                service._index_unit_fts(
-                    unit_id=unit_id,
-                    title=f"Doc group {idx + 1}",
-                    fts_text=fts_text,
-                    tags=["longrag", "doc_group", normalized_corpus],
+                _insert_doc_group_unit(
+                    service,
+                    corpus_id=normalized_corpus,
+                    doc_id=doc_id,
+                    index=idx,
+                    segment=segment,
+                    start_token=start_token,
+                    end_token=end_token,
                 )
                 groups_created += 1
 
@@ -636,6 +592,62 @@ def group_long_units(
         docs_updated=len(docs),
         groups_created=groups_created,
     ).model_dump(mode="json")
+
+
+def _insert_doc_group_unit(
+    service: Any,
+    *,
+    corpus_id: str,
+    doc_id: str,
+    index: int,
+    segment: str,
+    start_token: int,
+    end_token: int,
+) -> None:
+    unit_id = _stable_id(
+        "retrievectl-unit",
+        f"{doc_id}:doc_group:{index}:{start_token}:{end_token}",
+    )
+    group_id = f"{doc_id}:g{index + 1}"
+    text_ref = service._write_text_blob(segment)
+    tags = ["longrag", "doc_group", corpus_id]
+    title = f"Doc group {index + 1}"
+    context_text = service._build_context_text(
+        source_type="doc",
+        source_ref=group_id,
+        scope="project",
+        tags=tags,
+        title=title,
+        chunk_text=segment,
+    )
+    context_ref = service._write_text_blob(context_text) if context_text else None
+    fts_text = f"{context_text}\n\n{segment}" if context_text else segment
+    offsets = {"index": index, "start_token": start_token, "end_token": end_token}
+    service.store.execute(
+        """
+        INSERT INTO retrievectl_units(
+            unit_id, doc_id, unit_kind, level, node_id, text_ref, context_text_ref,
+            fts_text, created_at, token_count, group_id, offsets_json
+        ) VALUES (?, ?, 'doc_group', NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            unit_id,
+            doc_id,
+            text_ref,
+            context_ref,
+            fts_text,
+            _iso_now(),
+            max(0, end_token - start_token),
+            group_id,
+            json.dumps(
+                offsets,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ),
+        ),
+    )
+    service._index_unit_fts(unit_id=unit_id, title=title, fts_text=fts_text, tags=tags)
 
 
 def extract_ingest_text(payload: dict[str, Any]) -> str:

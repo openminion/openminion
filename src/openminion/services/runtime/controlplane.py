@@ -22,7 +22,7 @@ from openminion.modules.controlplane.runtime.audit import AuditLogger
 from openminion.modules.controlplane.runtime.auth import AuthEvaluator
 from openminion.modules.controlplane.runtime.channels import ChannelRegistry
 from openminion.modules.controlplane.runtime.dispatcher import ControlPlaneDispatcher
-from openminion.modules.controlplane.runtime.identity import StoreBackedIdentityAPI
+from openminion.modules.controlplane.runtime.identity import build_identity_api
 from openminion.modules.controlplane.runtime.parser import SlashCommandParser
 from openminion.modules.controlplane.runtime.rate_limit import (
     ControlPlaneRateLimiter,
@@ -30,6 +30,7 @@ from openminion.modules.controlplane.runtime.rate_limit import (
 )
 from openminion.modules.controlplane.runtime.router import Router
 from openminion.modules.controlplane.runtime.worker.outbox import OutboxWorker
+from openminion.modules.controlplane import InboxWorker, ScopeAuthorizer
 from openminion.modules.controlplane.storage import (
     SQLiteControlPlaneStore,
     build_controlplane_store,
@@ -47,8 +48,7 @@ class ControlPlaneRuntimeComponents:
     config: ControlPlaneConfig
     store: Any
     audit_logger: AuditLogger
-    auth: AuthEvaluator
-    identity_api: StoreBackedIdentityAPI
+    identity_api: Any
     router: Router
     parser: SlashCommandParser
     command_registry: CommandRegistry
@@ -56,6 +56,7 @@ class ControlPlaneRuntimeComponents:
     dispatcher: ControlPlaneDispatcher
     rate_limiter: ControlPlaneRateLimiter
     delivery_registry: ChannelRegistry
+    inbox_worker: InboxWorker
     outbox_worker: OutboxWorker
     metrics: MetricsRegistry
     sidecar_specs: list[Any]
@@ -103,7 +104,7 @@ def build_controlplane_runtime_components(
         home_root=home_root,
         data_root=data_root,
     )
-    identity_api = StoreBackedIdentityAPI(store)
+    identity_api = build_identity_api(store=store, config=cp_cfg)
     dispatcher = ControlPlaneDispatcher(
         store=store,
         router=router,
@@ -113,14 +114,6 @@ def build_controlplane_runtime_components(
         outbound_sender=lambda _payload: None,
         audit_logger=audit_logger,
         identity_api=identity_api,
-    )
-    delivery_registry = ChannelRegistry()
-    outbox_worker = OutboxWorker(
-        store=store,
-        registry=delivery_registry,
-        audit_logger=audit_logger,
-        max_attempts=cp_cfg.outbox_max_attempts,
-        max_backoff_s=cp_cfg.outbox_max_backoff_s,
     )
     rate_limiter = ControlPlaneRateLimiter(
         store=store,
@@ -133,11 +126,27 @@ def build_controlplane_runtime_components(
             session_limit=cp_cfg.rate_limit_session_limit,
         ),
     )
+    delivery_registry = ChannelRegistry()
+    inbox_worker = InboxWorker(
+        store=store,
+        dispatcher=dispatcher,
+        authorizer=ScopeAuthorizer(store=store, identity_api=identity_api),
+        rate_limiter=rate_limiter,
+        audit_logger=audit_logger,
+        max_attempts=cp_cfg.inbox_max_attempts,
+        max_backoff_s=cp_cfg.inbox_max_backoff_s,
+    )
+    outbox_worker = OutboxWorker(
+        store=store,
+        registry=delivery_registry,
+        audit_logger=audit_logger,
+        max_attempts=cp_cfg.outbox_max_attempts,
+        max_backoff_s=cp_cfg.outbox_max_backoff_s,
+    )
     return ControlPlaneRuntimeComponents(
         config=cp_cfg,
         store=store,
         audit_logger=audit_logger,
-        auth=auth,
         identity_api=identity_api,
         router=router,
         parser=parser,
@@ -146,6 +155,7 @@ def build_controlplane_runtime_components(
         dispatcher=dispatcher,
         rate_limiter=rate_limiter,
         delivery_registry=delivery_registry,
+        inbox_worker=inbox_worker,
         outbox_worker=outbox_worker,
         metrics=metrics,
         sidecar_specs=build_controlplane_sidecar_specs(

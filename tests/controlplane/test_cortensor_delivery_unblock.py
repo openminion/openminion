@@ -3,6 +3,15 @@ import pytest
 from unittest.mock import MagicMock
 
 
+def _runtime_with_gateway(gateway=None):
+    gateway = gateway or MagicMock()
+    runtime = MagicMock()
+    runtime.runtime_manager.gateway = gateway
+    runtime.resolve_gateway.return_value = gateway
+    runtime.runtime_manager.resolve_gateway.return_value = gateway
+    return runtime
+
+
 class TestControlplaneTimeoutSemantics:
     @pytest.fixture
     def mock_gateway(self):
@@ -11,9 +20,7 @@ class TestControlplaneTimeoutSemantics:
 
     @pytest.fixture
     def mock_runtime(self, mock_gateway):
-        runtime = MagicMock()
-        runtime.runtime_manager.gateway = mock_gateway
-        return runtime
+        return _runtime_with_gateway(mock_gateway)
 
     def test_timeout_seconds_default(self):
         from openminion.modules.controlplane.adapters.client import (
@@ -116,7 +123,7 @@ class TestControlplaneTimeoutSemantics:
 class TestControlplaneLifecyclePropagation:
     @pytest.fixture
     def mock_runtime_with_lifecycle(self):
-        runtime = MagicMock()
+        runtime = _runtime_with_gateway()
 
         result = MagicMock()
         result.body = "Weather: sunny"
@@ -176,7 +183,7 @@ class TestControlplaneLifecyclePropagation:
         )
         import json
 
-        runtime = MagicMock()
+        runtime = _runtime_with_gateway()
 
         result = MagicMock()
         result.body = "Response text"
@@ -227,7 +234,7 @@ class TestControlplaneLifecyclePropagation:
             OpenMinionBrainClient,
         )
 
-        runtime = MagicMock()
+        runtime = _runtime_with_gateway()
 
         result = MagicMock()
         result.body = "Simple response"
@@ -261,7 +268,7 @@ class TestControlplaneWeatherPromptPath:
             OpenMinionBrainClient,
         )
 
-        runtime = MagicMock()
+        runtime = _runtime_with_gateway()
 
         result = MagicMock()
         result.body = "The weather in San Francisco is sunny today."
@@ -300,7 +307,7 @@ class TestControlplaneWeatherPromptPath:
             OpenMinionBrainClient,
         )
 
-        runtime = MagicMock()
+        runtime = _runtime_with_gateway()
 
         async def mock_run_once(**kwargs):
             raise RuntimeError("Provider error")
@@ -329,7 +336,7 @@ class TestNegativePaths:
             OpenMinionBrainClient,
         )
 
-        runtime = MagicMock()
+        runtime = _runtime_with_gateway()
 
         async def slow_run(**kwargs):
             await asyncio.sleep(0.1)
@@ -358,7 +365,7 @@ class TestNegativePaths:
             OpenMinionBrainClient,
         )
 
-        runtime = MagicMock()
+        runtime = _runtime_with_gateway()
 
         result = MagicMock()
         result.body = ""

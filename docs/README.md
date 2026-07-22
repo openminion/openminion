@@ -40,6 +40,9 @@ This directory holds the public package documentation for standalone
 - [`memory-namespace-queries.md`](memory-namespace-queries.md)
   documents typed memory list/search filters across `memctl` and the local HTTP
   API, including the operator-security and legacy-scope boundaries.
+- [`memory-review-workflow.md`](memory-review-workflow.md)
+  documents digest-bound review-before-apply, SQLite rollback, and audit
+  evidence for memory changes.
 - [`provider-capabilities.md`](provider-capabilities.md)
   documents explicit provider capability facts, request requirements, and
   deterministic pre-call routing behavior.

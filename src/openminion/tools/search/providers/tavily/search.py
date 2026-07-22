@@ -1,5 +1,6 @@
 import json
-from typing import Any, Dict, Mapping
+from typing import Any
+from collections.abc import Mapping
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -149,7 +150,7 @@ class TavilySearchTool:
         search_depth: str,
         max_results: int,
     ) -> dict[str, Any]:
-        data: Dict[str, Any] = {
+        data: dict[str, Any] = {
             "query": query,
             "answer": answer,
             "results": normalized_results,
@@ -175,7 +176,7 @@ class TavilySearchTool:
 
     def _search_tavily(
         self, *, api_url: str, payload: Mapping[str, Any]
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         request = urllib_request.Request(
             api_url,
             data=json.dumps(payload).encode("utf-8"),

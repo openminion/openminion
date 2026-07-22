@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from .constants import RUNTIME_MODE_HOT
 from .events.catalog import LIFECYCLE_EVENT_TYPES

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from openminion.base.debug import (
     DebugProvider,
@@ -23,19 +23,19 @@ class ToolSelectionDebugPayload:
     category: Optional[str] = None
     binding_source: Optional[str] = None
     fallback_used: bool = False
-    reason_codes: List[str] = field(default_factory=list)
+    reason_codes: list[str] = field(default_factory=list)
     validation_retry_count: int = 0
     schema_expanded: bool = False
 
     # Capability-related debug fields from CBGF-10
     capability_category: Optional[str] = None
     capability_primary: Optional[str] = None
-    capability_fallback_chain: Optional[List[str]] = field(default_factory=list)
-    capability_attempted_tools: Optional[List[str]] = field(default_factory=list)
+    capability_fallback_chain: Optional[list[str]] = field(default_factory=list)
+    capability_attempted_tools: Optional[list[str]] = field(default_factory=list)
     capability_fallback_trigger_reason: Optional[str] = None
     capability_final_tool: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         result = {
             "mode": self.mode,
             "shortlist_size": self.shortlist_size,
@@ -73,7 +73,7 @@ def create_tool_selection_debug_payload(
     category: Optional[str] = None,
     binding_source: Optional[str] = None,
     fallback_used: bool = False,
-    reason_codes: Optional[List[str]] = None,
+    reason_codes: Optional[list[str]] = None,
     validation_retry_count: int = 0,
     schema_expanded: bool = False,
     **capability_kwargs: Any,
@@ -114,7 +114,7 @@ def load_debug_providers() -> None:
 
 
 def is_debug_surface_enabled(
-    config: OpenMinionConfig | Dict[str, Any], *, surface: str
+    config: OpenMinionConfig | dict[str, Any], *, surface: str
 ) -> bool:
     runtime = None
     if isinstance(config, dict):

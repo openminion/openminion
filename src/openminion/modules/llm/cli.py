@@ -2,7 +2,7 @@ import json
 import sys
 from pathlib import Path
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import typer
 
@@ -45,7 +45,7 @@ def _write_stdout(text: str = "") -> None:
     sys.stdout.write(f"{text}\n")
 
 
-def _print_obj(obj: Dict[str, Any], json_out: bool) -> None:
+def _print_obj(obj: dict[str, Any], json_out: bool) -> None:
     if json_out:
         _write_stdout(json.dumps(obj, indent=2, ensure_ascii=True))
         return
@@ -59,7 +59,7 @@ def _runtime(config_path: Path) -> LLMCTL:
     return LLMCTL.from_config(config_path)
 
 
-def _load_yaml(path: Path) -> Dict[str, Any]:
+def _load_yaml(path: Path) -> dict[str, Any]:
     if yaml is None:
         raise typer.BadParameter(
             "PyYAML is required to load YAML files; install pyyaml or use JSON"
@@ -70,7 +70,7 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
     return parsed
 
 
-def _load_structured_file(path: Path) -> Dict[str, Any]:
+def _load_structured_file(path: Path) -> dict[str, Any]:
     if path.suffix.lower() == ".json":
         return json.loads(path.read_text(encoding="utf-8"))
     return _load_yaml(path)
@@ -223,7 +223,7 @@ def prompt(
     llmctl = _runtime(config)
     client = llmctl.client(agent)
 
-    overrides: Dict[str, Any] = {}
+    overrides: dict[str, Any] = {}
     if provider is not None:
         overrides["provider"] = provider
     if model is not None:

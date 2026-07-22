@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse
 from openminion.modules.tool.base import ToolExecutionContext

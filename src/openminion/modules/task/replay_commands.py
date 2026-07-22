@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
+from collections.abc import Mapping
 
 from openminion.modules.runtime.replay import (
     ReplayBundle,

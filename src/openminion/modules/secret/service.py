@@ -1,7 +1,7 @@
 import asyncio
 import time
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 from cryptography.fernet import Fernet, InvalidToken
 

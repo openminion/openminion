@@ -1,4 +1,5 @@
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.tool.registry import ToolRegistry

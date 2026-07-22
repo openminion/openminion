@@ -387,6 +387,20 @@ class SQLiteRetrieveStore(_RetrieveStoreMixin, BaseModuleSQLiteStore, RetrieveSt
 
     def ensure_schema(self) -> bool:
         self.connection.execute("PRAGMA foreign_keys=ON")
+        self._create_retrieve_tables()
+        self._create_retrieve_indexes()
+        self._apply_phase0_contract_schema()
+        self._ensure_units_fts_table()
+        self._reconcile_units_fts_title_schema()
+        self.connection.commit()
+        ensure_module_metadata_for_package(
+            self.connection,
+            package=__package__,
+            migrations=list_migrations(),
+        )
+        return self.fts_enabled
+
+    def _create_retrieve_tables(self) -> None:
         self.connection.execute(
             """
             CREATE TABLE IF NOT EXISTS retrievectl_docs(
@@ -448,6 +462,8 @@ class SQLiteRetrieveStore(_RetrieveStoreMixin, BaseModuleSQLiteStore, RetrieveSt
             )
             """
         )
+
+    def _create_retrieve_indexes(self) -> None:
         self.connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_retrievectl_docs_scope ON retrievectl_docs(scope)"
         )
@@ -466,8 +482,8 @@ class SQLiteRetrieveStore(_RetrieveStoreMixin, BaseModuleSQLiteStore, RetrieveSt
         self.connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_retrievectl_units_group ON retrievectl_units(group_id)"
         )
-        self._apply_phase0_contract_schema()
 
+    def _ensure_units_fts_table(self) -> None:
         try:
             self.connection.execute(
                 """
@@ -491,16 +507,6 @@ class SQLiteRetrieveStore(_RetrieveStoreMixin, BaseModuleSQLiteStore, RetrieveSt
                 "CREATE INDEX IF NOT EXISTS idx_retrievectl_units_fts_text ON retrievectl_units_fts(fts_text)"
             )
             self.fts_enabled = False
-
-        self._reconcile_units_fts_title_schema()
-
-        self.connection.commit()
-        ensure_module_metadata_for_package(
-            self.connection,
-            package=__package__,
-            migrations=list_migrations(),
-        )
-        return self.fts_enabled
 
     def _table_columns(self, table: str) -> set[str]:
         rows = self.connection.execute(f"PRAGMA table_info({table})").fetchall()

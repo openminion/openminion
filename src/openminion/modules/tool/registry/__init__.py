@@ -4,16 +4,9 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
     Literal,
-    Mapping,
-    Sequence,
-    Set,
-    Tuple,
 )
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 from openminion.modules.tool.contracts import ProviderToolCall, ProviderToolSpec
 from openminion.modules.tool.executor import (  # noqa: F401  (re-exported)
@@ -56,6 +49,7 @@ from openminion.modules.tool.base import (
     ToolExecutionResult,
 )
 from openminion.modules.tool.errors import ToolRuntimeError
+import builtins
 
 if TYPE_CHECKING:
     from openminion.modules.tool.exposure import ToolExposureService
@@ -66,7 +60,7 @@ _ALLOW_MODEL_EXPOSURE_PROVIDER_FALLBACK_ENV = (
     "OPENMINION_ALLOW_MODEL_EXPOSURE_PROVIDER_FALLBACK"
 )
 
-Handler = Callable[[Dict[str, Any], "RuntimeContext"], Dict[str, Any]]
+Handler = Callable[[dict[str, Any], "RuntimeContext"], dict[str, Any]]
 Scope = Literal["READ_ONLY", "WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"]
 
 
@@ -74,8 +68,8 @@ class ToolRegistry:
     def __init__(self, tools: Iterable[Tool] | None = None) -> None:
         from openminion.modules.tool.exposure import ToolExposureService
 
-        self._tools: Dict[str, Any] = {}
-        self._category_index: Dict[str, Set[str]] = {}
+        self._tools: dict[str, Any] = {}
+        self._category_index: dict[str, set[str]] = {}
         self._sidecar_autostart: Callable[..., dict[str, Any]] | None = None
         self.mcp_manager: MCPFleetHandle | None = None
         self._exposure_service = ToolExposureService()
@@ -106,13 +100,13 @@ class ToolRegistry:
     def _index_tool_category(self, tool_name: str, tool: Tool) -> None:
         _catalog_index_tool_category(self, tool_name, tool)
 
-    def tools_by_category(self, category: str) -> List[str]:
+    def tools_by_category(self, category: str) -> builtins.list[str]:
         return _catalog_tools_by_category(self, category)
 
     def category_for_tool(self, tool_name: str) -> ToolCategoryEntry:
         return _catalog_category_for_tool(self, tool_name)
 
-    def all_categories(self) -> List[str]:
+    def all_categories(self) -> builtins.list[str]:
         return _catalog_all_categories(self)
 
     def add(self, spec: Any) -> None:
@@ -129,11 +123,11 @@ class ToolRegistry:
             raise KeyError(name)
         return tool
 
-    def list(self) -> Dict[str, Any]:
+    def list(self) -> dict[str, Any]:
         """Shim for openminion-tool plugin compatibility."""
         return dict(self._tools)
 
-    def list_by_capability(self, capability: str) -> List[ToolSpec]:
+    def list_by_capability(self, capability: str) -> builtins.list[ToolSpec]:
         """Shim for openminion-tool plugin compatibility."""
         return _catalog_list_by_capability(self, capability)
 
@@ -147,28 +141,28 @@ class ToolRegistry:
 
         return model_provider_specs(self)
 
-    def model_to_runtime_binding_map(self) -> Dict[str, str]:
+    def model_to_runtime_binding_map(self) -> dict[str, str]:
         from .exposure import (
             model_to_runtime_binding_map,
         )
 
         return model_to_runtime_binding_map(self)
 
-    def model_to_runtime_tool_map(self) -> Dict[str, str]:
+    def model_to_runtime_tool_map(self) -> dict[str, str]:
         from .exposure import (
             model_to_runtime_tool_map,
         )
 
         return model_to_runtime_tool_map(self)
 
-    def model_runtime_dispatch_map(self) -> Dict[str, Dict[str, Any]]:
+    def model_runtime_dispatch_map(self) -> dict[str, dict[str, Any]]:
         from .exposure import (
             model_runtime_dispatch_map,
         )
 
         return model_runtime_dispatch_map(self)
 
-    def registration_debug_snapshot(self) -> Dict[str, Any]:
+    def registration_debug_snapshot(self) -> dict[str, Any]:
         from .exposure import (
             registration_debug_snapshot,
         )
@@ -282,7 +276,7 @@ class ToolRegistry:
         *,
         calls: Sequence[ProviderToolCall],
         context: ToolExecutionContext,
-        available_tool_names: Tuple[str, ...],
+        available_tool_names: tuple[str, ...],
         runtime_binding_policies: Any,
     ) -> list[ToolExecutionResult]:
         return _executor_execute_calls_with_dependencies(
@@ -298,7 +292,7 @@ class ToolRegistry:
         *,
         call: ProviderToolCall,
         context: ToolExecutionContext,
-        available_tool_names: Tuple[str, ...],
+        available_tool_names: tuple[str, ...],
         runtime_binding_policies: Any,
     ) -> ToolExecutionResult:
         return _executor_execute_single_call(

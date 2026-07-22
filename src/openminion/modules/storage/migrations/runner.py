@@ -395,61 +395,110 @@ class MigrationRunner:
                 raise MigrationApplyError(
                     "Postgres metadata update requires an active SQLAlchemy connection."
                 )
-            from sqlalchemy import text
+            self._update_postgres_metadata_after_migration(
+                target=target,
+                migrated_at=migrated_at,
+                connection=connection,
+            )
+            return
 
+        self._update_sqlite_metadata_after_migration(
+            target=target,
+            migrated_at=migrated_at,
+        )
+
+    def _update_postgres_metadata_after_migration(
+        self,
+        *,
+        target: str,
+        migrated_at: str,
+        connection: SAConnection,
+    ) -> None:
+        from sqlalchemy import text
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS om_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+        )
+        current_revision = self._ensure_postgres_alembic_revision(
+            target=target,
+            connection=connection,
+        )
+        self._upsert_postgres_om_meta(
+            connection=connection,
+            values={
+                "module_id": self.module_id,
+                "schema_head": str(current_revision or target),
+                "last_migrated_at": migrated_at,
+            },
+        )
+
+    def _ensure_postgres_alembic_revision(
+        self,
+        *,
+        target: str,
+        connection: SAConnection,
+    ) -> str | None:
+        current_revision = self._read_alembic_revision_pg(connection)
+        if current_revision is not None:
+            return current_revision
+        current_revision = self._resolve_target_revision(target)
+        if current_revision is None:
+            return None
+        from sqlalchemy import text
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS alembic_version (
+                    version_num TEXT PRIMARY KEY
+                )
+                """
+            )
+        )
+        connection.execute(text("DELETE FROM alembic_version"))
+        connection.execute(
+            text("INSERT INTO alembic_version(version_num) VALUES (:revision)"),
+            {"revision": current_revision},
+        )
+        return current_revision
+
+    def _upsert_postgres_om_meta(
+        self,
+        *,
+        connection: SAConnection,
+        values: dict[str, str],
+    ) -> None:
+        from sqlalchemy import text
+
+        for key, value in values.items():
             connection.execute(
                 text(
                     """
-                    CREATE TABLE IF NOT EXISTS om_meta (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL
-                    )
+                    INSERT INTO om_meta(key, value)
+                    VALUES (:key, :value)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value
                     """
-                )
+                ),
+                {"key": key, "value": value},
             )
-            current_revision = self._read_alembic_revision_pg(connection)
-            if current_revision is None:
-                current_revision = self._resolve_target_revision(target)
-                if current_revision is not None:
-                    connection.execute(
-                        text(
-                            """
-                            CREATE TABLE IF NOT EXISTS alembic_version (
-                                version_num TEXT PRIMARY KEY
-                            )
-                            """
-                        )
-                    )
-                    connection.execute(text("DELETE FROM alembic_version"))
-                    connection.execute(
-                        text(
-                            "INSERT INTO alembic_version(version_num) VALUES (:revision)"
-                        ),
-                        {"revision": current_revision},
-                    )
-            schema_head = current_revision or target
-            for key, value in (
-                ("module_id", self.module_id),
-                ("schema_head", str(schema_head)),
-                ("last_migrated_at", migrated_at),
-            ):
-                connection.execute(
-                    text(
-                        """
-                        INSERT INTO om_meta(key, value)
-                        VALUES (:key, :value)
-                        ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                        """
-                    ),
-                    {"key": key, "value": value},
-                )
-            return
 
+    def _update_sqlite_metadata_after_migration(
+        self,
+        *,
+        target: str,
+        migrated_at: str,
+    ) -> None:
         with sqlite3.connect(str(self.db_path)) as conn:
             conn.execute(f"PRAGMA application_id={self.module_application_id}")
             if self.target_user_version is not None:
                 conn.execute(f"PRAGMA user_version={int(self.target_user_version)}")
-
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS om_meta (
@@ -458,50 +507,61 @@ class MigrationRunner:
                 )
                 """
             )
-
-            current_revision = self._read_alembic_revision(conn)
-            if current_revision is None:
-                current_revision = self._resolve_target_revision(target)
-                if current_revision is not None:
-                    conn.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS alembic_version (
-                            version_num TEXT PRIMARY KEY
-                        )
-                        """
-                    )
-                    conn.execute("DELETE FROM alembic_version")
-                    conn.execute(
-                        "INSERT INTO alembic_version(version_num) VALUES (?)",
-                        (current_revision,),
-                    )
-            schema_head = current_revision or target
-
-            conn.execute(
-                """
-                INSERT INTO om_meta(key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                """,
-                ("module_id", self.module_id),
+            current_revision = self._ensure_sqlite_alembic_revision(
+                target=target,
+                connection=conn,
             )
-            conn.execute(
-                """
-                INSERT INTO om_meta(key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                """,
-                ("schema_head", str(schema_head)),
-            )
-            conn.execute(
-                """
-                INSERT INTO om_meta(key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value
-                """,
-                ("last_migrated_at", migrated_at),
+            self._upsert_sqlite_om_meta(
+                connection=conn,
+                values={
+                    "module_id": self.module_id,
+                    "schema_head": str(current_revision or target),
+                    "last_migrated_at": migrated_at,
+                },
             )
             conn.commit()
+
+    def _ensure_sqlite_alembic_revision(
+        self,
+        *,
+        target: str,
+        connection: sqlite3.Connection,
+    ) -> str | None:
+        current_revision = self._read_alembic_revision(connection)
+        if current_revision is not None:
+            return current_revision
+        current_revision = self._resolve_target_revision(target)
+        if current_revision is None:
+            return None
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alembic_version (
+                version_num TEXT PRIMARY KEY
+            )
+            """
+        )
+        connection.execute("DELETE FROM alembic_version")
+        connection.execute(
+            "INSERT INTO alembic_version(version_num) VALUES (?)",
+            (current_revision,),
+        )
+        return current_revision
+
+    def _upsert_sqlite_om_meta(
+        self,
+        *,
+        connection: sqlite3.Connection,
+        values: dict[str, str],
+    ) -> None:
+        for key, value in values.items():
+            connection.execute(
+                """
+                INSERT INTO om_meta(key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                """,
+                (key, value),
+            )
 
     @staticmethod
     def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:

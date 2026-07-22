@@ -1,5 +1,5 @@
+from collections.abc import Mapping
 import os
-from typing import Mapping
 
 from openminion.services.config import resolve_services_env
 

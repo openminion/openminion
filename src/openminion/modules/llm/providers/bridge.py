@@ -104,13 +104,22 @@ def _decode_bridge_json_like(value: Any) -> Any:
 
 def _bridge_usage_payload(usage_info: Any) -> dict[str, Any]:
     usage: dict[str, Any] = {}
-    if usage_info.input_tokens is not None:
-        usage["prompt_tokens"] = int(usage_info.input_tokens)
-    if usage_info.output_tokens is not None:
-        usage["completion_tokens"] = int(usage_info.output_tokens)
-    if usage_info.total_tokens is not None:
-        usage["total_tokens"] = int(usage_info.total_tokens)
-        usage["total_source"] = usage_info.total_source or "provider"
+    input_tokens = getattr(usage_info, "input_tokens", None)
+    output_tokens = getattr(usage_info, "output_tokens", None)
+    total_tokens = getattr(usage_info, "total_tokens", None)
+    cached_tokens = getattr(usage_info, "cached_tokens", None)
+    cache_creation_tokens = getattr(usage_info, "cache_creation_tokens", None)
+    if input_tokens is not None:
+        usage["prompt_tokens"] = int(input_tokens)
+    if output_tokens is not None:
+        usage["completion_tokens"] = int(output_tokens)
+    if total_tokens is not None:
+        usage["total_tokens"] = int(total_tokens)
+        usage["total_source"] = getattr(usage_info, "total_source", None) or "provider"
+    if cached_tokens is not None:
+        usage["cached_tokens"] = int(cached_tokens)
+    if cache_creation_tokens is not None:
+        usage["cache_creation_tokens"] = int(cache_creation_tokens)
     return usage
 
 

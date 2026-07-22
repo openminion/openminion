@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..contracts.schemas import (
     Artifact,
@@ -26,7 +26,7 @@ __all__ = [
 
 
 def create_run_root(
-    policy: Policy, run_id: str, root_override: Optional[Path] = None
+    policy: Policy, run_id: str, root_override: Path | None = None
 ) -> Path:
     date_dir = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     root = (
@@ -54,7 +54,7 @@ def make_ok_envelope(
     *,
     tool: str,
     run_id: str,
-    request_id: Optional[str],
+    request_id: str | None,
     scope: Scope,
     started_at: str,
     workspace: Path,
@@ -85,7 +85,7 @@ def make_error_envelope(
     *,
     tool: str,
     run_id: str,
-    request_id: Optional[str],
+    request_id: str | None,
     scope: Scope,
     started_at: str,
     workspace: Path,

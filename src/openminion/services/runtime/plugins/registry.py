@@ -1,5 +1,5 @@
 import logging
-from typing import Callable, Iterable, List
+from collections.abc import Callable, Iterable
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime.capability import resolve_plugin_runtime_policy
@@ -29,7 +29,7 @@ class PluginRegistry:
         plugins: Iterable[Plugin] = (),
         hook_runner: PluginHookRunner | None = None,
     ) -> None:
-        self._plugins: List[Plugin] = list(plugins)
+        self._plugins: list[Plugin] = list(plugins)
         self._manifests: dict[str, PluginManifest] = {}
         self._hook_runner = hook_runner or PluginHookRunner()
 
@@ -40,18 +40,16 @@ class PluginRegistry:
             self._manifests[manifest.id] = manifest
         self._plugins.append(plugin)
 
-    def names(self) -> List[str]:
+    def names(self) -> list[str]:
         return [plugin.name for plugin in self._plugins]
 
-    def manifest_ids(self) -> List[str]:
+    def manifest_ids(self) -> list[str]:
         return sorted(self._manifests.keys())
 
-    def manifests(self) -> List[PluginManifest]:
+    def manifests(self) -> list[PluginManifest]:
         return [self._manifests[key] for key in sorted(self._manifests.keys())]
 
-    def register_tool_extensions(
-        self, registry: ToolRegistry, context: PluginContext
-    ) -> None:
+    def register_tool_extensions(self, registry: ToolRegistry, context: PluginContext) -> None:
         for plugin in self._plugins:
             try:
                 plugin.register_tools(registry, context)

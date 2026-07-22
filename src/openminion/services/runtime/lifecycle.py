@@ -154,6 +154,7 @@ class LifecycleService:
         if controlplane_components is not None:
             channel_supervisor = ChannelRuntimeSupervisor(
                 channels=channels,
+                inbox_worker=controlplane_components.inbox_worker,
                 outbox_worker=controlplane_components.outbox_worker,
                 close_runtime=controlplane_components.close,
                 logger=self._logger.getChild("channel_supervisor"),

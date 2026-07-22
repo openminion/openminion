@@ -423,6 +423,134 @@ def _anthropic_content(
     return parts
 
 
+def _openai_like_fallback_instruction(
+    *,
+    request: LLMRequest,
+    include_fallback_instruction: bool,
+    schema_only: bool,
+    tool_name_overrides: Mapping[str, str] | None,
+) -> str:
+    if not include_fallback_instruction or not request.tools:
+        return ""
+    return build_fallback_tool_call_instruction(
+        request.tools,
+        schema_only=schema_only,
+        canonical_to_external=tool_name_overrides,
+    )
+
+
+def _append_openai_like_message(
+    messages: list[dict[str, Any]],
+    *,
+    msg: Message,
+    enable_vision_input: bool,
+    supports_vision_input: bool,
+    tool_name_overrides: Mapping[str, str] | None,
+) -> None:
+    content = _openai_like_content(
+        msg,
+        enable_vision_input=enable_vision_input,
+        supports_vision_input=supports_vision_input,
+    )
+    if isinstance(content, str) and not content:
+        return
+    role = msg.role if msg.role in {"system", "user", "assistant", "tool"} else "user"
+    if role != "tool":
+        messages.append({"role": role, "content": content})
+        return
+    _append_openai_like_tool_message(
+        messages,
+        content=content,
+        meta=dict(getattr(msg, "meta", {}) or {}),
+        tool_name_overrides=tool_name_overrides,
+    )
+
+
+def _append_openai_like_tool_message(
+    messages: list[dict[str, Any]],
+    *,
+    content: str | list[dict[str, Any]],
+    meta: Mapping[str, Any],
+    tool_name_overrides: Mapping[str, str] | None,
+) -> None:
+    tool_call_id = str(meta.get("tool_call_id", "") or "").strip()
+    tool_name = str(meta.get("tool_name", "") or "").strip()
+    tool_arguments = meta.get("tool_arguments", {})
+    if not tool_call_id or not tool_name:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"Tool result ({tool_name or 'unknown'}): {content}",
+            }
+        )
+        return
+    external_tool_name = (
+        str(tool_name_overrides.get(tool_name, tool_name)).strip()
+        if tool_name_overrides
+        else tool_name
+    )
+    serialized_arguments = (
+        json.dumps(tool_arguments, sort_keys=True)
+        if isinstance(tool_arguments, dict)
+        else "{}"
+    )
+    messages.append(
+        {
+            "role": "assistant",
+            "content": "Tool call issued.",
+            "tool_calls": [
+                {
+                    "id": tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": external_tool_name,
+                        "arguments": serialized_arguments,
+                    },
+                }
+            ],
+        }
+    )
+    messages.append({"role": "tool", "content": content, "tool_call_id": tool_call_id})
+
+
+def _insert_openai_like_fallback_instruction(
+    messages: list[dict[str, Any]],
+    *,
+    fallback_instruction: str,
+    schema_only: bool,
+) -> None:
+    if not schema_only:
+        messages.insert(0, {"role": "system", "content": fallback_instruction})
+        return
+    insert_index = len(messages)
+    for idx, item in enumerate(messages):
+        if item.get("role") != "system":
+            insert_index = idx
+            break
+    messages.insert(insert_index, {"role": "system", "content": fallback_instruction})
+
+
+def _insert_openai_like_extra_instructions(
+    messages: list[dict[str, Any]],
+    *,
+    schema_only: bool,
+    include_fallback_instruction: bool,
+    extra_system_instruction: str,
+) -> None:
+    extra_instruction_parts: list[str] = []
+    if str(extra_system_instruction or "").strip():
+        extra_instruction_parts.append(str(extra_system_instruction).strip())
+    if schema_only and not include_fallback_instruction:
+        # Native-only providers still need an explicit phase boundary; otherwise
+        # schema-only control calls can be tempted into task-tool envelopes.
+        extra_instruction_parts.append(_SCHEMA_ONLY_SUBMIT_OUTPUT_NATIVE_INSTRUCTION)
+    if extra_instruction_parts:
+        messages.insert(
+            0,
+            {"role": "system", "content": "\n\n".join(extra_instruction_parts)},
+        )
+
+
 def _messages_openai_like(
     request: LLMRequest,
     include_fallback_instruction: bool,
@@ -437,99 +565,33 @@ def _messages_openai_like(
     schema_only = bool(request.tools) and is_schema_only_submit_output_tools(
         request.tools
     )
-    fallback_instruction = ""
-    if include_fallback_instruction and request.tools:
-        fallback_instruction = build_fallback_tool_call_instruction(
-            request.tools,
-            schema_only=schema_only,
-            canonical_to_external=tool_name_overrides,
-        )
-
+    fallback_instruction = _openai_like_fallback_instruction(
+        request=request,
+        include_fallback_instruction=include_fallback_instruction,
+        schema_only=schema_only,
+        tool_name_overrides=tool_name_overrides,
+    )
     for msg in request.messages:
-        content = _openai_like_content(
-            msg,
+        _append_openai_like_message(
+            messages,
+            msg=msg,
             enable_vision_input=enable_vision_input,
             supports_vision_input=supports_vision_input,
+            tool_name_overrides=tool_name_overrides,
         )
-        if isinstance(content, str) and not content:
-            continue
-        role = (
-            msg.role if msg.role in {"system", "user", "assistant", "tool"} else "user"
-        )
-        if role == "tool":
-            meta = dict(getattr(msg, "meta", {}) or {})
-            tool_call_id = str(meta.get("tool_call_id", "") or "").strip()
-            tool_name = str(meta.get("tool_name", "") or "").strip()
-            tool_arguments = meta.get("tool_arguments", {})
-            if tool_call_id and tool_name:
-                external_tool_name = (
-                    str(tool_name_overrides.get(tool_name, tool_name)).strip()
-                    if tool_name_overrides
-                    else tool_name
-                )
-                if isinstance(tool_arguments, dict):
-                    serialized_arguments = json.dumps(tool_arguments, sort_keys=True)
-                else:
-                    serialized_arguments = "{}"
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "Tool call issued.",
-                        "tool_calls": [
-                            {
-                                "id": tool_call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": external_tool_name,
-                                    "arguments": serialized_arguments,
-                                },
-                            }
-                        ],
-                    }
-                )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "content": content,
-                        "tool_call_id": tool_call_id,
-                    }
-                )
-                continue
-            messages.append(
-                {
-                    "role": "system",
-                    "content": f"Tool result ({tool_name or 'unknown'}): {content}",
-                }
-            )
-            continue
-        messages.append({"role": role, "content": content})
 
     if fallback_instruction:
-        if schema_only:
-            insert_index = len(messages)
-            for idx, item in enumerate(messages):
-                if item.get("role") != "system":
-                    insert_index = idx
-                    break
-            messages.insert(
-                insert_index,
-                {"role": "system", "content": fallback_instruction},
-            )
-        else:
-            messages.insert(0, {"role": "system", "content": fallback_instruction})
-
-    extra_instruction_parts = []
-    if str(extra_system_instruction or "").strip():
-        extra_instruction_parts.append(str(extra_system_instruction).strip())
-    if schema_only and not include_fallback_instruction:
-        # Native-only providers still need an explicit phase boundary; otherwise
-        # schema-only control calls can be tempted into task-tool envelopes.
-        extra_instruction_parts.append(_SCHEMA_ONLY_SUBMIT_OUTPUT_NATIVE_INSTRUCTION)
-    if extra_instruction_parts:
-        messages.insert(
-            0,
-            {"role": "system", "content": "\n\n".join(extra_instruction_parts)},
+        _insert_openai_like_fallback_instruction(
+            messages,
+            fallback_instruction=fallback_instruction,
+            schema_only=schema_only,
         )
+    _insert_openai_like_extra_instructions(
+        messages,
+        schema_only=schema_only,
+        include_fallback_instruction=include_fallback_instruction,
+        extra_system_instruction=extra_system_instruction,
+    )
 
     if not messages:
         messages.append({"role": "user", "content": "Continue."})

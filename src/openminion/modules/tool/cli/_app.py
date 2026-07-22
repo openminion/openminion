@@ -2,7 +2,7 @@
 
 import sys as _sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import typer
 
@@ -113,7 +113,7 @@ DEFAULT_POLICY_PATH = (
 )
 
 
-def _print_obj(obj: Dict[str, Any], json_out: bool = True) -> None:
+def _print_obj(obj: dict[str, Any], json_out: bool = True) -> None:
     cli_runtime.print_obj(obj, json_out=json_out)
 
 
@@ -121,7 +121,7 @@ def _parse_call_payload(payload: Optional[str]) -> CallRequest:
     return cli_runtime.parse_call_payload(payload)
 
 
-def _build_registry(policy: Policy) -> tuple[ToolRegistry, list[Dict[str, Any]]]:
+def _build_registry(policy: Policy) -> tuple[ToolRegistry, list[dict[str, Any]]]:
     return cli_runtime.build_registry(policy)
 
 
@@ -134,7 +134,7 @@ def _write_run_meta(
     request: CallRequest,
     effective_scope: Scope,
     policy_path: Path,
-    plugin_statuses: list[Dict[str, Any]],
+    plugin_statuses: list[dict[str, Any]],
 ) -> None:
     cli_runtime.write_run_meta(
         run_root,
@@ -146,7 +146,7 @@ def _write_run_meta(
 
 
 def _raise_if_denied(
-    stage: str, code: str, reason: str, details: Dict[str, Any]
+    stage: str, code: str, reason: str, details: dict[str, Any]
 ) -> None:
     cli_runtime.raise_if_denied(stage, code, reason, details)
 
@@ -185,7 +185,7 @@ def _execute_call_payload(
 def _invoke_pinchtab_tool(
     *,
     tool: str,
-    args: Dict[str, Any],
+    args: dict[str, Any],
     policy: Path,
     workspace: Optional[Path],
     scope: Optional[str],
@@ -226,19 +226,19 @@ def _is_unknown_browser_tool_error(env: ResultEnvelope) -> bool:
 
 
 def _map_pinchtab_to_browser_call(
-    *, tool: str, args: Dict[str, Any]
-) -> tuple[str, Dict[str, Any]]:
+    *, tool: str, args: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
     return cli_runtime.map_pinchtab_to_browser_call(tool=tool, args=args)
 
 
-def _parse_env_pairs(values: list[str]) -> Dict[str, str]:
+def _parse_env_pairs(values: list[str]) -> dict[str, str]:
     return cli_runtime.parse_env_pairs(values)
 
 
 def _invoke_exec_tool(
     *,
     tool: str,
-    args: Dict[str, Any],
+    args: dict[str, Any],
     policy: Path,
     workspace: Optional[Path],
     scope: Optional[str],

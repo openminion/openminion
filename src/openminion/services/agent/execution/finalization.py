@@ -35,6 +35,9 @@ _FINALIZATION_STATUS_ATTR_RE = re.compile(
 _STATUS_ATTR_RE = re.compile(
     r'\bstatus\s*=\s*"(?P<status>final_answer|incomplete|blocked)"'
 )
+_RESPOND_ENVELOPE_RE = re.compile(
+    r"(?s)^<respond(?:\((?P<call_payload>\{.*\})\)>?|>(?P<tag_payload>\{.*\})</respond>)$"
+)
 
 FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE: str = _FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE
 FINALIZATION_STATUS_RETRY_GUIDANCE: str = _FINALIZATION_STATUS_RETRY_GUIDANCE
@@ -166,6 +169,9 @@ def unwrap_final_answer_envelope(
     raw_text: str,
 ) -> tuple[str, dict[str, Any]] | None:
     text = str(raw_text or "").strip()
+    respond_envelope = _unwrap_respond_envelope(text)
+    if respond_envelope is not None:
+        return respond_envelope
     if not text or text[0] != "{" or text[-1] != "}":
         return None
     try:
@@ -194,6 +200,34 @@ def unwrap_final_answer_envelope(
         "status": status_value,
         "summary": summary_value,
         "output": output_value,
+    }
+    return output_text, payload
+
+
+def _unwrap_respond_envelope(text: str) -> tuple[str, dict[str, Any]] | None:
+    match = _RESPOND_ENVELOPE_RE.match(text)
+    if match is None:
+        return None
+    payload_text = str(
+        match.group("call_payload") or match.group("tag_payload") or ""
+    )
+    try:
+        parsed = json.loads(payload_text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    answer = parsed.get("answer")
+    if not isinstance(answer, str):
+        return None
+    output_text = answer.strip()
+    if not output_text:
+        return None
+    summary = parsed.get("summary")
+    payload: dict[str, Any] = {
+        "status": "final_answer",
+        "summary": summary if isinstance(summary, str) else "respond envelope",
+        "output": answer,
     }
     return output_text, payload
 

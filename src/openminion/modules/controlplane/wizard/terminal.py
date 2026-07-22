@@ -102,6 +102,70 @@ class TerminalInteractionChannel(InteractionChannel):
 
         return PromptResponse(value=line)
 
+    def _render_choice_options(
+        self,
+        options: list[str | Option],
+        *,
+        default_index: int | None,
+        allow_multiple: bool,
+    ) -> list[Option]:
+        mapped_options: list[Option] = []
+        for i, opt in enumerate(options):
+            option_obj = Option(value=opt, label=opt) if isinstance(opt, str) else opt
+            mapped_options.append(option_obj)
+            disp = f"[{i + 1}] {option_obj.label}"
+            if option_obj.description:
+                disp += f" - {option_obj.description}"
+            self._write(f"  {disp}\n", flush=False)
+
+        if allow_multiple:
+            idx_range = f"1-{len(options)}"
+            prompt_text = (
+                f" (comma-separated numbers, e.g., '{idx_range}' "
+                "or enter individual values)"
+            )
+        else:
+            idx_list = ", ".join(str(i + 1) for i in range(len(options)))
+            prompt_text = f" (enter {idx_list}): "
+        if default_index is not None and 0 <= default_index < len(options):
+            prompt_text += f" (default: {default_index + 1})"
+        self._write(f"Select option{prompt_text}")
+        return mapped_options
+
+    def _parse_multiple_choice(
+        self, line: str, mapped_options: list[Option]
+    ) -> ChoiceResponse:
+        indices: list[int] = []
+        for idx_str in line.split(","):
+            try:
+                actual_idx = int(idx_str.strip()) - 1
+            except ValueError:
+                return ChoiceResponse(
+                    value=line,
+                    index=None,
+                    cancelled=False,
+                    error=f"Invalid number format: {idx_str.strip()}",
+                )
+            if not 0 <= actual_idx < len(mapped_options):
+                return ChoiceResponse(
+                    value=line,
+                    index=None,
+                    cancelled=False,
+                    error=f"Invalid option number: {actual_idx + 1}",
+                )
+            indices.append(actual_idx)
+
+        first_selected = indices[0] if indices else None
+        if first_selected is not None:
+            return ChoiceResponse(
+                value=mapped_options[first_selected].value,
+                index=first_selected,
+                cancelled=False,
+            )
+        return ChoiceResponse(
+            value=line, index=None, cancelled=False, error="Invalid selection format"
+        )
+
     async def choose(
         self,
         message: str,
@@ -115,29 +179,9 @@ class TerminalInteractionChannel(InteractionChannel):
 
         self._write(f"{message}\n", flush=False)
 
-        mapped_options = []
-        for i, opt in enumerate(options):
-            if isinstance(opt, str):
-                option_obj = Option(value=opt, label=opt)
-            else:
-                option_obj = opt
-            mapped_options.append(option_obj)
-            disp = f"[{i + 1}] {option_obj.label}"
-            if option_obj.description:
-                disp += f" - {option_obj.description}"
-            self._write(f"  {disp}\n", flush=False)
-
-        if allow_multiple:
-            idx_range = f"1-{len(options)}"
-            default_text = f" (comma-separated numbers, e.g., '{idx_range}' or enter individual values)"
-        else:
-            idx_list = ", ".join(str(i + 1) for i in range(len(options)))
-            default_text = f" (enter {idx_list}): "
-
-        if default_index is not None and 0 <= default_index < len(options):
-            default_text += f" (default: {default_index + 1})"
-
-        self._write(f"Select option{default_text}")
+        mapped_options = self._render_choice_options(
+            options, default_index=default_index, allow_multiple=allow_multiple
+        )
 
         line = self.stdin.readline()
         if line is None:
@@ -171,34 +215,7 @@ class TerminalInteractionChannel(InteractionChannel):
             )
         except ValueError:
             if allow_multiple and "," in line:
-                indices = []
-                for idx_str in line.split(","):
-                    try:
-                        idx_num = int(idx_str.strip())
-                        actual_idx = idx_num - 1
-                        if 0 <= actual_idx < len(mapped_options):
-                            indices.append(actual_idx)
-                        else:
-                            return ChoiceResponse(
-                                value=line,
-                                index=None,
-                                cancelled=False,
-                                error=f"Invalid option number: {idx_num}",
-                            )
-                    except ValueError:
-                        return ChoiceResponse(
-                            value=line,
-                            index=None,
-                            cancelled=False,
-                            error=f"Invalid number format: {idx_str.strip()}",
-                        )
-
-                if indices:
-                    first_selected = indices[0]
-                    val = mapped_options[first_selected].value
-                    return ChoiceResponse(
-                        value=val, index=first_selected, cancelled=False
-                    )
+                return self._parse_multiple_choice(line, mapped_options)
 
             return ChoiceResponse(
                 value=line,

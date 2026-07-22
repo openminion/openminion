@@ -11,6 +11,7 @@ from openminion.modules.llm.reasoning import ThinkingCtl
 from openminion.modules.llm.reasoning import __version__ as reasoning_version
 
 VERSION_LITERAL_ALLOWLIST = {
+    Path("pyproject.toml"),
     Path("src/openminion/base/version.py"),
 }
 

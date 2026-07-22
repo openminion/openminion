@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -8,7 +8,7 @@ class SessionRecord:
     session_key: str
     channel: str
     target: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     created_at: str
     updated_at: str
     status: str
@@ -40,7 +40,7 @@ class MessageRecord:
     attach_id: str
     role: str
     body: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     created_at: str
     rowid: int = 0
 
@@ -50,7 +50,7 @@ class EventRecord:
     id: int
     session_id: str
     event_type: str
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     created_at: str
 
 

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Tuple
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.tool.contracts import ProviderToolSpec
 from openminion.modules.tool.runtime.delegation import A2ADelegateApi
@@ -12,7 +13,7 @@ class ToolExecutionContext:
     channel: str
     target: str
     session_id: str = ""
-    metadata: Dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, str] = field(default_factory=dict)
     memory_service: MemoryToolRuntimeService | None = None
     sandbox_runner: Any | None = None
     authored_tools_api: Any | None = None
@@ -21,6 +22,7 @@ class ToolExecutionContext:
     a2a_delegate_api: A2ADelegateApi | None = None
     blast_radius_adapter: Any | None = None
     telemetryctl: Any | None = None
+    confirm: bool = False
 
 
 @dataclass
@@ -30,7 +32,7 @@ class ToolExecutionResult:
     content: str
     verified: bool = False
     error: str = ""
-    data: Dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
     call_id: str = ""
     source: str = ""
     started_at: float | None = None
@@ -50,13 +52,13 @@ class ToolExecutionPolicy:
 @dataclass(frozen=True)
 class ToolCategoryInfo:
     primary_category: str = "general_assistance"
-    secondary_categories: Tuple[str, ...] = ()
+    secondary_categories: tuple[str, ...] = ()
 
 
 class Tool(ABC):
     name = "tool"
     description = "Tool"
-    parameters: Dict[str, Any] = {}
+    parameters: dict[str, Any] = {}
     policy: ToolExecutionPolicy = ToolExecutionPolicy()
     categories: ToolCategoryInfo = ToolCategoryInfo()
 
@@ -107,7 +109,7 @@ class Tool(ABC):
         if not primary:
             primary = "general_assistance"
         secondary_raw = getattr(self, "secondary_categories", None)
-        secondary: Tuple[str, ...] = ()
+        secondary: tuple[str, ...] = ()
         if isinstance(secondary_raw, (list, tuple)):
             secondary = tuple(str(s).strip() for s in secondary_raw if str(s).strip())
         return ToolCategoryInfo(

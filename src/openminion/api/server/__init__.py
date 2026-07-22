@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from http import HTTPStatus
 from time import perf_counter as _perf_counter
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 import openminion.api.server.app as _server_app
 import openminion.api.routes.turns as _routes_turns
@@ -22,7 +22,7 @@ perf_counter = _perf_counter
 
 
 def build_api_server(
-    config_path: Optional[str],
+    config_path: str | None,
     host: str,
     port: int,
 ) -> _OpenMinionThreadingHTTPServer:
@@ -42,13 +42,13 @@ def build_api_server(
 def dispatch_request(
     method: str,
     path: str,
-    config_path: Optional[str],
-    body: Optional[dict[str, Any]] = None,
-    query: Optional[str] = None,
-    runtime: Optional[APIRuntime] = None,
-    runtime_bootstrap_error: Optional[str] = None,
-    request_headers: Optional[Mapping[str, str]] = None,
-    request_id: Optional[str] = None,
+    config_path: str | None,
+    body: dict[str, Any] | None = None,
+    query: str | None = None,
+    runtime: APIRuntime | None = None,
+    runtime_bootstrap_error: str | None = None,
+    request_headers: Mapping[str, str] | None = None,
+    request_id: str | None = None,
 ) -> tuple[HTTPStatus, dict[str, Any]]:
     had_run_turn = hasattr(_server_app, "run_turn")
     orig_run_turn = getattr(_server_app, "run_turn", None)

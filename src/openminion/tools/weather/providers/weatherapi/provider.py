@@ -1,6 +1,6 @@
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, NoReturn
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -47,6 +47,69 @@ def _resolve_q(query_args: Mapping[str, Any]) -> str:
     if lat is not None and lon is not None:
         return f"{float(lat)},{float(lon)}"
     return ""
+
+
+def _raise_weatherapi_http_error(exc: urllib_error.HTTPError) -> NoReturn:
+    status = int(exc.code)
+    body_text = ""
+    try:
+        body_text = exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        body_text = ""
+    if status in {401, 403}:
+        raise ToolRuntimeError(
+            "UPSTREAM_ERROR",
+            f"{WEATHERAPI_DISPLAY_NAME} authentication failed (HTTP {status})",
+            {"reason": "auth_failed", "status_code": status, "body": body_text[:500]},
+        ) from exc
+    if status == 429:
+        raise ToolRuntimeError(
+            "UPSTREAM_ERROR",
+            f"{WEATHERAPI_DISPLAY_NAME} rate limit exceeded (HTTP {status})",
+            {"reason": "rate_limited", "status_code": status, "body": body_text[:500]},
+        ) from exc
+    raise ToolRuntimeError(
+        "UPSTREAM_ERROR",
+        f"{WEATHERAPI_DISPLAY_NAME} request failed with status {status}",
+        {"status_code": status, "body": body_text[:500]},
+    ) from exc
+
+
+def _weatherapi_payload_from_body(raw_body: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise ToolRuntimeError(
+            "UPSTREAM_ERROR",
+            f"{WEATHERAPI_DISPLAY_NAME} returned invalid JSON",
+            {"reason": "invalid_json", "body": raw_body[:500]},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ToolRuntimeError(
+            "UPSTREAM_ERROR",
+            f"{WEATHERAPI_DISPLAY_NAME} returned an unexpected payload shape",
+            {"reason": "unexpected_shape"},
+        )
+    return payload
+
+
+def _raise_weatherapi_payload_error(payload: Mapping[str, Any]) -> None:
+    if "error" not in payload:
+        return
+    err = payload["error"] or {}
+    err_code = int(err.get("code", 0))
+    err_msg = str(err.get("message", "unknown error"))
+    if err_code in {1002, 2006, 2007, 2008, 2009}:
+        raise ToolRuntimeError(
+            "UPSTREAM_ERROR",
+            f"{WEATHERAPI_DISPLAY_NAME} authentication error: {err_msg}",
+            {"reason": "auth_failed", "api_error_code": err_code},
+        )
+    raise ToolRuntimeError(
+        "UPSTREAM_ERROR",
+        f"{WEATHERAPI_DISPLAY_NAME} error: {err_msg}",
+        {"api_error_code": err_code},
+    )
 
 
 def _normalize_response(payload: dict[str, Any], *, q: str) -> dict[str, Any]:
@@ -184,44 +247,18 @@ class WeatherApiProvider:
             method="GET",
         )
 
+        raw_body = self._read_json_body(req, ctx=ctx)
+        payload = _weatherapi_payload_from_body(raw_body)
+        _raise_weatherapi_payload_error(payload)
+        return _normalize_response(payload, q=q)
+
+    def _read_json_body(self, req: urllib_request.Request, *, ctx: RuntimeContext) -> str:
         try:
             with urllib_request.urlopen(req, timeout=self._timeout_s(ctx=ctx)) as resp:
-                raw_body = resp.read().decode("utf-8", errors="replace")
+                body: bytes = resp.read()
+                return body.decode("utf-8", errors="replace")
         except urllib_error.HTTPError as exc:
-            status = int(exc.code)
-            body_text = ""
-            try:
-                body_text = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                body_text = ""
-            if status in {401, 403}:
-                raise ToolRuntimeError(
-                    "UPSTREAM_ERROR",
-                    f"{WEATHERAPI_DISPLAY_NAME} authentication failed (HTTP {status})",
-                    {
-                        "reason": "auth_failed",
-                        "status_code": status,
-                        "body": body_text[:500],
-                    },
-                ) from exc
-            if status == 429:
-                raise ToolRuntimeError(
-                    "UPSTREAM_ERROR",
-                    f"{WEATHERAPI_DISPLAY_NAME} rate limit exceeded (HTTP {status})",
-                    {
-                        "reason": "rate_limited",
-                        "status_code": status,
-                        "body": body_text[:500],
-                    },
-                ) from exc
-            raise ToolRuntimeError(
-                "UPSTREAM_ERROR",
-                f"{WEATHERAPI_DISPLAY_NAME} request failed with status {status}",
-                {
-                    "status_code": status,
-                    "body": body_text[:500],
-                },
-            ) from exc
+            _raise_weatherapi_http_error(exc)
         except urllib_error.URLError as exc:
             raise ToolRuntimeError(
                 "UPSTREAM_ERROR",
@@ -229,40 +266,6 @@ class WeatherApiProvider:
                 {"reason": str(getattr(exc, "reason", exc))},
             ) from exc
 
-        try:
-            payload = json.loads(raw_body)
-        except json.JSONDecodeError as exc:
-            raise ToolRuntimeError(
-                "UPSTREAM_ERROR",
-                f"{WEATHERAPI_DISPLAY_NAME} returned invalid JSON",
-                {"reason": "invalid_json", "body": raw_body[:500]},
-            ) from exc
-
-        if not isinstance(payload, dict):
-            raise ToolRuntimeError(
-                "UPSTREAM_ERROR",
-                f"{WEATHERAPI_DISPLAY_NAME} returned an unexpected payload shape",
-                {"reason": "unexpected_shape"},
-            )
-
-        # WeatherAPI returns error objects with a nested "error" key
-        if "error" in payload:
-            err = payload["error"] or {}
-            err_code = int(err.get("code", 0))
-            err_msg = str(err.get("message", "unknown error"))
-            if err_code in {1002, 2006, 2007, 2008, 2009}:
-                raise ToolRuntimeError(
-                    "UPSTREAM_ERROR",
-                    f"{WEATHERAPI_DISPLAY_NAME} authentication error: {err_msg}",
-                    {"reason": "auth_failed", "api_error_code": err_code},
-                )
-            raise ToolRuntimeError(
-                "UPSTREAM_ERROR",
-                f"{WEATHERAPI_DISPLAY_NAME} error: {err_msg}",
-                {"api_error_code": err_code},
-            )
-
-        return _normalize_response(payload, q=q)
 
 
 __all__ = [

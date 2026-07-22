@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from .models import (
     EventRecord,

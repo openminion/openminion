@@ -47,15 +47,4 @@ def __getattr__(name: str) -> Any:
 
 
 # Per-symbol public-surface version metadata.
-__since__: dict[str, str] = {
-    "APIRuntime": OPENMINION_VERSION,
-    "Agent": OPENMINION_VERSION,
-    "AgentOutputValidationError": OPENMINION_VERSION,
-    "AgentRunResult": OPENMINION_VERSION,
-    "Handoff": OPENMINION_VERSION,
-    "MemoryBundle": OPENMINION_VERSION,
-    "OpenMinionConfig": OPENMINION_VERSION,
-    "__version__": OPENMINION_VERSION,
-    "subagent": OPENMINION_VERSION,
-    "tool": OPENMINION_VERSION,
-}
+__since__: dict[str, str] = {name: OPENMINION_VERSION for name in __all__}

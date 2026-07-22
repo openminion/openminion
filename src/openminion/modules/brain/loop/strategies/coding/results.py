@@ -15,6 +15,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
     ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
+    DirectToolTurnContext,
 )
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
@@ -22,6 +23,9 @@ from openminion.modules.brain.execution.loop_contracts import (
 )
 from openminion.modules.brain.execution.closure import final_close_message
 from openminion.modules.brain.schemas import ActionResult, new_uuid
+from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
+    mutating_file_evidence_fallback_text,
+)
 from openminion.modules.brain.loop.tools.postprocess.rules import (
     _looks_like_unexecutable_tool_payload_text,
 )
@@ -157,6 +161,7 @@ def _result_from_outcome(
             allowed_tools=allowed_tools,
             build_blocked_result=build_blocked_result,
             final_text=outcome.final_text or "",
+            outcome_state=getattr(outcome, "state", None),
         )
         if missing_write_result is not None:
             return missing_write_result
@@ -169,6 +174,17 @@ def _result_from_outcome(
             build_blocked_result=build_blocked_result,
         )
     if outcome.termination_reason == CODING_TERM_BUDGET_EXHAUSTED:
+        missing_write_result = _maybe_gate_missing_required_write(
+            runner,
+            ctx,
+            loop=loop,
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
+            final_text=getattr(outcome, "final_text", "") or "",
+            outcome_state=getattr(outcome, "state", None),
+        )
+        if missing_write_result is not None:
+            return missing_write_result
         return _exit_budget_exhausted(
             runner,
             ctx,
@@ -231,6 +247,7 @@ def _result_from_outcome(
             allowed_tools=allowed_tools,
             build_blocked_result=build_blocked_result,
             final_text=getattr(outcome, "final_text", "") or "",
+            outcome_state=getattr(outcome, "state", None),
         )
         if missing_write_result is not None:
             return missing_write_result
@@ -288,6 +305,50 @@ def _result_from_outcome(
     )
 
 
+def _user_explicitly_requested_file_artifact(loop_state: Any) -> bool:
+    user_text = "\n".join(
+        str(getattr(message, "content", "") or "")
+        for message in list(getattr(loop_state, "messages", []) or [])
+        if str(getattr(message, "role", "") or "").strip().lower() == "user"
+    ).lower()
+    if not user_text:
+        return False
+    explicit_tooling = any(
+        pattern in user_text
+        for pattern in (
+            "do not only show code",
+            "file.write/file.read",
+            "file.write for files",
+            "implement it with file.write",
+            "use file.write",
+            "using file.write",
+            "with file.write",
+        )
+    )
+    if not explicit_tooling:
+        return False
+    return any(
+        token in user_text
+        for token in ("build", "create", "implement", "write", "project", "module")
+    )
+
+
+def _stage_required_write_direct_tool(
+    loop_state: Any,
+    *,
+    allowed_tools: frozenset[str],
+) -> None:
+    if getattr(loop_state, "direct_tool_turn", None) is not None:
+        return
+    requested_name = "file.write" if "file.write" in allowed_tools else "code.patch"
+    loop_state.direct_tool_turn = DirectToolTurnContext(
+        requested_tool_names=(requested_name,),
+        requested_batch_signature="",
+        match_by_name_only=True,
+    )
+    loop_state.scratchpad["coding.required_write_direct_tool"] = requested_name
+
+
 def _maybe_gate_missing_required_write(
     runner: Any,
     ctx: ExecutionContext,
@@ -296,8 +357,14 @@ def _maybe_gate_missing_required_write(
     allowed_tools: frozenset[str],
     build_blocked_result,
     final_text: str = "",
+    outcome_state: Any | None = None,
 ) -> ExecutionResult | None:
-    if not runner._coding_plan_requires_file_change():
+    requires_file_change = (
+        runner._coding_plan_requires_file_change()
+        or _user_explicitly_requested_file_artifact(runner._loop_state)
+        or _user_explicitly_requested_file_artifact(outcome_state)
+    )
+    if not requires_file_change:
         return None
     if runner._has_successful_mutating_file_result():
         return None
@@ -309,6 +376,7 @@ def _maybe_gate_missing_required_write(
     if runner._coding_plan is not None:
         runner._coding_plan.current_phase = "implement"
         runner._coding_plan.record_open_issue(failure_summary)
+    _stage_required_write_direct_tool(loop, allowed_tools=allowed_tools)
     attempt = runner._record_verify_gate_block(
         ctx,
         failure_summary=failure_summary,
@@ -677,6 +745,12 @@ def _exit_final_text(
     return ExecutionResult.from_step_output(step_output, judgment=judgment)
 
 
+def _mutating_file_evidence_final_text(runner: Any) -> str:
+    if not runner._has_successful_mutating_file_result():
+        return ""
+    return mutating_file_evidence_fallback_text(runner._loop_state)
+
+
 def _exit_budget_exhausted(
     runner: Any,
     ctx: ExecutionContext,
@@ -685,6 +759,33 @@ def _exit_budget_exhausted(
     *,
     build_blocked_result,
 ) -> ExecutionResult:
+    salvaged_final_text = _salvage_reserved_closeout_from_existing_evidence(
+        runner,
+        interruption_detail=(
+            "The reserved answer-only closeout was interrupted by budget "
+            "exhaustion, so this summary is derived from the existing coding "
+            "evidence."
+        ),
+    )
+    if salvaged_final_text is not None:
+        return _exit_final_text(
+            runner,
+            ctx,
+            loop,
+            salvaged_final_text,
+            allowed_tools,
+            build_blocked_result=build_blocked_result,
+        )
+    fallback_text = _mutating_file_evidence_final_text(runner)
+    if fallback_text:
+        return _exit_final_text(
+            runner,
+            ctx,
+            loop,
+            fallback_text,
+            allowed_tools,
+            build_blocked_result=build_blocked_result,
+        )
     telemetry_payload = loop.telemetry_payload(allowed_tools)
     msg = (
         "[act:coding] budget exhausted before a final answer. "
@@ -730,6 +831,16 @@ def _exit_blocked_with_closure(
             allowed_tools,
             build_blocked_result=build_blocked_result,
         )
+    fallback_text = _mutating_file_evidence_final_text(runner)
+    if fallback_text:
+        return _exit_final_text(
+            runner,
+            ctx,
+            loop,
+            fallback_text,
+            allowed_tools,
+            build_blocked_result=build_blocked_result,
+        )
     blocked_action = build_blocked_result(message, code).model_copy(
         update={"outputs": telemetry_payload},
         deep=True,
@@ -750,45 +861,16 @@ def _exit_blocked_with_closure(
         and disposition != BRAIN_DISPOSITION_CONTINUE
         and str(getattr(judgment, "final_answer", "") or "").strip()
     ):
-        close_message = final_close_message(
-            state=ctx.state,
-            judgment=judgment,
-            action_result=blocked_action,
-            fallback_message=message,
-        )
-        resolved_action = blocked_action.model_copy(
-            update={
-                "status": BRAIN_ACTION_STATUS_SUCCESS,
-                "summary": close_message,
-                "error": None,
-            },
-            deep=True,
-        )
-        ctx.extract_success_memories(
-            action_result=resolved_action,
+        return _exit_closed_by_closure_gate(
+            runner,
+            ctx,
+            loop=loop,
+            message=message,
+            code=code,
+            telemetry_payload=telemetry_payload,
+            blocked_action=blocked_action,
             judgment=judgment,
         )
-        ctx.emit_status(
-            source_phase="coding.loop",
-            detail_text="[act:coding] done",
-            mode=BRAIN_DECISION_ROUTE_ACT,
-            mode_state="done",
-            terminal=True,
-            payload={
-                **telemetry_payload,
-                "act.profile": BRAIN_ACT_PROFILE_CODING,
-                "coding.closed_by_closure_gate": True,
-                "coding.exhaustion_reason": code,
-            },
-        )
-        runner._clear_coding_module_state(ctx)
-        step_output = ctx.respond(
-            message=close_message,
-            status=BRAIN_STATE_DONE,
-            action_result=resolved_action,
-        )
-        runner._finalize_checkpoint(ctx, terminal=True, cursor=loop.iteration)
-        return ExecutionResult.from_step_output(step_output, judgment=judgment)
 
     runner._finalize_checkpoint(ctx, terminal=False, cursor=loop.iteration)
     return ExecutionResult(
@@ -797,3 +879,55 @@ def _exit_blocked_with_closure(
         message=message,
         action_result=blocked_action,
     )
+
+
+def _exit_closed_by_closure_gate(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    loop: Any,
+    message: str,
+    code: str,
+    telemetry_payload: dict[str, Any],
+    blocked_action: ActionResult,
+    judgment: Any,
+) -> ExecutionResult:
+    close_message = final_close_message(
+        state=ctx.state,
+        judgment=judgment,
+        action_result=blocked_action,
+        fallback_message=message,
+    )
+    resolved_action = blocked_action.model_copy(
+        update={
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": close_message,
+            "error": None,
+        },
+        deep=True,
+    )
+    ctx.extract_success_memories(
+        action_result=resolved_action,
+        judgment=judgment,
+    )
+    ctx.emit_status(
+        source_phase="coding.loop",
+        detail_text="[act:coding] done",
+        mode=BRAIN_DECISION_ROUTE_ACT,
+        mode_state="done",
+        terminal=True,
+        payload={
+            **telemetry_payload,
+            "act.profile": BRAIN_ACT_PROFILE_CODING,
+            "coding.closed_by_closure_gate": True,
+            "coding.exhaustion_reason": code,
+        },
+    )
+    runner._clear_coding_module_state(ctx)
+    step_output = ctx.respond(
+        message=close_message,
+        status=BRAIN_STATE_DONE,
+        action_result=resolved_action,
+    )
+    runner._finalize_checkpoint(ctx, terminal=True, cursor=loop.iteration)
+    return ExecutionResult.from_step_output(step_output, judgment=judgment)

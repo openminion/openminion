@@ -1,4 +1,5 @@
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 from uuid import uuid4
 
 from openminion.modules.storage.record_store import RecordStore

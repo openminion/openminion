@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.controlplane.channels.slack.config import SlackChannelConfig
 from openminion.modules.controlplane.channels.slack.constants import (

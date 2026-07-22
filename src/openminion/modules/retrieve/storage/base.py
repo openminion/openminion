@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
 from abc import ABC, abstractmethod
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+import sqlite3
+from typing import Any
 
 
 class RetrieveStore(ABC):

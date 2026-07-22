@@ -305,6 +305,39 @@ class SecurityPolicyEngine:
             int(state.per_tool_calls.get(normalized_tool, 0)) + 1
         )
 
+    def _unknown_action_decision(
+        self, action_key: tuple[str, str]
+    ) -> SecurityPolicyDecision:
+        return SecurityPolicyDecision(
+            decision=DECISION_DENY,
+            reason_code="unknown_action",
+            policy_version=self._policy_version,
+            details={"resource": action_key[0], "verb": action_key[1]},
+        )
+
+    def _missing_any_scope_decision(
+        self, rule: SecurityPolicyRule
+    ) -> SecurityPolicyDecision:
+        return SecurityPolicyDecision(
+            decision=DECISION_DENY,
+            reason_code="missing_scope",
+            policy_version=self._policy_version,
+            details={"required_any_scope": sorted(rule.required_scopes_any)},
+        )
+
+    def _missing_tool_scope_decision(
+        self, required_scopes_all: set[str], missing_scopes: list[str]
+    ) -> SecurityPolicyDecision:
+        return SecurityPolicyDecision(
+            decision=DECISION_DENY,
+            reason_code="missing_tool_scope",
+            policy_version=self._policy_version,
+            details={
+                "required_scopes_all": sorted(required_scopes_all),
+                "missing_scopes": missing_scopes,
+            },
+        )
+
     def evaluate(self, check: SecurityPolicyCheck) -> SecurityPolicyDecision:
         # First check identity constraints before other checks
         violation = self._check_identity_constraint_violation(check)
@@ -326,26 +359,13 @@ class SecurityPolicyEngine:
         )
         rule = self._rules.get(action_key)
         if rule is None:
-            return SecurityPolicyDecision(
-                decision=DECISION_DENY,
-                reason_code="unknown_action",
-                policy_version=self._policy_version,
-                details={
-                    "resource": action_key[0],
-                    "verb": action_key[1],
-                },
-            )
+            return self._unknown_action_decision(action_key)
 
         normalized_scopes = {_normalize_token(scope) for scope in check.actor.scopes}
         if rule.required_scopes_any and not normalized_scopes.intersection(
             rule.required_scopes_any
         ):
-            return SecurityPolicyDecision(
-                decision=DECISION_DENY,
-                reason_code="missing_scope",
-                policy_version=self._policy_version,
-                details={"required_any_scope": sorted(rule.required_scopes_any)},
-            )
+            return self._missing_any_scope_decision(rule)
 
         required_scopes_all = {
             _normalize_token(scope)
@@ -359,14 +379,8 @@ class SecurityPolicyEngine:
                 scope for scope in required_scopes_all if scope not in normalized_scopes
             )
             if missing_scopes:
-                return SecurityPolicyDecision(
-                    decision=DECISION_DENY,
-                    reason_code="missing_tool_scope",
-                    policy_version=self._policy_version,
-                    details={
-                        "required_scopes_all": sorted(required_scopes_all),
-                        "missing_scopes": missing_scopes,
-                    },
+                return self._missing_tool_scope_decision(
+                    required_scopes_all, missing_scopes
                 )
 
         normalized_risk = _normalize_risk(check.action.risk)

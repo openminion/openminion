@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from openminion.api.runtime import APIRuntime
 from openminion.services.diagnostics.owner_status import build_owner_status
@@ -17,13 +17,13 @@ class OwnerStatusQueryError(RuntimeError):
 
 
 def get_owner_status(
-    config_path: Optional[str],
+    config_path: str | None,
     *,
     session_limit: int = 20,
     run_limit_per_session: int = 20,
     window_hours: int = 24,
-    runtime: Optional[APIRuntime] = None,
-) -> Dict[str, Any]:
+    runtime: APIRuntime | None = None,
+) -> dict[str, Any]:
     if int(session_limit) <= 0:
         raise OwnerStatusQueryError("`session_limit` must be greater than zero.")
     if int(run_limit_per_session) <= 0:

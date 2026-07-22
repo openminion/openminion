@@ -42,116 +42,58 @@ class ExecRegistrar:
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
         """Return ToolBindingManifest for exec module."""
-        from openminion.modules.tool.contracts import (
-            ModelToolDef,
-            RuntimeBindingDef,
-            ToolBindingManifest,
-        )
+        del ctx
+        from openminion.modules.tool.contracts import ToolBindingManifest
 
         return ToolBindingManifest(
             module_id="exec",
-            model_tools=(
-                ModelToolDef(
-                    model_tool_id=MODEL_EXEC_RUN,
-                    description=(
-                        "Run one allowlisted direct shell command for verification "
-                        "or existing-file workflows; do not use pipes, "
-                        "redirections, chaining, or fallback operators. For "
-                        "toolchain checks, use direct discovery such as "
-                        "`command -v nasm`, then a separate direct version check "
-                        "such as `nasm --version`. Prefer host.metrics for disk, "
-                        "memory, and OS status; prefer structured file/web tools "
-                        "for reads, scaffolding, or web fetches."
-                    ),
-                    parameters={},
-                    aliases=("exec_run",),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_EXEC_POLL,
-                    description="Poll process status",
-                    parameters={},
-                    aliases=("exec_poll",),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_EXEC_SEND_KEYS,
-                    description="Send keys to process",
-                    parameters={},
-                    aliases=("exec_send_keys",),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_EXEC_SUBMIT,
-                    description="Submit new process",
-                    parameters={},
-                    aliases=("exec_submit",),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_EXEC_PASTE,
-                    description="Paste to process",
-                    parameters={},
-                    aliases=("exec_paste",),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_EXEC_KILL,
-                    description="Kill process",
-                    parameters={},
-                    aliases=("exec_kill",),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_EXEC_CLEAR,
-                    description="Clear process buffer",
-                    parameters={},
-                    aliases=("exec_clear",),
-                ),
-                ModelToolDef(
-                    model_tool_id=MODEL_EXEC_LIST,
-                    description="List processes",
-                    parameters={},
-                    aliases=("exec_list",),
-                ),
-            ),
-            runtime_bindings=(
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_EXEC_RUN,
-                    model_tool_id=MODEL_EXEC_RUN,
-                    runtime_candidates=("exec.run",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_EXEC_POLL,
-                    model_tool_id=MODEL_EXEC_POLL,
-                    runtime_candidates=("exec.poll",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_EXEC_SEND_KEYS,
-                    model_tool_id=MODEL_EXEC_SEND_KEYS,
-                    runtime_candidates=("exec.send_keys",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_EXEC_SUBMIT,
-                    model_tool_id=MODEL_EXEC_SUBMIT,
-                    runtime_candidates=("exec.submit",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_EXEC_PASTE,
-                    model_tool_id=MODEL_EXEC_PASTE,
-                    runtime_candidates=("exec.paste",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_EXEC_KILL,
-                    model_tool_id=MODEL_EXEC_KILL,
-                    runtime_candidates=("exec.kill",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_EXEC_CLEAR,
-                    model_tool_id=MODEL_EXEC_CLEAR,
-                    runtime_candidates=("exec.clear",),
-                ),
-                RuntimeBindingDef(
-                    runtime_binding_id=RUNTIME_EXEC_LIST,
-                    model_tool_id=MODEL_EXEC_LIST,
-                    runtime_candidates=("exec.list",),
-                ),
-            ),
+            model_tools=_exec_model_tools(),
+            runtime_bindings=_exec_runtime_bindings(),
         )
+
+
+def _exec_model_tools() -> tuple[Any, ...]:
+    from openminion.modules.tool.contracts import ModelToolDef
+
+    return (
+        ModelToolDef(MODEL_EXEC_RUN, _EXEC_RUN_DESCRIPTION, {}, ("exec_run",)),
+        ModelToolDef(MODEL_EXEC_POLL, "Poll process status", {}, ("exec_poll",)),
+        ModelToolDef(MODEL_EXEC_SEND_KEYS, "Send keys to process", {}, ("exec_send_keys",)),
+        ModelToolDef(MODEL_EXEC_SUBMIT, "Submit new process", {}, ("exec_submit",)),
+        ModelToolDef(MODEL_EXEC_PASTE, "Paste to process", {}, ("exec_paste",)),
+        ModelToolDef(MODEL_EXEC_KILL, "Kill process", {}, ("exec_kill",)),
+        ModelToolDef(MODEL_EXEC_CLEAR, "Clear process buffer", {}, ("exec_clear",)),
+        ModelToolDef(MODEL_EXEC_LIST, "List processes", {}, ("exec_list",)),
+    )
+
+
+def _exec_runtime_bindings() -> tuple[Any, ...]:
+    from openminion.modules.tool.contracts import RuntimeBindingDef
+
+    return tuple(
+        RuntimeBindingDef(runtime_id, model_id, (candidate,))
+        for runtime_id, model_id, candidate in (
+            (RUNTIME_EXEC_RUN, MODEL_EXEC_RUN, "exec.run"),
+            (RUNTIME_EXEC_POLL, MODEL_EXEC_POLL, "exec.poll"),
+            (RUNTIME_EXEC_SEND_KEYS, MODEL_EXEC_SEND_KEYS, "exec.send_keys"),
+            (RUNTIME_EXEC_SUBMIT, MODEL_EXEC_SUBMIT, "exec.submit"),
+            (RUNTIME_EXEC_PASTE, MODEL_EXEC_PASTE, "exec.paste"),
+            (RUNTIME_EXEC_KILL, MODEL_EXEC_KILL, "exec.kill"),
+            (RUNTIME_EXEC_CLEAR, MODEL_EXEC_CLEAR, "exec.clear"),
+            (RUNTIME_EXEC_LIST, MODEL_EXEC_LIST, "exec.list"),
+        )
+    )
+
+
+_EXEC_RUN_DESCRIPTION = (
+    "Run one allowlisted direct shell command for verification or existing-file "
+    "workflows; do not use pipes, redirections, chaining, or fallback operators. "
+    "For toolchain checks, use direct discovery such as `command -v nasm`, then "
+    "a separate direct version check such as `nasm --version`. Prefer "
+    "host.metrics for disk, memory, and OS status; prefer structured file/web "
+    "tools for reads, scaffolding, or web fetches."
+)
+
 
 
 REGISTRAR = ExecRegistrar()

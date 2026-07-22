@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Optional
+from collections.abc import Callable
 
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.services.gateway.turn.runtime import _correlation_payload

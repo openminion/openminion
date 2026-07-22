@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -33,5 +33,5 @@ class ExecOperationSchema(BaseModel):
     """Schema definition specifically for exec operations."""
 
     operation: str
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
     contract_version: str = EXEC_PLUGIN_INTERFACE_VERSION

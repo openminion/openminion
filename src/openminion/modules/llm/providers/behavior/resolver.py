@@ -1,7 +1,8 @@
 """Resolve one provider behavior profile per provider call."""
 
 from dataclasses import replace
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.llm.providers.behavior.constants import (
     DASHSCOPE_SERVICE_VENDOR,

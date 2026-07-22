@@ -1,4 +1,5 @@
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+from collections.abc import Mapping
 
 
 SQL_LOG_PREFIX_CHARS = 200

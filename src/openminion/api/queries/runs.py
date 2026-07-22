@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.runtime import APIRuntime
@@ -23,12 +23,12 @@ class RunQueryError(RuntimeError):
 
 
 def list_runs(
-    config_path: Optional[str],
+    config_path: str | None,
     *,
     session_id: str,
     limit: int = 20,
-    runtime: Optional[APIRuntime] = None,
-) -> Dict[str, Any]:
+    runtime: APIRuntime | None = None,
+) -> dict[str, Any]:
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
         raise RunQueryError("`session_id` is required.", code="invalid_request")
@@ -68,13 +68,13 @@ def list_runs(
 
 
 def list_run_events(
-    config_path: Optional[str],
+    config_path: str | None,
     *,
     session_id: str,
     run_id: str,
     limit: int = 200,
-    runtime: Optional[APIRuntime] = None,
-) -> Dict[str, Any]:
+    runtime: APIRuntime | None = None,
+) -> dict[str, Any]:
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
         raise RunQueryError("`session_id` is required.", code="invalid_request")

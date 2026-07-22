@@ -1,7 +1,8 @@
 """Session storage row decoders."""
 
 import sqlite3
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from .json_utils import parse_json
 

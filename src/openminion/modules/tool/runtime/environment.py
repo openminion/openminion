@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.base.constants import OPENMINION_DATA_ROOT_ENV

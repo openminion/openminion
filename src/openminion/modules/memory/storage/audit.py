@@ -141,6 +141,11 @@ class AuditedMemoryStore:
         except Exception:
             pass
 
+    def append_audit_event(self, event: MemoryAuditEvent) -> None:
+        """Append a domain-owned audit fact without exposing the sink."""
+
+        self._append(event)
+
     def put(self, record: Any) -> str:
         record_id = self._store.put(record)
         self._append(

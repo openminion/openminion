@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 
@@ -74,7 +74,7 @@ class PolicyToolHook:
 
 class _FallbackPolicyDecision:
     def __init__(
-        self, *, action: str, reason: str, code: str, details: Dict[str, Any]
+        self, *, action: str, reason: str, code: str, details: dict[str, Any]
     ) -> None:
         self.action = action
         self.reason = reason

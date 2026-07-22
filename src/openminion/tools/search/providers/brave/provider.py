@@ -2,7 +2,8 @@
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping
+from typing import Any
+from collections.abc import Mapping
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -75,12 +76,12 @@ class BraveSearchProvider:
 
     def search(
         self, *, args: Mapping[str, Any], ctx: Any | None = None
-    ) -> tuple[Dict[str, Any], Dict[str, str]]:
+    ) -> tuple[dict[str, Any], dict[str, str]]:
         api_key = self._api_key(args, ctx=ctx)
         if not api_key:
             raise BraveSearchError("Missing Brave API key", code="DEPENDENCY_MISSING")
 
-        params: Dict[str, str] = {
+        params: dict[str, str] = {
             "q": str(args.get("q", "")).strip(),
             "count": str(clamp_count(args.get("count"))),
             "offset": str(clamp_offset(args.get("offset"))),

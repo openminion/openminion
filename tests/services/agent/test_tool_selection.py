@@ -21,6 +21,7 @@ from openminion.modules.tool.base import (
     ToolExecutionContext,
     ToolExecutionResult,
 )
+from openminion.modules.tool import build_default_tool_registry
 from openminion.modules.tool.registry import ToolRegistry
 from tests._csc_fixtures import _csc_install_default_agent
 
@@ -182,6 +183,21 @@ class _NoToolSearchProvider(LLMProvider):
         del request
         return ProviderResponse(
             text="I cannot browse right now.",
+            model="fake-model",
+            finish_reason="stop",
+        )
+
+
+class _CapturingStopProvider(LLMProvider):
+    name = "capturing-stop"
+
+    def __init__(self) -> None:
+        self.calls: list[ProviderRequest] = []
+
+    async def generate(self, request: ProviderRequest) -> ProviderResponse:
+        self.calls.append(request)
+        return ProviderResponse(
+            text="No tool call emitted.",
             model="fake-model",
             finish_reason="stop",
         )
@@ -773,6 +789,87 @@ def test_forced_search_requires_model_tool_call_by_default() -> None:
         == "required_tool_call_missing"
     )
     assert response.metadata.get("tool_execution_count") == "0"
+
+
+@pytest.mark.parametrize("forced_name", ["weather", "functions.weather"])
+def test_forced_tool_provider_request_includes_visible_canonical_schema(
+    forced_name: str,
+) -> None:
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config)  # type: ignore[attr-defined]
+    provider = _CapturingStopProvider()
+    service = AgentService(
+        config=config,
+        plugins=PluginRegistry([]),
+        provider=provider,
+        logger=logging.getLogger("openminion.tests"),
+        tools=build_default_tool_registry(),
+    )
+
+    response = _run_async(
+        service.run_turn(
+            Message(channel="console", target="cli", body="check weather"),
+            forced_tools=[forced_name],
+        )
+    )
+
+    assert response.text == "Required tool call missing"
+    assert len(provider.calls) == 2
+    assert all(call.tool_choice == "required" for call in provider.calls)
+    assert all([spec.name for spec in call.tools] == ["weather"] for call in provider.calls)
+
+
+def test_forced_unknown_tool_exits_unavailable_before_provider_call() -> None:
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config)  # type: ignore[attr-defined]
+    provider = _CapturingStopProvider()
+    service = AgentService(
+        config=config,
+        plugins=PluginRegistry([]),
+        provider=provider,
+        logger=logging.getLogger("openminion.tests"),
+        tools=build_default_tool_registry(),
+    )
+
+    response = _run_async(
+        service.run_turn(
+            Message(channel="console", target="cli", body="use missing"),
+            forced_tools=["missing.tool"],
+        )
+    )
+
+    assert response.text == "Required tool unavailable"
+    assert response.metadata.get("tool_loop_termination_reason") == (
+        "forced_tool_unavailable"
+    )
+    assert provider.calls == []
+
+
+def test_forced_hidden_tool_exits_unavailable_before_provider_call() -> None:
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config)  # type: ignore[attr-defined]
+    provider = _CapturingStopProvider()
+    tools = build_default_tool_registry()
+    service = AgentService(
+        config=config,
+        plugins=PluginRegistry([]),
+        provider=provider,
+        logger=logging.getLogger("openminion.tests"),
+        tools=tools,
+    )
+
+    response = _run_async(
+        service.run_turn(
+            Message(channel="console", target="cli", body="cancel job"),
+            forced_tools=["ops.job.cancel"],
+        )
+    )
+
+    assert response.text == "Required tool unavailable"
+    assert response.metadata.get("tool_loop_termination_reason") == (
+        "forced_tool_unavailable"
+    )
+    assert provider.calls == []
 
 
 def test_required_lane_retries_once_for_tool_call_repair(

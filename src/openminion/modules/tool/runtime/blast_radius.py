@@ -1,7 +1,8 @@
 import uuid
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Iterable, Literal, Mapping, Optional, Protocol, Sequence
+from typing import Any, Literal, Optional, Protocol
+from collections.abc import Iterable, Mapping, Sequence
 
 from openminion.base.time import utc_now_iso as _now_iso
 from openminion.modules.runtime.credentials import CredentialRef

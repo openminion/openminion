@@ -8,7 +8,8 @@ import json
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 from uuid import uuid4
 
 from openminion.modules.storage.record_store import RecordStore

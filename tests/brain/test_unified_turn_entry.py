@@ -442,6 +442,58 @@ def test_unified_entry_file_write_seed_routes_to_coding_profile(
     assert getattr(route, "source", "") == "entry_mutation_seed_tool_call"
 
 
+def test_unified_entry_readonly_seed_routes_explicit_file_artifact_to_coding(
+    tmp_path: Path,
+) -> None:
+    response = _tool_response("file.list_dir", {"path": "."})
+    llm = _RecordingEntryLLM(response)
+    runner = _build_runner(tmp_path, llm_api=llm)
+    state = _state("entry-readonly-file-artifact")
+
+    decision = runner._decide(
+        state=state,
+        user_input=(
+            "Implement a tiny package with module code, CLI entry, tests, and "
+            "README using file.write/file.read."
+        ),
+        logger=fake_logger(),
+    )
+
+    assert decision.mode == "act"
+    assert decision.reason_code == "entry_coding_user_file_artifact_request"
+    assert getattr(decision, "_entry_response", None) is response
+    route = getattr(decision, "_pre_resolved_act_route", None)
+    assert route is not None
+    assert getattr(route, "act_profile", "") == "coding"
+    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+
+
+def test_unified_entry_tool_request_for_file_artifact_does_not_seed_coding(
+    tmp_path: Path,
+) -> None:
+    response = _tool_response("tool.request", {"name": "file.write"})
+    llm = _RecordingEntryLLM(response)
+    runner = _build_runner(tmp_path, llm_api=llm)
+    state = _state("entry-tool-request-file-artifact")
+
+    decision = runner._decide(
+        state=state,
+        user_input=(
+            "Build a small package using file.write and file.read; write "
+            "module code, tests, and README files."
+        ),
+        logger=fake_logger(),
+    )
+
+    assert decision.mode == "act"
+    assert decision.reason_code == "entry_coding_user_file_artifact_request"
+    assert getattr(decision, "_entry_response", None) is None
+    route = getattr(decision, "_pre_resolved_act_route", None)
+    assert route is not None
+    assert getattr(route, "act_profile", "") == "coding"
+    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+
+
 def test_entry_decompose_with_one_subtask_routes_to_orchestrate(
     tmp_path: Path,
 ) -> None:

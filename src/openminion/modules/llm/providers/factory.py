@@ -43,6 +43,45 @@ class RuntimeLLMHandle:
     tool_call_strategy: str = LLM_TOOL_CALL_STRATEGY_HYBRID
 
 
+def _runtime_llmctl_config(
+    *,
+    bridge_provider_name: str,
+    model: str,
+    provider_payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "llmctl": {
+            "default_provider": bridge_provider_name,
+            "default_model": model,
+            "timeouts": {
+                "request_timeout_sec": _as_positive_int(
+                    provider_payload.get("timeout_seconds"), default=60
+                ),
+                "connect_timeout_sec": 10,
+            },
+            "retries": {
+                "max_retries": 0 if bridge_provider_name == "cortensor" else 2,
+                "backoff_ms": 300,
+            },
+            "logging": {"redaction": "normal", "include_provider_raw": False},
+        },
+        "providers": {bridge_provider_name: dict(provider_payload)},
+        "agents": {
+            "openminion_runtime": {
+                "default_provider": bridge_provider_name,
+                "default_model": model,
+                "tool_policy": {
+                    "enable_tools": True,
+                    "allowed_tools": None,
+                    "tool_choice_default": LLM_TOOL_CHOICE_AUTO,
+                    "block_on_disallowed_tool_call": False,
+                },
+            }
+        },
+    }
+
+
 def build_runtime_llm_handle(
     config: OpenMinionConfig,
     logger: logging.Logger,
@@ -90,39 +129,11 @@ def build_runtime_llm_handle(
         env=provider_env
     ).snapshot()
 
-    llmctl_config = {
-        "version": 1,
-        "llmctl": {
-            "default_provider": bridge_provider_name,
-            "default_model": model,
-            "timeouts": {
-                "request_timeout_sec": _as_positive_int(
-                    provider_payload.get("timeout_seconds"), default=60
-                ),
-                "connect_timeout_sec": 10,
-            },
-            "retries": {
-                "max_retries": 0 if bridge_provider_name == "cortensor" else 2,
-                "backoff_ms": 300,
-            },
-            "logging": {"redaction": "normal", "include_provider_raw": False},
-        },
-        "providers": {
-            bridge_provider_name: dict(provider_payload),
-        },
-        "agents": {
-            "openminion_runtime": {
-                "default_provider": bridge_provider_name,
-                "default_model": model,
-                "tool_policy": {
-                    "enable_tools": True,
-                    "allowed_tools": None,
-                    "tool_choice_default": LLM_TOOL_CHOICE_AUTO,
-                    "block_on_disallowed_tool_call": False,
-                },
-            }
-        },
-    }
+    llmctl_config = _runtime_llmctl_config(
+        bridge_provider_name=bridge_provider_name,
+        model=model,
+        provider_payload=provider_payload,
+    )
 
     runtime = LLMCTL.from_config(llmctl_config)
     profile = AgentProfile(

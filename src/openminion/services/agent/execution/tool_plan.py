@@ -1,6 +1,7 @@
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from openminion.base.types import Message
+from openminion.modules.tool.exposure import resolve_forced_provider_tool_name
 
 from .ports import TurnFlowServicePort
 from .state import ToolPlan
@@ -36,14 +37,14 @@ def _resolve_explicit_forced_tools(
     service_port: TurnFlowServicePort,
     *,
     effective_forced_tools: list[str],
-    canonical_tool_name: Canonicalize,
     canonical_tool_chain: CanonicalizeChain,
 ) -> tuple[list[str], list[str], str | None]:
+    tools = service_port.tools
     available_forced = [
-        canonical_tool_name(name)
+        resolve_forced_provider_tool_name(tools, name) if tools is not None else ""
         for name in effective_forced_tools
-        if service_port.get_spec_for_tool(name) is not None
     ]
+    available_forced = [name for name in available_forced if name]
     available_forced = canonical_tool_chain(available_forced)
     if not available_forced:
         return effective_forced_tools, [], "forced_tool_unavailable"
@@ -100,7 +101,7 @@ def build_tool_plan(
     inbound: Message,
     user_message: str,
     forced_tools: list[str] | None,
-    capability_category: Optional[str],
+    capability_category: str | None,
     canonical_tool_name: Canonicalize,
     canonical_tool_chain: CanonicalizeChain,
 ) -> ToolPlan:
@@ -133,7 +134,6 @@ def build_tool_plan(
         ) = _resolve_explicit_forced_tools(
             service_port,
             effective_forced_tools=effective_forced_tools,
-            canonical_tool_name=canonical_tool_name,
             canonical_tool_chain=canonical_tool_chain,
         )
 

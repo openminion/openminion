@@ -1,4 +1,5 @@
-from typing import Any, Mapping, Protocol
+from typing import Any, Protocol
+from collections.abc import Mapping
 
 from openminion.modules.llm.providers.base import (
     ProviderHistoryMessage as ProviderHistoryMessage,
@@ -7,8 +8,7 @@ from openminion.modules.llm.providers.base import (
     ProviderToolCall as ProviderToolCall,
     ProviderToolSpec,
 )
-from openminion.modules.tool.base import ToolExecutionResult
-from openminion.modules.tool.base import ToolExecutionContext
+from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.modules.policy import ToolBudgetState
 

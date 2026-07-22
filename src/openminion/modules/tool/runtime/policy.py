@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 try:
     import yaml
@@ -39,11 +39,11 @@ from .policy_shared import SCOPE_ORDER, _invalid_argument
 
 @dataclass
 class Policy(PolicyExecMixin, PolicyAccessMixin, PolicyConfigMixin):
-    raw: Dict[str, Any]
+    raw: dict[str, Any]
 
     @staticmethod
     def load(path: Path) -> "Policy":
-        parsed: Dict[str, Any] = {}
+        parsed: dict[str, Any] = {}
         if path.exists():
             loaded = yaml.safe_load(path.read_text()) or {}
             if not isinstance(loaded, dict):

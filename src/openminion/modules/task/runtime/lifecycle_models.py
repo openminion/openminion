@@ -4,7 +4,8 @@ import json
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+from collections.abc import Mapping
 
 
 @runtime_checkable

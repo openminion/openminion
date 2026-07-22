@@ -2,7 +2,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, cast
+from typing import Any, Optional, cast
 
 from openminion.services.config import (
     resolve_services_env,
@@ -102,12 +102,12 @@ class ContextCtlGatewayAdapter:
     def select_history(
         self,
         *,
-        history: List[object],
+        history: list[object],
         session_id: str,
         agent_id: str,
         query: str,
-        contextctl_messages: Optional[List[ContextCtlMessage]] = None,
-    ) -> List[object]:
+        contextctl_messages: Optional[list[ContextCtlMessage]] = None,
+    ) -> list[object]:
         """C-09: Select which history to pass to the agent."""
         if self._dual_render and contextctl_messages is not None:
             # log parity diff for monitoring
@@ -138,7 +138,7 @@ class ContextCtlGatewayAdapter:
         agent_id: str,
         query: str,
         purpose: str = "act",
-    ) -> Optional[List[ContextCtlMessage]]:
+    ) -> Optional[list[ContextCtlMessage]]:
         """C-08: Attempt to build context pack via ctxctl."""
         try:
             messages = self._call_ctxctl(
@@ -164,7 +164,7 @@ class ContextCtlGatewayAdapter:
         agent_id: str,
         query: str,
         purpose: str,
-    ) -> List[ContextCtlMessage]:
+    ) -> list[ContextCtlMessage]:
         """Build a context pack through the ContextCtl service."""
         from openminion.modules.context.schemas import (
             BuildPackRequest,
@@ -234,7 +234,7 @@ class ContextCtlGatewayAdapter:
             if m.content.strip()
         ]
 
-    def _contextctl_to_history(self, messages: List[ContextCtlMessage]) -> List[object]:
+    def _contextctl_to_history(self, messages: list[ContextCtlMessage]) -> list[object]:
         from openminion.base.types import Message
 
         result: list[Message] = []

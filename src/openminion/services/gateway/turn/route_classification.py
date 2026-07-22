@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 _FILE_HINT_RE = re.compile(
     r"(^|\s)(@?[./~]?[\w.-]+(?:/[\w.-]+)+|@?[\w.-]+\.(?:py|md|json|toml|yaml|yml|txt))\b"

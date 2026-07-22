@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Optional, Any
 from enum import Enum
 
 
@@ -26,7 +26,7 @@ class WizardSession:
     state: WizardState
     step: int
     total_steps: int
-    session_data: Dict[str, Any] = field(default_factory=dict)
+    session_data: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -34,7 +34,7 @@ class WizardSession:
     chat_key: Optional[str] = None
     session_id: Optional[str] = None
 
-    draft_result: Optional[Dict[str, Any]] = field(default_factory=dict)
+    draft_result: Optional[dict[str, Any]] = field(default_factory=dict)
     timeout_at: Optional[datetime] = None
 
 
@@ -182,7 +182,7 @@ class InMemoryWizardStore(WizardStore):
     """In-memory implementation of wizard session storage."""
 
     def __init__(self):
-        self._sessions: Dict[str, WizardSession] = {}
+        self._sessions: dict[str, WizardSession] = {}
 
     async def init(self):
         """Initialize the in-memory store."""
@@ -328,7 +328,7 @@ def _session_to_params(session: WizardSession) -> tuple:
 class SqliteWizardStore(WizardStore):
     """SQLite-backed wizard session storage that mirrors :class:`InMemoryWizardStore`."""
 
-    def __init__(self, sqlite_path: Union[str, Path]):
+    def __init__(self, sqlite_path: str | Path):
         self._path = str(sqlite_path)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
@@ -372,7 +372,7 @@ class SqliteWizardStore(WizardStore):
             self._conn.commit()
         return True
 
-    async def _get_raw_sessions_by_user(self, user_key: str) -> List[WizardSession]:
+    async def _get_raw_sessions_by_user(self, user_key: str) -> list[WizardSession]:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT * FROM cp_wizard_sessions WHERE user_key = ?",
@@ -381,7 +381,7 @@ class SqliteWizardStore(WizardStore):
             rows = cur.fetchall()
         return [_row_to_session(row) for row in rows]
 
-    async def _get_raw_sessions_by_chat(self, chat_key: str) -> List[WizardSession]:
+    async def _get_raw_sessions_by_chat(self, chat_key: str) -> list[WizardSession]:
         with self._lock:
             cur = self._conn.execute(
                 "SELECT * FROM cp_wizard_sessions WHERE chat_key = ?",
@@ -448,7 +448,7 @@ class StoreFactory:
         raise ValueError(f"Unknown store type: {kind}")
 
 
-_STORE_REGISTRY: Dict[str, WizardStore] = {}
+_STORE_REGISTRY: dict[str, WizardStore] = {}
 
 
 def register_store(kind: str, store: WizardStore) -> None:

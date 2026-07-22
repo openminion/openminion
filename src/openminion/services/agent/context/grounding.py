@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
+from collections.abc import Mapping, Sequence
 
 from openminion.modules.context.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
 from openminion.services.config import resolve_services_roots

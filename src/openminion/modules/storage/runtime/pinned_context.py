@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 ALLOWED_PIN_SOURCES: tuple[str, ...] = ("user", "operator", "system", "policy")
 

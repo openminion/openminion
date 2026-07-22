@@ -1,5 +1,6 @@
 import json
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 from urllib.request import Request, urlopen
 
 

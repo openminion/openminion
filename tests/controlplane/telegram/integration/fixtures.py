@@ -19,6 +19,8 @@ from openminion.modules.controlplane.runtime.channels import (
 )
 from openminion.modules.controlplane.runtime.router import Router
 from openminion.modules.controlplane.runtime.worker.outbox import OutboxWorker
+from openminion.modules.controlplane.runtime.worker.inbox import InboxWorker
+from openminion.modules.controlplane.runtime.security import ScopeAuthorizer
 
 
 def attach_outbox_worker(
@@ -48,6 +50,34 @@ def drain_outbox(worker: OutboxWorker, *, max_iters: int = 32) -> int:
             break
         drained += 1
     return drained
+
+
+def drain_inbox(worker: InboxWorker, *, max_iters: int = 32) -> int:
+
+    drained = 0
+    for _ in range(max_iters):
+        result = worker.run_once()
+        if result is None:
+            break
+        drained += 1
+    return drained
+
+
+def attach_inbox_worker(
+    runner: Any,
+    *,
+    store: Any,
+    audit_logger: Any | None = None,
+) -> InboxWorker:
+    worker = InboxWorker(
+        store=store,
+        dispatcher=runner._runtime,
+        authorizer=ScopeAuthorizer(store=store),
+        rate_limiter=getattr(runner, "_rate_limiter", None),
+        audit_logger=audit_logger,
+    )
+    runner._inbox_worker = worker
+    return worker
 
 
 @dataclass

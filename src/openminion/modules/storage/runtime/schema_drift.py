@@ -4,7 +4,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from .migrations import (
     DEFAULT_MIGRATIONS,

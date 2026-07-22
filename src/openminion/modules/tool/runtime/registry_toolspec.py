@@ -3,7 +3,8 @@ import inspect
 import json
 import os
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.base.config.env import resolve_environment_config
@@ -22,6 +23,8 @@ _CONFIRMATION_GRANT_ID_METADATA_KEY = "confirmation_grant_id"
 
 
 def _context_confirm_requested(context: ToolExecutionContext) -> bool:
+    if bool(getattr(context, "confirm", False)):
+        return True
     metadata = context.metadata if isinstance(context.metadata, Mapping) else {}
     source = str(metadata.get(_CONFIRMATION_SOURCE_METADATA_KEY, "") or "").strip()
     grant_id = str(metadata.get(_CONFIRMATION_GRANT_ID_METADATA_KEY, "") or "").strip()

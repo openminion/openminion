@@ -1,6 +1,7 @@
 """Timeout and profile override helpers for runtime ingress."""
 
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
+from collections.abc import Mapping
 
 from openminion.base.config import (
     ConfigError,

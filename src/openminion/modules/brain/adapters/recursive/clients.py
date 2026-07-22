@@ -142,6 +142,10 @@ class RLMBridgeLLMClient:
                     "input_tokens": resp.usage.input_tokens,
                     "output_tokens": resp.usage.output_tokens,
                     "total_tokens": resp.usage.total_tokens,
+                    "total_source": resp.usage.total_source
+                    or ("provider" if resp.usage.total_tokens is not None else None),
+                    "cached_tokens": resp.usage.cached_tokens,
+                    "cache_creation_tokens": resp.usage.cache_creation_tokens,
                 }
 
             if not resp.ok:

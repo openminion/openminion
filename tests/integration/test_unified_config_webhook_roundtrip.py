@@ -8,7 +8,7 @@ from openminion.modules.controlplane.channels.telegram.webhook import (
 from openminion.services.runtime.lifecycle import LifecycleService
 from openminion.services.security.policy import SecurityPolicyEngine
 
-from tests.controlplane.telegram.integration.fixtures import drain_outbox
+from tests.controlplane.telegram.integration.fixtures import drain_inbox, drain_outbox
 from tests.controlplane.telegram.integration.transports import (
     DeterministicTelegramTransport,
 )
@@ -87,6 +87,8 @@ def test_unified_config_webhook_runner_dispatches_inbound_to_outbound(
 
         assert result["success"] is True
         assert result.get("update_id") == 1
+        assert runtime.controlplane_components is not None
+        drain_inbox(runtime.controlplane_components.inbox_worker)
         outbox_worker = getattr(runner, "_outbox_worker", None)
         assert outbox_worker is not None, (
             "lifecycle did not wire outbox worker into telegram webhook runner"

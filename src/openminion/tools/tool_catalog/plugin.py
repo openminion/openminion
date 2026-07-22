@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,7 +32,7 @@ class ToolSearchArgs(BaseModel):
     )
 
 
-def _h_tool_search(args: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
+def _h_tool_search(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     validated = ToolSearchArgs.model_validate(args)
     if validated.library:
         service = getattr(ctx, "authored_tools_api", None)
@@ -66,7 +66,7 @@ def _h_tool_search(args: Dict[str, Any], ctx: Any) -> Dict[str, Any]:
     except Exception:
         catalog_rows = ()
 
-    tools: List[Dict[str, Any]] = []
+    tools: list[dict[str, Any]] = []
 
     if catalog_rows:
         for tool_id, description in catalog_rows:

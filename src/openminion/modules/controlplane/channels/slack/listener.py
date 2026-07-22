@@ -6,7 +6,8 @@ import hmac
 import json
 import time
 from hashlib import sha256
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 
 class SlackSignatureError(ValueError):

@@ -1,5 +1,6 @@
 import json
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Optional
+from collections.abc import Callable, Mapping
 
 _NO_INTENT_CATEGORY = "none"
 _INBOUND_META_SKIP = {

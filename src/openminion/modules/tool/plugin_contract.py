@@ -7,12 +7,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import (
     Any,
-    Dict,
-    List,
     Literal,
     Optional,
     Protocol,
-    Union,
     runtime_checkable,
     TYPE_CHECKING,
 )
@@ -45,12 +42,12 @@ class ToolInvocation(BaseModel):
     method: str = Field(
         ..., min_length=1, description="Method name, e.g., 'exec' or 'snapshot'"
     )
-    args: Dict[str, Any] = Field(default_factory=dict)
+    args: dict[str, Any] = Field(default_factory=dict)
     timeout_s: Optional[float] = Field(
         default=None, description="Per-invocation timeout in seconds"
     )
     idempotency_key: Optional[str] = None
-    tags: Dict[str, str] = Field(default_factory=dict)
+    tags: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("timeout_s")
     @classmethod
@@ -69,7 +66,7 @@ class ArtifactRef(BaseModel):
     ref: str
     kind: str
     name: str
-    meta: Dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolError(BaseModel):
@@ -77,7 +74,7 @@ class ToolError(BaseModel):
     code: str
     message: str
     retryable: bool = False
-    details: Dict[str, Any] = Field(default_factory=dict)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolResult(BaseModel):
@@ -87,9 +84,9 @@ class ToolResult(BaseModel):
     status: Literal["ok", "error"]
     stdout: Optional[str] = None
     stderr: Optional[str] = None
-    data: Dict[str, Any] = Field(default_factory=dict)
-    artifacts: List[ArtifactRef] = Field(default_factory=list)
-    metrics: Dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[ArtifactRef] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
     error: Optional[ToolError] = None
 
     @model_validator(mode="after")
@@ -125,7 +122,7 @@ class ToolCapabilities(BaseModel):
 class HealthStatus(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ok: bool
-    details: Dict[str, Any] = Field(default_factory=dict)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class RiskSpec(BaseModel):
@@ -136,14 +133,14 @@ class RiskSpec(BaseModel):
     side_effects: Literal["none", "local", "remote", "external_account"] = "none"
     reversibility: RiskReversibility = "unknown"
     default_confirm: bool = False
-    sensitive_targets: List[Union[Dict[str, Any], str]] = Field(default_factory=list)
+    sensitive_targets: list[dict[str, Any] | str] = Field(default_factory=list)
 
 
 class MethodSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
     method_name: str
-    args_schema: Dict[str, Any] = Field(default_factory=dict)
-    return_schema: Optional[Dict[str, Any]] = None
+    args_schema: dict[str, Any] = Field(default_factory=dict)
+    return_schema: Optional[dict[str, Any]] = None
     description: Optional[str] = None
     risk_spec: Optional[RiskSpec] = None
 
@@ -152,7 +149,7 @@ class ToolSchemaBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tool: str
     description: Optional[str] = None
-    methods: List[MethodSchema] = Field(default_factory=list)
+    methods: list[MethodSchema] = Field(default_factory=list)
     capabilities: ToolCapabilities = Field(default_factory=ToolCapabilities)
 
 
@@ -161,7 +158,7 @@ class ToolDescriptor(BaseModel):
     plugin_id: str
     plugin_version: str
     tool: str
-    methods: List[str] = Field(default_factory=list)
+    methods: list[str] = Field(default_factory=list)
     capabilities: ToolCapabilities = Field(default_factory=ToolCapabilities)
 
 
@@ -170,7 +167,7 @@ class PolicyDecision:
     action: PolicyAction
     reason: str = ""
     code: str = "POLICY_DENIED"
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable
@@ -181,13 +178,13 @@ class ArtifactSink(Protocol):
         name: str,
         content: bytes,
         kind: str,
-        meta: Optional[Dict[str, Any]] = None,
+        meta: Optional[dict[str, Any]] = None,
     ) -> ArtifactRef: ...
 
 
 @runtime_checkable
 class EventSink(Protocol):
-    def emit(self, *, event_name: str, payload: Dict[str, Any]) -> None: ...
+    def emit(self, *, event_name: str, payload: dict[str, Any]) -> None: ...
 
 
 @runtime_checkable
@@ -209,12 +206,12 @@ class ToolContext:
     session_id: Optional[str] = None
     agent_id: Optional[str] = None
     working_dir: Optional[str] = None
-    env: Optional[Dict[str, str]] = None
+    env: Optional[dict[str, str]] = None
     artifact_sink: Optional[ArtifactSink] = None
     event_sink: Optional[EventSink] = None
     logger: Any = None
     runtime: Optional["ToolRuntime"] = None
-    extras: Dict[str, Any] = field(default_factory=dict)
+    extras: dict[str, Any] = field(default_factory=dict)
 
     def resolved_logger(self) -> logging.Logger:
         if self.logger is not None:
@@ -225,16 +222,16 @@ class ToolContext:
 @runtime_checkable
 class ToolMethod(Protocol):
     method_name: str
-    args_schema: Dict[str, Any]
-    return_schema: Dict[str, Any]
+    args_schema: dict[str, Any]
+    return_schema: dict[str, Any]
 
-    def run(self, args: Dict[str, Any], ctx: ToolContext) -> ToolResult: ...
+    def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult: ...
 
 
 @runtime_checkable
 class ToolDefinition(Protocol):
     name: str
-    methods: Dict[str, ToolMethod]
+    methods: dict[str, ToolMethod]
     capabilities: ToolCapabilities
 
     def schema(self) -> ToolSchemaBundle: ...
@@ -245,11 +242,11 @@ class ToolPlugin(Protocol):
     plugin_id: str
     version: str
 
-    def get_tools(self) -> List[ToolDefinition]: ...
+    def get_tools(self) -> list[ToolDefinition]: ...
 
-    def get_config_schema(self) -> Optional[Dict[str, Any]]: ...
+    def get_config_schema(self) -> Optional[dict[str, Any]]: ...
 
-    def validate_config(self, config: Dict[str, Any]) -> None: ...
+    def validate_config(self, config: dict[str, Any]) -> None: ...
 
     def init(self, runtime: "ToolRuntime") -> None: ...
 
@@ -261,7 +258,7 @@ class ToolPlugin(Protocol):
 class NullEventSink:
     """No-op event sink used when caller does not provide one."""
 
-    def emit(self, *, event_name: str, payload: Dict[str, Any]) -> None:
+    def emit(self, *, event_name: str, payload: dict[str, Any]) -> None:
         del event_name, payload
 
 
@@ -269,9 +266,9 @@ class MemoryEventSink:
     """Simple in-memory sink useful for tests and development."""
 
     def __init__(self) -> None:
-        self.events: List[Dict[str, Any]] = []
+        self.events: list[dict[str, Any]] = []
 
-    def emit(self, *, event_name: str, payload: Dict[str, Any]) -> None:
+    def emit(self, *, event_name: str, payload: dict[str, Any]) -> None:
         self.events.append({"event_name": event_name, "payload": dict(payload)})
 
 
@@ -279,7 +276,7 @@ class MemoryArtifactSink:
     """In-memory artifact sink that also returns stable hash-based references."""
 
     def __init__(self) -> None:
-        self.objects: Dict[str, bytes] = {}
+        self.objects: dict[str, bytes] = {}
 
     def put_bytes(
         self,
@@ -287,7 +284,7 @@ class MemoryArtifactSink:
         name: str,
         content: bytes,
         kind: str,
-        meta: Optional[Dict[str, Any]] = None,
+        meta: Optional[dict[str, Any]] = None,
     ) -> ArtifactRef:
         sha = hashlib.sha256(content).hexdigest()
         ref = f"artifact:sha256:{sha}"
@@ -322,7 +319,7 @@ class CASArtifactSink:
         name: str,
         content: bytes,
         kind: str,
-        meta: Optional[Dict[str, Any]] = None,
+        meta: Optional[dict[str, Any]] = None,
     ) -> ArtifactRef:
         ref = self._artifactctl.ingest_bytes(
             data=content,

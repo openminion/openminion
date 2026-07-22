@@ -1,6 +1,6 @@
 from pathlib import Path
 import sqlite3
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 from openminion.modules.storage.migrations.backup import (
     BACKUP_MODE_ONLINE,

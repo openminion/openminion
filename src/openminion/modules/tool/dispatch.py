@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Optional
+from collections.abc import Mapping, Sequence
 
 from openminion.modules.tool.contracts import (
     normalize_raw_model_tool_name,

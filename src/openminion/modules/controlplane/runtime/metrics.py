@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
+from collections.abc import Callable, Iterable, Mapping
 
 from .audit import AuditEvent
 

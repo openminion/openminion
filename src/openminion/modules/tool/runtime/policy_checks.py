@@ -1,6 +1,6 @@
 from pathlib import Path
 import shlex
-from typing import Any, Dict
+from typing import Any
 
 from openminion.modules.tool.commands import normalize_cd_prefixed_command
 
@@ -16,7 +16,7 @@ def run_policy_preflight(
     policy: Policy,
     tool_spec: ToolSpec,
     tool_name: str,
-    args: Dict[str, Any],
+    args: dict[str, Any],
     effective_scope: Scope,
     confirm: bool,
     workspace: Path,

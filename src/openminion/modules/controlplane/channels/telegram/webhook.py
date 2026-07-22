@@ -13,7 +13,7 @@ from openminion.modules.controlplane.interfaces import (
 from openminion.modules.controlplane.constants import (
     AUTH_ROLE_UNPAIRED,
 )
-from openminion.modules.controlplane.contracts.models import DeliveryContext
+from openminion.modules.controlplane.contracts.models import AuthContext, DeliveryContext
 from openminion.modules.controlplane.channels.telegram.access import (
     TelegramAccessPolicy,
 )
@@ -73,6 +73,7 @@ from openminion.modules.controlplane.channels.telegram.runtime.helpers import (
     _chat_action_pulse as _runtime_chat_action_pulse,
     _deliver_sync_fallback as _runtime_deliver_sync_fallback,
     _dispatch_runtime_with_parity_error,
+    _enqueue_inbox as _runtime_enqueue_inbox,
     _enqueue_outbox as _runtime_enqueue_outbox,
     _has_active_principal_binding as _runtime_has_active_principal_binding,
     _resolve_controlplane_auth_store,
@@ -516,10 +517,10 @@ class TelegramWebhookRunner:
             self._answer_callback_if_needed(envelope)
             return None
 
-        # rate limiter gate (parallel to polling.py).
-        if self._rate_limiter is not None and self._is_rate_limited(
-            inbound=inbound, envelope=envelope
-        ):
+        if self._rate_limit_blocks(inbound=inbound, envelope=envelope):
+            return None
+
+        if self._enqueue_inbox_and_ack(inbound=inbound, envelope=envelope):
             return None
 
         self._audit_event(
@@ -672,6 +673,42 @@ class TelegramWebhookRunner:
     ) -> None:
         _runtime_enqueue_outbox(self, payload=payload, envelope=envelope)
 
+    def _enqueue_inbox(
+        self,
+        *,
+        inbound: Any,
+        envelope: TelegramInboundEnvelope,
+    ) -> bool:
+        return _runtime_enqueue_inbox(self, inbound=inbound, envelope=envelope)
+
+    def _enqueue_inbox_and_ack(
+        self,
+        *,
+        inbound: Any,
+        envelope: TelegramInboundEnvelope,
+    ) -> bool:
+        if not self._enqueue_inbox(inbound=inbound, envelope=envelope):
+            return False
+        self._audit_event(
+            "cp.route.runtime_dispatch",
+            reason="inbox_enqueued",
+            update_id=envelope.update_id,
+            chat_id=str(envelope.chat_id),
+        )
+        self._answer_callback_if_needed(envelope)
+        return True
+
+    def _rate_limit_blocks(
+        self,
+        *,
+        inbound: Any,
+        envelope: TelegramInboundEnvelope,
+    ) -> bool:
+        return self._rate_limiter is not None and self._is_rate_limited(
+            inbound=inbound,
+            envelope=envelope,
+        )
+
     def _is_rate_limited(
         self,
         *,
@@ -817,7 +854,13 @@ class TelegramWebhookRunner:
 
         if auth.role == AUTH_ROLE_UNPAIRED and not is_pair_command(inbound.text):
             if not pairing_gate_enabled and parsed is None:
-                return inbound
+                return replace(
+                    inbound,
+                    auth=AuthContext(
+                        role="channel_allowed",
+                        scopes=tuple(self._authorizer.default_scopes),
+                    ),
+                )
             self._send_local_text(
                 envelope,
                 "This chat is not paired. Run /pair <code> first.",

@@ -105,6 +105,56 @@ from ..tools.iteration.helpers import (  # noqa: E402
 from ..tools.evidence import (  # noqa: E402
     _successful_substantive_tool_results,
 )
+from ..tools.postprocess.evidence_closeout import (  # noqa: E402
+    tool_evidence_closeout_text,
+)
+
+
+def _duplicate_exhaustion_evidence_outcome(
+    outcome: AdaptiveToolLoopOutcome,
+) -> AdaptiveToolLoopOutcome | None:
+    if outcome.termination_reason not in {
+        ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+        ADAPTIVE_TERM_CIRCULAR_PATTERN,
+    }:
+        return None
+    reason = (
+        "successful tool evidence was preserved after repeated tool calls, so "
+        "OpenMinion is returning an evidence-based closeout instead of another "
+        "tool attempt."
+    )
+    final_text = tool_evidence_closeout_text(outcome.state, reason=reason)
+    if not final_text:
+        return None
+    outcome.state.scratchpad[
+        "adaptive.duplicate_exhaustion_used_evidence_closeout"
+    ] = True
+    return replace(
+        outcome,
+        termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
+        final_text=final_text,
+        finalization_status={
+            "status": "final_answer",
+            "reasoning": "successful tool evidence fallback after repeated tool calls",
+        },
+        error_message=None,
+    )
+
+
+def _finalization_contract_missing_result(
+    ctx: ExecutionContext,
+    *,
+    message: str,
+) -> ExecutionResult:
+    return ExecutionResult(
+        status=BRAIN_STATE_ERROR,
+        working_state=ctx.state,
+        message=message,
+        action_result=_build_error_result(
+            message,
+            "act_finalization_contract_missing",
+        ),
+    )
 
 
 class ActLoopFinalizationMixin:
@@ -623,14 +673,12 @@ class ActLoopFinalizationMixin:
                     "General act work ended without the required typed "
                     "finalization_status contract."
                 )
-                return ExecutionResult(
-                    status=BRAIN_STATE_ERROR,
-                    working_state=ctx.state,
-                    message=message,
-                    action_result=_build_error_result(
-                        message,
-                        "act_finalization_contract_missing",
-                    ),
+                return _finalization_contract_missing_result(ctx, message=message)
+            evidence_outcome = _duplicate_exhaustion_evidence_outcome(outcome)
+            if evidence_outcome is not None:
+                return cast(
+                    ExecutionResult,
+                    self._finalize_success(ctx, loop_outcome=evidence_outcome),
                 )
             adaptive_modes._extract_failure_memories_for_outcome(ctx, outcome=outcome)
             if outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED:

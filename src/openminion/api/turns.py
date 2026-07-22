@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from openminion.api.runtime import APIRuntime
 from openminion.modules.brain.diagnostics.status import PhaseStatus
@@ -12,10 +12,10 @@ _run_turn = _request_orchestrator.run_turn
 
 
 def run_turn(
-    config_path: Optional[str],
+    config_path: str | None,
     payload: dict[str, Any],
-    runtime: Optional[APIRuntime] = None,
-    request_id: Optional[str] = None,
+    runtime: APIRuntime | None = None,
+    request_id: str | None = None,
     progress_callback: Callable[[PhaseStatus], None] | None = None,
     approval_callback: Any | None = None,
 ) -> dict[str, Any]:

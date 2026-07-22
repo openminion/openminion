@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Any
 
-from openminion.modules.controlplane.runtime.worker.outbox import OutboxWorker
+from openminion.modules.controlplane import InboxWorker, OutboxWorker
 from openminion.modules.telemetry.schemas import TelemetryEvent
 
 
@@ -44,6 +44,7 @@ class ChannelStatus:
 class ChannelRuntimeStatus:
     state: str
     channels: dict[str, ChannelStatus]
+    inbox_worker_alive: bool
     outbox_worker_alive: bool
     last_error: str | None = None
 
@@ -54,6 +55,7 @@ class ChannelRuntimeStatus:
                 channel_id: status.to_dict()
                 for channel_id, status in sorted(self.channels.items())
             },
+            "inbox_worker_alive": self.inbox_worker_alive,
             "outbox_worker_alive": self.outbox_worker_alive,
             "last_error": self.last_error,
         }
@@ -74,6 +76,7 @@ class ChannelRuntimeSupervisor:
         self,
         *,
         channels: Any,
+        inbox_worker: InboxWorker | None = None,
         outbox_worker: OutboxWorker | None = None,
         close_runtime: Any | None = None,
         telemetry_service: Any | None = None,
@@ -81,11 +84,13 @@ class ChannelRuntimeSupervisor:
         channel_ids: list[str] | None = None,
     ) -> None:
         self._channels = channels
+        self._inbox_worker = inbox_worker
         self._outbox_worker = outbox_worker
         self._close_runtime = close_runtime
         self._telemetry_service = telemetry_service
         self._log = logger or logging.getLogger(__name__)
         self._stop_event = threading.Event()
+        self._inbox_thread: threading.Thread | None = None
         self._outbox_thread: threading.Thread | None = None
         self._runtimes: dict[str, _ChannelRuntime] = {}
         self._last_error: str | None = None
@@ -100,6 +105,7 @@ class ChannelRuntimeSupervisor:
 
     def start(self) -> dict[str, object]:
         self._stop_event.clear()
+        self._start_inbox_worker()
         self._start_outbox_worker()
         results: dict[str, object] = {}
         for channel_id, runtime in self._runtimes.items():
@@ -151,6 +157,7 @@ class ChannelRuntimeSupervisor:
             else:
                 self._emit("controlplane.channel.stopped", channel_id=channel_id)
             results[channel_id] = {"ok": not alive, "state": runtime.state}
+        self._stop_inbox_worker(timeout_seconds=timeout_seconds)
         self._stop_outbox_worker(timeout_seconds=timeout_seconds)
         self._close_shared_runtime()
         return results
@@ -174,6 +181,9 @@ class ChannelRuntimeSupervisor:
         return ChannelRuntimeStatus(
             state=state,
             channels=channel_statuses,
+            inbox_worker_alive=bool(
+                self._inbox_thread is not None and self._inbox_thread.is_alive()
+            ),
             outbox_worker_alive=bool(
                 self._outbox_thread is not None and self._outbox_thread.is_alive()
             ),
@@ -207,6 +217,20 @@ class ChannelRuntimeSupervisor:
                 error=runtime.last_error,
             )
 
+    def _start_inbox_worker(self) -> None:
+        if self._inbox_worker is None:
+            return
+        if self._inbox_thread is not None and self._inbox_thread.is_alive():
+            return
+        thread = threading.Thread(
+            target=self._run_inbox_loop,
+            daemon=True,
+            name="controlplane-inbox-worker",
+        )
+        self._inbox_thread = thread
+        thread.start()
+        self._emit("controlplane.inbox_worker.started")
+
     def _start_outbox_worker(self) -> None:
         if self._outbox_worker is None:
             return
@@ -220,6 +244,18 @@ class ChannelRuntimeSupervisor:
         self._outbox_thread = thread
         thread.start()
         self._emit("controlplane.outbox_worker.started")
+
+    def _stop_inbox_worker(self, *, timeout_seconds: float) -> None:
+        thread = self._inbox_thread
+        if thread is None:
+            return
+        thread.join(timeout=timeout_seconds)
+        if thread.is_alive():
+            self._last_error = "inbox_join_timeout"
+            self._emit("controlplane.inbox_worker.join_timeout")
+            return
+        self._inbox_thread = None
+        self._emit("controlplane.inbox_worker.stopped")
 
     def _stop_outbox_worker(self, *, timeout_seconds: float) -> None:
         thread = self._outbox_thread
@@ -245,21 +281,33 @@ class ChannelRuntimeSupervisor:
             self._last_error = _redact(str(exc))
             self._emit("controlplane.runtime.close_failed", error=self._last_error)
 
+    def _run_inbox_loop(self) -> None:
+        self._run_worker_loop(self._inbox_worker, event_prefix="inbox")
+
     def _run_outbox_loop(self) -> None:
-        while not self._stop_event.is_set():
+        self._run_worker_loop(self._outbox_worker, event_prefix="outbox")
+
+    def _run_worker_loop(self, worker: Any, *, event_prefix: str) -> None:
+        while True:
             try:
-                result = self._outbox_worker.run_once()  # type: ignore[union-attr]
+                result = worker.run_once()
             except Exception as exc:  # noqa: BLE001
                 self._last_error = _redact(str(exc))
                 self._log.warning(
-                    "controlplane outbox worker failed: %s",
+                    "controlplane %s worker failed: %s",
+                    event_prefix,
                     exc,
                     exc_info=True,
                 )
-                self._emit("controlplane.outbox_worker.failed", error=self._last_error)
+                self._emit(
+                    f"controlplane.{event_prefix}_worker.failed",
+                    error=self._last_error,
+                )
                 time.sleep(0.1)
                 continue
             if result is None:
+                if self._stop_event.is_set():
+                    return
                 time.sleep(0.1)
 
     def _channel_status(self, channel_id: str, runtime: _ChannelRuntime) -> ChannelStatus:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 
 @dataclass(frozen=True)
@@ -37,12 +37,12 @@ class HybridRetrievalRanker:
     def rank(
         self,
         query: str,
-        records: List[Any],
+        records: list[Any],
         top_k: int = 10,
         scope_filter: Optional[str] = None,
         agent_id: Optional[str] = None,
         project_id: Optional[str] = None,
-    ) -> tuple[List[RetrievalResult], RetrievalDiagnostics]:
+    ) -> tuple[list[RetrievalResult], RetrievalDiagnostics]:
         filters = {}
         if scope_filter:
             filters["scope"] = scope_filter
@@ -177,7 +177,7 @@ class RetrievalService:
         scope: Optional[str] = None,
         agent_id: Optional[str] = None,
         project_id: Optional[str] = None,
-    ) -> tuple[List[RetrievalResult], RetrievalDiagnostics]:
+    ) -> tuple[list[RetrievalResult], RetrievalDiagnostics]:
         if not self._enabled:
             return [], RetrievalDiagnostics(
                 records_considered=0,

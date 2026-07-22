@@ -1,7 +1,8 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.base.config.paths import ensure_under_data_root

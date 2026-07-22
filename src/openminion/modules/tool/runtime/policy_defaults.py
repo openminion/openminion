@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from ..constants import (
     TOOL_AUDIT_WRITE_MODE_DUAL,
@@ -13,7 +13,7 @@ from ..constants import (
 from .command_patterns import COMMAND_ALLOW_PATTERNS, DISCOVERY_KNOWN_TOOLS
 
 
-DEFAULT_POLICY: Dict[str, Any] = {
+DEFAULT_POLICY: dict[str, Any] = {
     "version": 1,
     "scope": "WRITE_SAFE",
     "workspace_root": "~/openminion_tool_runs",

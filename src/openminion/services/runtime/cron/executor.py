@@ -13,6 +13,13 @@ from openminion.tools.task.routine.dispatcher import (
 )
 from openminion.tools.task.routine.schemas import RoutinePayloadV1
 from openminion.services.runtime.cron.audit import watch_write_audit_entries
+from openminion.modules.task.cron_payloads import (
+    build_cron_request_payload,
+    build_expired_watch_result,
+    mark_idle_tick_request,
+    watch_condition_met as is_watch_condition_met,
+    watch_terminal_state,
+)
 from openminion.tools.task.constants import (
     CONSOLIDATION_PAYLOAD_KEY,
     DEFAULT_CONSOLIDATION_BATCH_LIMIT,
@@ -95,78 +102,42 @@ class CronTurnExecutor:
         expired_precheck = self._watch_ttl_expired(job=job, watch=watch)
         current_checks = int(watch.get("checks_completed", 0) or 0)
         if expired_precheck:
-            summary = self._watch_terminal_summary(
+            return build_expired_watch_result(
+                watch_output=self._watch_output,
+                watch_terminal_summary=self._watch_terminal_summary,
                 watch=watch,
                 checks_completed=current_checks,
-                terminal_reason="ttl_expired",
-                fallback="Watch expired before the next check ran.",
             )
-            return {
-                "summary": summary,
-                "output": self._watch_output(
-                    condition_met=False,
-                    terminal=True,
-                    deliver=True,
-                    checks_completed=current_checks,
-                    terminal_reason="ttl_expired",
-                    summary=summary,
-                ),
-            }
 
         result = self._execute_agent_turn(job=job, run=run, payload=payload)
         checks_completed = current_checks + 1
         metadata = dict(result.get("metadata") or {})
-        watch_condition_met = (
-            str(metadata.get("watch_condition_met", "") or "").strip().lower() == "true"
-        )
+        watch_condition_met = is_watch_condition_met(metadata)
         watch_summary = str(metadata.get("watch_summary", "") or "").strip()
         summary = str(result.get("summary", "") or "").strip() or watch_summary
-        action_executed = False
-        action_summary = ""
-        write_audit_entries: tuple[dict[str, Any], ...] = ()
-        terminal_reason = ""
-        deliver = bool(watch_condition_met)
-        terminal = bool(watch_condition_met)
-        if checks_completed >= int(
-            watch.get("max_checks", DEFAULT_WATCH_MAX_CHECKS)
-            or DEFAULT_WATCH_MAX_CHECKS
-        ):
-            terminal = True
-            deliver = True
-            terminal_reason = "max_checks_reached"
-            summary = self._watch_terminal_summary(
-                watch=watch,
-                checks_completed=checks_completed,
-                terminal_reason=terminal_reason,
-                fallback=summary,
-            )
-        elif self._watch_ttl_expired(job=job, watch=watch):
-            terminal = True
-            deliver = True
-            terminal_reason = "ttl_expired"
-            summary = self._watch_terminal_summary(
-                watch=watch,
-                checks_completed=checks_completed,
-                terminal_reason=terminal_reason,
-                fallback=summary,
-            )
-        elif watch_condition_met:
-            terminal_reason = "condition_met"
-            action_result = self._execute_watch_action_turn(
+        terminal_state = watch_terminal_state(
+            watch_terminal_summary=self._watch_terminal_summary,
+            watch_ttl_expired=self._watch_ttl_expired,
+            job=job,
+            watch=watch,
+            checks_completed=checks_completed,
+            condition_met=watch_condition_met,
+            summary=summary,
+        )
+        terminal = terminal_state["terminal"]
+        deliver = terminal_state["deliver"]
+        terminal_reason = str(terminal_state["terminal_reason"])
+        summary = str(terminal_state["summary"])
+        action_executed, action_summary, write_audit_entries, summary = (
+            self._maybe_execute_watch_action(
                 job=job,
                 run=run,
                 payload=payload,
                 watch=watch,
-                watch_summary=summary,
+                terminal_reason=terminal_reason,
+                summary=summary,
             )
-            if action_result is not None:
-                action_executed = True
-                action_summary = str(action_result.get("summary", "") or "").strip()
-                if action_summary:
-                    summary = action_summary
-                write_audit_entries = watch_write_audit_entries(
-                    metadata=dict(action_result.get("metadata") or {}),
-                )
+        )
 
         self._persist_watch_progress(
             job=job,
@@ -193,6 +164,37 @@ class CronTurnExecutor:
         result["summary"] = summary
         result["output"] = output
         return result
+
+    def _maybe_execute_watch_action(
+        self,
+        *,
+        job: dict[str, Any],
+        run: dict[str, Any],
+        payload: dict[str, Any],
+        watch: dict[str, Any],
+        terminal_reason: str,
+        summary: str,
+    ) -> tuple[bool, str, tuple[dict[str, Any], ...], str]:
+        if terminal_reason != "condition_met":
+            return False, "", (), summary
+        action_summary = ""
+        write_audit_entries: tuple[dict[str, Any], ...] = ()
+        action_result = self._execute_watch_action_turn(
+            job=job,
+            run=run,
+            payload=payload,
+            watch=watch,
+            watch_summary=summary,
+        )
+        if action_result is None:
+            return False, "", (), summary
+        action_summary = str(action_result.get("summary", "") or "").strip()
+        if action_summary:
+            summary = action_summary
+        write_audit_entries = watch_write_audit_entries(
+            metadata=dict(action_result.get("metadata") or {}),
+        )
+        return True, action_summary, write_audit_entries, summary
 
     def _execute_watch_action_turn(
         self,
@@ -490,18 +492,24 @@ class CronTurnExecutor:
             payload=payload,
         )
         request_payload["session_id"] = session_id
-        cron_meta = request_payload.setdefault("cron", {})
-        if isinstance(cron_meta, dict):
-            cron_meta["pae_idle_tick"] = "true"
-            if plan_id:
-                cron_meta["pae_plan_id"] = plan_id
-        request_meta = request_payload.setdefault("meta", {})
-        if isinstance(request_meta, dict):
-            request_meta["pae_idle_tick"] = "true"
-            if plan_id:
-                request_meta["pae_plan_id"] = plan_id
+        mark_idle_tick_request(request_payload, plan_id=plan_id)
+        return self._submit_idle_tick_turn(
+            manager=manager,
+            request_payload=request_payload,
+            agent_id=agent_id,
+            cron_job_id=str(job.get("job_id", "") or "").strip(),
+            session_id=session_id,
+        )
 
-        cron_job_id = str(job.get("job_id", "") or "").strip()
+    def _submit_idle_tick_turn(
+        self,
+        *,
+        manager: Any,
+        request_payload: dict[str, Any],
+        agent_id: str,
+        cron_job_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
         last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             request = self._request_builder(request_payload, agent_id)
@@ -545,7 +553,6 @@ class CronTurnExecutor:
                 "summary": summary,
                 "metadata": metadata_dict,
             }
-
         return {
             "summary": f"PAE idle tick exhausted {self._max_attempts} attempts",
             "error": True,
@@ -674,133 +681,14 @@ class CronTurnExecutor:
         message: Any,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        resolved_payload = (
-            payload if isinstance(payload, dict) else job.get("payload", {})
+        return build_cron_request_payload(
+            job=job,
+            run=run,
+            message=message,
+            payload=payload,
+            consolidation_metadata=self._consolidation_metadata,
+            watch_metadata=self._watch_metadata,
         )
-        payload_session_id = ""
-        if isinstance(resolved_payload, dict):
-            payload_session_id = str(
-                resolved_payload.get("session_id", "") or ""
-            ).strip()
-        cron_job_id = str(job.get("job_id", "") or "").strip()
-        cron_run_id = str(run.get("run_id", "") or "").strip()
-        scheduled_for = str(run.get("due_at", "") or "").strip()
-        if not scheduled_for:
-            scheduled_for = str(job.get("next_due_at", "") or "").strip()
-        isolated_session_id = str(run.get("isolated_session_id", "") or "").strip()
-
-        request_payload: dict[str, Any] = {
-            "message": message,
-            "session_id": payload_session_id or isolated_session_id or "cron-session",
-            "trace_id": run["run_id"],
-        }
-        cron_meta: dict[str, str] = {}
-        if cron_job_id:
-            cron_meta["cron_job_id"] = cron_job_id
-        if cron_run_id:
-            cron_meta["cron_run_id"] = cron_run_id
-        if scheduled_for:
-            cron_meta["scheduled_for"] = scheduled_for
-        if isinstance(resolved_payload, dict):
-            linked_task_id = str(
-                resolved_payload.get("linked_task_id", "") or ""
-            ).strip()
-            if linked_task_id:
-                cron_meta["linked_task_id"] = linked_task_id
-            goal_id = str(resolved_payload.get("goal_id", "") or "").strip()
-            if goal_id:
-                cron_meta["goal_id"] = goal_id
-            mission_id = str(resolved_payload.get("mission_id", "") or "").strip()
-            if mission_id:
-                cron_meta["mission_id"] = mission_id
-            consolidation = self._consolidation_metadata(resolved_payload)
-            if consolidation is not None:
-                cron_meta["memory_consolidation_job"] = "true"
-                cron_meta["memory_consolidation_target_scope"] = str(
-                    consolidation.get("target_scope", "") or ""
-                ).strip()
-                cron_meta["memory_consolidation_batch_limit"] = str(
-                    int(
-                        consolidation.get(
-                            "batch_limit",
-                            DEFAULT_CONSOLIDATION_BATCH_LIMIT,
-                        )
-                        or DEFAULT_CONSOLIDATION_BATCH_LIMIT
-                    )
-                )
-                cron_meta["memory_consolidation_max_iterations"] = str(
-                    int(
-                        consolidation.get(
-                            "max_iterations",
-                            DEFAULT_CONSOLIDATION_MAX_ITERATIONS,
-                        )
-                        or DEFAULT_CONSOLIDATION_MAX_ITERATIONS
-                    )
-                )
-                cron_meta["memory_consolidation_timeout_seconds"] = str(
-                    int(
-                        consolidation.get(
-                            "timeout_seconds",
-                            DEFAULT_CONSOLIDATION_TIMEOUT_SECONDS,
-                        )
-                        or DEFAULT_CONSOLIDATION_TIMEOUT_SECONDS
-                    )
-                )
-            watch = self._watch_metadata(resolved_payload)
-            if watch is not None:
-                watch_turn_kind = (
-                    str(
-                        watch.get("turn_kind", WATCH_TURN_KIND_CHECK)
-                        or WATCH_TURN_KIND_CHECK
-                    ).strip()
-                    or WATCH_TURN_KIND_CHECK
-                )
-                cron_meta["watch_job"] = "true"
-                cron_meta["watch_turn_kind"] = watch_turn_kind
-                cron_meta["watch_description"] = str(
-                    watch.get("description", "") or ""
-                ).strip()
-                cron_meta["watch_alert_condition"] = str(
-                    watch.get("alert_condition", "") or ""
-                ).strip()
-                if watch_turn_kind == WATCH_TURN_KIND_CHECK:
-                    cron_meta["watch_allowed_tools"] = ",".join(
-                        [
-                            str(item).strip()
-                            for item in list(
-                                watch.get("allowed_tools", WATCH_DEFAULT_ALLOWED_TOOLS)
-                                or WATCH_DEFAULT_ALLOWED_TOOLS
-                            )
-                            if str(item).strip()
-                        ]
-                    )
-                if watch_turn_kind == WATCH_TURN_KIND_ACTION:
-                    cron_meta["watch_write_authorized"] = str(
-                        bool(watch.get("write_authorized", False))
-                    ).lower()
-                    cron_meta["watch_write_authorization_scope"] = "watch_job"
-                cron_meta["watch_max_iterations"] = str(
-                    int(
-                        watch.get("max_iterations", DEFAULT_WATCH_MAX_ITERATIONS)
-                        or DEFAULT_WATCH_MAX_ITERATIONS
-                    )
-                )
-                cron_meta["watch_timeout_seconds"] = str(
-                    int(
-                        watch.get("timeout_seconds", DEFAULT_WATCH_TIMEOUT_SECONDS)
-                        or DEFAULT_WATCH_TIMEOUT_SECONDS
-                    )
-                )
-        if cron_meta:
-            request_payload["meta"] = cron_meta
-        if isinstance(resolved_payload, dict):
-            timeout_seconds = int(resolved_payload.get("timeout_seconds", 0) or 0)
-            if timeout_seconds <= 0:
-                watch = self._watch_metadata(resolved_payload)
-                timeout_seconds = int((watch or {}).get("timeout_seconds", 0) or 0)
-            if timeout_seconds > 0:
-                request_payload["timeout_seconds"] = timeout_seconds
-        return request_payload
 
     def _consolidation_metadata(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         raw = payload.get(CONSOLIDATION_PAYLOAD_KEY)

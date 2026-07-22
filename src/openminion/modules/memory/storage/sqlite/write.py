@@ -284,33 +284,16 @@ def upsert(
                     )
                 payload = _sqlite_upsert_payload(row, record_patch)
                 result_id = uuid.uuid4().hex
-                _sqlite_insert_record(
+                _sqlite_insert_upsert_record(
                     conn,
+                    payload=payload,
                     record_id=result_id,
                     scope=scope,
-                    namespace=payload["namespace"],
                     record_type=record_type,
                     key=key,
-                    title=payload["title"],
-                    content=payload["content"],
-                    tags=payload["tags"],
-                    entities=payload["entities"],
-                    source=payload["source"],
-                    confidence=payload["confidence"],
-                    evidence_refs=payload["evidence_refs"],
-                    meta=payload["meta"],
-                    last_hit_at=None,
-                    event_time=now,
-                    valid_to=None,
-                    tier="working",
-                    access_count=0,
-                    expires_at=payload["expires_at"],
-                    created_at=now,
-                    updated_at=now,
                     supersedes_id=supersedes_id,
-                    superseded_by_id=None,
-                    supersession_reason=None,
                     is_deleted=row is not None,
+                    now=now,
                 )
                 if supersedes_id is not None:
                     store._apply_supersession(
@@ -359,6 +342,48 @@ def upsert(
     if not result.is_deleted:
         store._add_artifact_refs(owner_id=result.id, ref_values=result.evidence_refs)
     return result
+
+
+def _sqlite_insert_upsert_record(
+    conn: sqlite3.Connection,
+    *,
+    payload: dict[str, Any],
+    record_id: str,
+    scope: str,
+    record_type: MemoryType,
+    key: str,
+    supersedes_id: str | None,
+    is_deleted: bool,
+    now: str,
+) -> None:
+    _sqlite_insert_record(
+        conn,
+        record_id=record_id,
+        scope=scope,
+        namespace=payload["namespace"],
+        record_type=record_type,
+        key=key,
+        title=payload["title"],
+        content=payload["content"],
+        tags=payload["tags"],
+        entities=payload["entities"],
+        source=payload["source"],
+        confidence=payload["confidence"],
+        evidence_refs=payload["evidence_refs"],
+        meta=payload["meta"],
+        last_hit_at=None,
+        event_time=now,
+        valid_to=None,
+        tier="working",
+        access_count=0,
+        expires_at=payload["expires_at"],
+        created_at=now,
+        updated_at=now,
+        supersedes_id=supersedes_id,
+        superseded_by_id=None,
+        supersession_reason=None,
+        is_deleted=is_deleted,
+    )
 
 
 def promote_candidate(

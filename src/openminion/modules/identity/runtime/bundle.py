@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from openminion.base.config import resolve_data_root, resolve_home_root
 from openminion.base.config.env import resolve_environment_config

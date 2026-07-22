@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, cast
+from typing import Any, cast
 
 from openminion.base.config.env import resolve_environment_config
 
@@ -45,10 +45,10 @@ class PolicyExecMixin:
         security_mode = self.exec_security_mode()
         ask_mode = self.exec_ask_mode()
         allowlist = self.exec_allowlist()
-        commands = cast(Dict[str, Any], self.raw.get("commands", {}))
+        commands = cast(dict[str, Any], self.raw.get("commands", {}))
         allow_pattern = matching_allow_pattern(effective_argv, commands)
 
-        def _ask_required(rule: str, details: Dict[str, Any]) -> None:
+        def _ask_required(rule: str, details: dict[str, Any]) -> None:
             if confirm:
                 return
             raise ToolRuntimeError(
@@ -134,7 +134,7 @@ class PolicyExecMixin:
         if not exec_name:
             raise _invalid_argument("cmd.run executable cannot be empty")
 
-        commands = cast(Dict[str, Any], self.raw.get("commands", {}))
+        commands = cast(dict[str, Any], self.raw.get("commands", {}))
         deny_exact = set(commands.get("deny_exact", []))
         if exec_name in deny_exact:
             raise ToolRuntimeError(
@@ -191,15 +191,15 @@ class PolicyExecMixin:
 
         return exec_name
 
-    def filter_env(self, raw_env: Dict[str, str]) -> Dict[str, str]:
-        env_cfg = cast(Dict[str, Any], self.raw.get("env", {}))
+    def filter_env(self, raw_env: dict[str, str]) -> dict[str, str]:
+        env_cfg = cast(dict[str, Any], self.raw.get("env", {}))
         allow_keys = set(env_cfg.get("allow_keys", []))
         deny_regex = [
             re.compile(str(expr)) for expr in env_cfg.get("deny_keys_regex", [])
         ]
         process_env = resolve_environment_config().snapshot()
 
-        out: Dict[str, str] = {}
+        out: dict[str, str] = {}
 
         for key in allow_keys:
             if key in process_env:

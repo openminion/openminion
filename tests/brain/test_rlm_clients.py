@@ -23,7 +23,14 @@ def _make_llm_response(
             provider="mock",
             model="mock-model",
             output_text=text,
-            usage=UsageInfo(input_tokens=10, output_tokens=5, total_tokens=15),
+            usage=UsageInfo(
+                input_tokens=10,
+                output_tokens=5,
+                total_tokens=15,
+                total_source="derived",
+                cached_tokens=4,
+                cache_creation_tokens=2,
+            ),
         )
     from openminion.modules.llm.schemas import ResponseError
 
@@ -64,6 +71,9 @@ class TestRLMBridgeLLMClient:
         assert result["text"] == "Generated answer"
         assert result["usage"]["input_tokens"] == 10
         assert result["usage"]["output_tokens"] == 5
+        assert result["usage"]["total_source"] == "derived"
+        assert result["usage"]["cached_tokens"] == 4
+        assert result["usage"]["cache_creation_tokens"] == 2
         # Verify the underlying client.call was invoked with an LLMRequest
         adapter.client.call.assert_called_once()
         req_arg = adapter.client.call.call_args[0][0]

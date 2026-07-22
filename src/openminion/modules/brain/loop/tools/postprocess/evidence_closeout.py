@@ -8,6 +8,26 @@ from ..evidence import _successful_substantive_tool_results
 
 MUTATING_FILE_CLOSEOUT_KEY = "mutating_file_answer_only_closure_pending"
 MUTATING_FILE_PATH_COUNTS_KEY = "mutating_file_success_path_counts"
+_MUTATING_FILE_TOOL_NAMES = frozenset(
+    {
+        "code.patch",
+        "file.edit",
+        "file.write",
+        "write_file",
+    }
+)
+_MUTATING_FILE_REQUEST_PATTERNS = (
+    "build a tiny",
+    "create a tiny",
+    "create file",
+    "direct exec.run commands for checks",
+    "file.write",
+    "files changed",
+    "implement it",
+    "one minimal check",
+    "run a focused check",
+    "use file tools for files",
+)
 
 
 def requested_closeout_markers(loop_state: Any) -> tuple[str, ...]:
@@ -41,9 +61,11 @@ def requested_closeout_markers(loop_state: Any) -> tuple[str, ...]:
     if "validation result" in lowered:
         markers.append("validation")
     if "files changed" in lowered:
-        markers.append("files")
+        markers.append("files changed")
     if "remaining follow-ups" in lowered:
         markers.append("follow-ups")
+    if "next steps" in lowered:
+        markers.append("next steps")
     if "recommended direction" in lowered or "recommendation" in lowered:
         markers.append("recommendation")
     unique: list[str] = []
@@ -74,6 +96,28 @@ def _changed_paths_from_tool_results(tool_results: list[dict[str, Any]]) -> list
     return changed_paths
 
 
+def _is_mutating_file_tool_result(item: dict[str, Any]) -> bool:
+    tool_name = str(item.get("tool_name") or "").strip().lower()
+    if tool_name in _MUTATING_FILE_TOOL_NAMES:
+        return True
+    return tool_name.startswith(("code.patch", "file.edit", "file.write"))
+
+
+def _mutating_file_tool_results(
+    tool_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    return [item for item in tool_results if _is_mutating_file_tool_result(item)]
+
+
+def _user_requested_file_mutation(loop_state: Any) -> bool:
+    user_text = "\n".join(
+        str(getattr(message, "content", "") or "")
+        for message in list(getattr(loop_state, "messages", []) or [])
+        if str(getattr(message, "role", "") or "").strip().lower() == "user"
+    ).lower()
+    return any(pattern in user_text for pattern in _MUTATING_FILE_REQUEST_PATTERNS)
+
+
 def _tool_evidence_lines(tool_results: list[dict[str, Any]]) -> list[str]:
     lines: list[str] = []
     for item in tool_results[-5:]:
@@ -91,8 +135,14 @@ def tool_evidence_closeout_text(loop_state: Any, *, reason: str) -> str:
     tool_results = _successful_substantive_tool_results(loop_state)
     if not tool_results:
         return ""
+    mutation_requested = _user_requested_file_mutation(loop_state)
+    mutating_results = _mutating_file_tool_results(tool_results)
+    if mutation_requested and not mutating_results:
+        return ""
     requested = requested_closeout_markers(loop_state)
-    changed_paths = _changed_paths_from_tool_results(tool_results)
+    changed_paths = _changed_paths_from_tool_results(
+        mutating_results if mutation_requested else tool_results
+    )
     rendered_paths = ", ".join(changed_paths[-8:]) if changed_paths else "none recorded"
     lines: list[str] = []
     for marker in requested:
@@ -105,9 +155,9 @@ def tool_evidence_closeout_text(loop_state: Any, *, reason: str) -> str:
                 f"{marker}: deterministic validation was not captured before closeout; "
                 "successful tool evidence is preserved below."
             )
-        elif marker == "follow-ups":
+        elif marker in {"follow-ups", "next steps"}:
             lines.append(
-                "follow-ups: rerun a narrower continuation if stronger proof or a "
+                f"{marker}: rerun a narrower continuation if stronger proof or a "
                 "more polished synthesis is needed."
             )
         elif marker == "recommendation":
@@ -155,29 +205,43 @@ def tool_evidence_closeout_outcome(
 
 def mutating_file_evidence_fallback_text(loop_state: Any) -> str:
     tool_results = _successful_substantive_tool_results(loop_state)
-    changed_paths = _changed_paths_from_tool_results(tool_results)
+    mutating_results = _mutating_file_tool_results(tool_results)
+    changed_paths = _changed_paths_from_tool_results(mutating_results)
     if not changed_paths:
         return ""
     rendered_paths = ", ".join(changed_paths[-8:])
     requested = requested_closeout_markers(loop_state)
     lines: list[str] = []
-    if "result" in requested:
+    for marker in requested:
+        normalized = str(marker or "").strip().lower().rstrip(":")
+        if not normalized:
+            continue
+        if normalized == "result":
+            lines.append(
+                "result: stopped after successful file mutations and returned "
+                "preserved tool evidence."
+            )
+        elif normalized in {"files", "files changed"}:
+            lines.append(f"{normalized}: {rendered_paths}")
+        elif normalized in {"validation", "validation result"}:
+            lines.append(
+                f"{normalized}: deterministic validation was not captured before "
+                "closeout; successful file-write evidence is preserved above."
+            )
+        elif normalized in {"follow-ups", "next steps", "remaining follow-ups"}:
+            lines.append(
+                f"{normalized}: rerun focused validation if stronger proof is "
+                "needed."
+            )
+        else:
+            lines.append(
+                f"{normalized}: not captured before closeout; preserved "
+                "written-file evidence is reported instead."
+            )
+    if not any(line.startswith(("files:", "files changed:")) for line in lines):
+        lines.append(f"files changed: {rendered_paths}")
+    if not any(line.startswith("result:") for line in lines):
         lines.append(
-            "result: stopped after repeated successful file mutations and returned "
-            "the preserved tool evidence."
-        )
-    lines.append(f"files changed: {rendered_paths}")
-    if "validation" in requested:
-        lines.append(
-            "validation: not captured after the repeated-mutation closeout guard; "
-            "successful file-write evidence is preserved above."
-        )
-    if "follow-ups" in requested:
-        lines.append(
-            "follow-ups: rerun focused validation if stronger proof is needed."
-        )
-    if "result" not in requested:
-        lines.append(
-            "result: repeated successful file writes were closed from tool evidence."
+            "result: successful file writes were closed from tool evidence."
         )
     return "\n".join(lines)

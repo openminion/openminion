@@ -521,8 +521,7 @@ class WorkingState(BaseModel):
         text = str(value or "").strip()
         return text or None
 
-    @model_validator(mode="after")
-    def _sync_clarify_fields(self) -> "WorkingState":
+    def _sync_skill_fields(self) -> None:
         active_ids = _normalize_skill_ids(self.active_skill_ids)
         resolved_ids = _normalize_skill_ids(self.resolved_skill_ids)
         current_active = str(self.active_skill_id or "").strip()
@@ -536,10 +535,14 @@ class WorkingState(BaseModel):
             self.active_skill_id = active_ids[0]
         self.active_skill_ids = active_ids
         self.resolved_skill_ids = resolved_ids
+
+    def _sync_clarify_item_mirrors(self) -> None:
         if not self.pending_clarify_items and self.unresolved_clarify_items:
             self.pending_clarify_items = list(self.unresolved_clarify_items)
         if not self.unresolved_clarify_items and self.pending_clarify_items:
             self.unresolved_clarify_items = list(self.pending_clarify_items)
+
+    def _sync_decision_sub_intents(self) -> None:
         if not self.decision_sub_intent_refs:
             if self.decision_sub_intents:
                 self.decision_sub_intent_refs = to_structured_sub_intents(
@@ -554,29 +557,29 @@ class WorkingState(BaseModel):
                 self.decision_sub_intent_refs
             )
 
+    def _confirmation_source_sub_intents(self) -> list[SubIntent]:
+        if self.pending_confirmation_command is None:
+            return []
+        command_ids = getattr(self.pending_confirmation_command, "sub_intent_ids", [])
+        if self.plan is not None and self.plan.sub_intents:
+            return select_sub_intents_by_ids(self.plan.sub_intents, command_ids)
+        if self.decision_sub_intent_refs:
+            return select_sub_intents_by_ids(
+                self.decision_sub_intent_refs,
+                command_ids,
+            )
+        return []
+
+    def _sync_pending_confirmation_sub_intents(self) -> None:
         if not self.pending_confirmation_sub_intent_refs:
             if self.pending_confirmation_sub_intents:
                 self.pending_confirmation_sub_intent_refs = to_structured_sub_intents(
                     self.pending_confirmation_sub_intents
                 )
-            elif self.pending_confirmation_command is not None:
-                source_values: list[SubIntent] = []
-                if self.plan is not None and self.plan.sub_intents:
-                    source_values = select_sub_intents_by_ids(
-                        self.plan.sub_intents,
-                        getattr(
-                            self.pending_confirmation_command, "sub_intent_ids", []
-                        ),
-                    )
-                elif self.decision_sub_intent_refs:
-                    source_values = select_sub_intents_by_ids(
-                        self.decision_sub_intent_refs,
-                        getattr(
-                            self.pending_confirmation_command, "sub_intent_ids", []
-                        ),
-                    )
-                if source_values:
-                    self.pending_confirmation_sub_intent_refs = source_values
+            else:
+                self.pending_confirmation_sub_intent_refs = (
+                    self._confirmation_source_sub_intents()
+                )
         if (
             not self.pending_confirmation_sub_intents
             and self.pending_confirmation_sub_intent_refs
@@ -584,32 +587,39 @@ class WorkingState(BaseModel):
             self.pending_confirmation_sub_intents = sub_intent_descriptions(
                 self.pending_confirmation_sub_intent_refs
             )
+
+    @staticmethod
+    def _feasibility_report_from_state(
+        state_payload: dict[str, Any],
+    ) -> FeasibilityReport | None:
+        if not state_payload:
+            return None
+        try:
+            return FeasibilityReport.model_validate(
+                feasibility_report_payload(state_payload)
+            )
+        except Exception:
+            return None
+
+    def _sync_feasibility_reports(self) -> None:
         if (
             self.decision_feasibility_report is None
             and isinstance(self.decision_feasibility_state, dict)
-            and self.decision_feasibility_state
         ):
-            try:
-                self.decision_feasibility_report = FeasibilityReport.model_validate(
-                    feasibility_report_payload(self.decision_feasibility_state)
-                )
-            except Exception:
-                self.decision_feasibility_report = None
+            self.decision_feasibility_report = self._feasibility_report_from_state(
+                self.decision_feasibility_state
+            )
         if (
             self.pending_confirmation_feasibility_report is None
             and isinstance(self.pending_confirmation_feasibility_state, dict)
-            and self.pending_confirmation_feasibility_state
         ):
-            try:
-                self.pending_confirmation_feasibility_report = (
-                    FeasibilityReport.model_validate(
-                        feasibility_report_payload(
-                            self.pending_confirmation_feasibility_state
-                        )
-                    )
+            self.pending_confirmation_feasibility_report = (
+                self._feasibility_report_from_state(
+                    self.pending_confirmation_feasibility_state
                 )
-            except Exception:
-                self.pending_confirmation_feasibility_report = None
+            )
+
+    def _sync_feasibility_state_payloads(self) -> None:
         if (
             self.decision_feasibility_report is not None
             and not self.decision_feasibility_state
@@ -624,6 +634,8 @@ class WorkingState(BaseModel):
             self.pending_confirmation_feasibility_state = (
                 self.pending_confirmation_feasibility_report.model_dump(mode="json")
             )
+
+    def _sync_intent_execution_states(self) -> None:
         source_sub_intents: list[SubIntent] = []
         if self.decision_sub_intent_refs:
             source_sub_intents = list(self.decision_sub_intent_refs)
@@ -636,6 +648,16 @@ class WorkingState(BaseModel):
             )
         elif self.intent_execution_states:
             self.intent_execution_states = []
+
+    @model_validator(mode="after")
+    def _sync_clarify_fields(self) -> "WorkingState":
+        self._sync_skill_fields()
+        self._sync_clarify_item_mirrors()
+        self._sync_decision_sub_intents()
+        self._sync_pending_confirmation_sub_intents()
+        self._sync_feasibility_reports()
+        self._sync_feasibility_state_payloads()
+        self._sync_intent_execution_states()
         return self
 
 

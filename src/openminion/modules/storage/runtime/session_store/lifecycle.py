@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from .backend import RuntimeSessionStoreBackend
 from .keys import normalize_session_status, utc_now_iso

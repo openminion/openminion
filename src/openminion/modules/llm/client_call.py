@@ -86,12 +86,28 @@ def usage_payload_from_response_usage(raw_usage: Any) -> dict[str, Any]:
             "prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
             "completion_tokens": getattr(raw_usage, "completion_tokens", None),
             "total_tokens": getattr(raw_usage, "total_tokens", None),
+            "total_source": getattr(raw_usage, "total_source", None),
+            "total_tokens_source": getattr(
+                raw_usage,
+                "total_tokens_source",
+                None,
+            ),
             "input_tokens": getattr(raw_usage, "input_tokens", None),
             "output_tokens": getattr(raw_usage, "output_tokens", None),
             "cached_tokens": getattr(raw_usage, "cached_tokens", None),
+            "cache_read_input_tokens": getattr(
+                raw_usage,
+                "cache_read_input_tokens",
+                None,
+            ),
             "cache_creation_tokens": getattr(
                 raw_usage,
                 "cache_creation_tokens",
+                None,
+            ),
+            "cache_creation_input_tokens": getattr(
+                raw_usage,
+                "cache_creation_input_tokens",
                 None,
             ),
         }

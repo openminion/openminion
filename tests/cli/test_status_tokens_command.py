@@ -129,6 +129,47 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
     assert "incomplete: event_limit=2" in output
 
 
+def test_status_tokens_text_separates_provider_and_derived_totals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-provenance.db")
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    for usage in (
+        {"input_tokens": 4, "output_tokens": 2, "total_tokens": 7},
+        {
+            "input_tokens": 3,
+            "output_tokens": 1,
+            "total_tokens": 4,
+            "total_source": "derived",
+        },
+    ):
+        store.append_event(
+            session_id,
+            event_type="llm.call.completed",
+            payload={"usage": usage},
+        )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    assert (
+        run_tokens_status(
+            _args(session_id=session_id),
+            config=OpenMinionConfig(),
+        )
+        == 0
+    )
+
+    assert (
+        "totals: provider=7 derived=4 input=7 output=3 cache_read=0 cache_write=0"
+    ) in capsys.readouterr().out
+
+
 def test_status_tokens_rejects_cross_session_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

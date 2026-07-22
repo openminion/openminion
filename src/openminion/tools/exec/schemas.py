@@ -1,6 +1,6 @@
 import json
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import (
     AliasChoices,
@@ -41,7 +41,7 @@ class ArtifactRefModel(BaseModel):
     ref: str = Field(..., min_length=1)
     kind: str = Field(default="file", min_length=1)
     name: str = Field(..., min_length=1)
-    meta: Dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExecErrorModel(BaseModel):
@@ -49,7 +49,7 @@ class ExecErrorModel(BaseModel):
     code: str = Field(..., min_length=1)
     message: str = Field(..., min_length=1)
     retryable: bool = False
-    details: Dict[str, Any] = Field(default_factory=dict)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExecMetricsModel(BaseModel):
@@ -74,7 +74,7 @@ class ExecRunArgs(BaseModel):
         validation_alias=AliasChoices("workdir", *_EXEC_RUN_WORKDIR_ALIASES),
         description="Working directory relative to workspace root",
     )
-    env: Dict[str, str] = Field(
+    env: dict[str, str] = Field(
         default_factory=dict, description="Environment overrides"
     )
     yield_ms: int = Field(default=10000, ge=0, le=3_600_000)
@@ -205,11 +205,11 @@ class ProcessPollResult(BaseModel):
 class ProcessSendKeysArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str = Field(..., min_length=1)
-    keys: List[str] = Field(..., min_length=1)
+    keys: list[str] = Field(..., min_length=1)
 
     @field_validator("keys")
     @classmethod
-    def _keys_non_empty(cls, value: List[str]) -> List[str]:
+    def _keys_non_empty(cls, value: list[str]) -> list[str]:
         cleaned = [str(item).strip() for item in value if str(item).strip()]
         if not cleaned:
             raise ValueError("keys must include at least one key")
@@ -256,10 +256,10 @@ class ProcessAckResult(BaseModel):
 
 class ProcessListResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    sessions: List[Dict[str, Any]] = Field(default_factory=list)
+    sessions: list[dict[str, Any]] = Field(default_factory=list)
 
 
-def tool_schemas() -> Dict[str, Dict[str, Any]]:
+def tool_schemas() -> dict[str, dict[str, Any]]:
     return {
         "exec.run": {
             "description": (

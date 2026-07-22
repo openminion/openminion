@@ -1,7 +1,8 @@
 import inspect
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable
 
 from openminion.base.config.env import (
     EnvironmentConfig,

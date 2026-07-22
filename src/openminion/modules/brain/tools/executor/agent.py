@@ -120,38 +120,17 @@ def _execute_local_self_agent_command(
     method = str(getattr(command, "method", "") or "").strip()
     local_tool_name = _resolve_local_tool_name(runner, method=method)
     if local_tool_name:
-        tool_command = ToolCommand(
-            command_id=str(getattr(command, "command_id", "") or new_uuid()),
-            title=str(getattr(command, "title", "") or f"Tool call: {local_tool_name}"),
-            tool_name=local_tool_name,
-            args=dict(getattr(command, "params", {}) or {})
-            if isinstance(getattr(command, "params", None), dict)
-            else {},
-            inputs=dict(getattr(command, "inputs", {}) or {})
-            if isinstance(getattr(command, "inputs", None), dict)
-            else {},
-            success_criteria=dict(getattr(command, "success_criteria", {}) or {})
-            if isinstance(getattr(command, "success_criteria", None), dict)
-            else {},
-            fallback=getattr(command, "fallback", None),
-            risk_level=str(getattr(command, "risk_level", "low") or "low"),
-            requires_confirmation=bool(
-                getattr(command, "requires_confirmation", False)
-            ),
-            idempotency_key=str(getattr(command, "idempotency_key", "") or new_uuid()),
-            timeout_ms=getattr(command, "timeout_ms", None),
-            sub_intent_ids=list(getattr(command, "sub_intent_ids", []) or []),
+        tool_command = _local_tool_command_from_agent(
+            command,
+            local_tool_name=local_tool_name,
         )
-        logger.emit(
-            "brain.local_agent.rewrite",
-            {
-                "source_kind": "agent",
-                "target_agent_id": str(getattr(command, "target_agent_id", "") or ""),
-                "method": method,
-                "rewritten_kind": "tool",
-                "tool_name": local_tool_name,
-            },
-            trace_id=state.trace_id,
+        _emit_local_agent_rewrite(
+            logger=logger,
+            state=state,
+            command=command,
+            method=method,
+            rewritten_kind="tool",
+            tool_name=local_tool_name,
         )
         return execute_action_fn(
             runner,
@@ -161,32 +140,13 @@ def _execute_local_self_agent_command(
         )
 
     if method.lower() == "respond":
-        think_command = ThinkCommand(
-            command_id=str(getattr(command, "command_id", "") or new_uuid()),
-            title=str(getattr(command, "title", "") or "Respond to user"),
-            prompt=_local_self_respond_prompt(state=state, command=command),
-            output_key="local_self_respond",
-            idempotency_key=str(getattr(command, "idempotency_key", "") or new_uuid()),
-            success_criteria=dict(getattr(command, "success_criteria", {}) or {})
-            if isinstance(getattr(command, "success_criteria", None), dict)
-            else {},
-            fallback=getattr(command, "fallback", None),
-            risk_level=str(getattr(command, "risk_level", "low") or "low"),
-            requires_confirmation=bool(
-                getattr(command, "requires_confirmation", False)
-            ),
-            timeout_ms=getattr(command, "timeout_ms", None),
-            sub_intent_ids=list(getattr(command, "sub_intent_ids", []) or []),
-        )
-        logger.emit(
-            "brain.local_agent.rewrite",
-            {
-                "source_kind": "agent",
-                "target_agent_id": str(getattr(command, "target_agent_id", "") or ""),
-                "method": method,
-                "rewritten_kind": "think",
-            },
-            trace_id=state.trace_id,
+        think_command = _local_think_command_from_agent(state=state, command=command)
+        _emit_local_agent_rewrite(
+            logger=logger,
+            state=state,
+            command=command,
+            method=method,
+            rewritten_kind="think",
         )
         return execute_action_fn(
             runner,
@@ -195,7 +155,74 @@ def _execute_local_self_agent_command(
             logger=logger,
         )
 
-    result = ActionResult(
+    result = _unsupported_local_agent_method_result(command=command, method=method)
+    runner._remember_idempotency(state=state, command=command, result=result)
+    return result, None
+
+
+def _local_tool_command_from_agent(command: Any, *, local_tool_name: str) -> ToolCommand:
+    return ToolCommand(
+        command_id=str(getattr(command, "command_id", "") or new_uuid()),
+        title=str(getattr(command, "title", "") or f"Tool call: {local_tool_name}"),
+        tool_name=local_tool_name,
+        args=_dict_attr(command, "params"),
+        inputs=_dict_attr(command, "inputs"),
+        success_criteria=_dict_attr(command, "success_criteria"),
+        fallback=getattr(command, "fallback", None),
+        risk_level=str(getattr(command, "risk_level", "low") or "low"),
+        requires_confirmation=bool(getattr(command, "requires_confirmation", False)),
+        idempotency_key=str(getattr(command, "idempotency_key", "") or new_uuid()),
+        timeout_ms=getattr(command, "timeout_ms", None),
+        sub_intent_ids=list(getattr(command, "sub_intent_ids", []) or []),
+    )
+
+
+def _local_think_command_from_agent(
+    *,
+    state: WorkingState,
+    command: Any,
+) -> ThinkCommand:
+    return ThinkCommand(
+        command_id=str(getattr(command, "command_id", "") or new_uuid()),
+        title=str(getattr(command, "title", "") or "Respond to user"),
+        prompt=_local_self_respond_prompt(state=state, command=command),
+        output_key="local_self_respond",
+        idempotency_key=str(getattr(command, "idempotency_key", "") or new_uuid()),
+        success_criteria=_dict_attr(command, "success_criteria"),
+        fallback=getattr(command, "fallback", None),
+        risk_level=str(getattr(command, "risk_level", "low") or "low"),
+        requires_confirmation=bool(getattr(command, "requires_confirmation", False)),
+        timeout_ms=getattr(command, "timeout_ms", None),
+        sub_intent_ids=list(getattr(command, "sub_intent_ids", []) or []),
+    )
+
+
+def _emit_local_agent_rewrite(
+    *,
+    logger: Any,
+    state: WorkingState,
+    command: Any,
+    method: str,
+    rewritten_kind: str,
+    tool_name: str = "",
+) -> None:
+    payload = {
+        "source_kind": "agent",
+        "target_agent_id": str(getattr(command, "target_agent_id", "") or ""),
+        "method": method,
+        "rewritten_kind": rewritten_kind,
+    }
+    if tool_name:
+        payload["tool_name"] = tool_name
+    logger.emit("brain.local_agent.rewrite", payload, trace_id=state.trace_id)
+
+
+def _unsupported_local_agent_method_result(
+    *,
+    command: Any,
+    method: str,
+) -> ActionResult:
+    return ActionResult(
         command_id=getattr(command, "command_id", "") or new_uuid(),
         status=BRAIN_ACTION_STATUS_FAILED,
         summary=(
@@ -217,8 +244,11 @@ def _execute_local_self_agent_command(
             },
         ),
     )
-    runner._remember_idempotency(state=state, command=command, result=result)
-    return result, None
+
+
+def _dict_attr(command: Any, name: str) -> dict[str, Any]:
+    value = getattr(command, name, None)
+    return dict(value) if isinstance(value, dict) else {}
 
 
 __all__ = [

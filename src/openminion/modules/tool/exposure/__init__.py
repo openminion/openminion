@@ -4,7 +4,11 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from openminion.modules.tool.contracts import ALL_MODEL_TOOL_IDS_SET, ProviderToolSpec
+from openminion.modules.tool.contracts import (
+    ALL_MODEL_TOOL_IDS_SET,
+    ProviderToolSpec,
+    normalize_raw_model_tool_name,
+)
 
 from .contracts import (
     ToolCatalogCard,
@@ -162,6 +166,40 @@ def get_visible_tool_specs_and_dispatch_map(
     return specs, dispatch_map
 
 
+def resolve_forced_provider_tool_name(registry: Any, raw_name: str) -> str:
+    """Resolve an explicitly forced name to an executable provider schema name."""
+    token = str(raw_name or "").strip()
+    if not token:
+        return ""
+    specs, _dispatch_map = get_visible_tool_specs_and_dispatch_map(registry)
+    visible_names = {spec.name for spec in specs if str(spec.name or "").strip()}
+    candidates = (normalize_raw_model_tool_name(token) or "", token)
+    for candidate in candidates:
+        if candidate and visible_names and candidate in visible_names:
+            return candidate
+    if visible_names:
+        return ""
+    provider_specs = getattr(registry, "provider_specs", None)
+    if not callable(provider_specs):
+        return ""
+    try:
+        legacy_specs = provider_specs()
+    except (AttributeError, TypeError):
+        return ""
+    legacy_by_name = {
+        str(getattr(spec, "name", "") or "").strip(): spec
+        for spec in legacy_specs
+        if str(getattr(spec, "name", "") or "").strip()
+    }
+    for candidate in candidates:
+        if not candidate:
+            continue
+        spec = legacy_by_name.get(candidate)
+        if spec is not None:
+            return str(getattr(spec, "name", "") or candidate)
+    return ""
+
+
 def render_catalog_cards(
     cards: tuple[ToolCatalogCard, ...],
     *,
@@ -199,11 +237,15 @@ def apply_model_exposure(request: Any, registry: Any) -> None:
     metadata = getattr(request, "metadata", {}) or {}
     service = getattr(registry, "exposure_service", None)
     if request.tools:
+        requested_tools = list(request.tools or [])
         if isinstance(service, ToolExposureService):
-            request.tools = service.filter_specs(
-                request.tools,
+            filtered = service.filter_specs(
+                requested_tools,
                 **exposure_scope(metadata),
             )
+            request.tools = filtered
+            if not filtered and not get_model_exposure_specs(registry, metadata=metadata):
+                request.tools = requested_tools
     else:
         request.tools = get_model_exposure_specs(registry, metadata=metadata)
     if not isinstance(service, ToolExposureService):
@@ -229,5 +271,6 @@ __all__ = [
     "get_model_exposure_specs",
     "get_visible_tool_specs_and_dispatch_map",
     "render_catalog_cards",
+    "resolve_forced_provider_tool_name",
     "requires_explicit_exposure_profile",
 ]

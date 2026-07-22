@@ -4,7 +4,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.storage.engine import StorageEngine, StorageEngineConfig

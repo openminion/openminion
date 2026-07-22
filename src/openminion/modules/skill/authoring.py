@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Literal
+from collections.abc import Mapping, Sequence
 
 SkillValidationSeverity = Literal[
     "error",

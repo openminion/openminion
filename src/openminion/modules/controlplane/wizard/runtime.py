@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
@@ -49,7 +49,7 @@ class WizardResult:
     success: bool
     completed: bool
     canceled: bool
-    data: Dict[str, Any]
+    data: dict[str, Any]
     error: Optional[str] = None
 
 
@@ -121,7 +121,7 @@ class WizardExecutor:
         if wizard_store is None:
             raise TypeError("WizardExecutor requires an async-initialized wizard_store")
         self.store = wizard_store
-        self.step_handlers: Dict[str, BaseWizardStepHandler] = {}
+        self.step_handlers: dict[str, BaseWizardStepHandler] = {}
 
     def register_step_handler(self, command_name: str, handler: BaseWizardStepHandler):
         """Register a custom step handler for a specific command."""
@@ -133,7 +133,7 @@ class WizardExecutor:
         total_steps: int,
         user_key: str,
         chat_key: str,
-        initial_state: Dict[str, Any] = None,
+        initial_state: dict[str, Any] = None,
     ) -> WizardSession:
         """Start a new wizard session."""
         session = await self.store.create_session(

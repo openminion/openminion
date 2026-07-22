@@ -1,7 +1,8 @@
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Optional
+from collections.abc import Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
@@ -54,8 +55,8 @@ class PinchTabClient:
         self.retry_policy = retry_policy or RetryPolicy()
         self.base_url = self.config.base_url.rstrip("/")
 
-    def _headers(self, extra: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
-        headers: Dict[str, str] = {"Accept": "application/json"}
+    def _headers(self, extra: Optional[Mapping[str, str]] = None) -> dict[str, str]:
+        headers: dict[str, str] = {"Accept": "application/json"}
         if self.config.token:
             headers["Authorization"] = f"Bearer {self.config.token}"
             headers["X-Bridge-Token"] = self.config.token
@@ -135,7 +136,7 @@ class PinchTabClient:
 
     def _try_post_json(
         self, candidates: list[tuple[str, Mapping[str, Any] | None]]
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if not candidates:
             raise PinchTabClientError("No PinchTab endpoint candidates were provided")
         last_error: PinchTabClientError | None = None
@@ -154,7 +155,7 @@ class PinchTabClient:
 
     def _try_get_json(
         self, candidates: list[tuple[str, Mapping[str, Any] | None]]
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if not candidates:
             raise PinchTabClientError("No PinchTab endpoint candidates were provided")
         last_error: PinchTabClientError | None = None
@@ -194,7 +195,7 @@ class PinchTabClient:
             raise last_error
         raise PinchTabClientError("No PinchTab endpoint candidates were provided")
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         return self._try_get_json([("/health", None)])
 
     def instance_start(
@@ -202,8 +203,8 @@ class PinchTabClient:
         profile_id: str | None = None,
         mode: str | None = None,
         port: int | None = None,
-    ) -> Dict[str, Any]:
-        body: Dict[str, Any] = {}
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
         if profile_id:
             body["profileId"] = profile_id
             body["profile_id"] = profile_id
@@ -219,10 +220,10 @@ class PinchTabClient:
             payload["instance_id"] = instance_id
         return payload
 
-    def instance_list(self) -> Dict[str, Any]:
+    def instance_list(self) -> dict[str, Any]:
         return self._try_get_json([("/instances", None)])
 
-    def instance_stop(self, instance_id: str) -> Dict[str, Any]:
+    def instance_stop(self, instance_id: str) -> dict[str, Any]:
         payload = self._try_post_json(
             [
                 (f"/instances/{instance_id}/stop", None),
@@ -236,10 +237,10 @@ class PinchTabClient:
             payload["stopped"] = True
         return payload
 
-    def instance_kill(self, instance_id: str) -> Dict[str, Any]:
+    def instance_kill(self, instance_id: str) -> dict[str, Any]:
         return self._try_post_json([(f"/instances/{instance_id}/kill", None)])
 
-    def tab_new(self, instance_id: str, url: str | None = None) -> Dict[str, Any]:
+    def tab_new(self, instance_id: str, url: str | None = None) -> dict[str, Any]:
         payload = self._try_post_json(
             [
                 (
@@ -261,14 +262,14 @@ class PinchTabClient:
             payload["tab_id"] = tab_id
         return payload
 
-    def tab_list(self, instance_id: str | None = None) -> Dict[str, Any]:
+    def tab_list(self, instance_id: str | None = None) -> dict[str, Any]:
         if instance_id:
             return self._try_get_json(
                 [("/tabs", {"instanceId": instance_id, "instance_id": instance_id})]
             )
         return self._try_get_json([("/tabs", None)])
 
-    def tab_close(self, tab_id: str) -> Dict[str, Any]:
+    def tab_close(self, tab_id: str) -> dict[str, Any]:
         return self._try_post_json(
             [
                 (f"/tabs/{tab_id}/close", None),
@@ -276,7 +277,7 @@ class PinchTabClient:
             ]
         )
 
-    def navigate(self, tab_id: str, url: str) -> Dict[str, Any]:
+    def navigate(self, tab_id: str, url: str) -> dict[str, Any]:
         return self._try_post_json(
             [
                 (f"/tabs/{tab_id}/navigate", {"url": url}),
@@ -291,7 +292,7 @@ class PinchTabClient:
         compact: bool = True,
         depth: int | None = None,
         max_tokens: int | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         query = {
             "interactive": "true" if interactive else "false",
             "compact": "true" if compact else "false",
@@ -307,7 +308,7 @@ class PinchTabClient:
             ]
         )
 
-    def text(self, tab_id: str, mode: str = "readability") -> Dict[str, Any]:
+    def text(self, tab_id: str, mode: str = "readability") -> dict[str, Any]:
         return self._try_get_json(
             [
                 (f"/tabs/{tab_id}/text", {"mode": mode}),
@@ -331,7 +332,7 @@ class PinchTabClient:
             ]
         )
 
-    def action(self, tab_id: str, action: Mapping[str, Any]) -> Dict[str, Any]:
+    def action(self, tab_id: str, action: Mapping[str, Any]) -> dict[str, Any]:
         payload = dict(action)
         return self._try_post_json(
             [
@@ -340,7 +341,7 @@ class PinchTabClient:
             ]
         )
 
-    def eval(self, tab_id: str, js: str) -> Dict[str, Any]:
+    def eval(self, tab_id: str, js: str) -> dict[str, Any]:
         payload = {"js": js, "script": js, "tabId": tab_id, "tab_id": tab_id}
         return self._try_post_json(
             [
@@ -350,10 +351,10 @@ class PinchTabClient:
             ]
         )
 
-    def lock(self, tab_id: str) -> Dict[str, Any]:
+    def lock(self, tab_id: str) -> dict[str, Any]:
         return self._try_post_json([(f"/tabs/{tab_id}/lock", None)])
 
-    def unlock(self, tab_id: str) -> Dict[str, Any]:
+    def unlock(self, tab_id: str) -> dict[str, Any]:
         return self._try_post_json([(f"/tabs/{tab_id}/unlock", None)])
 
 

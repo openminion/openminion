@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional, cast
+from typing import Any, Optional, cast
 
 from ..constants import (
     TOOL_DANGEROUS_MODE_ALLOW,
@@ -39,8 +39,8 @@ class PolicyConfigMixin:
         req = cast(Scope, requested)
         return req if SCOPE_ORDER[req] <= SCOPE_ORDER[policy_max] else policy_max
 
-    def limits(self) -> Dict[str, Any]:
-        return cast(Dict[str, Any], self.raw.get("limits", {}))
+    def limits(self) -> dict[str, Any]:
+        return cast(dict[str, Any], self.raw.get("limits", {}))
 
     def limit_int(self, key: str, default: int) -> int:
         val = self.limits().get(key, default)
@@ -63,11 +63,11 @@ class PolicyConfigMixin:
             )
         return str(mode)
 
-    def exec_config(self) -> Dict[str, Any]:
-        return cast(Dict[str, Any], self.raw.get("exec", {}))
+    def exec_config(self) -> dict[str, Any]:
+        return cast(dict[str, Any], self.raw.get("exec", {}))
 
-    def dangerous_config(self) -> Dict[str, Any]:
-        return cast(Dict[str, Any], self.raw.get("dangerous", {}))
+    def dangerous_config(self) -> dict[str, Any]:
+        return cast(dict[str, Any], self.raw.get("dangerous", {}))
 
     def exec_security_mode(self) -> str:
         mode = (

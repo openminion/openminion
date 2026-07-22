@@ -401,6 +401,84 @@ def phase_status_from_request_readiness(
     )
 
 
+def _status_key_for_phase_inputs(
+    *,
+    normalized_event: str,
+    normalized_phase: str,
+    normalized_runtime_status: str,
+) -> StatusKey:
+    status_key = _status_for_event(normalized_event)
+    if status_key is None and normalized_phase:
+        status_key = _PHASE_STATUS_MAP.get(normalized_phase)
+    if status_key is None and normalized_runtime_status:
+        status_key = _RUNTIME_STATUS_MAP.get(normalized_runtime_status)
+    return status_key or "working"
+
+
+def _step_progress_for_event(
+    *,
+    normalized_event: str,
+    payload: dict[str, Any],
+) -> tuple[int | None, int | None, str | None]:
+    if normalized_event == "brain.plan_checkpoint":
+        return (
+            _coerce_int(payload.get("cursor")),
+            _coerce_int(payload.get("total_steps")),
+            "plan_checkpoint",
+        )
+    detail_code = "closure_gate" if normalized_event.startswith("brain.closure_gate.") else None
+    return (
+        _coerce_int(payload.get("step_index")),
+        _coerce_int(payload.get("step_total")),
+        detail_code,
+    )
+
+
+def _normalized_route_for_phase(
+    *,
+    normalized_event: str,
+    payload: dict[str, Any],
+    route: str | None,
+    mode: str | None,
+) -> str | None:
+    if normalized_event == "brain.execution.exited":
+        return None
+    return (
+        str(route or mode or payload.get("route", "") or payload.get("mode", "") or "")
+        .strip()
+        .lower()
+        or None
+    )
+
+
+def _normalized_mode_step(
+    explicit_value: int | None,
+    *,
+    payload: dict[str, Any],
+    payload_key: str,
+) -> int | None:
+    if explicit_value is not None:
+        return _coerce_int(explicit_value)
+    return _coerce_int(payload.get(payload_key))
+
+
+def _token_usage_values(payload: dict[str, Any]) -> tuple[int | None, ...]:
+    return (
+        _coerce_int(payload.get("turn.llm_call_count")),
+        _coerce_int(payload.get("turn.llm_call_limit")),
+        _coerce_int(payload.get("total_input_tokens_used")),
+        _coerce_int(payload.get("total_output_tokens_used")),
+        _coerce_int(payload.get("total_tokens_used")),
+    )
+
+
+def _tool_progress_values(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    return (
+        str(payload.get("turn.tool_name", "") or "").strip() or None,
+        str(payload.get("turn.progress_phase", "") or "").strip() or None,
+    )
+
+
 def normalize_phase_status(
     *,
     trace_id: str,
@@ -424,27 +502,15 @@ def normalize_phase_status(
     normalized_runtime_status = str(runtime_status or "").strip().lower()
     payload = payload or {}
 
-    status_key = _status_for_event(normalized_event)
-    if status_key is None and normalized_phase:
-        status_key = _PHASE_STATUS_MAP.get(normalized_phase)
-    if status_key is None and normalized_runtime_status:
-        status_key = _RUNTIME_STATUS_MAP.get(normalized_runtime_status)
-    if status_key is None:
-        status_key = "working"
-
-    step_index = None
-    step_total = None
-    detail_code = None
-    if normalized_event == "brain.plan_checkpoint":
-        step_index = _coerce_int(payload.get("cursor"))
-        step_total = _coerce_int(payload.get("total_steps"))
-        detail_code = "plan_checkpoint"
-    else:
-        step_index = _coerce_int(payload.get("step_index"))
-        step_total = _coerce_int(payload.get("step_total"))
-        if normalized_event.startswith("brain.closure_gate."):
-            detail_code = "closure_gate"
-
+    status_key = _status_key_for_phase_inputs(
+        normalized_event=normalized_event,
+        normalized_phase=normalized_phase,
+        normalized_runtime_status=normalized_runtime_status,
+    )
+    step_index, step_total, detail_code = _step_progress_for_event(
+        normalized_event=normalized_event,
+        payload=payload,
+    )
     label = _label_for_status(
         status_key=status_key,
         source_event=normalized_event or None,
@@ -454,44 +520,37 @@ def normalize_phase_status(
     if terminal is None:
         terminal = status_key in {"completed", "error"}
 
-    normalized_route = (
-        str(route or mode or payload.get("route", "") or payload.get("mode", "") or "")
-        .strip()
-        .lower()
-        or None
+    normalized_route = _normalized_route_for_phase(
+        normalized_event=normalized_event,
+        payload=payload,
+        route=route,
+        mode=mode,
     )
     normalized_mode_state = (
         str(mode_state or payload.get("mode_state", "") or "").strip() or None
     )
-    if normalized_event == "brain.execution.exited":
-        normalized_route = None
     normalized_mode_label = (
         str(mode_label or payload.get("mode_label", "") or "").strip() or None
     )
-    normalized_mode_step_index = (
-        _coerce_int(mode_step_index)
-        if mode_step_index is not None
-        else _coerce_int(payload.get("mode_step_index"))
+    normalized_mode_step_index = _normalized_mode_step(
+        mode_step_index,
+        payload=payload,
+        payload_key="mode_step_index",
     )
-    normalized_mode_step_total = (
-        _coerce_int(mode_step_total)
-        if mode_step_total is not None
-        else _coerce_int(payload.get("mode_step_total"))
+    normalized_mode_step_total = _normalized_mode_step(
+        mode_step_total,
+        payload=payload,
+        payload_key="mode_step_total",
     )
-    normalized_llm_call_count = _coerce_int(payload.get("turn.llm_call_count"))
-    normalized_llm_call_limit = _coerce_int(payload.get("turn.llm_call_limit"))
-    normalized_total_input_tokens_used = _coerce_int(
-        payload.get("total_input_tokens_used")
-    )
-    normalized_total_output_tokens_used = _coerce_int(
-        payload.get("total_output_tokens_used")
-    )
-    normalized_total_tokens_used = _coerce_int(payload.get("total_tokens_used"))
+    (
+        normalized_llm_call_count,
+        normalized_llm_call_limit,
+        normalized_total_input_tokens_used,
+        normalized_total_output_tokens_used,
+        normalized_total_tokens_used,
+    ) = _token_usage_values(payload)
     normalized_token_usage_estimated = bool(payload.get("token_usage_estimated", False))
-    normalized_tool_name = str(payload.get("turn.tool_name", "") or "").strip() or None
-    normalized_progress_phase = (
-        str(payload.get("turn.progress_phase", "") or "").strip() or None
-    )
+    normalized_tool_name, normalized_progress_phase = _tool_progress_values(payload)
 
     return PhaseStatus(
         trace_id=trace_id,

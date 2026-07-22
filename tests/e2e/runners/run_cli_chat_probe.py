@@ -498,6 +498,11 @@ def _build_summary(
             if (text := _normalized_nonempty(row.get("tool_name")))
         }
     )
+    session_tool_events = [
+        event
+        for event in events
+        if str(event.get("type", "")).strip().startswith("tool.")
+    ]
     tool_failures = [
         row
         for row in audit_rows
@@ -505,6 +510,15 @@ def _build_summary(
         and (
             str(row.get("status", "")).strip().lower() == "failed"
             or bool(row.get("error"))
+        )
+    ]
+    session_tool_failures = [
+        event
+        for event in session_tool_events
+        if isinstance(event.get("payload"), dict)
+        and (
+            str(event["payload"].get("status", "")).strip().lower() == "failed"
+            or bool(event["payload"].get("error"))
         )
     ]
     return {
@@ -522,8 +536,10 @@ def _build_summary(
         "observed_source_phases": observed_source_phases,
         "observed_act_profiles": observed_profiles,
         "tool_names": tool_names,
-        "tool_event_count": len(audit_rows),
-        "tool_failure_count": len(tool_failures),
+        "tool_event_count": len(audit_rows) + len(session_tool_events),
+        "tool_audit_event_count": len(audit_rows),
+        "tool_session_event_count": len(session_tool_events),
+        "tool_failure_count": len(tool_failures) + len(session_tool_failures),
         "coding_payload_hits": _coding_payload_hits(events),
         "resume_markers": _resume_markers(events),
         "event_type_counts": {
@@ -535,6 +551,94 @@ def _build_summary(
             execution_status_events=execution_status_payloads,
         ),
     }
+
+
+def _probe_requirement_failure(
+    summary: dict[str, Any],
+    *,
+    output: str = "",
+    messages: tuple[str, ...] = (),
+    min_tool_events: int = 0,
+    required_tool_names: tuple[str, ...] = (),
+    required_output_markers: tuple[str, ...] = (),
+) -> str | None:
+    tool_event_count = int(summary.get("tool_event_count") or 0)
+    if tool_event_count < min_tool_events:
+        return (
+            f"expected at least {min_tool_events} tool event(s), "
+            f"observed {tool_event_count}"
+        )
+    observed_tool_names = {
+        str(name).strip()
+        for name in summary.get("tool_names", [])
+        if str(name).strip()
+    }
+    missing = sorted(
+        {
+            str(name).strip()
+            for name in required_tool_names
+            if str(name).strip() and str(name).strip() not in observed_tool_names
+        }
+    )
+    if missing:
+        return (
+            "missing required tool name(s): "
+            f"{', '.join(missing)}; observed: "
+            f"{', '.join(sorted(observed_tool_names)) or '(none)'}"
+        )
+    missing_markers = [
+        marker
+        for marker in required_output_markers
+        if str(marker).strip()
+        and not _assistant_output_contains_marker(
+            output,
+            marker=str(marker),
+            messages=messages,
+        )
+    ]
+    if missing_markers:
+        return (
+            "missing required assistant output marker(s): "
+            f"{', '.join(missing_markers)}"
+        )
+    return None
+
+
+def _assistant_output_contains_marker(
+    output: str,
+    *,
+    marker: str,
+    messages: tuple[str, ...],
+) -> bool:
+    expected = str(marker).strip()
+    if not expected:
+        return True
+    echoed_messages = {" ".join(str(message).split()) for message in messages}
+    assistant_chunks: list[str] = []
+    for line in _normalize_probe_text(output).splitlines():
+        normalized = " ".join(line.strip().split())
+        if not normalized or normalized in echoed_messages:
+            continue
+        if normalized.startswith("❯"):
+            normalized = normalized.lstrip("❯ ").strip()
+            if not normalized:
+                continue
+        prompt_match = re.match(r"^\[[^\]]+\]\s+you>\s*(?P<body>.*)$", normalized)
+        if prompt_match:
+            normalized = str(prompt_match.group("body") or "").strip()
+            if not normalized:
+                continue
+        if normalized in echoed_messages:
+            continue
+        assistant_chunks.append(normalized)
+        if expected in normalized:
+            return True
+    assistant_text = " ".join(assistant_chunks)
+    compact_expected = "".join(expected.split())
+    compact_assistant_text = "".join(assistant_text.split())
+    if compact_expected and compact_expected in compact_assistant_text:
+        return True
+    return False
 
 
 def _read_until(
@@ -982,7 +1086,7 @@ def _write_probe_artifacts(
     audit_paths: list[str],
     audit_rows: list[dict[str, Any]],
     event_session_id: str | None,
-) -> None:
+) -> dict[str, Any]:
     if transcript_path is not None:
         transcript_path.parent.mkdir(parents=True, exist_ok=True)
         transcript_path.write_text(output, encoding="utf-8")
@@ -992,22 +1096,23 @@ def _write_probe_artifacts(
             json.dumps(events, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+    summary = _build_summary(
+        session_id=session_id,
+        transcript_path=transcript_path,
+        events_path=events_path,
+        output=output,
+        events=events,
+        audit_paths=audit_paths,
+        audit_rows=audit_rows,
+        event_session_id=event_session_id,
+    )
     if summary_path is not None:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary = _build_summary(
-            session_id=session_id,
-            transcript_path=transcript_path,
-            events_path=events_path,
-            output=output,
-            events=events,
-            audit_paths=audit_paths,
-            audit_rows=audit_rows,
-            event_session_id=event_session_id,
-        )
         summary_path.write_text(
             json.dumps(summary, indent=2, sort_keys=True),
             encoding="utf-8",
         )
+    return summary
 
 
 def main() -> int:
@@ -1026,6 +1131,27 @@ def main() -> int:
     parser.add_argument("--data-root")
     parser.add_argument("--trace-root")
     parser.add_argument("--max-ticks", type=int)
+    parser.add_argument(
+        "--min-tool-events",
+        type=int,
+        default=0,
+        help="Fail the probe unless at least this many tool audit events are observed.",
+    )
+    parser.add_argument(
+        "--require-tool-name",
+        action="append",
+        default=[],
+        help="Fail the probe unless the named tool appears in the audit summary.",
+    )
+    parser.add_argument(
+        "--require-output-marker",
+        action="append",
+        default=[],
+        help=(
+            "Fail the probe unless the marker appears in assistant output after "
+            "ignoring echoed prompt lines."
+        ),
+    )
     parser.add_argument(
         "--dump-debug-on-exit",
         action="store_true",
@@ -1182,7 +1308,7 @@ def main() -> int:
         else []
     )
     audit_paths, audit_rows = _collect_tool_audit_rows(data_root=data_root)
-    _write_probe_artifacts(
+    summary = _write_probe_artifacts(
         transcript_path=transcript_path,
         events_path=events_path,
         summary_path=summary_path,
@@ -1193,5 +1319,20 @@ def main() -> int:
         audit_rows=audit_rows,
         event_session_id=event_session_id,
     )
+    requirement_failure = _probe_requirement_failure(
+        summary,
+        output=output,
+        messages=tuple(args.message),
+        min_tool_events=max(0, int(args.min_tool_events)),
+        required_tool_names=tuple(args.require_tool_name or ()),
+        required_output_markers=tuple(args.require_output_marker or ()),
+    )
     sys.stdout.write(output)
+    if requirement_failure is not None:
+        sys.stderr.write(f"probe requirement failed: {requirement_failure}\n")
+        return 1
     return exit_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

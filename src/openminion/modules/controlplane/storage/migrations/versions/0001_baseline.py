@@ -72,6 +72,7 @@ DDL = (
         status TEXT NOT NULL,
         error TEXT,
         attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00+00:00',
         locked_at TEXT,
         lock_owner TEXT,
         UNIQUE(channel, chat_id, channel_message_id)
@@ -206,6 +207,7 @@ DDL = (
     "CREATE INDEX IF NOT EXISTS idx_cp_inbound_session_ts ON cp_inbound_messages(session_id, timestamp, id)",
     "CREATE INDEX IF NOT EXISTS idx_cp_inbox_channel_chat ON cp_inbox(channel, chat_id)",
     "CREATE INDEX IF NOT EXISTS idx_cp_inbox_status_received ON cp_inbox(status, received_at)",
+    "CREATE INDEX IF NOT EXISTS idx_cp_inbox_status_next ON cp_inbox(status, next_attempt_at, received_at)",
     "CREATE INDEX IF NOT EXISTS idx_cp_outbound_chat_ts ON cp_outbound_messages(chat_key, timestamp, id)",
     "CREATE INDEX IF NOT EXISTS idx_cp_outbound_session_ts ON cp_outbound_messages(session_id, timestamp, id)",
     "CREATE INDEX IF NOT EXISTS idx_cp_outbox_channel_chat ON cp_outbox(channel, chat_id)",
@@ -258,6 +260,7 @@ def downgrade() -> None:
             "idx_cp_inbound_session_ts",
             "idx_cp_inbox_channel_chat",
             "idx_cp_inbox_status_received",
+            "idx_cp_inbox_status_next",
             "idx_cp_outbound_chat_ts",
             "idx_cp_outbound_session_ts",
             "idx_cp_outbox_channel_chat",

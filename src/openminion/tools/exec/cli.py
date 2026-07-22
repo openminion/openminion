@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import typer
 
@@ -24,8 +24,8 @@ DEFAULT_POLICY_PATH = (
 )
 
 
-def _parse_env_overrides(items: List[str]) -> Dict[str, str]:
-    parsed: Dict[str, str] = {}
+def _parse_env_overrides(items: list[str]) -> dict[str, str]:
+    parsed: dict[str, str] = {}
     for item in items:
         if "=" not in str(item):
             raise typer.BadParameter(
@@ -48,7 +48,7 @@ def _print_env_and_exit(env: ResultEnvelope, exit_code: int, json_out: bool) -> 
 def _run_exec_tool(
     *,
     tool: str,
-    args: Dict[str, Any],
+    args: dict[str, Any],
     policy: Path,
     workspace: Optional[Path],
     scope: Optional[str],
@@ -72,7 +72,7 @@ def _run_exec_tool(
 def run_cmd(
     command: str = typer.Argument(..., help="Shell command to execute"),
     workdir: Optional[str] = typer.Option(None, "--workdir"),
-    env: List[str] = typer.Option(
+    env: list[str] = typer.Option(
         [], "--env", help="Environment override KEY=VALUE (repeatable)"
     ),
     yield_ms: int = typer.Option(10000, "--yield-ms"),
@@ -90,7 +90,7 @@ def run_cmd(
     outer_timeout_sec: Optional[int] = typer.Option(None, "--outer-timeout-sec"),
     json_out: bool = typer.Option(True, "--json/--no-json"),
 ) -> None:
-    args: Dict[str, Any] = {
+    args: dict[str, Any] = {
         "command": command,
         "yield_ms": int(yield_ms),
         "background": bool(background),
@@ -143,7 +143,7 @@ def poll_cmd(
 @app.command("send-keys")
 def send_keys_cmd(
     session_id: str = typer.Argument(..., help="Session id"),
-    keys: List[str] = typer.Argument(..., help="Keys to send (e.g. Enter C-c Up)"),
+    keys: list[str] = typer.Argument(..., help="Keys to send (e.g. Enter C-c Up)"),
     policy: Path = typer.Option(DEFAULT_POLICY_PATH, "--policy"),
     workspace: Optional[Path] = typer.Option(None, "--workspace"),
     scope: Optional[str] = typer.Option(None, "--scope"),
@@ -220,7 +220,7 @@ def kill_cmd(
     outer_timeout_sec: Optional[int] = typer.Option(None, "--outer-timeout-sec"),
     json_out: bool = typer.Option(True, "--json/--no-json"),
 ) -> None:
-    args: Dict[str, Any] = {"session_id": session_id}
+    args: dict[str, Any] = {"session_id": session_id}
     if signal_name:
         args["signal"] = signal_name
     _run_exec_tool(

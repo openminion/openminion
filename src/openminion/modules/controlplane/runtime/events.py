@@ -111,6 +111,28 @@ _EVENT_SPECS = (
         metric_name="controlplane_delivery_total",
     ),
     AuditEventSpec(
+        "cp.inbox.enqueued",
+        "channels/*/runtime/helpers.py",
+        {"channel": "str", "inbox_id": "str"},
+        metric_name="controlplane_inbound_total",
+    ),
+    AuditEventSpec(
+        "cp.inbox.retry",
+        "runtime/worker/inbox.py::InboxWorker.run_once",
+        {"inbox_id": "str", "outcome": "str"},
+        severity="warn",
+        metric_name="controlplane_inbound_total",
+        alert_threshold="alert on sustained retry growth by channel",
+    ),
+    AuditEventSpec(
+        "cp.inbox.deadletter",
+        "runtime/worker/inbox.py::InboxWorker.run_once",
+        {"inbox_id": "str", "outcome": "str"},
+        severity="critical",
+        metric_name="controlplane_inbound_total",
+        alert_threshold="page on sustained inbound deadletter growth",
+    ),
+    AuditEventSpec(
         "cp.outbox.enqueued",
         "channels/*/runtime/helpers.py",
         {"channel": "str", "outbox_id": "str"},

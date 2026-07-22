@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -48,8 +48,8 @@ class TaskPlanStep(BaseModel):
     description: str = Field(min_length=1)
     status: TaskPlanStepStatus = "pending"
     estimated_difficulty: TaskPlanDifficulty = "medium"
-    depends_on: List[str] = Field(default_factory=list)
-    tool_families: List[TaskPlanToolFamily] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+    tool_families: list[TaskPlanToolFamily] = Field(default_factory=list)
     output_summary: str = ""
     blocker_type: Optional[str] = None
     blocker_details: Optional[str] = None
@@ -61,7 +61,7 @@ class TaskPlanStep(BaseModel):
 
     @field_validator("depends_on", mode="before")
     @classmethod
-    def _normalize_depends_on(cls, value: Any) -> List[str]:
+    def _normalize_depends_on(cls, value: Any) -> list[str]:
         if value is None:
             return []
         if not isinstance(value, list):
@@ -70,7 +70,7 @@ class TaskPlanStep(BaseModel):
 
     @field_validator("tool_families", mode="before")
     @classmethod
-    def _normalize_tool_families(cls, value: Any) -> List[str]:
+    def _normalize_tool_families(cls, value: Any) -> list[str]:
         if value is None:
             return []
         if not isinstance(value, list):
@@ -106,7 +106,7 @@ class TaskPlan(BaseModel):
     workflow_id: Optional[str] = None
     root_goal_id: Optional[str] = None
     status: TaskPlanStatus = "active"
-    steps: List[TaskPlanStep] = Field(min_length=1)
+    steps: list[TaskPlanStep] = Field(min_length=1)
     # model-opt-in signal to schedule a follow-up autonomous turn
     continue_plan_autonomously: bool = False
 
@@ -199,7 +199,7 @@ class TaskPlanStepBlocked(BaseModel):
 class TaskPlanRevision(BaseModel):
     plan_id: str = Field(min_length=1)
     reason: str = ""
-    revised_steps: List[TaskPlanStep] = Field(min_length=1)
+    revised_steps: list[TaskPlanStep] = Field(min_length=1)
     objective: Optional[str] = None
     workflow_id: Optional[str] = None
     # opt-in signal to schedule a follow-up autonomous turn after

@@ -174,6 +174,20 @@ def preferred_artifact_ref(artifact: Any) -> str:
     return str(getattr(artifact, "path", "") or "").strip()
 
 
+def _artifact_log_payload(
+    *,
+    rel_path: str,
+    content: bytes,
+    mime: str,
+) -> dict[str, object]:
+    return {
+        "rel_path": rel_path,
+        "mime": mime,
+        "bytes": len(content),
+        "durable": True,
+    }
+
+
 @dataclass
 class RuntimeContext:
     policy: Policy
@@ -243,65 +257,15 @@ class RuntimeContext:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         sha = hashlib.sha256(content).hexdigest()
-        canonical_ref: str | None = None
-        if durable:
-            artifactctl = getattr(self, "artifactctl", None)
-            if artifactctl is None:
-                self.add_log(
-                    "warning",
-                    "CAS ingest unavailable for durable artifact write",
-                    {
-                        "rel_path": rel_path,
-                        "mime": mime,
-                        "bytes": len(content),
-                        "durable": True,
-                    },
-                )
-            else:
-                ingest_meta = {
-                    "runtime_bridge": "RuntimeContext.write_artifact",
-                    "tool_name": str(getattr(self, "tool_name", "") or "").strip(),
-                    "local_rel_path": rel_path,
-                    "mime": mime,
-                }
-                run_id = str(getattr(self, "run_id", "") or "").strip()
-                if run_id:
-                    ingest_meta["run_id"] = run_id
-                trace_id = str(getattr(self, "trace_id", "") or "").strip()
-                if trace_id:
-                    ingest_meta["trace_id"] = trace_id
-                try:
-                    ref = artifactctl.ingest_bytes(
-                        data=content,
-                        mime=mime,
-                        original_name=Path(rel_path).name,
-                        label=Path(rel_path).name,
-                        meta=ingest_meta,
-                        session_id=str(getattr(self, "session_id", "") or "").strip()
-                        or None,
-                        trace_id=trace_id or None,
-                        agent_id=str(getattr(self, "agent_id", "") or "").strip()
-                        or None,
-                    )
-                    canonical_ref = str(getattr(ref, "ref", "") or "").strip() or None
-                except Exception as exc:
-                    self.add_log(
-                        "warning",
-                        "CAS ingest failed for durable artifact write",
-                        {
-                            "rel_path": rel_path,
-                            "mime": mime,
-                            "bytes": len(content),
-                            "durable": True,
-                            "error": f"{type(exc).__name__}: {exc}",
-                        },
-                    )
-                    _LOG.warning(
-                        "tool.runtime.artifact_cas_ingest_failed rel_path=%s error=%s: %s",
-                        rel_path,
-                        type(exc).__name__,
-                        exc,
-                    )
+        canonical_ref = (
+            self._ingest_durable_artifact(
+                rel_path=rel_path,
+                content=content,
+                mime=mime,
+            )
+            if durable
+            else None
+        )
         artifact = Artifact(
             type="file",
             path=rel_path,
@@ -312,6 +276,71 @@ class RuntimeContext:
         )
         self.artifacts.append(artifact)
         return artifact
+
+
+    def _ingest_durable_artifact(
+        self,
+        *,
+        rel_path: str,
+        content: bytes,
+        mime: str,
+    ) -> str | None:
+        artifactctl = getattr(self, "artifactctl", None)
+        if artifactctl is None:
+            self.add_log(
+                "warning",
+                "CAS ingest unavailable for durable artifact write",
+                _artifact_log_payload(rel_path=rel_path, content=content, mime=mime),
+            )
+            return None
+        trace_id = str(getattr(self, "trace_id", "") or "").strip()
+        try:
+            ref = artifactctl.ingest_bytes(
+                data=content,
+                mime=mime,
+                original_name=Path(rel_path).name,
+                label=Path(rel_path).name,
+                meta=self._artifact_ingest_meta(rel_path=rel_path, mime=mime),
+                session_id=str(getattr(self, "session_id", "") or "").strip() or None,
+                trace_id=trace_id or None,
+                agent_id=str(getattr(self, "agent_id", "") or "").strip() or None,
+            )
+            return str(getattr(ref, "ref", "") or "").strip() or None
+        except Exception as exc:
+            self.add_log(
+                "warning",
+                "CAS ingest failed for durable artifact write",
+                {
+                    **_artifact_log_payload(
+                        rel_path=rel_path,
+                        content=content,
+                        mime=mime,
+                    ),
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
+            )
+            _LOG.warning(
+                "tool.runtime.artifact_cas_ingest_failed rel_path=%s error=%s: %s",
+                rel_path,
+                type(exc).__name__,
+                exc,
+            )
+            return None
+
+    def _artifact_ingest_meta(self, *, rel_path: str, mime: str) -> dict[str, str]:
+        ingest_meta = {
+            "runtime_bridge": "RuntimeContext.write_artifact",
+            "tool_name": str(getattr(self, "tool_name", "") or "").strip(),
+            "local_rel_path": rel_path,
+            "mime": mime,
+        }
+        run_id = str(getattr(self, "run_id", "") or "").strip()
+        if run_id:
+            ingest_meta["run_id"] = run_id
+        trace_id = str(getattr(self, "trace_id", "") or "").strip()
+        if trace_id:
+            ingest_meta["trace_id"] = trace_id
+        return ingest_meta
 
     def write_audit_event(self, event: Dict[str, Any]) -> None:
         payload = dict(event or {})

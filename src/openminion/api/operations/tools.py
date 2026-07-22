@@ -38,6 +38,7 @@ def normalize_tool_run_request(body: dict[str, Any]) -> dict[str, Any]:
         "channel": channel,
         "target": target,
         "requested_session_id": requested_session_id,
+        "confirm": bool(body.get("confirm", False)),
     }
 
 
@@ -50,6 +51,7 @@ def execute_tool_run(
     channel: str,
     target: str,
     requested_session_id: str,
+    confirm: bool = False,
 ) -> tuple[HTTPStatus, dict[str, Any], str]:
     session = runtime.sessions.resolve_session(
         agent_id=resolve_default_agent_id(runtime.config),
@@ -83,6 +85,7 @@ def execute_tool_run(
         blast_radius_adapter=build_default_composition_boundary_adapter(
             seam_id=SEAM_API_TOOLS,
         ),
+        confirm=bool(confirm),
     )
     batch = runtime.tools.execute_calls(
         [

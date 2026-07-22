@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config.env.subprocess import build_subprocess_env
@@ -114,7 +114,7 @@ class SessionRecord:
 class ProcessManager:
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._sessions: Dict[str, SessionRecord] = {}
+        self._sessions: dict[str, SessionRecord] = {}
 
     def start(
         self,
@@ -122,7 +122,7 @@ class ProcessManager:
         agent_id: str,
         command: str,
         cwd: str,
-        env: Dict[str, str],
+        env: dict[str, str],
         use_pty: bool,
         timeout_s: int,
         host: str,
@@ -302,8 +302,8 @@ class ProcessManager:
             self._sessions.pop(session_id, None)
             return True, "session cleared"
 
-    def list(self, *, agent_id: str, include_exited: bool) -> list[Dict[str, Any]]:
-        rows: list[Dict[str, Any]] = []
+    def list(self, *, agent_id: str, include_exited: bool) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
         with self._lock:
             for entry in self._sessions.values():
                 if entry.agent_id != agent_id:

@@ -1,6 +1,6 @@
 import logging
 from time import perf_counter
-from typing import Any, Dict, List
+from typing import Any
 
 from openminion.base.config import EnvironmentConfig
 from openminion.services.runtime.constants import (
@@ -12,8 +12,8 @@ from .types import HealthCheck
 _HEALTH_LOG = logging.getLogger("openminion.health")
 
 
-def _build_readiness_by_group(checks: List[HealthCheck]) -> Dict[str, Dict[str, int]]:
-    grouped: Dict[str, Dict[str, int]] = {}
+def _build_readiness_by_group(checks: list[HealthCheck]) -> dict[str, dict[str, int]]:
+    grouped: dict[str, dict[str, int]] = {}
     for check in checks:
         group = _check_group(check.id)
         bucket = grouped.setdefault(group, {"ok": 0, "warn": 0, "fail": 0, "total": 0})
@@ -42,8 +42,8 @@ def _check_group(check_id: str) -> str:
 
 def _emit_normalization_telemetry(
     *,
-    checks: List[HealthCheck],
-    normalized_health_snapshot: Dict[str, Any],
+    checks: list[HealthCheck],
+    normalized_health_snapshot: dict[str, Any],
     fail_count: int,
     warn_count: int,
 ) -> None:
@@ -78,8 +78,8 @@ def _duration_ms(started_at: float) -> int:
 
 
 def _build_dependency_timing_summary(
-    checks: List[HealthCheck], *, started_at: float
-) -> Dict[str, Any]:
+    checks: list[HealthCheck], *, started_at: float
+) -> dict[str, Any]:
     entries = []
     for check in checks:
         if check.duration_ms is None:
@@ -99,7 +99,7 @@ def _build_dependency_timing_summary(
 
     max_entry = max(entries, key=lambda item: item[1])
     duration_sum = sum(item[1] for item in entries)
-    by_group: Dict[str, Dict[str, int]] = {}
+    by_group: dict[str, dict[str, int]] = {}
     for check_id, duration in entries:
         group = _check_group(check_id)
         bucket = by_group.setdefault(
@@ -123,7 +123,7 @@ def _build_dependency_timing_summary(
     }
 
 
-def _build_operator_hints(env_config: EnvironmentConfig) -> Dict[str, Any]:
+def _build_operator_hints(env_config: EnvironmentConfig) -> dict[str, Any]:
     metrics_token_required = env_config.has(API_METRICS_TOKEN_ENV)
     return {
         "metrics": {
@@ -137,8 +137,8 @@ def _build_operator_hints(env_config: EnvironmentConfig) -> Dict[str, Any]:
 
 
 def _normalize_metrics_consistency(
-    metrics_consistency: Dict[str, Any],
-) -> Dict[str, str]:
+    metrics_consistency: dict[str, Any],
+) -> dict[str, str]:
     stamp = str(metrics_consistency.get("stamp", "")).strip()
     runtime_started = str(metrics_consistency.get("runtime_started_at_utc", "")).strip()
     metrics_reset = str(metrics_consistency.get("metrics_reset_at_utc", "")).strip()
@@ -154,7 +154,7 @@ def _resolve_health_latency_budget_threshold_ms(env_config: EnvironmentConfig) -
 
 
 def _build_latency_budget_check(
-    *, checks: List[HealthCheck], threshold_ms: int
+    *, checks: list[HealthCheck], threshold_ms: int
 ) -> HealthCheck:
     timed_checks: list[dict[str, int | str]] = [
         {"id": check.id, "duration_ms": int(check.duration_ms)}

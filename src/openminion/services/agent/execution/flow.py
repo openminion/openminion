@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from openminion.base.types import AgentResponse, Message
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
@@ -31,7 +31,7 @@ def _build_runtime_context(
     service,
     *,
     inbound: Message,
-    history: List[Message] | None,
+    history: list[Message] | None,
     progress_callback,
     approval_callback,
 ) -> TurnRuntimeContext:
@@ -60,7 +60,7 @@ def _prepare_turn_runtime(
     service,
     *,
     inbound: Message,
-    history: List[Message] | None,
+    history: list[Message] | None,
     progress_callback,
     approval_callback,
 ):
@@ -133,7 +133,7 @@ def _build_and_apply_tool_plan(
     *,
     inbound: Message,
     runtime: TurnRuntimeContext,
-    forced_tools: List[str] | None,
+    forced_tools: list[str] | None,
     capability_category: str | None,
 ):
     plan = build_tool_plan(
@@ -358,8 +358,8 @@ class AgentTurnFlowMixin:
     async def run_turn(
         self,
         inbound: Message,
-        history: List[Message] = None,
-        forced_tools: List[str] = None,
+        history: list[Message] = None,
+        forced_tools: list[str] = None,
         capability_category: Optional[str] = None,
         progress_callback=None,
         approval_callback=None,

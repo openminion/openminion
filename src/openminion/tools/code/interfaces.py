@@ -1,4 +1,4 @@
-from typing import Any, Dict, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,7 +32,7 @@ class CodeErrorEnvelope(ToolErrorEnvelope):
 
 class CodeOperationSchema(BaseModel):
     operation: str
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
     contract_version: str = CODE_PLUGIN_INTERFACE_VERSION
 
 

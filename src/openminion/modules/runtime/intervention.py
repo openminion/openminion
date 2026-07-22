@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, Protocol
+from typing import Any, Literal, Protocol
+from collections.abc import Mapping
 
 from openminion.modules.runtime.constants import INTERVENTION_RECORDED_EVENT_TYPE
 

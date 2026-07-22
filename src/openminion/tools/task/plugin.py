@@ -495,29 +495,12 @@ def _h_task_watch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     watch_session_id = f"watch:{job_id}"
     interval_minutes = int(validated.interval_minutes)
     timeout_seconds = int(validated.timeout_seconds)
-    watch_metadata: dict[str, Any] = {
-        "description": validated.description,
-        "check_instruction": validated.check_instruction,
-        "alert_condition": validated.alert_condition,
-        "on_condition_action": validated.on_condition_action,
-        "delivery": validated.delivery,
-        "interval_minutes": interval_minutes,
-        "max_checks": int(validated.max_checks),
-        "checks_completed": 0,
-        "ttl_minutes": int(validated.ttl_minutes),
-        "timeout_seconds": timeout_seconds,
-        "max_iterations": DEFAULT_WATCH_MAX_ITERATIONS,
-        "allowed_tools": list(WATCH_DEFAULT_ALLOWED_TOOLS),
-        "turn_kind": WATCH_TURN_KIND_CHECK,
-        "write_authorized": write_authorized,
-        "write_audit": [],
-        "created_at": None,
-        "last_check_at": None,
-        "last_check_summary": None,
-        "last_condition_met": False,
-        "last_terminal_reason": "",
-    }
-    # persist the typed routine payload under
+    watch_metadata = _watch_metadata_from_args(
+        validated,
+        interval_minutes=interval_minutes,
+        timeout_seconds=timeout_seconds,
+        write_authorized=write_authorized,
+    )
     if validated.routine is not None:
         watch_metadata["routine"] = validated.routine.model_dump(mode="json")
     payload: dict[str, Any] = {
@@ -571,6 +554,37 @@ def _h_task_watch(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             "Watch scheduled. Checks run only while the openminion daemon is running. "
             "Start it with: openminion daemon start"
         ),
+    }
+
+
+def _watch_metadata_from_args(
+    validated: TaskWatchArgs,
+    *,
+    interval_minutes: int,
+    timeout_seconds: int,
+    write_authorized: bool,
+) -> dict[str, Any]:
+    return {
+        "description": validated.description,
+        "check_instruction": validated.check_instruction,
+        "alert_condition": validated.alert_condition,
+        "on_condition_action": validated.on_condition_action,
+        "delivery": validated.delivery,
+        "interval_minutes": interval_minutes,
+        "max_checks": int(validated.max_checks),
+        "checks_completed": 0,
+        "ttl_minutes": int(validated.ttl_minutes),
+        "timeout_seconds": timeout_seconds,
+        "max_iterations": DEFAULT_WATCH_MAX_ITERATIONS,
+        "allowed_tools": list(WATCH_DEFAULT_ALLOWED_TOOLS),
+        "turn_kind": WATCH_TURN_KIND_CHECK,
+        "write_authorized": write_authorized,
+        "write_audit": [],
+        "created_at": None,
+        "last_check_at": None,
+        "last_check_summary": None,
+        "last_condition_met": False,
+        "last_terminal_reason": "",
     }
 
 
@@ -853,8 +867,8 @@ def _h_task_list(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     }
 
 
-def register(registry: ToolRegistry) -> None:
-    registry.add(
+def _task_tool_specs() -> tuple[ToolSpec, ...]:
+    return (
         ToolSpec(
             name=MODEL_TASK_SCHEDULE,
             args_model=TaskScheduleArgs,
@@ -865,9 +879,7 @@ def register(registry: ToolRegistry) -> None:
             tags=("plugin", "task", "schedule"),
             capabilities=("task", "schedule"),
             block_under_readonly=True,
-        )
-    )
-    registry.add(
+        ),
         ToolSpec(
             name=MODEL_TASK_CONSOLIDATE_MEMORY,
             args_model=TaskConsolidateMemoryArgs,
@@ -877,9 +889,7 @@ def register(registry: ToolRegistry) -> None:
             idempotent=False,
             tags=("plugin", "task", "memory"),
             capabilities=("task", "schedule"),
-        )
-    )
-    registry.add(
+        ),
         ToolSpec(
             name=MODEL_TASK_CANCEL,
             args_model=TaskCancelArgs,
@@ -890,9 +900,7 @@ def register(registry: ToolRegistry) -> None:
             tags=("plugin", "task", "schedule"),
             capabilities=("task", "schedule"),
             block_under_readonly=True,
-        )
-    )
-    registry.add(
+        ),
         ToolSpec(
             name=MODEL_TASK_WATCH,
             args_model=TaskWatchArgs,
@@ -902,9 +910,7 @@ def register(registry: ToolRegistry) -> None:
             idempotent=False,
             tags=("plugin", "task", "watch"),
             capabilities=("task", "schedule"),
-        )
-    )
-    registry.add(
+        ),
         ToolSpec(
             name=MODEL_TASK_LIST,
             args_model=TaskListArgs,
@@ -914,9 +920,7 @@ def register(registry: ToolRegistry) -> None:
             idempotent=True,
             tags=("plugin", "task", "schedule"),
             capabilities=("task", "schedule"),
-        )
-    )
-    registry.add(
+        ),
         ToolSpec(
             name=MODEL_TASK_PAUSE,
             args_model=TaskPauseArgs,
@@ -927,9 +931,7 @@ def register(registry: ToolRegistry) -> None:
             tags=("plugin", "task", "schedule"),
             capabilities=("task", "schedule"),
             block_under_readonly=True,
-        )
-    )
-    registry.add(
+        ),
         ToolSpec(
             name=MODEL_TASK_RESUME,
             args_model=TaskResumeArgs,
@@ -940,9 +942,7 @@ def register(registry: ToolRegistry) -> None:
             tags=("plugin", "task", "schedule"),
             capabilities=("task", "schedule"),
             block_under_readonly=True,
-        )
-    )
-    registry.add(
+        ),
         ToolSpec(
             name=MODEL_TASK_SHOW,
             args_model=TaskShowArgs,
@@ -952,8 +952,13 @@ def register(registry: ToolRegistry) -> None:
             idempotent=True,
             tags=("plugin", "task", "schedule"),
             capabilities=("task", "schedule"),
-        )
+        ),
     )
+
+
+def register(registry: ToolRegistry) -> None:
+    for spec in _task_tool_specs():
+        registry.add(spec)
 
 
 __all__ = [

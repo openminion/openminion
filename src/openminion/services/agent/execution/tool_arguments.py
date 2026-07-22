@@ -1,5 +1,6 @@
 import re
-from typing import Any, Mapping, Optional
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.llm.providers.base import ProviderToolSpec
 from openminion.modules.tool.dispatch import _get_registry_manager
@@ -17,7 +18,7 @@ def _is_generic_open_object_schema(schema: Mapping[str, Any]) -> bool:
     return schema.get("additionalProperties") is True
 
 
-def _parameters_for_spec(spec: Optional[ProviderToolSpec]) -> dict[str, Any]:
+def _parameters_for_spec(spec: ProviderToolSpec | None) -> dict[str, Any]:
     if spec is None:
         return {}
     parameters = getattr(spec, "parameters", {}) or {}
@@ -43,7 +44,7 @@ def _parameters_for_spec(spec: Optional[ProviderToolSpec]) -> dict[str, Any]:
     return {}
 
 
-def required_fields_from_spec(spec: Optional[ProviderToolSpec]) -> list[str]:
+def required_fields_from_spec(spec: ProviderToolSpec | None) -> list[str]:
     parameters = _parameters_for_spec(spec)
     if not parameters:
         return []
@@ -85,7 +86,7 @@ def normalize_required_tool_arguments(
 def sanitize_arguments_for_spec(
     *,
     arguments: Mapping[str, Any],
-    spec: Optional[ProviderToolSpec],
+    spec: ProviderToolSpec | None,
 ) -> dict[str, Any]:
     normalized = dict(arguments or {})
     parameters = _parameters_for_spec(spec)

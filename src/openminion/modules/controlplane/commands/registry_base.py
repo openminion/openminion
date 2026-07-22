@@ -1,7 +1,7 @@
 # mypy: ignore-errors
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from openminion.base.logging import get_logger
 from openminion.modules.controlplane.contracts.models import (
@@ -51,15 +51,15 @@ class CommandRegistryBaseMixin:
             """Get command spec by name."""
             return self._command_specs.get(command_name)
 
-    def list_commands(self) -> List[str]:
+    def list_commands(self) -> list[str]:
             """List all registered (non-shadowed) command names."""
             return list(self._command_specs.keys())
 
-    def list_shadowed_commands(self) -> List[str]:
+    def list_shadowed_commands(self) -> list[str]:
             """List all shadowed command names."""
             return list(self.shadowed_commands.keys())
 
-    def get_all_registered_commands(self) -> List[CommandSpec]:
+    def get_all_registered_commands(self) -> list[CommandSpec]:
             """Get all registered command specs (including shadowed ones)."""
             return list(self._command_specs.values()) + list(
                 self.shadowed_commands.values()
@@ -70,7 +70,7 @@ class CommandRegistryBaseMixin:
             spec = self._command_specs.get(command_name)
             return spec.auth_requirement if spec else None
 
-    def get_loaded_modules(self) -> Dict[str, str]:
+    def get_loaded_modules(self) -> dict[str, str]:
             """Get dictionary of loaded modules and their versions."""
             return self.loaded_modules.copy()
 
@@ -82,7 +82,7 @@ class CommandRegistryBaseMixin:
             self,
             module_name: str,
             error: Exception,
-            failed_commands: Optional[List[str]] = None,
+            failed_commands: Optional[list[str]] = None,
         ) -> None:
             """Register a module that couldn't be loaded."""
             self.broken_module_tracker.register_broken_module(

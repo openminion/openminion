@@ -161,64 +161,16 @@ def generate_candidates(
 
     results: list[dict[str, Any]] = []
     for row in rows:
-        tags = _safe_json_loads(str(row["tags_json"]), [])
-        if not isinstance(tags, list):
-            tags = []
-        tags = [str(tag) for tag in tags if str(tag).strip()]
-
-        if filters.tags:
-            wanted = {tag.strip().lower() for tag in filters.tags if tag.strip()}
-            if wanted and not wanted.intersection({tag.lower() for tag in tags}):
-                continue
-
-        created_at = str(row["created_at"])
-        if filters.time_window_hours is not None:
-            created_dt = parse_iso_timestamp(created_at)
-            if created_dt is not None:
-                age_hours = max(
-                    0.0,
-                    (datetime.now(timezone.utc) - created_dt).total_seconds() / 3600.0,
-                )
-                if age_hours > float(filters.time_window_hours):
-                    continue
-
-        bm25_score = float(row["bm25_score"] or 0.0)
-
+        tags = _candidate_row_tags(row)
+        if not _candidate_row_matches_filters(row, tags=tags, filters=filters):
+            continue
         results.append(
-            {
-                "unit_id": str(row["unit_id"]),
-                "doc_id": str(row["doc_id"]),
-                "title": str(row["title"] or ""),
-                "source_type": str(row["source_type"]),
-                "source_ref": str(row["source_ref"]),
-                "doc_scope": str(row["scope"]),
-                "tags": tags,
-                "created_at": created_at,
-                "unit_kind": str(row["unit_kind"]),
-                "level": str(row["level"] or "none"),
-                "node_id": str(row["node_id"]) if row["node_id"] is not None else None,
-                "group_id": str(row["group_id"])
-                if row["group_id"] is not None
-                else None,
-                "text_ref": str(row["text_ref"]),
-                "offsets": _safe_json_loads(str(row["offsets_json"]), {}),
-                "query": query,
-                "bm25_score": bm25_score,
-                "type": _candidate_type(tags),
-                "confidence": (
-                    float(defaults.confidence_memory)
-                    if str(row["source_type"]) == "mem"
-                    else float(defaults.confidence_default)
-                ),
-                "why": "",
-                "meta": {
-                    "hit_count": int(row["hit_count"] or 0),
-                    "last_hit_at": str(row["last_hit_at"])
-                    if row["last_hit_at"]
-                    else None,
-                    "feedback_score": clamp01(float(row["feedback_score"] or 0.0)),
-                },
-            }
+            _candidate_from_row(
+                row,
+                query=query,
+                tags=tags,
+                defaults=defaults,
+            )
         )
 
     results.sort(
@@ -235,6 +187,81 @@ def generate_candidates(
             candidate_limit,
         )
     return results[:candidate_limit]
+
+
+def _candidate_row_tags(row: Mapping[str, Any]) -> list[str]:
+    tags = _safe_json_loads(str(row["tags_json"]), [])
+    if not isinstance(tags, list):
+        return []
+    return [str(tag) for tag in tags if str(tag).strip()]
+
+
+def _candidate_row_matches_filters(
+    row: Mapping[str, Any],
+    *,
+    tags: list[str],
+    filters: RetrievalFilters,
+) -> bool:
+    if filters.tags:
+        wanted = {tag.strip().lower() for tag in filters.tags if tag.strip()}
+        if wanted and not wanted.intersection({tag.lower() for tag in tags}):
+            return False
+    if filters.time_window_hours is None:
+        return True
+    created_dt = parse_iso_timestamp(str(row["created_at"]))
+    if created_dt is None:
+        return True
+    age_hours = max(
+        0.0,
+        (datetime.now(timezone.utc) - created_dt).total_seconds() / 3600.0,
+    )
+    return age_hours <= float(filters.time_window_hours)
+
+
+def _candidate_from_row(
+    row: Mapping[str, Any],
+    *,
+    query: str,
+    tags: list[str],
+    defaults: Any,
+) -> dict[str, Any]:
+    source_type = str(row["source_type"])
+    return {
+        "unit_id": str(row["unit_id"]),
+        "doc_id": str(row["doc_id"]),
+        "title": str(row["title"] or ""),
+        "source_type": source_type,
+        "source_ref": str(row["source_ref"]),
+        "doc_scope": str(row["scope"]),
+        "tags": tags,
+        "created_at": str(row["created_at"]),
+        "unit_kind": str(row["unit_kind"]),
+        "level": str(row["level"] or "none"),
+        "node_id": str(row["node_id"]) if row["node_id"] is not None else None,
+        "group_id": str(row["group_id"]) if row["group_id"] is not None else None,
+        "text_ref": str(row["text_ref"]),
+        "offsets": _safe_json_loads(str(row["offsets_json"]), {}),
+        "query": query,
+        "bm25_score": float(row["bm25_score"] or 0.0),
+        "type": _candidate_type(tags),
+        "confidence": _candidate_confidence(source_type, defaults),
+        "why": "",
+        "meta": _candidate_meta(row),
+    }
+
+
+def _candidate_confidence(source_type: str, defaults: Any) -> float:
+    if source_type == "mem":
+        return float(defaults.confidence_memory)
+    return float(defaults.confidence_default)
+
+
+def _candidate_meta(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "hit_count": int(row["hit_count"] or 0),
+        "last_hit_at": str(row["last_hit_at"]) if row["last_hit_at"] else None,
+        "feedback_score": clamp01(float(row["feedback_score"] or 0.0)),
+    }
 
 
 def apply_title_identity_boost_in_place(

@@ -3,7 +3,8 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Mapping, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
+from collections.abc import Mapping
 
 from openminion.base.time import utc_now_iso as _now_iso
 

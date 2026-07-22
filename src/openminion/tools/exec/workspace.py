@@ -1,6 +1,6 @@
+from collections.abc import Iterable, Mapping
 import re
 from pathlib import Path
-from typing import Iterable, Mapping, Optional
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_CLEAR,
@@ -92,7 +92,7 @@ _DISCOVERY_HINT_FIX = (
 )
 
 
-def _resolve_workspace_cwd(ctx: RuntimeContext, raw_workdir: Optional[str]) -> Path:
+def _resolve_workspace_cwd(ctx: RuntimeContext, raw_workdir: str | None) -> Path:
     workspace_root = resolve_tool_workspace_root(
         env=ctx.env,
         fallback=ctx.workspace,

@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any
+from collections.abc import Iterable, Sequence
 
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.llm.providers.tool_calling.registry import (

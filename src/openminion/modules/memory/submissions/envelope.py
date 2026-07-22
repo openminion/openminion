@@ -1,7 +1,8 @@
 """Typed submission envelope for the OpenMinion to Sophiagraph pipeline."""
 
 from dataclasses import dataclass, field
-from typing import Any, Final, Literal, Mapping
+from typing import Any, Final, Literal
+from collections.abc import Mapping
 
 
 SUBMISSION_ENVELOPE_SCHEMA_VERSION: Final[str] = "openminion_sophiagraph_submission.v1"

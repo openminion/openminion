@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from openminion.modules.llm.providers.behavior import resolve_behavior_profile
+from openminion.modules.llm.client_call import usage_payload_from_response_usage
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.modules.llm.providers.normalization import (
     is_provider_recovery_fallback_text,
@@ -81,6 +82,28 @@ def test_normalize_provider_response_derives_malformed_total() -> None:
 
     assert normalized.usage["total_tokens"] == 18
     assert normalized.usage["total_source"] == "derived"
+
+
+def test_usage_payload_preserves_generic_object_provenance_and_cache_aliases() -> None:
+    usage = usage_payload_from_response_usage(
+        SimpleNamespace(
+            input_tokens=11,
+            output_tokens=7,
+            total_tokens=18,
+            total_tokens_source="derived",
+            cache_read_input_tokens=5,
+            cache_creation_input_tokens=3,
+        )
+    )
+
+    assert usage == {
+        "prompt_tokens": 11,
+        "completion_tokens": 7,
+        "total_tokens": 18,
+        "cached_tokens": 5,
+        "cache_creation_tokens": 3,
+        "total_source": "derived",
+    }
 
 
 def test_normalize_provider_response_does_not_recover_tool_call_from_text() -> None:

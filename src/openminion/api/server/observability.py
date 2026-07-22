@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from http import HTTPStatus
-from typing import Any, Optional
+from typing import Any
 
 from openminion.api import metrics_registry
 from openminion.api.responses.serialization import (
@@ -60,8 +60,8 @@ def finalize_api_response(
     request_id: str,
     started_at: float,
     logger: logging.Logger,
-    session_id: Optional[str] = None,
-    run_id: Optional[str] = None,
+    session_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     response = attach_response_meta(
         payload,
@@ -104,7 +104,7 @@ def observe_request_metrics(
     method: str,
     path: str,
     status: HTTPStatus,
-    payload: Optional[dict[str, Any]],
+    payload: dict[str, Any] | None,
     started_at: float,
 ) -> int:
     from openminion.api import server
@@ -129,8 +129,8 @@ def log_request_done(
     status: HTTPStatus,
     request_id: str,
     duration_ms: int,
-    session_id: Optional[str],
-    run_id: Optional[str],
+    session_id: str | None,
+    run_id: str | None,
 ) -> None:
     route = route_metric_key(method=method, path=path)
     values = (

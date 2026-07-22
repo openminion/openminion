@@ -37,6 +37,13 @@ from ...schemas import (
     WorkingState,
 )
 from ..parser import normalize_tool_name_for_brain
+from .arguments import (
+    _JSON_SCHEMA_TOP_LEVEL_KEYS,
+    _parameter_keys_from_spec_payload,
+    _spec_like_payload,
+    resolve_tool_spec_payload,
+    sanitize_tool_command_args,
+)
 from .dispatch import _command_lineage_payload
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.base.constants import STATE_KEY_SOURCE_OUTCOME
@@ -44,22 +51,6 @@ from openminion.base.constants import STATE_KEY_SOURCE_OUTCOME
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...runner import BrainRunner
 
-
-_JSON_SCHEMA_TOP_LEVEL_KEYS = frozenset(
-    {
-        "$defs",
-        "$schema",
-        "additionalProperties",
-        "allOf",
-        "anyOf",
-        "description",
-        "oneOf",
-        "properties",
-        "required",
-        "title",
-        "type",
-    }
-)
 
 _TOOL_OUTCOME_RECORD_TYPE = "tool_outcome"
 _TOOL_OUTCOME_MAX_STAGE_PER_TURN = 3
@@ -169,97 +160,57 @@ def _stage_tool_outcome_candidate(
     normalized_tool_name = str(tool_name or "").strip()
     if memory_api is None or not normalized_tool_name:
         return None
-    outcome = _tool_outcome_from_result(
+    outcome = _staged_tool_outcome(
+        tool_name=normalized_tool_name,
         action_result=action_result,
         forced_outcome=forced_outcome,
     )
     if outcome is None:
         return None
-    if not _tool_outcome_should_stage(
-        tool_name=normalized_tool_name,
-        outcome=outcome,
-    ):
-        return None
 
     module_state = state.module_state.setdefault(_TOOL_OUTCOME_STATE_KEY, {})
-    staged_command_ids = {
-        str(item).strip()
-        for item in list(
-            module_state.get(_TOOL_OUTCOME_STAGED_COMMAND_IDS_KEY, []) or []
-        )
-        if str(item).strip()
-    }
-    command_id = str(
-        getattr(command, "command_id", "")
-        or getattr(action_result, "command_id", "")
-        or ""
-    ).strip()
-    if command_id and command_id in staged_command_ids:
+    staged_command_ids = _tool_outcome_staged_command_ids(module_state)
+    command_id = _tool_outcome_command_id(command=command, action_result=action_result)
+    if _tool_outcome_already_staged(command_id, staged_command_ids):
         return None
 
     staged_count = int(module_state.get(_TOOL_OUTCOME_STAGED_COUNT_KEY, 0) or 0)
     if staged_count >= _TOOL_OUTCOME_MAX_STAGE_PER_TURN:
         return None
 
-    error_code = str(
-        getattr(getattr(action_result, "error", None), "code", "") or ""
-    ).strip()
-    artifact_refs = [
-        str(getattr(ref, "ref", "") or "").strip()
-        for ref in list(getattr(action_result, "artifact_refs", []) or [])
-        if str(getattr(ref, "ref", "") or "").strip()
-    ]
+    error_code = _tool_outcome_error_code(action_result)
+    artifact_refs = _tool_outcome_artifact_refs(action_result)
     tool_family = _tool_family(normalized_tool_name)
     args_signature = _tool_outcome_args_signature(command)
-    confidence = 0.7 if outcome == "success" else 0.4
     candidate_id = memory_api.stage_candidate(
         scope=f"agent:{runner.profile.agent_id}",
         record_type=_TOOL_OUTCOME_RECORD_TYPE,
-        title=":".join(
-            item
-            for item in [
-                "tool_outcome",
-                normalized_tool_name,
-                outcome,
-                error_code or "",
-            ]
-            if item
+        title=_tool_outcome_title(
+            tool_name=normalized_tool_name,
+            outcome=outcome,
+            error_code=error_code,
         ),
-        content={
-            "tool_name": normalized_tool_name,
-            "tool_family": tool_family,
-            "outcome": outcome,
-            "error_code": error_code or None,
-            "turn_index": _tool_outcome_turn_index(runner, state=state),
-            "intent_id": (
-                list(getattr(command, "sub_intent_ids", []) or [None])[0]
-                if command is not None
-                else None
-            ),
-            "args_signature": args_signature,
-            "artifact_ref": artifact_refs[0] if artifact_refs else None,
-        },
-        tags=[
-            tag
-            for tag in [
-                "tool_outcome",
-                f"tool_family:{tool_family}" if tool_family else "",
-                f"outcome:{outcome}",
-            ]
-            if tag
-        ],
+        content=_tool_outcome_content(
+            runner=runner,
+            state=state,
+            tool_name=normalized_tool_name,
+            tool_family=tool_family,
+            outcome=outcome,
+            error_code=error_code,
+            command=command,
+            args_signature=args_signature,
+            artifact_refs=artifact_refs,
+        ),
+        tags=_tool_outcome_tags(tool_family=tool_family, outcome=outcome),
         evidence_refs=artifact_refs or None,
-        confidence=confidence,
-        meta={
-            "source_kind": "tool_outcome",
-            "source_negative_outcome": outcome != "success",
-            "source_success_path": outcome == "success",
-            STATE_KEY_SOURCE_OUTCOME: outcome,
-            "source_tool_name": normalized_tool_name,
-            "source_tool_family": tool_family,
-            "source_args_signature": args_signature,
-            "source_command_id": command_id or None,
-        },
+        confidence=_tool_outcome_confidence(outcome),
+        meta=_tool_outcome_meta(
+            tool_name=normalized_tool_name,
+            tool_family=tool_family,
+            outcome=outcome,
+            args_signature=args_signature,
+            command_id=command_id,
+        ),
     )
     state.memory_candidates.append(candidate_id)
     module_state[_TOOL_OUTCOME_STAGED_COUNT_KEY] = staged_count + 1
@@ -267,6 +218,131 @@ def _stage_tool_outcome_candidate(
         staged_command_ids.add(command_id)
         module_state[_TOOL_OUTCOME_STAGED_COMMAND_IDS_KEY] = sorted(staged_command_ids)
     return candidate_id
+
+
+def _staged_tool_outcome(
+    *,
+    tool_name: str,
+    action_result: ActionResult | None,
+    forced_outcome: str | None,
+) -> str | None:
+    outcome = _tool_outcome_from_result(
+        action_result=action_result,
+        forced_outcome=forced_outcome,
+    )
+    if outcome is None:
+        return None
+    if not _tool_outcome_should_stage(tool_name=tool_name, outcome=outcome):
+        return None
+    return outcome
+
+
+def _tool_outcome_staged_command_ids(module_state: dict[str, Any]) -> set[str]:
+    return {
+        str(item).strip()
+        for item in list(module_state.get(_TOOL_OUTCOME_STAGED_COMMAND_IDS_KEY, []) or [])
+        if str(item).strip()
+    }
+
+
+def _tool_outcome_command_id(
+    *,
+    command: Command | None,
+    action_result: ActionResult | None,
+) -> str:
+    return str(
+        getattr(command, "command_id", "")
+        or getattr(action_result, "command_id", "")
+        or ""
+    ).strip()
+
+
+def _tool_outcome_already_staged(command_id: str, staged_command_ids: set[str]) -> bool:
+    return bool(command_id and command_id in staged_command_ids)
+
+
+def _tool_outcome_error_code(action_result: ActionResult | None) -> str:
+    return str(getattr(getattr(action_result, "error", None), "code", "") or "").strip()
+
+
+def _tool_outcome_artifact_refs(action_result: ActionResult | None) -> list[str]:
+    return [
+        str(getattr(ref, "ref", "") or "").strip()
+        for ref in list(getattr(action_result, "artifact_refs", []) or [])
+        if str(getattr(ref, "ref", "") or "").strip()
+    ]
+
+
+def _tool_outcome_title(*, tool_name: str, outcome: str, error_code: str) -> str:
+    return ":".join(
+        item for item in ["tool_outcome", tool_name, outcome, error_code or ""] if item
+    )
+
+
+def _tool_outcome_content(
+    *,
+    runner: "BrainRunner",
+    state: WorkingState,
+    tool_name: str,
+    tool_family: str,
+    outcome: str,
+    error_code: str,
+    command: Command | None,
+    args_signature: str | None,
+    artifact_refs: list[str],
+) -> dict[str, Any]:
+    return {
+        "tool_name": tool_name,
+        "tool_family": tool_family,
+        "outcome": outcome,
+        "error_code": error_code or None,
+        "turn_index": _tool_outcome_turn_index(runner, state=state),
+        "intent_id": _tool_outcome_intent_id(command),
+        "args_signature": args_signature,
+        "artifact_ref": artifact_refs[0] if artifact_refs else None,
+    }
+
+
+def _tool_outcome_intent_id(command: Command | None) -> object:
+    if command is None:
+        return None
+    return list(getattr(command, "sub_intent_ids", []) or [None])[0]
+
+
+def _tool_outcome_tags(*, tool_family: str, outcome: str) -> list[str]:
+    return [
+        tag
+        for tag in [
+            "tool_outcome",
+            f"tool_family:{tool_family}" if tool_family else "",
+            f"outcome:{outcome}",
+        ]
+        if tag
+    ]
+
+
+def _tool_outcome_confidence(outcome: str) -> float:
+    return 0.7 if outcome == "success" else 0.4
+
+
+def _tool_outcome_meta(
+    *,
+    tool_name: str,
+    tool_family: str,
+    outcome: str,
+    args_signature: str | None,
+    command_id: str,
+) -> dict[str, Any]:
+    return {
+        "source_kind": "tool_outcome",
+        "source_negative_outcome": outcome != "success",
+        "source_success_path": outcome == "success",
+        STATE_KEY_SOURCE_OUTCOME: outcome,
+        "source_tool_name": tool_name,
+        "source_tool_family": tool_family,
+        "source_args_signature": args_signature,
+        "source_command_id": command_id or None,
+    }
 
 
 def _tool_api_unavailable_result(*, command_id: str) -> ActionResult:
@@ -350,125 +426,220 @@ def _validation_failed_result(
     )
 
 
-def prepare_tool_dispatch(
+def _prepare_outcome(
+    *,
+    command: Command,
+    original_command: Command,
+    tool_name: str,
+    disposition: str,
+    action_result: ActionResult,
+) -> PrepareOutcome:
+    return PrepareOutcome(
+        approved_command=command,
+        original_command=original_command,
+        command_id=command.command_id,
+        tool_name=tool_name,
+        disposition=disposition,
+        action_result=action_result,
+    )
+
+
+def _remembered_prepare_outcome(
     runner: "BrainRunner",
     *,
     state: WorkingState,
     command: Command,
     original_command: Command,
-    logger: CanonicalEventLogger,
-) -> PreparedToolDispatch | PrepareOutcome:
-    activate_skill_for_command(state, command)
-    global_permission_mode = canonical_permission_mode(
-        str(getattr(state, "permission_mode", "default"))
+    tool_name: str,
+    disposition: str,
+    action_result: ActionResult,
+) -> PrepareOutcome:
+    runner._remember_idempotency(state=state, command=command, result=action_result)
+    return _prepare_outcome(
+        command=command,
+        original_command=original_command,
+        tool_name=tool_name,
+        disposition=disposition,
+        action_result=action_result,
     )
-    state.permission_mode = global_permission_mode
 
+
+def _normalized_tool_command(command: Command) -> tuple[Command, str]:
     tool_name = str(getattr(command, "tool_name", "") or "").strip()
     normalized_tool_name = normalize_tool_name_for_brain(tool_name) or tool_name
     if normalized_tool_name and normalized_tool_name != tool_name:
-        command = command.model_copy(
-            update={"tool_name": normalized_tool_name},
-            deep=True,
-        )
+        command = command.model_copy(update={"tool_name": normalized_tool_name}, deep=True)
         tool_name = normalized_tool_name
-    permission_mode = effective_permission_mode_for_tool(
-        global_mode=global_permission_mode,
-        permission_overrides=getattr(state, "permission_overrides", {}),
-        tool_name=tool_name,
-    )
-    requested_outcome = str(
-        getattr(getattr(state, "request_readiness", None), "requested_outcome", "")
-        or ""
-    ).strip()
-    if not request_outcome_allows_tool(
-        requested_outcome=requested_outcome,
-        tool_name=tool_name,
-    ):
-        result = _request_outcome_blocked_result(
-            command_id=command.command_id,
-            tool_name=tool_name,
-            requested_outcome=requested_outcome,
-        )
-        runner._remember_idempotency(state=state, command=command, result=result)
-        return PrepareOutcome(
-            approved_command=command,
-            original_command=original_command,
-            command_id=command.command_id,
-            tool_name=tool_name,
-            disposition="request_outcome_blocked",
-            action_result=result,
-        )
-    if permission_mode == "readonly" and is_tool_blocked_by_readonly(tool_name):
-        result = _readonly_blocked_result(
-            command_id=command.command_id,
-            tool_name=tool_name,
-        )
-        runner._remember_idempotency(state=state, command=command, result=result)
-        return PrepareOutcome(
-            approved_command=command,
-            original_command=original_command,
-            command_id=command.command_id,
-            tool_name=tool_name,
-            disposition="readonly_blocked",
-            action_result=result,
-        )
+    return command, tool_name
 
-    lineage = _command_lineage_payload(state=state, command=command)
-    if state.budgets_remaining.tool_calls <= 0:
-        return PrepareOutcome(
-            approved_command=command,
-            original_command=original_command,
-            command_id=command.command_id,
-            tool_name=tool_name,
-            disposition="budget_exhausted",
-            action_result=runner._budget_blocked_result(
-                command_id=command.command_id,
-                budget_name="tool_calls",
-            ),
-        )
+
+def _requested_outcome(state: WorkingState) -> str:
+    readiness = getattr(state, "request_readiness", None)
+    return str(getattr(readiness, "requested_outcome", "") or "").strip()
+
+
+def _request_outcome_block(
+    runner: "BrainRunner",
+    *,
+    state: WorkingState,
+    command: Command,
+    original_command: Command,
+    tool_name: str,
+    requested_outcome: str,
+) -> PrepareOutcome:
+    result = _request_outcome_blocked_result(
+        command_id=command.command_id,
+        tool_name=tool_name,
+        requested_outcome=requested_outcome,
+    )
+    return _remembered_prepare_outcome(
+        runner,
+        state=state,
+        command=command,
+        original_command=original_command,
+        tool_name=tool_name,
+        disposition="request_outcome_blocked",
+        action_result=result,
+    )
+
+
+def _readonly_block(
+    runner: "BrainRunner",
+    *,
+    state: WorkingState,
+    command: Command,
+    original_command: Command,
+    tool_name: str,
+) -> PrepareOutcome:
+    result = _readonly_blocked_result(command_id=command.command_id, tool_name=tool_name)
+    return _remembered_prepare_outcome(
+        runner,
+        state=state,
+        command=command,
+        original_command=original_command,
+        tool_name=tool_name,
+        disposition="readonly_blocked",
+        action_result=result,
+    )
+
+
+def _prepare_blocking_outcome(
+    runner: "BrainRunner",
+    *,
+    command: Command,
+    original_command: Command,
+    tool_name: str,
+) -> PrepareOutcome | None:
+    if command.kind != BRAIN_COMMAND_KIND_TOOL:
+        return None
     if runner.tool_api is None:
-        return PrepareOutcome(
-            approved_command=command,
+        return _prepare_outcome(
+            command=command,
             original_command=original_command,
-            command_id=command.command_id,
             tool_name=tool_name,
             disposition="tool_api_unavailable",
             action_result=_tool_api_unavailable_result(command_id=command.command_id),
         )
+    return None
 
-    state.budgets_remaining.tool_calls -= 1
-    sanitized_args, removed_arg_keys = sanitize_tool_command_args(
-        runner, command=command
+
+def _budget_exhausted_outcome(
+    runner: "BrainRunner",
+    *,
+    command: Command,
+    original_command: Command,
+    tool_name: str,
+) -> PrepareOutcome:
+    return _prepare_outcome(
+        command=command,
+        original_command=original_command,
+        tool_name=tool_name,
+        disposition="budget_exhausted",
+        action_result=runner._budget_blocked_result(
+            command_id=command.command_id,
+            budget_name="tool_calls",
+        ),
     )
-    if removed_arg_keys:
-        logger.emit(
-            "tool.args_sanitized",
-            {
-                "tool_name": tool_name,
-                "removed_keys": list(removed_arg_keys),
-                "retained_keys": sorted(sanitized_args.keys()),
-                **lineage,
-            },
-            trace_id=state.trace_id,
-        )
 
-    validation_result = runner._validate_tool_args(command=command, state=state)
-    if validation_result is not None:
-        result = _validation_failed_result(
-            command_id=command.command_id,
-            validation_result=validation_result,
-        )
-        runner._remember_idempotency(state=state, command=command, result=result)
-        return PrepareOutcome(
-            approved_command=command,
-            original_command=original_command,
-            command_id=command.command_id,
+
+def _emit_sanitized_tool_args(
+    *,
+    logger: CanonicalEventLogger,
+    state: WorkingState,
+    tool_name: str,
+    sanitized_args: dict[str, Any],
+    removed_arg_keys: list[str],
+    lineage: dict[str, Any],
+) -> None:
+    if not removed_arg_keys:
+        return
+    logger.emit(
+        "tool.args_sanitized",
+        {
+            "tool_name": tool_name,
+            "removed_keys": list(removed_arg_keys),
+            "retained_keys": sorted(sanitized_args.keys()),
+            **lineage,
+        },
+        trace_id=state.trace_id,
+    )
+
+
+def _validation_failed_outcome(
+    runner: "BrainRunner",
+    *,
+    state: WorkingState,
+    command: Command,
+    original_command: Command,
+    tool_name: str,
+    validation_result: dict[str, Any] | None,
+) -> PrepareOutcome | None:
+    if validation_result is None:
+        return None
+    result = _validation_failed_result(
+        command_id=command.command_id,
+        validation_result=validation_result,
+    )
+    return _remembered_prepare_outcome(
+        runner,
+        state=state,
+        command=command,
+        original_command=original_command,
+        tool_name=tool_name,
+        disposition="validation_failed",
+        action_result=result,
+    )
+
+
+def _emit_tool_started_progress(
+    runner: "BrainRunner",
+    *,
+    command: Command,
+    tool_name: str,
+) -> None:
+    emit_tool_progress = getattr(runner, "_emit_tool_progress_event", None)
+    if not callable(emit_tool_progress):
+        return
+    try:
+        emit_tool_progress(
+            kind="tool_started",
             tool_name=tool_name,
-            disposition="validation_failed",
-            action_result=result,
+            args=dict(getattr(command, "args", {}) or {}),
+            call_id=str(getattr(command, "command_id", "") or ""),
         )
+    except Exception:
+        pass
 
+
+def _emit_tool_dispatch_start(
+    runner: "BrainRunner",
+    *,
+    state: WorkingState,
+    command: Command,
+    tool_name: str,
+    logger: CanonicalEventLogger,
+    lineage: dict[str, Any],
+) -> None:
     logger.emit(
         "tool.request",
         {
@@ -483,22 +654,9 @@ def prepare_tool_dispatch(
         session_id=state.session_id,
         turn_id=str(state.trace_id or "").strip(),
         operation="tool_loop",
-        extra={
-            "provider": "tool",
-            "tool_name": tool_name,
-        },
+        extra={"provider": "tool", "tool_name": tool_name},
     )
-    _emit_tool_progress = getattr(runner, "_emit_tool_progress_event", None)
-    if callable(_emit_tool_progress):
-        try:
-            _emit_tool_progress(
-                kind="tool_started",
-                tool_name=tool_name,
-                args=dict(getattr(command, "args", {}) or {}),
-                call_id=str(getattr(command, "command_id", "") or ""),
-            )
-        except Exception:
-            pass
+    _emit_tool_started_progress(runner, command=command, tool_name=tool_name)
     logger.emit(
         "skill.step",
         {
@@ -509,6 +667,14 @@ def prepare_tool_dispatch(
         trace_id=state.trace_id,
     )
 
+
+def _tool_dispatch_payload(
+    *,
+    command: Command,
+    state: WorkingState,
+    lineage: dict[str, Any],
+    permission_mode: str,
+) -> dict[str, Any]:
     payload = command.model_dump(mode="json")
     payload_meta = payload.get("meta")
     if not isinstance(payload_meta, dict):
@@ -516,15 +682,26 @@ def prepare_tool_dispatch(
     payload_meta["orchestration"] = dict(lineage)
     payload["meta"] = payload_meta
     inputs = payload.get("inputs")
-    if isinstance(inputs, dict):
-        inputs.setdefault("permission_mode", permission_mode)
-    else:
-        inputs = {"permission_mode": permission_mode}
+    if not isinstance(inputs, dict):
+        inputs = {}
         payload["inputs"] = inputs
-    if _watch_background_write_authorized(state) and isinstance(inputs, dict):
+    inputs.setdefault("permission_mode", permission_mode)
+    if _watch_background_write_authorized(state):
         inputs["background_write_authorized"] = True
         inputs["background_write_authorization_source"] = _WATCH_STATE_KEY
+    return payload
 
+
+def _prepared_tool_dispatch(
+    *,
+    command: Command,
+    original_command: Command,
+    state: WorkingState,
+    tool_name: str,
+    lineage: dict[str, Any],
+    permission_mode: str,
+    payload: dict[str, Any],
+) -> PreparedToolDispatch:
     return PreparedToolDispatch(
         approved_command=command,
         original_command=original_command,
@@ -534,6 +711,136 @@ def prepare_tool_dispatch(
         session_id=state.session_id,
         trace_id=str(state.trace_id or ""),
         agent_id=str(getattr(state, "agent_id", "") or ""),
+        lineage=lineage,
+        permission_mode=permission_mode,
+        payload=payload,
+    )
+
+
+def _tool_dispatch_preflight(
+    runner: "BrainRunner",
+    *,
+    state: WorkingState,
+    command: Command,
+    original_command: Command,
+) -> tuple[Command, str, str, dict[str, Any], PrepareOutcome | None]:
+    global_permission_mode = canonical_permission_mode(
+        str(getattr(state, "permission_mode", "default"))
+    )
+    state.permission_mode = global_permission_mode
+
+    command, tool_name = _normalized_tool_command(command)
+    permission_mode = effective_permission_mode_for_tool(
+        global_mode=global_permission_mode,
+        permission_overrides=getattr(state, "permission_overrides", {}),
+        tool_name=tool_name,
+    )
+    requested_outcome = _requested_outcome(state)
+    if not request_outcome_allows_tool(
+        requested_outcome=requested_outcome,
+        tool_name=tool_name,
+    ):
+        outcome = _request_outcome_block(
+            runner,
+            state=state,
+            command=command,
+            original_command=original_command,
+            tool_name=tool_name,
+            requested_outcome=requested_outcome,
+        )
+        return command, tool_name, permission_mode, {}, outcome
+    if permission_mode == "readonly" and is_tool_blocked_by_readonly(tool_name):
+        outcome = _readonly_block(
+            runner,
+            state=state,
+            command=command,
+            original_command=original_command,
+            tool_name=tool_name,
+        )
+        return command, tool_name, permission_mode, {}, outcome
+
+    lineage = _command_lineage_payload(state=state, command=command)
+    if state.budgets_remaining.tool_calls <= 0:
+        outcome = _budget_exhausted_outcome(
+            runner,
+            command=command,
+            original_command=original_command,
+            tool_name=tool_name,
+        )
+        return command, tool_name, permission_mode, lineage, outcome
+    outcome = _prepare_blocking_outcome(
+        runner,
+        command=command,
+        original_command=original_command,
+        tool_name=tool_name,
+    )
+    return command, tool_name, permission_mode, lineage, outcome
+
+
+def prepare_tool_dispatch(
+    runner: "BrainRunner",
+    *,
+    state: WorkingState,
+    command: Command,
+    original_command: Command,
+    logger: CanonicalEventLogger,
+) -> PreparedToolDispatch | PrepareOutcome:
+    activate_skill_for_command(state, command)
+    command, tool_name, permission_mode, lineage, blocking_outcome = (
+        _tool_dispatch_preflight(
+            runner,
+            state=state,
+            command=command,
+            original_command=original_command,
+        )
+    )
+    if blocking_outcome is not None:
+        return blocking_outcome
+
+    state.budgets_remaining.tool_calls -= 1
+    sanitized_args, removed_arg_keys = sanitize_tool_command_args(
+        runner, command=command
+    )
+    _emit_sanitized_tool_args(
+        logger=logger,
+        state=state,
+        tool_name=tool_name,
+        sanitized_args=sanitized_args,
+        removed_arg_keys=removed_arg_keys,
+        lineage=lineage,
+    )
+
+    failed_outcome = _validation_failed_outcome(
+        runner,
+        state=state,
+        command=command,
+        original_command=original_command,
+        tool_name=tool_name,
+        validation_result=runner._validate_tool_args(command=command, state=state),
+    )
+    if failed_outcome is not None:
+        return failed_outcome
+
+    _emit_tool_dispatch_start(
+        runner,
+        state=state,
+        command=command,
+        tool_name=tool_name,
+        logger=logger,
+        lineage=lineage,
+    )
+    payload = _tool_dispatch_payload(
+        command=command,
+        state=state,
+        lineage=lineage,
+        permission_mode=permission_mode,
+    )
+
+    return _prepared_tool_dispatch(
+        command=command,
+        original_command=original_command,
+        state=state,
+        tool_name=tool_name,
         lineage=lineage,
         permission_mode=permission_mode,
         payload=payload,
@@ -639,101 +946,6 @@ def finalize_tool_result(
         job=job,
     )
 
-
-def _spec_like_payload(entry: Any) -> dict[str, Any] | None:
-    if isinstance(entry, dict):
-        return dict(entry)
-    name = str(getattr(entry, "name", "") or "").strip()
-    parameters = getattr(entry, "parameters", None)
-    if not name:
-        return None
-    return {
-        "name": name,
-        "parameters": dict(parameters) if isinstance(parameters, dict) else parameters,
-    }
-
-
-def _parameter_keys_from_spec_payload(spec_payload: dict[str, Any] | None) -> set[str]:
-    if not isinstance(spec_payload, dict):
-        return set()
-    raw_parameters = spec_payload.get("parameters")
-    if not isinstance(raw_parameters, dict) or not raw_parameters:
-        return set()
-    properties = raw_parameters.get("properties")
-    if isinstance(properties, dict) and properties:
-        return {str(key).strip() for key in properties.keys() if str(key or "").strip()}
-    if any(key in raw_parameters for key in _JSON_SCHEMA_TOP_LEVEL_KEYS):
-        return set()
-    return {str(key).strip() for key in raw_parameters.keys() if str(key or "").strip()}
-
-
-def resolve_tool_spec_payload(
-    runner: "BrainRunner",
-    *,
-    tool_name: str,
-) -> dict[str, Any] | None:
-    normalized_name = normalize_tool_name_for_brain(tool_name)
-    candidate_names = [
-        item
-        for item in [str(tool_name or "").strip(), str(normalized_name or "").strip()]
-        if item
-    ]
-    tool_api = getattr(runner, "tool_api", None)
-    list_tools = getattr(tool_api, "list_tools", None)
-    if callable(list_tools):
-        try:
-            for entry in list(list_tools() or []):
-                payload = _spec_like_payload(entry)
-                if payload is None:
-                    continue
-                if str(payload.get("name", "") or "").strip() in candidate_names:
-                    return payload
-        except Exception:
-            pass
-    registry = getattr(tool_api, "registry", None)
-    getter = getattr(registry, "get", None)
-    if callable(getter):
-        for candidate in candidate_names:
-            try:
-                payload = _spec_like_payload(getter(candidate))
-            except Exception:
-                payload = None
-            if payload is not None:
-                return payload
-    tools_dict = getattr(registry, "_tools", None)
-    if isinstance(tools_dict, dict):
-        for candidate in candidate_names:
-            payload = _spec_like_payload(tools_dict.get(candidate))
-            if payload is not None:
-                return payload
-    return None
-
-
-def sanitize_tool_command_args(
-    runner: "BrainRunner",
-    *,
-    command: Command,
-) -> tuple[dict[str, Any], list[str]]:
-    if command.kind != BRAIN_COMMAND_KIND_TOOL:
-        return {}, []
-    existing_args = getattr(command, "args", {})
-    if not isinstance(existing_args, dict):
-        return {}, []
-    known_keys = _parameter_keys_from_spec_payload(
-        resolve_tool_spec_payload(
-            runner,
-            tool_name=str(getattr(command, "tool_name", "") or ""),
-        )
-    )
-    if not known_keys:
-        return dict(existing_args), []
-    sanitized = {
-        key: value for key, value in existing_args.items() if key in known_keys
-    }
-    removed = [str(key) for key in existing_args.keys() if key not in known_keys]
-    if removed:
-        command.args = dict(sanitized)
-    return dict(command.args), removed
 
 
 __all__ = [

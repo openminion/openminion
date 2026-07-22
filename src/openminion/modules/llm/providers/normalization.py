@@ -1,7 +1,8 @@
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from openminion.modules.llm.providers.base import (
     PROVIDER_RESPONSE_INTERFACE_VERSION,

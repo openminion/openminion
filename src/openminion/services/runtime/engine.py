@@ -47,7 +47,7 @@ class RuntimeContext:
     session_id: str
     run_id: str
     workspace_root: str
-    tool_caps: dict = field(default_factory=dict)
+    tool_caps: dict[str, Any] = field(default_factory=dict)
     task_id: str | None = None
     plan_id: str | None = None
     step_id: str | None = None
@@ -62,7 +62,7 @@ class PolicyDecision:
 
     outcome: str
     policy_request_id: str
-    constraints: dict = field(default_factory=dict)
+    constraints: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -84,7 +84,28 @@ class PolicyClient(Protocol):
 
 ConfirmHandler = Callable[[ToolCall, RuntimeContext, PolicyDecision], bool]
 
-_EventHook = Callable[[str, dict], None]
+_EventHook = Callable[[str, dict[str, Any]], None]
+
+
+def _blast_radius_tool_shape(tool_call: ToolCall) -> SimpleNamespace:
+    kind = str(getattr(tool_call, "kind", "") or "").strip().lower()
+    name = str(getattr(tool_call, "name", "") or "").strip()
+    if kind == "exec":
+        return SimpleNamespace(name=name or "exec", min_scope="POWER_USER", dangerous=True)
+    if kind in ("fs.write", "fs.delete"):
+        return SimpleNamespace(name=name or kind, min_scope="WRITE_SAFE", dangerous=True)
+    if kind == "net.fetch":
+        return SimpleNamespace(
+            name=name or "net.fetch",
+            min_scope="WRITE_SAFE",
+            dangerous=False,
+            blast_radius="remote_mutation",
+        )
+    return SimpleNamespace(
+        name=name or kind or "runtime_engine_tool",
+        min_scope="READ_ONLY",
+        dangerous=False,
+    )
 
 
 class RuntimeEngine:
@@ -132,37 +153,7 @@ class RuntimeEngine:
         )
         decision = self._policy.evaluate(tool_call, ctx)
 
-        if self._blast_radius_adapter is not None:
-            kind = str(getattr(tool_call, "kind", "") or "").strip().lower()
-            if kind == "exec":
-                spec_shape = SimpleNamespace(
-                    name=str(getattr(tool_call, "name", "") or "").strip() or "exec",
-                    min_scope="POWER_USER",
-                    dangerous=True,
-                )
-            elif kind in ("fs.write", "fs.delete"):
-                spec_shape = SimpleNamespace(
-                    name=str(getattr(tool_call, "name", "") or "").strip() or kind,
-                    min_scope="WRITE_SAFE",
-                    dangerous=True,
-                )
-            elif kind == "net.fetch":
-                spec_shape = SimpleNamespace(
-                    name=str(getattr(tool_call, "name", "") or "").strip()
-                    or "net.fetch",
-                    min_scope="WRITE_SAFE",
-                    dangerous=False,
-                    blast_radius="remote_mutation",
-                )
-            else:
-                spec_shape = SimpleNamespace(
-                    name=str(getattr(tool_call, "name", "") or "").strip()
-                    or kind
-                    or "runtime_engine_tool",
-                    min_scope="READ_ONLY",
-                    dangerous=False,
-                )
-            self._blast_radius_adapter.step(spec_shape)
+        self._record_blast_radius_step(tool_call)
 
         self._emit(
             "policy.decision.created",
@@ -181,36 +172,90 @@ class RuntimeEngine:
                 reason="policy_deny",
             )
 
-        if decision.outcome == RUNTIME_POLICY_OUTCOME_CONFIRM:
-            approved = self._on_confirm is not None and self._on_confirm(
-                tool_call, ctx, decision
-            )
-            if not approved:
-                if self._on_confirm is None:
-                    self._record_pending_approval(ctx=ctx, decision=decision)
-                return self._blocked_result(
-                    tool_call=tool_call,
-                    correlation=correlation,
-                    policy_request_id=decision.policy_request_id,
-                    reason="confirm_denied",
-                )
+        confirm_block = self._blocked_confirm_result(
+            tool_call=tool_call,
+            ctx=ctx,
+            decision=decision,
+            correlation=correlation,
+        )
+        if confirm_block is not None:
+            return confirm_block
 
-        sandbox = ExecutionSandboxSpec.build(
-            workspace_root=ctx.workspace_root,
-            tool_caps=ctx.tool_caps,
-            policy_constraints=decision.constraints
+        sandbox = self._sandbox_for_decision(
+            tool_call=tool_call,
+            ctx=ctx,
+            decision=decision,
+        )
+        exec_payload = {**correlation, "policy_request_id": decision.policy_request_id}
+        result = self._dispatch(tool_call, sandbox, exec_payload)
+
+        self._record_final_result(
+            tool_call=tool_call,
+            result=result,
+            correlation=correlation,
+        )
+        return result
+
+    def _record_blast_radius_step(self, tool_call: ToolCall) -> None:
+        if self._blast_radius_adapter is None:
+            return
+        self._blast_radius_adapter.step(_blast_radius_tool_shape(tool_call))
+
+    def _blocked_confirm_result(
+        self,
+        *,
+        tool_call: ToolCall,
+        ctx: RuntimeContext,
+        decision: PolicyDecision,
+        correlation: dict[str, str],
+    ) -> ToolExecutionResult | None:
+        if decision.outcome != RUNTIME_POLICY_OUTCOME_CONFIRM:
+            return None
+        approved = self._on_confirm is not None and self._on_confirm(
+            tool_call, ctx, decision
+        )
+        if approved:
+            return None
+        if self._on_confirm is None:
+            self._record_pending_approval(ctx=ctx, decision=decision)
+        return self._blocked_result(
+            tool_call=tool_call,
+            correlation=correlation,
+            policy_request_id=decision.policy_request_id,
+            reason="confirm_denied",
+        )
+
+    def _sandbox_for_decision(
+        self,
+        *,
+        tool_call: ToolCall,
+        ctx: RuntimeContext,
+        decision: PolicyDecision,
+    ) -> ExecutionSandboxSpec:
+        policy_constraints = (
+            decision.constraints
             if decision.outcome
             in (
                 RUNTIME_POLICY_OUTCOME_ALLOW_WITH_CONSTRAINTS,
                 RUNTIME_POLICY_OUTCOME_CONFIRM,
             )
-            else {},
+            else {}
+        )
+        sandbox = ExecutionSandboxSpec.build(
+            workspace_root=ctx.workspace_root,
+            tool_caps=ctx.tool_caps,
+            policy_constraints=policy_constraints,
         )
         sandbox.idempotency_key = tool_call.idempotency_key
+        return sandbox
 
-        exec_payload = {**correlation, "policy_request_id": decision.policy_request_id}
-        result = self._dispatch(tool_call, sandbox, exec_payload)
-
+    def _record_final_result(
+        self,
+        *,
+        tool_call: ToolCall,
+        result: ToolExecutionResult,
+        correlation: dict[str, str],
+    ) -> None:
         final_event = (
             "tool.call.blocked"
             if result.outcome
@@ -218,16 +263,13 @@ class RuntimeEngine:
             else "tool.call.completed"
         )
         self._emit(final_event, {**correlation, "outcome": result.outcome})
-
         if (
             tool_call.idempotency_key
             and result.outcome == RUNTIME_TOOL_OUTCOME_COMPLETED
         ):
             self._idempotency_cache[tool_call.idempotency_key] = result
 
-        return result
-
-    def _emit(self, event: str, payload: dict) -> None:
+    def _emit(self, event: str, payload: dict[str, Any]) -> None:
         if self._on_event:
             ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
             self._on_event(event, {"ts": ts, **payload})
@@ -325,59 +367,59 @@ class RuntimeEngine:
         self,
         tool_call: ToolCall,
         sandbox: ExecutionSandboxSpec,
-        audit_payload: dict,
+        audit_payload: dict[str, Any],
     ) -> ToolExecutionResult:
         try:
             if tool_call.kind == "exec":
                 assert isinstance(tool_call.spec, ExecSpec)
                 self._emit("runtime.exec.started", audit_payload)
-                raw = self._runner.run_exec(tool_call.spec, sandbox)
+                exec_result = self._runner.run_exec(tool_call.spec, sandbox)
                 self._emit(
                     "runtime.exec.completed",
                     {
                         **audit_payload,
-                        "returncode": raw.returncode,
-                        "timed_out": raw.timed_out,
+                        "returncode": exec_result.returncode,
+                        "timed_out": exec_result.timed_out,
                     },
                 )
                 return ToolExecutionResult(
                     tool_call_id=tool_call.tool_call_id,
                     outcome=RUNTIME_TOOL_OUTCOME_COMPLETED,
-                    result=raw,
+                    result=exec_result,
                 )
 
             if tool_call.kind == "fs.write":
                 assert isinstance(tool_call.spec, FsWriteSpec)
-                raw = self._runner.fs_write(tool_call.spec, sandbox)
+                write_result = self._runner.fs_write(tool_call.spec, sandbox)
                 self._emit(
                     "runtime.fs.write",
                     {
                         **audit_payload,
                         "path": tool_call.spec.path,
-                        "success": raw.success,
+                        "success": write_result.success,
                     },
                 )
                 return ToolExecutionResult(
                     tool_call_id=tool_call.tool_call_id,
                     outcome=RUNTIME_TOOL_OUTCOME_COMPLETED,
-                    result=raw,
+                    result=write_result,
                 )
 
             if tool_call.kind == "fs.delete":
                 assert isinstance(tool_call.spec, FsDeleteSpec)
-                raw = self._runner.fs_delete(tool_call.spec, sandbox)
+                delete_result = self._runner.fs_delete(tool_call.spec, sandbox)
                 self._emit(
                     "runtime.fs.delete",
                     {
                         **audit_payload,
                         "path": tool_call.spec.path,
-                        "success": raw.success,
+                        "success": delete_result.success,
                     },
                 )
                 return ToolExecutionResult(
                     tool_call_id=tool_call.tool_call_id,
                     outcome=RUNTIME_TOOL_OUTCOME_COMPLETED,
-                    result=raw,
+                    result=delete_result,
                 )
 
             if tool_call.kind == "net.fetch":
@@ -390,11 +432,11 @@ class RuntimeEngine:
                         "method": tool_call.spec.method,
                     },
                 )
-                raw = self._runner.net_fetch(tool_call.spec, sandbox)
+                fetch_result = self._runner.net_fetch(tool_call.spec, sandbox)
                 return ToolExecutionResult(
                     tool_call_id=tool_call.tool_call_id,
                     outcome=RUNTIME_TOOL_OUTCOME_COMPLETED,
-                    result=raw,
+                    result=fetch_result,
                 )
 
             return ToolExecutionResult(

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Sequence
+from collections.abc import Sequence
 
 from openminion.modules.memory.observability.span import MemorySpanRecord
 

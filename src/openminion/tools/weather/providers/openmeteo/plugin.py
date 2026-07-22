@@ -218,38 +218,14 @@ def _request_json(
             with urllib_request.urlopen(request, timeout=timeout_s) as response:
                 body = response.read().decode("utf-8", errors="replace")
         except urllib_error.HTTPError as exc:
-            status_code = int(exc.code)
-            body = ""
-            try:
-                body = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                body = ""
-
-            if status_code == 429:
-                raise ToolRuntimeError(
-                    "RATE_LIMITED",
-                    f"{service_name} rate limit exceeded",
-                    {
-                        "status_code": status_code,
-                        "url": request_url,
-                        "body": _truncate(body, 500),
-                    },
-                )
-            if (
-                status_code in WEATHER_OPENMETEO_RETRYABLE_STATUS_CODES
-                and attempt < retries
+            if _retry_openmeteo_http_error(
+                exc,
+                attempt=attempt,
+                retries=retries,
+                request_url=request_url,
+                service_name=service_name,
             ):
-                _sleep_before_retry(attempt=attempt)
                 continue
-            raise ToolRuntimeError(
-                "UPSTREAM_ERROR",
-                f"{service_name} request failed with status {status_code}",
-                {
-                    "status_code": status_code,
-                    "url": request_url,
-                    "body": _truncate(body, 500),
-                },
-            )
         except TimeoutError as exc:
             if attempt < retries:
                 _sleep_before_retry(attempt=attempt)
@@ -260,25 +236,15 @@ def _request_json(
                 {"timeout_s": timeout_s, "url": request_url},
             ) from exc
         except urllib_error.URLError as exc:
-            reason = getattr(exc, "reason", exc)
-            reason_text = str(reason)
-            is_timeout = (
-                isinstance(reason, TimeoutError) or "timed out" in reason_text.lower()
-            )
-            if attempt < retries:
-                _sleep_before_retry(attempt=attempt)
+            if _retry_openmeteo_url_error(
+                exc,
+                attempt=attempt,
+                retries=retries,
+                timeout_s=timeout_s,
+                request_url=request_url,
+                service_name=service_name,
+            ):
                 continue
-            if is_timeout:
-                raise ToolRuntimeError(
-                    "TIMEOUT",
-                    f"{service_name} request timed out after {timeout_s} second(s)",
-                    {"timeout_s": timeout_s, "url": request_url, "reason": reason_text},
-                ) from exc
-            raise ToolRuntimeError(
-                "UPSTREAM_ERROR",
-                f"{service_name} request failed",
-                {"url": request_url, "reason": reason_text},
-            ) from exc
 
         try:
             payload = json.loads(body)
@@ -305,6 +271,63 @@ def _request_json(
     raise ToolRuntimeError(
         "UPSTREAM_ERROR", f"{service_name} request failed after retries"
     )
+
+
+def _retry_openmeteo_http_error(
+    exc: urllib_error.HTTPError,
+    *,
+    attempt: int,
+    retries: int,
+    request_url: str,
+    service_name: str,
+) -> bool:
+    status_code = int(exc.code)
+    body = ""
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        body = ""
+    if status_code == 429:
+        raise ToolRuntimeError(
+            "RATE_LIMITED",
+            f"{service_name} rate limit exceeded",
+            {"status_code": status_code, "url": request_url, "body": _truncate(body, 500)},
+        ) from exc
+    if status_code in WEATHER_OPENMETEO_RETRYABLE_STATUS_CODES and attempt < retries:
+        _sleep_before_retry(attempt=attempt)
+        return True
+    raise ToolRuntimeError(
+        "UPSTREAM_ERROR",
+        f"{service_name} request failed with status {status_code}",
+        {"status_code": status_code, "url": request_url, "body": _truncate(body, 500)},
+    ) from exc
+
+
+def _retry_openmeteo_url_error(
+    exc: urllib_error.URLError,
+    *,
+    attempt: int,
+    retries: int,
+    timeout_s: float,
+    request_url: str,
+    service_name: str,
+) -> bool:
+    reason = getattr(exc, "reason", exc)
+    reason_text = str(reason)
+    if attempt < retries:
+        _sleep_before_retry(attempt=attempt)
+        return True
+    if isinstance(reason, TimeoutError) or "timed out" in reason_text.lower():
+        raise ToolRuntimeError(
+            "TIMEOUT",
+            f"{service_name} request timed out after {timeout_s} second(s)",
+            {"timeout_s": timeout_s, "url": request_url, "reason": reason_text},
+        ) from exc
+    raise ToolRuntimeError(
+        "UPSTREAM_ERROR",
+        f"{service_name} request failed",
+        {"url": request_url, "reason": reason_text},
+    ) from exc
 
 
 def _geocode(

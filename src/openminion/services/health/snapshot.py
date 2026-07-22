@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any
 
 from .lifecycle import (
     _build_supervision_component_snapshots,
@@ -12,14 +12,14 @@ from .types import HealthCheck, LifecycleFact
 
 def _build_normalized_health_snapshot(
     *,
-    checks: List[HealthCheck],
+    checks: list[HealthCheck],
     provider_name: str,
     default_channel: str,
     storage_path: str,
     observed_at: str,
-    lifecycle_facts: Dict[str, LifecycleFact],
-) -> Dict[str, Any]:
-    grouped_checks: Dict[str, List[HealthCheck]] = {}
+    lifecycle_facts: dict[str, LifecycleFact],
+) -> dict[str, Any]:
+    grouped_checks: dict[str, list[HealthCheck]] = {}
     for check in checks:
         group = _check_group(check.id)
         grouped_checks.setdefault(group, []).append(check)
@@ -67,7 +67,7 @@ def _merge_health_counts_with_supervision_components(
     ok_count: int,
     warn_count: int,
     fail_count: int,
-    normalized_health_snapshot: Dict[str, Any],
+    normalized_health_snapshot: dict[str, Any],
 ) -> tuple[int, int, int]:
     merged_ok = int(ok_count)
     merged_warn = int(warn_count)
@@ -90,13 +90,13 @@ def _merge_health_counts_with_supervision_components(
 def _build_group_snapshot(
     *,
     group: str,
-    group_checks: List[HealthCheck],
+    group_checks: list[HealthCheck],
     provider_name: str,
     default_channel: str,
     storage_path: str,
     observed_at: str,
-    lifecycle_facts: Dict[str, LifecycleFact],
-) -> Dict[str, Any]:
+    lifecycle_facts: dict[str, LifecycleFact],
+) -> dict[str, Any]:
     component = _component_identity_for_group(
         group=group,
         provider_name=provider_name,
@@ -160,7 +160,7 @@ def _component_identity_for_group(
     provider_name: str,
     default_channel: str,
     storage_path: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if group == "config":
         return {
             "component_kind": "runtime_manager",
@@ -210,7 +210,7 @@ def _component_identity_for_group(
     }
 
 
-def _aggregate_check_status(checks: List[HealthCheck]) -> str:
+def _aggregate_check_status(checks: list[HealthCheck]) -> str:
     if any(check.status == "fail" for check in checks):
         return "fail"
     if any(check.status == "warn" for check in checks):
@@ -220,7 +220,7 @@ def _aggregate_check_status(checks: List[HealthCheck]) -> str:
     return "unknown"
 
 
-def _rollup_health_state(states: List[str]) -> str:
+def _rollup_health_state(states: list[str]) -> str:
     if any(state == "failed" for state in states):
         return "failed"
     if any(state == "degraded" for state in states):

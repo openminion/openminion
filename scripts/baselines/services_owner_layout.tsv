@@ -3,7 +3,9 @@ scope	max_python_files	max_loc
 # bounded phase owners; see docs/trackers/wip/gateway-turn-flow-decomposition-tracker.md.
 # BPPD (2026-07-18) intentionally split services/brain/post_execution/postprocess.py
 # into bounded metadata, response, tool-result, policy, and clarify owners.
-services	204	37797
+# CUS (2026-07-20) intentionally wires the controlplane inbox worker into
+# shared runtime composition and channel supervision.
+services	204	37897
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

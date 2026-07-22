@@ -1,7 +1,8 @@
 """Config helpers for durable-memory backend selection below the MDCG seam."""
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from openminion.modules.memory.errors import InvalidArgumentError
 
