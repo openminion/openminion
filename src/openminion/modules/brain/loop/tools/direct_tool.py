@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from types import SimpleNamespace
+from collections.abc import Sequence
 from typing import Any
 
 from openminion.modules.llm.schemas import Message
@@ -426,103 +427,156 @@ def _clamp_direct_tool_batch_to_requested_call(
     ):
         return tool_calls
     if _direct_tool_turn_match_by_name_only(loop_state):
-        remaining_tool_names = _remaining_direct_tool_name_sequence(loop_state)
-        if not remaining_tool_names:
-            return tool_calls
-        requested_name = (
-            remaining_tool_names[0] if len(remaining_tool_names) == 1 else ""
-        )
-        if requested_name:
-            for tool_call in tool_calls:
-                if str(getattr(tool_call, "name", "") or "").strip() != requested_name:
-                    continue
-                loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
-                return [tool_call]
-        if remaining_tool_names:
-            matching: list[Any] = []
-            remaining_index = 0
-            for tool_call in tool_calls:
-                if remaining_index >= len(remaining_tool_names):
-                    break
-                tool_name = str(getattr(tool_call, "name", "") or "").strip()
-                if tool_name != remaining_tool_names[remaining_index]:
-                    if matching:
-                        break
-                    continue
-                matching.append(tool_call)
-                remaining_index += 1
-            if matching:
-                loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
-                return matching
-        loop_state.scratchpad["direct_tool_requested_batch_clamped_empty"] = True
-        return []
-    if len(requested_calls) == 1:
-        requested_call = requested_calls[0]
-        requested_name = str(getattr(requested_call, "name", "") or "").strip()
-        requested_inputs = _direct_tool_call_inputs(
-            getattr(requested_call, "inputs", None)
-        )
-        if _allow_homogeneous_batch_for_single_requested_call(
-            requested_call=requested_call,
-            tool_calls=tool_calls,
-        ):
-            loop_state.scratchpad["direct_tool_requested_batch_clamped"] = False
-            loop_state.scratchpad["direct_tool_requested_batch_expanded"] = True
-            return tool_calls
-        for tool_call in tool_calls:
-            if str(getattr(tool_call, "name", "") or "").strip() != requested_name:
-                continue
-            loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
-            requested_arguments = _direct_tool_call_arguments(
-                getattr(requested_call, "arguments", None)
-            )
-            return [
-                _direct_tool_call_with_requested_contract(
-                    tool_call=tool_call,
-                    requested_name=requested_name,
-                    requested_arguments=requested_arguments,
-                    requested_inputs=requested_inputs,
-                )
-            ]
-    if len(requested_calls) > 1:
-        clamped_calls: list[Any] = []
-        for tool_call in tool_calls:
-            executed_name = str(getattr(tool_call, "name", "") or "").strip()
-            executed_arguments = _direct_tool_call_arguments(
-                getattr(tool_call, "arguments", None)
-            )
-            for requested_call in requested_calls:
-                requested_name = str(getattr(requested_call, "name", "") or "").strip()
-                requested_arguments = _direct_tool_call_arguments(
-                    getattr(requested_call, "arguments", None)
-                )
-                if not _direct_tool_requested_call_matches(
-                    requested_name=requested_name,
-                    requested_arguments=requested_arguments,
-                    executed_name=executed_name,
-                    executed_arguments=executed_arguments,
-                ):
-                    continue
-                clamped_calls.append(
-                    _direct_tool_call_with_requested_contract(
-                        tool_call=tool_call,
-                        requested_name=requested_name,
-                        requested_arguments=requested_arguments,
-                        requested_inputs=_direct_tool_call_inputs(
-                            getattr(requested_call, "inputs", None)
-                        ),
-                    )
-                )
-                break
-        if clamped_calls:
-            loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
-            return clamped_calls
+        return _clamp_direct_tool_batch_by_name(loop_state, tool_calls)
+    clamped_calls = _clamp_direct_tool_batch_by_requested_calls(
+        loop_state,
+        tool_calls,
+        requested_calls=requested_calls,
+    )
+    if clamped_calls is not None:
+        return clamped_calls
     for tool_call in tool_calls:
         if semantic_batch_signature([tool_call]) != requested_batch_signature:
             continue
         loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
         return [tool_call]
     return tool_calls
+
+
+def _clamp_direct_tool_batch_by_name(
+    loop_state: AdaptiveToolLoopState,
+    tool_calls: list[Any],
+) -> list[Any]:
+    remaining_tool_names = _remaining_direct_tool_name_sequence(loop_state)
+    if not remaining_tool_names:
+        return tool_calls
+    requested_name = remaining_tool_names[0] if len(remaining_tool_names) == 1 else ""
+    if requested_name:
+        for tool_call in tool_calls:
+            if str(getattr(tool_call, "name", "") or "").strip() != requested_name:
+                continue
+            loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
+            return [tool_call]
+    matching = _matching_direct_tool_name_sequence(tool_calls, remaining_tool_names)
+    if matching:
+        loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
+        return matching
+    loop_state.scratchpad["direct_tool_requested_batch_clamped_empty"] = True
+    return []
+
+
+def _matching_direct_tool_name_sequence(
+    tool_calls: list[Any],
+    remaining_tool_names: Sequence[str],
+) -> list[Any]:
+    matching: list[Any] = []
+    remaining_index = 0
+    for tool_call in tool_calls:
+        if remaining_index >= len(remaining_tool_names):
+            break
+        tool_name = str(getattr(tool_call, "name", "") or "").strip()
+        if tool_name != remaining_tool_names[remaining_index]:
+            if matching:
+                break
+            continue
+        matching.append(tool_call)
+        remaining_index += 1
+    return matching
+
+
+def _clamp_direct_tool_batch_by_requested_calls(
+    loop_state: AdaptiveToolLoopState,
+    tool_calls: list[Any],
+    *,
+    requested_calls: Sequence[Any],
+) -> list[Any] | None:
+    if len(requested_calls) == 1:
+        return _clamp_single_requested_direct_tool_call(
+            loop_state,
+            tool_calls,
+            requested_call=requested_calls[0],
+        )
+    if len(requested_calls) > 1:
+        clamped_calls = _clamp_multiple_requested_direct_tool_calls(
+            tool_calls,
+            requested_calls=requested_calls,
+        )
+        if clamped_calls:
+            loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
+            return clamped_calls
+    return None
+
+
+def _clamp_single_requested_direct_tool_call(
+    loop_state: AdaptiveToolLoopState,
+    tool_calls: list[Any],
+    *,
+    requested_call: Any,
+) -> list[Any] | None:
+    requested_name = str(getattr(requested_call, "name", "") or "").strip()
+    requested_inputs = _direct_tool_call_inputs(getattr(requested_call, "inputs", None))
+    if _allow_homogeneous_batch_for_single_requested_call(
+        requested_call=requested_call,
+        tool_calls=tool_calls,
+    ):
+        loop_state.scratchpad["direct_tool_requested_batch_clamped"] = False
+        loop_state.scratchpad["direct_tool_requested_batch_expanded"] = True
+        return tool_calls
+    for tool_call in tool_calls:
+        if str(getattr(tool_call, "name", "") or "").strip() != requested_name:
+            continue
+        loop_state.scratchpad["direct_tool_requested_batch_clamped"] = True
+        return [
+            _direct_tool_call_with_requested_contract(
+                tool_call=tool_call,
+                requested_name=requested_name,
+                requested_arguments=_direct_tool_call_arguments(
+                    getattr(requested_call, "arguments", None)
+                ),
+                requested_inputs=requested_inputs,
+            )
+        ]
+    return None
+
+
+def _clamp_multiple_requested_direct_tool_calls(
+    tool_calls: list[Any],
+    *,
+    requested_calls: Sequence[Any],
+) -> list[Any]:
+    clamped_calls: list[Any] = []
+    for tool_call in tool_calls:
+        match = _matched_requested_direct_tool_call(tool_call, requested_calls)
+        if match is not None:
+            clamped_calls.append(match)
+    return clamped_calls
+
+
+def _matched_requested_direct_tool_call(
+    tool_call: Any,
+    requested_calls: Sequence[Any],
+) -> Any | None:
+    executed_name = str(getattr(tool_call, "name", "") or "").strip()
+    executed_arguments = _direct_tool_call_arguments(getattr(tool_call, "arguments", None))
+    for requested_call in requested_calls:
+        requested_name = str(getattr(requested_call, "name", "") or "").strip()
+        requested_arguments = _direct_tool_call_arguments(
+            getattr(requested_call, "arguments", None)
+        )
+        if not _direct_tool_requested_call_matches(
+            requested_name=requested_name,
+            requested_arguments=requested_arguments,
+            executed_name=executed_name,
+            executed_arguments=executed_arguments,
+        ):
+            continue
+        return _direct_tool_call_with_requested_contract(
+            tool_call=tool_call,
+            requested_name=requested_name,
+            requested_arguments=requested_arguments,
+            requested_inputs=_direct_tool_call_inputs(getattr(requested_call, "inputs", None)),
+        )
+    return None
 
 
 def _force_direct_tool_answer_only_closure(

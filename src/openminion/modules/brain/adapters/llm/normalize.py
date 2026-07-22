@@ -233,68 +233,12 @@ def _normalize_agent_command_payload(
         normalized["kind"] = "agent"
         normalized_fields.append(f"{field_prefix}.kind")
 
-    if "arguments" in normalized and "params" not in normalized:
-        arguments = normalized.get("arguments")
-        if isinstance(arguments, dict):
-            normalized["params"] = copy.deepcopy(arguments)
-            normalized.pop("arguments", None)
-            normalized_fields.extend(
-                [f"{field_prefix}.params", f"{field_prefix}.arguments_removed"]
-            )
-
-    if "args" in normalized:
-        args = normalized.get("args")
-        if "params" not in normalized and isinstance(args, dict):
-            normalized["params"] = copy.deepcopy(args)
-            normalized.pop("args", None)
-            normalized_fields.extend(
-                [f"{field_prefix}.params", f"{field_prefix}.args_removed"]
-            )
-        elif normalized.get("params") == args:
-            normalized.pop("args", None)
-            normalized_fields.append(f"{field_prefix}.args_removed")
-        else:
-            conflicts.append(f"{field_prefix}.args_conflict")
-
-    if "inputs" in normalized:
-        inputs = normalized.get("inputs")
-        if "params" not in normalized and isinstance(inputs, dict):
-            normalized["params"] = copy.deepcopy(inputs)
-            normalized.pop("inputs", None)
-            normalized_fields.extend(
-                [f"{field_prefix}.params", f"{field_prefix}.inputs_removed"]
-            )
-        elif (
-            _is_empty_command_args(normalized.get("params"))
-            and isinstance(inputs, dict)
-            and inputs
-        ):
-            normalized["params"] = copy.deepcopy(inputs)
-            normalized.pop("inputs", None)
-            normalized_fields.extend(
-                [
-                    f"{field_prefix}.params",
-                    f"{field_prefix}.inputs_replaced_empty_params",
-                ]
-            )
-        elif normalized.get("params") == inputs:
-            normalized.pop("inputs", None)
-            normalized_fields.append(f"{field_prefix}.inputs_removed")
-        elif isinstance(inputs, dict) and isinstance(normalized.get("params"), dict):
-            merged = {
-                **copy.deepcopy(inputs),
-                **copy.deepcopy(normalized.get("params", {})),
-            }
-            normalized["params"] = merged
-            normalized.pop("inputs", None)
-            normalized_fields.extend(
-                [
-                    f"{field_prefix}.params",
-                    f"{field_prefix}.inputs_merged_into_params",
-                ]
-            )
-        else:
-            conflicts.append(f"{field_prefix}.inputs_conflict")
+    _normalize_agent_command_arg_aliases(
+        normalized,
+        field_prefix=field_prefix,
+        normalized_fields=normalized_fields,
+        conflicts=conflicts,
+    )
 
     params_value = normalized.get("params")
     if isinstance(params_value, dict):
@@ -319,6 +263,69 @@ def _normalize_agent_command_payload(
         normalized_fields.append(f"{field_prefix}.title")
 
     return normalized, normalized_fields, conflicts
+
+
+def _normalize_agent_command_arg_aliases(
+    normalized: dict[str, Any],
+    *,
+    field_prefix: str,
+    normalized_fields: list[str],
+    conflicts: list[str],
+) -> None:
+    if "arguments" in normalized and "params" not in normalized:
+        arguments = normalized.get("arguments")
+        if isinstance(arguments, dict):
+            normalized["params"] = copy.deepcopy(arguments)
+            normalized.pop("arguments", None)
+            normalized_fields.extend(
+                [f"{field_prefix}.params", f"{field_prefix}.arguments_removed"]
+            )
+
+    if "args" in normalized:
+        args = normalized.get("args")
+        if "params" not in normalized and isinstance(args, dict):
+            normalized["params"] = copy.deepcopy(args)
+            normalized.pop("args", None)
+            normalized_fields.extend(
+                [f"{field_prefix}.params", f"{field_prefix}.args_removed"]
+            )
+        elif normalized.get("params") == args:
+            normalized.pop("args", None)
+            normalized_fields.append(f"{field_prefix}.args_removed")
+        else:
+            conflicts.append(f"{field_prefix}.args_conflict")
+
+    if "inputs" not in normalized:
+        return
+    inputs = normalized.get("inputs")
+    if "params" not in normalized and isinstance(inputs, dict):
+        normalized["params"] = copy.deepcopy(inputs)
+        normalized.pop("inputs", None)
+        normalized_fields.extend(
+            [f"{field_prefix}.params", f"{field_prefix}.inputs_removed"]
+        )
+    elif (
+        _is_empty_command_args(normalized.get("params"))
+        and isinstance(inputs, dict)
+        and inputs
+    ):
+        normalized["params"] = copy.deepcopy(inputs)
+        normalized.pop("inputs", None)
+        normalized_fields.extend(
+            [f"{field_prefix}.params", f"{field_prefix}.inputs_replaced_empty_params"]
+        )
+    elif normalized.get("params") == inputs:
+        normalized.pop("inputs", None)
+        normalized_fields.append(f"{field_prefix}.inputs_removed")
+    elif isinstance(inputs, dict) and isinstance(normalized.get("params"), dict):
+        merged = {**copy.deepcopy(inputs), **copy.deepcopy(normalized.get("params", {}))}
+        normalized["params"] = merged
+        normalized.pop("inputs", None)
+        normalized_fields.extend(
+            [f"{field_prefix}.params", f"{field_prefix}.inputs_merged_into_params"]
+        )
+    else:
+        conflicts.append(f"{field_prefix}.inputs_conflict")
 
 
 def _normalize_decision_subtasks_payload(

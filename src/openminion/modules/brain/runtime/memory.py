@@ -76,6 +76,240 @@ def _success_memory_config(runner: "BrainRunner") -> Any:
     return getattr(getattr(runner, "options", None), "success_memory_config", None)
 
 
+def _memory_unavailable_result() -> dict[str, Any]:
+    return {
+        "candidate_ids": [],
+        "skipped_items": [
+            {
+                "reason": "memory_api_unavailable",
+                "title": "",
+            }
+        ],
+    }
+
+
+def _success_memory_limits(config: Any) -> tuple[int, float, bool, bool]:
+    return (
+        max(1, int(getattr(config, "max_items_per_turn", 3) or 3)),
+        float(getattr(config, "min_item_confidence", 0.7) or 0.7),
+        bool(getattr(config, "procedure_enabled", True)),
+        bool(getattr(config, "tool_habit_enabled", True)),
+    )
+
+
+def _skip_success_memory_item(
+    item: Any,
+    *,
+    staged_items: int,
+    max_items: int,
+    min_confidence: float,
+    procedure_enabled: bool,
+    tool_habit_enabled: bool,
+) -> dict[str, Any] | None:
+    if staged_items >= max_items:
+        return {
+            "kind": item.kind,
+            "title": item.title,
+            "reason": "max_items_reached",
+        }
+    if float(item.confidence) < min_confidence:
+        return {
+            "kind": item.kind,
+            "title": item.title,
+            "reason": "below_min_confidence",
+            "confidence": float(item.confidence),
+        }
+    if item.kind == "procedure" and not procedure_enabled:
+        return {
+            "kind": item.kind,
+            "title": item.title,
+            "reason": "procedure_disabled",
+        }
+    if item.kind == "tool_habit" and not tool_habit_enabled:
+        return {
+            "kind": item.kind,
+            "title": item.title,
+            "reason": "tool_habit_disabled",
+        }
+    return None
+
+
+def _success_memory_tags(item: Any) -> list[str]:
+    tags = list(item.tags or [])
+    if "success_path" not in tags:
+        tags.append("success_path")
+    return tags
+
+
+def _success_memory_rationale(
+    item: Any,
+    *,
+    base_meta: Mapping[str, Any],
+) -> str:
+    return (
+        str(getattr(item, "rationale", "") or "").strip()
+        or str(base_meta.get("source_thinking_rationale", "") or "").strip()
+    )
+
+
+def _success_memory_meta(
+    item: Any,
+    *,
+    base_meta: Mapping[str, Any],
+    rationale: str,
+) -> dict[str, Any]:
+    meta = dict(base_meta)
+    meta.update(
+        {
+            "source_kind": item.kind,
+            "source_success_path": True,
+        }
+    )
+    if rationale:
+        meta["rationale"] = rationale
+    return meta
+
+
+def _success_memory_content(item: Any, *, rationale: str) -> Any:
+    if not rationale or not isinstance(item.content, Mapping):
+        return item.content
+    content_payload = dict(item.content)
+    content_payload.setdefault("rationale", rationale)
+    return content_payload
+
+
+def _stage_success_memory_candidate(
+    runner: "BrainRunner",
+    *,
+    item: Any,
+    base_meta: Mapping[str, Any],
+) -> str:
+    rationale = _success_memory_rationale(item, base_meta=base_meta)
+    write_scope, _event = emit_write_decision(
+        runner.profile.agent_id,
+        caller_seam=_SEAM_APPLY_SUCCESS,
+    )
+    return runner.memory_api.stage_candidate(
+        scope=write_scope,
+        record_type=item.kind,
+        title=item.title,
+        content=_success_memory_content(item, rationale=rationale),
+        tags=_success_memory_tags(item),
+        evidence_refs=[artifact.ref for artifact in item.evidence_refs],
+        confidence=float(item.confidence),
+        meta=_success_memory_meta(item, base_meta=base_meta, rationale=rationale),
+    )
+
+
+def _improvement_governance_action(fix: Any) -> dict[str, str] | None:
+    action = str(getattr(fix, "action", "") or "").strip().lower()
+    if not action:
+        return None
+    return {
+        "action": action,
+        "title": fix.title,
+        "target_command_id": str(
+            getattr(fix, "target_command_id", "") or ""
+        ).strip(),
+    }
+
+
+def _improvement_memory_tags(fix: Any) -> list[str]:
+    tags = list(fix.tags or ["self-improvement"])
+    if fix.kind == "lesson" and "self-improvement:lesson" not in tags:
+        tags.append("self-improvement:lesson")
+    return tags
+
+
+def _put_improvement_memory_record(
+    runner: "BrainRunner",
+    *,
+    fix: Any,
+) -> tuple[str | None, dict[str, str] | None]:
+    if runner.memory_api is None or not runner.profile.defaults.auto_save_lessons:
+        return None, None
+
+    record_type = "fact" if fix.kind == "lesson" else fix.kind
+    write_scope, _event = emit_write_decision(
+        runner.profile.agent_id,
+        caller_seam=_SEAM_APPLY_IMPROVEMENTS,
+    )
+    try:
+        record_id = runner.memory_api.put_record(
+            scope=write_scope,
+            record_type=record_type,
+            title=fix.title,
+            content=fix.content,
+            tags=_improvement_memory_tags(fix),
+            evidence_refs=[item.ref for item in fix.evidence_refs],
+        )
+    except (TypeError, ValueError) as exc:
+        return None, {
+            "kind": fix.kind,
+            "title": fix.title,
+            "reason": str(exc),
+        }
+    return record_id, None
+
+
+def _improvement_candidate_tags(fix: Any, *, record_type: str) -> list[str]:
+    tags = list(fix.tags or ["candidate"])
+    if fix.kind != record_type:
+        normalized_tag = f"candidate_kind:{fix.kind}"
+        if normalized_tag not in tags:
+            tags.append(normalized_tag)
+    suggestion = str(getattr(fix, "scope_suggestion", "") or "").strip()
+    if suggestion and f"scope_suggestion:{suggestion}" not in tags:
+        tags.append(f"scope_suggestion:{suggestion}")
+    return tags
+
+
+def _stage_improvement_candidate(
+    runner: "BrainRunner",
+    *,
+    fix: Any,
+) -> tuple[str | None, dict[str, str] | None]:
+    if (
+        runner.memory_api is None
+        or not runner.profile.defaults.auto_stage_policy_candidates
+    ):
+        return None, None
+
+    record_type = _candidate_record_type_for_fix_kind(fix.kind)
+    if not record_type:
+        return None, {
+            "kind": fix.kind,
+            "title": fix.title,
+            "reason": "unsupported_candidate_record_type",
+        }
+    candidate_scope, _event = emit_write_decision(
+        runner.profile.agent_id,
+        caller_seam=_SEAM_APPLY_IMPROVEMENTS_CANDIDATE,
+    )
+    try:
+        candidate_id = runner.memory_api.stage_candidate(
+            scope=candidate_scope,
+            record_type=record_type,
+            title=fix.title,
+            content=fix.content,
+            tags=_improvement_candidate_tags(fix, record_type=record_type),
+            evidence_refs=[item.ref for item in fix.evidence_refs],
+        )
+    except (TypeError, ValueError) as exc:
+        return None, {
+            "kind": fix.kind,
+            "title": fix.title,
+            "reason": str(exc),
+        }
+    return candidate_id, None
+
+
+def _append_fix_safeguard(state: WorkingState, fix: Any) -> None:
+    safeguard = f"Guardrail: {fix.title}"
+    if safeguard not in state.constraints:
+        state.constraints.append(safeguard)
+
+
 def stage_self_improvement_candidate(
     runner: "BrainRunner",
     *,
@@ -121,100 +355,24 @@ def apply_improvements(
     governance_actions: list[dict[str, str]] = []
 
     for fix in report.fixes:
-        action = str(getattr(fix, "action", "") or "").strip().lower()
-        if action:
-            governance_actions.append(
-                {
-                    "action": action,
-                    "title": fix.title,
-                    "target_command_id": str(
-                        getattr(fix, "target_command_id", "") or ""
-                    ).strip(),
-                }
-            )
-        if fix.kind in {"lesson", "procedure"}:
-            if (
-                runner.memory_api is not None
-                and runner.profile.defaults.auto_save_lessons
-            ):
-                # Brain reflection may emit "lesson", but memory backends only
-                record_type = "fact" if fix.kind == "lesson" else fix.kind
-                tags = list(fix.tags or ["self-improvement"])
-                if fix.kind == "lesson" and "self-improvement:lesson" not in tags:
-                    tags.append("self-improvement:lesson")
-                write_scope, _event = emit_write_decision(
-                    runner.profile.agent_id,
-                    caller_seam=_SEAM_APPLY_IMPROVEMENTS,
-                )
-                try:
-                    record_id = runner.memory_api.put_record(
-                        scope=write_scope,
-                        record_type=record_type,
-                        title=fix.title,
-                        content=fix.content,
-                        tags=tags,
-                        evidence_refs=[item.ref for item in fix.evidence_refs],
-                    )
-                except (TypeError, ValueError) as exc:
-                    skipped_fixes.append(
-                        {
-                            "kind": fix.kind,
-                            "title": fix.title,
-                            "reason": str(exc),
-                        }
-                    )
-                else:
-                    memory_ids.append(record_id)
-        else:
-            if (
-                runner.memory_api is not None
-                and runner.profile.defaults.auto_stage_policy_candidates
-            ):
-                record_type = _candidate_record_type_for_fix_kind(fix.kind)
-                if not record_type:
-                    skipped_fixes.append(
-                        {
-                            "kind": fix.kind,
-                            "title": fix.title,
-                            "reason": "unsupported_candidate_record_type",
-                        }
-                    )
-                else:
-                    tags = list(fix.tags or ["candidate"])
-                    if fix.kind != record_type:
-                        normalized_tag = f"candidate_kind:{fix.kind}"
-                        if normalized_tag not in tags:
-                            tags.append(normalized_tag)
-                    candidate_scope, _event = emit_write_decision(
-                        runner.profile.agent_id,
-                        caller_seam=_SEAM_APPLY_IMPROVEMENTS_CANDIDATE,
-                    )
-                    suggestion = str(getattr(fix, "scope_suggestion", "") or "").strip()
-                    if suggestion and f"scope_suggestion:{suggestion}" not in tags:
-                        tags.append(f"scope_suggestion:{suggestion}")
-                    try:
-                        candidate_id = runner.memory_api.stage_candidate(
-                            scope=candidate_scope,
-                            record_type=record_type,
-                            title=fix.title,
-                            content=fix.content,
-                            tags=tags,
-                            evidence_refs=[item.ref for item in fix.evidence_refs],
-                        )
-                    except (TypeError, ValueError) as exc:
-                        skipped_fixes.append(
-                            {
-                                "kind": fix.kind,
-                                "title": fix.title,
-                                "reason": str(exc),
-                            }
-                        )
-                    else:
-                        candidate_ids.append(candidate_id)
+        governance_action = _improvement_governance_action(fix)
+        if governance_action is not None:
+            governance_actions.append(governance_action)
 
-        safeguard = f"Guardrail: {fix.title}"
-        if safeguard not in state.constraints:
-            state.constraints.append(safeguard)
+        if fix.kind in {"lesson", "procedure"}:
+            record_id, skipped_fix = _put_improvement_memory_record(runner, fix=fix)
+            if record_id is not None:
+                memory_ids.append(record_id)
+            if skipped_fix is not None:
+                skipped_fixes.append(skipped_fix)
+        else:
+            candidate_id, skipped_fix = _stage_improvement_candidate(runner, fix=fix)
+            if candidate_id is not None:
+                candidate_ids.append(candidate_id)
+            if skipped_fix is not None:
+                skipped_fixes.append(skipped_fix)
+
+        _append_fix_safeguard(state, fix)
 
     state.memory_candidates.extend(candidate_ids)
     logger.emit(
@@ -240,20 +398,11 @@ def apply_success_memories(
 ) -> dict[str, Any]:
     config = _success_memory_config(runner)
     if runner.memory_api is None or config is None:
-        return {
-            "candidate_ids": [],
-            "skipped_items": [
-                {
-                    "reason": "memory_api_unavailable",
-                    "title": "",
-                }
-            ],
-        }
+        return _memory_unavailable_result()
 
-    max_items = max(1, int(getattr(config, "max_items_per_turn", 3) or 3))
-    min_confidence = float(getattr(config, "min_item_confidence", 0.7) or 0.7)
-    procedure_enabled = bool(getattr(config, "procedure_enabled", True))
-    tool_habit_enabled = bool(getattr(config, "tool_habit_enabled", True))
+    max_items, min_confidence, procedure_enabled, tool_habit_enabled = (
+        _success_memory_limits(config)
+    )
     base_meta = dict(provenance_meta or {})
 
     candidate_ids: list[str] = []
@@ -261,79 +410,21 @@ def apply_success_memories(
     staged_items = 0
 
     for item in report.items:
-        if staged_items >= max_items:
-            skipped_items.append(
-                {
-                    "kind": item.kind,
-                    "title": item.title,
-                    "reason": "max_items_reached",
-                }
-            )
-            continue
-        if float(item.confidence) < min_confidence:
-            skipped_items.append(
-                {
-                    "kind": item.kind,
-                    "title": item.title,
-                    "reason": "below_min_confidence",
-                    "confidence": float(item.confidence),
-                }
-            )
-            continue
-        if item.kind == "procedure" and not procedure_enabled:
-            skipped_items.append(
-                {
-                    "kind": item.kind,
-                    "title": item.title,
-                    "reason": "procedure_disabled",
-                }
-            )
-            continue
-        if item.kind == "tool_habit" and not tool_habit_enabled:
-            skipped_items.append(
-                {
-                    "kind": item.kind,
-                    "title": item.title,
-                    "reason": "tool_habit_disabled",
-                }
-            )
+        skipped_item = _skip_success_memory_item(
+            item,
+            staged_items=staged_items,
+            max_items=max_items,
+            min_confidence=min_confidence,
+            procedure_enabled=procedure_enabled,
+            tool_habit_enabled=tool_habit_enabled,
+        )
+        if skipped_item is not None:
+            skipped_items.append(skipped_item)
             continue
 
-        tags = list(item.tags or [])
-        if "success_path" not in tags:
-            tags.append("success_path")
-        meta = dict(base_meta)
-        item_rationale = (
-            str(getattr(item, "rationale", "") or "").strip()
-            or str(base_meta.get("source_thinking_rationale", "") or "").strip()
+        candidate_ids.append(
+            _stage_success_memory_candidate(runner, item=item, base_meta=base_meta)
         )
-        meta.update(
-            {
-                "source_kind": item.kind,
-                "source_success_path": True,
-            }
-        )
-        if item_rationale:
-            meta["rationale"] = item_rationale
-        content_payload = item.content
-        if item_rationale and isinstance(item.content, Mapping):
-            content_payload = dict(item.content)
-            content_payload.setdefault("rationale", item_rationale)
-        write_scope, _event = emit_write_decision(
-            runner.profile.agent_id,
-            caller_seam=_SEAM_APPLY_SUCCESS,
-        )
-        candidate_id = runner.memory_api.stage_candidate(
-            scope=write_scope,
-            record_type=item.kind,
-            title=item.title,
-            content=content_payload,
-            tags=tags,
-            evidence_refs=[artifact.ref for artifact in item.evidence_refs],
-            confidence=float(item.confidence),
-            meta=meta,
-        )
-        candidate_ids.append(candidate_id)
         staged_items += 1
 
     state.memory_candidates.extend(candidate_ids)

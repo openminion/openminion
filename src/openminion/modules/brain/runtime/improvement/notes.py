@@ -4,7 +4,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Mapping, Sequence, Tuple
+from typing import Iterable, Mapping, Sequence
 
 from openminion.base.config import OpenMinionConfig
 from openminion.modules.memory.runtime.scope import (
@@ -123,15 +123,15 @@ class ImprovementNote:
     source: str
     context: str
     guidance: str
-    trigger_tokens: Tuple[str, ...]
-    tags: Tuple[str, ...]
+    trigger_tokens: tuple[str, ...]
+    tags: tuple[str, ...]
     occurrence_count: int
     apply_count: int
     created_at: str
     updated_at: str
     last_applied_at: str = ""
 
-    def to_dict(self) -> Dict[str, object]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "agent_id": self.agent_id,
             "signature": self.signature,
@@ -449,7 +449,7 @@ class SelfImprovementEngine:
 
     # `_record_applied` was removed. Its sole caller was
 
-    def _read_index(self) -> Dict[str, Dict[str, object]]:
+    def _read_index(self) -> dict[str, dict[str, object]]:
         if not self._index_path.exists():
             return {}
         try:
@@ -461,7 +461,7 @@ class SelfImprovementEngine:
         notes_payload = payload.get("notes")
         if not isinstance(notes_payload, list):
             return {}
-        notes_by_key: Dict[str, Dict[str, object]] = {}
+        notes_by_key: dict[str, dict[str, object]] = {}
         for item in notes_payload:
             if not isinstance(item, dict):
                 continue

@@ -40,6 +40,142 @@ def _pae_is_enabled(config: Any) -> bool:
     return interval > 0
 
 
+def _idle_tick_result(
+    *,
+    scheduled: bool = False,
+    job_id: str = "",
+    reason: str,
+    interval_seconds: int = 0,
+    error: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "scheduled": scheduled,
+        "job_id": job_id,
+        "reason": reason,
+        "interval_seconds": interval_seconds,
+    }
+    if error:
+        result["error"] = error
+    return result
+
+
+def _emit_idle_tick_suppressed(
+    *,
+    session_api: Any,
+    session_id: str,
+    agent_id: str,
+    plan_id: str,
+    reason: str,
+    trace_id: str | None,
+    error: str | None = None,
+) -> None:
+    payload = {"reason": reason, "plan_id": plan_id}
+    if error:
+        payload["error"] = error
+    _emit_pae_event(
+        session_api=session_api,
+        session_id=session_id,
+        agent_id=agent_id,
+        event_type="pae.idle_tick.suppressed",
+        payload=payload,
+        trace_id=trace_id,
+    )
+
+
+def _suppressed_idle_tick_result(
+    *,
+    session_api: Any,
+    session_id: str,
+    agent_id: str,
+    plan_id: str,
+    reason: str,
+    trace_id: str | None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    _emit_idle_tick_suppressed(
+        session_api=session_api,
+        session_id=session_id,
+        agent_id=agent_id,
+        plan_id=plan_id,
+        reason=reason,
+        trace_id=trace_id,
+        error=error,
+    )
+    return _idle_tick_result(reason=reason, error=error)
+
+
+def _user_activity_grace_seconds(config: Any) -> int:
+    try:
+        return max(0, int(getattr(config, "user_activity_grace_seconds", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _idle_tick_payload(*, session_id: str, plan_id: str, grace_seconds: int) -> dict[str, Any]:
+    return {
+        "kind": "agentIdleTick",
+        "session_id": session_id,
+        "plan_id": plan_id,
+        "user_activity_grace_seconds": grace_seconds,
+    }
+
+
+def _add_idle_tick_job(
+    *,
+    cron_store: Any,
+    job_id: str,
+    interval_seconds: int,
+    agent_id: str,
+    session_id: str,
+    plan_id: str,
+    grace_seconds: int,
+) -> None:
+    cron_store.add_cron_job(
+        name=job_id,
+        schedule={"kind": "every", "every_ms": interval_seconds * 1000},
+        payload=_idle_tick_payload(
+            session_id=session_id,
+            plan_id=plan_id,
+            grace_seconds=grace_seconds,
+        ),
+        description=f"PAE idle tick for agent={agent_id} session={session_id} plan={plan_id}",
+        agent_id=agent_id,
+        session_target="agent_session",
+        job_id=job_id,
+        enabled=True,
+    )
+
+
+def _scheduled_idle_tick_result(
+    *,
+    session_api: Any,
+    session_id: str,
+    agent_id: str,
+    plan_id: str,
+    job_id: str,
+    interval_seconds: int,
+    trace_id: str | None,
+) -> dict[str, Any]:
+    _emit_pae_event(
+        session_api=session_api,
+        session_id=session_id,
+        agent_id=agent_id,
+        event_type="pae.idle_tick.scheduled",
+        payload={
+            "plan_id": plan_id,
+            "interval_seconds": interval_seconds,
+            "job_id": job_id,
+        },
+        trace_id=trace_id,
+    )
+    return _idle_tick_result(
+        scheduled=True,
+        job_id=job_id,
+        reason="scheduled",
+        interval_seconds=interval_seconds,
+    )
+
+
 def maybe_schedule_idle_tick(
     *,
     cron_store: Any,
@@ -51,111 +187,75 @@ def maybe_schedule_idle_tick(
     trace_id: str | None = None,
 ) -> dict[str, Any]:
     """Schedule a session-scoped idle-tick cron job."""
-    result: dict[str, Any] = {
-        "scheduled": False,
-        "job_id": "",
-        "reason": "",
-        "interval_seconds": 0,
-    }
-
     agent = str(agent_id or "").strip()
     session = str(session_id or "").strip()
     plan = str(plan_id or "").strip()
     if not agent or not session or not plan:
-        result["reason"] = "missing_ids"
-        _emit_pae_event(
+        return _suppressed_idle_tick_result(
             session_api=session_api,
             session_id=session,
             agent_id=agent,
-            event_type="pae.idle_tick.suppressed",
-            payload={"reason": "missing_ids", "plan_id": plan},
+            plan_id=plan,
+            reason="missing_ids",
             trace_id=trace_id,
         )
-        return result
 
     config = _resolve_pae_config(runner)
     if not _pae_is_enabled(config):
-        result["reason"] = "disabled"
-        _emit_pae_event(
+        return _suppressed_idle_tick_result(
             session_api=session_api,
             session_id=session,
             agent_id=agent,
-            event_type="pae.idle_tick.suppressed",
-            payload={"reason": "disabled", "plan_id": plan},
+            plan_id=plan,
+            reason="disabled",
             trace_id=trace_id,
         )
-        return result
 
     if cron_store is None:
-        result["reason"] = "missing_cron_store"
-        return result
+        return _idle_tick_result(reason="missing_cron_store")
 
     interval = int(getattr(config, "interval_seconds", 0) or 0)
-    result["interval_seconds"] = interval
-    try:
-        grace_seconds = max(
-            0, int(getattr(config, "user_activity_grace_seconds", 0) or 0)
-        )
-    except (TypeError, ValueError):
-        grace_seconds = 0
+    grace_seconds = _user_activity_grace_seconds(config)
     job_id = idle_tick_job_id(agent_id=agent, session_id=session, plan_id=plan)
-    result["job_id"] = job_id
 
     existing = _safe_get_cron_job(cron_store=cron_store, job_id=job_id)
     if existing is not None:
-        result["reason"] = "already_scheduled"
-        return result
+        return _idle_tick_result(
+            job_id=job_id,
+            reason="already_scheduled",
+            interval_seconds=interval,
+        )
 
     try:
-        cron_store.add_cron_job(
-            name=job_id,
-            schedule={"kind": "every", "every_ms": interval * 1000},
-            payload={
-                "kind": "agentIdleTick",
-                "session_id": session,
-                "plan_id": plan,
-                "user_activity_grace_seconds": grace_seconds,
-            },
-            description=(
-                f"PAE idle tick for agent={agent} session={session} plan={plan}"
-            ),
-            agent_id=agent,
-            session_target="agent_session",
+        _add_idle_tick_job(
+            cron_store=cron_store,
             job_id=job_id,
-            enabled=True,
+            interval_seconds=interval,
+            agent_id=agent,
+            session_id=session,
+            plan_id=plan,
+            grace_seconds=grace_seconds,
         )
     except Exception as exc:  # noqa: BLE001 — scheduling is best-effort
-        result["reason"] = "schedule_failed"
-        result["error"] = str(exc)
-        _emit_pae_event(
+        return _suppressed_idle_tick_result(
             session_api=session_api,
             session_id=session,
             agent_id=agent,
-            event_type="pae.idle_tick.suppressed",
-            payload={
-                "reason": "schedule_failed",
-                "plan_id": plan,
-                "error": str(exc),
-            },
+            plan_id=plan,
+            reason="schedule_failed",
             trace_id=trace_id,
+            error=str(exc),
         )
-        return result
 
-    result["scheduled"] = True
-    result["reason"] = "scheduled"
-    _emit_pae_event(
+    return _scheduled_idle_tick_result(
         session_api=session_api,
         session_id=session,
         agent_id=agent,
-        event_type="pae.idle_tick.scheduled",
-        payload={
-            "plan_id": plan,
-            "interval_seconds": interval,
-            "job_id": job_id,
-        },
+        plan_id=plan,
+        job_id=job_id,
+        interval_seconds=interval,
         trace_id=trace_id,
     )
-    return result
 
 
 def cancel_idle_tick(

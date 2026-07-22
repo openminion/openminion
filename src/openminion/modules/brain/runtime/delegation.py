@@ -524,6 +524,25 @@ def aggregate_delegation_results(
     canceled_count = sum(1 for r in records if r.status == "canceled")
     child_ids = [r.child_id for r in records]
 
+    def build_result(
+        *,
+        completed_required: bool,
+        selected_child_id: str,
+        merged_payload: dict[str, Any],
+    ) -> AggregatedResult:
+        return AggregatedResult(
+            total_children=len(records),
+            success_count=success_count,
+            failure_count=failure_count,
+            skipped_count=skipped_count,
+            canceled_count=canceled_count,
+            completed_required=completed_required,
+            selected_child_id=selected_child_id,
+            merged_payload=merged_payload,
+            child_ids=list(child_ids),
+            source_policy=policy,
+        )
+
     if policy == "all_required":
         required_records = [r for r in records if r.required]
         completed_required = bool(required_records) and all(
@@ -533,17 +552,10 @@ def aggregate_delegation_results(
         for r in records:
             if r.status == "success":
                 merged[r.child_id] = dict(r.payload)
-        return AggregatedResult(
-            total_children=len(records),
-            success_count=success_count,
-            failure_count=failure_count,
-            skipped_count=skipped_count,
-            canceled_count=canceled_count,
+        return build_result(
             completed_required=completed_required,
             selected_child_id="",
             merged_payload=merged,
-            child_ids=list(child_ids),
-            source_policy=policy,
         )
     if policy == "first_success":
         selected = ""
@@ -553,34 +565,20 @@ def aggregate_delegation_results(
                 selected = r.child_id
                 merged = dict(r.payload)
                 break
-        return AggregatedResult(
-            total_children=len(records),
-            success_count=success_count,
-            failure_count=failure_count,
-            skipped_count=skipped_count,
-            canceled_count=canceled_count,
+        return build_result(
             completed_required=bool(selected),
             selected_child_id=selected,
             merged_payload=merged,
-            child_ids=list(child_ids),
-            source_policy=policy,
         )
     if policy == "best_effort":
         merged = {}
         for r in records:
             if r.status == "success":
                 merged[r.child_id] = dict(r.payload)
-        return AggregatedResult(
-            total_children=len(records),
-            success_count=success_count,
-            failure_count=failure_count,
-            skipped_count=skipped_count,
-            canceled_count=canceled_count,
+        return build_result(
             completed_required=success_count > 0,
             selected_child_id="",
             merged_payload=merged,
-            child_ids=list(child_ids),
-            source_policy=policy,
         )
     merged = {}
     for r in records:
@@ -593,17 +591,10 @@ def aggregate_delegation_results(
     completed_required = bool(required_records) and all(
         r.status == "success" for r in required_records
     )
-    return AggregatedResult(
-        total_children=len(records),
-        success_count=success_count,
-        failure_count=failure_count,
-        skipped_count=skipped_count,
-        canceled_count=canceled_count,
+    return build_result(
         completed_required=completed_required,
         selected_child_id="",
         merged_payload=merged,
-        child_ids=list(child_ids),
-        source_policy=policy,
     )
 
 

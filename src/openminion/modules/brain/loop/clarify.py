@@ -85,41 +85,12 @@ def clarify(
             return True
         return False
     elif not user_input and state.unresolved_clarify_items:
-        readiness_state = str(
-            getattr(getattr(state, "request_readiness", None), "state", "") or ""
-        ).strip()
-        if (
-            bool(getattr(getattr(runner, "options", None), "request_handoff_enabled", False))
-            and readiness_state == "needs_user"
-        ):
-            transition(state, "clarify_requested", logger=logger)
-            return True
-        if config.handle_unanswered_policy == "error":
-            transition(state, "task_failed", logger=logger)
-            return True
-        if config.handle_unanswered_policy == "assume_default":
-            logger.emit(
-                "brain.assumptions.used",
-                {"count": len(state.unresolved_clarify_items)},
-                trace_id=state.trace_id,
-            )
-            state.unresolved_clarify_items = []
-            state.pending_clarify_items = []
-            return False
-        if config.handle_unanswered_policy == "abort":
-            state.unresolved_clarify_items = []
-            state.pending_clarify_items = []
-            transition(state, "execution_stopped", logger=logger)
-            logger.emit(
-                "brain.clarify.aborted",
-                {
-                    "reason_code": "clarify_unanswered_abort",
-                    "source": "clarify",
-                },
-                trace_id=state.trace_id,
-            )
-            return True
-        return True
+        return _handle_unanswered_clarify_items(
+            runner=runner,
+            state=state,
+            logger=logger,
+            policy=config.handle_unanswered_policy,
+        )
 
     # RCL-06/RCL-11: Heuristic conversational clarification block removed.
     if user_input:
@@ -129,6 +100,47 @@ def clarify(
             trace_id=state.trace_id,
         )
     return False
+
+
+def _handle_unanswered_clarify_items(
+    *,
+    runner: "BrainRunner",
+    state: WorkingState,
+    logger: CanonicalEventLogger,
+    policy: str,
+) -> bool:
+    readiness_state = str(
+        getattr(getattr(state, "request_readiness", None), "state", "") or ""
+    ).strip()
+    if (
+        bool(getattr(getattr(runner, "options", None), "request_handoff_enabled", False))
+        and readiness_state == "needs_user"
+    ):
+        transition(state, "clarify_requested", logger=logger)
+        return True
+    if policy == "error":
+        transition(state, "task_failed", logger=logger)
+        return True
+    if policy == "assume_default":
+        logger.emit(
+            "brain.assumptions.used",
+            {"count": len(state.unresolved_clarify_items)},
+            trace_id=state.trace_id,
+        )
+        state.unresolved_clarify_items = []
+        state.pending_clarify_items = []
+        return False
+    if policy == "abort":
+        state.unresolved_clarify_items = []
+        state.pending_clarify_items = []
+        transition(state, "execution_stopped", logger=logger)
+        logger.emit(
+            "brain.clarify.aborted",
+            {"reason_code": "clarify_unanswered_abort", "source": "clarify"},
+            trace_id=state.trace_id,
+        )
+        return True
+    return True
 
 
 def clear_llm_clarify_context(

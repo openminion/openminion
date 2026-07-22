@@ -83,25 +83,14 @@ def detect_goal_drift(
     recent_tokens = tuple(trajectory.recent_action_tokens)
     structural_checks = _structural_check_set(goal)
 
-    if (
-        trajectory.expected_mission_type
-        and trajectory.observed_mission_type
-        and trajectory.observed_mission_type != trajectory.expected_mission_type
-    ):
-        return GoalDriftSignal(
-            signal_id=signal_id,
-            goal_id=goal.goal_id,
-            kind="mission_type_drift",
-            description=(
-                f"Observed mission-type mix {trajectory.observed_mission_type!r} "
-                f"differs from expected {trajectory.expected_mission_type!r}"
-            ),
-            detected_at=detected_at,
-            evidence=_build_evidence(
-                trajectory=trajectory,
-                matched_tokens=(),
-            ),
-        )
+    mission_type_signal = _mission_type_drift_signal(
+        goal=goal,
+        trajectory=trajectory,
+        detected_at=detected_at,
+        signal_id=signal_id,
+    )
+    if mission_type_signal is not None:
+        return mission_type_signal
 
     # Bail early if we don't have enough action history to score.
     if len(recent_tokens) < thresholds.min_recent_actions:
@@ -175,6 +164,32 @@ def detect_goal_drift(
         )
 
     return None
+
+
+def _mission_type_drift_signal(
+    *,
+    goal: Goal,
+    trajectory: ActionTrajectoryRecord,
+    detected_at: str,
+    signal_id: str,
+) -> GoalDriftSignal | None:
+    if not (
+        trajectory.expected_mission_type
+        and trajectory.observed_mission_type
+        and trajectory.observed_mission_type != trajectory.expected_mission_type
+    ):
+        return None
+    return GoalDriftSignal(
+        signal_id=signal_id,
+        goal_id=goal.goal_id,
+        kind="mission_type_drift",
+        description=(
+            f"Observed mission-type mix {trajectory.observed_mission_type!r} "
+            f"differs from expected {trajectory.expected_mission_type!r}"
+        ),
+        detected_at=detected_at,
+        evidence=_build_evidence(trajectory=trajectory, matched_tokens=()),
+    )
 
 
 __all__ = [

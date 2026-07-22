@@ -428,53 +428,15 @@ def _process_review_tool_calls(
         if str(getattr(tool_call, "name", "") or "").strip() != REVIEW_TOOL_NAME
     ]
     for tool_call in review_tool_calls:
-        arguments = dict(getattr(tool_call, "arguments", {}) or {})
-        loop_state.scratchpad[REVIEW_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
-        action_result = handle_review_tool_call(loop_ctx=loop_ctx, arguments=arguments)
-        if str(getattr(action_result, "status", "") or "") == "success":
-            loop_state.scratchpad[REVIEW_TOOL_USED_SCRATCHPAD_KEY] = True
-        loop_state.messages.append(
-            action_result_to_tool_message(
-                getattr(tool_call, "id", None),
-                REVIEW_TOOL_NAME,
-                action_result,
-            )
-        )
-        iter_tool_records.append(
-            IterationToolCallRecord(
-                tool_name=REVIEW_TOOL_NAME,
-                duration_ms=0,
-                status=str(getattr(action_result, "status", "") or ""),
-                cache_hit=False,
-                parallel=False,
-            )
-        )
-        if callable(append_tool_result_payload):
-            append_tool_result_payload(
-                loop_state,
-                tool_name=REVIEW_TOOL_NAME,
-                action_result=action_result,
-            )
-        set_turn_progress(
-            loop_state,
-            llm_call_count=loop_state.llm_calls,
-            llm_call_limit=_effective_cap(profile, loop_state),
-            progress_phase="tool",
-            tool_name=REVIEW_TOOL_NAME,
-        )
-        emit_adaptive_status(
+        _process_single_review_tool_call(
             loop_ctx,
             profile=profile,
             loop_state=loop_state,
-            detail_text=f"{public_mode_tag} tool {REVIEW_TOOL_NAME}",
-            mode_state="tool_call",
-            extra={
-                "tool_name": REVIEW_TOOL_NAME,
-                "review_severity": str(
-                    (getattr(action_result, "outputs", {}) or {}).get("severity", "")
-                    or ""
-                ).strip(),
-            },
+            tool_call=tool_call,
+            public_mode_tag=public_mode_tag,
+            iter_tool_records=iter_tool_records,
+            append_tool_result_payload=append_tool_result_payload,
+            set_turn_progress=set_turn_progress,
         )
     batch_had_progress = True
     if on_tool_result is not None:
@@ -505,6 +467,67 @@ def _process_review_tool_calls(
             ),
         )
     return regular_tool_calls, batch_had_progress, None
+
+
+def _process_single_review_tool_call(
+    loop_ctx: AdaptiveToolLoopContext,
+    *,
+    profile: AdaptiveToolLoopProfile,
+    loop_state: AdaptiveToolLoopState,
+    tool_call: Any,
+    public_mode_tag: str,
+    iter_tool_records: list[IterationToolCallRecord],
+    append_tool_result_payload: Any,
+    set_turn_progress: Any,
+) -> None:
+    arguments = dict(getattr(tool_call, "arguments", {}) or {})
+    loop_state.scratchpad[REVIEW_TOOL_ATTEMPTED_SCRATCHPAD_KEY] = True
+    action_result = handle_review_tool_call(loop_ctx=loop_ctx, arguments=arguments)
+    if str(getattr(action_result, "status", "") or "") == "success":
+        loop_state.scratchpad[REVIEW_TOOL_USED_SCRATCHPAD_KEY] = True
+    loop_state.messages.append(
+        action_result_to_tool_message(
+            getattr(tool_call, "id", None),
+            REVIEW_TOOL_NAME,
+            action_result,
+        )
+    )
+    iter_tool_records.append(
+        IterationToolCallRecord(
+            tool_name=REVIEW_TOOL_NAME,
+            duration_ms=0,
+            status=str(getattr(action_result, "status", "") or ""),
+            cache_hit=False,
+            parallel=False,
+        )
+    )
+    if callable(append_tool_result_payload):
+        append_tool_result_payload(
+            loop_state,
+            tool_name=REVIEW_TOOL_NAME,
+            action_result=action_result,
+        )
+    set_turn_progress(
+        loop_state,
+        llm_call_count=loop_state.llm_calls,
+        llm_call_limit=_effective_cap(profile, loop_state),
+        progress_phase="tool",
+        tool_name=REVIEW_TOOL_NAME,
+    )
+    emit_adaptive_status(
+        loop_ctx,
+        profile=profile,
+        loop_state=loop_state,
+        detail_text=f"{public_mode_tag} tool {REVIEW_TOOL_NAME}",
+        mode_state="tool_call",
+        extra={
+            "tool_name": REVIEW_TOOL_NAME,
+            "review_severity": str(
+                (getattr(action_result, "outputs", {}) or {}).get("severity", "")
+                or ""
+            ).strip(),
+        },
+    )
 
 
 def _process_tool_request_calls(

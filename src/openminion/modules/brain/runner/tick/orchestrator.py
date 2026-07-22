@@ -194,6 +194,24 @@ def _maybe_run_autonomous_turn(
     )
 
 
+def _dispatch_tick_entry(runner: "BrainRunner", *, state, logger, tick_ctx):
+    return dispatch_entry(
+        runner=runner,
+        state=state,
+        logger=logger,
+        request=build_execution_entry_request(
+            user_input=tick_ctx.user_input,
+            forced_tools=tick_ctx.forced_tools,
+            capability_category=tick_ctx.capability_category,
+            skip_decide=tick_ctx.skip_decide,
+            decision=tick_ctx.decision,
+            mask_pending_confirmation_in_output=tick_ctx.mask_pending_confirmation_in_output,
+            masked_resume_cursor=tick_ctx.masked_resume_cursor,
+            consume_user_input_for_command=tick_ctx.consume_user_input_for_command,
+        ),
+    )
+
+
 def run_step(
     runner: "BrainRunner",
     *,
@@ -276,21 +294,7 @@ def run_step(
             return confirmation_result
 
         with active_chat_phase("brain_tick_dispatch"):
-            return dispatch_entry(
-                runner=runner,
-                state=state,
-                logger=logger,
-                request=build_execution_entry_request(
-                    user_input=tick_ctx.user_input,
-                    forced_tools=tick_ctx.forced_tools,
-                    capability_category=tick_ctx.capability_category,
-                    skip_decide=tick_ctx.skip_decide,
-                    decision=tick_ctx.decision,
-                    mask_pending_confirmation_in_output=tick_ctx.mask_pending_confirmation_in_output,
-                    masked_resume_cursor=tick_ctx.masked_resume_cursor,
-                    consume_user_input_for_command=tick_ctx.consume_user_input_for_command,
-                ),
-            )
+            return _dispatch_tick_entry(runner, state=state, logger=logger, tick_ctx=tick_ctx)
     finally:
         elapsed = max(0, _runner_delegate("_now_ms", runner) - started)
         state.budgets_remaining.time_ms = max(

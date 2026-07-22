@@ -42,60 +42,31 @@ def build_failure_reflection(
     outcome_snapshot: dict[str, Any] | None,
     strategy_outcome_refs: list[str],
 ) -> FailureReflectionData | list[str]:
-    if runner.llm_api is None or runner.context_api is None:
-        return emit_skipped(
-            logger=logger,
-            event="brain.failure_memory.skipped",
-            state=state,
-            reason="missing_llm_or_context",
-            refs=strategy_outcome_refs,
-            status="warning",
+    skip_reason = _failure_reflection_skip_reason(
+        runner=runner,
+        termination_reason=termination_reason,
+    )
+    if skip_reason is not None:
+        status_kwargs = (
+            {"status": "warning"}
+            if skip_reason != "missing_termination_reason"
+            else {}
         )
-    if runner.memory_api is None:
         return emit_skipped(
             logger=logger,
             event="brain.failure_memory.skipped",
             state=state,
-            reason="memory_api_unavailable",
+            reason=skip_reason,
             refs=strategy_outcome_refs,
-            status="warning",
+            **status_kwargs,
         )
     normalized_reason = str(termination_reason or "").strip().lower()
-    if not normalized_reason:
-        return emit_skipped(
-            logger=logger,
-            event="brain.failure_memory.skipped",
-            state=state,
-            reason="missing_termination_reason",
-            refs=strategy_outcome_refs,
-        )
     snapshot = dict(outcome_snapshot or {})
-    command_ids = _successful_command_ids(state=state, action_result=action_result)
-    tool_names = _successful_tool_names(state=state, command_ids=command_ids)
-    args_signatures = memory_barrel()._command_signatures(
-        state=state, command_ids=command_ids
+    command_ids, tool_names, args_signatures, tool_results = _failure_trace_context(
+        state=state,
+        action_result=action_result,
+        snapshot=snapshot,
     )
-    tool_results = [
-        item
-        for item in list(snapshot.get("tool_results", []) or [])
-        if isinstance(item, dict)
-    ]
-    if not tool_names:
-        tool_names = _dedupe_text_values(
-            [
-                str(item.get("tool_name", "") or "").strip()
-                for item in tool_results
-                if str(item.get("tool_name", "") or "").strip()
-            ]
-        )
-    if not args_signatures:
-        args_signatures = _dedupe_text_values(
-            [
-                str(item.get("args_signature", "") or "").strip()
-                for item in tool_results
-                if str(item.get("args_signature", "") or "").strip()
-            ]
-        )
     if not command_ids and not tool_names and action_result is None:
         return emit_skipped(
             logger=logger,
@@ -141,6 +112,57 @@ def build_failure_reflection(
             tool_results=tool_results,
             llm_call_id=llm_call_id,
         ),
+    )
+
+
+def _failure_reflection_skip_reason(
+    *,
+    runner: "BrainRunner",
+    termination_reason: str,
+) -> str | None:
+    if runner.llm_api is None or runner.context_api is None:
+        return "missing_llm_or_context"
+    if runner.memory_api is None:
+        return "memory_api_unavailable"
+    if not str(termination_reason or "").strip().lower():
+        return "missing_termination_reason"
+    return None
+
+
+def _failure_trace_context(
+    *,
+    state: WorkingState,
+    action_result: ActionResult | None,
+    snapshot: dict[str, Any],
+) -> tuple[list[str], list[str], list[str], list[dict[str, Any]]]:
+    command_ids = _successful_command_ids(state=state, action_result=action_result)
+    tool_names = _successful_tool_names(state=state, command_ids=command_ids)
+    args_signatures = memory_barrel()._command_signatures(
+        state=state,
+        command_ids=command_ids,
+    )
+    tool_results = [
+        item
+        for item in list(snapshot.get("tool_results", []) or [])
+        if isinstance(item, dict)
+    ]
+    if not tool_names:
+        tool_names = _text_values_from_tool_results(tool_results, "tool_name")
+    if not args_signatures:
+        args_signatures = _text_values_from_tool_results(tool_results, "args_signature")
+    return command_ids, tool_names, args_signatures, tool_results
+
+
+def _text_values_from_tool_results(
+    tool_results: list[dict[str, Any]],
+    key: str,
+) -> list[str]:
+    return _dedupe_text_values(
+        [
+            str(item.get(key, "") or "").strip()
+            for item in tool_results
+            if str(item.get(key, "") or "").strip()
+        ]
     )
 
 

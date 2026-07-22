@@ -99,114 +99,150 @@ def _exact_first_tool_batch_sequence(user_text: str) -> tuple[str, ...]:
     return explicit_tool_name_sequence(match.group(0))
 
 
+def _seeded_command_tool_call(seeded_command: Any) -> tuple[ToolCall | Any, str] | None:
+    seeded_tool_name = str(getattr(seeded_command, "tool_name", "") or "").strip()
+    if not seeded_tool_name:
+        return None
+    seeded_args = dict(getattr(seeded_command, "args", {}) or {})
+    seeded_inputs = getattr(seeded_command, "inputs", None)
+    if isinstance(seeded_inputs, dict) and seeded_inputs:
+        return (
+            SimpleNamespace(
+                name=seeded_tool_name,
+                arguments=seeded_args,
+                inputs=dict(seeded_inputs),
+            ),
+            seeded_tool_name,
+        )
+    return ToolCall(name=seeded_tool_name, arguments=seeded_args), seeded_tool_name
+
+
+def _seeded_commands_context(ctx: ExecutionContext) -> DirectToolTurnContext | None:
+    seeded_commands = list(getattr(ctx.decision, "_seeded_commands", []) or [])
+    decision_reason_code = str(getattr(ctx.decision, "reason_code", "") or "").strip()
+    if not seeded_commands or not is_explicit_direct_tool_reason(decision_reason_code):
+        return None
+    requested_calls: list[ToolCall | Any] = []
+    requested_tool_names: list[str] = []
+    for seeded_command in seeded_commands:
+        seed_call = _seeded_command_tool_call(seeded_command)
+        if seed_call is None:
+            continue
+        requested_call, seeded_tool_name = seed_call
+        requested_calls.append(requested_call)
+        requested_tool_names.append(seeded_tool_name)
+    requested_batch_signature = semantic_batch_signature(requested_calls)
+    if not requested_tool_names or not requested_batch_signature:
+        return None
+    return DirectToolTurnContext(
+        requested_tool_names=tuple(requested_tool_names),
+        requested_batch_signature=requested_batch_signature,
+        requested_calls=tuple(requested_calls),
+    )
+
+
+def _parsed_command_context(ctx: ExecutionContext) -> DirectToolTurnContext | None:
+    runner = runner_from_context(ctx)
+    if runner is None or not str(ctx.user_input or "").strip():
+        return None
+    parsed_command = parse_tool_command(
+        runner=runner,
+        state=ctx.state,
+        text=str(ctx.user_input or ""),
+    )
+    if parsed_command is None:
+        return None
+    requested_tool_name = str(getattr(parsed_command, "tool_name", "") or "").strip()
+    if not requested_tool_name:
+        return None
+    requested_call = ToolCall(
+        name=requested_tool_name,
+        arguments=dict(getattr(parsed_command, "args", {}) or {}),
+    )
+    requested_batch_signature = semantic_batch_signature([requested_call])
+    if not requested_batch_signature:
+        return None
+    return DirectToolTurnContext(
+        requested_tool_names=(requested_tool_name,),
+        requested_batch_signature=requested_batch_signature,
+        requested_calls=(requested_call,),
+    )
+
+
+def _name_only_context(tool_names: tuple[str, ...]) -> DirectToolTurnContext | None:
+    if not tool_names:
+        return None
+    return DirectToolTurnContext(
+        requested_tool_names=tool_names,
+        requested_batch_signature="",
+        requested_calls=(),
+        match_by_name_only=True,
+    )
+
+
+def _exact_batch_context(user_text: str) -> DirectToolTurnContext | None:
+    exact_batch_sequence = _exact_first_tool_batch_sequence(user_text)
+    if len(exact_batch_sequence) < 2:
+        return None
+    return _name_only_context(exact_batch_sequence)
+
+
+def _seed_response_context(
+    *,
+    user_text: str,
+    seed_response: Any | None,
+) -> DirectToolTurnContext | None:
+    seed_tool_calls = list(getattr(seed_response, "tool_calls", []) or [])
+    if not user_text or len(seed_tool_calls) != 1:
+        return None
+    seed_tool_call = seed_tool_calls[0]
+    seed_tool_name = str(getattr(seed_tool_call, "name", "") or "").strip()
+    if not (
+        seed_tool_name
+        and seed_tool_name in user_text
+        and _looks_like_direct_tool_instruction(user_text)
+    ):
+        return None
+    requested_batch_signature = semantic_batch_signature([seed_tool_call])
+    if not requested_batch_signature:
+        return None
+    return DirectToolTurnContext(
+        requested_tool_names=(seed_tool_name,),
+        requested_batch_signature=requested_batch_signature,
+        requested_calls=(seed_tool_call,),
+    )
+
+
+def _explicit_sequence_context(user_text: str) -> DirectToolTurnContext | None:
+    explicit_sequence = explicit_tool_name_sequence(user_text)
+    if not explicit_sequence or not _looks_like_direct_tool_instruction(user_text):
+        return None
+    return _name_only_context(_collapse_repeated_single_tool_mentions(explicit_sequence))
+
+
+def _explicit_mention_context(user_text: str) -> DirectToolTurnContext | None:
+    explicit_mentions = _explicit_tool_name_mentions(user_text)
+    if len(explicit_mentions) != 1 or not _looks_like_direct_tool_instruction(user_text):
+        return None
+    return _name_only_context(explicit_mentions)
+
+
 def _direct_tool_turn_context(
     *,
     ctx: ExecutionContext,
     seed_response: Any | None,
 ) -> DirectToolTurnContext | None:
-    seeded_commands = list(getattr(ctx.decision, "_seeded_commands", []) or [])
-    decision_reason_code = str(getattr(ctx.decision, "reason_code", "") or "").strip()
-    if seeded_commands and is_explicit_direct_tool_reason(decision_reason_code):
-        requested_calls: list[ToolCall] = []
-        requested_tool_names: list[str] = []
-        for seeded_command in seeded_commands:
-            seeded_tool_name = str(
-                getattr(seeded_command, "tool_name", "") or ""
-            ).strip()
-            seeded_args = dict(getattr(seeded_command, "args", {}) or {})
-            seeded_inputs = getattr(seeded_command, "inputs", None)
-            if not seeded_tool_name:
-                continue
-            if isinstance(seeded_inputs, dict) and seeded_inputs:
-                requested_calls.append(
-                    SimpleNamespace(
-                        name=seeded_tool_name,
-                        arguments=seeded_args,
-                        inputs=dict(seeded_inputs),
-                    )
-                )
-            else:
-                requested_calls.append(
-                    ToolCall(
-                        name=seeded_tool_name,
-                        arguments=seeded_args,
-                    )
-                )
-            requested_tool_names.append(seeded_tool_name)
-        requested_batch_signature = semantic_batch_signature(requested_calls)
-        if requested_tool_names and requested_batch_signature:
-            return DirectToolTurnContext(
-                requested_tool_names=tuple(requested_tool_names),
-                requested_batch_signature=requested_batch_signature,
-                requested_calls=tuple(requested_calls),
-            )
-    runner = runner_from_context(ctx)
-    if runner is not None and str(ctx.user_input or "").strip():
-        parsed_command = parse_tool_command(
-            runner=runner,
-            state=ctx.state,
-            text=str(ctx.user_input or ""),
-        )
-        if parsed_command is not None:
-            requested_tool_name = str(
-                getattr(parsed_command, "tool_name", "") or ""
-            ).strip()
-            requested_args = dict(getattr(parsed_command, "args", {}) or {})
-            if requested_tool_name:
-                requested_call = ToolCall(
-                    name=requested_tool_name,
-                    arguments=requested_args,
-                )
-                requested_batch_signature = semantic_batch_signature([requested_call])
-                if requested_batch_signature:
-                    return DirectToolTurnContext(
-                        requested_tool_names=(requested_tool_name,),
-                        requested_batch_signature=requested_batch_signature,
-                        requested_calls=(requested_call,),
-                    )
     user_text = str(ctx.user_input or "").strip()
-    exact_batch_sequence = _exact_first_tool_batch_sequence(user_text)
-    if len(exact_batch_sequence) >= 2:
-        return DirectToolTurnContext(
-            requested_tool_names=exact_batch_sequence,
-            requested_batch_signature="",
-            requested_calls=(),
-            match_by_name_only=True,
-        )
-    seed_tool_calls = list(getattr(seed_response, "tool_calls", []) or [])
-    if user_text and len(seed_tool_calls) == 1:
-        seed_tool_call = seed_tool_calls[0]
-        seed_tool_name = str(getattr(seed_tool_call, "name", "") or "").strip()
-        if (
-            seed_tool_name
-            and seed_tool_name in user_text
-            and _looks_like_direct_tool_instruction(user_text)
-        ):
-            requested_batch_signature = semantic_batch_signature([seed_tool_call])
-            if requested_batch_signature:
-                return DirectToolTurnContext(
-                    requested_tool_names=(seed_tool_name,),
-                    requested_batch_signature=requested_batch_signature,
-                    requested_calls=(seed_tool_call,),
-                )
-    explicit_sequence = explicit_tool_name_sequence(user_text)
-    if explicit_sequence and _looks_like_direct_tool_instruction(user_text):
-        return DirectToolTurnContext(
-            requested_tool_names=_collapse_repeated_single_tool_mentions(
-                explicit_sequence
-            ),
-            requested_batch_signature="",
-            requested_calls=(),
-            match_by_name_only=True,
-        )
-    explicit_mentions = _explicit_tool_name_mentions(user_text)
-    if len(explicit_mentions) == 1 and _looks_like_direct_tool_instruction(user_text):
-        return DirectToolTurnContext(
-            requested_tool_names=explicit_mentions,
-            requested_batch_signature="",
-            requested_calls=(),
-            match_by_name_only=True,
-        )
+    for candidate in (
+        _seeded_commands_context(ctx),
+        _parsed_command_context(ctx),
+        _exact_batch_context(user_text),
+        _seed_response_context(user_text=user_text, seed_response=seed_response),
+        _explicit_sequence_context(user_text),
+        _explicit_mention_context(user_text),
+    ):
+        if candidate is not None:
+            return candidate
     return None
 
 
