@@ -1,4 +1,4 @@
-from typing import Sequence
+from collections.abc import Sequence
 
 from openminion.modules.brain.runtime.verification.policy import (
     VerifierResult,

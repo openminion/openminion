@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Sequence
+from collections.abc import Sequence
 
 from openminion.services.bootstrap.paths import (
     SERVICES_PLUGIN_MANIFEST_GLOB,

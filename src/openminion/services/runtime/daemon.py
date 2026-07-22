@@ -49,7 +49,7 @@ class _LifecycleTelemetryBridge:
         # reuse the runtime's pre-built TelemetryService so the
         existing = getattr(runtime, "telemetry_service", None)
         if existing is not None:
-            self._telemetry = existing
+            self._telemetry: TelemetryService = existing
             self._owns_telemetry = False
         else:
             self._telemetry = TelemetryService(
@@ -115,7 +115,7 @@ class _LifecycleTelemetryBridge:
 
 def build_runtime_manager(runtime: "RuntimeFacade") -> Any:
     lifecycle_bridge = _LifecycleTelemetryBridge(runtime)
-    runtime._lifecycle_event_bridge = lifecycle_bridge
+    setattr(runtime, "_lifecycle_event_bridge", lifecycle_bridge)
 
     def _on_agent_evict(agent_id: str, reason: str) -> None:
         runtime.evict_agent_runtime(agent_id=agent_id, reason=reason)
@@ -160,10 +160,12 @@ def attach_cron_scheduler(
     Returns the scheduler instance or None if initialization fails.
     """
     try:
-        from openminion.modules.storage.runtime.sqlite import resolve_database_path
-        from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
-        from openminion.services.cron.scheduler import CronScheduler
-        from openminion.modules.brain.paths import resolve_brain_sessions_db_path
+        (
+            resolve_database_path,
+            resolve_brain_sessions_db_path,
+            SQLiteSessionStore,
+            CronScheduler,
+        ) = _cron_scheduler_components()
     except Exception as exc:  # noqa: BLE001
         _DAEMON_LOGGER.warning(
             format_structured_event(
@@ -175,33 +177,13 @@ def attach_cron_scheduler(
 
     try:
         lifecycle_bridge = getattr(runtime, "_lifecycle_event_bridge", None)
-        storage_path = resolve_database_path(
-            runtime.config.storage.path,
-            env=getattr(runtime.config.runtime, "env", None),
-        )
-        db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
-        cron_store = SQLiteSessionStore(db_path)
-
-        cron_timeout_s: float = max(
-            10.0,
-            float(
-                getattr(runtime.config.runtime, "chat_turn_timeout_seconds", 0) or 90.0
-            ),
-        )
-        cron_max_attempts: int = max(
-            1,
-            int(getattr(runtime.config.runtime, "chat_turn_max_attempts", 0) or 2),
-        )
-        turn_executor = CronTurnExecutor(
+        cron_store = _cron_store_for_runtime(
             runtime=runtime,
-            cron_store=cron_store,
-            request_builder=lambda payload, agent_id: build_turn_request(
-                payload,
-                default_agent_id=agent_id,
-            ),
-            timeout_s=cron_timeout_s,
-            max_attempts=cron_max_attempts,
+            resolve_database_path=resolve_database_path,
+            resolve_brain_sessions_db_path=resolve_brain_sessions_db_path,
+            sqlite_session_store=SQLiteSessionStore,
         )
+        turn_executor = _cron_turn_executor_for_runtime(runtime, cron_store=cron_store)
         delivery_bridge = CronDeliveryBridge(runtime=runtime)
 
         scheduler = CronScheduler(
@@ -221,31 +203,7 @@ def attach_cron_scheduler(
             ),
         )
         scheduler.start()
-
-        try:
-            cron_store.add_cron_job(
-                name="system-cron-cleanup",
-                description="Prune old cron history",
-                schedule={"kind": "every", "every_ms": 86_400_000},
-                payload={
-                    "kind": "systemEvent",
-                    "event_text": "prune_cron_runs",
-                    "kwargs": {"days": 7},
-                },
-                agent_id="system",
-                session_target="main",
-                wake_mode="none",
-                delete_after_run=False,
-                job_id="system-cron-cleanup",
-            )
-        except Exception as exc:  # noqa: BLE001
-            _DAEMON_LOGGER.warning(
-                format_structured_event(
-                    "cron.cleanup.seed_failed",
-                    error=exc,
-                )
-            )
-
+        _seed_cron_cleanup_job(cron_store)
         return scheduler
     except Exception as exc:  # noqa: BLE001
         _DAEMON_LOGGER.warning(
@@ -257,6 +215,86 @@ def attach_cron_scheduler(
         return None
 
 
+def _cron_scheduler_components() -> tuple[Any, Any, Any, Any]:
+    from openminion.modules.brain.paths import resolve_brain_sessions_db_path
+    from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
+    from openminion.modules.storage.runtime.sqlite import resolve_database_path
+    from openminion.services.cron.scheduler import CronScheduler
+
+    return (
+        resolve_database_path,
+        resolve_brain_sessions_db_path,
+        SQLiteSessionStore,
+        CronScheduler,
+    )
+
+
+def _cron_store_for_runtime(
+    *,
+    runtime: "RuntimeFacade",
+    resolve_database_path: Any,
+    resolve_brain_sessions_db_path: Any,
+    sqlite_session_store: Any,
+) -> Any:
+    storage_path = resolve_database_path(
+        runtime.config.storage.path,
+        env=getattr(runtime.config.runtime, "env", None),
+    )
+    db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
+    return sqlite_session_store(db_path)
+
+
+def _cron_turn_executor_for_runtime(
+    runtime: "RuntimeFacade",
+    *,
+    cron_store: Any,
+) -> CronTurnExecutor:
+    cron_timeout_s: float = max(
+        10.0,
+        float(getattr(runtime.config.runtime, "chat_turn_timeout_seconds", 0) or 90.0),
+    )
+    cron_max_attempts: int = max(
+        1,
+        int(getattr(runtime.config.runtime, "chat_turn_max_attempts", 0) or 2),
+    )
+    return CronTurnExecutor(
+        runtime=runtime,
+        cron_store=cron_store,
+        request_builder=lambda payload, agent_id: build_turn_request(
+            payload,
+            default_agent_id=agent_id,
+        ),
+        timeout_s=cron_timeout_s,
+        max_attempts=cron_max_attempts,
+    )
+
+
+def _seed_cron_cleanup_job(cron_store: Any) -> None:
+    try:
+        cron_store.add_cron_job(
+            name="system-cron-cleanup",
+            description="Prune old cron history",
+            schedule={"kind": "every", "every_ms": 86_400_000},
+            payload={
+                "kind": "systemEvent",
+                "event_text": "prune_cron_runs",
+                "kwargs": {"days": 7},
+            },
+            agent_id="system",
+            session_target="main",
+            wake_mode="none",
+            delete_after_run=False,
+            job_id="system-cron-cleanup",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _DAEMON_LOGGER.warning(
+            format_structured_event(
+                "cron.cleanup.seed_failed",
+                error=exc,
+            )
+        )
+
+
 def execute_turn(
     *,
     runtime: "RuntimeFacade",
@@ -266,17 +304,11 @@ def execute_turn(
 ) -> Any:
     started = perf_counter()
     if cancel_event.is_set():
-        return TurnResponse(
-            final_text="",
-            errors=[
-                TurnError(
-                    code="cancelled",
-                    message="turn cancelled before execution",
-                    retryable=False,
-                )
-            ],
-            stats={},
-            telemetry=TurnTelemetry(duration_ms=0),
+        return _turn_error_response(
+            code="cancelled",
+            message="turn cancelled before execution",
+            retryable=False,
+            duration_ms=0,
         )
 
     emit_phase_status = partial(
@@ -288,45 +320,32 @@ def execute_turn(
     timer = phase_timing.ChatPhaseTimer(cold_start=bool(request.meta.get("cold_start")))
     ingress_request = None
     try:
-        with phase_timing.use_chat_phase_timer(timer):
-            with phase_timing.active_chat_phase("provider_request_build"):
-                ingress_request = runtime_turn_request_from_manager_request(
-                    runtime=runtime,
-                    request=request,
-                )
-            turn_result = execute_runtime_turn(
-                runtime=runtime,
-                request=ingress_request,
-                progress_callback=emit_phase_status,
-            )
+        turn_result, ingress_request = _execute_runtime_turn_with_timer(
+            runtime=runtime,
+            request=request,
+            timer=timer,
+            progress_callback=emit_phase_status,
+        )
     except TurnRequestError as exc:
-        duration_ms = max(0, int((perf_counter() - started) * 1000))
-        return TurnResponse(
-            final_text="",
-            metadata={},
-            stats={},
-            errors=[
-                TurnError(code="invalid_request", message=str(exc), retryable=False)
-            ],
-            telemetry=TurnTelemetry(duration_ms=duration_ms),
+        return _turn_error_response(
+            code="invalid_request",
+            message=str(exc),
+            retryable=False,
+            duration_ms=_duration_since_ms(started),
         )
     except TurnTimeoutError as exc:
-        duration_ms = max(0, int((perf_counter() - started) * 1000))
-        return TurnResponse(
-            final_text="",
-            metadata={},
-            stats={},
-            errors=[TurnError(code="turn_timeout", message=str(exc), retryable=True)],
-            telemetry=TurnTelemetry(duration_ms=duration_ms),
+        return _turn_error_response(
+            code="turn_timeout",
+            message=str(exc),
+            retryable=True,
+            duration_ms=_duration_since_ms(started),
         )
     except Exception as exc:
-        duration_ms = max(0, int((perf_counter() - started) * 1000))
-        return TurnResponse(
-            final_text="",
-            metadata={},
-            stats={},
-            errors=[TurnError(code="turn_failed", message=str(exc), retryable=False)],
-            telemetry=TurnTelemetry(duration_ms=duration_ms),
+        return _turn_error_response(
+            code="turn_failed",
+            message=str(exc),
+            retryable=False,
+            duration_ms=_duration_since_ms(started),
         )
     finally:
         if ingress_request is not None:
@@ -336,6 +355,56 @@ def execute_turn(
                 request=ingress_request,
             )
 
+    return _turn_success_response(
+        turn_result=turn_result,
+        request=request,
+        duration_ms=_duration_since_ms(started),
+    )
+
+
+def _execute_runtime_turn_with_timer(
+    *,
+    runtime: "RuntimeFacade",
+    request: Any,
+    timer: phase_timing.ChatPhaseTimer,
+    progress_callback: Any,
+) -> tuple[Any, Any]:
+    with phase_timing.use_chat_phase_timer(timer):
+        with phase_timing.active_chat_phase("provider_request_build"):
+            ingress_request = runtime_turn_request_from_manager_request(
+                runtime=runtime,
+                request=request,
+            )
+        turn_result = execute_runtime_turn(
+            runtime=runtime,
+            request=ingress_request,
+            progress_callback=progress_callback,
+        )
+    return turn_result, ingress_request
+
+
+def _turn_error_response(
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+    duration_ms: int,
+) -> TurnResponse:
+    return TurnResponse(
+        final_text="",
+        metadata={},
+        stats={},
+        errors=[TurnError(code=code, message=message, retryable=retryable)],
+        telemetry=TurnTelemetry(duration_ms=duration_ms),
+    )
+
+
+def _turn_success_response(
+    *,
+    turn_result: Any,
+    request: Any,
+    duration_ms: int,
+) -> TurnResponse:
     metadata = dict(turn_result.metadata)
     tool_calls = _tool_call_summaries(metadata.get("tool_calls"))
     artifact_refs = _tool_artifact_refs(
@@ -343,7 +412,6 @@ def execute_turn(
         session_id=request.session_id,
         trace_id=request.trace_id,
     )
-    duration_ms = max(0, int((perf_counter() - started) * 1000))
     return TurnResponse(
         final_text=turn_result.body,
         metadata=metadata,
@@ -362,6 +430,10 @@ def execute_turn(
         ),
         errors=[],
     )
+
+
+def _duration_since_ms(started: float) -> int:
+    return max(0, int((perf_counter() - started) * 1000))
 
 
 def _emit_turn_phase_status(

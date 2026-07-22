@@ -116,7 +116,7 @@ class DebugRegistry:
         return self._providers.get(module_name)
 
     def get_all_debug(self) -> list[ModuleDebugPayload]:
-        results = []
+        results: list[ModuleDebugPayload] = []
         for module_name in sorted(self._providers.keys()):
             provider = self._providers[module_name]
             try:

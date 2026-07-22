@@ -1,12 +1,9 @@
 """Agent execution runtime coordinator."""
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
-from openminion.modules.llm.providers.base import (
-    ProviderRequest,
-    ProviderResponse,
-    ProviderToolCall,
-)
+from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse, ProviderToolCall
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.modules.tool.exposure import apply_model_exposure

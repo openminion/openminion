@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, cast
+from typing import Any, Optional, cast
+from collections.abc import Mapping
 
 from openminion import __version__
 from openminion.base.protocol import (

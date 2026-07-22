@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Optional
+from typing import Any
 
 from openminion.base.config import EnvironmentConfig, RunProfileOverrides
 from openminion.modules.llm import RuntimeLLMHandle
@@ -58,7 +58,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
 
     def capability_report(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         overrides: RunProfileOverrides | None = None,
     ) -> dict[str, Any]:
         reports = import_module("openminion.api.queries.runtime_reports")
@@ -70,7 +70,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
 
     def runtime_posture(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         overrides: RunProfileOverrides | None = None,
     ) -> dict[str, Any]:
         reports = import_module("openminion.api.queries.runtime_reports")
@@ -86,7 +86,7 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
 
     def runtime_self_model(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         overrides: RunProfileOverrides | None = None,
     ) -> dict[str, Any]:
         queries = import_module("openminion.api.queries.self_model")

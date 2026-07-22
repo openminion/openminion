@@ -1,11 +1,9 @@
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
 
 from openminion.modules.tool.registry import ToolExecutionBatch
 from openminion.services.agent.execution.dependencies import ExecutorDeps
-from openminion.services.agent.execution.loop_quality import (
-    exec_command_action_class,
-    exec_tool_call_command,
-)
+from openminion.services.agent.execution.loop_quality import exec_command_action_class, exec_tool_call_command
 
 from .metadata import build_required_outcome
 from .state import _PhaseResult

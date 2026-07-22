@@ -20,6 +20,11 @@ from openminion.cli.bootstrap.loader import load_config
 _PROBE_STATUS_MISMATCH: str = "mismatch"
 
 
+def _remote_config_path_from_probe_payload(payload: object) -> str:
+    daemon_payload = (payload.get("daemon") or {}) if isinstance(payload, dict) else {}
+    return str(daemon_payload.get("config_path", "")).strip()
+
+
 def run_daemon(args) -> int:
     action = str(getattr(args, "daemon_command", "")).strip().lower()
     if action == "start":
@@ -205,11 +210,7 @@ def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
                 "message": f"Daemon already running pid={existing_pid} ({endpoint.host}:{endpoint.port})",
             }
         if probe_status == _PROBE_STATUS_MISMATCH:
-            remote_config_path = str(
-                (
-                    (payload.get("daemon") or {}) if isinstance(payload, dict) else {}
-                ).get("config_path", "")
-            ).strip()
+            remote_config_path = _remote_config_path_from_probe_payload(payload)
             return {
                 "ok": False,
                 "message": (
@@ -258,11 +259,7 @@ def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
                 "message": f"Started daemon pid={pid} ({endpoint.host}:{endpoint.port})",
             }
         if probe_status == _PROBE_STATUS_MISMATCH:
-            remote_config_path = str(
-                (
-                    (payload.get("daemon") or {}) if isinstance(payload, dict) else {}
-                ).get("config_path", "")
-            ).strip()
+            remote_config_path = _remote_config_path_from_probe_payload(payload)
             return {
                 "ok": False,
                 "message": (

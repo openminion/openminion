@@ -1,7 +1,8 @@
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.telemetry.service import resolve_telemetry_db_path
 from .observability import (
@@ -20,7 +21,7 @@ from openminion.services.supervision import (
 def _load_lifecycle_facts(
     *,
     home_root: Path | None,
-) -> Dict[str, LifecycleFact]:
+) -> dict[str, LifecycleFact]:
     telemetry_path = resolve_telemetry_db_path(home_root=home_root).db_path
     if telemetry_path == ":memory:":
         return {}
@@ -54,7 +55,7 @@ def _load_lifecycle_facts(
         except Exception:
             pass
 
-    facts: Dict[str, LifecycleFact] = {}
+    facts: dict[str, LifecycleFact] = {}
     for row in rows:
         payload = _safe_json_object(row["data"])
         component = payload.get("component")
@@ -94,9 +95,9 @@ def _load_lifecycle_facts(
 def _build_supervision_component_snapshots(
     *,
     observed_at: str,
-    lifecycle_facts: Dict[str, LifecycleFact],
-) -> List[Dict[str, Any]]:
-    components: List[Dict[str, Any]] = []
+    lifecycle_facts: dict[str, LifecycleFact],
+) -> list[dict[str, Any]]:
+    components: list[dict[str, Any]] = []
     for component, policy in _supervision_policies_for_lifecycle_facts(lifecycle_facts):
         key = _lifecycle_component_key(component)
         lifecycle_fact = lifecycle_facts.get(key)
@@ -122,8 +123,8 @@ def _build_supervision_component_snapshots(
 
 
 def _supervision_policies_for_lifecycle_facts(
-    lifecycle_facts: Dict[str, LifecycleFact],
-) -> list[tuple[Dict[str, Any], SupervisionPolicy]]:
+    lifecycle_facts: dict[str, LifecycleFact],
+) -> list[tuple[dict[str, Any], SupervisionPolicy]]:
     from openminion.daemon import build_daemon_supervision_policy
     from openminion.services.cron.scheduler import build_cron_supervision_policy
     from openminion.modules.telemetry.lifecycle import (
@@ -182,14 +183,14 @@ def _build_supervision_component_snapshot(
     lifecycle_fact: LifecycleFact,
     decision: SupervisionDecision,
     observed_at: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     state = _supervision_posture_to_health_state(decision.posture)
     status_message = f"supervision={decision.reason}"
     if decision.restart.action != "none":
         status_message += (
             f"; restart={decision.restart.action}:{decision.restart.reason}"
         )
-    snapshot: Dict[str, Any] = {
+    snapshot: dict[str, Any] = {
         "component": dict(component),
         "liveness": state["liveness"],
         "readiness": state["readiness"],
@@ -229,7 +230,7 @@ def _build_supervision_component_snapshot(
     return snapshot
 
 
-def _supervision_posture_to_health_state(posture: str) -> Dict[str, str]:
+def _supervision_posture_to_health_state(posture: str) -> dict[str, str]:
     normalized = str(posture or "").strip().lower()
     if normalized == "healthy":
         return {"liveness": "alive", "readiness": "ready", "health_state": "healthy"}
@@ -262,9 +263,9 @@ def _lifecycle_component_key(component: Mapping[str, Any]) -> str:
 
 
 def _merge_lifecycle_health_state(
-    state: Dict[str, str],
+    state: dict[str, str],
     lifecycle_fact: LifecycleFact | None,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     if lifecycle_fact is None:
         return state
 
@@ -287,7 +288,7 @@ def _merge_lifecycle_health_state(
     return merged
 
 
-def _status_to_health_state(status: str) -> Dict[str, str]:
+def _status_to_health_state(status: str) -> dict[str, str]:
     if status == "fail":
         return {
             # Phase 2 health normalization is based on readiness/config/probe posture,

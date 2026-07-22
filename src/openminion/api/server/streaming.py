@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from http import HTTPStatus
-from typing import Callable, Optional
+from typing import Callable
 
 from openminion.api.core.turn_execution import close_submission, open_turn_submission
 from openminion.api.runtime import APIRuntime
@@ -80,8 +80,8 @@ def _stream_error_payload(
 def _open_stream_submission(
     *,
     body: dict,
-    config_path: Optional[str],
-    runtime: Optional[APIRuntime],
+    config_path: str | None,
+    runtime: APIRuntime | None,
 ) -> tuple[object | None, HTTPStatus | None, dict | None]:
     try:
         submission = open_turn_submission(
@@ -251,9 +251,9 @@ def _collect_stream_result(
 def handle_turn_stream_request(
     *,
     body: dict,
-    request_id: Optional[str],
-    config_path: Optional[str],
-    runtime: Optional[APIRuntime],
+    request_id: str | None,
+    config_path: str | None,
+    runtime: APIRuntime | None,
     start_sse_response: Callable[[], None],
     write_sse_event: Callable[..., None],
     write_json: Callable[..., None],
@@ -263,8 +263,8 @@ def handle_turn_stream_request(
 ) -> None:
     resolved_request_id = normalize_request_id(request_id)
     started_at = perf_counter()
-    session_id_for_meta: Optional[str] = None
-    run_id_for_meta: Optional[str] = None
+    session_id_for_meta: str | None = None
+    run_id_for_meta: str | None = None
     logger = logging.getLogger("openminion.api")
 
     submission, error_status, error_payload = _open_stream_submission(

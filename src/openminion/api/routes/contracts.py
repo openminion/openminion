@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 from urllib.parse import parse_qs
 
 from openminion.api.responses.serialization import error_response
@@ -11,10 +11,10 @@ from openminion.api.runtime import APIRuntime
 
 @dataclass(frozen=True)
 class APIRouteContext:
-    config_path: Optional[str]
-    runtime: Optional[APIRuntime]
-    runtime_bootstrap_error: Optional[str]
-    request_headers: Optional[Mapping[str, str]]
+    config_path: str | None
+    runtime: APIRuntime | None
+    runtime_bootstrap_error: str | None
+    request_headers: Mapping[str, str] | None
     request_id: str
 
 
@@ -22,8 +22,8 @@ class APIRouteContext:
 class RouteResult:
     status: HTTPStatus
     payload: dict[str, Any]
-    session_id: Optional[str] = None
-    run_id: Optional[str] = None
+    session_id: str | None = None
+    run_id: str | None = None
 
 
 def query_value(query: str | None, name: str) -> str | None:

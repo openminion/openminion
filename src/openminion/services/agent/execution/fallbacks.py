@@ -1,5 +1,6 @@
 import json
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any
+from collections.abc import Iterable, Mapping
 
 from openminion.base.types import Message
 from openminion.modules.llm.providers.base import ProviderToolSpec, ProviderToolCall
@@ -91,7 +92,7 @@ class AgentToolFallbacksMixin:
         *,
         tool_name: str,
         message: str,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         text = str(message or "").strip()
         if not text.lower().startswith("tool "):
             return None
@@ -159,7 +160,7 @@ class AgentToolFallbacksMixin:
         self,
         *,
         tool_name: str,
-        spec: Optional[ProviderToolSpec],
+        spec: ProviderToolSpec | None,
         inbound: Message,
     ):
         if not tool_name or self._tools is None:
@@ -226,9 +227,9 @@ class AgentToolFallbacksMixin:
         self,
         *,
         tool_name: str,
-        spec: Optional[ProviderToolSpec],
+        spec: ProviderToolSpec | None,
         inbound: Message,
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         message = str(inbound.body or "").strip()
         if not message:
             return None
@@ -257,7 +258,7 @@ class AgentToolFallbacksMixin:
     def _sanitize_arguments_for_spec(
         *,
         arguments: Mapping[str, Any],
-        spec: Optional[ProviderToolSpec],
+        spec: ProviderToolSpec | None,
     ) -> dict[str, Any]:
         return sanitize_arguments_for_spec(arguments=arguments, spec=spec)
 

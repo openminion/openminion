@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Mapping
+from typing import Any, Mapping
 
 from openminion.api.config import close_api_runtime_if_owned, resolve_api_runtime
 from openminion.api.runtime import APIRuntime
@@ -23,12 +23,12 @@ class SessionQueryError(RuntimeError):
 
 
 def list_session_messages(
-    config_path: Optional[str],
+    config_path: str | None,
     *,
     session_id: str,
     limit: int = 100,
-    runtime: Optional[APIRuntime] = None,
-) -> Dict[str, Any]:
+    runtime: APIRuntime | None = None,
+) -> dict[str, Any]:
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
         raise SessionQueryError("`session_id` is required.", code="invalid_request")
@@ -50,7 +50,7 @@ def list_session_messages(
         records = active_runtime.sessions.list_messages(
             session_id=normalized_session_id, limit=safe_limit
         )
-        messages: List[Dict[str, Any]] = [
+        messages: list[dict[str, Any]] = [
             {
                 "id": record.id,
                 "session_id": record.session_id,
@@ -77,13 +77,13 @@ def list_session_messages(
 
 
 def append_session_event(
-    config_path: Optional[str],
+    config_path: str | None,
     *,
     session_id: str,
     event_type: str,
     payload: Mapping[str, Any] | None = None,
-    runtime: Optional[APIRuntime] = None,
-) -> Dict[str, Any]:
+    runtime: APIRuntime | None = None,
+) -> dict[str, Any]:
     normalized_session_id = session_id.strip()
     if not normalized_session_id:
         raise SessionQueryError("`session_id` is required.", code="invalid_request")
@@ -122,13 +122,13 @@ def append_session_event(
 
 
 def list_session_context_traces(
-    config_path: Optional[str],
+    config_path: str | None,
     *,
     session_id: str,
     turn_id: str | None = None,
     limit: int = 50,
-    runtime: Optional[APIRuntime] = None,
-) -> Dict[str, Any]:
+    runtime: APIRuntime | None = None,
+) -> dict[str, Any]:
     active_runtime, own_runtime = resolve_api_runtime(
         config_path=config_path,
         runtime=runtime,

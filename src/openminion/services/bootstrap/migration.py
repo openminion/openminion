@@ -3,7 +3,7 @@ import re
 import shutil
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Iterable, List
+from collections.abc import Iterable
 
 from openminion.services.bootstrap.paths import (
     SERVICES_IDENTITY_SUBDIR,
@@ -31,7 +31,7 @@ class MigrationReport:
     started_at: str
     finished_at: str
     dry_run: bool
-    items: List[MigrationItem]
+    items: list[MigrationItem]
 
     def to_dict(self) -> dict[str, object]:
         return {

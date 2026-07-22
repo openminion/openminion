@@ -6,7 +6,7 @@ import logging
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from time import perf_counter
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 from openminion.api.config import bootstrap_api_runtime, build_api_handler_class
@@ -25,9 +25,9 @@ from openminion.api.server.observability import (
 
 
 class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
-    config_path: Optional[str] = None
-    runtime: Optional[APIRuntime] = None
-    runtime_bootstrap_error: Optional[str] = None
+    config_path: str | None = None
+    runtime: APIRuntime | None = None
+    runtime_bootstrap_error: str | None = None
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         parsed = urlparse(self.path)
@@ -107,7 +107,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             raw_body=raw_body,
         )
 
-    def _handle_turn_stream(self, *, body: dict[str, Any], request_id: Optional[str]) -> None:
+    def _handle_turn_stream(self, *, body: dict[str, Any], request_id: str | None) -> None:
         from openminion.api.server.streaming import handle_turn_stream_request
 
         handle_turn_stream_request(
@@ -176,7 +176,7 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         return
 
 
-def build_api_server(config_path: Optional[str], host: str, port: int) -> ThreadingHTTPServer:
+def build_api_server(config_path: str | None, host: str, port: int) -> ThreadingHTTPServer:
     bootstrap = bootstrap_api_runtime(config_path)
     handler_cls = build_api_handler_class(
         _OpenMinionAPIHandler,
@@ -201,7 +201,7 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
         self,
         server_address: tuple[str, int],
         handler_cls: type[BaseHTTPRequestHandler],
-        runtime: Optional[APIRuntime],
+        runtime: APIRuntime | None,
     ) -> None:
         super().__init__(server_address, handler_cls)
         self._runtime = runtime
@@ -214,7 +214,7 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
             super().server_close()
 
 
-def _start_sse_stream_response(handler: _OpenMinionAPIHandler, request_id: Optional[str]) -> None:
+def _start_sse_stream_response(handler: _OpenMinionAPIHandler, request_id: str | None) -> None:
     handler.send_response(int(HTTPStatus.OK))
     handler.send_header("Content-Type", "text/event-stream")
     handler.send_header("Cache-Control", "no-cache")

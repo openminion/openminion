@@ -1,10 +1,9 @@
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
-from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse
-from openminion.modules.llm.providers.base import ProviderToolSpec
-from openminion.modules.tool.base import ToolExecutionResult
-from openminion.modules.tool.base import ToolExecutionContext
+from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse, ProviderToolSpec
+from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 
 from .ports import TurnFlowServicePort

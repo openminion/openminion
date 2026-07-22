@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from http import HTTPStatus
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 from uuid import uuid4
 
 from openminion.base.errors.adapt import (
@@ -19,11 +19,11 @@ _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 def error_response(
     status: HTTPStatus,
     *,
-    code: Optional[str] = None,
-    message: Optional[str] = None,
-    details: Optional[dict[str, Any]] = None,
+    code: str | None = None,
+    message: str | None = None,
+    details: dict[str, Any] | None = None,
     retryable: bool = False,
-    retry_after_ms: Optional[int] = None,
+    retry_after_ms: int | None = None,
     error: ErrorInfo | BaseException | Mapping[str, Any] | None = None,
 ) -> tuple[HTTPStatus, dict[str, Any]]:
     resolved = _resolve_error_info(
@@ -53,8 +53,8 @@ def attach_response_meta(
     request_id: str,
     method: str,
     path: str,
-    session_id: Optional[str] = None,
-    run_id: Optional[str] = None,
+    session_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     response_payload = dict(payload)
     existing_meta = response_payload.get("meta")
@@ -73,14 +73,14 @@ def attach_response_meta(
     return response_payload
 
 
-def normalize_request_id(raw_request_id: Optional[str]) -> str:
+def normalize_request_id(raw_request_id: str | None) -> str:
     candidate = (raw_request_id or "").strip()
     if candidate and _REQUEST_ID_PATTERN.fullmatch(candidate):
         return candidate
     return uuid4().hex
 
 
-def response_error_code(payload: Optional[dict[str, Any]]) -> Optional[str]:
+def response_error_code(payload: dict[str, Any] | None) -> str | None:
     if not isinstance(payload, dict):
         return None
     error = payload.get("error")
@@ -96,9 +96,9 @@ def response_error_code(payload: Optional[dict[str, Any]]) -> Optional[str]:
 def _resolve_error_info(
     *,
     error: ErrorInfo | BaseException | Mapping[str, Any] | None,
-    code: Optional[str],
-    message: Optional[str],
-    details: Optional[dict[str, Any]],
+    code: str | None,
+    message: str | None,
+    details: dict[str, Any] | None,
 ) -> ErrorInfo:
     if isinstance(error, ErrorInfo):
         return error

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Optional
+from collections.abc import Callable, Iterable
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.storage.runtime.context import build_runtime_storage
@@ -11,7 +12,7 @@ class ProbeResult:
     id: str
     status: str
     message: str
-    details: Dict[str, Any] | None = None
+    details: dict[str, Any] | None = None
     remediation: str = ""
 
 
@@ -251,7 +252,7 @@ def probe_plugins_enabled(enabled_plugins: Iterable[str]) -> ProbeResult:
 
 def probe_runtime_bootstrap(
     *,
-    bootstrap_fn: Callable[[], Dict[str, Any]],
+    bootstrap_fn: Callable[[], dict[str, Any]],
     success_message: str,
     failure_remediation: str = "",
     failure_message_prefix: str = "Runtime bootstrap failed",

@@ -1,5 +1,5 @@
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from typing import Iterable, List, Tuple
+from collections.abc import Iterable
 
 from openminion.base.types import AgentResponse, Message
 from openminion.services.runtime.plugins.hooks import Plugin, PluginContext
@@ -65,9 +65,9 @@ class PluginHookRunner:
         *,
         inbound: bool,
         context: PluginContext,
-    ) -> Tuple[List[Plugin], List[Plugin]]:
-        mutating_plugins: List[Plugin] = []
-        side_effect_plugins: List[Plugin] = []
+    ) -> tuple[list[Plugin], list[Plugin]]:
+        mutating_plugins: list[Plugin] = []
+        side_effect_plugins: list[Plugin] = []
         for plugin in plugins:
             mode = _resolve_hook_mode(plugin=plugin, inbound=inbound, context=context)
             if mode == HOOK_MODE_SIDE_EFFECT:
@@ -78,7 +78,7 @@ class PluginHookRunner:
 
     def _run_side_effect_inbound(
         self,
-        plugins: List[Plugin],
+        plugins: list[Plugin],
         message: Message,
         context: PluginContext,
     ) -> None:
@@ -107,7 +107,7 @@ class PluginHookRunner:
 
     def _run_side_effect_outbound(
         self,
-        plugins: List[Plugin],
+        plugins: list[Plugin],
         response: AgentResponse,
         message: Message,
         context: PluginContext,

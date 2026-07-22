@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 from importlib.metadata import EntryPoint, entry_points
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.runtime.capability import resolve_plugin_runtime_policy
