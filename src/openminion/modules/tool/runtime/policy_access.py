@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Iterable, cast
+from typing import Any, cast
+from collections.abc import Iterable
 
 from ..contracts.schemas import Scope, TOOL_ERROR_CONFIRM_REQUIRED
 from ..errors import ToolRuntimeError
@@ -13,7 +14,7 @@ from .policy_shared import SCOPE_ORDER
 
 class PolicyAccessMixin:
     def is_plugin_enabled(self, name: str) -> bool:
-        plugins = cast(Dict[str, Any], self.raw.get("plugins", {}))
+        plugins = cast(dict[str, Any], self.raw.get("plugins", {}))
         deny = set(plugins.get("deny", []))
         if name in deny:
             return False
@@ -23,7 +24,7 @@ class PolicyAccessMixin:
         return True
 
     def ensure_tool_allowed(self, tool_name: str) -> None:
-        tools = cast(Dict[str, Any], self.raw.get("tools", {}))
+        tools = cast(dict[str, Any], self.raw.get("tools", {}))
         deny_exact = set(tools.get("deny_exact", []))
         if tool_name in deny_exact:
             raise ToolRuntimeError(
@@ -65,14 +66,14 @@ class PolicyAccessMixin:
     def ensure_confirm_if_required(
         self,
         tool_name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         confirm: bool,
         dangerous_default: bool,
     ) -> None:
         tool_name_canonical = canonical_tool_name(tool_name)
         required = False
-        reason: Dict[str, Any] = {}
-        confirm_cfg = cast(Dict[str, Any], self.raw.get("confirm", {}))
+        reason: dict[str, Any] = {}
+        confirm_cfg = cast(dict[str, Any], self.raw.get("confirm", {}))
 
         required_tools = {
             canonical_tool_name(str(name))
@@ -88,7 +89,7 @@ class PolicyAccessMixin:
             rule_tool = canonical_tool_name(str(rule.get("tool", "")))
             if rule_tool != tool_name_canonical:
                 continue
-            args_match = cast(Dict[str, Any], rule.get("args_match", {}))
+            args_match = cast(dict[str, Any], rule.get("args_match", {}))
             if args_match and all(
                 args.get(key) == val for key, val in args_match.items()
             ):
@@ -125,7 +126,7 @@ class PolicyAccessMixin:
 
         candidate_path, resolved_path = _resolve_candidate_path(raw_path, workspace)
 
-        paths = cast(Dict[str, Any], self.raw.get("paths", {}))
+        paths = cast(dict[str, Any], self.raw.get("paths", {}))
         deny_roots = [
             _expand_path_pair(str(p), workspace) for p in paths.get("deny", [])
         ]

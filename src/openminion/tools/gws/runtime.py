@@ -3,7 +3,8 @@
 import hashlib
 import json
 import re
-from typing import Any, Dict, Mapping, Optional, cast
+from typing import Any, Optional, cast
+from collections.abc import Mapping
 
 _SENSITIVE_KEY_PATTERN = re.compile(
     r"(token|secret|password|authorization|credential)", re.IGNORECASE
@@ -55,7 +56,7 @@ def parse_json_or_ndjson(
 
 def extract_error_payload(
     parsed_data: Any, stderr_text: str, *, timed_out: bool, exit_code: int
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if timed_out:
         return {
             "code": "TIMEOUT",
@@ -130,7 +131,7 @@ if False:  # pragma: no cover - typing-only import
 
 def redact_basic(value: Any, *, key_hint: str = "") -> Any:
     if isinstance(value, Mapping):
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for key, child in value.items():
             key_str = str(key)
             if _SENSITIVE_KEY_PATTERN.search(key_str):
@@ -147,12 +148,12 @@ def redact_basic(value: Any, *, key_hint: str = "") -> Any:
     return value
 
 
-def result_for_event(result: Dict[str, Any], *, redaction_mode: str) -> Dict[str, Any]:
+def result_for_event(result: dict[str, Any], *, redaction_mode: str) -> dict[str, Any]:
     mode = str(redaction_mode or "basic")
     if mode == "none":
         return dict(result)
     if mode == "strict":
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "ok": bool(result.get("ok", False)),
             "source": str(result.get("source", "gws")),
             "content": str(result.get("content", "")),
@@ -171,7 +172,7 @@ def result_for_event(result: Dict[str, Any], *, redaction_mode: str) -> Dict[str
                 str(result.get("raw_stderr", "")).encode("utf-8", errors="replace")
             ).hexdigest()
         return payload
-    return cast(Dict[str, Any], redact_basic(result))
+    return cast(dict[str, Any], redact_basic(result))
 
 
 def base_request_payload(
@@ -179,8 +180,8 @@ def base_request_payload(
     tool: str,
     command: list[str],
     request: Mapping[str, Any],
-    auth_env: Dict[str, bool],
-) -> Dict[str, Any]:
+    auth_env: dict[str, bool],
+) -> dict[str, Any]:
     return {
         "tool": tool,
         "source": "gws",

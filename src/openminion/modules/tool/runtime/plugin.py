@@ -190,99 +190,22 @@ class ToolRuntime:
             if isinstance(invocation, ToolInvocation)
             else ToolInvocation.model_validate(invocation)
         )
-        key = (inv.tool, inv.method)
-        if key not in self._methods:
-            err = ToolError(
-                code="NOT_FOUND",
-                message=f"Unknown tool.method: {inv.tool}.{inv.method}",
-                retryable=False,
-                details={"tool": inv.tool, "method": inv.method},
-            )
-            self._emit_failed(inv, ctx, metrics={"duration_ms": 0}, error=err)
-            return ToolResult(
-                status=TOOL_RESULT_STATUS_ERROR, error=err, metrics={"duration_ms": 0}
-            )
-
-        reg = self._methods[key]
-        ctx.runtime = self
-        if ctx.event_sink is None:
-            ctx.event_sink = self.event_sink
-        if ctx.artifact_sink is None:
-            ctx.artifact_sink = self.artifact_sink
-        if ctx.logger is None:
-            ctx.logger = self.logger
+        reg = self._registered_method_for_invocation(inv, ctx)
+        if isinstance(reg, ToolResult):
+            return reg
+        self._bind_context_defaults(ctx)
 
         policy = self._evaluate_policy(inv, ctx, reg.tool.capabilities)
         if policy.action != TOOL_POLICY_ACTION_ALLOW:
-            err_code = (
-                "POLICY_DENIED"
-                if policy.action == TOOL_POLICY_ACTION_DENY
-                else TOOL_ERROR_CONFIRM_REQUIRED
-            )
-            details = dict(policy.details)
-            result_data: Dict[str, Any] = {}
-            confirm_request = details.get("confirm_request")
-            if policy.action == TOOL_POLICY_ACTION_REQUIRE_CONFIRM and isinstance(
-                confirm_request, dict
-            ):
-                result_data["confirm_request"] = confirm_request
-            err = ToolError(
-                code=err_code,
-                message=policy.reason or "Invocation rejected by policy hook",
-                retryable=False,
-                details=details,
-            )
-            self._emit_failed(inv, ctx, metrics={"duration_ms": 0}, error=err)
-            return ToolResult(
-                status=TOOL_RESULT_STATUS_ERROR,
-                error=err,
-                metrics={"duration_ms": 0},
-                data=result_data,
-            )
+            return self._policy_rejection_result(inv, ctx, policy)
 
         self._emit_requested(inv, ctx)
-        started = time.perf_counter()
-        timeout_s = (
-            inv.timeout_s if inv.timeout_s is not None else self.default_timeout_s
-        )
-
-        try:
-            if timeout_s is None:
-                raw_result = reg.method.run(inv.args, ctx)
-            else:
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(reg.method.run, inv.args, ctx)
-                    raw_result = future.result(timeout=float(timeout_s))
-        except FuturesTimeoutError:
-            metrics = {
-                "duration_ms": self._duration_ms(started),
-                "timeout_s": timeout_s,
-            }
-            err = ToolError(
-                code="TIMEOUT",
-                message=f"Invocation timed out after {timeout_s} seconds",
-                retryable=True,
-                details={"timeout_s": timeout_s},
-            )
-            self._emit_failed(inv, ctx, metrics=metrics, error=err)
-            return ToolResult(
-                status=TOOL_RESULT_STATUS_ERROR, error=err, metrics=metrics
-            )
-        except Exception as exc:
-            metrics = {"duration_ms": self._duration_ms(started)}
-            err = ToolError(
-                code="REMOTE_ERROR",
-                message=f"{type(exc).__name__}: {exc}",
-                retryable=False,
-                details={"exception_type": type(exc).__name__},
-            )
-            self._emit_failed(inv, ctx, metrics=metrics, error=err)
-            return ToolResult(
-                status=TOOL_RESULT_STATUS_ERROR, error=err, metrics=metrics
-            )
+        raw_result, error_result, duration_ms = self._run_registered_method(inv, ctx, reg)
+        if error_result is not None:
+            return error_result
 
         result = self._normalize_result(raw_result)
-        result.metrics = {"duration_ms": self._duration_ms(started), **result.metrics}
+        result.metrics = {"duration_ms": duration_ms, **result.metrics}
         result = self._externalize_large_outputs(invocation=inv, result=result, ctx=ctx)
 
         if result.status == TOOL_RESULT_STATUS_OK:
@@ -291,6 +214,128 @@ class ToolRuntime:
 
         self._emit_failed(inv, ctx, metrics=result.metrics, error=result.error)
         return result
+
+    def _registered_method_for_invocation(
+        self,
+        inv: ToolInvocation,
+        ctx: ToolContext,
+    ) -> _RegisteredMethod | ToolResult:
+        key = (inv.tool, inv.method)
+        if key in self._methods:
+            return self._methods[key]
+        err = ToolError(
+            code="NOT_FOUND",
+            message=f"Unknown tool.method: {inv.tool}.{inv.method}",
+            retryable=False,
+            details={"tool": inv.tool, "method": inv.method},
+        )
+        self._emit_failed(inv, ctx, metrics={"duration_ms": 0}, error=err)
+        return ToolResult(
+            status=TOOL_RESULT_STATUS_ERROR,
+            error=err,
+            metrics={"duration_ms": 0},
+        )
+
+    def _bind_context_defaults(self, ctx: ToolContext) -> None:
+        ctx.runtime = self
+        if ctx.event_sink is None:
+            ctx.event_sink = self.event_sink
+        if ctx.artifact_sink is None:
+            ctx.artifact_sink = self.artifact_sink
+        if ctx.logger is None:
+            ctx.logger = self.logger
+
+    def _policy_rejection_result(
+        self,
+        inv: ToolInvocation,
+        ctx: ToolContext,
+        policy: PolicyDecision,
+    ) -> ToolResult:
+        err_code = (
+            "POLICY_DENIED"
+            if policy.action == TOOL_POLICY_ACTION_DENY
+            else TOOL_ERROR_CONFIRM_REQUIRED
+        )
+        details = dict(policy.details)
+        result_data: Dict[str, Any] = {}
+        confirm_request = details.get("confirm_request")
+        if policy.action == TOOL_POLICY_ACTION_REQUIRE_CONFIRM and isinstance(
+            confirm_request, dict
+        ):
+            result_data["confirm_request"] = confirm_request
+        err = ToolError(
+            code=err_code,
+            message=policy.reason or "Invocation rejected by policy hook",
+            retryable=False,
+            details=details,
+        )
+        self._emit_failed(inv, ctx, metrics={"duration_ms": 0}, error=err)
+        return ToolResult(
+            status=TOOL_RESULT_STATUS_ERROR,
+            error=err,
+            metrics={"duration_ms": 0},
+            data=result_data,
+        )
+
+    def _run_registered_method(
+        self,
+        inv: ToolInvocation,
+        ctx: ToolContext,
+        reg: _RegisteredMethod,
+    ) -> tuple[Any, ToolResult | None, int]:
+        started = time.perf_counter()
+        timeout_s = inv.timeout_s if inv.timeout_s is not None else self.default_timeout_s
+        try:
+            if timeout_s is None:
+                raw_result = reg.method.run(inv.args, ctx)
+                return raw_result, None, self._duration_ms(started)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(reg.method.run, inv.args, ctx)
+                raw_result = future.result(timeout=float(timeout_s))
+                return raw_result, None, self._duration_ms(started)
+        except FuturesTimeoutError:
+            error = self._timeout_result(inv, ctx, started=started, timeout_s=timeout_s)
+            return None, error, self._duration_ms(started)
+        except Exception as exc:
+            error = self._remote_error_result(inv, ctx, started=started, exc=exc)
+            return None, error, self._duration_ms(started)
+
+    def _timeout_result(
+        self,
+        inv: ToolInvocation,
+        ctx: ToolContext,
+        *,
+        started: float,
+        timeout_s: float | None,
+    ) -> ToolResult:
+        metrics = {"duration_ms": self._duration_ms(started), "timeout_s": timeout_s}
+        err = ToolError(
+            code="TIMEOUT",
+            message=f"Invocation timed out after {timeout_s} seconds",
+            retryable=True,
+            details={"timeout_s": timeout_s},
+        )
+        self._emit_failed(inv, ctx, metrics=metrics, error=err)
+        return ToolResult(status=TOOL_RESULT_STATUS_ERROR, error=err, metrics=metrics)
+
+    def _remote_error_result(
+        self,
+        inv: ToolInvocation,
+        ctx: ToolContext,
+        *,
+        started: float,
+        exc: Exception,
+    ) -> ToolResult:
+        metrics = {"duration_ms": self._duration_ms(started)}
+        err = ToolError(
+            code="REMOTE_ERROR",
+            message=f"{type(exc).__name__}: {exc}",
+            retryable=False,
+            details={"exception_type": type(exc).__name__},
+        )
+        self._emit_failed(inv, ctx, metrics=metrics, error=err)
+        return ToolResult(status=TOOL_RESULT_STATUS_ERROR, error=err, metrics=metrics)
+
 
     def _register_tool(
         self, plugin: ToolPlugin, tool: ToolDefinition

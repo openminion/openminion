@@ -2,7 +2,8 @@ from collections.abc import Mapping
 from typing import Any, Callable
 
 from openminion.modules.tool.errors import ToolRuntimeError
-from openminion.modules.tool.registry import ToolRegistry, ToolSpec
+from openminion.modules.tool.registry import ToolRegistry
+from openminion.modules.tool.registry.catalog import ToolSpec
 
 from .interfaces import (
     TOOL_GITHUB_COMMIT_FILES,
@@ -110,114 +111,42 @@ def _h_post_pr_comment(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
 
 
 def register(registry: ToolRegistry) -> None:
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_LIST_PRS,
-            args_model=GithubListPrsArgs,
-            min_scope="READ_ONLY",
-            handler=_h_list_prs,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "github"),
-            capabilities=("read_only", "network"),
-        )
+    for spec in _github_tool_specs():
+        registry.add(spec)
+
+
+def _github_tool_specs() -> tuple[ToolSpec, ...]:
+    return (
+        _github_tool_spec(TOOL_GITHUB_LIST_PRS, GithubListPrsArgs, _h_list_prs, read_only=True),
+        _github_tool_spec(TOOL_GITHUB_FETCH_PR, GithubFetchPrArgs, _h_fetch_pr, read_only=True),
+        _github_tool_spec(TOOL_GITHUB_FETCH_DIFF, GithubFetchDiffArgs, _h_fetch_diff, read_only=True),
+        _github_tool_spec(TOOL_GITHUB_FETCH_COMMENTS, GithubFetchCommentsArgs, _h_fetch_comments, read_only=True),
+        _github_tool_spec(TOOL_GITHUB_FETCH_CHECKS, GithubFetchChecksArgs, _h_fetch_checks, read_only=True),
+        _github_tool_spec(TOOL_GITHUB_COMMIT_FILES, GithubCommitFilesArgs, _h_commit_files, read_only=False),
+        _github_tool_spec(TOOL_GITHUB_OPEN_PR, GithubOpenPrArgs, _h_open_pr, read_only=False),
+        _github_tool_spec(TOOL_GITHUB_POST_PR_REVIEW, GithubPostPrReviewArgs, _h_post_pr_review, read_only=False),
+        _github_tool_spec(TOOL_GITHUB_POST_PR_COMMENT, GithubPostPrCommentArgs, _h_post_pr_comment, read_only=False),
     )
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_FETCH_PR,
-            args_model=GithubFetchPrArgs,
-            min_scope="READ_ONLY",
-            handler=_h_fetch_pr,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "github"),
-            capabilities=("read_only", "network"),
-        )
+
+
+def _github_tool_spec(
+    name: str,
+    args_model: type[Any],
+    handler: Any,
+    *,
+    read_only: bool,
+) -> ToolSpec:
+    return ToolSpec(
+        name=name,
+        args_model=args_model,
+        min_scope="READ_ONLY" if read_only else "WRITE_SAFE",
+        handler=handler,
+        dangerous=not read_only,
+        idempotent=read_only,
+        tags=("plugin", "github"),
+        capabilities=("read_only" if read_only else "write_safe", "network"),
     )
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_FETCH_DIFF,
-            args_model=GithubFetchDiffArgs,
-            min_scope="READ_ONLY",
-            handler=_h_fetch_diff,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "github"),
-            capabilities=("read_only", "network"),
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_FETCH_COMMENTS,
-            args_model=GithubFetchCommentsArgs,
-            min_scope="READ_ONLY",
-            handler=_h_fetch_comments,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "github"),
-            capabilities=("read_only", "network"),
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_FETCH_CHECKS,
-            args_model=GithubFetchChecksArgs,
-            min_scope="READ_ONLY",
-            handler=_h_fetch_checks,
-            dangerous=False,
-            idempotent=True,
-            tags=("plugin", "github"),
-            capabilities=("read_only", "network"),
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_COMMIT_FILES,
-            args_model=GithubCommitFilesArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_commit_files,
-            dangerous=True,
-            idempotent=False,
-            tags=("plugin", "github"),
-            capabilities=("write_safe", "network"),
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_OPEN_PR,
-            args_model=GithubOpenPrArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_open_pr,
-            dangerous=True,
-            idempotent=False,
-            tags=("plugin", "github"),
-            capabilities=("write_safe", "network"),
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_POST_PR_REVIEW,
-            args_model=GithubPostPrReviewArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_post_pr_review,
-            dangerous=True,
-            idempotent=False,
-            tags=("plugin", "github"),
-            capabilities=("write_safe", "network"),
-        )
-    )
-    registry.add(
-        ToolSpec(
-            name=TOOL_GITHUB_POST_PR_COMMENT,
-            args_model=GithubPostPrCommentArgs,
-            min_scope="WRITE_SAFE",
-            handler=_h_post_pr_comment,
-            dangerous=True,
-            idempotent=False,
-            tags=("plugin", "github"),
-            capabilities=("write_safe", "network"),
-        )
-    )
+
 
 
 __all__ = ["register"]

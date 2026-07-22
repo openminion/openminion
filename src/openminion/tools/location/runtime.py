@@ -1,7 +1,8 @@
 """Location tool runtime helpers."""
 
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.tool.family.events import emit_family_event
 

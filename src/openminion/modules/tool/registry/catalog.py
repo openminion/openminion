@@ -2,13 +2,10 @@ from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
-    Dict,
-    List,
     Literal,
     Optional,
-    Tuple,
 )
+from collections.abc import Callable
 
 from pydantic import BaseModel
 
@@ -30,7 +27,7 @@ if TYPE_CHECKING:
     from openminion.modules.tool.runtime import RuntimeContext
 
 
-Handler = Callable[[Dict[str, Any], "RuntimeContext"], Dict[str, Any]]
+Handler = Callable[[dict[str, Any], "RuntimeContext"], dict[str, Any]]
 Scope = Literal["READ_ONLY", "WRITE_SAFE", "POWER_USER", "UI_AUTOMATION"]
 
 
@@ -42,10 +39,10 @@ class ToolSpec:
     handler: Handler
     dangerous: bool = False
     idempotent: bool = True
-    tags: Tuple[str, ...] = ("core",)
-    capabilities: Optional[Tuple[str, ...]] = None
+    tags: tuple[str, ...] = ("core",)
+    capabilities: Optional[tuple[str, ...]] = None
     sidecar: str | None = None
-    parameters_schema: Dict[str, Any] | None = None
+    parameters_schema: dict[str, Any] | None = None
     prompt_visible_runtime_name: bool = False
     runtime_binding_id: str = ""
     block_under_readonly: bool = False
@@ -53,7 +50,7 @@ class ToolSpec:
     blast_radius: Optional[ToolBlastRadius] = None
     sandbox_kind: Optional[SandboxKind] = None
 
-    def resolved_capabilities(self) -> Tuple[str, ...]:
+    def resolved_capabilities(self) -> tuple[str, ...]:
         if self.capabilities:
             return self.capabilities
         return self.tags
@@ -63,7 +60,7 @@ class ToolSpec:
 class ToolCategoryEntry:
     tool_name: str
     primary_category: str
-    secondary_categories: List[str]
+    secondary_categories: list[str]
 
 
 @dataclass(frozen=True)
@@ -103,7 +100,7 @@ def index_tool_category(registry: "ToolRegistry", tool_name: str, tool: Tool) ->
         registry._category_index[secondary].add(tool_name)
 
 
-def tools_by_category(registry: "ToolRegistry", category: str) -> List[str]:
+def tools_by_category(registry: "ToolRegistry", category: str) -> list[str]:
     """Return tool names registered under the given category."""
     names = set(registry._category_index.get(category, set()))
     if not names:
@@ -167,7 +164,7 @@ def category_for_tool(registry: "ToolRegistry", tool_name: str) -> ToolCategoryE
     )
 
 
-def all_categories(registry: "ToolRegistry") -> List[str]:
+def all_categories(registry: "ToolRegistry") -> list[str]:
     """Return all categories currently indexed in the registry."""
     return sorted(registry._category_index.keys())
 
@@ -264,12 +261,12 @@ def add_tool_spec(registry: "ToolRegistry", spec: Any) -> None:
     )
 
 
-def list_by_capability(registry: "ToolRegistry", capability: str) -> List[ToolSpec]:
+def list_by_capability(registry: "ToolRegistry", capability: str) -> list[ToolSpec]:
     """Return ToolSpec entries whose resolved_capabilities contain the needle."""
     needle = str(capability or "").strip()
     if not needle:
         return []
-    matches: List[ToolSpec] = []
+    matches: list[ToolSpec] = []
     for tool in registry._tools.values():
         if not isinstance(tool, ToolSpec):
             continue

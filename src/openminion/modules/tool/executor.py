@@ -67,6 +67,15 @@ class ToolExecutionBatch:
         )
 
 
+@dataclass
+class _DependencyGraph:
+    node_order: list[str]
+    call_by_node: dict[str, ProviderToolCall]
+    ref_to_node: dict[str, str]
+    deps_by_node: dict[str, list[str]]
+    result_by_node: dict[str, ToolExecutionResult]
+
+
 def _runtime_env_from_metadata(
     metadata: Mapping[str, Any] | None,
 ) -> Mapping[str, object] | None:
@@ -647,107 +656,170 @@ def execute_calls_with_dependencies(
     available_tool_names: tuple[str, ...],
     runtime_binding_policies: Any,
 ) -> list[ToolExecutionResult]:
-    node_order: list[str] = []
-    call_by_node: dict[str, ProviderToolCall] = {}
-    ref_to_node: dict[str, str] = {}
-    deps_by_node: dict[str, list[str]] = {}
-    result_by_node: dict[str, ToolExecutionResult] = {}
-
-    for idx, call in enumerate(calls):
-        provided_id = str(getattr(call, "id", "") or "").strip()
-        node_id = provided_id or f"__call_{idx}"
-        if provided_id and provided_id in ref_to_node:
-            node_id = f"__dup_call_{idx}"
-            result_by_node[node_id] = dependency_error_result(
-                call=call,
-                error_code="invalid_dependency_graph",
-                reason_code="DUPLICATE_CALL_ID",
-                message=f"duplicate tool call id '{provided_id}'",
-                details={"duplicate_call_id": provided_id},
-            )
-        else:
-            if provided_id:
-                ref_to_node[provided_id] = node_id
-        node_order.append(node_id)
-        call_by_node[node_id] = call
-
-    for node_id in node_order:
-        call = call_by_node[node_id]
-        normalized_deps: list[str] = []
-        seen: set[str] = set()
-        raw_depends_on = getattr(call, "depends_on", []) or []
-        for dep in raw_depends_on:
-            dep_ref = str(dep or "").strip()
-            if not dep_ref or dep_ref in seen:
-                continue
-            seen.add(dep_ref)
-            dep_node = ref_to_node.get(dep_ref)
-            if dep_node is None:
-                if node_id not in result_by_node:
-                    result_by_node[node_id] = dependency_error_result(
-                        call=call,
-                        error_code="invalid_dependency_graph",
-                        reason_code="UNKNOWN_DEPENDENCY",
-                        message=f"unknown dependency '{dep_ref}'",
-                        details={"unknown_dependency": dep_ref},
-                    )
-                continue
-            normalized_deps.append(dep_node)
-        deps_by_node[node_id] = normalized_deps
-
-    pending = [node_id for node_id in node_order if node_id not in result_by_node]
+    graph = _dependency_graph_for_calls(calls)
+    pending = [
+        node_id for node_id in graph.node_order if node_id not in graph.result_by_node
+    ]
     while pending:
         ready = [
             node_id
             for node_id in pending
-            if all(dep in result_by_node for dep in deps_by_node.get(node_id, []))
+            if all(
+                dep in graph.result_by_node
+                for dep in graph.deps_by_node.get(node_id, [])
+            )
         ]
         if not ready:
-            for node_id in list(pending):
-                if node_id in result_by_node:
-                    continue
-                call = call_by_node[node_id]
-                result_by_node[node_id] = dependency_error_result(
-                    call=call,
-                    error_code="dependency_cycle",
-                    reason_code="DEPENDENCY_CYCLE",
-                    message="tool dependency cycle detected",
-                    details={"depends_on": deps_by_node.get(node_id, [])},
-                )
+            _record_dependency_cycle_results(graph, pending)
             break
 
         for node_id in ready:
-            call = call_by_node[node_id]
-            deps = deps_by_node.get(node_id, [])
-            failed_deps = [
-                dep_id
-                for dep_id in deps
-                if not bool(result_by_node.get(dep_id).ok)  # type: ignore[union-attr]
-            ]
-            if failed_deps:
-                failed_refs: list[str] = []
-                for dep_id in failed_deps:
-                    dep_call = call_by_node.get(dep_id)
-                    ref = str(getattr(dep_call, "id", "") or "").strip() or dep_id
-                    failed_refs.append(ref)
-                result_by_node[node_id] = dependency_error_result(
-                    call=call,
-                    error_code="dependency_failed",
-                    reason_code="DEPENDENCY_FAILED",
-                    message="tool execution skipped due to failed dependency",
-                    details={"failed_dependencies": failed_refs},
-                )
-            else:
-                result_by_node[node_id] = execute_single_call(
-                    registry,
-                    call=call,
-                    context=context,
-                    available_tool_names=available_tool_names,
-                    runtime_binding_policies=runtime_binding_policies,
-                )
+            _execute_ready_dependency_node(
+                registry,
+                graph=graph,
+                node_id=node_id,
+                context=context,
+                available_tool_names=available_tool_names,
+                runtime_binding_policies=runtime_binding_policies,
+            )
             pending.remove(node_id)
 
-    return [result_by_node[node_id] for node_id in node_order]
+    return [graph.result_by_node[node_id] for node_id in graph.node_order]
+
+
+def _dependency_graph_for_calls(
+    calls: Sequence[ProviderToolCall],
+) -> _DependencyGraph:
+    graph = _DependencyGraph([], {}, {}, {}, {})
+    for idx, call in enumerate(calls):
+        _add_dependency_graph_node(graph, idx=idx, call=call)
+    for node_id in graph.node_order:
+        graph.deps_by_node[node_id] = _normalized_dependency_nodes(
+            graph,
+            node_id=node_id,
+        )
+    return graph
+
+
+def _add_dependency_graph_node(
+    graph: _DependencyGraph,
+    *,
+    idx: int,
+    call: ProviderToolCall,
+) -> None:
+    provided_id = str(getattr(call, "id", "") or "").strip()
+    node_id = provided_id or f"__call_{idx}"
+    if provided_id and provided_id in graph.ref_to_node:
+        node_id = f"__dup_call_{idx}"
+        graph.result_by_node[node_id] = dependency_error_result(
+            call=call,
+            error_code="invalid_dependency_graph",
+            reason_code="DUPLICATE_CALL_ID",
+            message=f"duplicate tool call id '{provided_id}'",
+            details={"duplicate_call_id": provided_id},
+        )
+    elif provided_id:
+        graph.ref_to_node[provided_id] = node_id
+    graph.node_order.append(node_id)
+    graph.call_by_node[node_id] = call
+
+
+def _normalized_dependency_nodes(
+    graph: _DependencyGraph,
+    *,
+    node_id: str,
+) -> list[str]:
+    call = graph.call_by_node[node_id]
+    normalized_deps: list[str] = []
+    seen: set[str] = set()
+    for dep in getattr(call, "depends_on", []) or []:
+        dep_ref = str(dep or "").strip()
+        if not dep_ref or dep_ref in seen:
+            continue
+        seen.add(dep_ref)
+        dep_node = graph.ref_to_node.get(dep_ref)
+        if dep_node is None:
+            _record_unknown_dependency(graph, node_id=node_id, dep_ref=dep_ref)
+            continue
+        normalized_deps.append(dep_node)
+    return normalized_deps
+
+
+def _record_unknown_dependency(
+    graph: _DependencyGraph,
+    *,
+    node_id: str,
+    dep_ref: str,
+) -> None:
+    if node_id in graph.result_by_node:
+        return
+    graph.result_by_node[node_id] = dependency_error_result(
+        call=graph.call_by_node[node_id],
+        error_code="invalid_dependency_graph",
+        reason_code="UNKNOWN_DEPENDENCY",
+        message=f"unknown dependency '{dep_ref}'",
+        details={"unknown_dependency": dep_ref},
+    )
+
+
+def _record_dependency_cycle_results(
+    graph: _DependencyGraph,
+    pending: list[str],
+) -> None:
+    for node_id in list(pending):
+        if node_id in graph.result_by_node:
+            continue
+        graph.result_by_node[node_id] = dependency_error_result(
+            call=graph.call_by_node[node_id],
+            error_code="dependency_cycle",
+            reason_code="DEPENDENCY_CYCLE",
+            message="tool dependency cycle detected",
+            details={"depends_on": graph.deps_by_node.get(node_id, [])},
+        )
+
+
+def _execute_ready_dependency_node(
+    registry: "ToolRegistry",
+    *,
+    graph: _DependencyGraph,
+    node_id: str,
+    context: ToolExecutionContext,
+    available_tool_names: tuple[str, ...],
+    runtime_binding_policies: Any,
+) -> None:
+    call = graph.call_by_node[node_id]
+    failed_refs = _failed_dependency_refs(graph, graph.deps_by_node.get(node_id, []))
+    if failed_refs:
+        graph.result_by_node[node_id] = dependency_error_result(
+            call=call,
+            error_code="dependency_failed",
+            reason_code="DEPENDENCY_FAILED",
+            message="tool execution skipped due to failed dependency",
+            details={"failed_dependencies": failed_refs},
+        )
+        return
+    graph.result_by_node[node_id] = execute_single_call(
+        registry,
+        call=call,
+        context=context,
+        available_tool_names=available_tool_names,
+        runtime_binding_policies=runtime_binding_policies,
+    )
+
+
+def _failed_dependency_refs(
+    graph: _DependencyGraph,
+    deps: list[str],
+) -> list[str]:
+    failed_refs: list[str] = []
+    for dep_id in deps:
+        result = graph.result_by_node.get(dep_id)
+        if result is not None and result.ok:
+            continue
+        dep_call = graph.call_by_node.get(dep_id)
+        ref = str(getattr(dep_call, "id", "") or "").strip() or dep_id
+        failed_refs.append(ref)
+    return failed_refs
 
 
 def _duplicate_call_id_results(

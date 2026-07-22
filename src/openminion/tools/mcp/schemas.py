@@ -441,43 +441,7 @@ def _validate_value(
             )
 
     if schema_type == "object":
-        if not isinstance(value, Mapping):
-            raise MCPArgumentValidationError(f"{path} must be an object.")
-        properties = schema.get("properties", {})
-        if not isinstance(properties, Mapping):
-            properties = {}
-        required = schema.get("required", [])
-        required_names = (
-            {str(item).strip() for item in required if str(item).strip()}
-            if isinstance(required, list)
-            else set()
-        )
-        additional_properties = bool(schema.get("additionalProperties", True))
-        out: dict[str, Any] = {}
-        for required_name in sorted(required_names):
-            if required_name not in value:
-                raise MCPArgumentValidationError(f"{path}.{required_name} is required.")
-        for key, raw in value.items():
-            key_text = str(key or "")
-            property_schema = properties.get(key_text)
-            if isinstance(property_schema, Mapping):
-                out[key_text] = _validate_value(
-                    schema=property_schema,
-                    value=raw,
-                    path=f"{path}.{key_text}",
-                )
-                continue
-            if not additional_properties:
-                raise MCPArgumentValidationError(
-                    f"{path}.{key_text} is not allowed by the schema."
-                )
-            out[key_text] = raw
-        for key, property_schema in properties.items():
-            if key in out or not isinstance(property_schema, Mapping):
-                continue
-            if "default" in property_schema:
-                out[str(key)] = copy.deepcopy(property_schema["default"])
-        return out
+        return _validate_object_value(schema=schema, value=value, path=path)
 
     if schema_type == "array":
         if not isinstance(value, list):
@@ -507,6 +471,51 @@ def _validate_value(
         return value
 
     raise MCPArgumentValidationError(f"{path} uses unsupported type {schema_type!r}.")
+
+
+def _validate_object_value(
+    *,
+    schema: Mapping[str, Any],
+    value: Any,
+    path: str,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise MCPArgumentValidationError(f"{path} must be an object.")
+    properties = schema.get("properties", {})
+    if not isinstance(properties, Mapping):
+        properties = {}
+    required = schema.get("required", [])
+    required_names = (
+        {str(item).strip() for item in required if str(item).strip()}
+        if isinstance(required, list)
+        else set()
+    )
+    additional_properties = bool(schema.get("additionalProperties", True))
+    out: dict[str, Any] = {}
+    for required_name in sorted(required_names):
+        if required_name not in value:
+            raise MCPArgumentValidationError(f"{path}.{required_name} is required.")
+    for key, raw in value.items():
+        key_text = str(key or "")
+        property_schema = properties.get(key_text)
+        if isinstance(property_schema, Mapping):
+            out[key_text] = _validate_value(
+                schema=property_schema,
+                value=raw,
+                path=f"{path}.{key_text}",
+            )
+            continue
+        if not additional_properties:
+            raise MCPArgumentValidationError(
+                f"{path}.{key_text} is not allowed by the schema."
+            )
+        out[key_text] = raw
+    for key, property_schema in properties.items():
+        if key in out or not isinstance(property_schema, Mapping):
+            continue
+        if "default" in property_schema:
+            out[str(key)] = copy.deepcopy(property_schema["default"])
+    return out
 
 
 def _validate_tagged_union_value(

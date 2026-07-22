@@ -3,7 +3,8 @@ import re
 import shlex
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping
+from typing import Any
+from collections.abc import Iterable, Mapping
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_CLEAR,
@@ -112,7 +113,7 @@ _DISCOVERY_HINT_FIX = (
 )
 
 
-def _attach_parse_error_hint(details: Dict[str, Any], code: str) -> Dict[str, Any]:
+def _attach_parse_error_hint(details: dict[str, Any], code: str) -> dict[str, Any]:
     if str(code or "").strip() == "unsupported_redirection":
         command = str(details.get("command", "") or "").strip().lower()
         if "pytest" in command or "python -m" in command:
@@ -129,9 +130,9 @@ def _attach_parse_error_hint(details: Dict[str, Any], code: str) -> Dict[str, An
 
 
 def _attach_executable_denial_hint(
-    details: Dict[str, Any],
+    details: dict[str, Any],
     executable: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     normalized = str(executable or "").strip().lower()
     if normalized == "pytest":
         details.setdefault("suggested_tool", _PYTEST_EXECUTABLE_HINT_TOOL)
@@ -159,7 +160,7 @@ def _discovery_chain_detected(parsed: ParseResult) -> bool:
     return False
 
 
-def _attach_discovery_chain_hint(command: str) -> Dict[str, Any]:
+def _attach_discovery_chain_hint(command: str) -> dict[str, Any]:
     return {
         "command": command,
         "parse_error_code": "unsupported_chain",
@@ -328,7 +329,7 @@ def _is_under_trusted_dir(path: str, trusted_dirs: Iterable[str]) -> bool:
 def _validate_host_allowlist(
     command: str,
     ctx: RuntimeContext,
-) -> tuple[bool, str, Dict[str, Any]]:
+) -> tuple[bool, str, dict[str, Any]]:
     shell_family = resolve_shell_family()
     if shell_family == ShellFamily.UNKNOWN:
         return (
@@ -367,7 +368,7 @@ def _validate_host_allowlist(
     allowed_paths = _parse_allowlist_paths_from_env(ctx)
     safe_bins = _parse_safe_bins_from_env(ctx)
     trusted_dirs = _parse_safe_bin_trusted_dirs_from_env(ctx)
-    checked: list[Dict[str, str]] = []
+    checked: list[dict[str, str]] = []
 
     for segment in parsed.segments:
         raw_exec = segment.argv[0]
@@ -411,7 +412,7 @@ def _validate_host_allowlist(
 
 def _validate_command_against_policy(
     command: str, ctx: RuntimeContext
-) -> tuple[bool, str, Dict[str, Any]]:
+) -> tuple[bool, str, dict[str, Any]]:
     shell_family = resolve_shell_family()
     if shell_family == ShellFamily.UNKNOWN:
         return (
@@ -453,7 +454,7 @@ def _validate_command_against_policy(
             _attach_discovery_chain_hint(command),
         )
 
-    checked: list[Dict[str, Any]] = []
+    checked: list[dict[str, Any]] = []
     for segment in parsed.segments:
         executable = str(segment.argv[0])
         try:

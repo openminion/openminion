@@ -1,4 +1,4 @@
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -117,4 +117,4 @@ class ActionArgs(PinchTabConfigArgs):
     key: Optional[str] = None
     option: Optional[str] = None
     delta: Optional[int] = None
-    extra: Dict[str, Any] = Field(default_factory=dict)
+    extra: dict[str, Any] = Field(default_factory=dict)

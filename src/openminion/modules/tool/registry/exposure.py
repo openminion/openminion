@@ -1,5 +1,6 @@
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Mapping
+from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
 
 from openminion.modules.tool.contracts import (
     ProviderToolSpec,
@@ -23,7 +24,7 @@ def provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
     for tool in registry._tools.values():
         if isinstance(tool, ToolSpec):
             description = ""
-            parameters: Dict[str, Any] = {}
+            parameters: dict[str, Any] = {}
             explicit_parameters = getattr(tool, "parameters_schema", None)
             if isinstance(explicit_parameters, Mapping) and explicit_parameters:
                 parameters = dict(explicit_parameters)
@@ -75,24 +76,24 @@ def model_provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
     return specs
 
 
-def model_to_runtime_binding_map(registry: "ToolRegistry") -> Dict[str, str]:
+def model_to_runtime_binding_map(registry: "ToolRegistry") -> dict[str, str]:
     manager = registry._binding_manager()
     return manager.model_to_runtime_binding_map()
 
 
-def model_to_runtime_tool_map(registry: "ToolRegistry") -> Dict[str, str]:
+def model_to_runtime_tool_map(registry: "ToolRegistry") -> dict[str, str]:
     manager = registry._binding_manager()
     return manager.model_to_runtime_tool_map(set(registry._tools.keys()))
 
 
 def model_runtime_dispatch_map(
     registry: "ToolRegistry",
-) -> Dict[str, Dict[str, Any]]:
+) -> dict[str, dict[str, Any]]:
     manager = registry._binding_manager()
     return manager.model_runtime_dispatch_map(set(registry._tools.keys()))
 
 
-def registration_debug_snapshot(registry: "ToolRegistry") -> Dict[str, Any]:
+def registration_debug_snapshot(registry: "ToolRegistry") -> dict[str, Any]:
     """Build a debug snapshot of registration state for telemetry/diagnostics."""
     runtime_tools = sorted(registry._tools.keys())
     manager = registry._binding_manager()
@@ -174,7 +175,7 @@ def provider_spec_for_runtime_name(
         return None
     if isinstance(tool, ToolSpec):
         description = ""
-        parameters: Dict[str, Any] = {}
+        parameters: dict[str, Any] = {}
         explicit_parameters = getattr(tool, "parameters_schema", None)
         if isinstance(explicit_parameters, Mapping) and explicit_parameters:
             parameters = dict(explicit_parameters)

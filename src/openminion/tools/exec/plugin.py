@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Dict
+from typing import Any
+from collections.abc import Callable
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_CLEAR,
@@ -46,7 +47,7 @@ from .results import _artifactize_output as _artifactize_output
 class ExecToolDeclaration:
     name: str
     args_model: type[Any]
-    handler: Callable[[Dict[str, Any], RuntimeContext], Dict[str, Any]]
+    handler: Callable[[dict[str, Any], RuntimeContext], dict[str, Any]]
     min_scope: str
     dangerous: bool = False
     idempotent: bool = True
@@ -73,50 +74,50 @@ def _plugin_validate_host_allowlist(command: str, ctx: RuntimeContext) -> Any:
     return _policy._validate_host_allowlist(command, ctx)
 
 
-def _plugin_h_exec_run(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _plugin_h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     _sync_compat_globals()
     return _handlers._h_exec_run(args, ctx)
 
 
-def _plugin_h_process_poll(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _plugin_h_process_poll(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     _sync_compat_globals()
     return _handlers._h_process_poll(args, ctx)
 
 
 def _plugin_h_process_send_keys(
-    args: Dict[str, Any], ctx: RuntimeContext
-) -> Dict[str, Any]:
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
     _sync_compat_globals()
     return _handlers._h_process_send_keys(args, ctx)
 
 
 def _plugin_h_process_submit(
-    args: Dict[str, Any], ctx: RuntimeContext
-) -> Dict[str, Any]:
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
     _sync_compat_globals()
     return _handlers._h_process_submit(args, ctx)
 
 
 def _plugin_h_process_paste(
-    args: Dict[str, Any], ctx: RuntimeContext
-) -> Dict[str, Any]:
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
     _sync_compat_globals()
     return _handlers._h_process_paste(args, ctx)
 
 
-def _plugin_h_process_kill(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _plugin_h_process_kill(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     _sync_compat_globals()
     return _handlers._h_process_kill(args, ctx)
 
 
 def _plugin_h_process_clear(
-    args: Dict[str, Any], ctx: RuntimeContext
-) -> Dict[str, Any]:
+    args: dict[str, Any], ctx: RuntimeContext
+) -> dict[str, Any]:
     _sync_compat_globals()
     return _handlers._h_process_clear(args, ctx)
 
 
-def _plugin_h_process_list(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _plugin_h_process_list(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     _sync_compat_globals()
     return _handlers._h_process_list(args, ctx)
 
@@ -138,7 +139,7 @@ def _register_tool(
     *,
     name: str,
     args_model: type[Any],
-    handler: Callable[[Dict[str, Any], RuntimeContext], Dict[str, Any]],
+    handler: Callable[[dict[str, Any], RuntimeContext], dict[str, Any]],
     min_scope: str,
     dangerous: bool = False,
     idempotent: bool = True,

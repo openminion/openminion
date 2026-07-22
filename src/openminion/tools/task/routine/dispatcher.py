@@ -12,8 +12,10 @@ from openminion.tools.task.pr_review.renderer import (
     render_artifact_markdown,
 )
 from openminion.tools.task.pr_review.schemas import (
+    FindingV1,
     PrFactsPayloadV1,
     ReviewOutcomePayloadV1,
+    ReviewedPrV1,
     build_pr_facts_payload,
     finding_hash,
     validate_review_outcome,
@@ -199,116 +201,150 @@ class GitHubPrReviewHandler:
         outcome_text: str,
         sink: PostTurnSink,
     ) -> PostTurnResult:
-        # 1. Parse trailer.
         parse = parse_routine_outcome_trailer(outcome_text)
         if parse.outcome is None:
-            updated = _bump_failure(routine, last_check_iso=facts.checked_at)
-            return PostTurnResult(
-                ok=False,
-                reason_code=parse.reason_code,
-                detail=parse.detail,
-                updated_routine=updated,
-            )
+            return _post_turn_parse_failure(routine, facts=facts, parse=parse)
 
         kept, dropped = validate_review_outcome(parse.outcome, facts=facts)
         if not kept and not dropped and not parse.outcome.skipped_prs:
-            # Empty actionable + empty drop → no-op tick. Update cursor and
-            # bail without writing an artifact.
-            updated = _advance_cursor(
-                routine,
-                checked_at=facts.checked_at,
-                facts=facts,
-                kept=[],
-                new_finding_hashes_per_pr={},
-            )
-            return PostTurnResult(
-                ok=True,
-                summary_line="",
-                kept_count=0,
-                dropped_count=0,
-                new_findings_count=0,
-                updated_routine=updated,
-            )
+            return _post_turn_noop_success(routine, facts=facts)
 
-        delivered = dict(routine.cursor.delivered_findings_hashes)
-        kept_after_dedupe = []
-        new_finding_hashes_per_pr: dict[str, list[str]] = {}
-        new_findings_total = 0
-        for entry in kept:
-            seen = set(delivered.get(str(entry.number), []))
-            fresh_findings = []
-            fresh_hashes: list[str] = []
-            for finding in entry.findings:
-                h = finding_hash(
-                    pr_number=entry.number,
-                    head_sha=entry.head_sha_reviewed,
-                    finding=finding,
-                )
-                if h in seen:
-                    continue
-                fresh_findings.append(finding)
-                fresh_hashes.append(h)
-            if not fresh_findings and not entry.summary.strip():
-                # No new info and no summary text — drop the entry to avoid
-                # spam.
-                continue
-            entry_copy = entry.model_copy(update={"findings": fresh_findings})
-            kept_after_dedupe.append(entry_copy)
-            new_finding_hashes_per_pr[str(entry.number)] = fresh_hashes
-            new_findings_total += len(fresh_hashes)
-
-        if not kept_after_dedupe and not parse.outcome.skipped_prs:
-            # Everything was a duplicate. Don't write an artifact, but DO
-            # advance the cursor's last_check_iso.
-            updated = _advance_cursor(
-                routine,
-                checked_at=facts.checked_at,
-                facts=facts,
-                kept=[],
-                new_finding_hashes_per_pr={},
-            )
-            return PostTurnResult(
-                ok=True,
-                summary_line="",
-                kept_count=0,
-                dropped_count=len(dropped),
-                new_findings_count=0,
-                updated_routine=updated,
+        deduped, fresh_hashes, fresh_count = _dedupe_review_entries(routine, kept)
+        if not deduped and not parse.outcome.skipped_prs:
+            return _post_turn_duplicate_success(
+                routine, facts=facts, dropped_count=len(dropped)
             )
 
         outcome_after_dedupe = parse.outcome.model_copy(
-            update={"reviewed_prs": kept_after_dedupe}
+            update={"reviewed_prs": deduped}
         )
-
-        body = render_artifact_markdown(
-            routine_id=routine_id,
-            repo=facts.repo,
-            checked_at=facts.checked_at,
-            outcome=outcome_after_dedupe,
+        artifact_id, summary_line = _write_review_artifact(
+            routine_id=routine_id, facts=facts, outcome=outcome_after_dedupe, sink=sink
         )
-        artifact_id = sink.write_artifact(routine_id=routine_id, body=body)
-        summary_line = render_announce_summary(
-            repo=facts.repo, outcome=outcome_after_dedupe
-        )
-        sink.announce(routine_id=routine_id, summary=summary_line)
-
         updated = _advance_cursor(
             routine,
             checked_at=facts.checked_at,
             facts=facts,
-            kept=kept_after_dedupe,
-            new_finding_hashes_per_pr=new_finding_hashes_per_pr,
+            kept=deduped,
+            new_finding_hashes_per_pr=fresh_hashes,
         )
-
         return PostTurnResult(
             ok=True,
             artifact_id=artifact_id,
             summary_line=summary_line,
-            kept_count=len(kept_after_dedupe),
+            kept_count=len(deduped),
             dropped_count=len(dropped),
-            new_findings_count=new_findings_total,
+            new_findings_count=fresh_count,
             updated_routine=updated,
         )
+
+
+def _post_turn_parse_failure(
+    routine: RoutinePayloadV1,
+    *,
+    facts: PrFactsPayloadV1,
+    parse: TrailerParseResult,
+) -> PostTurnResult:
+    return PostTurnResult(
+        ok=False,
+        reason_code=parse.reason_code,
+        detail=parse.detail,
+        updated_routine=_bump_failure(routine, last_check_iso=facts.checked_at),
+    )
+
+
+def _post_turn_noop_success(
+    routine: RoutinePayloadV1, *, facts: PrFactsPayloadV1
+) -> PostTurnResult:
+    return PostTurnResult(
+        ok=True,
+        summary_line="",
+        kept_count=0,
+        dropped_count=0,
+        new_findings_count=0,
+        updated_routine=_advance_cursor(
+            routine,
+            checked_at=facts.checked_at,
+            facts=facts,
+            kept=[],
+            new_finding_hashes_per_pr={},
+        ),
+    )
+
+
+def _post_turn_duplicate_success(
+    routine: RoutinePayloadV1, *, facts: PrFactsPayloadV1, dropped_count: int
+) -> PostTurnResult:
+    return PostTurnResult(
+        ok=True,
+        summary_line="",
+        kept_count=0,
+        dropped_count=dropped_count,
+        new_findings_count=0,
+        updated_routine=_advance_cursor(
+            routine,
+            checked_at=facts.checked_at,
+            facts=facts,
+            kept=[],
+            new_finding_hashes_per_pr={},
+        ),
+    )
+
+
+def _dedupe_review_entries(
+    routine: RoutinePayloadV1, kept: list[ReviewedPrV1]
+) -> tuple[list[ReviewedPrV1], dict[str, list[str]], int]:
+    delivered = dict(routine.cursor.delivered_findings_hashes)
+    deduped: list[ReviewedPrV1] = []
+    fresh_hashes_per_pr: dict[str, list[str]] = {}
+    fresh_total = 0
+    for entry in kept:
+        fresh_findings, fresh_hashes = _fresh_findings_for_entry(
+            entry, seen=set(delivered.get(str(entry.number), []))
+        )
+        if not fresh_findings and not entry.summary.strip():
+            continue
+        deduped.append(entry.model_copy(update={"findings": fresh_findings}))
+        fresh_hashes_per_pr[str(entry.number)] = fresh_hashes
+        fresh_total += len(fresh_hashes)
+    return deduped, fresh_hashes_per_pr, fresh_total
+
+
+def _fresh_findings_for_entry(
+    entry: ReviewedPrV1, *, seen: set[str]
+) -> tuple[list[FindingV1], list[str]]:
+    fresh_findings: list[FindingV1] = []
+    fresh_hashes: list[str] = []
+    for finding in entry.findings:
+        candidate = finding_hash(
+            pr_number=entry.number,
+            head_sha=entry.head_sha_reviewed,
+            finding=finding,
+        )
+        if candidate in seen:
+            continue
+        fresh_findings.append(finding)
+        fresh_hashes.append(candidate)
+    return fresh_findings, fresh_hashes
+
+
+def _write_review_artifact(
+    *,
+    routine_id: str,
+    facts: PrFactsPayloadV1,
+    outcome: ReviewOutcomePayloadV1,
+    sink: PostTurnSink,
+) -> tuple[str, str]:
+    body = render_artifact_markdown(
+        routine_id=routine_id,
+        repo=facts.repo,
+        checked_at=facts.checked_at,
+        outcome=outcome,
+    )
+    artifact_id = sink.write_artifact(routine_id=routine_id, body=body)
+    summary_line = render_announce_summary(repo=facts.repo, outcome=outcome)
+    sink.announce(routine_id=routine_id, summary=summary_line)
+    return artifact_id, summary_line
 
 
 def _bump_failure(
@@ -328,7 +364,7 @@ def _advance_cursor(
     *,
     checked_at: str,
     facts: PrFactsPayloadV1,
-    kept: list,
+    kept: list[ReviewedPrV1],
     new_finding_hashes_per_pr: dict[str, list[str]],
 ) -> RoutinePayloadV1:
     last_review_per_pr = dict(routine.cursor.last_review_per_pr)

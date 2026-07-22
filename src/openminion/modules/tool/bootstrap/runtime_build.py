@@ -2,6 +2,7 @@ import importlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any, Mapping
 
 from openminion.base.config.env import resolve_environment_config
@@ -338,6 +339,54 @@ def build_runtime_bootstrap(
     )
 
 
+def _tool_bootstrap_entry_enabled(entry: _ToolBootstrapEntry) -> bool:
+    gate = str(entry.gate or TOOL_BOOTSTRAP_GATE_ALWAYS).strip().lower()
+    if gate == "never":
+        return False
+    if gate == TOOL_BOOTSTRAP_GATE_ALWAYS:
+        return True
+    env_val = (
+        resolve_environment_config()
+        .get(f"OPENMINION_TOOL_GATE_{gate.upper()}", "1")
+        .strip()
+    )
+    return env_val in ("1", "true", "yes", "on")
+
+
+def _validate_manifest_ids(
+    *,
+    entry: _ToolBootstrapEntry,
+    model_tools: Iterable[Any],
+    runtime_bindings: Iterable[Any],
+) -> None:
+    for model_tool in model_tools:
+        model_tool_id = getattr(model_tool, "model_tool_id", None)
+        if not model_tool_id or not str(model_tool_id).strip():
+            raise ToolRuntimeError(
+                "INVALID_ARGUMENT",
+                f"Module {entry.module_name} ({entry.label}) has invalid manifest - "
+                "ModelToolDef missing model_tool_id",
+                {"module_name": entry.module_name, "label": entry.label},
+            )
+    for runtime_binding in runtime_bindings:
+        runtime_binding_id = getattr(runtime_binding, "runtime_binding_id", None)
+        model_tool_id = getattr(runtime_binding, "model_tool_id", None)
+        if not runtime_binding_id or not str(runtime_binding_id).strip():
+            raise ToolRuntimeError(
+                "INVALID_ARGUMENT",
+                f"Module {entry.module_name} ({entry.label}) has invalid manifest - "
+                "RuntimeBindingDef missing runtime_binding_id",
+                {"module_name": entry.module_name, "label": entry.label},
+            )
+        if not model_tool_id or not str(model_tool_id).strip():
+            raise ToolRuntimeError(
+                "INVALID_ARGUMENT",
+                f"Module {entry.module_name} ({entry.label}) has invalid manifest - "
+                "RuntimeBindingDef missing model_tool_id",
+                {"module_name": entry.module_name, "label": entry.label},
+            )
+
+
 def wire_default_tool_registry_manager(
     *,
     tool_bootstrap_entries: tuple[_ToolBootstrapEntry, ...] | None = None,
@@ -346,18 +395,8 @@ def wire_default_tool_registry_manager(
     registry_manager = ToolRegistryManager()
 
     for entry in tool_bootstrap_entries or _TOOL_BOOTSTRAP_ENTRIES:
-        # Check gate
-        gate = str(entry.gate or TOOL_BOOTSTRAP_GATE_ALWAYS).strip().lower()
-        if gate == "never":
+        if not _tool_bootstrap_entry_enabled(entry):
             continue
-        if gate != TOOL_BOOTSTRAP_GATE_ALWAYS:
-            env_val = (
-                resolve_environment_config()
-                .get(f"OPENMINION_TOOL_GATE_{gate.upper()}", "1")
-                .strip()
-            )
-            if env_val not in ("1", "true", "yes", "on"):
-                continue
 
         if entry.kind == "provider":
             continue  # Providers don't have manifests
@@ -407,33 +446,9 @@ def wire_default_tool_registry_manager(
                 {"module_name": entry.module_name, "label": entry.label},
             )
 
-        for model_tool in model_tools:
-            model_tool_id = getattr(model_tool, "model_tool_id", None)
-            if not model_tool_id or not str(model_tool_id).strip():
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT",
-                    f"Module {entry.module_name} ({entry.label}) has invalid manifest - "
-                    "ModelToolDef missing model_tool_id",
-                    {"module_name": entry.module_name, "label": entry.label},
-                )
-
-        for runtime_binding in runtime_bindings:
-            runtime_binding_id = getattr(runtime_binding, "runtime_binding_id", None)
-            model_tool_id = getattr(runtime_binding, "model_tool_id", None)
-            if not runtime_binding_id or not str(runtime_binding_id).strip():
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT",
-                    f"Module {entry.module_name} ({entry.label}) has invalid manifest - "
-                    "RuntimeBindingDef missing runtime_binding_id",
-                    {"module_name": entry.module_name, "label": entry.label},
-                )
-            if not model_tool_id or not str(model_tool_id).strip():
-                raise ToolRuntimeError(
-                    "INVALID_ARGUMENT",
-                    f"Module {entry.module_name} ({entry.label}) has invalid manifest - "
-                    "RuntimeBindingDef missing model_tool_id",
-                    {"module_name": entry.module_name, "label": entry.label},
-                )
+        _validate_manifest_ids(
+            entry=entry, model_tools=model_tools, runtime_bindings=runtime_bindings
+        )
 
         registry_manager.register_module_manifest(
             manifest, source_module=entry.module_name

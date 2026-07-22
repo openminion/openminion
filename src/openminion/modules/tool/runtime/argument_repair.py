@@ -1,5 +1,6 @@
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..contracts.model_ids import (
     MODEL_LOCATION,

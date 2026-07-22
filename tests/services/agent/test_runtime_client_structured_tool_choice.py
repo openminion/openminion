@@ -224,6 +224,26 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
         )
         self.assertEqual(response.tool_calls[0].name, "submit_output")
 
+    def test_runtime_client_downgrades_required_tool_choice_without_tools(self) -> None:
+        client = _CapturingRuntimeClient()
+        service = _service(client=client)
+
+        response = asyncio.run(
+            service._invoke_provider_request(
+                ProviderRequest(
+                    user_message="route this",
+                    system_prompt="You are helpful.",
+                    tools=[],
+                    tool_choice="required",
+                )
+            )
+        )
+
+        self.assertEqual(response.normalization.get("adapter"), "llm_runtime_client")
+        self.assertEqual(len(client.calls), 1)
+        self.assertIsNone(client.calls[0]["tools"])
+        self.assertEqual(client.calls[0]["tool_choice"], "auto")
+
     def test_runtime_client_retry_override_can_be_disabled_via_metadata(self) -> None:
         client = _RetryingRuntimeClient()
         service = _service(client=client)

@@ -1,6 +1,6 @@
 """Google Workspace tool schemas."""
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -28,10 +28,10 @@ class GwsCallArgs(BaseModel):
     method: str = Field(
         ..., min_length=1, description="Method token, e.g. list/get/create/delete."
     )
-    params: Optional[Dict[str, Any]] = Field(
+    params: Optional[dict[str, Any]] = Field(
         default=None, description="Maps to --params '<json>'."
     )
-    json_payload: Optional[Dict[str, Any]] = Field(
+    json_payload: Optional[dict[str, Any]] = Field(
         default=None, alias="json", description="Maps to --json '<json>'."
     )
     dry_run: bool = Field(default=False, description="If true, include --dry-run.")
@@ -187,12 +187,12 @@ class GwsToolConfig(BaseModel):
         return normalized or "gws"
 
 
-GWS_CALL_INPUT_SCHEMA: Dict[str, Any] = GwsCallArgs.model_json_schema(by_alias=True)
-GWS_SCHEMA_INPUT_SCHEMA: Dict[str, Any] = GwsSchemaArgs.model_json_schema()
-GWS_AUTH_INPUT_SCHEMA: Dict[str, Any] = GwsAuthArgs.model_json_schema()
-GWS_AUTH_EXPORT_INPUT_SCHEMA: Dict[str, Any] = GwsAuthExportArgs.model_json_schema()
+GWS_CALL_INPUT_SCHEMA: dict[str, Any] = GwsCallArgs.model_json_schema(by_alias=True)
+GWS_SCHEMA_INPUT_SCHEMA: dict[str, Any] = GwsSchemaArgs.model_json_schema()
+GWS_AUTH_INPUT_SCHEMA: dict[str, Any] = GwsAuthArgs.model_json_schema()
+GWS_AUTH_EXPORT_INPUT_SCHEMA: dict[str, Any] = GwsAuthExportArgs.model_json_schema()
 
-GWS_RESULT_OUTPUT_SCHEMA: Dict[str, Any] = {
+GWS_RESULT_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["ok", "source", "content"],
     "properties": {

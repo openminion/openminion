@@ -1,4 +1,5 @@
-from typing import Any, Dict, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.tools.config import resolve_tool_context_env
 from openminion.tools.env import (
@@ -117,7 +118,7 @@ class TavilySearchPlugin:
     tool_id = "search.provider.tavily"
     contract_version = TAVILY_PLUGIN_INTERFACE_VERSION
     capabilities = ("network", "web.search", "tavily")
-    input_schema: Dict[str, Any] = {
+    input_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "query": {"type": "string"},
@@ -128,7 +129,7 @@ class TavilySearchPlugin:
         "required": ["query"],
         "additionalProperties": False,
     }
-    output_schema: Dict[str, Any] = {
+    output_schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "ok": {"type": "boolean"},
@@ -143,7 +144,7 @@ class TavilySearchPlugin:
     def register(self, registry: Any) -> None:
         register(registry)
 
-    def healthcheck(self) -> Dict[str, Any]:
+    def healthcheck(self) -> dict[str, Any]:
         configured = bool(get_tavily_api_key())
         return {
             "ok": True,

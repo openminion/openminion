@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 
 def _coerce_int(
@@ -36,11 +36,11 @@ def _normalize_search_depth(raw_value: Any) -> str:
     return "basic"
 
 
-def _normalize_results(raw_results: Any) -> list[Dict[str, Any]]:
+def _normalize_results(raw_results: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_results, list):
         return []
 
-    normalized: list[Dict[str, Any]] = []
+    normalized: list[dict[str, Any]] = []
     for item in raw_results:
         if not isinstance(item, dict):
             continue
@@ -50,7 +50,7 @@ def _normalize_results(raw_results: Any) -> list[Dict[str, Any]]:
         snippet = " ".join(content.split())
         if len(snippet) > 400:
             snippet = snippet[:400].rstrip() + "..."
-        record: Dict[str, Any] = {
+        record: dict[str, Any] = {
             "title": title,
             "url": url,
             "snippet": snippet,

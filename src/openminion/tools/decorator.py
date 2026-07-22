@@ -1,5 +1,6 @@
 import inspect
-from typing import Any, Callable, Optional, Union, overload
+from typing import Any, Optional, overload
+from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict, create_model
 
@@ -151,7 +152,7 @@ def tool(
 
 
 def tool(
-    func: Union[Callable[..., Any], None] = None,
+    func: Callable[..., Any] | None = None,
     *,
     name: Optional[str] = None,
     description: Optional[str] = None,

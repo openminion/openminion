@@ -1,6 +1,7 @@
 import fnmatch
 from pathlib import Path
-from typing import Callable, Mapping, cast
+from typing import cast
+from collections.abc import Callable, Mapping
 
 from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError

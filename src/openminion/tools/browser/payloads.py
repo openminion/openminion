@@ -1,7 +1,8 @@
 """Browser payload and selector normalization."""
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.tool.runtime.resource_selectors import ResourceSelectors
 

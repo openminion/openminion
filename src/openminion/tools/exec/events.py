@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_CLEAR,
@@ -117,7 +117,7 @@ def _emit_exec_operation(
     tool_name: str,
     status: str = "ok",
     error_code: str | None = None,
-    extra: Dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> None:
     emit_tool_exec_operation_for_context(
         ctx=ctx,

@@ -1,6 +1,7 @@
 import re
 import time
-from typing import Any, Dict, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_CLEAR,
@@ -139,7 +140,7 @@ def _encode_keys(keys: Iterable[str]) -> bytes:
     return bytes(output)
 
 
-def _h_exec_run(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_exec_run(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     params = ExecRunArgs.model_validate(args)
     started = time.monotonic()
     tool_name = MODEL_EXEC_RUN
@@ -177,7 +178,7 @@ def _h_exec_run(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     )
 
 
-def _h_process_poll(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_process_poll(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     params = ProcessPollArgs.model_validate(args)
     agent_id = _agent_id(ctx)
     session_backend = _session_backend_for_ctx(ctx, params.session_id)
@@ -231,7 +232,7 @@ def _h_process_poll(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]
     return result.model_dump()
 
 
-def _h_process_send_keys(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_process_send_keys(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     params = ProcessSendKeysArgs.model_validate(args)
     agent_id = _agent_id(ctx)
     session_backend = _session_backend_for_ctx(ctx, params.session_id)
@@ -276,7 +277,7 @@ def _h_process_send_keys(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str,
     ).model_dump()
 
 
-def _h_process_submit(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_process_submit(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     params = ProcessSubmitArgs.model_validate(args)
     agent_id = _agent_id(ctx)
     session_backend = _session_backend_for_ctx(ctx, params.session_id)
@@ -291,7 +292,7 @@ def _h_process_submit(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, An
     ).model_dump()
 
 
-def _h_process_paste(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_process_paste(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     params = ProcessPasteArgs.model_validate(args)
     agent_id = _agent_id(ctx)
     payload = params.text.encode("utf-8", errors="replace")
@@ -309,7 +310,7 @@ def _h_process_paste(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any
     ).model_dump()
 
 
-def _h_process_kill(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_process_kill(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     params = ProcessKillArgs.model_validate(args)
     agent_id = _agent_id(ctx)
     session_backend = _session_backend_for_ctx(ctx, params.session_id)
@@ -340,7 +341,7 @@ def _h_process_kill(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]
     ).model_dump()
 
 
-def _h_process_clear(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_process_clear(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     params = ProcessClearArgs.model_validate(args)
     agent_id = _agent_id(ctx)
     session_backend = _session_backend_for_ctx(ctx, params.session_id)
@@ -353,7 +354,7 @@ def _h_process_clear(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any
     ).model_dump()
 
 
-def _h_process_list(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
+def _h_process_list(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     params = ProcessListArgs.model_validate(args)
     agent_id = _agent_id(ctx)
     sessions = PROCESS_MANAGER.list(

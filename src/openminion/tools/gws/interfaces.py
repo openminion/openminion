@@ -1,6 +1,6 @@
 """Google Workspace tool interfaces."""
 
-from typing import Any, Dict
+from typing import Any
 
 GWS_INTERFACE_VERSION = "v1"
 
@@ -126,7 +126,7 @@ def _type_matches(actual_type: str, expected_types: list[str]) -> bool:
     return actual_type in {"integer", "number"} and "number" in expected_types
 
 
-def _validate_array_items(value: Any, prop_def: Dict[str, Any]) -> bool:
+def _validate_array_items(value: Any, prop_def: dict[str, Any]) -> bool:
     if _json_type(value) != "array" or "items" not in prop_def:
         return True
     items_spec = prop_def["items"]
@@ -136,7 +136,7 @@ def _validate_array_items(value: Any, prop_def: Dict[str, Any]) -> bool:
     return all(_type_matches(_json_type(item), item_types) for item in value)
 
 
-def _validate_property_value(value: Any, prop_def: Dict[str, Any]) -> bool:
+def _validate_property_value(value: Any, prop_def: dict[str, Any]) -> bool:
     expected = _expected_types(prop_def.get("type"))
     if not expected:
         return True
@@ -151,7 +151,7 @@ def _validate_property_value(value: Any, prop_def: Dict[str, Any]) -> bool:
     return _validate_array_items(value, prop_def)
 
 
-def validate_request_schema(operation: str, request: Dict[str, Any]) -> bool:
+def validate_request_schema(operation: str, request: dict[str, Any]) -> bool:
     schema = _GWS_REQUEST_SCHEMAS.get(operation)
     if schema is None:
         return False
@@ -165,7 +165,7 @@ def validate_request_schema(operation: str, request: Dict[str, Any]) -> bool:
     )
 
 
-def validate_response_schema(response: Dict[str, Any]) -> bool:
+def validate_response_schema(response: dict[str, Any]) -> bool:
     required = GWS_RESPONSE_SCHEMA.get("required", [])
     if any(field not in response for field in required):
         return False

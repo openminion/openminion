@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.family.events import emit_family_event
@@ -46,7 +47,7 @@ def normalize_location_text(value: Any) -> str:
     return normalized
 
 
-def sanitize_request(args: Mapping[str, Any]) -> Dict[str, Any]:
+def sanitize_request(args: Mapping[str, Any]) -> dict[str, Any]:
     redacted = dict(args)
     for key in ("location", "city", "query", "place"):
         if key in redacted:
@@ -55,13 +56,13 @@ def sanitize_request(args: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 def emit_event(
-    ctx: RuntimeContext, *, event_name: str, payload: Dict[str, Any]
+    ctx: RuntimeContext, *, event_name: str, payload: dict[str, Any]
 ) -> None:
     emit_family_event(ctx, event=event_name, payload=payload)
 
 
-def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> Dict[str, Any]:
-    out: Dict[str, Any] = dict(base)
+def deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = dict(base)
     for key, value in override.items():
         if key in out and isinstance(out[key], dict) and isinstance(value, dict):
             out[key] = deep_merge(out[key], value)
@@ -187,7 +188,7 @@ def build_source(
     endpoints: list[str],
     fallback_used: bool,
     geocoding_provider: str = "open-meteo",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     license_note = (
         WEATHER_OPENMETEO_FALLBACK_LICENSE_NOTE
         if fallback_used
@@ -209,15 +210,15 @@ def build_source(
 def build_payload(
     *,
     query: str,
-    location: Dict[str, Any],
-    metrics: Dict[str, Any],
+    location: dict[str, Any],
+    metrics: dict[str, Any],
     observed_at: str,
     endpoints: list[str],
     warnings: list[str],
     fallback_used: bool,
     geocoding_provider: str = "open-meteo",
-) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "location": {
             "query": query,
             "resolved_name": str(location.get("resolved_name", query)),
@@ -244,7 +245,7 @@ def build_payload(
     return payload
 
 
-def fallback_sample(query: str) -> Dict[str, Any]:
+def fallback_sample(query: str) -> dict[str, Any]:
     normalized = normalize_query_key(query)
     observed_at = datetime.now(timezone.utc).isoformat()
 

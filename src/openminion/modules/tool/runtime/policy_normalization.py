@@ -1,6 +1,7 @@
 """Tool module support for runtime policy normalization."""
 
-from typing import Any, Dict, Sequence, cast
+from typing import Any, cast
+from collections.abc import Sequence
 
 
 def canonicalize_policy_tool_token(raw_token: str) -> str:
@@ -43,19 +44,19 @@ def canonical_tool_name(tool_name: str) -> str:
     return token
 
 
-def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     for key, val in override.items():
         if key in out and isinstance(out[key], dict) and isinstance(val, dict):
             out[key] = deep_merge(
-                cast(Dict[str, Any], out[key]), cast(Dict[str, Any], val)
+                cast(dict[str, Any], out[key]), cast(dict[str, Any], val)
             )
             continue
         out[key] = val
     return out
 
 
-def normalize_policy_legacy_aliases(raw: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_policy_legacy_aliases(raw: dict[str, Any]) -> dict[str, Any]:
     """Runtime helper."""
     if not isinstance(raw, dict):
         return {}

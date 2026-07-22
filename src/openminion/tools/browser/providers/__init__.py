@@ -1,7 +1,8 @@
 import logging
 from dataclasses import dataclass, field
 from importlib.metadata import EntryPoint, entry_points
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Protocol
+from collections.abc import Callable, Mapping
 
 from openminion.modules.tool.runtime.resource_selectors import ResourceSelectors
 from openminion.modules.tool.runtime import RuntimeContext

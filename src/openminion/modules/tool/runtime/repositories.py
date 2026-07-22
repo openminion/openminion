@@ -4,7 +4,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from openminion.base.config.env import resolve_environment_config
 

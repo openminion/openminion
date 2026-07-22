@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -28,5 +28,5 @@ class TavilyErrorEnvelope(ToolErrorEnvelope): ...
 
 class TavilyOperationSchema(BaseModel):
     operation: str
-    parameters: Dict[str, Any]
+    parameters: dict[str, Any]
     contract_version: str = TAVILY_PLUGIN_INTERFACE_VERSION

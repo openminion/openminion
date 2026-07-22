@@ -5,7 +5,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.time import utc_now_iso as iso_now
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
