@@ -35,3 +35,6 @@ Library/
 temp_*
 
 .claude/
+
+# Local control-plane runtime state (created on first use).
+controlplane/*.db
