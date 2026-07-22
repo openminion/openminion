@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.modules.task.scheduling.interfaces import CRON_INTERFACE_VERSION
 from ..interfaces import (

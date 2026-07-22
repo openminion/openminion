@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from openminion.modules.runtime.credentials import CredentialRef
 from openminion.modules.tool.runtime.blast_radius import (
@@ -39,7 +40,7 @@ class CompositionBoundaryAdapter:
         self,
         tool_spec: Any,
         *,
-        credential_ref: Optional[CredentialRef] = None,
+        credential_ref: CredentialRef | None = None,
     ) -> tuple[ToolBlastRadiusProfile, bool, CompositionBoundaryEvent]:
         profile = classify_tool_blast_radius(tool_spec, credential_ref=credential_ref)
         needs_approval = requires_composition_approval(

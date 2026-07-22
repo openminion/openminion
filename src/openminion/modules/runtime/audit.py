@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
-from typing import Iterable, Literal, Mapping, Protocol
+from typing import Literal, Protocol
+from collections.abc import Iterable, Mapping
 
 from openminion.modules.runtime.constants import AUDIT_EVENT_TYPE_PREFIX
 

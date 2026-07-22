@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 from openminion.modules.identity.models import AgentProfile
 from openminion.modules.identity.storage.base import (

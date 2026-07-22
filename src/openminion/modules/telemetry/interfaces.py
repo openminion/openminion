@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, Protocol, Mapping, Optional
+from typing import Any, Protocol, Optional
+from collections.abc import Mapping
 from pathlib import Path
 from .schemas import TelemetryEvent, SessionTelemetry, CostSummary
 

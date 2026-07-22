@@ -414,68 +414,11 @@ class RetrievalPipeline:
         )
         meta = build_empty_meta("retrieval", limit)
 
-        retrieve_hits: list[dict[str, Any]] = []
-        split_counts = {"conversational": 0, "knowledge": 0}
-        if self._retrieve_ctl is not None:
-            try:
-                retrieve_hits, split_counts = self._retrieve_split(
-                    self._retrieve_ctl,
-                    query=user_message,
-                    session_id=session_id,
-                    agent_id=self._agent_id,
-                    project_id=project_id,
-                    k_conversational=int(self._config_default("k_conversational", 3)),
-                    k_knowledge=int(self._config_default("k_knowledge", 3)),
-                )
-                retrieve_hits = self._apply_recency_boost(
-                    retrieve_hits,
-                    decay_halflife_days=int(
-                        self._config_default("decay_halflife_days", 30)
-                    ),
-                    recency_weight=float(self._config_default("recency_weight", 0.3)),
-                )
-                retrieve_hits = self._apply_feedback_boost(
-                    retrieve_hits,
-                    max_boost=self._feedback_boost_on_reference,
-                )
-                total_k = max(
-                    1,
-                    int(self._config_default("k_conversational", 3))
-                    + int(self._config_default("k_knowledge", 3)),
-                )
-                mmr_enabled = bool(
-                    getattr(self._ranking_config, "mmr_enabled", True)
-                    if self._ranking_config is not None
-                    else self._config_default("mmr_enabled", True)
-                )
-                mmr_lambda = float(
-                    getattr(self._ranking_config, "mmr_lambda", 0.6)
-                    if self._ranking_config is not None
-                    else self._config_default("mmr_lambda", 0.6)
-                )
-                if mmr_enabled:
-                    retrieve_hits = self.mmr_rerank(
-                        retrieve_hits,
-                        k=total_k,
-                        lambda_=mmr_lambda,
-                    )
-                else:
-                    retrieve_hits = retrieve_hits[:total_k]
-            except Exception as exc:
-                self._logger.warning(
-                    "memory.retrieval.retrieve_ctl failed agent_id=%s session_id=%s error=%s",
-                    self._agent_id,
-                    session_id,
-                    exc,
-                )
-                self._trace(
-                    "memory.retrieval.retrieve_ctl_error",
-                    {
-                        "session_id": session_id,
-                        "error": str(exc),
-                    },
-                )
-
+        retrieve_hits, split_counts = self._rank_retrieve_hits(
+            user_message=user_message,
+            session_id=session_id,
+            project_id=project_id,
+        )
         merged_hits = self._merge_and_dedup(memory_hits, retrieve_hits)
         if not merged_hits:
             meta["memory_envelope_limit_chars"] = str(limit)
@@ -509,6 +452,73 @@ class RetrievalPipeline:
             },
         )
         return content, meta, retrieve_hits, merged_hits
+
+    def _rank_retrieve_hits(
+        self,
+        *,
+        user_message: str,
+        session_id: str,
+        project_id: str | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        split_counts = {"conversational": 0, "knowledge": 0}
+        if self._retrieve_ctl is None:
+            return [], split_counts
+        try:
+            retrieve_hits, split_counts = self._retrieve_split(
+                self._retrieve_ctl,
+                query=user_message,
+                session_id=session_id,
+                agent_id=self._agent_id,
+                project_id=project_id,
+                k_conversational=int(self._config_default("k_conversational", 3)),
+                k_knowledge=int(self._config_default("k_knowledge", 3)),
+            )
+            return self._rerank_retrieve_hits(retrieve_hits), split_counts
+        except Exception as exc:
+            self._logger.warning(
+                "memory.retrieval.retrieve_ctl failed agent_id=%s session_id=%s error=%s",
+                self._agent_id,
+                session_id,
+                exc,
+            )
+            self._trace(
+                "memory.retrieval.retrieve_ctl_error",
+                {"session_id": session_id, "error": str(exc)},
+            )
+            return [], split_counts
+
+    def _rerank_retrieve_hits(
+        self,
+        retrieve_hits: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        boosted_hits = self._apply_recency_boost(
+            retrieve_hits,
+            decay_halflife_days=int(self._config_default("decay_halflife_days", 30)),
+            recency_weight=float(self._config_default("recency_weight", 0.3)),
+        )
+        boosted_hits = self._apply_feedback_boost(
+            boosted_hits,
+            max_boost=self._feedback_boost_on_reference,
+        )
+        total_k = max(
+            1,
+            int(self._config_default("k_conversational", 3))
+            + int(self._config_default("k_knowledge", 3)),
+        )
+        mmr_enabled = bool(
+            getattr(self._ranking_config, "mmr_enabled", True)
+            if self._ranking_config is not None
+            else self._config_default("mmr_enabled", True)
+        )
+        if not mmr_enabled:
+            return boosted_hits[:total_k]
+        mmr_lambda = float(
+            getattr(self._ranking_config, "mmr_lambda", 0.6)
+            if self._ranking_config is not None
+            else self._config_default("mmr_lambda", 0.6)
+        )
+        return self.mmr_rerank(boosted_hits, k=total_k, lambda_=mmr_lambda)
+
 
 
 __all__ = [

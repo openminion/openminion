@@ -186,20 +186,20 @@ def replay_from_events(bundle: ReplayBundle) -> ReplayResult:
         ts = _event_timestamp(event, last_timestamp)
 
         if seq is not None and last_seq is not None and seq < last_seq:
-            divergence = ReplayDivergence(
-                event_id=event_id,
-                seam_id=event_type or "unknown",
-                expected_payload={"seq": last_seq + 1},
-                actual_payload={"seq": seq},
-                divergence_kind="event_order_mismatch",
-                recorded_at=ts,
+            halted = _record_replayed_divergence(
+                divergences,
+                divergence=_event_order_divergence(
+                    event_id=event_id,
+                    event_type=event_type,
+                    last_seq=last_seq,
+                    seq=seq,
+                    recorded_at=ts,
+                ),
+                policy=bundle.policy,
             )
-            divergences.append(divergence)
             events_replayed += 1
             last_seq = seq
             last_timestamp = ts
-            if bundle.policy.stop_on_divergence:
-                halted = True
             continue
 
         actual_payload = event.get("payload")
@@ -207,44 +207,39 @@ def replay_from_events(bundle: ReplayBundle) -> ReplayResult:
             actual_payload = {}
 
         expected_payload = bundle.expected_event_payloads.get(event_id)
-
-        if expected_payload is None:
-            pass
-        else:
-            kind = _event_kind_to_divergence(event_type)
-            if _payload_comparison_enabled(bundle.policy, kind):
-                if dict(expected_payload) != dict(actual_payload):
-                    divergence = ReplayDivergence(
-                        event_id=event_id,
-                        seam_id=event_type or "unknown",
-                        expected_payload=dict(expected_payload),
-                        actual_payload=dict(actual_payload),
-                        divergence_kind=kind,
-                        recorded_at=ts,
-                    )
-                    divergences.append(divergence)
-                    events_replayed += 1
-                    last_seq = seq if seq is not None else last_seq
-                    last_timestamp = ts
-                    if bundle.policy.stop_on_divergence:
-                        halted = True
-                    continue
-
-        if event.get("missing") is True:
-            divergence = ReplayDivergence(
-                event_id=event_id,
-                seam_id=event_type or "unknown",
-                expected_payload=dict(expected_payload) if expected_payload else {},
-                actual_payload={},
-                divergence_kind="missing_event",
-                recorded_at=ts,
+        divergence = _event_payload_divergence(
+            event_id=event_id,
+            event_type=event_type,
+            actual_payload=actual_payload,
+            expected_payload=expected_payload,
+            policy=bundle.policy,
+            recorded_at=ts,
+        )
+        if divergence is not None:
+            halted = _record_replayed_divergence(
+                divergences,
+                divergence=divergence,
+                policy=bundle.policy,
             )
-            divergences.append(divergence)
             events_replayed += 1
             last_seq = seq if seq is not None else last_seq
             last_timestamp = ts
-            if bundle.policy.stop_on_divergence:
-                halted = True
+            continue
+
+        if event.get("missing") is True:
+            halted = _record_replayed_divergence(
+                divergences,
+                divergence=_missing_event_divergence(
+                    event_id=event_id,
+                    event_type=event_type,
+                    expected_payload=expected_payload,
+                    recorded_at=ts,
+                ),
+                policy=bundle.policy,
+            )
+            events_replayed += 1
+            last_seq = seq if seq is not None else last_seq
+            last_timestamp = ts
             continue
 
         events_replayed += 1
@@ -252,17 +247,14 @@ def replay_from_events(bundle: ReplayBundle) -> ReplayResult:
         last_timestamp = ts
 
     final_state: Mapping[str, Any] = dict(bundle.initial_state)
-    if bundle.expected_state is not None and not halted:
-        if dict(bundle.expected_state) != dict(final_state):
-            divergence = ReplayDivergence(
-                event_id="<final-state>",
-                seam_id=STATE_KEY_WORKING,
-                expected_payload=dict(bundle.expected_state),
-                actual_payload=dict(final_state),
-                divergence_kind="state_mismatch",
-                recorded_at=last_timestamp,
-            )
-            divergences.append(divergence)
+    final_divergence = _final_state_divergence(
+        expected_state=bundle.expected_state,
+        final_state=final_state,
+        halted=halted,
+        recorded_at=last_timestamp,
+    )
+    if final_divergence is not None:
+        divergences.append(final_divergence)
 
     return ReplayResult(
         bundle_id=bundle.bundle_id,
@@ -272,6 +264,98 @@ def replay_from_events(bundle: ReplayBundle) -> ReplayResult:
         events_skipped=events_skipped,
         completed_at=last_timestamp,
     )
+
+
+def _final_state_divergence(
+    *,
+    expected_state: Mapping[str, Any] | None,
+    final_state: Mapping[str, Any],
+    halted: bool,
+    recorded_at: datetime,
+) -> ReplayDivergence | None:
+    if expected_state is None or halted:
+        return None
+    if dict(expected_state) == dict(final_state):
+        return None
+    return ReplayDivergence(
+        event_id="<final-state>",
+        seam_id=STATE_KEY_WORKING,
+        expected_payload=dict(expected_state),
+        actual_payload=dict(final_state),
+        divergence_kind="state_mismatch",
+        recorded_at=recorded_at,
+    )
+
+
+def _missing_event_divergence(
+    *,
+    event_id: str,
+    event_type: str,
+    expected_payload: Mapping[str, Any] | None,
+    recorded_at: datetime,
+) -> ReplayDivergence:
+    return ReplayDivergence(
+        event_id=event_id,
+        seam_id=event_type or "unknown",
+        expected_payload=dict(expected_payload) if expected_payload else {},
+        actual_payload={},
+        divergence_kind="missing_event",
+        recorded_at=recorded_at,
+    )
+
+
+def _event_order_divergence(
+    *,
+    event_id: str,
+    event_type: str,
+    last_seq: int,
+    seq: int,
+    recorded_at: datetime,
+) -> ReplayDivergence:
+    return ReplayDivergence(
+        event_id=event_id,
+        seam_id=event_type or "unknown",
+        expected_payload={"seq": last_seq + 1},
+        actual_payload={"seq": seq},
+        divergence_kind="event_order_mismatch",
+        recorded_at=recorded_at,
+    )
+
+
+def _event_payload_divergence(
+    *,
+    event_id: str,
+    event_type: str,
+    actual_payload: Mapping[str, Any],
+    expected_payload: Mapping[str, Any] | None,
+    policy: ReplayPolicy,
+    recorded_at: datetime,
+) -> ReplayDivergence | None:
+    if expected_payload is None:
+        return None
+    kind = _event_kind_to_divergence(event_type)
+    if not _payload_comparison_enabled(policy, kind):
+        return None
+    if dict(expected_payload) == dict(actual_payload):
+        return None
+    return ReplayDivergence(
+        event_id=event_id,
+        seam_id=event_type or "unknown",
+        expected_payload=dict(expected_payload),
+        actual_payload=dict(actual_payload),
+        divergence_kind=kind,
+        recorded_at=recorded_at,
+    )
+
+
+def _record_replayed_divergence(
+    divergences: list[ReplayDivergence],
+    *,
+    divergence: ReplayDivergence,
+    policy: ReplayPolicy,
+) -> bool:
+    divergences.append(divergence)
+    return bool(policy.stop_on_divergence)
 
 
 def record_replay_divergence(

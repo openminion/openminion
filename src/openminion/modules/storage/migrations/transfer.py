@@ -195,6 +195,66 @@ def _stream_table_rows_via_record_store(
     yield from record_store.stream_dicts(sql, tuple(where_params))
 
 
+def _export_table_via_record_store(
+    record_store: RecordStore,
+    *,
+    table: str,
+    data_path: Path,
+    where_clause: str | None,
+    where_params: list[Any],
+    reporter: "ProgressReporter | None",
+) -> tuple[int, str, list[OmxResumeChunk]]:
+    row_count = 0
+    with data_path.open("w", encoding="utf-8") as handle:
+        for row in _stream_table_rows_via_record_store(
+            record_store,
+            table,
+            where_clause=where_clause,
+            where_params=where_params,
+        ):
+            handle.write(json.dumps(row, ensure_ascii=True, default=str) + "\n")
+            row_count += 1
+            if reporter is not None:
+                _call_reporter(reporter.on_progress, advance=1, message=table)
+
+    sha256 = _sha256_file(data_path)
+    chunks = (
+        [
+            OmxResumeChunk(
+                chunk_index=0,
+                row_start=0,
+                row_end=row_count - 1,
+                sha256=sha256,
+            )
+        ]
+        if row_count > 0
+        else []
+    )
+    return row_count, sha256, chunks
+
+
+def _partial_filter_for_table(
+    record_store: RecordStore,
+    table: str,
+    *,
+    since: datetime | None,
+    namespace: str | None,
+    where_clause: str | None,
+) -> tuple[str | None, list[Any]] | None:
+    if since is None and namespace is None and where_clause is None:
+        return None, []
+    columns = _table_columns_via_record_store(record_store, table)
+    clause, params = _build_partial_where(
+        columns,
+        since=since,
+        namespace=namespace,
+        where_clause=where_clause,
+    )
+    if clause == "__skip__":
+        return None
+    return clause, params
+
+
 def _export_via_record_store(
     record_store: RecordStore,
     *,
@@ -233,48 +293,27 @@ def _export_via_record_store(
         if schema is not None:
             schema_map[table] = schema
 
-        partial_clause: str | None = None
-        partial_params: list[Any] = []
-        if partial_filter_active:
-            columns = _table_columns_via_record_store(record_store, table)
-            clause, params = _build_partial_where(
-                columns,
-                since=since,
-                namespace=namespace,
-                where_clause=where_clause,
-            )
-            if clause == "__skip__":
-                skipped_tables.append(table)
-                continue
-            partial_clause = clause
-            partial_params = params
+        partial_filter = _partial_filter_for_table(
+            record_store,
+            table,
+            since=since,
+            namespace=namespace,
+            where_clause=where_clause,
+        )
+        if partial_filter is None:
+            skipped_tables.append(table)
+            continue
+        partial_clause, partial_params = partial_filter
 
         data_path = tables_dir / f"{table}.jsonl"
-        row_count = 0
-        with data_path.open("w", encoding="utf-8") as handle:
-            for row in _stream_table_rows_via_record_store(
-                record_store,
-                table,
-                where_clause=partial_clause,
-                where_params=partial_params,
-            ):
-                handle.write(json.dumps(row, ensure_ascii=True, default=str) + "\n")
-                row_count += 1
-                if reporter is not None:
-                    _call_reporter(reporter.on_progress, advance=1, message=table)
-
-        sha256 = _sha256_file(data_path)
-        chunks: list[OmxResumeChunk] = []
-        if row_count > 0:
-            chunks.append(
-                OmxResumeChunk(
-                    chunk_index=0,
-                    row_start=0,
-                    row_end=row_count - 1,
-                    sha256=sha256,
-                )
-            )
-
+        row_count, sha256, chunks = _export_table_via_record_store(
+            record_store,
+            table=table,
+            data_path=data_path,
+            where_clause=partial_clause,
+            where_params=partial_params,
+            reporter=reporter,
+        )
         table_entries.append(
             OmxTableEntry(
                 name=table,
@@ -471,6 +510,64 @@ def _import_via_record_store(
     )
 
 
+def _import_omx_tables_sqlite(
+    *,
+    omx_dir: Path,
+    target: Path,
+    manifest: OmxManifest,
+    verify_checksums: bool,
+    reporter: "ProgressReporter | None",
+) -> int:
+    imported_rows = 0
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(target)) as conn:
+        schema_map: dict[str, str] = {}
+        if manifest.blobs:
+            schema_map = manifest.blobs.get("schemas", {}) or {}
+        for table in manifest.tables:
+            _ensure_table_schema_sqlite(conn, schema_map, table.name)
+        for table in manifest.tables:
+            rows = _read_omx_bundle_rows(
+                omx_dir,
+                table,
+                verify_checksums=verify_checksums,
+            )
+            imported_rows += _replace_sqlite_table_rows(
+                conn=conn,
+                table_name=table.name,
+                rows=rows,
+            )
+            if reporter is not None and rows:
+                _call_reporter(
+                    reporter.on_progress,
+                    advance=len(rows),
+                    message=table.name,
+                )
+        conn.commit()
+    return imported_rows
+
+
+def _replace_sqlite_table_rows(
+    *,
+    conn: sqlite3.Connection,
+    table_name: str,
+    rows: list[dict[str, Any]],
+) -> int:
+    try:
+        conn.execute(f'DELETE FROM "{table_name}"')
+    except sqlite3.OperationalError:
+        if not rows:
+            return 0
+        raise
+    if not rows:
+        return 0
+    columns = list(rows[0].keys())
+    placeholders = ", ".join(["?"] * len(columns))
+    sql = f'INSERT INTO "{table_name}" ({", ".join(columns)}) VALUES ({placeholders})'
+    conn.executemany(sql, [[row.get(col) for col in columns] for row in rows])
+    return len(rows)
+
+
 def import_omx(
     *,
     omx_dir: str | Path,
@@ -521,41 +618,13 @@ def import_omx(
         )
 
     try:
-        resolved_target.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(resolved_target)) as conn:
-            schema_map: dict[str, str] = {}
-            if manifest.blobs:
-                schema_map = manifest.blobs.get("schemas", {}) or {}
-            for table in manifest.tables:
-                _ensure_table_schema_sqlite(conn, schema_map, table.name)
-            for table in manifest.tables:
-                rows = _read_omx_bundle_rows(
-                    omx_dir, table, verify_checksums=verify_checksums
-                )
-                try:
-                    conn.execute(f'DELETE FROM "{table.name}"')
-                except sqlite3.OperationalError:
-                    if not rows:
-                        continue
-                    raise
-                if not rows:
-                    continue
-                columns = list(rows[0].keys())
-                placeholders = ", ".join(["?"] * len(columns))
-                sql = (
-                    f'INSERT INTO "{table.name}" ({", ".join(columns)}) '
-                    f"VALUES ({placeholders})"
-                )
-                conn.executemany(
-                    sql, [[row.get(col) for col in columns] for row in rows]
-                )
-                imported_rows += len(rows)
-                if reporter is not None:
-                    _call_reporter(
-                        reporter.on_progress, advance=len(rows), message=table.name
-                    )
-            conn.commit()
-
+        imported_rows = _import_omx_tables_sqlite(
+            omx_dir=omx_dir,
+            target=resolved_target,
+            manifest=manifest,
+            verify_checksums=verify_checksums,
+            reporter=reporter,
+        )
         verification = run_verification(
             module_id=manifest.module_id,
             db_path=resolved_target,

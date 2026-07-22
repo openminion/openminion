@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Optional
+from collections.abc import Mapping
 from uuid import uuid4
 
 from openminion.modules.storage.runtime.module_store import (
@@ -264,7 +265,7 @@ class _PolicyStoreMixin(PolicyStore):
         decision: str,
         matched_grant_id: Optional[str],
         reason_code: str,
-        risk_spec: Dict[str, Any],
+        risk_spec: dict[str, Any],
     ) -> str:
         now = utc_now_iso()
         decision_id = str(uuid4())
@@ -293,7 +294,7 @@ class _PolicyStoreMixin(PolicyStore):
         )
         return decision_id
 
-    def list_decisions(self, *, limit: int = 100) -> list[Dict[str, Any]]:
+    def list_decisions(self, *, limit: int = 100) -> list[dict[str, Any]]:
         rows = self._record_store.query_dicts(
             """
             SELECT *

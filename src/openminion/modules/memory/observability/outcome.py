@@ -1,7 +1,7 @@
 """Outcome back-reference helpers for memory spans."""
 
 from dataclasses import replace
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from openminion.modules.memory.observability.span import MemorySpanRecord
 

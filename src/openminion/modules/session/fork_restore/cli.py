@@ -1,6 +1,7 @@
 """Dispatchers for `/session fork` and `/restore`."""
 
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from openminion.modules.session.fork_restore.fork import (
     SessionForkAPI,

@@ -1,7 +1,8 @@
 # mypy: ignore-errors
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from .lifecycle_models import TaskLifecycleRecord, TaskLifecycleState
 

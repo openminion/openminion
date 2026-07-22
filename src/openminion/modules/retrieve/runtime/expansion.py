@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any
+from collections.abc import Mapping, Sequence
 
 from .retrieval import candidate_from_row, to_retrieved_item
 from ..schemas import RetrievedItem

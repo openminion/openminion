@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 import os
-from typing import Mapping
+from collections.abc import Mapping
 
 from openminion.modules.runtime.constants import (
     DAYTONA_DEFAULT_API_KEY_ENV,

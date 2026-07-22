@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Literal
+from collections.abc import Callable, Sequence
 
 from openminion.modules.memory.diagnostics.operability import parse_iso_utc
 from openminion.modules.memory.runtime.consolidation.coordinator import (

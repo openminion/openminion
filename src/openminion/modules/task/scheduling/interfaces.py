@@ -1,5 +1,6 @@
 from collections.abc import Mapping
-from typing import Any, Callable, ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, runtime_checkable
+from collections.abc import Callable
 
 
 CRON_INTERFACE_VERSION = "v1"

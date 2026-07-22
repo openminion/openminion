@@ -34,6 +34,66 @@ class RuntimeSessionStoreSessions:
         self._backend = backend
         self._list_participants = list_participants
 
+    def _resolve_existing_explicit_session(
+        self, explicit_id: str, *, agent_id: str
+    ) -> SessionRecord | None:
+        existing = self.get_session(explicit_id)
+        if existing is None:
+            return None
+
+        normalized_agent = normalize_identity(agent_id) if agent_id else ""
+        if normalized_agent:
+            participants = self._list_participants(existing.id)
+            agent_participants = {
+                item.participant_id: item
+                for item in participants
+                if item.participant_type == "agent"
+            }
+            if agent_participants:
+                if normalized_agent not in agent_participants:
+                    raise ValueError(
+                        f"Session {explicit_id!r} does not include agent "
+                        f"{normalized_agent!r}"
+                    )
+                return existing
+
+        session_agent = agent_id_from_session_key(existing.session_key)
+        if normalized_agent and session_agent and session_agent != normalized_agent:
+            raise ValueError(
+                f"Session {explicit_id!r} belongs to agent "
+                f"{session_agent!r}, not {normalized_agent!r}"
+            )
+        return existing
+
+    def _create_explicit_session(
+        self,
+        *,
+        explicit_id: str,
+        agent_id: str,
+        channel: str,
+        target: str,
+        metadata: Mapping[str, Any] | None,
+    ) -> SessionRecord:
+        now = utc_now_iso()
+        self.insert_session(
+            session_id=explicit_id,
+            session_key=build_explicit_session_key(
+                agent_id=agent_id,
+                channel=channel,
+                target=target,
+                session_id=explicit_id,
+            ),
+            channel=channel,
+            target=target,
+            session_metadata_json=metadata_json(metadata),
+            created_at=now,
+            updated_at=now,
+        )
+        created = self.get_session(explicit_id)
+        if created is None:
+            raise RuntimeError(f"Failed to create explicit session record id={explicit_id}")
+        return created
+
     def resolve_session(
         self,
         *,
@@ -48,56 +108,19 @@ class RuntimeSessionStoreSessions:
 
         explicit_id = (session_id or "").strip()
         if explicit_id:
-            existing = self.get_session(explicit_id)
+            existing = self._resolve_existing_explicit_session(
+                explicit_id, agent_id=agent_id
+            )
             if existing is not None:
-                normalized_agent = normalize_identity(agent_id) if agent_id else ""
-                if normalized_agent:
-                    participants = self._list_participants(existing.id)
-                    agent_participants = {
-                        item.participant_id: item
-                        for item in participants
-                        if item.participant_type == "agent"
-                    }
-                    if agent_participants:
-                        if normalized_agent not in agent_participants:
-                            raise ValueError(
-                                f"Session {explicit_id!r} does not include agent "
-                                f"{normalized_agent!r}"
-                            )
-                        return existing
-                session_agent = agent_id_from_session_key(existing.session_key)
-                if (
-                    normalized_agent
-                    and session_agent
-                    and session_agent != normalized_agent
-                ):
-                    raise ValueError(
-                        f"Session {explicit_id!r} belongs to agent "
-                        f"{session_agent!r}, not {normalized_agent!r}"
-                    )
                 return existing
 
-            now = utc_now_iso()
-            self.insert_session(
-                session_id=explicit_id,
-                session_key=build_explicit_session_key(
-                    agent_id=agent_id,
-                    channel=normalized_channel,
-                    target=normalized_target,
-                    session_id=explicit_id,
-                ),
+            return self._create_explicit_session(
+                explicit_id=explicit_id,
+                agent_id=agent_id,
                 channel=normalized_channel,
                 target=normalized_target,
-                session_metadata_json=metadata_json(metadata),
-                created_at=now,
-                updated_at=now,
+                metadata=metadata,
             )
-            created = self.get_session(explicit_id)
-            if created is None:
-                raise RuntimeError(
-                    f"Failed to create explicit session record id={explicit_id}"
-                )
-            return created
 
         session_key = build_session_key(
             agent_id=agent_id, channel=channel, target=target

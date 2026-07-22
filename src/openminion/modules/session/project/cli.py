@@ -1,5 +1,6 @@
 import uuid
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 
 from openminion.modules.session.project.schemas import Project
 from openminion.modules.session.project.storage.base import ProjectStore

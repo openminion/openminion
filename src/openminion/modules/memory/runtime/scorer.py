@@ -1,7 +1,8 @@
 from dataclasses import dataclass, replace
 from datetime import datetime
 import math
-from typing import Any, Mapping, Sequence
+from typing import Any
+from collections.abc import Mapping, Sequence
 import warnings
 
 from ..diagnostics.operability import parse_iso_utc

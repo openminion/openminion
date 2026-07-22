@@ -1,6 +1,6 @@
 import hashlib
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 SEGMENT_ORDER = [
@@ -106,9 +106,9 @@ class SessionStore(Protocol):
 
     def create_prompt_context(self, session_id: str, **kw) -> str: ...
     def close_prompt_context(self, prompt_context_id: str, **kw) -> None: ...
-    def get_active_prompt_context(self, session_id: str) -> Optional[dict]: ...
+    def get_active_prompt_context(self, session_id: str) -> dict | None: ...
     def emit_canonical_event(
-        self, session_id: str, event_type: str, payload: Optional[dict] = None, **kw
+        self, session_id: str, event_type: str, payload: dict | None = None, **kw
     ) -> str: ...
 
 
@@ -128,12 +128,12 @@ class RolloverOrchestrator:
         *,
         sessctl: Any = None,
         compressor: Any = None,
-        trigger: Optional[RolloverTrigger] = None,
+        trigger: RolloverTrigger | None = None,
     ) -> None:
         self._sessctl = sessctl
         self._compressor = compressor
         self._trigger = trigger or RolloverTrigger()
-        self._last_rollover: Dict[str, dict] = {}
+        self._last_rollover: dict[str, dict] = {}
 
     def maybe_rollover(
         self,
@@ -167,7 +167,7 @@ class RolloverOrchestrator:
         self,
         session_id: str,
         *,
-        reasons: Optional[list[str]] = None,
+        reasons: list[str] | None = None,
     ) -> dict[str, Any]:
         """Checkpoint, build a seed, and swap prompt contexts."""
         reasons = reasons or ["explicit_request"]
@@ -228,7 +228,7 @@ class RolloverOrchestrator:
         self._last_rollover[session_id] = result
         return result
 
-    def get_last_rollover(self, session_id: str) -> Optional[dict[str, Any]]:
+    def get_last_rollover(self, session_id: str) -> dict[str, Any] | None:
         """Return the most recent rollover result for a session."""
         return self._last_rollover.get(session_id)
 
@@ -236,9 +236,9 @@ class RolloverOrchestrator:
 class RecallAPI:
     """Read structured sections back out of a rendered seed bundle."""
 
-    def __init__(self, seed_sections: Optional[list[dict[str, Any]]] = None) -> None:
+    def __init__(self, seed_sections: list[dict[str, Any]] | None = None) -> None:
         self._sections = seed_sections or []
-        self._index: Dict[str, list[dict]] = {}
+        self._index: dict[str, list[dict]] = {}
         for sec in self._sections:
             sec_type = sec.get("section_type", "unknown")
             self._index.setdefault(sec_type, []).append(sec)
@@ -406,7 +406,7 @@ def should_use_cached_prefix(
     model_hint: str,
     prefix_hash: str,
     *,
-    known_cache_prefixes: Optional[Dict[str, str]] = None,
+    known_cache_prefixes: dict[str, str] | None = None,
 ) -> bool:
     """Determine if the current prefix matches a known cached prefix."""
     if not known_cache_prefixes:

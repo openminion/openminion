@@ -58,36 +58,16 @@ class SkillMatchingMixin:
 
         narrow_threshold = int(getattr(self.config, "selection_rag_threshold", 10))
         narrow_topk = int(getattr(self.config, "selection_rag_topk", 5))
-        narrow_extra: dict[str, Any] | None = None
         if len(rows) > narrow_threshold:
-            narrow_candidates = []
-            for row in rows:
-                package = SkillPackage.from_dict(row["package"])
-                description = str(package.short_description or package.summary or "")
-                when_to_use = str(package.sections.get("when_to_use", ""))
-                narrow_candidates.append(
-                    {
-                        "id": str(row.get("skill_id", "")),
-                        "name": str(row.get("name", "") or package.name),
-                        "description": description,
-                        "when_to_use": when_to_use,
-                        "_original_row": row,
-                    }
-                )
-            narrowed = narrow_catalog_by_bm25(
-                narrow_candidates,
+            rows, narrow_extra = self._narrow_skill_rows(
+                rows,
                 query=intent_text or "",
-                top_k=max(int(k) * 3, narrow_topk),
+                k=k,
+                narrow_threshold=narrow_threshold,
+                narrow_topk=narrow_topk,
             )
-            pre_count = len(rows)
-            rows = [entry["_original_row"] for entry in narrowed]
-            narrow_extra = {
-                "narrowed": True,
-                "narrow_threshold": narrow_threshold,
-                "narrow_topk": narrow_topk,
-                "pre_narrow_count": pre_count,
-                "narrowed_count": len(rows),
-            }
+        else:
+            narrow_extra = None
 
         intent_lower = (intent_text or "").lower()
 
@@ -150,6 +130,43 @@ class SkillMatchingMixin:
                 extra={"reason": "no_match"},
             )
         return limited
+
+    def _narrow_skill_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        query: str,
+        k: int,
+        narrow_threshold: int,
+        narrow_topk: int,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        narrow_candidates = []
+        for row in rows:
+            package = SkillPackage.from_dict(row["package"])
+            narrow_candidates.append(
+                {
+                    "id": str(row.get("skill_id", "")),
+                    "name": str(row.get("name", "") or package.name),
+                    "description": str(
+                        package.short_description or package.summary or ""
+                    ),
+                    "when_to_use": str(package.sections.get("when_to_use", "")),
+                    "_original_row": row,
+                }
+            )
+        narrowed = narrow_catalog_by_bm25(
+            narrow_candidates,
+            query=query,
+            top_k=max(int(k) * 3, narrow_topk),
+        )
+        narrowed_rows = [entry["_original_row"] for entry in narrowed]
+        return narrowed_rows, {
+            "narrowed": True,
+            "narrow_threshold": narrow_threshold,
+            "narrow_topk": narrow_topk,
+            "pre_narrow_count": len(rows),
+            "narrowed_count": len(narrowed_rows),
+        }
 
     def _resolve_status_filter(
         self, status_filter: list[str] | str | None, risk_hint: str

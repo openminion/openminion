@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 from openminion.base.time import utc_now_iso as _now_iso
 from .sqlite import connect_database
@@ -16,7 +16,7 @@ class AgentRegistryRecord:
     description: str
     config_path: str
     workspace_root: str
-    tags: List[str]
+    tags: list[str]
     status: str  # registered | stopped
     registered_at: str
     updated_at: str
@@ -51,7 +51,7 @@ class AgentRegistryStore:
         description: str = "",
         config_path: str = "",
         workspace_root: str = "",
-        tags: List[str] | None = None,
+        tags: list[str] | None = None,
         status: str = "registered",
     ) -> None:
         tags_json = json.dumps(tags or [])
@@ -103,7 +103,7 @@ class AgentRegistryStore:
             return None
         return _row_to_registry(row)
 
-    def list_agents(self, *, status: Optional[str] = None) -> List[AgentRegistryRecord]:
+    def list_agents(self, *, status: Optional[str] = None) -> list[AgentRegistryRecord]:
         if status:
             sql = "SELECT * FROM daemon_registry WHERE status = ? ORDER BY registered_at ASC"
             params: tuple = (status,)
@@ -168,7 +168,7 @@ class AgentRegistryStore:
             return None
         return _row_to_heartbeat(row)
 
-    def list_heartbeats(self) -> List[AgentHeartbeatRecord]:
+    def list_heartbeats(self) -> list[AgentHeartbeatRecord]:
         with connect_database(self._path) as conn:
             rows = conn.execute(
                 "SELECT * FROM daemon_heartbeats ORDER BY last_heartbeat_at DESC"

@@ -1,7 +1,8 @@
 from collections.abc import Mapping
 from dataclasses import fields
 from datetime import datetime, timezone
-from typing import Callable, Literal
+from typing import Literal
+from collections.abc import Callable
 import uuid
 
 from pydantic import BaseModel, Field

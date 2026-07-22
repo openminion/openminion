@@ -169,6 +169,28 @@ def _parse_iso_to_epoch(value: str) -> float | None:
         return None
 
 
+def _record_auto_dismissal(
+    store: SkillStore,
+    *,
+    proposal_id: str,
+    signature: tuple[str, str, str],
+    reason: str,
+    surfaced_at: str,
+) -> dict[str, Any]:
+    _emit_dismiss(
+        store,
+        proposal_id=proposal_id,
+        signature=_signature_key(signature),
+        reason=reason,
+        surfaced_at=surfaced_at,
+    )
+    return {
+        "proposal_id": proposal_id,
+        "signature": list(signature),
+        "reason": reason,
+    }
+
+
 def run_suggestion_surface_pass(
     store: SkillStore,
     *,
@@ -212,19 +234,14 @@ def run_suggestion_surface_pass(
             continue
 
         if signature in pass_signatures_used:
-            _emit_dismiss(
-                store,
-                proposal_id=proposal_id,
-                signature=signature_key,
-                reason=DISMISS_REASON_STRUCTURAL_DUPLICATE,
-                surfaced_at=now_iso,
-            )
             dismissed.append(
-                {
-                    "proposal_id": proposal_id,
-                    "signature": list(signature),
-                    "reason": DISMISS_REASON_STRUCTURAL_DUPLICATE,
-                }
+                _record_auto_dismissal(
+                    store,
+                    proposal_id=proposal_id,
+                    signature=signature,
+                    reason=DISMISS_REASON_STRUCTURAL_DUPLICATE,
+                    surfaced_at=now_iso,
+                )
             )
             continue
 
@@ -236,19 +253,14 @@ def run_suggestion_surface_pass(
             and now_epoch > 0
             and (now_epoch - last_surfaced_epoch) < safe_cooldown
         ):
-            _emit_dismiss(
-                store,
-                proposal_id=proposal_id,
-                signature=signature_key,
-                reason=DISMISS_REASON_COOLDOWN_ACTIVE,
-                surfaced_at=now_iso,
-            )
             dismissed.append(
-                {
-                    "proposal_id": proposal_id,
-                    "signature": list(signature),
-                    "reason": DISMISS_REASON_COOLDOWN_ACTIVE,
-                }
+                _record_auto_dismissal(
+                    store,
+                    proposal_id=proposal_id,
+                    signature=signature,
+                    reason=DISMISS_REASON_COOLDOWN_ACTIVE,
+                    surfaced_at=now_iso,
+                )
             )
             continue
 

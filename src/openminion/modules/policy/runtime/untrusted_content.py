@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 _TRUSTED_CHANNELS = frozenset({"console"})
 _SUSPICIOUS_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (

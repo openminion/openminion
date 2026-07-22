@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Mapping, Protocol
+from typing import Protocol
+from collections.abc import Mapping
 
 
 SECRET_INTERFACE_VERSION = "v1"

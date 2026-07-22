@@ -3,7 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 from threading import RLock
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from openminion.base.time import utc_now_iso as _utc_now_iso
 

@@ -185,11 +185,7 @@ class RetrieveCtl:
             return []
 
         retrieval_k = max(1, int(k))
-        retrieval_filters = (
-            filters
-            if isinstance(filters, RetrievalFilters)
-            else RetrievalFilters.model_validate(filters or {})
-        )
+        retrieval_filters = self._normalize_filters(filters)
         resolved_strategy = self._resolve_strategy(
             query=normalized_query,
             purpose=str(purpose or "act"),
@@ -197,12 +193,61 @@ class RetrieveCtl:
             scope=scope,
             filters=retrieval_filters,
         )
-
-        candidates = self._generate_candidates(
+        candidates = self._score_candidates(
             query=normalized_query,
             scope=scope,
             filters=retrieval_filters,
             limit=max(retrieval_k, int(self.config.defaults.lexical_candidate_count)),
+        )
+        if str(purpose).lower() == "verify":
+            candidates = self._filter_verify_candidates(candidates)
+
+        selected = self._select_candidates(
+            candidates=candidates,
+            strategy=resolved_strategy,
+            k=retrieval_k,
+        )
+        items = [
+            self._to_retrieved_item(candidate=item, strategy=resolved_strategy)
+            for item in selected
+        ]
+        elapsed_ms = (perf_counter() - started) * 1000.0
+        self._emit_retrieval_metrics(
+            scope=scope,
+            query=normalized_query,
+            purpose=purpose,
+            requested_strategy=strategy,
+            resolved_strategy=resolved_strategy,
+            candidate_count=len(candidates),
+            item_count=len(items),
+            elapsed_ms=elapsed_ms,
+        )
+        self._record_retrieval_run(
+            scope=scope,
+            query=normalized_query,
+            strategy=resolved_strategy,
+            k=retrieval_k,
+            items=items,
+        )
+        return [item.model_dump(mode="json") for item in items]
+
+    def _normalize_filters(
+        self, filters: dict[str, Any] | RetrievalFilters | None
+    ) -> RetrievalFilters:
+        if isinstance(filters, RetrievalFilters):
+            return filters
+        return RetrievalFilters.model_validate(filters or {})
+
+    def _score_candidates(
+        self,
+        *,
+        query: str,
+        scope: dict[str, Any],
+        filters: RetrievalFilters,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        candidates = self._generate_candidates(
+            query=query, scope=scope, filters=filters, limit=limit
         )
         candidates = score_records(
             candidates,
@@ -211,87 +256,101 @@ class RetrieveCtl:
         )
         retrieval_ops.apply_title_identity_boost_in_place(
             candidates=candidates,
-            query=normalized_query,
+            query=query,
             max_boost=self.config.defaults.title_identity_max_boost,
         )
         for candidate in candidates:
-            unified_score = float(
-                candidate.get(
-                    "unified_score",
-                    candidate.get("score", 0.0),
-                )
-                or 0.0
-            )
-            candidate["score"] = unified_score
-            candidate["why"] = self._format_score_breakdown(candidate)
+            self._attach_score_breakdown(candidate)
+        return candidates
 
-        if str(purpose).lower() == "verify":
-            candidates = [
-                item
-                for item in candidates
-                if float(item.get("unified_score", item.get("score", 0.0)) or 0.0)
-                >= float(self.config.defaults.verify_min_score)
-            ]
-
-        selected = self._select_candidates(
-            candidates=candidates,
-            strategy=resolved_strategy,
-            k=retrieval_k,
+    def _attach_score_breakdown(self, candidate: dict[str, Any]) -> None:
+        unified_score = float(
+            candidate.get("unified_score", candidate.get("score", 0.0)) or 0.0
         )
+        candidate["score"] = unified_score
+        candidate["why"] = self._format_score_breakdown(candidate)
 
-        items = [
-            self._to_retrieved_item(candidate=item, strategy=resolved_strategy)
-            for item in selected
+    def _filter_verify_candidates(
+        self, candidates: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        min_score = float(self.config.defaults.verify_min_score)
+        return [
+            item
+            for item in candidates
+            if float(item.get("unified_score", item.get("score", 0.0)) or 0.0)
+            >= min_score
         ]
-        telemetry_session_id = self._resolve_telemetry_session_id(scope=scope)
-        telemetry_turn_id = self._resolve_telemetry_turn_id(scope=scope)
-        elapsed_ms = (perf_counter() - started) * 1000.0
+
+    def _emit_retrieval_metrics(
+        self,
+        *,
+        scope: dict[str, Any],
+        query: str,
+        purpose: str,
+        requested_strategy: str,
+        resolved_strategy: RetrievalStrategy,
+        candidate_count: int,
+        item_count: int,
+        elapsed_ms: float,
+    ) -> None:
+        session_id = self._resolve_telemetry_session_id(scope=scope)
+        turn_id = self._resolve_telemetry_turn_id(scope=scope)
+        token_estimate = len(query.split())
         telemetry_extra = {
             "strategy": str(resolved_strategy),
             "purpose": str(purpose or "").strip().lower() or "act",
-            "requested_strategy": str(strategy or "").strip().lower() or "auto",
+            "requested_strategy": str(requested_strategy or "").strip().lower()
+            or "auto",
         }
-        token_estimate = len(normalized_query.split())
         self._emit_query_metrics(
-            session_id=telemetry_session_id,
-            turn_id=telemetry_turn_id,
+            session_id=session_id,
+            turn_id=turn_id,
             operation="query",
-            result_count=len(candidates),
+            result_count=candidate_count,
             latency_ms=elapsed_ms,
             token_estimate=token_estimate,
             extra=telemetry_extra,
         )
         self._emit_query_metrics(
-            session_id=telemetry_session_id,
-            turn_id=telemetry_turn_id,
+            session_id=session_id,
+            turn_id=turn_id,
             operation="rerank",
-            result_count=len(items),
+            result_count=item_count,
             latency_ms=elapsed_ms,
             token_estimate=token_estimate,
             extra=telemetry_extra,
         )
-        if not items:
+        if item_count == 0:
             self._emit_query_metrics(
-                session_id=telemetry_session_id,
-                turn_id=telemetry_turn_id,
+                session_id=session_id,
+                turn_id=turn_id,
                 operation="fallback",
                 result_count=0,
                 latency_ms=elapsed_ms,
                 token_estimate=token_estimate,
                 extra={**telemetry_extra, "reason": "no_results"},
             )
+
+    def _record_retrieval_run(
+        self,
+        *,
+        scope: dict[str, Any],
+        query: str,
+        strategy: RetrievalStrategy,
+        k: int,
+        items: list[RetrievedItem],
+    ) -> None:
         self._record_run(
             session_id=str(scope.get("session_id") or ""),
-            query=normalized_query,
-            strategy=resolved_strategy,
-            k=retrieval_k,
+            query=query,
+            strategy=strategy,
+            k=k,
             unit_ids=[
                 str(item.meta.get("unit_id", ""))
                 for item in items
                 if str(item.meta.get("unit_id", "")).strip()
             ],
         )
-        return [item.model_dump(mode="json") for item in items]
 
     def expand(self, *, ref: str, mode: str, k: int) -> list[dict[str, Any]]:
         normalized_ref = str(ref or "").strip()

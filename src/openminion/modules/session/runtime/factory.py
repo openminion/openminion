@@ -1,8 +1,9 @@
 """Session runtime store factory."""
 
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from openminion.base.config.env import (
     EnvironmentConfig,

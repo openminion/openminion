@@ -1,6 +1,7 @@
 import warnings
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
+from collections.abc import Mapping
 import os
 
 from openminion.base.config import OpenMinionConfig

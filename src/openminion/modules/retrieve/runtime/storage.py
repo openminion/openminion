@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 from uuid import uuid4
 
 from openminion.base.time import utc_now_iso as _iso_now

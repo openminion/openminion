@@ -22,6 +22,12 @@ def _assert_identifier(name: str) -> str:
 
 def migrate_v1_to_v2(store: RecordStore) -> None:
     """Add task-related tables."""
+    _create_task_tables(store)
+    _create_task_indexes(store)
+    _ensure_task_optional_columns(store)
+
+
+def _create_task_tables(store: RecordStore) -> None:
     store.execute_count("""
         CREATE TABLE IF NOT EXISTS tasks (
             task_id TEXT PRIMARY KEY,
@@ -106,6 +112,8 @@ def migrate_v1_to_v2(store: RecordStore) -> None:
         );
     """)
 
+
+def _create_task_indexes(store: RecordStore) -> None:
     store.execute_count("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);")
     store.execute_count(
         "CREATE INDEX IF NOT EXISTS idx_tasks_current_plan ON tasks(current_plan_id);"
@@ -126,6 +134,8 @@ def migrate_v1_to_v2(store: RecordStore) -> None:
         "CREATE INDEX IF NOT EXISTS idx_pending_policy_request_id ON pending_actions(policy_request_id);"
     )
 
+
+def _ensure_task_optional_columns(store: RecordStore) -> None:
     _ensure_optional_column(
         store, table="tasks", column="created_by_mode", column_sql="TEXT"
     )
