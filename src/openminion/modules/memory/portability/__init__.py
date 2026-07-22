@@ -16,6 +16,12 @@ from .bundle import (
     load_bundle,
     save_bundle,
 )
+from .review_contracts import (
+    MemoryReviewArtifact,
+    MemoryReviewDecisionReceipt,
+    MemoryReviewError,
+    MemoryReviewPlan,
+)
 
 __all__ = [
     "MEMORY_BUNDLE_VERSION",
@@ -24,6 +30,10 @@ __all__ = [
     "MemoryBundleImportOptions",
     "MemoryBundleImportResult",
     "MemoryBundleSnapshot",
+    "MemoryReviewArtifact",
+    "MemoryReviewDecisionReceipt",
+    "MemoryReviewError",
+    "MemoryReviewPlan",
     "export_bundle",
     "import_bundle",
     "load_bundle",

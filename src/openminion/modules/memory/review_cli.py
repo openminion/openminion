@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import typer
 
-from sophiagraph.portability import (
+from openminion.modules.memory.portability.review_contracts import (
     MemoryReviewError,
     read_review_artifact,
     read_review_plan,

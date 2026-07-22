@@ -9,7 +9,7 @@ import uuid
 
 from sophiagraph.audit.events import MemoryAuditEvent
 from sophiagraph.contracts.provenance import TurnProvenanceTrace
-from sophiagraph.portability import (
+from openminion.modules.memory.portability.review_contracts import (
     APPLY_INCOMPLETE,
     ARTIFACT_DIGEST_MISMATCH,
     IMPORT_OPTIONS_CHANGED,

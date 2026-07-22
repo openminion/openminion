@@ -17,7 +17,7 @@ from openminion.modules.memory.storage.audit import (
 )
 from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
-from sophiagraph.portability import MemoryReviewError
+from openminion.modules.memory.portability.review_contracts import MemoryReviewError
 
 
 def _record(record_id: str, content: str = "source") -> MemoryRecord:

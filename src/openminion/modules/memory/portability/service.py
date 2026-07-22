@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 import uuid
 
-from sophiagraph.portability import (
+from openminion.modules.memory.portability.review_contracts import (
     MemoryReviewArtifact,
     MemoryReviewDecisionReceipt,
     MemoryReviewPlan,
