@@ -18,6 +18,7 @@ class CodingLoopState:
     tool_calls_made: list[str] = field(default_factory=list)
     total_tool_calls: int = 0
     termination_reason: str = ""
+    direct_tool_turn: Any | None = None
     scratchpad: dict[str, Any] = field(default_factory=dict)
     seen_signatures: list[str] = field(default_factory=list)
 

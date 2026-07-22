@@ -24,7 +24,6 @@ from .postprocess.rules import (
     _final_text_parrots_policy_denial,
     _looks_like_execution_preface_draft,
     _looks_like_pre_tool_draft_echo,
-    _looks_like_snippet_only_file_artifact_answer,
     _looks_like_structured_final_answer,
     _looks_like_structured_status_payload,
     _looks_like_unexecutable_tool_payload_text,
@@ -378,15 +377,7 @@ def _retry_snippet_only_file_artifact_answer(
         return None
     if _has_file_mutation_attempt(runner.loop_state):
         return _requested_direct_tool_not_executed_outcome(runner)
-    if not (
-        normalized_final_text
-        and (
-            _looks_like_snippet_only_file_artifact_answer(normalized_final_text)
-            or "file.write" in normalized_final_text.lower()
-            or "implementation" in normalized_final_text.lower()
-            or "validation" in normalized_final_text.lower()
-        )
-    ):
+    if not normalized_final_text:
         return None
     retry_key = "snippet_only_file_artifact_retry_used"
     if not bool(runner.loop_state.scratchpad.get(retry_key, False)):

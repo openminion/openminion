@@ -52,6 +52,7 @@ from .entry_routing import (
     _entry_mutation_seed_should_route_to_coding,
     _entry_query_text,
     _entry_research_decision,
+    _entry_user_file_artifact_should_route_to_coding,
     _is_empty_entry_response,
     _local_route,
     _provisional_entry_route,
@@ -171,6 +172,16 @@ def _entry_response_bytes(response: Any) -> int:
             ],
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
         }
+    )
+
+
+def _entry_response_only_requests_tool_directory(response: Any) -> bool:
+    tool_calls = list(getattr(response, "tool_calls", []) or [])
+    if not tool_calls:
+        return False
+    return all(
+        str(getattr(call, "name", "") or "").strip() == "tool.request"
+        for call in tool_calls
     )
 
 
@@ -340,6 +351,33 @@ def _enforce_idle_tick_v1_bound(
         reason_code=_PAE_IDLE_TICK_NOOP_REASON_CODE,
         answer=_PAE_IDLE_TICK_NOOP_ANSWER_SENTINEL,
     )
+
+
+def _emit_decide_pre_call_status(
+    runner: "BrainRunner",
+    *,
+    state: WorkingState,
+    estimate: int,
+    tool_specs: list[Any],
+) -> None:
+    estimated_tool_tokens = sum(
+        max(1, len(str(getattr(spec, "input_schema", "") or "")) // 4)
+        + max(1, len(str(getattr(spec, "description", "") or "")) // 4)
+        for spec in tool_specs
+    )
+    _estimated_outbound = estimate + estimated_tool_tokens
+    _pre_call_emit = getattr(runner, "_emit_phase_status", None)
+    if callable(_pre_call_emit):
+        _pre_call_payload: dict[str, Any] = {"turn.llm_call_count": 1, "turn.llm_call_limit": 1}
+        if _estimated_outbound > 0:
+            _pre_call_payload.update(
+                {
+                    "total_input_tokens_used": _estimated_outbound,
+                    "total_tokens_used": _estimated_outbound,
+                    "token_usage_estimated": True,
+                }
+            )
+        _pre_call_emit(state=state, source_phase="DECIDE", payload=_pre_call_payload)
 
 
 def decide(
@@ -632,31 +670,12 @@ def decide(
             if str(item or "").strip()
         ]
 
-    _estimated_tool_tokens = sum(
-        max(1, len(str(getattr(spec, "input_schema", "") or "")) // 4)
-        + max(1, len(str(getattr(spec, "description", "") or "")) // 4)
-        for spec in tool_specs
+    _emit_decide_pre_call_status(
+        runner,
+        state=state,
+        estimate=int(_estimate or 0),
+        tool_specs=tool_specs,
     )
-    _estimated_outbound = (_estimate or 0) + _estimated_tool_tokens
-    _pre_call_emit = getattr(runner, "_emit_phase_status", None)
-    if callable(_pre_call_emit):
-        _pre_call_payload: dict[str, Any] = {
-            "turn.llm_call_count": 1,
-            "turn.llm_call_limit": 1,
-        }
-        if _estimated_outbound > 0:
-            _pre_call_payload.update(
-                {
-                    "total_input_tokens_used": _estimated_outbound,
-                    "total_tokens_used": _estimated_outbound,
-                    "token_usage_estimated": True,
-                }
-            )
-        _pre_call_emit(
-            state=state,
-            source_phase="DECIDE",
-            payload=_pre_call_payload,
-        )
 
     for attempt in range(max_retries + 1):
         logger.emit(
@@ -960,6 +979,20 @@ def decide(
         decision._pre_resolved_act_route = _local_route(
             act_profile=BRAIN_ACT_PROFILE_CODING,
             source="entry_mutation_seed_tool_call",
+        )
+        return decision
+    if _entry_user_file_artifact_should_route_to_coding(
+        state=state,
+        user_input=user_input,
+        provisional_route=provisional_route,
+    ):
+        decision.reason_code = "entry_coding_user_file_artifact_request"
+        decision.act_profile = BRAIN_ACT_PROFILE_CODING
+        if _entry_response_only_requests_tool_directory(response):
+            decision._entry_response = None
+        decision._pre_resolved_act_route = _local_route(
+            act_profile=BRAIN_ACT_PROFILE_CODING,
+            source="entry_user_file_artifact_request",
         )
         return decision
     decision._pre_resolved_act_route = provisional_route

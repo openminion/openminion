@@ -1406,6 +1406,15 @@ class TestLooksLikeUnexecutableToolPayloadText:
         )
         assert _looks_like_unexecutable_tool_payload_text(text) is True
 
+    def test_detects_pseudo_tool_tags_as_unexecutable_payloads(self) -> None:
+        text = (
+            "validation: now writing files with pseudo tool tags\n"
+            "<create_file> wc_cli.py import sys </create_file>\n"
+            "<execute_command> python3 wc_cli.py sample.txt </execute_command>\n"
+            "<read_file> wordcount_summary.txt </read_file>"
+        )
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
     def test_allows_prose_that_mentions_exec_run_without_invocation_shape(self) -> None:
         text = "A future agent can use exec.run after selecting a safe command."
         assert _looks_like_unexecutable_tool_payload_text(text) is False

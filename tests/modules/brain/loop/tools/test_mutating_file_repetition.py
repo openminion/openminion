@@ -109,3 +109,29 @@ def test_tool_evidence_closeout_preserves_research_labels() -> None:
     assert "tradeoffs:" in text
     assert "recommendation:" in text
     assert "tool evidence:" in text
+
+
+def test_tool_evidence_closeout_preserves_prose_next_steps_request() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content="Write a research synthesis and end with prioritized next steps.",
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "web.search",
+                    "ok": True,
+                    "content": "found CLI harness evidence",
+                    "data": {},
+                }
+            ]
+        },
+    )
+
+    text = tool_evidence_closeout_text(state, reason="tool budget exhausted.")
+
+    assert "next steps:" in text
+    assert "tool evidence:" in text

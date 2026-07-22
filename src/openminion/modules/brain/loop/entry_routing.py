@@ -117,6 +117,51 @@ def _entry_tool_calls(response: Any, tool_name: str) -> list[Any]:
 
 
 _ENTRY_MUTATION_TO_CODING_TOOLS = frozenset({"file.write", "code.patch"})
+_ENTRY_FILE_ARTIFACT_TOOLING_MARKERS = (
+    "file.write/file.read",
+    "file.read/file.write",
+    "file.write",
+    "code.patch",
+)
+_ENTRY_FILE_ARTIFACT_ACTION_TERMS = frozenset(
+    {
+        "add",
+        "build",
+        "create",
+        "generate",
+        "implement",
+        "make",
+        "scaffold",
+        "write",
+    }
+)
+_ENTRY_FILE_ARTIFACT_OBJECT_TERMS = frozenset(
+    {
+        "app",
+        "cli",
+        "file",
+        "implementation",
+        "module",
+        "package",
+        "project",
+        "readme",
+        "script",
+        "test",
+        "tests",
+        "workspace",
+    }
+)
+
+
+def _is_runtime_default_general_route(route: Any) -> bool:
+    if (
+        str(getattr(route, "act_profile", "") or "").strip().lower()
+        != BRAIN_ACT_PROFILE_GENERAL
+    ):
+        return False
+    return str(getattr(route, "source", "") or "").strip() == (
+        "runtime_default_general"
+    )
 
 
 def _entry_mutation_seed_should_route_to_coding(
@@ -124,20 +169,30 @@ def _entry_mutation_seed_should_route_to_coding(
     response: Any,
     provisional_route: Any,
 ) -> bool:
-    if (
-        str(getattr(provisional_route, "act_profile", "") or "").strip().lower()
-        != BRAIN_ACT_PROFILE_GENERAL
-    ):
-        return False
-    if str(getattr(provisional_route, "source", "") or "").strip() != (
-        "runtime_default_general"
-    ):
+    if not _is_runtime_default_general_route(provisional_route):
         return False
     tool_names = {
         str(getattr(call, "name", "") or "").strip()
         for call in list(getattr(response, "tool_calls", []) or [])
     }
     return bool(tool_names & _ENTRY_MUTATION_TO_CODING_TOOLS)
+
+
+def _entry_user_file_artifact_should_route_to_coding(
+    *,
+    state: WorkingState,
+    user_input: str | None,
+    provisional_route: Any,
+) -> bool:
+    if not _is_runtime_default_general_route(provisional_route):
+        return False
+    query = _entry_query_text(state=state, user_input=user_input).lower()
+    if not any(marker in query for marker in _ENTRY_FILE_ARTIFACT_TOOLING_MARKERS):
+        return False
+    terms = set(query.replace("/", " ").replace(".", " ").replace("-", " ").split())
+    return bool(terms & _ENTRY_FILE_ARTIFACT_ACTION_TERMS) and bool(
+        terms & _ENTRY_FILE_ARTIFACT_OBJECT_TERMS
+    )
 
 
 def _subtasks_from_decompose_payload(
