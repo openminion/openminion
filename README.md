@@ -31,6 +31,20 @@ One shared runtime spans CLI work, Python embedding, HTTP API turns,
 daemon-backed workflows, tools, sessions, and local integrations, so the
 system stays inspectable instead of disappearing behind wrappers.
 
+## Read This First
+
+If you are new to OpenMinion, read the README in this order:
+
+1. [Trust and Brand Safety](#trust-and-brand-safety) to verify the official
+   project channels and avoid token/airdrop scams.
+2. [At a glance](#at-a-glance) to decide whether the current alpha fits your
+   use case.
+3. [Quick start](#quick-start) for one local CLI run.
+4. [Interactive CLI](#interactive-cli) if you want the default operator
+   experience.
+5. [Configuration and deeper docs](#configuration-and-deeper-docs) when you
+   need providers, tools, sessions, storage, or contributor details.
+
 ## Trust and Brand Safety
 
 - Official GitHub: `https://github.com/openminion`
