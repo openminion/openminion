@@ -94,6 +94,11 @@ class MemoryForgetArgs(BaseModel):
     record_id: str = Field(
         ..., min_length=1, description="Explicit record id to soft-delete"
     )
+    reason: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Optional explicit operator/model-provided forget reason",
+    )
 
     @field_validator("record_id", mode="before")
     @classmethod
@@ -101,6 +106,16 @@ class MemoryForgetArgs(BaseModel):
         token = str(value or "").strip()
         if not token:
             raise ValueError("record_id is required")
+        return token
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _normalize_reason(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        token = str(value or "").strip()
+        if not token:
+            raise ValueError("reason must be non-empty when supplied")
         return token
 
 
@@ -176,7 +191,13 @@ def _h_memory_search(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
 def _h_memory_forget(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     service = _require_memory_service(ctx)
     record_id = str(args["record_id"])
-    deleted = bool(service.delete_record(record_id))
+    reason = args.get("reason")
+    deleted = bool(
+        service.delete_record(
+            record_id,
+            reason=str(reason).strip() if reason is not None else None,
+        )
+    )
     return {
         "ok": deleted,
         "verified": deleted,
@@ -189,6 +210,7 @@ def _h_memory_forget(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         "data": {
             "record_id": record_id,
             "deleted": deleted,
+            "reason": str(reason).strip() if reason is not None else None,
         },
     }
 

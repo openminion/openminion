@@ -12,6 +12,10 @@ def run_status(args) -> int:
         from .runtime import run_onboarding_status
 
         return run_onboarding_status(args)
+    if args.status_command == "readiness":
+        from .readiness import run_readiness_status
+
+        return run_readiness_status(args)
     config = _load_status_config(args.config)
     from .action_policy import run_action_policy_status
     from .context_trace import run_context_trace_status
@@ -362,6 +366,22 @@ def _register_status_onboarding_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
+def _register_status_readiness_subcommand(
+    status_subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = status_subcommands.add_parser(
+        "readiness",
+        help="Show safe day-to-day assistant readiness without starting runtime",
+    )
+    parser.add_argument(
+        "--agent-id",
+        default=None,
+        help="Optional agent id for provider/profile-specific readiness inspection",
+    )
+    add_json_output_flag(parser)
+    parser.set_defaults(handler=run_status, needs_app=False)
+
+
 def _register_status_owner_subcommand(status_subcommands) -> None:
     parser = status_subcommands.add_parser(
         "owner",
@@ -438,6 +458,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _register_status_notes_subcommand(status_subcommands)
     _register_status_identity_subcommand(status_subcommands)
     _register_status_onboarding_subcommand(status_subcommands)
+    _register_status_readiness_subcommand(status_subcommands)
     _register_simple_status_subcommand(
         status_subcommands, "tools", "Inspect tool inventory status and readiness"
     )
