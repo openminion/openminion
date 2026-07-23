@@ -80,6 +80,35 @@ Best for:
 2. subsystem inspection,
 3. explicit local maintenance flows.
 
+### 5. Visual graph inspection
+
+Use:
+
+1. `openminion graph status`
+2. `openminion graph view --brain second`
+3. `openminion graph view --brain third --provider <name>`
+
+Best for:
+
+1. checking whether the visual graph lens is ready before opening it,
+2. opening the current second-brain memory graph in the shared GraphFakos viewer,
+3. opening configured third-brain provider graphs when they expose a viewer
+   envelope or a PragmaGraph snapshot,
+4. inspecting nodes, relationships, provenance, citations, and provider status.
+
+Notes:
+
+1. install `openminion[viewer]` to include GraphFakos,
+2. the visual surface is a lens over current graph state, not a memory backend
+   or graph indexer,
+3. `openminion graph status --json` reports GraphFakos availability, the
+   second-brain memory database path, active third-brain providers, visual
+   readiness, and suggested next commands,
+4. `openminion graph view --dry-run --json` builds the selected graph and
+   returns counts without starting the local browser viewer,
+5. `openminion graph view --html-out viewer.html` writes a static visual page
+   for inspection or sharing.
+
 ## Example surfaces
 
 The package-owned `examples/` tree is part of the public teaching surface:

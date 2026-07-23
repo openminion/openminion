@@ -98,6 +98,7 @@ COMMAND_SPECS = (
         "identity", "openminion.cli.commands.identity", "Identity profile management"
     ),
     CommandSpec("memory", "openminion.cli.commands.memory", "Memory operations"),
+    CommandSpec("graph", "openminion.cli.commands.graph", "Visual graph inspection"),
     CommandSpec(
         "project-learning",
         "openminion.cli.commands.project_learning",
