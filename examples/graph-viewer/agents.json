@@ -1,0 +1,26 @@
+{
+  "knowledge_graphs": {
+    "provider": {
+      "active": [
+        "repo_graph"
+      ],
+      "providers": {
+        "repo_graph": {
+          "provider": "graphify",
+          "tags": [
+            "code_graph",
+            "document_graph"
+          ],
+          "optional_capabilities": [
+            "query",
+            "citations",
+            "provenance"
+          ],
+          "options": {
+            "viewer_envelope_path": "repo-viewer-envelope.json"
+          }
+        }
+      }
+    }
+  }
+}
