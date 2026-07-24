@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 from types import ModuleType
 from typing import Any, Mapping
 import sys
@@ -191,6 +192,32 @@ def _graph_from_provider_envelope(
 
 def _roots(tmp_path):
     return resolve_cli_roots(home_root=tmp_path, data_root=tmp_path / ".openminion")
+
+
+def _package_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _example_envelope_path() -> Path:
+    return _package_root() / "examples" / "graph-viewer" / "repo-viewer-envelope.json"
+
+
+def _third_brain_example_config(envelope_path: Path) -> OpenMinionConfig:
+    config = OpenMinionConfig()
+    config.module_configs["knowledge_graphs"] = {
+        "provider": {
+            "active": ["repo_graph"],
+            "providers": {
+                "repo_graph": {
+                    "provider": "graphify",
+                    "tags": ["code_graph", "document_graph"],
+                    "optional_capabilities": ["query", "citations", "provenance"],
+                    "options": {"viewer_envelope_path": str(envelope_path)},
+                }
+            },
+        }
+    }
+    return config
 
 
 def test_second_brain_dry_run_builds_graph_from_memory_db(
@@ -477,3 +504,185 @@ def test_second_brain_static_html_uses_real_graphfakos_shell(tmp_path) -> None:
     assert result.html_path == str(html_path)
     assert "GraphFakos" in html
     assert "HTML Viewer" in html
+
+
+def test_second_brain_provider_matches_graphfakos_conformance(tmp_path) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    testing = pytest.importorskip("graphfakos.testing")
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    first = MemoryRecord(
+        id="memory:runtime",
+        scope="agent:openminion",
+        type="decision",
+        key="runtime-db",
+        title="Runtime DB",
+        content="Use OpenMinion memory DB as the second brain.",
+        created_at=now,
+        updated_at=now,
+    )
+    second = MemoryRecord(
+        id="memory:viewer",
+        scope="agent:openminion",
+        type="fact",
+        key="viewer",
+        title="Viewer",
+        content="Open the memory graph visually.",
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(first)
+    store.put(second)
+    store.put_relation(
+        MemoryRelation(
+            relation_id="relation:runtime-viewer",
+            source_record_id=first.id,
+            target_record_id=second.id,
+            relation_type="supports",
+            created_at=now,
+        )
+    )
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+
+    result = testing.assert_provider_conformance(
+        testing.GraphFakosProviderConformanceCase(
+            provider=provider,
+            expected_role="second_brain_memory",
+            expected_provider="OpenMinion Memory",
+            required_capabilities=("durable_memory", "local_preview"),
+            artifact_path=tmp_path / "memory.graphfakos.json",
+        )
+    )
+
+    assert result.replay_graph is not None
+    assert result.report["graph"]["provider_id"] == "openminion-memory"
+    assert "Runtime DB" in result.html
+    assert "supports" in result.html
+
+
+def test_third_brain_example_fixture_status_and_html(tmp_path) -> None:
+    pytest.importorskip("graphfakos")
+    config = _third_brain_example_config(_example_envelope_path())
+
+    status = inspect_graph_viewer_status(config=config, roots=_roots(tmp_path))
+    status_payload = status.to_dict()
+    third_brain = status_payload["third_brain"][0]
+    assert third_brain["provider"] == "repo_graph"
+    assert third_brain["visual_ready"] is True
+    assert third_brain["details"]["viewer_envelope_exists"] is True
+
+    html_path = tmp_path / "third-brain-viewer.html"
+    result = launch_graph_viewer(
+        config=config,
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(
+            brain="third",
+            provider="repo_graph",
+            html_out=str(html_path),
+        ),
+    )
+    html = html_path.read_text(encoding="utf-8")
+
+    assert result.mode == "static_html"
+    assert result.provider == "openminion-example"
+    assert "GraphFakos" in html
+    assert "Graph Canvas" in html
+    assert "Gateway Context" in html
+    assert "Graph Viewer Bridge" in html
+    assert "docs/runtime-surfaces.md" in html
+
+
+def test_third_brain_example_fixture_matches_graphfakos_conformance(tmp_path) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    testing = pytest.importorskip("graphfakos.testing")
+    provider = graphfakos.ProviderEnvelopeGraphProvider(str(_example_envelope_path()))
+
+    result = testing.assert_provider_conformance(
+        testing.GraphFakosProviderConformanceCase(
+            provider=provider,
+            expected_role="provider_viewer_envelope",
+            expected_provider="openminion-example",
+            required_capabilities=("content_preview", "local_preview"),
+            artifact_path=tmp_path / "repo.graphfakos.json",
+        )
+    )
+
+    assert result.replay_graph is not None
+    assert result.graph.provider_id == "openminion-example"
+    assert "Gateway Context" in result.html
+    assert "uses_context_graph" in result.html
+
+
+def test_static_html_renders_in_playwright_when_chromium_available(tmp_path) -> None:
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    store.put(
+        MemoryRecord(
+            id="memory:browser",
+            scope="agent:openminion",
+            type="fact",
+            key="browser-viewer",
+            title="Browser Viewer Smoke",
+            content="Render the GraphFakos shell in a real browser when available.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    html_path = tmp_path / "browser-viewer.html"
+    launch_graph_viewer(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(
+            brain="second",
+            memory_db=str(db_path),
+            html_out=str(html_path),
+        ),
+    )
+
+    page_text = _playwright_page_text(
+        playwright_sync=playwright_sync,
+        page_uri=html_path.as_uri(),
+    )
+    assert "GraphFakos" in page_text
+    assert "Browser Viewer Smoke" in page_text
+
+
+def _playwright_page_text(*, playwright_sync: Any, page_uri: str) -> str:
+    box: dict[str, object] = {}
+
+    def _runner() -> None:
+        try:
+            manager = playwright_sync.sync_playwright().start()
+        except Exception as exc:  # noqa: BLE001
+            box["skip"] = f"playwright unavailable: {exc}"
+            return
+        try:
+            try:
+                browser = manager.chromium.launch(headless=True)
+            except Exception as exc:  # noqa: BLE001
+                box["skip"] = f"chromium browser binary not available: {exc}"
+                return
+            try:
+                page = browser.new_page()
+                page.goto(page_uri)
+                box["text"] = page.locator("body").inner_text(timeout=10_000)
+            finally:
+                browser.close()
+        finally:
+            manager.stop()
+
+    worker = threading.Thread(target=_runner, daemon=True)
+    worker.start()
+    worker.join(timeout=60)
+    if worker.is_alive():
+        pytest.skip("chromium browser smoke timed out")
+    if "skip" in box:
+        pytest.skip(str(box["skip"]))
+    return str(box.get("text", ""))

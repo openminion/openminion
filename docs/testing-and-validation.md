@@ -74,6 +74,16 @@ Example focused run:
   tests/test_public_first_run_cli.py
 ```
 
+Graph viewer hardening is covered by:
+
+```bash
+.venv/bin/python3.11 -m pytest -q tests/context/knowledge/test_viewer.py
+```
+
+That slice checks second-brain memory rendering, third-brain provider-envelope
+rendering, GraphFakos provider conformance, static HTML generation, and an
+optional Chromium render smoke when Playwright browser binaries are available.
+
 ## Broader runtime checks
 
 For package-release or integration-owner validation, use:

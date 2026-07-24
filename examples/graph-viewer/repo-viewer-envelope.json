@@ -1,0 +1,141 @@
+{
+  "schema_version": "graphfakos.provider_envelope.v1",
+  "snapshot_id": "openminion-example-repo-graph",
+  "snapshot_version": "2026-07-24-example",
+  "generated_at": "2026-07-24T00:00:00Z",
+  "level_of_detail": "sample",
+  "producer": {
+    "package": "openminion-example",
+    "version": "0.0.0"
+  },
+  "root_identity": {
+    "root_path": "openminion",
+    "kind": "repository"
+  },
+  "capabilities": {
+    "query": true,
+    "citations": true,
+    "provenance": true
+  },
+  "graph_stats": {
+    "raw_node_count": 3,
+    "raw_edge_count": 2
+  },
+  "clusters": [
+    {
+      "id": "runtime",
+      "label": "Runtime Context",
+      "kind": "module_cluster",
+      "node_count": 2,
+      "edge_count": 1,
+      "color_hint": "#2563eb",
+      "centroid_hint": {
+        "x": -120,
+        "y": 0
+      }
+    },
+    {
+      "id": "provider",
+      "label": "Provider Graph",
+      "kind": "module_cluster",
+      "node_count": 1,
+      "edge_count": 1,
+      "color_hint": "#059669",
+      "centroid_hint": {
+        "x": 120,
+        "y": 0
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "src/openminion/services/gateway/context.py",
+      "label": "Gateway Context",
+      "kind": "python_module",
+      "summary": "Assembles runtime context and appends cited third-brain facts.",
+      "cluster_id": "runtime",
+      "source_kind": "code",
+      "freshness": "fresh",
+      "confidence": 0.98
+    },
+    {
+      "id": "src/openminion/modules/context/knowledge/viewer.py",
+      "label": "Graph Viewer Bridge",
+      "kind": "python_module",
+      "summary": "Adapts OpenMinion second- and third-brain graph state into GraphFakos.",
+      "cluster_id": "provider",
+      "source_kind": "code",
+      "freshness": "fresh",
+      "confidence": 0.97
+    },
+    {
+      "id": "docs/runtime-surfaces.md",
+      "label": "Runtime Surfaces Doc",
+      "kind": "markdown_doc",
+      "summary": "Documents visual graph inspection commands and operator usage.",
+      "cluster_id": "runtime",
+      "source_kind": "documentation",
+      "freshness": "fresh",
+      "confidence": 0.95
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge:gateway:viewer",
+      "source_id": "src/openminion/services/gateway/context.py",
+      "target_id": "src/openminion/modules/context/knowledge/viewer.py",
+      "kind": "uses_context_graph",
+      "confidence": 0.92
+    },
+    {
+      "id": "edge:docs:viewer",
+      "source_id": "docs/runtime-surfaces.md",
+      "target_id": "src/openminion/modules/context/knowledge/viewer.py",
+      "kind": "documents",
+      "confidence": 0.91
+    }
+  ],
+  "content_index": {
+    "src/openminion/services/gateway/context.py": {
+      "title": "Gateway context source",
+      "text": "Context assembly appends third-brain graph facts as cited provider context.",
+      "source_ref": {
+        "path": "src/openminion/services/gateway/context.py",
+        "line": 571
+      }
+    },
+    "src/openminion/modules/context/knowledge/viewer.py": {
+      "title": "Graph viewer bridge source",
+      "text": "The viewer bridge launches GraphFakos over second- and third-brain state.",
+      "source_ref": {
+        "path": "src/openminion/modules/context/knowledge/viewer.py",
+        "line": 1
+      }
+    },
+    "docs/runtime-surfaces.md": {
+      "title": "Runtime surface docs",
+      "text": "Visual graph inspection is documented as an optional lens over current graph state.",
+      "source_ref": {
+        "path": "docs/runtime-surfaces.md",
+        "line": 87
+      }
+    }
+  },
+  "provenance": [
+    {
+      "node_id": "src/openminion/services/gateway/context.py",
+      "source": "example-fixture",
+      "summary": "Gateway context assembly source path"
+    },
+    {
+      "node_id": "src/openminion/modules/context/knowledge/viewer.py",
+      "source": "example-fixture",
+      "summary": "OpenMinion GraphFakos viewer bridge source path"
+    },
+    {
+      "node_id": "docs/runtime-surfaces.md",
+      "source": "example-fixture",
+      "summary": "Runtime-surface documentation source path"
+    }
+  ]
+}

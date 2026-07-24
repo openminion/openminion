@@ -9,6 +9,7 @@ Use it as the main starter surface for:
 3. skill examples and fixture catalogs,
 4. identity/config examples,
 5. runnable example packages.
+6. graph viewer fixtures.
 
 ## Family Map
 
@@ -83,6 +84,18 @@ Current package:
 1. see `openminion/examples/modules/README.md` for the current runnable sample
    package
 
+### 6. Graph viewer fixtures
+
+Visual graph examples live under:
+
+1. `openminion/examples/graph-viewer/`
+
+Start with:
+
+1. `openminion/examples/graph-viewer/README.md`
+2. `openminion/examples/graph-viewer/agents.json`
+3. `openminion/examples/graph-viewer/repo-viewer-envelope.json`
+
 ## Naming Contract
 
 1. Contract-owned uppercase bundle paths remain uppercase:
@@ -91,7 +104,8 @@ Current package:
    the context.
 3. Skill scenario directories stay lower-kebab-case.
 4. Runnable packages stay under `openminion/examples/modules/`.
-5. New example families should prefer folder context over `hello_*`-style flat
+5. Graph viewer examples stay under `openminion/examples/graph-viewer/`.
+6. New example families should prefer folder context over `hello_*`-style flat
    filename sprawl.
 
 ## Canonical Paths
