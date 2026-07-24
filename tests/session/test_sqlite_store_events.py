@@ -109,7 +109,7 @@ def test_append_event_adds_artifact_edges_and_ignores_non_artifacts(
         )
 
         assert artifactctl.calls == [
-            ("session", session_id, valid_ref),
+            ("session", session_id, "a" * 64),
             ("session", session_id, raw_sha),
         ]
     finally:

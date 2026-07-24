@@ -240,6 +240,15 @@ def _result_from_outcome(
         ADAPTIVE_TERM_CIRCULAR_PATTERN,
         CODING_TERM_ITERATION_CAP,
     }:
+        readonly_retry = _maybe_retry_required_write_after_readonly_dead_end(
+            runner,
+            ctx,
+            loop=loop,
+            allowed_tools=allowed_tools,
+            outcome_state=getattr(outcome, "state", None),
+        )
+        if readonly_retry is not None:
+            return readonly_retry
         missing_write_result = _maybe_gate_missing_required_write(
             runner,
             ctx,
@@ -305,7 +314,64 @@ def _result_from_outcome(
     )
 
 
+def _plan_or_user_requires_file_change(runner: Any, loop_state: Any) -> bool:
+    plan = getattr(runner, "_coding_plan", None)
+    if plan is not None and bool(getattr(plan, "requires_file_change", False)):
+        return True
+    scratchpad = getattr(loop_state, "scratchpad", {}) or {}
+    if bool(scratchpad.get("coding.requires_file_change")):
+        return True
+    return _user_explicitly_requested_file_artifact(loop_state)
+
+
+def _maybe_retry_required_write_after_readonly_dead_end(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    loop: Any,
+    allowed_tools: frozenset[str],
+    outcome_state: Any | None = None,
+) -> ExecutionResult | None:
+    if runner._has_successful_mutating_file_result():
+        return None
+    if bool(loop.scratchpad.get("coding.readonly_dead_end_write_retry_used")):
+        return None
+    requires_file_change = _plan_or_user_requires_file_change(
+        runner, loop
+    ) or _plan_or_user_requires_file_change(runner, outcome_state)
+    if not requires_file_change:
+        return None
+
+    failure_summary = (
+        "Coding task repeated read-only tool calls before creating the requested "
+        "file artifacts. Retry with the mutating writer directly."
+    )
+    loop.scratchpad["coding.readonly_dead_end_write_retry_used"] = True
+    loop.scratchpad["coding.verify_gate_reason"] = "readonly_dead_end_missing_write"
+    if runner._coding_plan is not None:
+        runner._coding_plan.current_phase = "implement"
+        runner._coding_plan.record_open_issue(failure_summary)
+        runner._sync_plan_telemetry()
+    _stage_required_write_direct_tool(loop, allowed_tools=allowed_tools)
+    loop.messages.append(
+        Message(
+            role="user",
+            content=(
+                "The task is still in implement. You repeated read-only inspection "
+                "without creating the requested files. Call `file.write` now with "
+                "the target path and content for the first project file. Do not "
+                "call list/read/repo-map tools before that writer call."
+            ),
+        )
+    )
+    runner._emit_phase_status(ctx)
+    runner._sync_coding_module_state(ctx)
+    return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
+
+
 def _user_explicitly_requested_file_artifact(loop_state: Any) -> bool:
+    if loop_state is None:
+        return False
     user_text = "\n".join(
         str(getattr(message, "content", "") or "")
         for message in list(getattr(loop_state, "messages", []) or [])

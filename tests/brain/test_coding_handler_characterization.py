@@ -866,12 +866,60 @@ class TestCodingVerificationReserve:
             == "missing_implementation_write"
         )
         assert "file.write" in runner._loop_state.messages[-1].content
-        assert "code.patch" in runner._loop_state.messages[-1].content
         assert any(
             status.get("payload", {}).get("coding.verify_gate_reason")
             == "missing_implementation_write"
             for status in emitted
         )
+
+    def test_duplicate_tool_stop_gets_one_direct_write_retry_at_verify_cap(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 1
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.scratchpad = {
+            "adaptive.tool_results": [
+                {"tool_name": "file.list_dir", "ok": True},
+            ],
+            "coding.verify_gate_blocks": 1,
+        }
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "file.list_dir", "exec.run"}),
+            error_message="duplicate tool batch",
+        )
+
+        result = runner._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result.status == "continue"
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "readonly_dead_end_missing_write"
+        )
+        assert (
+            runner._loop_state.scratchpad["coding.required_write_direct_tool"]
+            == "file.write"
+        )
+        assert runner._loop_state.direct_tool_turn is not None
+        assert "file.write" in runner._loop_state.messages[-1].content
 
     def test_final_text_uses_scratchpad_required_file_change_when_plan_loses_flag(
         self,
@@ -1123,13 +1171,12 @@ class TestCodingVerificationReserve:
         assert runner._coding_plan.current_phase == "implement"
         assert (
             runner._loop_state.scratchpad["coding.verify_gate_reason"]
-            == "missing_implementation_write"
+            == "readonly_dead_end_missing_write"
         )
         assert "file.write" in runner._loop_state.messages[-1].content
-        assert "code.patch" in runner._loop_state.messages[-1].content
         assert any(
             status.get("payload", {}).get("coding.verify_gate_reason")
-            == "missing_implementation_write"
+            == "readonly_dead_end_missing_write"
             for status in emitted
         )
 
@@ -1180,14 +1227,14 @@ class TestCodingVerificationReserve:
         assert result.status == "continue"
         assert (
             runner._loop_state.scratchpad["coding.verify_gate_reason"]
-            == "missing_implementation_write"
+            == "readonly_dead_end_missing_write"
         )
         assert "file.write" in runner._loop_state.messages[-1].content
         assert runner._loop_state.direct_tool_turn is not None
         assert runner._loop_state.direct_tool_turn.requested_tool_names == ("file.write",)
         assert any(
             status.get("payload", {}).get("coding.verify_gate_reason")
-            == "missing_implementation_write"
+            == "readonly_dead_end_missing_write"
             for status in emitted
         )
 

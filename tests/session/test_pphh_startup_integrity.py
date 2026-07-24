@@ -11,11 +11,12 @@ def test_sqlite_session_store_runs_startup_integrity_check(
 ) -> None:
     calls: list[str] = []
 
-    def _verify(path):
+    def _verify(module_id, path):
+        assert module_id == "session"
         calls.append(str(path))
         return {"ok": True}
 
-    monkeypatch.setattr(session_store_module, "verify_session_store_integrity", _verify)
+    monkeypatch.setattr(session_store_module, "verify_module_integrity", _verify)
 
     store = SQLiteSessionStore(tmp_path / "sessions.db")
     try:
@@ -28,11 +29,12 @@ def test_sqlite_session_store_rejects_failed_startup_integrity(
     monkeypatch,
     tmp_path,
 ) -> None:
-    def _verify(path):
+    def _verify(module_id, path):
+        assert module_id == "session"
         del path
         return {"ok": False, "findings": [{"code": "quick_check_failed"}]}
 
-    monkeypatch.setattr(session_store_module, "verify_session_store_integrity", _verify)
+    monkeypatch.setattr(session_store_module, "verify_module_integrity", _verify)
 
     with pytest.raises(RuntimeError, match="integrity violation"):
         SQLiteSessionStore(tmp_path / "sessions.db")
