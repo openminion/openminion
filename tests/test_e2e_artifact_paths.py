@@ -283,6 +283,54 @@ def test_cli_chat_probe_defaults_home_and_data_root_to_openminion_package_root(
     assert probe._resolve_data_root(openminion_root) == openminion_root / ".openminion"
 
 
+def test_cli_chat_probe_passes_data_root_to_child_cli(
+    monkeypatch, tmp_path: Path
+) -> None:
+    probe = _load_cli_chat_probe_module()
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"runtime": {"env": {}}}', encoding="utf-8")
+    data_root = tmp_path / "probe-data"
+    captured: dict[str, object] = {}
+
+    def fake_run_probe_session(**kwargs):
+        captured.update(kwargs)
+        return 0, "HRMR_CHAT_OK\n"
+
+    monkeypatch.setattr(probe, "_run_probe_session", fake_run_probe_session)
+    monkeypatch.setattr(probe, "_find_conversation_session_id", lambda **_: None)
+    monkeypatch.setattr(probe, "_collect_tool_audit_rows", lambda **_: ([], []))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_chat_probe.py",
+            "--config",
+            str(config_path),
+            "--agent",
+            "openminion",
+            "--session",
+            "probe-session",
+            "--message",
+            "reply with the marker",
+            "--data-root",
+            str(data_root),
+            "--python",
+            sys.executable,
+            "--require-output-marker",
+            "HRMR_CHAT_OK",
+        ],
+    )
+
+    assert probe.main() == 0
+
+    command = captured["cmd"]
+    env = captured["env"]
+    assert isinstance(command, list)
+    assert isinstance(env, dict)
+    assert command[command.index("--data-root") + 1] == str(data_root.resolve())
+    assert env["OPENMINION_DATA_ROOT"] == str(data_root.resolve())
+
+
 @pytest.mark.parametrize(
     "loader",
     [_load_autonomy_smoke_module, _load_cortensor_e2e_suite_module],

@@ -1192,6 +1192,7 @@ def main() -> int:
             cwd=cwd,
         )
         env["OPENMINION_DATA_ROOT"] = str(normalized_data_root)
+        cmd.extend(("--data-root", str(normalized_data_root)))
     else:
         env.setdefault(
             "OPENMINION_DATA_ROOT",

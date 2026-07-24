@@ -11,6 +11,7 @@ from .notes import (
     ImprovementNote as ImprovementNote,
     SelfImprovementEngine as SelfImprovementEngine,
 )
+from .proof_ingestion import *  # noqa: F403
 from .readout import *  # noqa: F403
 from .replay import *  # noqa: F403
 from .rubric import *  # noqa: F403

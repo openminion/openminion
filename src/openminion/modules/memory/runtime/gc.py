@@ -5,13 +5,23 @@ from openminion.modules.memory.runtime.gc_confidence import apply_confidence_dec
 from openminion.modules.memory.runtime.gc_insights import evict_stale_insights
 from openminion.modules.memory.runtime.gc_summaries import compress_old_summaries
 from openminion.modules.memory.runtime.purge import GCResult, purge_soft_deleted
+from openminion.modules.memory.runtime.retention import (
+    RuntimeMemoryRetentionPolicy,
+    RuntimeMemoryRetentionReport,
+    dry_run_runtime_memory_retention,
+    enforce_runtime_memory_retention,
+)
 from openminion.modules.memory.storage.base import MemoryStore
 
 __all__ = [
     "GCResult",
+    "RuntimeMemoryRetentionPolicy",
+    "RuntimeMemoryRetentionReport",
     "apply_confidence_decay",
     "compress_old_summaries",
+    "dry_run_runtime_memory_retention",
     "enforce_scope_capacity",
+    "enforce_runtime_memory_retention",
     "evict_stale_insights",
     "run_gc",
 ]

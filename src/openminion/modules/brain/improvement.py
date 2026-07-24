@@ -23,6 +23,13 @@ from openminion.modules.brain.runtime.improvement.instructions import (
     InstructionTargetSnapshot,
     build_instruction_proposal,
 )
+from openminion.modules.brain.runtime.improvement.proof_ingestion import (
+    ProofPacketEvidenceBundle,
+    ProofPacketIngestionResult,
+    ProofPacketLearningStore,
+    ProofPacketLearningSubmission,
+    ingest_proof_packet_learning_submission,
+)
 
 __all__ = [
     "ImprovementCandidate",
@@ -33,8 +40,13 @@ __all__ = [
     "InstructionProposalEvent",
     "InstructionProposalStore",
     "InstructionTargetSnapshot",
+    "ProofPacketEvidenceBundle",
+    "ProofPacketIngestionResult",
+    "ProofPacketLearningStore",
+    "ProofPacketLearningSubmission",
     "apply_instruction_proposal",
     "build_instruction_proposal",
+    "ingest_proof_packet_learning_submission",
     "reject_instruction_proposal",
     "rollback_instruction_proposal",
     "stage_learning_memory_candidate",
