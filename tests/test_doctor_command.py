@@ -144,7 +144,10 @@ class DoctorCommandTests(unittest.TestCase):
             self.assertEqual(code, 0)
             doctor_mock.assert_called_once_with(config_path=config_path)
             chat_mock.assert_called_once_with(args, config_path=config_path)
-            self.assertIn("Setup validation passed. Entering Focus...", buf.getvalue())
+            self.assertIn(
+                "Setup validation passed. Entering OpenMinion...",
+                buf.getvalue(),
+            )
 
     def test_setup_stops_when_doctor_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

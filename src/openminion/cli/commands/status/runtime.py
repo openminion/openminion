@@ -6,9 +6,8 @@ from typing import Any
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import build_capability_runtime_diagnostics
 from openminion.base.config.core import resolve_default_agent_id
-from openminion.cli.commands.daemon import ensure_daemon_running
 from openminion.cli.presentation.json_output import print_json_payload
-from openminion.cli.transport.daemon_client import daemon_request
+from openminion.cli.transport.runtime_source import call_daemon_or_inproc, daemon_get
 from openminion.services.bootstrap.onboarding import (
     OnboardingInspectionRequest,
     OnboardingState,
@@ -20,11 +19,11 @@ from openminion.modules.policy import SecurityPolicyEngine, ToolBudgetPolicy
 
 
 def run_tools_status(args, *, config) -> int:
-    source, payload = _load_runtime_surface_payload(
+    source, payload, fallback_reason = _load_runtime_surface_payload(
         args=args,
         config=config,
         path="/v1/runtime/capabilities",
-        inproc_call=lambda: _build_inproc_capabilities_payload(args.config),
+        inproc_call=lambda: _build_inproc_capabilities_payload(args),
     )
 
     capability_payload = dict(payload.get("capabilities", {}) or {})
@@ -47,6 +46,7 @@ def run_tools_status(args, *, config) -> int:
         "available_count": available_count,
         "blocked_count": blocked_count,
         "disabled_count": disabled_count,
+        "runtime_fallback_reason": fallback_reason,
         "tools": tools,
     }
     if getattr(args, "json", False):
@@ -61,11 +61,11 @@ def run_tools_status(args, *, config) -> int:
 
 
 def run_capabilities_status(args, *, config) -> int:
-    source, payload = _load_runtime_surface_payload(
+    source, payload, fallback_reason = _load_runtime_surface_payload(
         args=args,
         config=config,
         path="/v1/runtime/capabilities",
-        inproc_call=lambda: _build_inproc_capabilities_payload(args.config),
+        inproc_call=lambda: _build_inproc_capabilities_payload(args),
     )
     capabilities = dict(payload.get("capabilities", {}) or {})
     providers = dict(capabilities.get("providers", {}) or {})
@@ -86,6 +86,7 @@ def run_capabilities_status(args, *, config) -> int:
     output = {
         "ok": bool(payload.get("ok", False)),
         "source": source,
+        "runtime_fallback_reason": fallback_reason,
         "capabilities": capabilities,
         "summary": {
             "providers_enabled": sum(
@@ -134,16 +135,17 @@ def run_capabilities_status(args, *, config) -> int:
 
 
 def run_runtime_status(args, *, config) -> int:
-    source, payload = _load_runtime_surface_payload(
+    source, payload, fallback_reason = _load_runtime_surface_payload(
         args=args,
         config=config,
         path="/v1/runtime/posture",
-        inproc_call=lambda: _build_inproc_runtime_posture_payload(args.config),
+        inproc_call=lambda: _build_inproc_runtime_posture_payload(args),
     )
     runtime_posture = dict(payload.get("runtime", {}) or {})
     output = {
         "ok": bool(payload.get("ok", False)),
         "source": source,
+        "runtime_fallback_reason": fallback_reason,
         "runtime": runtime_posture,
     }
     if getattr(args, "json", False):
@@ -154,7 +156,7 @@ def run_runtime_status(args, *, config) -> int:
         "status runtime: "
         f"source={source} mode={runtime_posture.get('runtime_mode', 'unknown')} "
         f"bridge_active={runtime_posture.get('brain_bridge_active', False)} "
-        f"fallback_reason={runtime_posture.get('fallback_reason', '') or '-'}"
+        f"fallback_reason={runtime_posture.get('fallback_reason', '') or fallback_reason or '-'}"
     )
     return 0 if output["ok"] else 1
 
@@ -283,40 +285,35 @@ def _load_runtime_surface_payload(
     config,
     path: str,
     inproc_call,
-) -> tuple[str, dict[str, Any]]:
-    payload: dict[str, Any] | None = None
-    source = "inproc"
+) -> tuple[str, dict[str, Any], str]:
     auto_start = bool(getattr(config.runtime, "daemon_auto_start", False))
-    try:
-        endpoint = ensure_daemon_running(args.config, auto_start=auto_start)
-        status_code, daemon_payload = daemon_request(
-            endpoint=endpoint,
-            method="GET",
-            path=path,
-            timeout_s=10,
-        )
-        if status_code < 400 and isinstance(daemon_payload, dict):
-            payload = daemon_payload
-            source = "daemon"
-    except RuntimeError:
-        payload = None
-
-    if payload is None:
-        payload = inproc_call()
-        source = "inproc"
-    return source, payload
+    result = call_daemon_or_inproc(
+        args=args,
+        auto_start=auto_start,
+        daemon_call=lambda endpoint: daemon_get(endpoint, path=path, timeout_s=10),
+        inproc_call=inproc_call,
+    )
+    return result.source, result.payload, result.fallback_reason
 
 
-def _build_inproc_capabilities_payload(config_path: str | None) -> dict[str, Any]:
-    runtime = APIRuntime.from_config_path(config_path)
+def _build_inproc_capabilities_payload(args: object) -> dict[str, Any]:
+    runtime = APIRuntime.from_config_path(
+        getattr(args, "config", None),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
     try:
         return {"ok": True, "capabilities": runtime.capability_report()}
     finally:
         runtime.close()
 
 
-def _build_inproc_runtime_posture_payload(config_path: str | None) -> dict[str, Any]:
-    runtime = APIRuntime.from_config_path(config_path)
+def _build_inproc_runtime_posture_payload(args: object) -> dict[str, Any]:
+    runtime = APIRuntime.from_config_path(
+        getattr(args, "config", None),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
     try:
         return {"ok": True, "runtime": runtime.runtime_posture()}
     finally:

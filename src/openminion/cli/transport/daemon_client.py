@@ -32,10 +32,19 @@ class DaemonStreamEvent:
 _DEFAULT_DAEMON_PROBE_TIMEOUT_S = 1.5
 
 
-def resolve_daemon_endpoint(config_path: str | None) -> DaemonEndpoint:
+def resolve_daemon_endpoint(
+    config_path: str | None,
+    *,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> DaemonEndpoint:
     from openminion.daemon import resolve_ipc_bind
 
-    config, resolved = load_config_with_path(config_path)
+    config, resolved = load_config_with_path(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
     host, port = resolve_ipc_bind(config)
     token = str(config.runtime.ipc_token or "").strip()
     return DaemonEndpoint(

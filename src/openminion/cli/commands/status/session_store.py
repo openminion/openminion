@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from openminion.base.config import OpenMinionConfig
-from openminion.cli.config import load_cli_manager
+from openminion.cli.config import load_cli_manager_from_args
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.modules.session.runtime.factory import build_module_session_store
 from openminion.modules.storage.engine import StorageEngineConfig
@@ -11,7 +11,7 @@ from openminion.modules.storage.runtime.sqlite import resolve_database_path
 
 
 def build_status_session_store(args: Any, config: OpenMinionConfig) -> Any:
-    manager = load_cli_manager(args.config)
+    manager = load_cli_manager_from_args(args)
     storage_env = manager.env.snapshot()
     storage_env.setdefault("OPENMINION_HOME", str(manager.home_root))
     storage_env.setdefault("OPENMINION_DATA_ROOT", str(manager.data_root))

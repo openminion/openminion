@@ -57,9 +57,9 @@ def _cron_status(app: APIRuntime) -> int:
 
     jobs = store.list_cron_jobs()
 
-    print("Cron Status")
-    print("===========")
-    print(f"Registered Jobs: {len(jobs)}")
+    print("Scheduled Task Status")
+    print("=====================")
+    print(f"Registered scheduled tasks: {len(jobs)}")
     for j in jobs:
         schedule = j.get("schedule_json") or j.get("schedule", {})
         if isinstance(schedule, dict):
@@ -67,7 +67,8 @@ def _cron_status(app: APIRuntime) -> int:
         else:
             schedule_summary = str(schedule)
         print(
-            f"  [{j.get('job_id')}] schedule={schedule_summary} next={j.get('next_due_at')}"
+            f"  [{j.get('job_id')}] schedule={schedule_summary} "
+            f"next_due_at={j.get('next_due_at')}"
         )
 
     return 0
@@ -190,7 +191,7 @@ def _cron_create(app: APIRuntime, args) -> int:
         return 1
 
     data = output["data"]
-    print("Cron job created")
+    print("Scheduled task created")
     print(f"  task_id: {data.get('task_id')}")
     print(f"  name: {data.get('name')}")
     print(f"  next_due_at: {data.get('next_due_at')}")
@@ -218,7 +219,7 @@ def _cron_pause(app: APIRuntime, args) -> int:
         print(f"Error: {output['error'] or 'task.pause failed'}")
         return 1
     data = output["data"]
-    print("Cron job paused")
+    print("Scheduled task paused")
     print(f"  task_id: {data.get('task_id')}")
     print(f"  enabled: {data.get('enabled')}")
     print(f"  next_due_at: {data.get('next_due_at')}")
@@ -243,7 +244,7 @@ def _cron_resume(app: APIRuntime, args) -> int:
         print(f"Error: {output['error'] or 'task.resume failed'}")
         return 1
     data = output["data"]
-    print("Cron job resumed")
+    print("Scheduled task resumed")
     print(f"  task_id: {data.get('task_id')}")
     print(f"  enabled: {data.get('enabled')}")
     print(f"  next_due_at: {data.get('next_due_at')}")
@@ -267,7 +268,7 @@ def _cron_show(app: APIRuntime, args) -> int:
         print(f"Error: {output['error'] or 'task.show failed'}")
         return 1
     task = dict((output.get("data") or {}).get("task") or {})
-    print("Cron job details")
+    print("Scheduled task details")
     print(f"  task_id: {task.get('task_id')}")
     print(f"  enabled: {task.get('enabled')}")
     print(f"  schedule: {task.get('schedule_summary')}")

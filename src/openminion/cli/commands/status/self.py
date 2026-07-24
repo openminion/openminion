@@ -9,16 +9,17 @@ from .runtime import _load_runtime_surface_payload
 
 
 def run_self_status(args, *, config) -> int:
-    source, payload = _load_runtime_surface_payload(
+    source, payload, fallback_reason = _load_runtime_surface_payload(
         args=args,
         config=config,
         path="/v1/runtime/self-model",
-        inproc_call=lambda: _build_inproc_self_model_payload(args.config),
+        inproc_call=lambda: _build_inproc_self_model_payload(args),
     )
     self_model = dict(payload.get("self_model", {}) or {})
     output = {
         "ok": bool(payload.get("ok", False)),
         "source": source,
+        "runtime_fallback_reason": fallback_reason,
         "health": payload.get("health") or self_model.get("health", "unavailable"),
         "self_model": self_model,
     }
@@ -29,8 +30,12 @@ def run_self_status(args, *, config) -> int:
     return 0 if output["ok"] else 1
 
 
-def _build_inproc_self_model_payload(config_path: str | None) -> dict[str, Any]:
-    runtime = APIRuntime.from_config_path(config_path)
+def _build_inproc_self_model_payload(args: object) -> dict[str, Any]:
+    runtime = APIRuntime.from_config_path(
+        getattr(args, "config", None),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
     try:
         snapshot = runtime.runtime_self_model()
         return {"ok": True, "self_model": snapshot, "health": snapshot.get("health")}

@@ -199,6 +199,9 @@ def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
     return int(run_interactive(interactive_args) or 0)
 
 
+_launch_post_setup_focus = _launch_post_setup_interactive
+
+
 def _resolve_runtime_helper(name: str) -> Any:
     module = importlib.import_module("openminion.cli.commands.setup")
     return getattr(module, name)
@@ -299,7 +302,7 @@ def run_setup(args) -> int:
         return 0
 
     print("Setup validation passed. Entering OpenMinion...")
-    return _resolve_runtime_helper("_launch_post_setup_interactive")(
+    return _resolve_runtime_helper("_launch_post_setup_focus")(
         args, config_path=saved_path
     )
 

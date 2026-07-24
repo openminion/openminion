@@ -9,7 +9,6 @@ from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 
-from openminion.api.config import bootstrap_api_runtime, build_api_handler_class
 from openminion.api.core.validation import parse_json_request_body
 from openminion.api.responses.serialization import error_response, normalize_request_id
 from openminion.api.runtime import APIRuntime
@@ -176,20 +175,6 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         return
 
 
-def build_api_server(config_path: str | None, host: str, port: int) -> ThreadingHTTPServer:
-    bootstrap = bootstrap_api_runtime(config_path)
-    handler_cls = build_api_handler_class(
-        _OpenMinionAPIHandler,
-        config_path=config_path,
-        bootstrap=bootstrap,
-    )
-    return _OpenMinionThreadingHTTPServer(
-        (host, int(port)),
-        handler_cls,
-        runtime=bootstrap.runtime,
-    )
-
-
 def _json_dumps(payload: object) -> str:
     import json
 
@@ -225,7 +210,6 @@ def _start_sse_stream_response(handler: _OpenMinionAPIHandler, request_id: str |
 
 __all__ = [
     "_OpenMinionAPIHandler",
-    "build_api_server",
     "dispatch_request",
     "get_api_metrics_consistency_stamp",
     "get_api_metrics_snapshot",

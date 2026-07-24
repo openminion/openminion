@@ -8,7 +8,7 @@ from openminion.cli.commands.session_policy import (
     resolve_configured_action_policy,
     resolve_effective_action_policy,
 )
-from openminion.cli.config import load_cli_manager, resolve_cli_policy_db_path
+from openminion.cli.config import load_cli_manager_from_args, resolve_cli_policy_db_path
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 from openminion.modules.policy.runtime.action_policy import (
@@ -157,7 +157,7 @@ def _render_action_policy_status_text(
 def run_action_policy_status(args, *, config) -> int:
     from openminion.modules.policy.runtime.service import PolicyCtl
 
-    manager = load_cli_manager(args.config)
+    manager = load_cli_manager_from_args(args)
     data_root = manager.data_root
     agent_id = (
         str(getattr(args, "agent_id", "") or resolve_default_agent_id(config)).strip()

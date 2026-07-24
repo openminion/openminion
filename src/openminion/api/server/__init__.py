@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+from os import PathLike
 from time import perf_counter as _perf_counter
 from typing import Any, Mapping
 
@@ -25,8 +26,15 @@ def build_api_server(
     config_path: str | None,
     host: str,
     port: int,
+    *,
+    home_root: str | PathLike[str] | None = None,
+    data_root: str | PathLike[str] | None = None,
 ) -> _OpenMinionThreadingHTTPServer:
-    bootstrap = bootstrap_api_runtime(config_path)
+    bootstrap = bootstrap_api_runtime(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
     handler_cls = build_api_handler_class(
         _OpenMinionAPIHandler,
         config_path=config_path,

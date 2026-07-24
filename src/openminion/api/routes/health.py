@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+from typing import Any
 from urllib.parse import parse_qs
 
 from openminion.api.core.deps import (
@@ -27,6 +28,8 @@ from .contracts import (
 
 
 _HEALTH_PATHS = {"/health", "/v1/health"}
+_LIVENESS_PATHS = {"/live", "/v1/live", "/health/live", "/v1/health/live"}
+_READINESS_PATHS = {"/ready", "/v1/ready", "/health/ready", "/v1/health/ready"}
 
 
 def _parse_probe_session_id(query: str | None) -> str | None:
@@ -73,6 +76,40 @@ def _handle_health_request(
     else:
         status = HTTPStatus.OK if payload.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE
     return RouteResult(status=status, payload=payload)
+
+
+def _handle_liveness_request(ctx: APIRouteContext, *, path: str) -> RouteResult:
+    payload = {
+        "ok": True,
+        "kind": "liveness",
+        "path": path,
+        "runtime_bootstrap_error": ctx.runtime_bootstrap_error or "",
+    }
+    return RouteResult(status=HTTPStatus.OK, payload=payload)
+
+
+def _handle_readiness_request(
+    ctx: APIRouteContext,
+    *,
+    path: str,
+    query: str | None,
+) -> RouteResult:
+    if ctx.runtime_bootstrap_error and not ctx.config_path:
+        return RouteResult(
+            status=HTTPStatus.SERVICE_UNAVAILABLE,
+            payload={
+                "ok": False,
+                "kind": "readiness",
+                "readiness_path": path,
+                "degraded": True,
+                "degraded_reason": ctx.runtime_bootstrap_error,
+            },
+        )
+    result = _handle_health_request(ctx, path="/v1/health", query=query)
+    payload = dict(result.payload)
+    payload["kind"] = "readiness"
+    payload["readiness_path"] = path
+    return RouteResult(status=result.status, payload=payload)
 
 
 def _handle_metrics_request(
@@ -175,11 +212,17 @@ def handle_request(
     *,
     method_name: str,
     path: str,
-    body: dict | None,
+    body: dict[str, Any] | None,
     query: str | None,
 ) -> RouteResult | None:
     if method_name == "GET" and path in _HEALTH_PATHS:
         return _handle_health_request(ctx, path=path, query=query)
+
+    if method_name == "GET" and path in _LIVENESS_PATHS:
+        return _handle_liveness_request(ctx, path=path)
+
+    if method_name == "GET" and path in _READINESS_PATHS:
+        return _handle_readiness_request(ctx, path=path, query=query)
 
     if method_name == "GET" and path == "/metrics":
         return _handle_metrics_request(ctx, path=path, query=query)

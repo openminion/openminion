@@ -1,4 +1,4 @@
-from openminion.cli.bootstrap.loader import load_config
+from openminion.cli.config import load_cli_config_from_args
 from openminion.services.diagnostics.debug import DebugStatus, WiringSource
 
 from . import cli as _cli
@@ -27,8 +27,16 @@ from .providers.tools import (
 )
 
 
+load_config = load_cli_config_from_args
+
+
 def run_debug(args) -> int:
-    _cli.load_config = load_config
+    def _load_for_cli(config_path):
+        if load_config is load_cli_config_from_args:
+            return load_config(args)
+        return load_config(config_path)
+
+    _cli.load_config = _load_for_cli
     return _cli.run_debug(args)
 
 

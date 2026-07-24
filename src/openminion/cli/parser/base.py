@@ -24,6 +24,11 @@ COMMAND_SPECS = (
     CommandSpec(
         "daemon", "openminion.cli.commands.daemon", "Daemon lifecycle controls"
     ),
+    CommandSpec(
+        "service",
+        "openminion.cli.commands.service",
+        "Unified service lifecycle overview",
+    ),
     CommandSpec("run", "openminion.cli.commands.run", "Run a prompt"),
     CommandSpec(
         "room", "openminion.cli.commands.room", "Create and manage room sessions"

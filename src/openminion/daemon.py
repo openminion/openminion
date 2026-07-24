@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 from types import FrameType
-from typing import Sequence, cast
+from typing import Any, Sequence, cast
 
 from openminion.api.server import build_api_server
 from openminion.base.config import (
@@ -323,7 +323,6 @@ def run_server(
 ) -> int:
     manager = ConfigManager.load(config_path)
     bootstrap_config_manager(manager)
-    resolved_config_path = manager.config_path
     config = manager.base_config
     bind_host, bind_port = resolve_ipc_bind(config)
     if host is not None:
@@ -348,9 +347,7 @@ def run_server(
         file_path=resolved_log_file,
     )
 
-    server = build_api_server(
-        config_path=str(resolved_config_path), host=bind_host, port=bind_port
-    )
+    server = _build_api_server_for_manager(manager, bind_host, bind_port)
     pid = os.getpid()
     resolved_pid_file.write_text(f"{pid}\n", encoding="utf-8")
     lifecycle = _DaemonLifecycleEmitter(
@@ -463,6 +460,20 @@ def run_server(
             pass
         lifecycle.close()
     return exit_code
+
+
+def _build_api_server_for_manager(
+    manager: ConfigManager,
+    bind_host: str,
+    bind_port: int,
+) -> Any:
+    return build_api_server(
+        config_path=str(manager.config_path),
+        host=bind_host,
+        port=bind_port,
+        home_root=manager.home_root,
+        data_root=manager.data_root,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
