@@ -66,3 +66,11 @@ class HybridDurableMemoryError(KnowledgeGraphError):
     """Hybrids must delegate durable writes; they cannot advertise durable_memory."""
 
     code = "HYBRID_DURABLE_MEMORY_REJECTED"
+
+
+class GraphViewerUnavailableError(KnowledgeGraphError):
+    code = "GRAPH_VIEWER_UNAVAILABLE"
+
+
+class GraphViewerSourceError(KnowledgeGraphError):
+    code = "GRAPH_VIEWER_SOURCE_ERROR"

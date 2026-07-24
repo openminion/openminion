@@ -391,7 +391,7 @@ src/openminion/services/identity/client.py	4	0	current broad-handler baseline; r
 src/openminion/services/runtime/a2a_delegate.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/bootstrap.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/catalog.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/runtime/channel_supervisor.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/runtime/channel_supervisor.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/cli.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/cron/delivery.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/runtime/cron/executor.py	15	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

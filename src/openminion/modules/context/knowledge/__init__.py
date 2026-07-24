@@ -53,6 +53,8 @@ from .contracts import KNOWLEDGE_GRAPH_CONTRACT_VERSION
 from .errors import (
     DisabledProviderError,
     DuplicateProviderError,
+    GraphViewerSourceError,
+    GraphViewerUnavailableError,
     HybridDurableMemoryError,
     InvalidCapabilityError,
     InvalidLayerError,
@@ -97,6 +99,15 @@ from .models import (
     KnowledgeGraphCapabilities,
     KnowledgeGraphHealth,
 )
+from .viewer import (
+    GraphViewerLaunchResult,
+    GraphViewerProviderStatus,
+    GraphViewerRequest,
+    GraphViewerStatusReport,
+    OpenMinionMemoryGraphFakosProvider,
+    inspect_graph_viewer_status,
+    launch_graph_viewer,
+)
 
 __all__ = [
     "CAPABILITY_CITATIONS",
@@ -139,6 +150,12 @@ __all__ = [
     "GraphRefreshRequest",
     "GraphRefreshResult",
     "GraphSourceRef",
+    "GraphViewerLaunchResult",
+    "GraphViewerProviderStatus",
+    "GraphViewerRequest",
+    "GraphViewerSourceError",
+    "GraphViewerStatusReport",
+    "GraphViewerUnavailableError",
     "HybridDurableMemoryError",
     "InvalidCapabilityError",
     "InvalidLayerError",
@@ -166,12 +183,15 @@ __all__ = [
     "LAYER_THIRD_BRAIN",
     "MissingRequiredCapabilityError",
     "MultiActiveSecondBrainError",
+    "OpenMinionMemoryGraphFakosProvider",
     "ResolvedKnowledgeGraphProvider",
     "PROVIDER_GRAPHIFY",
     "PROVIDER_PRAGMAGRAPH",
     "build_knowledge_graph_service",
     "empty_knowledge_graph_service",
+    "inspect_graph_viewer_status",
     "knowledge_graphs_config_from_mapping",
+    "launch_graph_viewer",
     "report_optional_capabilities",
     "resolve_knowledge_graphs_config",
     "TAG_ARTIFACT_GRAPH",
