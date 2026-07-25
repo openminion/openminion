@@ -50,9 +50,12 @@ def inspect_db(path: Path) -> dict[str, Any]:
             "path": str(resolved),
             "tables": {table: _row_count(conn, table) for table in tables},
             "cp_migrations": _query_dicts(
-                conn, "SELECT version, name, applied_at FROM cp_migrations ORDER BY version"
+                conn,
+                "SELECT version, name, applied_at FROM cp_migrations ORDER BY version",
             ),
-            "om_meta": _query_dicts(conn, "SELECT key, value FROM om_meta ORDER BY key"),
+            "om_meta": _query_dicts(
+                conn, "SELECT key, value FROM om_meta ORDER BY key"
+            ),
             "indexes": _query_dicts(
                 conn,
                 """

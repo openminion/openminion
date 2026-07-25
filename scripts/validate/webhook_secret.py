@@ -11,14 +11,17 @@ DEFAULT_SCAN_ROOTS = (
 )
 _PATTERNS = (
     "WebhookConfig(enabled=True,secret=None",
-    "WebhookConfig(enabled=True,secret=\"\"",
+    'WebhookConfig(enabled=True,secret=""',
     "WebhookConfig(enabled=True,secret=''",
 )
 
 
 def _inside_config_error_assert(lines: list[str], index: int) -> bool:
     lower_window = "\n".join(lines[max(0, index - 6) : index + 1]).lower()
-    return "pytest.raises(configerror" in lower_window or "assertraises(configerror" in lower_window
+    return (
+        "pytest.raises(configerror" in lower_window
+        or "assertraises(configerror" in lower_window
+    )
 
 
 def find_violations(roots: tuple[Path, ...]) -> list[str]:
@@ -35,7 +38,9 @@ def find_violations(roots: tuple[Path, ...]) -> list[str]:
                 if _inside_config_error_assert(lines, index):
                     continue
                 rel = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
-                violations.append(f"{rel}:{index + 1}: enabled webhook without required secret")
+                violations.append(
+                    f"{rel}:{index + 1}: enabled webhook without required secret"
+                )
     return violations
 
 

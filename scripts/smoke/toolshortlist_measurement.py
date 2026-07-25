@@ -133,7 +133,13 @@ def run_measurement(*, samples: int, latency_ms: float) -> dict[str, Any]:
                 tool_specs=tool_specs,
                 latency_ms=latency_ms,
             )
-            pairs.append({"scenario_id": scenario.scenario_id, "disabled": disabled, "enabled": enabled})
+            pairs.append(
+                {
+                    "scenario_id": scenario.scenario_id,
+                    "disabled": disabled,
+                    "enabled": enabled,
+                }
+            )
     return {
         "artifact_schema_version": ARTIFACT_VERSION,
         "measurement_mode": "deterministic-local",
@@ -199,7 +205,10 @@ def _measure_enabled(
         model="deterministic-shortlist-v1",
         user_messages=[Message(role="user", content=scenario.user_text)],
         tool_specs=tool_specs,
-        metadata={"purpose": "tool_schema_shortlisting_measurement", "scenario": scenario.scenario_id},
+        metadata={
+            "purpose": "tool_schema_shortlisting_measurement",
+            "scenario": scenario.scenario_id,
+        },
     )
     wall_time_ms = _elapsed_ms(started)
     return _sample_payload(
@@ -260,7 +269,8 @@ def _sample_payload(
         "extra_model_calls": extra_model_calls,
         "ttft_ms": round(ttft_ms, 3),
         "wall_time_ms": round(wall_time_ms, 3),
-        "shortlist_tokens": shortlist_tokens or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "shortlist_tokens": shortlist_tokens
+        or {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
     }
 
 
@@ -270,7 +280,9 @@ def _summarize_pairs(pairs: Sequence[dict[str, Any]]) -> dict[str, Any]:
         scenario_pairs = [pair for pair in pairs if pair["scenario_id"] == scenario_id]
         summaries[scenario_id] = {
             "sample_count": len(scenario_pairs),
-            "disabled": _summarize_samples([pair["disabled"] for pair in scenario_pairs]),
+            "disabled": _summarize_samples(
+                [pair["disabled"] for pair in scenario_pairs]
+            ),
             "enabled": _summarize_samples([pair["enabled"] for pair in scenario_pairs]),
         }
         summaries[scenario_id]["delta"] = _delta_summary(
@@ -287,8 +299,12 @@ def _summarize_samples(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "fallback_counts": _counts(
             sample["skip_or_fallback_reason"] or "none" for sample in samples
         ),
-        "prompt_tool_schema_chars": _number_summary(samples, "prompt_tool_schema_chars"),
-        "prompt_tool_schema_token_proxy": _number_summary(samples, "prompt_tool_schema_token_proxy"),
+        "prompt_tool_schema_chars": _number_summary(
+            samples, "prompt_tool_schema_chars"
+        ),
+        "prompt_tool_schema_token_proxy": _number_summary(
+            samples, "prompt_tool_schema_token_proxy"
+        ),
         "extra_model_calls": _number_summary(samples, "extra_model_calls"),
         "ttft_ms": _number_summary(samples, "ttft_ms"),
         "wall_time_ms": _number_summary(samples, "wall_time_ms"),
@@ -429,7 +445,9 @@ def main() -> int:
     recommendation = artifact["recommendation"]
     print(f"wrote: {output}")
     print(f"recommendation: {recommendation['decision']}")
-    print(f"all_enabled_samples_correct: {recommendation['all_enabled_samples_correct']}")
+    print(
+        f"all_enabled_samples_correct: {recommendation['all_enabled_samples_correct']}"
+    )
     return 0
 
 

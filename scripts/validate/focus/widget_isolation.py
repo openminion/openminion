@@ -45,9 +45,7 @@ REPO_ROOT = next(
     Path(__file__).resolve().parents[3],
 )
 FOCUS_SCREEN = REPO_ROOT / "src" / "openminion" / "cli" / "interactive" / "screen.py"
-FOCUS_WIDGETS_DIR = (
-    REPO_ROOT / "src" / "openminion" / "cli" / "interactive" / "widgets"
-)
+FOCUS_WIDGETS_DIR = REPO_ROOT / "src" / "openminion" / "cli" / "interactive" / "widgets"
 BASELINE_PATH = (
     REPO_ROOT / "scripts" / "baselines" / "focus_widget_isolation_baseline.txt"
 )
