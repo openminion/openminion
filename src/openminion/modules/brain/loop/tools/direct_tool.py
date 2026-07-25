@@ -225,6 +225,27 @@ def _visible_tool_specs_for_direct_tool_turn(
     return tool_specs
 
 
+def _forced_tool_choice_for_direct_tool_turn(
+    loop_state: AdaptiveToolLoopState,
+    tool_specs: list[Any],
+) -> str | None:
+    if not _direct_tool_turn_active(loop_state) or bool(
+        getattr(loop_state, "direct_tool_requested_batch_satisfied", False)
+    ):
+        return None
+    requested_tool_names = _remaining_direct_tool_name_sequence(loop_state)
+    if len(requested_tool_names) != 1:
+        return None
+    requested_name = requested_tool_names[0]
+    if not any(
+        str(getattr(tool_spec, "name", "") or "").strip() == requested_name
+        for tool_spec in tool_specs
+    ):
+        return None
+    loop_state.scratchpad["direct_tool_choice_forced"] = requested_name
+    return "required"
+
+
 def _restore_direct_tool_specs_after_shortlist(
     *,
     loop_state: AdaptiveToolLoopState,

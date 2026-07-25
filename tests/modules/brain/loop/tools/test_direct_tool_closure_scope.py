@@ -5,9 +5,10 @@ from openminion.modules.brain.loop.tools.contracts import (
     DirectToolTurnContext,
 )
 from openminion.modules.brain.loop.tools.direct_tool import (
+    _forced_tool_choice_for_direct_tool_turn,
     _should_force_direct_tool_closure,
 )
-from openminion.modules.llm.schemas import ToolCall
+from openminion.modules.llm.schemas import ToolCall, ToolSpec
 
 
 def _state_for_requested_tools(*tool_names: str) -> AdaptiveToolLoopState:
@@ -39,3 +40,33 @@ def test_consumed_direct_tool_closure_does_not_force_again() -> None:
     state.direct_tool_closure_consumed = True
 
     assert _should_force_direct_tool_closure(state) is False
+
+
+def test_single_remaining_direct_tool_forces_provider_tool_choice() -> None:
+    state = AdaptiveToolLoopState(
+        direct_tool_turn=DirectToolTurnContext(
+            requested_tool_names=("file.write",),
+            requested_batch_signature="",
+            match_by_name_only=True,
+        ),
+    )
+
+    choice = _forced_tool_choice_for_direct_tool_turn(
+        state,
+        [ToolSpec(name="file.write")],
+    )
+
+    assert choice == "required"
+    assert state.scratchpad["direct_tool_choice_forced"] == "file.write"
+
+
+def test_direct_tool_choice_is_not_forced_for_multi_tool_sequences() -> None:
+    state = AdaptiveToolLoopState(
+        direct_tool_turn=DirectToolTurnContext(
+            requested_tool_names=("file.write", "file.read"),
+            requested_batch_signature="",
+            match_by_name_only=True,
+        ),
+    )
+
+    assert _forced_tool_choice_for_direct_tool_turn(state, []) is None

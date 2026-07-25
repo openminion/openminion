@@ -449,7 +449,8 @@ def _maybe_gate_missing_required_write(
         reason="missing_implementation_write",
         required_tool="file.write or code.patch",
     )
-    if attempt >= runner._max_self_corrections:
+    correction_cap = max(1, int(getattr(runner, "_max_self_corrections", 0) or 0))
+    if attempt > correction_cap:
         loop.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
         runner._sync_plan_telemetry()
         runner._emit_phase_status(ctx)

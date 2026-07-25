@@ -32,6 +32,7 @@ from ..contracts import (
 from ..correction import build_correction_history_summary
 from ..direct_tool import (
     _build_direct_tool_closure_message,
+    _forced_tool_choice_for_direct_tool_turn,
     _should_force_direct_tool_closure,
     _visible_tool_specs_for_direct_tool_turn,
 )
@@ -317,6 +318,12 @@ class AdaptiveLoopRunnerPostprocessMixin(
             self.active_tool_specs,
         )
         llm_tool_choice = self.profile.tool_choice
+        forced_direct_choice = _forced_tool_choice_for_direct_tool_turn(
+            self.loop_state,
+            llm_tools,
+        )
+        if forced_direct_choice is not None:
+            llm_tool_choice = forced_direct_choice
         if llm_tool_choice == "none" and any(
             str(getattr(spec, "name", "") or "").strip() == PLAN_TOOL_NAME
             for spec in llm_tools

@@ -799,7 +799,7 @@ class TestCodingVerificationReserve:
         assert runner._coding_plan.current_phase == "verify"
         assert "coding.verify_gate_blocks" not in runner._loop_state.scratchpad
 
-    def test_advance_plan_after_phase_caps_missing_implementation_tool(
+    def test_advance_plan_after_phase_allows_one_missing_write_correction_at_cap_one(
         self,
     ) -> None:
         runner = CodingProfileRunner()
@@ -820,11 +820,66 @@ class TestCodingVerificationReserve:
         )
 
         assert runner._advance_plan_after_phase(ctx, outcome=outcome) is False
-        assert runner._loop_state.termination_reason == CODING_TERM_VERIFY_CAP_EXCEEDED
+        assert runner._loop_state.termination_reason != CODING_TERM_VERIFY_CAP_EXCEEDED
+        assert runner._coding_plan.current_phase == "implement"
         assert (
             runner._loop_state.scratchpad["coding.verify_gate_reason"]
             == "missing_implementation_write"
         )
+        assert (
+            runner._loop_state.scratchpad["coding.required_write_direct_tool"]
+            == "file.write"
+        )
+
+    def test_advance_plan_after_phase_allows_one_missing_write_correction_at_zero_cap(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 0
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.scratchpad = {}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+        )
+
+        assert runner._advance_plan_after_phase(ctx, outcome=outcome) is False
+        assert runner._loop_state.termination_reason != CODING_TERM_VERIFY_CAP_EXCEEDED
+        assert (
+            runner._loop_state.scratchpad["coding.required_write_direct_tool"]
+            == "file.write"
+        )
+
+    def test_advance_plan_after_phase_caps_repeated_missing_write_after_allowed_correction(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 1
+        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.scratchpad = {"coding.verify_gate_blocks": 1}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+        )
+
+        assert runner._advance_plan_after_phase(ctx, outcome=outcome) is False
+        assert runner._loop_state.termination_reason == CODING_TERM_VERIFY_CAP_EXCEEDED
 
     def test_final_text_requires_mutating_tool_for_file_change_plan(
         self,

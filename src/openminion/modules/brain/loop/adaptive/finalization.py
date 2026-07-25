@@ -84,6 +84,12 @@ _SEEDED_REPLAY_ARTIFACT_MUTATION_TOOLS = frozenset(
         MODEL_FILE_WRITE,
     }
 )
+_RECOVERABLE_READONLY_TOOL_FAILURE_ROOTS = frozenset(
+    {"browser", "fetch", "search", "web"}
+)
+_NON_RECOVERABLE_TOOL_FAILURE_CODES = frozenset(
+    {"INVALID_ARGUMENT", "NEEDS_APPROVAL", "POLICY_DENIED", "SSRF_BLOCKED"}
+)
 _CONTROL_RESTRICTED_REASON_CODES = frozenset(
     {
         "confirmation_replay",
@@ -155,6 +161,68 @@ def _finalization_contract_missing_result(
             "act_finalization_contract_missing",
         ),
     )
+
+
+def _has_recoverable_readonly_tool_failure(outcome: AdaptiveToolLoopOutcome) -> bool:
+    """Return true when a read-only web/search failure can still be synthesized."""
+    tool_results = [
+        item
+        for item in list(outcome.state.scratchpad.get("adaptive.tool_results", []) or [])
+        if isinstance(item, dict)
+    ]
+    for item in tool_results:
+        if bool(item.get("ok")):
+            continue
+        tool_name = str(item.get("tool_name", "") or "").strip().lower()
+        root = tool_name.split(".", 1)[0]
+        if tool_name not in _RECOVERABLE_READONLY_TOOL_FAILURE_ROOTS and (
+            root not in _RECOVERABLE_READONLY_TOOL_FAILURE_ROOTS
+        ):
+            continue
+        code = (
+            str(item.get("error_code", "") or "")
+            or str(dict(item.get("data", {}) or {}).get("error_code", "") or "")
+        ).strip().upper()
+        if code in _NON_RECOVERABLE_TOOL_FAILURE_CODES:
+            continue
+        return True
+    return False
+
+
+def _maybe_close_contract_missing_with_tool_evidence(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    telemetry_payload: dict[str, Any],
+    outcome: AdaptiveToolLoopOutcome,
+) -> ExecutionResult | None:
+    recoverable_readonly_failure = _has_recoverable_readonly_tool_failure(outcome)
+    recovered_tool_failure = _single_failed_tool_result_action(outcome)
+    if recovered_tool_failure is not None and not recoverable_readonly_failure:
+        return ExecutionResult(
+            status=BRAIN_STATE_ERROR,
+            working_state=ctx.state,
+            message=str(getattr(recovered_tool_failure, "summary", "") or ""),
+            action_result=recovered_tool_failure,
+        )
+    if not (
+        _successful_substantive_tool_results(outcome.state)
+        or recoverable_readonly_failure
+    ):
+        return None
+    closed_result, _blocked_action = runner._maybe_close_from_blocked_outcome(
+        ctx,
+        telemetry_payload=telemetry_payload,
+        message=str(
+            outcome.error_message
+            or "General act work ended without the required typed finalization_status contract."
+        ),
+        code="act_finalization_contract_missing",
+        status_detail=f"{_public_act_tag()} done",
+        closed_flag="adaptive.contract_missing_closed_by_closure_gate",
+        profile_name=BRAIN_ACT_PROFILE_GENERAL,
+    )
+    return closed_result
 
 
 class ActLoopFinalizationMixin:
@@ -782,33 +850,14 @@ class ActLoopFinalizationMixin:
                 outcome.termination_reason
                 == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
             ):
-                recovered_tool_failure = _single_failed_tool_result_action(outcome)
-                if recovered_tool_failure is not None:
-                    return ExecutionResult(
-                        status=BRAIN_STATE_ERROR,
-                        working_state=ctx.state,
-                        message=str(
-                            getattr(recovered_tool_failure, "summary", "") or ""
-                        ),
-                        action_result=recovered_tool_failure,
-                    )
-                if _successful_substantive_tool_results(outcome.state):
-                    closed_result, _blocked_action = (
-                        self._maybe_close_from_blocked_outcome(
-                            ctx,
-                            telemetry_payload=telemetry_payload,
-                            message=str(
-                                outcome.error_message
-                                or "General act work ended without the required typed finalization_status contract."
-                            ),
-                            code="act_finalization_contract_missing",
-                            status_detail=f"{_public_act_tag()} done",
-                            closed_flag="adaptive.contract_missing_closed_by_closure_gate",
-                            profile_name=BRAIN_ACT_PROFILE_GENERAL,
-                        )
-                    )
-                    if closed_result is not None:
-                        return closed_result
+                closed_result = _maybe_close_contract_missing_with_tool_evidence(
+                    self,
+                    ctx,
+                    telemetry_payload=telemetry_payload,
+                    outcome=outcome,
+                )
+                if closed_result is not None:
+                    return closed_result
             message = (
                 outcome.error_message or "Adaptive loop integrity contract failed."
             )
