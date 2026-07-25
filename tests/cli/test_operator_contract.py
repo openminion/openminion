@@ -245,14 +245,16 @@ def test_config_show_uses_root_aware_loader(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         config_command,
         "load_cli_config",
-        lambda config_path, *, home_root, data_root: calls.append(
-            (config_path, home_root, data_root)
-        )
-        or SimpleNamespace(to_dict=lambda: {"ok": True}),
+        lambda config_path, *, home_root, data_root: (
+            calls.append((config_path, home_root, data_root))
+            or SimpleNamespace(to_dict=lambda: {"ok": True})
+        ),
     )
 
     code = config_command.config_show(
-        Namespace(config="agents.json", home_root=str(home_root), data_root=str(data_root))
+        Namespace(
+            config="agents.json", home_root=str(home_root), data_root=str(data_root)
+        )
     )
 
     assert code == 0
@@ -266,8 +268,10 @@ def test_storage_status_uses_root_aware_config_loader(monkeypatch, capsys) -> No
     monkeypatch.setattr(
         storage_command,
         "load_cli_config_from_args",
-        lambda args: calls.append(args)
-        or SimpleNamespace(storage=SimpleNamespace(path="/tmp/openminion.db")),
+        lambda args: (
+            calls.append(args)
+            or SimpleNamespace(storage=SimpleNamespace(path="/tmp/openminion.db"))
+        ),
     )
 
     import openminion.modules.storage.engine as storage_engine

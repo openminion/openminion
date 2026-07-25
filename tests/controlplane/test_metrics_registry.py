@@ -29,26 +29,41 @@ def test_metrics_sink_maps_audit_events_to_low_cardinality_counters() -> None:
         )
     )
 
-    assert registry.counter_value(
-        "controlplane_inbound_total",
-        labels={"channel": "telegram", "outcome": "accepted"},
-    ) == 1
-    assert registry.counter_value(
-        "controlplane_inbound_total",
-        labels={"channel": "slack", "outcome": "deny"},
-    ) == 1
-    assert registry.counter_value(
-        "controlplane_rate_limit_exceeded_total",
-        labels={"channel": "telegram", "dimension": "chat"},
-    ) == 1
-    assert registry.counter_value(
-        "controlplane_delivery_total",
-        labels={"channel": "telegram", "status": "failed"},
-    ) == 1
-    assert registry.counter_value(
-        "controlplane_janitor_deleted_total",
-        labels={"table": "cp_outbox"},
-    ) == 2
+    assert (
+        registry.counter_value(
+            "controlplane_inbound_total",
+            labels={"channel": "telegram", "outcome": "accepted"},
+        )
+        == 1
+    )
+    assert (
+        registry.counter_value(
+            "controlplane_inbound_total",
+            labels={"channel": "slack", "outcome": "deny"},
+        )
+        == 1
+    )
+    assert (
+        registry.counter_value(
+            "controlplane_rate_limit_exceeded_total",
+            labels={"channel": "telegram", "dimension": "chat"},
+        )
+        == 1
+    )
+    assert (
+        registry.counter_value(
+            "controlplane_delivery_total",
+            labels={"channel": "telegram", "status": "failed"},
+        )
+        == 1
+    )
+    assert (
+        registry.counter_value(
+            "controlplane_janitor_deleted_total",
+            labels={"table": "cp_outbox"},
+        )
+        == 2
+    )
 
 
 def test_metric_labels_reject_subject_session_prompt_token_and_raw_errors() -> None:
@@ -78,4 +93,7 @@ def test_composed_audit_sink_preserves_storage_when_metrics_fails() -> None:
 def test_prometheus_rendering_uses_text_exposition_shape() -> None:
     registry = MetricsRegistry()
     registry.inc("controlplane_outbox_enqueued_total", labels={"channel": "telegram"})
-    assert b'controlplane_outbox_enqueued_total{channel="telegram"} 1' in registry.render_prometheus()
+    assert (
+        b'controlplane_outbox_enqueued_total{channel="telegram"} 1'
+        in registry.render_prometheus()
+    )

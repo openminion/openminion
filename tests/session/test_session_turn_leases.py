@@ -159,7 +159,9 @@ def test_renew_and_release_require_matching_fence(store: SQLiteSessionStore) -> 
         store.assert_session_turn_fence(session_id, fence_token=lease.fence_token)
 
 
-def _replace_legacy_lease(store: SQLiteSessionStore, session_id: str) -> tuple[int, int]:
+def _replace_legacy_lease(
+    store: SQLiteSessionStore, session_id: str
+) -> tuple[int, int]:
     first = store.acquire_session_turn_lease(
         session_id,
         owner="worker-a",

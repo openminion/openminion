@@ -504,7 +504,7 @@ class AgentServiceExecutionTests(AgentServiceTestCase):
             )
         )
         self.assertIn("UNEXECUTABLE_TOOL_ENVELOPE", response.text)
-        self.assertIn("Reason: unparseable", response.text)
+        self.assertIn("Reason: tool_not_allowed", response.text)
         self.assertNotIn("<|start|>", response.text)
         self.assertNotIn("<|channel|>", response.text)
         self.assertEqual(response.metadata.get("provider"), "fake-malformed-envelope")

@@ -2002,21 +2002,24 @@ class GatewayNoopSuppressionTests(unittest.TestCase):
         import inspect
         from openminion.services.gateway import turn as turn_mod
 
-        src = inspect.getsource(turn_mod.GatewayTurnRunner.run)
+        run_src = inspect.getsource(turn_mod.GatewayTurnRunner.run)
+        suppression_src = inspect.getsource(
+            turn_mod.GatewayTurnRunner._complete_suppressed_idle_tick
+        )
         # The suppression branch exists and uses the predicate.
-        self.assertIn("_response_is_pae_idle_tick_noop(response)", src)
+        self.assertIn("_response_is_pae_idle_tick_noop(response)", run_src)
         # Emits the suppressed event, not persisted.
-        self.assertIn('event_type="response.suppressed"', src)
+        self.assertIn('event_type="response.suppressed"', suppression_src)
         # Branch exists BEFORE Phase 7 persistence so persistence is
         # structurally unreachable on suppression.
-        branch_idx = src.find("_response_is_pae_idle_tick_noop(response)")
-        persist_idx = src.find("self._build_outbound_and_persist(")
+        branch_idx = run_src.find("_response_is_pae_idle_tick_noop(response)")
+        persist_idx = run_src.find("self._build_outbound_and_persist(")
         self.assertLess(branch_idx, persist_idx)
         # Branch returns early, short-circuiting the post-phase 7 flow.
         # We check the subsequent `return outbound` inside the branch
         # precedes the phase-7 invocation path.
-        post_branch = src[branch_idx:persist_idx]
-        self.assertIn("return outbound", post_branch)
+        post_branch = run_src[branch_idx:persist_idx]
+        self.assertIn("return self._complete_suppressed_idle_tick", post_branch)
 
     def test_suppressed_outbound_envelope_has_empty_body(self) -> None:
         from openminion.services.gateway.turn import GatewayTurnRunner
@@ -2053,7 +2056,7 @@ class CronExecutorNoopSummaryTests(unittest.TestCase):
         import inspect
         from openminion.services.runtime.cron import executor as mod
 
-        src = inspect.getsource(mod.CronTurnExecutor._execute_idle_tick_turn)
+        src = inspect.getsource(mod.CronTurnExecutor._submit_idle_tick_turn)
         # The no-op branch is gated on the `pae_idle_tick_noop`
         # metadata marker the postprocess layer sets.
         self.assertIn('"pae_idle_tick_noop"', src)

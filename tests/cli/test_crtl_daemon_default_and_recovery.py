@@ -6,12 +6,15 @@ from unittest import mock
 import pytest
 
 from openminion.cli.commands import daemon as daemon_module
+
+
 def test_default_runtime_config_now_auto_starts_daemon():
 
     from openminion.base.config.runtime import RuntimeConfig
 
     cfg = RuntimeConfig()
     assert cfg.daemon_auto_start is True
+
 
 def test_ensure_daemon_running_raises_when_auto_start_disabled():
 

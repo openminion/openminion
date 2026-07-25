@@ -45,18 +45,20 @@ def test_tools_command_supports_status_activation_and_deactivation() -> None:
     tab = _commands(runtime)
 
     assert "hidden  ops_job_control  (apply)" in tab._tools_command_body("/tools")
-    activated = tab._tools_command_body(
-        "/tools activate ops_job_control approved=yes"
-    )
+    activated = tab._tools_command_body("/tools activate ops_job_control approved=yes")
     assert activated == "Activated: ops_job_control (audit-1)"
-    assert "active  ops_job_control  (apply)" in tab._tools_command_body("/tools status")
-    assert tab._tools_command_body(
-        "/tools deactivate ops_job_control"
-    ) == "Deactivated: ops_job_control"
+    assert "active  ops_job_control  (apply)" in tab._tools_command_body(
+        "/tools status"
+    )
+    assert (
+        tab._tools_command_body("/tools deactivate ops_job_control")
+        == "Deactivated: ops_job_control"
+    )
 
 
 def test_tools_command_rejects_unstructured_options() -> None:
     tab = _commands(_Runtime())
-    assert tab._tools_command_body(
-        "/tools activate ops_job_control invalid"
-    ) == "Tool profile options must use key=value syntax."
+    assert (
+        tab._tools_command_body("/tools activate ops_job_control invalid")
+        == "Tool profile options must use key=value syntax."
+    )

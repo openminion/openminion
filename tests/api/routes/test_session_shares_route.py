@@ -13,7 +13,9 @@ class _Runtime:
     sessions: SQLiteSessionStore
 
 
-def _ctx(store: SQLiteSessionStore, headers: dict[str, str] | None = None) -> APIRouteContext:
+def _ctx(
+    store: SQLiteSessionStore, headers: dict[str, str] | None = None
+) -> APIRouteContext:
     return APIRouteContext(
         config_path=None,
         runtime=_Runtime(store),

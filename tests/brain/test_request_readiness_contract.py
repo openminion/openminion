@@ -3,7 +3,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from openminion.modules.brain.config import BrainConfig, RequestHandoffConfig, RunnerOptions
+from openminion.modules.brain.config import (
+    BrainConfig,
+    RequestHandoffConfig,
+    RunnerOptions,
+)
 from openminion.modules.brain.adapters.llm.request import (
     _build_request_readiness_guidance_message,
 )
@@ -128,7 +132,9 @@ def test_working_state_persists_single_request_readiness_copy() -> None:
 
     dumped = state.model_dump(mode="json")
     assert dumped["request_readiness"]["requested_outcome"] == "plan_only"
-    assert WorkingState.model_validate(dumped).request_readiness == state.request_readiness
+    assert (
+        WorkingState.model_validate(dumped).request_readiness == state.request_readiness
+    )
 
 
 def test_runner_and_brain_config_default_handoff_disabled() -> None:
@@ -146,10 +152,13 @@ def test_llm_decision_guidance_names_request_readiness_contract() -> None:
 
     assert "Decision.request_readiness" in guidance
     assert "answer_only" in guidance
-    assert _build_request_readiness_guidance_message(
-        purpose="act",
-        schema=type("Decision", (), {}),
-    ) == ""
+    assert (
+        _build_request_readiness_guidance_message(
+            purpose="act",
+            schema=type("Decision", (), {}),
+        )
+        == ""
+    )
 
 
 def test_plan_exposes_first_structural_action_without_prose_parsing() -> None:

@@ -40,7 +40,9 @@ def test_v1_turn_maps_session_turn_busy_to_retryable_conflict(monkeypatch) -> No
 
     monkeypatch.setattr(turns, "collect_sync_turn_payload", _raise_busy)
     closed: list[object] = []
-    monkeypatch.setattr(turns, "close_submission", lambda submission: closed.append(submission))
+    monkeypatch.setattr(
+        turns, "close_submission", lambda submission: closed.append(submission)
+    )
 
     result = turns.handle_request(
         _ctx(),

@@ -202,7 +202,7 @@ def test_normalize_provider_response_sanitizes_rejected_channel_envelope() -> No
 
     assert normalized.normalization.get("envelope_sanitized") is True
     assert normalized.text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
-    assert "Reason: unparseable" in normalized.text
+    assert "Reason: tool_not_allowed" in normalized.text
     assert "<|start|>" not in normalized.text
     assert "<|channel|>" not in normalized.text
 
@@ -226,12 +226,12 @@ def test_normalize_provider_response_sanitizes_rejected_minimax_markup() -> None
 
     assert normalized.normalization.get("envelope_sanitized") is True
     assert normalized.text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
-    assert "Reason: unparseable" in normalized.text
+    assert "Reason: tool_not_allowed" in normalized.text
     assert "<tool name=" not in normalized.text
     assert "<parameter name=" not in normalized.text
 
 
-def test_normalize_provider_response_preserves_parseable_minimax_bracket_markup() -> (
+def test_normalize_provider_response_promotes_parseable_minimax_bracket_markup() -> (
     None
 ):
     raw = {
@@ -256,7 +256,11 @@ def test_normalize_provider_response_preserves_parseable_minimax_bracket_markup(
     )
 
     assert normalized.normalization.get("envelope_sanitized") is not True
-    assert "[TOOL_CALL]" in normalized.text
+    assert normalized.text == ""
+    assert normalized.finish_reason == "tool_calls"
+    assert len(normalized.tool_calls) == 1
+    assert normalized.tool_calls[0].name == "file.read"
+    assert normalized.tool_calls[0].arguments == {"path": "pyproject.toml"}
 
 
 def test_normalize_provider_response_preserves_native_v2_shape_without_fallback() -> (

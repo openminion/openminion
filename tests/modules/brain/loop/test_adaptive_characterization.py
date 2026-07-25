@@ -191,11 +191,17 @@ class _FakeServices:
         message: str,
         status: str,
         action_result: ActionResult | None = None,
+        kind: str | None = None,
     ) -> Any:
         del logger
         state.status = status
         self.responses.append(
-            {"message": message, "status": status, "action_result": action_result}
+            {
+                "message": message,
+                "status": status,
+                "action_result": action_result,
+                "kind": kind,
+            }
         )
         return SimpleNamespace(
             session_id=state.session_id,
@@ -1113,9 +1119,9 @@ def test_confirmation_replay_seeded_path_gets_recovery_budget(
     assert mode.execute(seeded_ctx).status == "done"
 
     profile = captured["profile"]
-    assert profile.allow_llm_recovery_after_tool_failure is True
-    assert profile.max_iterations == 3
-    assert profile.max_tool_calls_per_loop == 3
+    assert profile.allow_llm_recovery_after_tool_failure is False
+    assert profile.max_iterations == 24
+    assert profile.max_tool_calls_per_loop == 32
 
 
 def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
@@ -1161,7 +1167,7 @@ def test_build_runtime_tool_specs_encode_file_vs_shell_scaffolding_boundary(
         (ADAPTIVE_TERM_DECOMPOSE_INVALID, BRAIN_STATE_ERROR),
         (ADAPTIVE_TERM_NEEDS_USER, BRAIN_STATE_WAITING_USER),
         (ADAPTIVE_TERM_JOB_PENDING, BRAIN_STATE_JOB_PENDING),
-        (ADAPTIVE_TERM_BUDGET_EXHAUSTED, BRAIN_STATE_WAITING_USER),
+        (ADAPTIVE_TERM_BUDGET_EXHAUSTED, BRAIN_STATE_ERROR),
         (ADAPTIVE_TERM_ITERATION_CAP, BRAIN_STATE_WAITING_USER),
         (ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS, BRAIN_STATE_WAITING_USER),
         (ADAPTIVE_TERM_CORRECTION_BUDGET_EXHAUSTED, BRAIN_STATE_WAITING_USER),
@@ -1327,6 +1333,7 @@ def test_finalize_success_stages_metadata_and_memory_paths(
             "trigger": "new info",
         },
         memory_consolidation_decisions=[{"kind": "promote", "content": "fact"}],
+        finalization_status={"status": "final_answer", "reasoning": "done"},
         state=AdaptiveToolLoopState(),
     )
     result = ActLoopMode()._finalize_success(
@@ -1366,6 +1373,7 @@ def test_finalize_success_runs_self_compaction_after_consolidation_marker() -> N
     outcome = _outcome(
         ADAPTIVE_TERM_CONFIDENT_COMPLETE,
         final_text=("checkpoint " * 90).strip(),
+        finalization_status={"status": "final_answer", "reasoning": "done"},
         state=AdaptiveToolLoopState(),
     )
 
@@ -1410,6 +1418,7 @@ def test_finalize_success_self_compaction_is_idempotent_for_same_state_hash() ->
     outcome = _outcome(
         ADAPTIVE_TERM_CONFIDENT_COMPLETE,
         final_text=("checkpoint " * 90).strip(),
+        finalization_status={"status": "final_answer", "reasoning": "done"},
         state=AdaptiveToolLoopState(),
     )
     mode = ActLoopMode()

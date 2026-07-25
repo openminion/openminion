@@ -7,6 +7,8 @@ import pytest
 
 from tests.e2e.runners import run_daily_assistant_smoke_suite as smoke
 
+pytestmark = pytest.mark.e2e
+
 
 def test_daily_assistant_smoke_runner_writes_catalog_shaped_ledger(
     tmp_path: Path,

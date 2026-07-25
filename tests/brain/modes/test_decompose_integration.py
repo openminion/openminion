@@ -101,6 +101,37 @@ class _FakeSessionAPI:
         return False
 
 
+class _WorkspaceWritingToolAPI:
+    def __init__(self, workspace_root: Path) -> None:
+        self.workspace_root = workspace_root
+        self.policy = SimpleNamespace(
+            raw={
+                "workspace_root": str(workspace_root),
+                "context_metadata": {
+                    "workspace_root": str(workspace_root),
+                    "cwd": str(workspace_root),
+                },
+            }
+        )
+        self.calls: list[dict[str, Any]] = []
+
+    def execute(self, *, command, session_id: str, trace_id: str) -> dict[str, Any]:
+        del session_id, trace_id
+        workspace = Path(self.workspace_root)
+        policy_workspace = self.policy.raw.get("workspace_root")
+        metadata = self.policy.raw.get("context_metadata", {})
+        value = command.get("args", {}).get("value", "tool")
+        (workspace / "seed.py").write_text(f"VALUE = {value}\n", encoding="utf-8")
+        call = {
+            "workspace_root": str(workspace),
+            "policy_workspace_root": str(policy_workspace),
+            "metadata_workspace_root": str(metadata.get("workspace_root", "")),
+            "metadata_cwd": str(metadata.get("cwd", "")),
+        }
+        self.calls.append(call)
+        return {"status": "success", "summary": f"patched:{value}", "outputs": call}
+
+
 @dataclass
 class _FakeRunner:
     profile: AgentProfile
@@ -456,7 +487,10 @@ def test_decompose_handler_collects_results_and_synthesizes(monkeypatch) -> None
         "orchestrate_inline",
         "orchestrate_inline",
     ]
-    assert [item["decision"]["projected_budget"]["source_policy"] for item in policy["projections"]] == [
+    assert [
+        item["decision"]["projected_budget"]["source_policy"]
+        for item in policy["projections"]
+    ] == [
         "split_fixed",
         "split_fixed",
         "split_fixed",
@@ -752,7 +786,7 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     monkeypatch,
 ) -> None:
     repo = _git_repo(tmp_path)
-    ctx, _runner, _services = _ctx(
+    ctx, runner, _services = _ctx(
         subtasks=[
             {
                 "subtask_id": "patch-a",
@@ -784,18 +818,16 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
             ),
         ],
     )
-    seen_worktrees: list[str] = []
+    tool_api = _WorkspaceWritingToolAPI(repo)
+    runner.tool_api = tool_api
 
     def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
-        del runner, user_input, logger, depth
-        worktree = state.module_state["worktree_children"]["worktree_child"][
-            "workspace"
-        ]
-        seen_worktrees.append(worktree)
+        del user_input, logger, depth
         value = 1 if getattr(decision, "reason_code", "") == "patch_a" else 2
-        (Path(worktree) / "seed.py").write_text(
-            f"VALUE = {value}\n",
-            encoding="utf-8",
+        runner.tool_api.execute(
+            command={"tool_name": "file.write", "args": {"value": value}},
+            session_id="s-decompose",
+            trace_id="trace-decompose",
         )
         return _mode_result(state, f"patched:{value}")
 
@@ -804,7 +836,21 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     result = OrchestrateMode().execute(ctx)
 
     assert result.status == "done"
+    seen_worktrees = [call["workspace_root"] for call in tool_api.calls]
     assert len(set(seen_worktrees)) == 2
+    assert all(
+        call["workspace_root"] == call["policy_workspace_root"]
+        for call in tool_api.calls
+    )
+    assert all(
+        call["workspace_root"] == call["metadata_workspace_root"]
+        for call in tool_api.calls
+    )
+    assert all(
+        call["workspace_root"] == call["metadata_cwd"] for call in tool_api.calls
+    )
+    assert tool_api.workspace_root == repo
+    assert tool_api.policy.raw["workspace_root"] == str(repo)
     assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
     bucket = ctx.state.module_state["worktree_children"]
     assert [child["subtask_id"] for child in bucket["children"]] == [

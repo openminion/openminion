@@ -72,7 +72,9 @@ def test_registry_accepts_structural_provider_and_lists_names() -> None:
     assert registry.get("demo", "wide").cell_width == 2
 
 
-def test_registry_discovers_lazy_entry_point_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_registry_discovers_lazy_entry_point_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from openminion.cli.presentation.animation import registry as registry_module
 
     class DemoEntryPoint:

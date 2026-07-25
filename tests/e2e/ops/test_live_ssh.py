@@ -58,9 +58,7 @@ def test_live_ssh_readonly_smoke(tmp_path: Path) -> None:
     service = OpsService(
         targets=targets,
         transports={
-            "ssh": SshTransport(
-                lambda _: required["OPENMINION_OPS_SSH_PASSWORD"]
-            )
+            "ssh": SshTransport(lambda _: required["OPENMINION_OPS_SSH_PASSWORD"])
         },
         jobs=OperationJobStore(jobs_path),
         evidence=EvidenceStore(evidence_path),

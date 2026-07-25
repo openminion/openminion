@@ -150,3 +150,28 @@ def test_lifecycle_bridge_emits_single_info_owner_for_canonical_events(
     ]
     assert cron_logs == []
     assert len(recorded) == 2
+
+
+def test_lifecycle_bridge_warns_instead_of_raising_on_sink_failure(
+    caplog,
+    tmp_path,
+) -> None:
+    def _fail(_event) -> None:
+        raise RuntimeError("telemetry is closed")
+
+    telemetry = SimpleNamespace(record_event_sync=_fail)
+    runtime = SimpleNamespace(
+        telemetry_service=telemetry,
+        logger=logging.getLogger("tests.runtime.lifecycle.sink_failure"),
+        home_root=tmp_path,
+        config=SimpleNamespace(runtime=SimpleNamespace(env={})),
+    )
+    bridge = runtime_daemon._LifecycleTelemetryBridge(runtime)
+
+    with caplog.at_level(logging.WARNING):
+        bridge._record(  # noqa: SLF001
+            SimpleNamespace(event_type="component.heartbeat", data={})
+        )
+
+    assert "lifecycle telemetry emit failed" in caplog.text
+    assert "component.heartbeat" in caplog.text

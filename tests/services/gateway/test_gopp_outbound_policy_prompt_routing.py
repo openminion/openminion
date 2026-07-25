@@ -221,7 +221,7 @@ def test_gateway_module_imports_respond_kind_constants() -> None:
 
 
 def test_postprocess_propagates_step_out_kind_into_metadata() -> None:
-    import openminion.services.brain.post_execution.postprocess as pp
+    import openminion.services.brain.post_execution.postprocess_response as pp
 
     source = open(pp.__file__).read()
     assert 'metadata["respond_kind"]' in source

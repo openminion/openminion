@@ -347,15 +347,24 @@ def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
 
     seam = _Seam()
 
-    assert _h_task_delegate(  # type: ignore[arg-type]
-        {"mode": "status", "task_id": "job-1"}, _ctx_with_seam(seam)
-    )["status"] == "running"
-    assert _h_task_delegate(  # type: ignore[arg-type]
-        {"mode": "resume", "task_id": "job-1"}, _ctx_with_seam(seam)
-    )["status"] == "running"
-    assert _h_task_delegate(  # type: ignore[arg-type]
-        {"mode": "cancel", "task_id": "job-1"}, _ctx_with_seam(seam)
-    )["status"] == "canceled"
+    assert (
+        _h_task_delegate(  # type: ignore[arg-type]
+            {"mode": "status", "task_id": "job-1"}, _ctx_with_seam(seam)
+        )["status"]
+        == "running"
+    )
+    assert (
+        _h_task_delegate(  # type: ignore[arg-type]
+            {"mode": "resume", "task_id": "job-1"}, _ctx_with_seam(seam)
+        )["status"]
+        == "running"
+    )
+    assert (
+        _h_task_delegate(  # type: ignore[arg-type]
+            {"mode": "cancel", "task_id": "job-1"}, _ctx_with_seam(seam)
+        )["status"]
+        == "canceled"
+    )
     assert calls == [
         ("status", "job-1"),
         ("resume", "job-1"),

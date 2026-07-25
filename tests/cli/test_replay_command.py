@@ -20,7 +20,16 @@ def _task_db(tmp_path: Path) -> Path:
     manager.save_checkpoint(
         "task-1",
         "cp-1",
-        {"event_log": [{"event_id": "e1", "event_type": "tool.completed", "seq": 1, "payload": {"ok": True}}]},
+        {
+            "event_log": [
+                {
+                    "event_id": "e1",
+                    "event_type": "tool.completed",
+                    "seq": 1,
+                    "payload": {"ok": True},
+                }
+            ]
+        },
     )
     return db_path
 

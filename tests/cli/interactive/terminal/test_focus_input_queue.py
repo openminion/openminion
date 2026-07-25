@@ -730,13 +730,9 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
         session_grants=set(),
     )
 
-    first = asyncio.create_task(
-        callback("file.write", {"path": "one.py"}, "call-1")
-    )
+    first = asyncio.create_task(callback("file.write", {"path": "one.py"}, "call-1"))
     await first_prompt_entered.wait()
-    second = asyncio.create_task(
-        callback("file.write", {"path": "two.py"}, "call-2")
-    )
+    second = asyncio.create_task(callback("file.write", {"path": "two.py"}, "call-2"))
     await asyncio.sleep(0)
     release_first_prompt.set()
 

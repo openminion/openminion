@@ -261,7 +261,9 @@ def test_daemon_stop_force_kills_hung_process(
         if sig == daemon_cmd.signal.SIGKILL:
             state["killed"] = True
 
-    monkeypatch.setattr(daemon_cmd, "resolve_daemon_endpoint", lambda _cfg: endpoint)
+    monkeypatch.setattr(
+        daemon_cmd, "resolve_daemon_endpoint", lambda _cfg, **_kwargs: endpoint
+    )
     monkeypatch.setattr(daemon_cmd, "load_config", lambda _path: SimpleNamespace())
     monkeypatch.setattr(daemon_mod, "resolve_daemon_pid_file", lambda _cfg: pid_file)
     monkeypatch.setattr(daemon_mod, "read_pid", lambda _pid_file: 123)
@@ -708,6 +710,7 @@ def test_run_server_emits_daemon_started_heartbeat_and_stopped(
         config_path=tmp_path / "config.json",
         base_config=config,
         home_root=tmp_path,
+        data_root=tmp_path,
     )
     calls: list[str] = []
 
@@ -788,6 +791,7 @@ def test_run_server_emits_daemon_crashed_on_server_error(
         config_path=tmp_path / "config.json",
         base_config=config,
         home_root=tmp_path,
+        data_root=tmp_path,
     )
     calls: list[str] = []
 
@@ -873,6 +877,7 @@ def test_run_server_wires_central_file_handler_configuration(
         config_path=tmp_path / "config.json",
         base_config=config,
         home_root=tmp_path,
+        data_root=tmp_path,
     )
 
     configure_calls: list[tuple[str, str, str]] = []

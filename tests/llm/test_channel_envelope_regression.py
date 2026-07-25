@@ -124,11 +124,7 @@ def test_json_fallback_when_no_envelope() -> None:
             "tool.not_allowed",
         ),
         (
-            (
-                '<tool name="secret.admin">'
-                '<parameter name="q">x</parameter>'
-                "</tool>"
-            ),
+            ('<tool name="secret.admin"><parameter name="q">x</parameter></tool>'),
             "secret.admin",
         ),
     ],

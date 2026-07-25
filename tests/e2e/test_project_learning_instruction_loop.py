@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import pytest
+
+
 import json
 from pathlib import Path
 
 from openminion.cli.main import main
+
+pytestmark = pytest.mark.e2e
 
 
 def _last_json(capsys) -> dict:

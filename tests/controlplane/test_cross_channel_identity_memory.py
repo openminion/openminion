@@ -28,7 +28,9 @@ class _IdentityStore:
         record = self.records.get((channel, subject_id))
         return str(record["principal_id"]) if record else None
 
-    def get_channel_subject(self, *, channel: str, subject_id: str) -> dict[str, object] | None:
+    def get_channel_subject(
+        self, *, channel: str, subject_id: str
+    ) -> dict[str, object] | None:
         return self.records.get((channel, subject_id))
 
 

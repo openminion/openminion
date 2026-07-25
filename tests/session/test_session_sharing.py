@@ -22,11 +22,15 @@ def _store() -> SQLiteSessionStore:
 def test_session_share_returns_token_once_and_persists_hash_only() -> None:
     store = _store()
     sid = store.create_session(session_id="share-session")
-    store.append_turn(sid, "user", "hello secret-ish user text", meta={"tool_inputs": "blocked"})
+    store.append_turn(
+        sid, "user", "hello secret-ish user text", meta={"tool_inputs": "blocked"}
+    )
     service = SessionShareService(store)
 
     created = service.create_share(session_id=sid, created_by="alice")
-    rows = store._record_store.query_rows("session_shares", where={"share_id": created.record.share_id})
+    rows = store._record_store.query_rows(
+        "session_shares", where={"share_id": created.record.share_id}
+    )
 
     assert created.token
     assert rows[0]["token_hash"] != created.token
@@ -42,12 +46,19 @@ def test_session_share_projection_is_structural_and_audited() -> None:
     service = SessionShareService(store)
     created = service.create_share(session_id=sid, created_by="alice")
 
-    projection = service.access_share(share_id=created.record.share_id, token=created.token)
+    projection = service.access_share(
+        share_id=created.record.share_id, token=created.token
+    )
 
     assert projection["schema_version"] == "session_share_projection.v1"
     assert projection["readonly"] is True
     assert projection["turns"] == [
-        {"turn_id": projection["turns"][0]["turn_id"], "role": "user", "text": "hello", "ts": projection["turns"][0]["ts"]}
+        {
+            "turn_id": projection["turns"][0]["turn_id"],
+            "role": "user",
+            "text": "hello",
+            "ts": projection["turns"][0]["ts"],
+        }
     ]
     assert "tool_inputs" not in str(projection)
     assert service.access_count(created.record.share_id) == 1
@@ -58,7 +69,9 @@ def test_session_share_denies_wrong_expired_and_query_tokens() -> None:
     sid = store.create_session(session_id="share-session")
     service = SessionShareService(store)
     now = datetime.now(timezone.utc)
-    created = service.create_share(session_id=sid, created_by="alice", ttl_seconds=1, now=now)
+    created = service.create_share(
+        session_id=sid, created_by="alice", ttl_seconds=1, now=now
+    )
 
     with pytest.raises(SessionShareDeniedError):
         service.access_share(share_id=created.record.share_id, token="wrong", now=now)

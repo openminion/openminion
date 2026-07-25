@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import pytest
+
+
 import importlib.util
 from pathlib import Path
 import subprocess
 from types import ModuleType
+
+pytestmark = pytest.mark.e2e
 
 
 _RUNNER_PATH = (
@@ -24,8 +29,14 @@ def test_timeout_seconds_defaults_for_missing_or_invalid_values() -> None:
     runner = _load_runner()
 
     assert runner._timeout_seconds({}) == runner.DEFAULT_LIVE_TIMEOUT_SECONDS
-    assert runner._timeout_seconds({runner.TIMEOUT_ENV: "abc"}) == runner.DEFAULT_LIVE_TIMEOUT_SECONDS
-    assert runner._timeout_seconds({runner.TIMEOUT_ENV: "0"}) == runner.DEFAULT_LIVE_TIMEOUT_SECONDS
+    assert (
+        runner._timeout_seconds({runner.TIMEOUT_ENV: "abc"})
+        == runner.DEFAULT_LIVE_TIMEOUT_SECONDS
+    )
+    assert (
+        runner._timeout_seconds({runner.TIMEOUT_ENV: "0"})
+        == runner.DEFAULT_LIVE_TIMEOUT_SECONDS
+    )
 
 
 def test_timeout_seconds_uses_positive_override() -> None:

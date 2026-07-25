@@ -46,7 +46,9 @@ def test_webhook_secret_validator_allows_config_error_assertion(tmp_path: Path) 
     assert find_webhook_secret((tmp_path,)) == []
 
 
-def test_webhook_secret_validator_rejects_enabled_missing_secret(tmp_path: Path) -> None:
+def test_webhook_secret_validator_rejects_enabled_missing_secret(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "webhook.py"
     bad_config = "WebhookConfig(enabled=True, " + "secret='')\n"
     path.write_text(bad_config, encoding="utf-8")

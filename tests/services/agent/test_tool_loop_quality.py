@@ -197,9 +197,7 @@ def test_executor_runtime_routes_sidecar_autostart_through_approval_callback() -
     )
     registry.bind_sidecar_autostart(
         lambda **kwargs: {
-            "enabled": dict(kwargs.get("runtime_env") or {}).get(
-                "PINCHTAB_AUTOSTART"
-            )
+            "enabled": dict(kwargs.get("runtime_env") or {}).get("PINCHTAB_AUTOSTART")
             == "1",
             "source": "test",
         }
@@ -274,9 +272,7 @@ def test_sidecar_approval_runs_when_security_policy_adapter_is_absent() -> None:
     )
     registry.bind_sidecar_autostart(
         lambda **kwargs: {
-            "enabled": dict(kwargs.get("runtime_env") or {}).get(
-                "PINCHTAB_AUTOSTART"
-            )
+            "enabled": dict(kwargs.get("runtime_env") or {}).get("PINCHTAB_AUTOSTART")
             == "1",
             "source": "test",
         }

@@ -148,9 +148,7 @@ def test_unwrap_final_answer_envelope_accepts_respond_wrapper(body: str) -> None
 
 def test_unwrap_final_answer_envelope_preserves_non_exact_respond_wrapper() -> None:
     assert (
-        unwrap_final_answer_envelope(
-            'Sure: <respond({"answer": "Groq smoke OK"})>'
-        )
+        unwrap_final_answer_envelope('Sure: <respond({"answer": "Groq smoke OK"})>')
         is None
     )
     assert unwrap_final_answer_envelope("<respond({not-json})>") is None

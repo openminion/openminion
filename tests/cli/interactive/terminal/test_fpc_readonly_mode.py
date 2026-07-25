@@ -36,8 +36,6 @@ def _make_runtime() -> OpenMinionRuntime:
     return rt
 
 
-
-
 def test_read_only_mode_default_false() -> None:
     rt = _make_runtime()
     assert rt.read_only_mode is False
@@ -126,16 +124,12 @@ def test_set_permission_mode_rejects_unknown_mode() -> None:
         raise AssertionError("expected ValueError")
 
 
-
-
 def test_readonly_in_slash_catalog() -> None:
     assert "/readonly" in _SLASH_COMMANDS
 
 
 def test_permissions_in_slash_catalog() -> None:
     assert "/permissions" in _SLASH_COMMANDS
-
-
 
 
 def _dispatch(runtime, text: str) -> str:

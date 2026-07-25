@@ -28,6 +28,8 @@ from tests.e2e.cli.focus.harness.probe import (
 )
 from tests.e2e.cli.focus.harness.pty import PtySession
 
+pytestmark = pytest.mark.e2e
+
 
 def test_expected_markers_ignore_echoed_prompt() -> None:
     prompt = "Please end with next steps."

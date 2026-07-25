@@ -12,7 +12,9 @@ from openminion.modules.brain.loop.tools import (
 from openminion.modules.llm.schemas import Message
 
 
-def test_duplicate_exhaustion_closes_from_tool_evidence_with_requested_markers() -> None:
+def test_duplicate_exhaustion_closes_from_tool_evidence_with_requested_markers() -> (
+    None
+):
     state = AdaptiveToolLoopState(
         messages=[
             Message(
@@ -55,10 +57,14 @@ def test_duplicate_exhaustion_closes_from_tool_evidence_with_requested_markers()
     assert "tradeoffs:" in str(closed.final_text).lower()
     assert "recommendation:" in str(closed.final_text).lower()
     assert "tool evidence:" in str(closed.final_text).lower()
-    assert state.scratchpad["adaptive.duplicate_exhaustion_used_evidence_closeout"] is True
+    assert (
+        state.scratchpad["adaptive.duplicate_exhaustion_used_evidence_closeout"] is True
+    )
 
 
-def test_duplicate_exhaustion_does_not_close_file_mutation_request_from_readonly_evidence() -> None:
+def test_duplicate_exhaustion_does_not_close_file_mutation_request_from_readonly_evidence() -> (
+    None
+):
     state = AdaptiveToolLoopState(
         messages=[
             Message(

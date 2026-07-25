@@ -36,4 +36,3 @@ def test_missing_payload_keeps_legacy_working_state_empty() -> None:
     record_decision_metadata(state=state, decision=ActDecision(), plan=None)
 
     assert state.request_readiness is None
-

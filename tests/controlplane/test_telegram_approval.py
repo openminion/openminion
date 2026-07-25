@@ -10,8 +10,6 @@ from openminion.modules.controlplane.channels.telegram.approval import (
 )
 
 
-
-
 def _confirm_required_payload(
     *,
     approval_id: str = "ap_abc123",
@@ -83,8 +81,6 @@ def test_extract_strips_whitespace_in_choice_strings():
     assert result["choices"] == ["allow_once", "allow_session", "deny"]
 
 
-
-
 def test_render_includes_all_four_typed_choices_by_default():
     request = {
         "approval_id": "ap_abc",
@@ -117,8 +113,6 @@ def test_render_includes_approval_id_and_reason_when_present():
     rendered = render_approval_prompt(request)
     assert "ap_xyz" in rendered
     assert "exec_policy" in rendered
-
-
 
 
 @pytest.mark.parametrize("typed", APPROVAL_CHOICES)

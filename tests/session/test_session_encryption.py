@@ -32,8 +32,12 @@ def test_session_encryption_round_trip_restart_and_rotation() -> None:
         record_identity={"session_id": "s1", "record_id": "r2"},
     )
 
-    assert decrypt_session_payload(ring, envelope, expected_identity={"session_id": "s1", "record_id": "r1"}) == {"text": "hello"}
-    assert decrypt_session_payload(ring, new_envelope, expected_identity={"session_id": "s1", "record_id": "r2"}) == {"text": "new"}
+    assert decrypt_session_payload(
+        ring, envelope, expected_identity={"session_id": "s1", "record_id": "r1"}
+    ) == {"text": "hello"}
+    assert decrypt_session_payload(
+        ring, new_envelope, expected_identity={"session_id": "s1", "record_id": "r2"}
+    ) == {"text": "new"}
     assert referenced_key_ids([envelope, new_envelope]) == {"k1", "k2"}
     assert ring.can_remove_key("k1", referenced_key_ids([envelope])) is False
 
@@ -49,9 +53,15 @@ def test_session_encryption_wrong_key_and_transplant_fail_closed() -> None:
     wrong_ring = FernetSessionKeyRing(active_key_id="k1")
 
     with pytest.raises(SessionEncryptionKeyError):
-        decrypt_session_payload(wrong_ring, envelope, expected_identity={"session_id": "s1", "record_id": "r1"})
+        decrypt_session_payload(
+            wrong_ring,
+            envelope,
+            expected_identity={"session_id": "s1", "record_id": "r1"},
+        )
     with pytest.raises(SessionEncryptionIdentityError):
-        decrypt_session_payload(ring, envelope, expected_identity={"session_id": "s2", "record_id": "r1"})
+        decrypt_session_payload(
+            ring, envelope, expected_identity={"session_id": "s2", "record_id": "r1"}
+        )
 
 
 def test_content_search_rejection_and_migration_checkpoint_schema() -> None:

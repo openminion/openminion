@@ -333,8 +333,8 @@ def test_closure_judgment_retry_message_includes_schema_summary() -> None:
     assert "Schema: ClosureJudgment." in message
     assert (
         "Schema keys: satisfied, reason, next_action, final_answer, "
-        "post_completion_critique, plan_reconciliation, verification, "
-        "review." in message
+        "mutation_claimed, post_completion_critique, plan_reconciliation, "
+        "verification, review." in message
     )
     assert "Schema types:" in message
     assert "Schema enums: next_action=close|continue|replan." in message

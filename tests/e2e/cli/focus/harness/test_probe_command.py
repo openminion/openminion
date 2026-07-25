@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import pytest
+
+
 import json
 from pathlib import Path
 
 from tests.e2e.cli.focus.harness.probe import FocusProbe
+
+pytestmark = pytest.mark.e2e
 
 
 def test_focus_probe_adds_demo_flag_for_echo_agent(tmp_path: Path) -> None:

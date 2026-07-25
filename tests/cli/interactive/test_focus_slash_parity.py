@@ -30,8 +30,6 @@ def _last_system_body(chat: FocusTranscript) -> str:
     return ""
 
 
-
-
 @pytest.mark.asyncio
 async def test_help_lists_every_registered_command_including_fcpp_06_additions() -> (
     None
@@ -67,8 +65,6 @@ async def test_help_lists_every_registered_command_including_fcpp_06_additions()
         assert cmd in body, f"`{cmd}` missing from /help cheat-sheet"
 
 
-
-
 @pytest.mark.asyncio
 async def test_model_command_renders_provider_and_model() -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -83,8 +79,6 @@ async def test_model_command_renders_provider_and_model() -> None:
     assert "echo" in body
     assert "demo" in body
     assert "current" in body.lower()
-
-
 
 
 @pytest.mark.asyncio
@@ -184,8 +178,6 @@ async def test_mcp_command_renders_status_report() -> None:
     assert "fixture" in body
 
 
-
-
 @pytest.mark.asyncio
 async def test_compact_command_surfaces_not_supported_when_hook_missing() -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -239,8 +231,6 @@ async def test_compact_command_surfaces_bounded_failure_on_exception() -> None:
             body = _last_system_body(app.screen.query_one(FocusTranscript))
     assert "failed" in body.lower()
     assert "explosion" in body
-
-
 
 
 @pytest.mark.asyncio

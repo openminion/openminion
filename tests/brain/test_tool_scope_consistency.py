@@ -98,8 +98,6 @@ def _runner_with_tools(tmp_path: Path, specs: list[ToolSpec]) -> BrainRunner:
     )
 
 
-
-
 def test_available_tool_names_returns_registered_tools(tmp_path: Path) -> None:
     runner = _runner_with_tools(tmp_path, [_web_search_spec(), _time_spec()])
     names = available_tool_names(runner)
@@ -130,8 +128,6 @@ def test_available_tool_names_with_list_tools_method(tmp_path: Path) -> None:
     names = available_tool_names(runner)
     assert "web.search" in names
     assert "time" in names
-
-
 
 
 def test_forced_tool_visible_single_path_also_resolves_in_multi_lane_context(
@@ -207,8 +203,6 @@ def test_tool_scope_consistent_regardless_of_single_or_multi_context(
         f"Tool scope inconsistency: single-tool name={single_name!r} "
         f"vs multi-tool name={multi_name!r}"
     )
-
-
 
 
 def test_truly_unavailable_tool_fails_clearly_in_any_context(

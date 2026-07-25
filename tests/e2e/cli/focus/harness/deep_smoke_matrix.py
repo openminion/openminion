@@ -135,7 +135,11 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
             "state.config_data_root_isolation",
             "break.command_failure",
         ),
-        evidence=("ansi transcript files", "visible screen snapshots", "isolated data root"),
+        evidence=(
+            "ansi transcript files",
+            "visible screen snapshots",
+            "isolated data root",
+        ),
     ),
     DeepSmokeRow(
         scenario_id="permission-approval-contracts",
@@ -175,7 +179,11 @@ MATRIX: tuple[DeepSmokeRow, ...] = (
             "permission.policy_blocked_tool",
             "break.malformed_tool_args",
         ),
-        evidence=("typed tool result", "policy denial reason", "schema validation error"),
+        evidence=(
+            "typed tool result",
+            "policy denial reason",
+            "schema validation error",
+        ),
     ),
     DeepSmokeRow(
         scenario_id="exec-sandbox-breakage",

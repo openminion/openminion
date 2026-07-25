@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+
 from tests.e2e.project_worker.harness import (
     ProjectWorkerScenarioKind,
     local_scenario_ids,
@@ -8,6 +11,8 @@ from tests.e2e.project_worker.harness import (
     soak_scenario_ids,
 )
 from tests.e2e.runners.run_project_worker_e2e import suite_names
+
+pytestmark = pytest.mark.e2e
 
 
 def test_project_worker_harness_covers_required_scenario_kinds() -> None:

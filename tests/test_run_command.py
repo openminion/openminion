@@ -47,6 +47,7 @@ def test_run_openminion_json_output_single_process(monkeypatch, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload == {
         "ok": True,
+        "runtime_source": "inproc",
         "trace_id": "trace-123",
         "turn": {"run_id": "trace-123", "final_text": "done"},
     }

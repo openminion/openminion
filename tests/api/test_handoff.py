@@ -202,7 +202,9 @@ def test_subagent_has_explicit_bounded_run_context() -> None:
 def test_subagent_run_threads_context_as_runtime_metadata() -> None:
     runtime = _FakeRuntime()
     parent = Agent(runtime=runtime, name="parent", instructions="parent secret")
-    child = subagent(parent, name="child", instructions="child only", tools=["safe.read"])
+    child = subagent(
+        parent, name="child", instructions="child only", tools=["safe.read"]
+    )
 
     child.run("bounded work")
 

@@ -66,4 +66,9 @@ def test_projection_fixture_uses_public_sophiagraph_imports_only() -> None:
         for node in ast.walk(tree)
         if isinstance(node, ast.ImportFrom) and node.module
     }
-    assert imports == {"__future__", "pathlib", "sophiagraph", "sophiagraph.projections"}
+    assert imports == {
+        "__future__",
+        "pathlib",
+        "sophiagraph",
+        "sophiagraph.projections",
+    }

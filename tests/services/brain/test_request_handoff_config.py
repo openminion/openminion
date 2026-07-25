@@ -62,4 +62,3 @@ def test_standalone_runner_options_map_request_handoff_enabled(tmp_path: Path) -
     )
 
     assert runner.options.request_handoff_enabled is True
-

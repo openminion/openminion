@@ -395,7 +395,9 @@ def test_multiple_active_third_brain_providers_suggest_provider_flags(
     ]
 
 
-def test_missing_graphfakos_reports_viewer_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_graphfakos_reports_viewer_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     original_import = __import__
 
     def _blocked_import(name: str, *args: object, **kwargs: object) -> object:

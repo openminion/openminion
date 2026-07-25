@@ -51,9 +51,7 @@ def test_typed_side_effect_radii_trigger_finalization() -> None:
 def test_name_prefix_without_typed_metadata_does_not_trigger() -> None:
     for tool_name in ("file.write", "exec.run", "git.commit", "memory.write"):
         assert (
-            requires_typed_finalization_contract_for_results(
-                [_FakeResult(tool_name)]
-            )
+            requires_typed_finalization_contract_for_results([_FakeResult(tool_name)])
             is False
         )
 
@@ -77,9 +75,7 @@ def test_typed_read_only_overrides_mutation_looking_name() -> None:
 
 
 def test_malformed_typed_radius_fails_safe() -> None:
-    results = [
-        _FakeResult("custom.tool", data={"tool_blast_radius": "unexpected"})
-    ]
+    results = [_FakeResult("custom.tool", data={"tool_blast_radius": "unexpected"})]
     assert requires_typed_finalization_contract_for_results(results) is True
 
 
