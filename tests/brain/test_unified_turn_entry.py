@@ -468,6 +468,32 @@ def test_unified_entry_readonly_seed_routes_explicit_file_artifact_to_coding(
     assert getattr(route, "source", "") == "entry_user_file_artifact_request"
 
 
+def test_unified_entry_file_tools_phrase_routes_file_artifact_to_coding(
+    tmp_path: Path,
+) -> None:
+    response = _text_response("I'll create it.")
+    llm = _RecordingEntryLLM(response)
+    runner = _build_runner(tmp_path, llm_api=llm)
+    state = _state("entry-file-tools-phrase")
+
+    decision = runner._decide(
+        state=state,
+        user_input=(
+            "Create a tiny Python function and one minimal check. Use file "
+            "tools for files and direct exec.run commands for checks."
+        ),
+        logger=fake_logger(),
+    )
+
+    assert decision.mode == "act"
+    assert decision.reason_code == "entry_coding_user_file_artifact_request"
+    assert getattr(decision, "_entry_response", None) is None
+    route = getattr(decision, "_pre_resolved_act_route", None)
+    assert route is not None
+    assert getattr(route, "act_profile", "") == "coding"
+    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+
+
 def test_unified_entry_tool_request_for_file_artifact_does_not_seed_coding(
     tmp_path: Path,
 ) -> None:

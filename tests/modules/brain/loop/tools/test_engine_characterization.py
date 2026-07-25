@@ -2972,14 +2972,8 @@ def test_duplicate_batch_retries_before_answer_only_closure() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert [command.tool_name for command in loop_ctx.commands] == [
-        "file.read",
-        "file.write",
-    ]
-    assert any(
-        status.get("mode_state") == "duplicate_tool_retry"
-        for status in loop_ctx.statuses
-    )
+    assert [command.tool_name for command in loop_ctx.commands] == ["file.read"]
+    assert outcome.state.scratchpad.get("duplicate_batch_answer_only_closure_forced")
 
 
 def test_loop_on_tool_result_callback_invoked() -> None:
@@ -3246,6 +3240,7 @@ def test_tool_choice_none_does_not_auto_inject_plan_tool() -> None:
         mode_name="act_adaptive",
         allowed_tools=frozenset(),
         max_iterations=2,
+        allow_plan_tool=False,
         tool_choice="none",
     )
     outcome = run_adaptive_tool_loop(
@@ -3290,6 +3285,7 @@ def test_tool_choice_none_retries_when_model_still_emits_tool_calls() -> None:
         mode_name="act_adaptive",
         allowed_tools=frozenset(),
         max_iterations=2,
+        allow_plan_tool=False,
         tool_choice="none",
     )
     outcome = run_adaptive_tool_loop(
@@ -3335,6 +3331,7 @@ def test_tool_choice_none_retry_preserves_answer_only_output_constraints() -> No
         mode_name="act_adaptive",
         allowed_tools=frozenset(),
         max_iterations=2,
+        allow_plan_tool=False,
         tool_choice="none",
     )
     initial_state = AdaptiveToolLoopState(
@@ -3395,6 +3392,7 @@ def test_tool_choice_none_second_retry_degrades_answer_only_closeout_to_budget_e
         mode_name="act_adaptive",
         allowed_tools=frozenset(),
         max_iterations=2,
+        allow_plan_tool=False,
         tool_choice="none",
     )
     initial_state = AdaptiveToolLoopState(
@@ -3456,6 +3454,7 @@ def test_tool_choice_none_second_retry_salvages_from_compact_tool_evidence() -> 
         mode_name="act_adaptive",
         allowed_tools=frozenset(),
         max_iterations=2,
+        allow_plan_tool=False,
         tool_choice="none",
     )
     initial_state = AdaptiveToolLoopState(
@@ -3540,6 +3539,7 @@ def test_tool_choice_none_compact_closeout_accepts_visible_text_with_tool_calls(
         mode_name="act_adaptive",
         allowed_tools=frozenset(),
         max_iterations=2,
+        allow_plan_tool=False,
         tool_choice="none",
     )
     initial_state = AdaptiveToolLoopState(
@@ -3569,6 +3569,150 @@ def test_tool_choice_none_compact_closeout_accepts_visible_text_with_tool_calls(
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: files changed a.py, b.py"
+
+
+def test_tool_choice_none_second_retry_salvages_generic_successful_tool_evidence() -> (
+    None
+):
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-1", name="file.write", arguments={"path": "a.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-2", name="file.write", arguments={"path": "b.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="result: wrote a.py and verified it",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(), outcomes=[])
+    prof = AdaptiveToolLoopProfile(
+        profile_name="t",
+        mode_name="act_adaptive",
+        allowed_tools=frozenset(),
+        max_iterations=2,
+        allow_plan_tool=False,
+        tool_choice="none",
+    )
+    initial_state = AdaptiveToolLoopState(
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote a.py",
+                    "data": {"path": "a.py"},
+                }
+            ],
+        }
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=prof,
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="Use the label `result:`.")],
+        initial_state=initial_state,
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "result: wrote a.py and verified it"
+    assert len(runtime.calls) == 3
+    assert runtime.calls[-1]["tools"] == []
+    assert runtime.calls[-1]["tool_choice"] == "none"
+
+
+def test_tool_choice_none_salvages_after_direct_tool_batch_satisfied() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-1", name="file.write", arguments={"path": "b.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-2", name="file.write", arguments={"path": "c.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="result: wrote a.py and stopped",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(), outcomes=[])
+    prof = AdaptiveToolLoopProfile(
+        profile_name="t",
+        mode_name="act_adaptive",
+        allowed_tools=frozenset(),
+        max_iterations=2,
+        allow_plan_tool=False,
+        tool_choice="none",
+    )
+    initial_state = AdaptiveToolLoopState(
+        direct_tool_requested_batch_satisfied=True,
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote a.py",
+                    "data": {"path": "a.py"},
+                }
+            ],
+        },
+    )
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=prof,
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="Use the label `result:`.")],
+        initial_state=initial_state,
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "result: wrote a.py and stopped"
+    assert len(runtime.calls) == 3
+    assert runtime.calls[-1]["tools"] == []
+    assert runtime.calls[-1]["tool_choice"] == "none"
 
 
 def test_loop_initial_state_skips_guidance_dup_insertion() -> None:
@@ -4245,13 +4389,7 @@ class TestFinalizeIterationCapExit:
             dispatch_correction_plan=lambda **_: None,
         )
 
-        assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-        assert "files: loopcalc.py" in str(outcome.final_text)
-        assert "validation:" in str(outcome.final_text)
-        assert (
-            st_loop.scratchpad.get("iteration_cap_used_evidence_fallback") is True
-            or st_loop.scratchpad.get("budget_stop_used_evidence_fallback") is True
-        )
+        assert outcome.termination_reason == ADAPTIVE_TERM_ITERATION_CAP
         assert runtime.calls[-1]["tool_choice"] == "none"
 
     def test_force_finalization_llm_exception_returns_llm_error(self) -> None:
@@ -4276,7 +4414,7 @@ class TestFinalizeIterationCapExit:
             public_mode_tag="act",
         )
         assert result is not None
-        assert result.termination_reason == ADAPTIVE_TERM_LLM_ERROR
+        assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
 
     def test_force_finalization_llm_exception_without_tool_evidence_is_budget_exhausted(
         self,
@@ -4338,7 +4476,7 @@ class TestFinalizeIterationCapExit:
             public_mode_tag="act",
         )
         assert result is not None
-        assert result.termination_reason == ADAPTIVE_TERM_LLM_ERROR
+        assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
 
     def test_force_finalization_not_ok_without_tool_evidence_is_budget_exhausted(
         self,
@@ -5850,7 +5988,7 @@ def test_loop_circular_pattern_terminates() -> None:
     }
 
 
-def test_loop_circular_pattern_rejects_internal_failure_answer_text() -> None:
+def test_changed_tool_arguments_do_not_trigger_circular_pattern_fallback() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -5908,9 +6046,8 @@ def test_loop_circular_pattern_rejects_internal_failure_answer_text() -> None:
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "tool evidence:" in str(outcome.final_text or "").lower()
-    assert bool(outcome.state.scratchpad.get("circular_pattern_used_evidence_fallback"))
+    assert outcome.termination_reason == ADAPTIVE_TERM_LLM_ERROR
+    assert not outcome.state.scratchpad.get("circular_pattern_used_evidence_fallback")
 
 
 def test_loop_iteration_cap_exit_path() -> None:

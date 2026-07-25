@@ -75,7 +75,7 @@ class FocusLabelsMixin:
             return ""
         try:
             return str(getter() or "").strip()
-        except (AttributeError, TypeError, ValueError):
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             return ""
 
     @staticmethod

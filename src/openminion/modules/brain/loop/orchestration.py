@@ -1,6 +1,6 @@
 import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from openminion.modules.brain.adapters.llm.request import (
     _insert_retry_system_message,
@@ -52,7 +52,7 @@ from .entry_routing import (
     _entry_mutation_seed_should_route_to_coding,
     _entry_query_text,
     _entry_research_decision,
-    _entry_user_file_artifact_should_route_to_coding,
+    _entry_user_file_artifact_coding_decision_if_needed,
     _is_empty_entry_response,
     _local_route,
     _provisional_entry_route,
@@ -73,9 +73,6 @@ from .providers.retry import (
 
 
 _BACKOFF_SLEEP = time.sleep
-
-if TYPE_CHECKING:  # pragma: no cover - typing only
-    from openminion.modules.brain.runner import BrainRunner
 
 
 def _apply_freshness_result(
@@ -354,7 +351,7 @@ def _enforce_idle_tick_v1_bound(
 
 
 def _emit_decide_pre_call_status(
-    runner: "BrainRunner",
+    runner: Any,
     *,
     state: WorkingState,
     estimate: int,
@@ -368,7 +365,10 @@ def _emit_decide_pre_call_status(
     _estimated_outbound = estimate + estimated_tool_tokens
     _pre_call_emit = getattr(runner, "_emit_phase_status", None)
     if callable(_pre_call_emit):
-        _pre_call_payload: dict[str, Any] = {"turn.llm_call_count": 1, "turn.llm_call_limit": 1}
+        _pre_call_payload: dict[str, Any] = {
+            "turn.llm_call_count": 1,
+            "turn.llm_call_limit": 1,
+        }
         if _estimated_outbound > 0:
             _pre_call_payload.update(
                 {
@@ -381,7 +381,7 @@ def _emit_decide_pre_call_status(
 
 
 def decide(
-    runner: "BrainRunner",
+    runner: Any,
     *,
     state: WorkingState,
     user_input: str | None,
@@ -912,6 +912,13 @@ def decide(
         return decision
 
     if last_detection.path == "respond":
+        file_artifact_decision = _entry_user_file_artifact_coding_decision_if_needed(
+            state=state,
+            user_input=user_input,
+            provisional_route=provisional_route,
+        )
+        if file_artifact_decision is not None:
+            return file_artifact_decision
         decision = _respond_decision(
             confidence=0.5,
             reason_code="entry_text_response",
@@ -965,10 +972,7 @@ def decide(
     )
     if decompose_decision is not None:
         return decompose_decision
-    decision = ActDecision(
-        confidence=0.5,
-        reason_code="entry_tool_call",
-    )
+    decision = ActDecision(confidence=0.5, reason_code="entry_tool_call")
     decision._entry_response = response
     if _entry_mutation_seed_should_route_to_coding(
         response=response,
@@ -981,19 +985,15 @@ def decide(
             source="entry_mutation_seed_tool_call",
         )
         return decision
-    if _entry_user_file_artifact_should_route_to_coding(
+    file_artifact_decision = _entry_user_file_artifact_coding_decision_if_needed(
         state=state,
         user_input=user_input,
         provisional_route=provisional_route,
-    ):
-        decision.reason_code = "entry_coding_user_file_artifact_request"
-        decision.act_profile = BRAIN_ACT_PROFILE_CODING
-        if _entry_response_only_requests_tool_directory(response):
-            decision._entry_response = None
-        decision._pre_resolved_act_route = _local_route(
-            act_profile=BRAIN_ACT_PROFILE_CODING,
-            source="entry_user_file_artifact_request",
-        )
-        return decision
+        entry_response=(
+            None if _entry_response_only_requests_tool_directory(response) else response
+        ),
+    )
+    if file_artifact_decision is not None:
+        return file_artifact_decision
     decision._pre_resolved_act_route = provisional_route
     return decision
