@@ -65,5 +65,14 @@ class MinimaxBracketToolCallParser:
             metadata = {"fallback_parse_mode": "minimax_bracket"}
             if raw_name:
                 metadata["fallback_tool_name_raw"] = raw_name
+                metadata["fallback_tool_name_normalized"] = parsed[0].name
             return ToolCallParseResult(calls=parsed, metadata=metadata)
+        if raw_name:
+            return ToolCallParseResult(
+                metadata={
+                    "fallback_parse_mode": "minimax_bracket",
+                    "fallback_tool_name_raw": raw_name,
+                    "fallback_rejected_reason": "tool_not_allowed",
+                }
+            )
         return ToolCallParseResult()

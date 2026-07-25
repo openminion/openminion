@@ -43,6 +43,9 @@ This directory holds the public package documentation for standalone
 - [`memory-review-workflow.md`](memory-review-workflow.md)
   documents digest-bound review-before-apply, SQLite rollback, and audit
   evidence for memory changes.
+- [`graph-viewer.md`](graph-viewer.md)
+  documents visual inspection of second-brain memory and third-brain provider
+  graphs through GraphFakos.
 - [`provider-capabilities.md`](provider-capabilities.md)
   documents explicit provider capability facts, request requirements, and
   deterministic pre-call routing behavior.

@@ -344,7 +344,12 @@ class InMemoryControlPlaneStore:
         with self._lock:
             if inbox_id in self._inbox:
                 self._inbox[inbox_id].update(
-                    {"status": "done", "lock_owner": None, "locked_at": None, "error": None}
+                    {
+                        "status": "done",
+                        "lock_owner": None,
+                        "locked_at": None,
+                        "error": None,
+                    }
                 )
 
     def fail_inbox(self, inbox_id: str, error: str) -> None:

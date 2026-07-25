@@ -165,7 +165,9 @@ def _set_pairing_scopes(
     return 0
 
 
-def _revoke_pairing(args: argparse.Namespace, *, admin: ControlPlanePairingAdmin) -> int:
+def _revoke_pairing(
+    args: argparse.Namespace, *, admin: ControlPlanePairingAdmin
+) -> int:
     if not _confirmed(args):
         return _confirmation_required(args, action="revoke pairing")
     result = admin.revoke(
@@ -193,9 +195,7 @@ def _optional_text(value: object | None) -> str | None:
 
 def _parse_scope_csv(raw: str | None) -> list[str]:
     return [
-        scope.strip()
-        for chunk in str(raw or "").split(",")
-        if (scope := chunk.strip())
+        scope.strip() for chunk in str(raw or "").split(",") if (scope := chunk.strip())
     ]
 
 

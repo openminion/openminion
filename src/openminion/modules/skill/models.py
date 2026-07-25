@@ -485,9 +485,7 @@ class SkillPackage:
             requires_tools=normalize_text_list(raw.get("requires_tools")),
             safe_for_domains=normalize_text_list(raw.get("safe_for_domains")),
             forbidden_claims=normalize_text_list(raw.get("forbidden_claims")),
-            evidence_expectations=normalize_text_list(
-                raw.get("evidence_expectations")
-            ),
+            evidence_expectations=normalize_text_list(raw.get("evidence_expectations")),
         )
 
     def to_version_hash(self) -> str:

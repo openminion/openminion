@@ -206,7 +206,7 @@ def test_config_manager_load_parses_identity_budget() -> None:
         )
 
         manager = ConfigManager.load(str(config_path))
-        identity_budget = manager.base_config.context.budget
+        identity_budget = manager.base_config.context.identity_budget
         assert identity_budget is not None
         assert identity_budget.total_tokens == 240
         assert identity_budget.section_order == ["constraints", "mission", "notes"]

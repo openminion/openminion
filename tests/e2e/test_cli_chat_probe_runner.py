@@ -426,7 +426,7 @@ def test_probe_requirement_accepts_prompt_prefixed_assistant_output_marker() -> 
             output=(
                 "❯ Reply with exactly: Groq smoke OK\n"
                 "Reply with exactly: Groq smoke OK\n"
-                "❯ ⏺ <respond>{\"answer\": \"Groq smoke OK\"}</respond>\n"
+                '❯ ⏺ <respond>{"answer": "Groq smoke OK"}</respond>\n'
             ),
             messages=("Reply with exactly: Groq smoke OK",),
             required_output_markers=("Groq smoke OK",),

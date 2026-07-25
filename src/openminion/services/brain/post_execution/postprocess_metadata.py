@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from typing import Any
 
@@ -24,7 +22,6 @@ _STRUCTURED_ACTION_OUTPUT_METADATA_KEYS: tuple[str, ...] = (
     "task_plan.abandoned",
     "task_plan.completed",
 )
-
 
 
 def _build_turn_response_metadata(

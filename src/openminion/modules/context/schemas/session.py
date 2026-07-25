@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class SessionTurn(BaseModel):
     turn_id: str
     role: str

@@ -403,9 +403,7 @@ class LLMOrchestrator:
                 candidates=candidates,
                 strategy=strategy,
             ),
-            disagreement=self._compute_disagreement(
-                candidates, strategy.disagreement
-            ),
+            disagreement=self._compute_disagreement(candidates, strategy.disagreement),
             usage_total=self._aggregate_usage(candidates),
         )
 

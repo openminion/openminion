@@ -6,13 +6,17 @@ from types import SimpleNamespace
 from openminion.cli.presentation.review import run_review_workflow
 
 
-_BLOCKING_DIFF = """diff --git a/tests/test_a.py b/tests/test_a.py
+_BLOCKING_DIFF = (
+    """diff --git a/tests/test_a.py b/tests/test_a.py
 --- a/tests/test_a.py
 +++ b/tests/test_a.py
 @@ -1,60 +1,1 @@
-""" + "\n".join(f"-x_{i}" for i in range(60)) + """
+"""
+    + "\n".join(f"-x_{i}" for i in range(60))
+    + """
 +kept
 """
+)
 
 _CLEAN_DIFF = """diff --git a/tests/test_a.py b/tests/test_a.py
 --- a/tests/test_a.py
@@ -23,7 +27,9 @@ _CLEAN_DIFF = """diff --git a/tests/test_a.py b/tests/test_a.py
 """
 
 
-def test_review_workflow_reports_no_target_when_git_diff_empty(monkeypatch, tmp_path: Path) -> None:
+def test_review_workflow_reports_no_target_when_git_diff_empty(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(
         "openminion.cli.presentation.review.render_git_diff",
         lambda _working_dir, _args="": SimpleNamespace(

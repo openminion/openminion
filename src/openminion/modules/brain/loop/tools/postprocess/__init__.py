@@ -10,7 +10,10 @@ __all__ = [
 ]
 
 _LAZY_EXPORTS = {
-    "AdaptiveLoopRunnerPostprocessMixin": (".engine", "AdaptiveLoopRunnerPostprocessMixin"),
+    "AdaptiveLoopRunnerPostprocessMixin": (
+        ".engine",
+        "AdaptiveLoopRunnerPostprocessMixin",
+    ),
     "finalize_iteration_state": (".loop", "finalize_iteration_state"),
 }
 

@@ -728,8 +728,8 @@ class TestIdentitySeedBenchmark(unittest.TestCase):
 
             _bench("seed_pins_first", count, elapsed)
             self.assertLess(elapsed, 5.0, "first-time pin seeding took > 5s")
-            # mission + responsibilities + constraints + domain + version sentinel = 5
-            self.assertEqual(count, 5, f"expected 5 pins, got {count}")
+            # Four legacy role pins + four canonical role pins + version sentinel.
+            self.assertEqual(count, 9, f"expected 9 pins, got {count}")
 
     def test_seed_pins_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -765,7 +765,7 @@ class TestIdentitySeedBenchmark(unittest.TestCase):
 
             _bench("seed_pins_force", count, elapsed)
             self.assertLess(elapsed, 5.0)
-            self.assertEqual(count, 5, "force=True should always write all 5 pins")
+            self.assertEqual(count, 9, "force=True should always write all 9 pins")
 
     def test_seed_pins_new_revision_triggers_reseed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -777,7 +777,7 @@ class TestIdentitySeedBenchmark(unittest.TestCase):
             count = seed_identity_pins(
                 profile=profile_v2, memory_service=svc, agent_id="bench"
             )
-            self.assertEqual(count, 5, "new revision should trigger full reseed")
+            self.assertEqual(count, 9, "new revision should trigger full reseed")
 
     def test_pins_visible_in_capsule_after_seed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

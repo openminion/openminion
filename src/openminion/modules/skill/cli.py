@@ -354,7 +354,6 @@ def _add_skill_cli_subcommands(sub: Any) -> None:
     add_storage_subcommands(sub)
 
 
-
 def _add_learning_subcommands(sub: Any) -> None:
     learning_scan = sub.add_parser(
         "learning-scan",

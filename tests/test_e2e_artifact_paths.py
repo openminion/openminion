@@ -357,11 +357,7 @@ def test_cli_chat_probe_rewrites_relative_legacy_artifact_paths(
     )
 
     assert normalized == (
-        openminion_root
-        / ".openminion"
-        / "runtime"
-        / "cli-chat-e2e"
-        / "transcript.txt"
+        openminion_root / ".openminion" / "runtime" / "cli-chat-e2e" / "transcript.txt"
     )
 
 
@@ -434,12 +430,20 @@ def test_cli_gate_timeout_uses_positive_integer_or_default() -> None:
     gate = _load_cli_gate_module()
 
     assert gate._timeout_seconds({}) == gate.DEFAULT_LIVE_TIMEOUT_SECONDS
-    assert gate._timeout_seconds({gate.TIMEOUT_ENV: "0"}) == gate.DEFAULT_LIVE_TIMEOUT_SECONDS
-    assert gate._timeout_seconds({gate.TIMEOUT_ENV: "bad"}) == gate.DEFAULT_LIVE_TIMEOUT_SECONDS
+    assert (
+        gate._timeout_seconds({gate.TIMEOUT_ENV: "0"})
+        == gate.DEFAULT_LIVE_TIMEOUT_SECONDS
+    )
+    assert (
+        gate._timeout_seconds({gate.TIMEOUT_ENV: "bad"})
+        == gate.DEFAULT_LIVE_TIMEOUT_SECONDS
+    )
     assert gate._timeout_seconds({gate.TIMEOUT_ENV: "42"}) == 42
 
 
-def test_cli_gate_main_sets_runtime_env_and_runs_local(monkeypatch, tmp_path: Path) -> None:
+def test_cli_gate_main_sets_runtime_env_and_runs_local(
+    monkeypatch, tmp_path: Path
+) -> None:
     gate = _load_cli_gate_module()
     captured: dict[str, str] = {}
     python_path = tmp_path / "python3.11"
@@ -497,10 +501,7 @@ def test_live_skill_dense_probe_runner_artifacts_use_generated_root(
     artifacts_root = runner._artifact_root()
 
     assert artifacts_root == (
-        openminion_home
-        / ".openminion"
-        / "runtime"
-        / "skill-complex-official-matrix"
+        openminion_home / ".openminion" / "runtime" / "skill-complex-official-matrix"
     )
 
 

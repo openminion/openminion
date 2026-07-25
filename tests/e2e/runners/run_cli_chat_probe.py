@@ -575,9 +575,7 @@ def _probe_requirement_failure(
             f"observed {tool_event_count}"
         )
     observed_tool_names = {
-        str(name).strip()
-        for name in summary.get("tool_names", [])
-        if str(name).strip()
+        str(name).strip() for name in summary.get("tool_names", []) if str(name).strip()
     }
     missing = sorted(
         {
@@ -604,8 +602,7 @@ def _probe_requirement_failure(
     ]
     if missing_markers:
         return (
-            "missing required assistant output marker(s): "
-            f"{', '.join(missing_markers)}"
+            f"missing required assistant output marker(s): {', '.join(missing_markers)}"
         )
     return None
 

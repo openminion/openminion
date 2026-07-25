@@ -10,7 +10,10 @@ from openminion.modules.controlplane.channels.telegram.polling import (
     TelegramPollingRunner,
 )
 from openminion.modules.controlplane.runtime.identity import CachedIdentityAPI
-from openminion.services.runtime.lifecycle import LifecycleService, build_channel_registry
+from openminion.services.runtime.lifecycle import (
+    LifecycleService,
+    build_channel_registry,
+)
 from openminion.services.security.policy import SecurityPolicyEngine
 from tests._csc_fixtures import _csc_install_default_agent
 

@@ -24,7 +24,7 @@ GUARDED_FILES: tuple[Path, ...] = (
     / "services"
     / "brain"
     / "post_execution"
-    / "postprocess.py",
+    / "postprocess_metadata.py",
 )
 
 EXPECTED_IMPORT_MODULE = "openminion.modules.llm.providers.envelope_v2"
@@ -129,7 +129,7 @@ class CrossFileConstantIdentityTests(unittest.TestCase):
         from openminion.services.agent.service import (
             CONTRACT_VERSION_V2 as service_constant,
         )
-        from openminion.services.brain.post_execution.postprocess import (
+        from openminion.services.brain.post_execution.postprocess_metadata import (
             CONTRACT_VERSION_V2 as postprocess_constant,
         )
 

@@ -43,8 +43,6 @@ def _state(*, pending_confirmation: bool = False) -> WorkingState:
     return state
 
 
-
-
 def test_execution_result_default_kind_is_assistant() -> None:
     state = _state()
     result = ExecutionResult(
@@ -105,8 +103,6 @@ def test_execution_result_from_step_output_default_when_missing() -> None:
     assert result.kind == RESPOND_KIND_ASSISTANT
 
 
-
-
 def _build_needs_user_helper():
     from openminion.modules.brain.loop.adaptive.modes import ActLoopMode
 
@@ -154,8 +150,6 @@ def test_result_from_needs_user_status_is_waiting_user() -> None:
     assert result.status == BRAIN_STATE_WAITING_USER
 
 
-
-
 def test_execution_context_respond_threads_kind_to_services() -> None:
     import inspect
 
@@ -184,8 +178,6 @@ def test_mode_services_impl_respond_with_meta_accepts_kind() -> None:
     sig = inspect.signature(RunnerExecutionServices.respond_with_meta)
     assert "kind" in sig.parameters
     assert sig.parameters["kind"].default == RESPOND_KIND_ASSISTANT
-
-
 
 
 def test_result_from_needs_user_uses_only_structural_state_signal() -> None:
@@ -219,8 +211,6 @@ def test_result_from_needs_user_uses_only_structural_state_signal() -> None:
                 f"_result_from_needs_user must not branch on prose keyword "
                 f"{sub.value!r}"
             )
-
-
 
 
 def test_loop_contracts_kind_field_pinned_at_dataclass() -> None:

@@ -3,8 +3,6 @@ from __future__ import annotations
 from openminion.modules.brain.loop.tools.cache import LoopCache
 
 
-
-
 def _fake_result(summary: str) -> object:
     class _R:
         pass
@@ -12,8 +10,6 @@ def _fake_result(summary: str) -> object:
     r = _R()
     r.summary = summary  # type: ignore[attr-defined]
     return r
-
-
 
 
 def test_identical_read_returns_cached_result() -> None:

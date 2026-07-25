@@ -48,7 +48,9 @@ def _tool_schemas(
 ) -> list[Any]:
     tool_schemas: list[Any] = []
     if constraints.output_schema is not None:
-        tool_schemas.append({"name": "output_schema", "schema": constraints.output_schema})
+        tool_schemas.append(
+            {"name": "output_schema", "schema": constraints.output_schema}
+        )
     for item in prompt_tool_schemas:
         if item not in tool_schemas:
             tool_schemas.append(item)
@@ -128,7 +130,9 @@ def _mode_context_lines(
             "conversation instead of restarting it with the same opener."
         )
     elif mode_name == _MODE_PLAN:
-        lines.append("plan mode: preserve constraints, procedures, and available tools.")
+        lines.append(
+            "plan mode: preserve constraints, procedures, and available tools."
+        )
         lines.extend(f"- {name}" for name in inventory[:12])
     elif mode_name == _MODE_ACT:
         lines.append("act mode: keep tactical context for the current execution loop.")
@@ -183,7 +187,9 @@ def _mission_content(
             None,
             [
                 "[MODE CONTEXT]\n" + "\n".join(mode_lines) if mode_lines else "",
-                f"[GATEWAY MEMORY CONTEXT]\n{gateway_block}" if gateway_block.strip() else "",
+                f"[GATEWAY MEMORY CONTEXT]\n{gateway_block}"
+                if gateway_block.strip()
+                else "",
                 f"[CLARIFY DIGEST]\n{clarify_block}" if clarify_block.strip() else "",
                 f"[TASK HEADER]\n{task_header(request, constraints)}",
                 plan_context_section(request),
@@ -191,7 +197,9 @@ def _mission_content(
                 reflect_context_section(request),
                 validate_context_section(request),
                 "\n".join(state_lines) if state_lines else "",
-                f"[CONSTRAINTS & POLICY]\n{constraints_block}" if constraints_block.strip() else "",
+                f"[CONSTRAINTS & POLICY]\n{constraints_block}"
+                if constraints_block.strip()
+                else "",
             ],
         )
     )
@@ -220,7 +228,9 @@ def _append_mission_snapshot(
         raise RuntimeError("MISSION_CONTEXT_MISSING")
     runtime.bucket_stats["mission_snapshot"] = {"total_available": 1, "dropped": 0}
     runtime.segments.append(
-        runtime.make("mission_snapshot", "mission_snapshot", mission_content, pinned=True)
+        runtime.make(
+            "mission_snapshot", "mission_snapshot", mission_content, pinned=True
+        )
     )
 
 

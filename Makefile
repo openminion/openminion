@@ -138,7 +138,7 @@ help:
 		'  make typecheck-strict Run typecheck + reject any new bare `# type: ignore`' \
 		'  make eval          G-06: run the 5 starter EvalCases via openminion-eval' \
 		'                     Override category: make eval ARGS="--category coding"' \
-		'  make test          Run the OpenMinion pytest suite' \
+		'  make test          Run the OpenMinion pytest suite (excluding benchmarks)' \
 		'  make bench         Run storage benchmark regression harness' \
 		'  make check         Run format-check, lint, and test'
 
@@ -225,7 +225,7 @@ test: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \
 	OPENMINION_HOME="$(OPENMINION_HOME)" \
 	OPENMINION_DATA_ROOT="$(OPENMINION_DATA_ROOT)" \
-	$(PYTEST) -q "$(REPO_ROOT)/tests"
+	$(PYTEST) -q -m "not benchmark" "$(REPO_ROOT)/tests"
 
 bench: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \

@@ -383,8 +383,8 @@ def _user_explicitly_requested_file_artifact(loop_state: Any) -> bool:
         pattern in user_text
         for pattern in (
             "do not only show code",
+            "file tools for files",
             "file.write/file.read",
-            "file.write for files",
             "implement it with file.write",
             "use file.write",
             "using file.write",

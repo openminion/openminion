@@ -361,9 +361,7 @@ class CachedIdentityAPI:
             default_scopes=default_scopes,
         )
 
-    def _remember(
-        self, key: tuple[str, str], principal_id: str, now: float
-    ) -> None:
+    def _remember(self, key: tuple[str, str], principal_id: str, now: float) -> None:
         self._resolve_cache[key] = (principal_id, now + self._ttl_seconds)
         self._resolve_cache.move_to_end(key)
         while len(self._resolve_cache) > self._maxsize:
@@ -385,9 +383,7 @@ def build_identity_api(
         else getattr(config, "identity_cache_enabled", False)
     )
     maxsize = cache_maxsize or int(getattr(config, "identity_cache_maxsize", 1024))
-    ttl = cache_ttl_seconds or int(
-        getattr(config, "identity_cache_ttl_seconds", 300)
-    )
+    ttl = cache_ttl_seconds or int(getattr(config, "identity_cache_ttl_seconds", 300))
     if not enabled:
         return api
     return CachedIdentityAPI(api, maxsize=maxsize, ttl_seconds=ttl)

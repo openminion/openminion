@@ -160,7 +160,9 @@ def _execute_local_self_agent_command(
     return result, None
 
 
-def _local_tool_command_from_agent(command: Any, *, local_tool_name: str) -> ToolCommand:
+def _local_tool_command_from_agent(
+    command: Any, *, local_tool_name: str
+) -> ToolCommand:
     return ToolCommand(
         command_id=str(getattr(command, "command_id", "") or new_uuid()),
         title=str(getattr(command, "title", "") or f"Tool call: {local_tool_name}"),

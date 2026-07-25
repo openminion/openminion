@@ -316,7 +316,9 @@ class PlaywrightProvider:
         tab = self._tabs.get(tab_id)
         timeout_ms = self._navigation_timeout_ms(options)
         response = tab.page.reload(timeout=timeout_ms)
-        return self._tab_control_payload(tab_id=tab.id, page=tab.page, response=response)
+        return self._tab_control_payload(
+            tab_id=tab.id, page=tab.page, response=response
+        )
 
     def tab_back(
         self,
@@ -328,7 +330,9 @@ class PlaywrightProvider:
         tab = self._tabs.get(tab_id)
         timeout_ms = self._navigation_timeout_ms(options)
         response = tab.page.go_back(timeout=timeout_ms)
-        return self._tab_control_payload(tab_id=tab.id, page=tab.page, response=response)
+        return self._tab_control_payload(
+            tab_id=tab.id, page=tab.page, response=response
+        )
 
     def tab_forward(
         self,
@@ -340,7 +344,9 @@ class PlaywrightProvider:
         tab = self._tabs.get(tab_id)
         timeout_ms = self._navigation_timeout_ms(options)
         response = tab.page.go_forward(timeout=timeout_ms)
-        return self._tab_control_payload(tab_id=tab.id, page=tab.page, response=response)
+        return self._tab_control_payload(
+            tab_id=tab.id, page=tab.page, response=response
+        )
 
     def tab_wait(
         self,

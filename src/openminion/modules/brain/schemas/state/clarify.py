@@ -1,10 +1,13 @@
 # ruff: noqa: F403,F405
 from .common import *
+
+
 class BrainMode(str, Enum):
     COMMAND = "command"
     GUIDED = "guided"
     AUTONOMOUS = "autonomous"
     BATCH = "batch"
+
 
 class ClarifyPolicy(str, Enum):
     ALWAYS_ASK = "always_ask"
@@ -13,9 +16,11 @@ class ClarifyPolicy(str, Enum):
     ASSUME_DEFAULTS = "assume_defaults"
     SMART_ASSUME = "smart_assume"
 
+
 class BudgetStopReason(str, Enum):
     TICKS_EXHAUSTED = "ticks_exhausted"
     TIME_EXHAUSTED = "time_exhausted"
+
 
 class ClarifyQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -32,6 +37,7 @@ class ClarifyQuestion(BaseModel):
     requires_validation: bool = False
     confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
+
 class ClarifyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -43,6 +49,7 @@ class ClarifyRequest(BaseModel):
     reason: str = ""
     context_snapshot: dict[str, Any] | None = None
     deadline: str | None = None
+
 
 class ClarifyResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
+
 from pathlib import Path
 
 from tests.e2e.cli.focus.harness.artifacts import artifact_root
+
+pytestmark = pytest.mark.e2e
 
 
 def test_artifact_root_defaults_to_workspace_tmp(monkeypatch, tmp_path: Path) -> None:
@@ -11,10 +16,10 @@ def test_artifact_root_defaults_to_workspace_tmp(monkeypatch, tmp_path: Path) ->
     root = artifact_root(tmp_path)
 
     assert root == (
-            Path(__file__).resolve().parents[5]
-            / "workspace-tmp"
-            / "openminion-cli-focus-e2e"
-            / tmp_path.parent.name
-            / tmp_path.name
-        )
+        Path(__file__).resolve().parents[5]
+        / "workspace-tmp"
+        / "openminion-cli-focus-e2e"
+        / tmp_path.parent.name
+        / tmp_path.name
+    )
     assert root.is_dir()

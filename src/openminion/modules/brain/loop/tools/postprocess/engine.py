@@ -96,9 +96,7 @@ def _mutating_file_fallback_outcome(runner: Any) -> AdaptiveToolLoopOutcome | No
     fallback_text = mutating_file_evidence_fallback_text(runner.loop_state)
     if not fallback_text:
         return None
-    runner.loop_state.scratchpad["mutating_file_closeout_used_evidence_fallback"] = (
-        True
-    )
+    runner.loop_state.scratchpad["mutating_file_closeout_used_evidence_fallback"] = True
     runner.loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
     return AdaptiveToolLoopOutcome(
         profile_name=runner.profile.profile_name,
@@ -535,10 +533,12 @@ class AdaptiveLoopRunnerPostprocessMixin(
             self.loop_state.scratchpad.get(MUTATING_FILE_CLOSEOUT_KEY, False)
         )
         retry_key = "tool_choice_none_retry_used"
-        direct_tool_closure_active = bool(
-            self.loop_state.scratchpad.get("direct_tool_closure_forced", False)
-        ) or bool(
+        direct_tool_batch_satisfied = bool(
             getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
+        )
+        direct_tool_closure_active = (
+            bool(self.loop_state.scratchpad.get("direct_tool_closure_forced", False))
+            or direct_tool_batch_satisfied
         )
         pending_finalization_text = _pending_finalization_salvage_text(self.loop_state)
         budget_answer_only_active = bool(
@@ -576,6 +576,10 @@ class AdaptiveLoopRunnerPostprocessMixin(
             termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
             error_message = "Answer-only finalization kept returning tool calls."
         else:
+            if not direct_tool_closure_active or direct_tool_batch_satisfied:
+                compact_closeout = self._force_compact_answer_only_closeout()
+                if compact_closeout is not None:
+                    return False, compact_closeout
             termination_reason = (
                 ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED
                 if direct_tool_closure_active

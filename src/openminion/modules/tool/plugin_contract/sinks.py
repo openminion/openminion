@@ -2,11 +2,13 @@
 from .common import *
 from .invocation import ArtifactRef
 
+
 class NullEventSink:
     """No-op event sink used when caller does not provide one."""
 
     def emit(self, *, event_name: str, payload: dict[str, Any]) -> None:
         del event_name, payload
+
 
 class MemoryEventSink:
     """Simple in-memory sink useful for tests and development."""
@@ -16,6 +18,7 @@ class MemoryEventSink:
 
     def emit(self, *, event_name: str, payload: dict[str, Any]) -> None:
         self.events.append({"event_name": event_name, "payload": dict(payload)})
+
 
 class MemoryArtifactSink:
     """In-memory artifact sink that also returns stable hash-based references."""
@@ -40,6 +43,7 @@ class MemoryArtifactSink:
         out_meta.setdefault("sha256", sha)
         out_meta.setdefault("created_at", now_iso)
         return ArtifactRef(ref=ref, kind=kind, name=name, meta=out_meta)
+
 
 class CASArtifactSink:
     """Artifact sink backed by ArtifactCtl canonical CAS storage."""

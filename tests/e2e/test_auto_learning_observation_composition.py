@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+
 from pathlib import Path
 
 from openminion.modules.brain import improvement as improvement_api
@@ -13,6 +16,8 @@ from openminion.modules.skill.learning import (
 )
 from openminion.modules.skill.proposal.queue import PROPOSAL_QUEUE_STATE_PENDING
 from openminion.modules.skill.storage import SQLiteSkillStore
+
+pytestmark = pytest.mark.e2e
 
 
 def _workflow_bundle(run_id: str, summary: str) -> WorkflowEvidenceBundle:

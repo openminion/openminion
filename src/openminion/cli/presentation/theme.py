@@ -95,14 +95,11 @@ def _show_theme_settings(
         persisted = read_persisted_theme(Path(str(data_root)))
         print(f"  Persisted: {persisted or '(none)'}")
     print(
-        "  Use `/theme list`, `/theme <name>`, "
-        "`/theme save <name>`, or `/theme reset`."
+        "  Use `/theme list`, `/theme <name>`, `/theme save <name>`, or `/theme reset`."
     )
 
 
-def _show_theme_list(
-    *, active_theme_name_getter: Callable[[], str] | None
-) -> None:
+def _show_theme_list(*, active_theme_name_getter: Callable[[], str] | None) -> None:
     print("Available themes:")
     active = _active_theme_name(active_theme_name_getter)
     for name in available_theme_names():

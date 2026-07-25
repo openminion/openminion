@@ -2,6 +2,7 @@
 from .common import *
 from .common import _stable_hash
 
+
 class RenderMessage(BaseModel):
     role: MessageRole
     content: str

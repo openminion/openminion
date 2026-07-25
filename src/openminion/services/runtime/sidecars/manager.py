@@ -36,6 +36,7 @@ from openminion.modules.policy import (
 
 from openminion.base.time import utc_now_iso as _iso_now
 
+
 def _truthy(value: str | None) -> bool:
     raw = str(value or "").strip().lower()
     if not raw:
@@ -170,8 +171,6 @@ class SubprocessExecutor:
 
 
 class ToolExecExecutor:
-    """Optional executor that delegates to a tool-runtime callable."""
-
     def __init__(self, invoke: Callable[..., Any]) -> None:
         self._invoke = invoke
 

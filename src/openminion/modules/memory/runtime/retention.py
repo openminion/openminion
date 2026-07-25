@@ -35,7 +35,10 @@ class RuntimeMemoryRetentionPolicy:
         if self.log_retention_days <= 0:
             raise InvalidArgumentError(
                 "log_retention_days must be positive",
-                details={"field": "log_retention_days", "value": self.log_retention_days},
+                details={
+                    "field": "log_retention_days",
+                    "value": self.log_retention_days,
+                },
             )
         if self.patch_retention_count <= 0:
             raise InvalidArgumentError(

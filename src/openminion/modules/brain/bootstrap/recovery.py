@@ -17,6 +17,8 @@ from openminion.modules.brain.tools.parser import (
     explicit_tool_name_sequence,
     parse_tool_command,
 )
+from openminion.modules.tool import tool_family_for_argument_repair
+from openminion.modules.tool.contracts.model_ids import MODEL_LOCATION, MODEL_TIME
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from openminion.modules.brain.runner import BrainRunner
@@ -98,21 +100,27 @@ def _recover_simple_tool_parity_decision(
     llm_call_id: str,
 ) -> Decision | None:
     del capability_category
-    command = parse_tool_command(
+    command = _recover_seed_command_from_response(
         runner=runner,
         state=state,
-        text=str(user_input or ""),
+        response=response,
     )
-    if command is None:
-        command = _recover_seed_command_from_response(
+    raw_user_input = str(user_input or "").strip()
+    if command is None and raw_user_input.lower().startswith("tool "):
+        command = parse_tool_command(
             runner=runner,
             state=state,
-            response=response,
+            text=raw_user_input,
         )
     explicit_tool_sequence = (
         ()
         if command is not None
-        else explicit_tool_name_sequence(str(user_input or ""))
+        else tuple(
+            tool_name
+            for tool_name in explicit_tool_name_sequence(raw_user_input)
+            if tool_family_for_argument_repair(tool_name)
+            in {MODEL_TIME, MODEL_LOCATION}
+        )
     )
     if command is None and not explicit_tool_sequence:
         return None

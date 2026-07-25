@@ -36,6 +36,7 @@ _CONTINUATION_APPLY_RE = re.compile(
     r"(?:/v1)?/sessions/([^/]+)/continuations/([^/]+)/apply"
 )
 
+
 def _parse_limit(
     *,
     raw_value: str | None,

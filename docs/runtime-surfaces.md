@@ -107,7 +107,9 @@ Notes:
 4. `openminion graph view --dry-run --json` builds the selected graph and
    returns counts without starting the local browser viewer,
 5. `openminion graph view --html-out viewer.html` writes a static visual page
-   for inspection or sharing.
+   for inspection or sharing,
+6. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
+   third-brain provider envelope.
 
 ## Example surfaces
 

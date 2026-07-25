@@ -10,7 +10,11 @@ from openminion.api.operations.a2a import (
     build_agent_card_payload,
     handle_jsonrpc,
 )
-from openminion.api.routes.contracts import APIRouteContext, RouteResult, error_route_result
+from openminion.api.routes.contracts import (
+    APIRouteContext,
+    RouteResult,
+    error_route_result,
+)
 
 _A2A_JSONRPC_PATH = "/a2a/v1/jsonrpc"
 _A2A_TASK_EVENTS_PREFIX = "/a2a/v1/tasks/"

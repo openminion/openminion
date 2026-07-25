@@ -18,8 +18,6 @@ def _make_transcript_and_console() -> tuple[TerminalTranscript, io.StringIO]:
     return TerminalTranscript(console, verbosity="normal"), buf
 
 
-
-
 def test_handle_set_active_tool_records_state() -> None:
     handle = TerminalTurnHandle(Console(file=io.StringIO()))
     handle.set_active_tool(
@@ -85,8 +83,6 @@ def test_handle_render_excludes_running_block_when_cleared() -> None:
     from rich.text import Text
 
     assert isinstance(rendered, Text)
-
-
 
 
 def test_transcript_routes_tool_started_to_active_handle() -> None:
@@ -199,8 +195,6 @@ def test_handle_render_elapsed_grows_over_time() -> None:
     )
     assert "Running" in buf1.getvalue()
     assert "Running" in buf2.getvalue()
-
-
 
 
 def test_handle_tool_started_idempotent_on_duplicate_call_id() -> None:

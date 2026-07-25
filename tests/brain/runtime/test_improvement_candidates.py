@@ -46,7 +46,9 @@ def test_improvement_candidate_semantic_author_source_is_additive_and_closed() -
         candidate = ImprovementCandidate.model_validate(
             {**_candidate(), "semantic_author_source": author_source}
         )
-        assert candidate.model_dump(mode="json")["semantic_author_source"] == author_source
+        assert (
+            candidate.model_dump(mode="json")["semantic_author_source"] == author_source
+        )
 
     with pytest.raises(ValidationError):
         ImprovementCandidate.model_validate(
@@ -174,7 +176,9 @@ def test_learning_memory_candidate_missing_author_does_not_call_owner() -> None:
     assert result.reason_code == "semantic_author_source_required"
 
 
-def test_learning_memory_candidate_rejects_non_memory_target_without_owner_call() -> None:
+def test_learning_memory_candidate_rejects_non_memory_target_without_owner_call() -> (
+    None
+):
     class MemoryService:
         def stage_candidate(self, **kwargs):
             raise AssertionError(f"unexpected memory owner call: {kwargs}")
@@ -192,7 +196,9 @@ def test_learning_memory_candidate_rejects_non_memory_target_without_owner_call(
     assert result.reason_code == "memory_learning_target_required"
 
 
-@pytest.mark.parametrize("state", ["under_review", "suppressed", "promoted", "rolled_back", "rejected"])
+@pytest.mark.parametrize(
+    "state", ["under_review", "suppressed", "promoted", "rolled_back", "rejected"]
+)
 def test_learning_memory_candidate_rejects_non_staged_state_without_owner_call(
     state: str,
 ) -> None:

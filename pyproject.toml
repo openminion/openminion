@@ -82,6 +82,9 @@ dev = [
   # ratchet. Scope is configured via the [tool.mypy] block below.
   # Test/dev only.
   "mypy>=1.10,<2",
+  # PyYAML is used by runtime config loaders; stubs keep the whole-tree
+  # ratchet stable as additional YAML-owning modules enter typed coverage.
+  "types-PyYAML>=6.0,<7",
 ]
 viewer = [
   "graphfakos>=0.0.6",

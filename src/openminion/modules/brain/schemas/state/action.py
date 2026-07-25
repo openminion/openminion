@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class ActionError(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -8,12 +9,14 @@ class ActionError(BaseModel):
     message: str = Field(..., min_length=1)
     details: dict[str, Any] = Field(default_factory=dict)
 
+
 class ActionMetrics(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     latency_ms: int | None = Field(default=None, ge=0)
     tokens_used: int | None = Field(default=None, ge=0)
     cost_estimate: float | None = Field(default=None, ge=0)
+
 
 class ActionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -27,6 +30,7 @@ class ActionResult(BaseModel):
     error: ActionError | None = None
     metrics: ActionMetrics | None = None
 
+
 class JobHandle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -36,6 +40,7 @@ class JobHandle(BaseModel):
     status: Literal["pending", "running", "done", "failed"]
     poll_after_ms: int = Field(default=1000, ge=1)
     created_at: str = Field(default_factory=iso_now)
+
 
 class ReflectReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -48,6 +53,7 @@ class ReflectReport(BaseModel):
     root_cause: str = ""
     evidence_refs: list[ArtifactRef] = Field(default_factory=list)
     fixes: list[FixItem] = Field(default_factory=list)
+
 
 class PolicyDecision(BaseModel):
     model_config = ConfigDict(extra="forbid")

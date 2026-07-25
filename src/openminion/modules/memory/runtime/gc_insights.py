@@ -82,7 +82,10 @@ def _evict_postgres_stale_insights(
                 continue
             record_id = str(row["id"])
             removed_edges.append(
-                (record_id, soft_delete_postgres_record(conn, record_id, now_iso=now_iso))
+                (
+                    record_id,
+                    soft_delete_postgres_record(conn, record_id, now_iso=now_iso),
+                )
             )
             evicted += 1
     return evicted, removed_edges
@@ -112,7 +115,10 @@ def _evict_sqlite_stale_insights(
                     continue
                 record_id = str(row["id"])
                 removed_edges.append(
-                    (record_id, soft_delete_sqlite_record(conn, record_id, now_iso=now_iso))
+                    (
+                        record_id,
+                        soft_delete_sqlite_record(conn, record_id, now_iso=now_iso),
+                    )
                 )
                 evicted += 1
             conn.execute("COMMIT")

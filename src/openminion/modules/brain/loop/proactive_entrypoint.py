@@ -111,7 +111,9 @@ def _user_activity_grace_seconds(config: Any) -> int:
         return 0
 
 
-def _idle_tick_payload(*, session_id: str, plan_id: str, grace_seconds: int) -> dict[str, Any]:
+def _idle_tick_payload(
+    *, session_id: str, plan_id: str, grace_seconds: int
+) -> dict[str, Any]:
     return {
         "kind": "agentIdleTick",
         "session_id": session_id,

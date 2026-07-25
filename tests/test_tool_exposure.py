@@ -721,5 +721,5 @@ def test_visible_ops_result_preserves_evidence_and_adds_exposure_metadata() -> N
     assert result.data["tool_exposure"] == {
         "profile_id": "ops_minimal",
         "activation_id": "",
-        "target_id": "",
+        "target_id": "test",
     }

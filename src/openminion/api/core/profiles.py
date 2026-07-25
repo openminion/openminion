@@ -424,7 +424,9 @@ class RuntimeProfilesMixin:
         }
         hot = set(self.list_hot_agents())
         registry_records, heartbeats = _load_agent_registry_facts(self.storage_path)
-        all_ids = sorted(set(configured) | set(registry_records) | hot | set(heartbeats))
+        all_ids = sorted(
+            set(configured) | set(registry_records) | hot | set(heartbeats)
+        )
         return [
             _build_agent_discovery_record(
                 agent_id=agent_id,

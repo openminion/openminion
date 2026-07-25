@@ -118,6 +118,7 @@ def _entry_tool_calls(response: Any, tool_name: str) -> list[Any]:
 
 _ENTRY_MUTATION_TO_CODING_TOOLS = frozenset({"file.write", "code.patch"})
 _ENTRY_FILE_ARTIFACT_TOOLING_MARKERS = (
+    "file tools",
     "file.write/file.read",
     "file.read/file.write",
     "file.write",
@@ -138,8 +139,10 @@ _ENTRY_FILE_ARTIFACT_ACTION_TERMS = frozenset(
 _ENTRY_FILE_ARTIFACT_OBJECT_TERMS = frozenset(
     {
         "app",
+        "check",
         "cli",
         "file",
+        "function",
         "implementation",
         "module",
         "package",
@@ -223,6 +226,40 @@ def _local_route(*, act_profile: str, source: str) -> Any:
         execution_target=ExecutionTargetPayload(kind=BRAIN_EXECUTION_TARGET_LOCAL),
         source=source,
     )
+
+
+def _entry_user_file_artifact_coding_decision(
+    *,
+    entry_response: Any | None = None,
+) -> ActDecision:
+    decision = ActDecision(
+        confidence=0.5,
+        reason_code="entry_coding_user_file_artifact_request",
+        act_profile=BRAIN_ACT_PROFILE_CODING,
+    )
+    if entry_response is not None:
+        decision._entry_response = entry_response
+    decision._pre_resolved_act_route = _local_route(
+        act_profile=BRAIN_ACT_PROFILE_CODING,
+        source="entry_user_file_artifact_request",
+    )
+    return decision
+
+
+def _entry_user_file_artifact_coding_decision_if_needed(
+    *,
+    state: WorkingState,
+    user_input: str | None,
+    provisional_route: Any,
+    entry_response: Any | None = None,
+) -> ActDecision | None:
+    if not _entry_user_file_artifact_should_route_to_coding(
+        state=state,
+        user_input=user_input,
+        provisional_route=provisional_route,
+    ):
+        return None
+    return _entry_user_file_artifact_coding_decision(entry_response=entry_response)
 
 
 def _route_after_decompose_decline(provisional_route: Any) -> Any:

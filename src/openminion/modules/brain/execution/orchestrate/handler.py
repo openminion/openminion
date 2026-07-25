@@ -34,6 +34,7 @@ from openminion.modules.brain.execution.delegation_policy import (
 )
 from openminion.modules.brain.execution.worktree_children import (
     allocate_child_worktree,
+    bind_runner_tool_workspace,
     finalize_child_worktree,
 )
 from openminion.modules.brain.execution.dispatch import invoke_decision_direct
@@ -558,14 +559,15 @@ class OrchestrateMode:
         lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
         result_status = "error"
         try:
-            result = invoke_decision_direct(
-                runner,
-                state=child_state,
-                decision=decision,
-                user_input=prompt,
-                logger=ctx.logger,
-                depth=1,
-            )
+            with bind_runner_tool_workspace(runner, lease=lease):
+                result = invoke_decision_direct(
+                    runner,
+                    state=child_state,
+                    decision=decision,
+                    user_input=prompt,
+                    logger=ctx.logger,
+                    depth=1,
+                )
             result_status = result.status
         finally:
             finalize_child_worktree(ctx, lease=lease, status=result_status)
@@ -675,14 +677,15 @@ class OrchestrateMode:
         lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
         result_status = "error"
         try:
-            result = invoke_decision_direct(
-                runner,
-                state=child_state,
-                decision=decision,
-                user_input=prompt,
-                logger=ctx.logger,
-                depth=1,
-            )
+            with bind_runner_tool_workspace(runner, lease=lease):
+                result = invoke_decision_direct(
+                    runner,
+                    state=child_state,
+                    decision=decision,
+                    user_input=prompt,
+                    logger=ctx.logger,
+                    depth=1,
+                )
             result_status = result.status
         finally:
             finalize_child_worktree(ctx, lease=lease, status=result_status)

@@ -195,4 +195,3 @@ def test_store_image_bytes_creates_nested_directories(tmp_path: Path) -> None:
     target = store_image_bytes(png, data_root=nested, session_id="sess-x", turn_index=0)
     assert target.exists()
     assert (nested / "images" / "sess-x").is_dir()
-

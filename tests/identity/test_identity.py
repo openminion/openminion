@@ -543,9 +543,7 @@ def test_purpose_literal_matches_canonical_renderer_set() -> None:
 def test_validate_profile_strict_promotes_warnings_to_errors() -> None:
     identity = IdentityCtl(store=InMemoryIdentityStore())
     profile = _profile().model_copy(
-        update={
-            "role": _profile().role.model_copy(update={"responsibilities": []})
-        }
+        update={"role": _profile().role.model_copy(update={"responsibilities": []})}
     )
 
     default_result = identity.validate_profile(profile)
@@ -600,7 +598,10 @@ def test_warm_cache_uses_canonical_per_purpose_budgets() -> None:
     custom_cfg = IdentityCtlConfig()
     custom_cfg.rendering.default_budgets["act"].max_tokens = 111
     store.clear_cache()
-    assert identity.warm_cache(profile.agent_id, purposes=["act"], identity_cfg=custom_cfg) == 1
+    assert (
+        identity.warm_cache(profile.agent_id, purposes=["act"], identity_cfg=custom_cfg)
+        == 1
+    )
     assert any("|act|" in key and "|111|" in key for key in store._cache)  # type: ignore[attr-defined]
 
 

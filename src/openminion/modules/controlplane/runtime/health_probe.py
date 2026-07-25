@@ -10,8 +10,8 @@ from typing import Any, Callable
 
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _PROMETHEUS_TEXT_VERSION = (0, 0, 4)
-_PROMETHEUS_TEXT_CONTENT_TYPE = (
-    "text/plain; version={}.{}.{}".format(*_PROMETHEUS_TEXT_VERSION)
+_PROMETHEUS_TEXT_CONTENT_TYPE = "text/plain; version={}.{}.{}".format(
+    *_PROMETHEUS_TEXT_VERSION
 )
 
 
@@ -35,7 +35,9 @@ class ControlPlaneHealthProbeSidecar:
     ) -> None:
         self.config = config or ControlPlaneHealthProbeConfig()
         self._get_status = get_status or (lambda: {})
-        self._get_audit_health = get_audit_health or (lambda: {"audit": {"healthy": True}})
+        self._get_audit_health = get_audit_health or (
+            lambda: {"audit": {"healthy": True}}
+        )
         self._probe_store = probe_store or (lambda: True)
         self._get_metrics = get_metrics or (lambda: b"")
         self._server: ThreadingHTTPServer | None = None
@@ -99,7 +101,10 @@ class ControlPlaneHealthProbeSidecar:
         host = str(self.config.host).strip().lower()
         if host in _LOOPBACK_HOSTS:
             return
-        if not self.config.allow_remote or not str(self.config.bearer_token or "").strip():
+        if (
+            not self.config.allow_remote
+            or not str(self.config.bearer_token or "").strip()
+        ):
             raise ValueError(
                 "controlplane health probe remote bind requires allow_remote=true and bearer token"
             )

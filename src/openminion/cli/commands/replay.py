@@ -57,9 +57,7 @@ def _handler_for(args: argparse.Namespace) -> Handler:
     raise ValueError(f"unknown replay command: {action}")
 
 
-def _checkpoints(
-    args: argparse.Namespace, manager: TaskManager
-) -> ReplayCommandResult:
+def _checkpoints(args: argparse.Namespace, manager: TaskManager) -> ReplayCommandResult:
     return list_task_checkpoints(manager, task_id=str(args.task_id))
 
 
@@ -68,7 +66,9 @@ def _replay(args: argparse.Namespace, manager: TaskManager) -> ReplayCommandResu
         manager,
         task_id=str(args.task_id),
         checkpoint_id=getattr(args, "checkpoint_id", None),
-        use_case=cast(ReplayUseCase, str(getattr(args, "use_case", "debug") or "debug")),
+        use_case=cast(
+            ReplayUseCase, str(getattr(args, "use_case", "debug") or "debug")
+        ),
     )
 
 
@@ -125,7 +125,9 @@ def _print_replay_human(payload: dict[str, object]) -> None:
     if payload.get("events_replayed"):
         print(f"events replayed: {payload.get('events_replayed')}")
         divergences = payload.get("divergences")
-        print(f"divergences: {len(divergences) if isinstance(divergences, list) else 0}")
+        print(
+            f"divergences: {len(divergences) if isinstance(divergences, list) else 0}"
+        )
     notes = payload.get("nondeterminism_notes")
     if isinstance(notes, list) and notes:
         print("notes:")
@@ -134,7 +136,9 @@ def _print_replay_human(payload: dict[str, object]) -> None:
 
 
 def _add_task_db(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--task-db", required=True, help="Task lifecycle SQLite DB path")
+    parser.add_argument(
+        "--task-db", required=True, help="Task lifecycle SQLite DB path"
+    )
     add_json_output_flag(parser)
     parser.set_defaults(handler=run_replay_command)
 

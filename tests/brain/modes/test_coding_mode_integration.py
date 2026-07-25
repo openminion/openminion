@@ -1005,8 +1005,7 @@ def test_coding_loop_stays_in_implement_until_exec_run_before_verify() -> None:
         if message.role == "user"
     ]
     assert any(
-        "Stay in implement and run at least one verification readback step"
-        in content
+        "Stay in implement and run at least one verification readback step" in content
         and "file.read" in content
         and "exec.run" in content
         for content in user_messages
@@ -1153,7 +1152,7 @@ def test_coding_plan_persists_to_module_state_and_resumes_on_continue() -> None:
                     )
                 ],
                 finish_reason="tool_calls",
-            )
+            ),
         ]
     )
     first_executor = _FakeCommandExecutor(
@@ -1218,7 +1217,7 @@ def test_coding_plan_persists_to_module_state_and_resumes_on_continue() -> None:
                         model="fake-model",
                         output_text="resumed from module state",
                         finish_reason="stop",
-                    )
+                    ),
                 ]
             ),
             _FakeCommandExecutor(),
@@ -1715,7 +1714,7 @@ def test_coding_verify_gate_blocks_with_typed_reason_when_exec_run_missing() -> 
     assert result.action_result is not None
     assert result.action_result.error is not None
     assert result.action_result.error.code == "verify_cap_exceeded"
-    assert result.action_result.outputs["coding.verify_gate_blocks"] == 1
+    assert result.action_result.outputs["coding.verify_gate_blocks"] == 2
     assert result.action_result.outputs["coding.termination_reason"] == (
         "verify_cap_exceeded"
     )
@@ -1882,7 +1881,7 @@ def test_coding_verify_phase_uses_typed_verifier_before_done() -> None:
                         id="tc-run",
                         name="exec.run",
                         arguments={"argv": ["pytest", "-q"]},
-                    )
+                    ),
                 ],
                 finish_reason="tool_calls",
             ),

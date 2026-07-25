@@ -22,8 +22,6 @@ from openminion.modules.brain.schemas.missions import (
 from openminion.modules.tool.plugin_contract import RiskReversibility
 
 
-
-
 def test_mission_type_is_closed_set_of_four_values() -> None:
 
     values = set(typing.get_args(MissionType))
@@ -38,8 +36,6 @@ def test_mission_type_invalid_value_is_rejected_via_intake_record() -> None:
             classification_source="slash_command",
             signal_token="/speculate",
         )
-
-
 
 
 def test_intake_record_constructs_with_minimal_valid_kwargs() -> None:
@@ -95,8 +91,6 @@ def test_intake_record_rejects_unknown_classification_source() -> None:
         )
 
 
-
-
 def test_capability_boundary_constructs_with_minimal_valid_kwargs() -> None:
     boundary = CapabilityBoundary(
         reason_code="tool_unavailable",
@@ -144,8 +138,6 @@ def test_capability_boundary_composes_tool_reversibility() -> None:
     assert boundary.tool_reversibility == "irreversible"
 
 
-
-
 def test_tool_reversibility_is_alias_of_risk_reversibility() -> None:
 
     assert ToolReversibility is RiskReversibility
@@ -155,8 +147,6 @@ def test_tool_reversibility_is_alias_of_risk_reversibility() -> None:
         "irreversible",
         "unknown",
     }
-
-
 
 
 def test_exploratory_disclosure_constructs_with_minimal_valid_kwargs() -> None:
@@ -175,8 +165,6 @@ def test_exploratory_disclosure_reason_closed_set() -> None:
         "no_verifier_expectation_registered",
         "mission_type_is_exploratory",
     }
-
-
 
 
 def test_verifier_expectation_consumes_tgcr_verifier_family_verbatim() -> None:
@@ -219,8 +207,6 @@ def test_verifier_expectation_rejects_duplicate_families() -> None:
             expected_verifier_families=["artifact_presence", "artifact_presence"],
             autonomous_completion_supported=True,
         )
-
-
 
 
 @pytest.mark.parametrize(

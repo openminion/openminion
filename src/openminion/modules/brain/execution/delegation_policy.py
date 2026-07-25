@@ -66,9 +66,7 @@ def _parent_deadline(ctx: ExecutionContext) -> ParentDeadline:
     resume_state = getattr(ctx.state, STATE_KEY_TASK_BACKED_RESUME, {}) or {}
     if isinstance(resume_state, dict):
         value = str(
-            resume_state.get("deadline_iso")
-            or resume_state.get("deadline")
-            or ""
+            resume_state.get("deadline_iso") or resume_state.get("deadline") or ""
         ).strip()
         if value:
             return ParentDeadline(deadline_iso=value)
@@ -221,7 +219,9 @@ def record_result_aggregation(
     return entry
 
 
-def merge_child_policy_facts(ctx: ExecutionContext, *, child_state: WorkingState) -> None:
+def merge_child_policy_facts(
+    ctx: ExecutionContext, *, child_state: WorkingState
+) -> None:
     """Merge child-recorded structural delegation facts into the parent state."""
 
     child_module_state = getattr(child_state, STATE_KEY_MODULE_STATE, {}) or {}

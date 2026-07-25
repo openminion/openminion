@@ -130,9 +130,7 @@ def test_load_identity_bundle_accepts_lowercase_file_layout(tmp_path: Path) -> N
     assert bundle.ok is True
     assert bundle.agent is not None
     assert bundle.soul is not None
-    assert [item.relative_path for item in bundle.skills] == [
-        "skills/ops/skill.md"
-    ]
+    assert [item.relative_path for item in bundle.skills] == ["skills/ops/skill.md"]
     assert [item.relative_path for item in bundle.notes] == ["notes/note.md"]
 
 

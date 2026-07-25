@@ -79,9 +79,7 @@ class TaskDelegateArgs(BaseModel):
     def _validate_action_fields(self) -> "TaskDelegateArgs":
         normalized_mode = self.mode.strip().lower()
         if normalized_mode not in {"sync", "async", "status", "resume", "cancel"}:
-            raise ValueError(
-                "mode must be one of: sync, async, status, resume, cancel"
-            )
+            raise ValueError("mode must be one of: sync, async, status, resume, cancel")
         self.mode = normalized_mode
         if normalized_mode in {"sync", "async"}:
             if not self.agent_id.strip() or not self.instruction.strip():

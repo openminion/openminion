@@ -91,7 +91,9 @@ class RuntimeSessionStoreSessions:
         )
         created = self.get_session(explicit_id)
         if created is None:
-            raise RuntimeError(f"Failed to create explicit session record id={explicit_id}")
+            raise RuntimeError(
+                f"Failed to create explicit session record id={explicit_id}"
+            )
         return created
 
     def resolve_session(

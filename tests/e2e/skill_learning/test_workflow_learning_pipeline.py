@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+
 from pathlib import Path
 
 from openminion.modules.skill.learning import (
@@ -20,6 +23,8 @@ from openminion.modules.skill.proposal.queue import (
     record_proposal_review,
 )
 from openminion.modules.skill.storage import SQLiteSkillStore
+
+pytestmark = pytest.mark.e2e
 
 
 def _store(tmp_path: Path) -> SQLiteSkillStore:

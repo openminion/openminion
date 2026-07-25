@@ -258,7 +258,7 @@ class RunnerMetaTests(unittest.TestCase):
             output = runner.step(session_id="s8")
             self.assertEqual(output.status, "waiting_user")
             self.assertIn(
-                "could not safely determine the next step",
+                "post-action judgment is unavailable",
                 (output.message or "").lower(),
             )
 

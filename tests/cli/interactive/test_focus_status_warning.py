@@ -188,3 +188,17 @@ def test_statusline_custom_label_handles_expected_getter_failures() -> None:
             )
 
     assert _Probe()._statusline_custom_label() == ""
+
+
+def test_goal_statusline_label_handles_runtime_store_failures() -> None:
+    from openminion.cli.interactive.status import FocusLabelsMixin
+
+    class _Probe(FocusLabelsMixin):
+        def __init__(self) -> None:
+            self._runtime = SimpleNamespace(
+                goal_statusline_label=lambda: (_ for _ in ()).throw(
+                    RuntimeError("goal store unavailable")
+                )
+            )
+
+    assert _Probe()._statusline_goal_loop_label() == ""

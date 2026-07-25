@@ -181,8 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             ("baseline entries", metrics["baseline_entries"]),
         ),
         findings=[
-            f"{finding.code}: {finding.path} — {finding.detail}"
-            for finding in findings
+            f"{finding.code}: {finding.path} — {finding.detail}" for finding in findings
         ],
         ok_message="init-file LOC baseline is clean.",
         report_stream=sys.stderr,

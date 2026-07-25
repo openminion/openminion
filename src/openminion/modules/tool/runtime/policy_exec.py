@@ -18,7 +18,11 @@ from ..constants import (
 )
 from ..contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from ..errors import ToolRuntimeError
-from .command_patterns import command_action_class, effective_command_argv, matching_allow_pattern
+from .command_patterns import (
+    command_action_class,
+    effective_command_argv,
+    matching_allow_pattern,
+)
 from .policy_shared import _MKDIR_SCAFFOLD_HINT, _invalid_argument
 
 

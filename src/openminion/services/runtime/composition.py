@@ -24,7 +24,7 @@ class OpenMinionRuntime:
     rlm: object | None
     meta: object
     brain: object
-    runtime_manager: object
+    runtime_manager: Any
 
     @classmethod
     def from_config_path(

@@ -19,7 +19,9 @@ class ReviewWorkflowResult:
     diff_source: str
 
 
-def run_review_workflow(working_dir: str | Path, args: str = "") -> ReviewWorkflowResult:
+def run_review_workflow(
+    working_dir: str | Path, args: str = ""
+) -> ReviewWorkflowResult:
     diff_text, source, no_target_message = _resolve_review_diff(working_dir, args)
     if no_target_message is not None:
         return ReviewWorkflowResult(
@@ -28,7 +30,9 @@ def run_review_workflow(working_dir: str | Path, args: str = "") -> ReviewWorkfl
             diff_source=source,
         )
 
-    action_result = handle_review_tool_call(loop_ctx=None, arguments={"diff": diff_text})
+    action_result = handle_review_tool_call(
+        loop_ctx=None, arguments={"diff": diff_text}
+    )
     return ReviewWorkflowResult(
         action_result=action_result,
         body=_format_review_result(action_result, diff_source=source),

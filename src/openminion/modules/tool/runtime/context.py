@@ -277,7 +277,6 @@ class RuntimeContext:
         self.artifacts.append(artifact)
         return artifact
 
-
     def _ingest_durable_artifact(
         self,
         *,

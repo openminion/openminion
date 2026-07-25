@@ -25,7 +25,9 @@ _CANONICAL_TURN_PATH = (
     "BrainRunner.run",
 )
 _CANONICAL_TURN_PATH_REF = "openminion.api.runtime.APIRuntime.runtime_posture"
-_EXECUTION_BOUNDARY_POLICY_REF = "openminion.modules.policy.adapters.tool.build_execution_boundary_policy_adapter"
+_EXECUTION_BOUNDARY_POLICY_REF = (
+    "openminion.modules.policy.adapters.tool.build_execution_boundary_policy_adapter"
+)
 _CAPABILITY_REF = "openminion.api.queries.runtime_reports.build_runtime_posture_report"
 _DISABLE_SECURITY_POLICY_ENV = "OPENMINION_DISABLE_SECURITY_POLICY"
 
@@ -157,6 +159,9 @@ class APIRuntime(RuntimeBootstrapMixin, RuntimeProfilesMixin, RuntimeToolExposur
     def close(self) -> None:
         if self._closed:
             return
+        from openminion.modules.a2a.endpoint import close_external_a2a_runtime
+
+        close_external_a2a_runtime(self)
         finalizer = getattr(self, "_finalizer", None)
         if finalizer is not None and finalizer.alive:
             finalizer.detach()

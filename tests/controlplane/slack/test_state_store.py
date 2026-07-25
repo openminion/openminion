@@ -13,9 +13,7 @@ def test_state_store_initializes_missing_database_parent(tmp_path) -> None:
     with sqlite3.connect(str(db_path)) as conn:
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
     assert {
         "slack_seen_events",

@@ -127,7 +127,10 @@ def get_default_storage_paths(
 
 def resolve_default_config_path(*, home_root: Optional[Path] = None) -> Path:
     """Return the default retrievectl config path under the generated root."""
-    return cast(Path, resolve_generated_config_path(DEFAULT_CONFIG_FILENAME, home_root=home_root))
+    return cast(
+        Path,
+        resolve_generated_config_path(DEFAULT_CONFIG_FILENAME, home_root=home_root),
+    )
 
 
 def load_config(

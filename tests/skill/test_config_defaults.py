@@ -13,12 +13,12 @@ def test_selection_rag_defaults_are_conservative() -> None:
 
 def test_promotion_cadence_defaults_are_opt_in() -> None:
     cfg = SkillConfig()
-    assert cfg.proposal.promotion_enabled is False
-    assert cfg.proposal.promotion_success_threshold == 3
-    assert cfg.proposal.promotion_utility_threshold == 0.7
+    assert cfg.promotion_cadence_enabled is False
+    assert cfg.promotion_cadence_success_threshold == 3
+    assert cfg.promotion_cadence_utility_threshold == 0.7
 
 
 def test_promotion_cadence_threshold_field_types_are_stable() -> None:
     cfg = SkillConfig()
-    assert isinstance(cfg.proposal.promotion_success_threshold, int)
-    assert isinstance(cfg.proposal.promotion_utility_threshold, float)
+    assert isinstance(cfg.promotion_cadence_success_threshold, int)
+    assert isinstance(cfg.promotion_cadence_utility_threshold, float)

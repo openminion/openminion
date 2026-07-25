@@ -76,9 +76,7 @@ class RuntimeToolExposureMixin:
             return
         session_id = str(record.get("session_id", "") or "runtime")
         turn_id = str(
-            record.get("task_id", "")
-            or record.get("audit_id", "")
-            or "tool-exposure"
+            record.get("task_id", "") or record.get("audit_id", "") or "tool-exposure"
         )
         record_sync(
             TelemetryEvent(

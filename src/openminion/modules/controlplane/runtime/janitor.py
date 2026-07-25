@@ -36,7 +36,9 @@ class ControlPlaneJanitorResult:
 @dataclass
 class ControlPlaneJanitor:
     store: Any
-    policy: ControlPlaneRetentionPolicy = field(default_factory=ControlPlaneRetentionPolicy)
+    policy: ControlPlaneRetentionPolicy = field(
+        default_factory=ControlPlaneRetentionPolicy
+    )
     audit_logger: object | None = None
     dry_run: bool = False
 

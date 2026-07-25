@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class Usage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -8,6 +9,7 @@ class Usage(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cost_estimate: Optional[float] = None
+
 
 class CandidateResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -25,6 +27,7 @@ class CandidateResponse(BaseModel):
     error: Optional[ResponseError] = None
     raw_artifact_ref: Optional[str] = None
 
+
 class SelectionResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -34,11 +37,13 @@ class SelectionResult(BaseModel):
     reasons: list[str] = Field(default_factory=list)
     risk_flags: Optional[list[str]] = None
 
+
 class DisagreementCluster(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     candidate_ids: list[str] = Field(default_factory=list)
     excerpt: str = ""
+
 
 class DisagreementReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -48,6 +53,7 @@ class DisagreementReport(BaseModel):
     json_diffs: Optional[dict[str, Any]] = None
     risk_flags: list[str] = Field(default_factory=list)
 
+
 class UsageTotal(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -55,6 +61,7 @@ class UsageTotal(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cost_estimate: Optional[float] = None
+
 
 class EnsembleResult(BaseModel):
     model_config = ConfigDict(extra="forbid")

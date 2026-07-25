@@ -132,9 +132,9 @@ def _duplicate_exhaustion_evidence_outcome(
     final_text = tool_evidence_closeout_text(outcome.state, reason=reason)
     if not final_text:
         return None
-    outcome.state.scratchpad[
-        "adaptive.duplicate_exhaustion_used_evidence_closeout"
-    ] = True
+    outcome.state.scratchpad["adaptive.duplicate_exhaustion_used_evidence_closeout"] = (
+        True
+    )
     return replace(
         outcome,
         termination_reason=ADAPTIVE_TERM_FINAL_TEXT,
@@ -167,7 +167,9 @@ def _has_recoverable_readonly_tool_failure(outcome: AdaptiveToolLoopOutcome) -> 
     """Return true when a read-only web/search failure can still be synthesized."""
     tool_results = [
         item
-        for item in list(outcome.state.scratchpad.get("adaptive.tool_results", []) or [])
+        for item in list(
+            outcome.state.scratchpad.get("adaptive.tool_results", []) or []
+        )
         if isinstance(item, dict)
     ]
     for item in tool_results:
@@ -180,9 +182,13 @@ def _has_recoverable_readonly_tool_failure(outcome: AdaptiveToolLoopOutcome) -> 
         ):
             continue
         code = (
-            str(item.get("error_code", "") or "")
-            or str(dict(item.get("data", {}) or {}).get("error_code", "") or "")
-        ).strip().upper()
+            (
+                str(item.get("error_code", "") or "")
+                or str(dict(item.get("data", {}) or {}).get("error_code", "") or "")
+            )
+            .strip()
+            .upper()
+        )
         if code in _NON_RECOVERABLE_TOOL_FAILURE_CODES:
             continue
         return True

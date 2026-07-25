@@ -294,7 +294,9 @@ def run_step(
             return confirmation_result
 
         with active_chat_phase("brain_tick_dispatch"):
-            return _dispatch_tick_entry(runner, state=state, logger=logger, tick_ctx=tick_ctx)
+            return _dispatch_tick_entry(
+                runner, state=state, logger=logger, tick_ctx=tick_ctx
+            )
     finally:
         elapsed = max(0, _runner_delegate("_now_ms", runner) - started)
         state.budgets_remaining.time_ms = max(

@@ -202,7 +202,12 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
 
         self.assertEqual(
             response.usage,
-            {"prompt_tokens": 123, "completion_tokens": 45, "total_tokens": 168},
+            {
+                "prompt_tokens": 123,
+                "completion_tokens": 45,
+                "total_tokens": 168,
+                "total_source": "provider",
+            },
         )
 
     def test_runtime_client_retries_with_shared_override_owner(self) -> None:
@@ -257,7 +262,7 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
 
         self.assertEqual(len(client.calls), 1)
 
-    def test_runtime_client_sanitizes_minimax_xml_tool_call_from_output_text(
+    def test_runtime_client_recovers_minimax_xml_tool_call_from_output_text(
         self,
     ) -> None:
         service = _service(client=_MinimaxXmlLeakRuntimeClient())
@@ -274,11 +279,13 @@ class RuntimeClientStructuredToolChoiceTests(unittest.TestCase):
             ],
         )
         response = asyncio.run(service._invoke_provider_request(weather_request))
-        self.assertEqual(response.tool_calls, [])
-        self.assertTrue(
-            response.text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
+        self.assertEqual(response.text, "")
+        self.assertEqual(len(response.tool_calls), 1)
+        self.assertEqual(response.tool_calls[0].name, "web.search")
+        self.assertEqual(
+            response.tool_calls[0].arguments,
+            {"query": "latest Iran news"},
         )
-        self.assertIn("Reason: unparseable", response.text)
 
     def test_runtime_client_sanitizes_unexecutable_minimax_xml_markup(self) -> None:
         service = _service(client=_RejectedMinimaxXmlLeakRuntimeClient())

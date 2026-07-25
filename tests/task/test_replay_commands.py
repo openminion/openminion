@@ -143,7 +143,9 @@ def test_rewind_task_to_checkpoint_creates_before_checkpoint_branch(
     assert branch.metadata["branch_mode"] == "before_checkpoint"
 
 
-def test_branch_task_from_checkpoint_rejects_unknown_branch_mode(tmp_path: Path) -> None:
+def test_branch_task_from_checkpoint_rejects_unknown_branch_mode(
+    tmp_path: Path,
+) -> None:
     manager, task_id = _task_with_checkpoint(tmp_path)
 
     with pytest.raises(ValueError, match="unsupported branch mode"):

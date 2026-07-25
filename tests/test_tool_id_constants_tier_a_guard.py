@@ -13,8 +13,8 @@ def _read(relative_path: str) -> str:
 def test_tier_a_model_tool_contract_imports_present() -> None:
     required_model_import_files = (
         "src/openminion/modules/tool/runtime/registry_categories.py",
-        "src/openminion/services/tool/selection.py",
-        "src/openminion/services/security/policy.py",
+        "src/openminion/modules/tool/selection/records.py",
+        "src/openminion/modules/policy/runtime/security.py",
     )
     for relpath in required_model_import_files:
         content = _read(relpath)

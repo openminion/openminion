@@ -4,6 +4,7 @@ from .context import ToolContext
 from .invocation import ToolResult
 from .schemas import HealthStatus, ToolCapabilities, ToolSchemaBundle
 
+
 @runtime_checkable
 class ToolMethod(Protocol):
     method_name: str
@@ -12,6 +13,7 @@ class ToolMethod(Protocol):
 
     def run(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult: ...
 
+
 @runtime_checkable
 class ToolDefinition(Protocol):
     name: str
@@ -19,6 +21,7 @@ class ToolDefinition(Protocol):
     capabilities: ToolCapabilities
 
     def schema(self) -> ToolSchemaBundle: ...
+
 
 @runtime_checkable
 class ToolPlugin(Protocol):

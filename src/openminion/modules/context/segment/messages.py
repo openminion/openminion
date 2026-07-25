@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..constants import CONTEXT_BUCKET_RECENT_WINDOW, CONTEXT_PURPOSE_DECIDE, RECENT_TURN_ASSISTANT_MAX_TOKENS
+from ..constants import (
+    CONTEXT_BUCKET_RECENT_WINDOW,
+    CONTEXT_PURPOSE_DECIDE,
+    RECENT_TURN_ASSISTANT_MAX_TOKENS,
+)
 from ..schemas import ContextSegment, RenderMessage, SessionTurn
 from .cache import segment_render_cache_metadata
 
@@ -80,7 +84,12 @@ def _bucket_order_index(bucket: str, bucket_order: list[str]) -> int:
 
 def _merge_system_segments(
     ordered: list[ContextSegment],
-) -> tuple[dict[str, list[str]], dict[str, dict[str, Any]], dict[str, list[str]], dict[str, list[str]]]:
+) -> tuple[
+    dict[str, list[str]],
+    dict[str, dict[str, Any]],
+    dict[str, list[str]],
+    dict[str, list[str]],
+]:
     merged_system: dict[str, list[str]] = {}
     merged_system_cache_control: dict[str, dict[str, Any]] = {}
     merged_system_segment_ids: dict[str, list[str]] = {}
@@ -99,7 +108,9 @@ def _merge_system_segments(
             if ref not in refs:
                 refs.append(ref)
         if segment.is_cacheable:
-            merged_system_cache_control.setdefault(segment.bucket, {"type": "ephemeral"})
+            merged_system_cache_control.setdefault(
+                segment.bucket, {"type": "ephemeral"}
+            )
     return (
         merged_system,
         merged_system_cache_control,
@@ -123,7 +134,9 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
         "evidence_refs",
         "turn_input",
     ]
-    ordered = sorted(segments, key=lambda segment: _bucket_order_index(segment.bucket, bucket_order))
+    ordered = sorted(
+        segments, key=lambda segment: _bucket_order_index(segment.bucket, bucket_order)
+    )
     (
         merged_system,
         merged_system_cache_control,
@@ -145,14 +158,22 @@ def segments_to_messages(segments: list[ContextSegment]) -> list[RenderMessage]:
                     cache_control=merged_system_cache_control.get(segment.bucket),
                     meta={
                         "block_kind": segment.bucket,
-                        "cache_eligible": bool(segment.bucket in merged_system_cache_control),
-                        "segment_ids": list(merged_system_segment_ids.get(segment.bucket, [])),
+                        "cache_eligible": bool(
+                            segment.bucket in merged_system_cache_control
+                        ),
+                        "segment_ids": list(
+                            merged_system_segment_ids.get(segment.bucket, [])
+                        ),
                         "refs": list(merged_system_refs.get(segment.bucket, [])),
                         **segment_render_cache_metadata(segment),
                     },
                 )
             )
-        elif segment.bucket == CONTEXT_BUCKET_RECENT_WINDOW or segment.role in {"user", "assistant", "tool"}:
+        elif segment.bucket == CONTEXT_BUCKET_RECENT_WINDOW or segment.role in {
+            "user",
+            "assistant",
+            "tool",
+        }:
             result.append(
                 RenderMessage(
                     role=segment.role,  # type: ignore[arg-type]

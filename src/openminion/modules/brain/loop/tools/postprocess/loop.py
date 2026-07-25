@@ -12,13 +12,18 @@ from openminion.modules.llm.schemas import Message
 
 from ..duplicate_batch import _reset_duplicate_batch_tracking
 from ..iteration.helpers import _MUTATING_FILE_TOOLS
-from ..contracts import AdaptiveToolLoopContext, AdaptiveToolLoopProfile
+from ..contracts import (
+    AdaptiveToolLoopContext,
+    AdaptiveToolLoopProfile,
+    semantic_batch_signature,
+)
 from .evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
     MUTATING_FILE_PATH_COUNTS_KEY,
 )
 from ..snapshot import LoopSnapshot, LoopToolCallRecord, compress_transcript
 from ..telemetry import _emit_iteration_event
+
 
 def _has_successful_mutating_file_tool_result(
     ordered_tool_results: list[tuple[Any, Any]],
@@ -155,7 +160,7 @@ def _track_repeated_tool_sequence(
     )
     if not sequence:
         return
-    iteration_tool_sequences.append(sequence)
+    iteration_tool_sequences.append((semantic_batch_signature(tool_calls),))
     if len(iteration_tool_sequences) > CIRCULAR_TOOL_SEQUENCE_LIMIT:
         del iteration_tool_sequences[:-CIRCULAR_TOOL_SEQUENCE_LIMIT]
     recent = iteration_tool_sequences[-CIRCULAR_TOOL_SEQUENCE_LIMIT:]
@@ -228,9 +233,8 @@ def _update_prefetch_state(
         prefetch_pending = None
     prefetch_predictor.observe(iter_tool_names)
     pred_tool, pred_conf = prefetch_predictor.predict(list(loop_state.tool_calls_made))
-    if (
-        pred_tool is not None
-        and pred_conf >= float(profile.speculative_prefetch_threshold)
+    if pred_tool is not None and pred_conf >= float(
+        profile.speculative_prefetch_threshold
     ):
         prefetch_pending = pred_tool
     loop_state.scratchpad["loop.prefetch_correct"] = prefetch_predictor.correct
@@ -291,7 +295,9 @@ def _loop_snapshot_from_state(
         allowed_tools=profile.allowed_tools or frozenset(),
         tool_results=[
             item
-            for item in list(loop_state.scratchpad.get("adaptive.tool_results", []) or [])
+            for item in list(
+                loop_state.scratchpad.get("adaptive.tool_results", []) or []
+            )
             if isinstance(item, dict)
         ][-24:],
     )

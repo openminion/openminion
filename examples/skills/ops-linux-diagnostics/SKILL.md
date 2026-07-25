@@ -1,11 +1,9 @@
-# Linux Operations Diagnostics
-
-## Purpose
+# Purpose
 
 Collect bounded, read-only evidence about a configured local, container, or SSH
 target without accepting model-authored shell commands.
 
-## Metadata
+# Metadata
 
 1. `skill_id`: `ops-linux-diagnostics`
 2. `capability_pack`: `ops-linux-readonly`
@@ -16,7 +14,7 @@ target without accepting model-authored shell commands.
 5. `forbidden_claims`: successful remediation without post-change evidence
 6. `evidence_expectations`: cite target and evidence identifiers
 
-## Procedure
+# Procedure
 
 1. List targets and select one explicit target identifier.
 2. Inspect the target before requesting observations.
@@ -24,7 +22,7 @@ target without accepting model-authored shell commands.
 4. Correlate typed evidence by target, profile, timestamp, and claim status.
 5. Report observed facts separately from hypotheses and unavailable evidence.
 
-## Stop Conditions
+# Stop Conditions
 
 1. Stop when the requested claim is supported by bounded evidence.
 2. Stop and report a blocked claim when the target, policy, transport, or

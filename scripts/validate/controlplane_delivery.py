@@ -5,16 +5,18 @@ import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SCAN_ROOT = ROOT / "src" / "openminion" / "modules" / "controlplane" / "channels"
+DEFAULT_SCAN_ROOT = (
+    ROOT / "src" / "openminion" / "modules" / "controlplane" / "channels"
+)
 
 
 def _is_fallback_context(lines: list[str], index: int) -> bool:
     for line in reversed(lines[: index + 1]):
         stripped = line.strip()
         if stripped.startswith("def ") or stripped.startswith("async def "):
-            return stripped.startswith("def _deliver_sync_fallback") or stripped.startswith(
-                "async def _deliver_sync_fallback"
-            )
+            return stripped.startswith(
+                "def _deliver_sync_fallback"
+            ) or stripped.startswith("async def _deliver_sync_fallback")
     return False
 
 
@@ -34,7 +36,9 @@ def find_violations(scan_root: Path) -> list[str]:
             if _is_fallback_context(lines, index):
                 continue
             rel = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
-            violations.append(f"{rel}:{index + 1}: synchronous self.deliver(payload, envelope) outside _deliver_sync_fallback")
+            violations.append(
+                f"{rel}:{index + 1}: synchronous self.deliver(payload, envelope) outside _deliver_sync_fallback"
+            )
     return violations
 
 

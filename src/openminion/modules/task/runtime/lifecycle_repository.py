@@ -20,7 +20,9 @@ from .lifecycle_checkpoints import TaskLifecycleRepositoryCheckpointMixin
 from .lifecycle_schema import TaskLifecycleRepositorySchemaMixin
 
 
-def _require_task_record(record: TaskLifecycleRecord | None, *, task_id: str) -> TaskLifecycleRecord:
+def _require_task_record(
+    record: TaskLifecycleRecord | None, *, task_id: str
+) -> TaskLifecycleRecord:
     if record is None:
         raise KeyError(f"task not found after write: {task_id}")
     return record
@@ -147,7 +149,9 @@ class TaskLifecycleRepository(
                 ),
             )
             self._conn.commit()
-        return _require_task_record(self.get(normalized_task_id), task_id=normalized_task_id)
+        return _require_task_record(
+            self.get(normalized_task_id), task_id=normalized_task_id
+        )
 
     def get(self, task_id: str) -> TaskLifecycleRecord | None:
         normalized = str(task_id or "").strip()

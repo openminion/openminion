@@ -80,7 +80,9 @@ def test_multichannel_daemon_uses_one_shared_runtime_and_routes_outbound(
         assert components is not None
         assert runtime.channels.get("telegram")._runtime is components.dispatcher
         assert runtime.channels.get("slack")._runtime is components.dispatcher
-        assert runtime.channels.get("telegram")._outbox_worker is components.outbox_worker
+        assert (
+            runtime.channels.get("telegram")._outbox_worker is components.outbox_worker
+        )
         assert runtime.channels.get("slack")._outbox_worker is components.outbox_worker
         assert components.store.get_chat_binding("telegram:100") is not None
         assert components.store.get_chat_binding("slack:T1:channel:D1") is not None

@@ -158,7 +158,9 @@ class TestCodingHandlerPureHelperBehavior:
 
     def test_verify_phase_allowed_tools_drop_mutating_writers(self) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Ship a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Ship a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.current_phase = "verify"
 
         allowed = runner._allowed_tools_for_current_phase(
@@ -183,7 +185,9 @@ class TestCodingHandlerPureHelperBehavior:
 
     def test_verify_phase_instruction_is_read_only(self) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Ship a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Ship a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.current_phase = "verify"
 
         runner._append_phase_instruction()
@@ -373,7 +377,9 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._last_verifier_candidate_payload = {
             "command": {"tool_name": "file.read"},
             "action_result": {"summary": "read ok"},
@@ -413,7 +419,9 @@ class TestCodingVerificationReserve:
 
     def test_reserved_verification_step_also_works_inside_verify_phase(self) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.messages = [
             Message(role="assistant", content="old context"),
@@ -465,7 +473,9 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.scratchpad = {
             "adaptive.tool_results": [
@@ -505,7 +515,9 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.scratchpad = {
             "coding.final_answer_reserve_used": True,
@@ -547,7 +559,9 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.messages = [
             Message(
@@ -598,7 +612,9 @@ class TestCodingVerificationReserve:
 
     def test_final_answer_reserve_budget_exhausted_salvages_final_summary(self) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.messages = [
             Message(
@@ -648,7 +664,9 @@ class TestCodingVerificationReserve:
     def test_final_answer_reserve_blocked_cap_salvages_final_summary(self) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 1
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.current_phase = "verify"
         runner._loop_state.termination_reason = "blocked_cap"
         runner._loop_state.messages = [
@@ -705,7 +723,9 @@ class TestCodingVerificationReserve:
     def test_advance_plan_after_phase_blocks_at_self_correction_cap(self) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 2
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._loop_state.messages = [
             Message(
                 role="tool",
@@ -735,7 +755,9 @@ class TestCodingVerificationReserve:
         emitted: list[dict[str, object]] = []
         runner = CodingProfileRunner()
         runner._max_self_corrections = 2
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.requires_file_change = True
         runner._loop_state.scratchpad = {}
         ctx = SimpleNamespace(
@@ -804,7 +826,9 @@ class TestCodingVerificationReserve:
     ) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 1
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.requires_file_change = True
         runner._loop_state.scratchpad = {}
         ctx = SimpleNamespace(
@@ -836,7 +860,9 @@ class TestCodingVerificationReserve:
     ) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 0
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.requires_file_change = True
         runner._loop_state.scratchpad = {}
         ctx = SimpleNamespace(
@@ -863,7 +889,9 @@ class TestCodingVerificationReserve:
     ) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 1
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.requires_file_change = True
         runner._loop_state.scratchpad = {"coding.verify_gate_blocks": 1}
         ctx = SimpleNamespace(
@@ -887,7 +915,9 @@ class TestCodingVerificationReserve:
         emitted: list[dict[str, object]] = []
         runner = CodingProfileRunner()
         runner._max_self_corrections = 2
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.requires_file_change = True
         runner._loop_state.scratchpad = {}
         ctx = SimpleNamespace(
@@ -927,12 +957,90 @@ class TestCodingVerificationReserve:
             for status in emitted
         )
 
+    def test_missing_write_retry_continues_inside_same_coding_turn(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._max_self_corrections = 2
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.scratchpad = {}
+        ctx = SimpleNamespace(
+            state=SimpleNamespace(task_backed_checkpoint_id=None),
+            emit_status=lambda **kwargs: None,
+            respond=lambda **kwargs: SimpleNamespace(
+                kind="assistant",
+                working_state=ctx.state,
+                **kwargs,
+            ),
+        )
+        outcome = AdaptiveToolLoopOutcome(
+            profile_name="coding_v1",
+            mode_name="act_coding",
+            termination_reason=CODING_TERM_FINAL_TEXT,
+            state=runner._as_adaptive_state(runner._loop_state),
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            final_text="I'll create the files now.",
+        )
+
+        result = runner._handle_iteration_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=outcome.allowed_tools,
+        )
+
+        assert result is None
+        assert (
+            runner._loop_state.scratchpad["coding.verify_gate_reason"]
+            == "missing_implementation_write"
+        )
+        assert (
+            runner._loop_state.scratchpad["coding.required_write_direct_tool"]
+            == "file.write"
+        )
+        assert runner._loop_state.direct_tool_turn is not None
+        assert "file.write" in runner._loop_state.messages[-1].content
+
+    def test_initial_implement_phase_stages_file_writer_for_explicit_file_task(
+        self,
+    ) -> None:
+        runner = CodingProfileRunner()
+        runner._coding_plan = CodingPlan.fallback(
+            "Create a tiny Python function.",
+            include_verify=True,
+        )
+        runner._coding_plan.requires_file_change = True
+        runner._loop_state.messages = [
+            Message(
+                role="user",
+                content=(
+                    "Create a tiny Python function and one minimal check. Use "
+                    "file tools for files."
+                ),
+            )
+        ]
+
+        runner._stage_initial_write_if_required()
+
+        assert (
+            runner._loop_state.scratchpad["coding.required_write_direct_tool"]
+            == "file.write"
+        )
+        assert runner._loop_state.direct_tool_turn is not None
+        assert runner._loop_state.direct_tool_turn.requested_tool_names == (
+            "file.write",
+        )
+
     def test_duplicate_tool_stop_gets_one_direct_write_retry_at_verify_cap(
         self,
     ) -> None:
         runner = CodingProfileRunner()
         runner._max_self_corrections = 1
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.requires_file_change = True
         runner._loop_state.scratchpad = {
             "adaptive.tool_results": [
@@ -1087,7 +1195,7 @@ class TestCodingVerificationReserve:
             final_text=json.dumps(
                 {
                     "path": "test_project/pyproject.toml",
-                    "content": "[project]\nname = \"test-project\"\n",
+                    "content": '[project]\nname = "test-project"\n',
                 }
             ),
         )
@@ -1191,7 +1299,9 @@ class TestCodingVerificationReserve:
         emitted: list[dict[str, object]] = []
         runner = CodingProfileRunner()
         runner._max_self_corrections = 2
-        runner._coding_plan = CodingPlan.fallback("Build a tiny CLI.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Build a tiny CLI.", include_verify=True
+        )
         runner._coding_plan.requires_file_change = True
         runner._loop_state.scratchpad = {
             "adaptive.tool_results": [
@@ -1286,7 +1396,9 @@ class TestCodingVerificationReserve:
         )
         assert "file.write" in runner._loop_state.messages[-1].content
         assert runner._loop_state.direct_tool_turn is not None
-        assert runner._loop_state.direct_tool_turn.requested_tool_names == ("file.write",)
+        assert runner._loop_state.direct_tool_turn.requested_tool_names == (
+            "file.write",
+        )
         assert any(
             status.get("payload", {}).get("coding.verify_gate_reason")
             == "readonly_dead_end_missing_write"
@@ -1344,7 +1456,9 @@ class TestCodingVerificationReserve:
         )
         assert "file.write" in runner._loop_state.messages[-1].content
         assert runner._loop_state.direct_tool_turn is not None
-        assert runner._loop_state.direct_tool_turn.requested_tool_names == ("file.write",)
+        assert runner._loop_state.direct_tool_turn.requested_tool_names == (
+            "file.write",
+        )
         assert any(
             status.get("payload", {}).get("coding.verify_gate_reason")
             == "missing_implementation_write"
@@ -1412,7 +1526,9 @@ class TestCodingVerificationReserve:
         self,
     ) -> None:
         runner = CodingProfileRunner()
-        runner._coding_plan = CodingPlan.fallback("Explain this module.", include_verify=True)
+        runner._coding_plan = CodingPlan.fallback(
+            "Explain this module.", include_verify=True
+        )
         runner._coding_plan.requires_file_change = False
         runner._loop_state.scratchpad = {}
         ctx = SimpleNamespace(

@@ -21,7 +21,11 @@ from ..contracts import (
     AdaptiveToolLoopState,
     resolve_allowed_tools,
 )
-from ..plan_control import PLAN_TOOL_NAME, plan_tool_enabled, with_enabled_plan_tool_spec
+from ..plan_control import (
+    PLAN_TOOL_NAME,
+    plan_tool_enabled,
+    with_enabled_plan_tool_spec,
+)
 from ..response_payloads import (
     _CONFIDENT_COMPLETE_GUIDANCE,
     _DELEGATION_RESULT_SUMMARY_GUIDANCE,

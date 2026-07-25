@@ -19,7 +19,9 @@ from scripts.common.terminal_output import emit_json_report  # noqa: E402
 DEFAULT_CEILING = 20
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SOURCE_ROOT = REPO_ROOT / "src" / "openminion"
-DEFAULT_BASELINE = REPO_ROOT / "scripts" / "baselines" / "schema_class_count_baseline.tsv"
+DEFAULT_BASELINE = (
+    REPO_ROOT / "scripts" / "baselines" / "schema_class_count_baseline.tsv"
+)
 
 
 @dataclass(frozen=True)
@@ -40,9 +42,13 @@ def count_top_level_classes(path: Path) -> int:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise SystemExit(f"validate_schema_class_count: cannot read {path}: {exc}") from exc
+        raise SystemExit(
+            f"validate_schema_class_count: cannot read {path}: {exc}"
+        ) from exc
     except SyntaxError as exc:
-        raise SystemExit(f"validate_schema_class_count: cannot parse {path}: {exc}") from exc
+        raise SystemExit(
+            f"validate_schema_class_count: cannot parse {path}: {exc}"
+        ) from exc
     return sum(isinstance(node, ast.ClassDef) for node in tree.body)
 
 
@@ -195,8 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             ("baseline entries", metrics["baseline_entries"]),
         ),
         findings=[
-            f"{finding.code}: {finding.path} — {finding.detail}"
-            for finding in findings
+            f"{finding.code}: {finding.path} — {finding.detail}" for finding in findings
         ],
         ok_message="schema class-count baseline is clean.",
         report_stream=sys.stderr,

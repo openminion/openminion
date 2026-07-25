@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+
 import json
 
 from tests.e2e.project_worker.harness import (
@@ -10,6 +13,8 @@ from tests.e2e.project_worker.harness import (
     soak_pilot_specs,
     write_project_pilot_artifacts,
 )
+
+pytestmark = pytest.mark.e2e
 
 
 def test_project_worker_pilot_scenarios_are_registered() -> None:

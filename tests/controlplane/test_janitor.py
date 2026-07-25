@@ -25,7 +25,9 @@ class _FakeStore:
         self.deleted.append(table)
         return self.counts.get(table, 0)
 
-    def _query_dicts(self, sql: str, _params: tuple[object, ...]) -> list[dict[str, int]]:
+    def _query_dicts(
+        self, sql: str, _params: tuple[object, ...]
+    ) -> list[dict[str, int]]:
         table = sql.split(" FROM ", 1)[1].split(" WHERE ", 1)[0].strip()
         return [{"count": self.counts.get(table, 0)}]
 

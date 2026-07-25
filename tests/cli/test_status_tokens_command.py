@@ -215,8 +215,8 @@ def test_session_store_factory_uses_configured_record_backend(
     captured = {}
     sentinel = object()
     monkeypatch.setattr(
-        "openminion.cli.commands.status.session_store.load_cli_manager",
-        lambda _path: manager,
+        "openminion.cli.commands.status.session_store.load_cli_manager_from_args",
+        lambda _args: manager,
     )
 
     def _build(**kwargs):

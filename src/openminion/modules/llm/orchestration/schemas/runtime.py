@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class TraceContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -10,12 +11,14 @@ class TraceContext(BaseModel):
     agent_id: Optional[str] = None
     task_id: Optional[str] = None
 
+
 class RequestBudget(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     timeout_ms: int = 30000
     max_tokens: int = 1024
     max_cost: Optional[float] = None
+
 
 class RuntimeLLMRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")

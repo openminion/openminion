@@ -137,7 +137,9 @@ def _disabled_handoff_wait_response(
     logger: CanonicalEventLogger,
     user_input: str | None,
 ) -> Any | None:
-    if bool(getattr(getattr(runner, "options", None), "request_handoff_enabled", False)):
+    if bool(
+        getattr(getattr(runner, "options", None), "request_handoff_enabled", False)
+    ):
         return None
     if str(user_input or "").strip():
         return None
@@ -157,9 +159,7 @@ def _disabled_handoff_wait_response(
         status="warning",
     )
     status = (
-        BRAIN_STATE_ERROR
-        if readiness_state == "blocked"
-        else BRAIN_STATE_WAITING_USER
+        BRAIN_STATE_ERROR if readiness_state == "blocked" else BRAIN_STATE_WAITING_USER
     )
     return _runner_delegate(
         "_respond_with_meta",
@@ -636,7 +636,10 @@ def _normalize_confirmation_replay_result(
     result: Any,
     replay_reason_code: str,
 ) -> Any | None:
-    if replay_reason_code != "confirmation_replay" or result.status != BRAIN_STATE_ACTIVE:
+    if (
+        replay_reason_code != "confirmation_replay"
+        or result.status != BRAIN_STATE_ACTIVE
+    ):
         return None
     action_result = getattr(result, "action_result", None)
     outputs = getattr(action_result, "outputs", None)

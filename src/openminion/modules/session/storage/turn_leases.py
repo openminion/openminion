@@ -150,7 +150,10 @@ class SessionTurnLeaseStore:
                 (sid, now),
             )
             if current is not None:
-                if str(current["owner"]) == lease_owner and str(current["request_id"]) == request:
+                if (
+                    str(current["owner"]) == lease_owner
+                    and str(current["request_id"]) == request
+                ):
                     renewed = self._renew_locked(
                         session_id=sid,
                         owner=lease_owner,

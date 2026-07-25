@@ -84,10 +84,9 @@ def test_supervisor_starts_and_stops_channels_and_outbox() -> None:
 
     supervisor.start()
     wait_until(
-        lambda: telegram.started
-        and slack.started
-        and inbox.calls > 0
-        and outbox.calls > 0
+        lambda: (
+            telegram.started and slack.started and inbox.calls > 0 and outbox.calls > 0
+        )
     )
     running = supervisor.status()
 

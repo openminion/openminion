@@ -33,4 +33,3 @@ def test_request_readiness_operation_approval_status_is_distinct() -> None:
 
     assert status.status_key == "awaiting_confirmation"
     assert "confirmation" in format_phase_status_text(status).lower()
-

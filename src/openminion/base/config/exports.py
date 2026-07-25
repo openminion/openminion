@@ -1,9 +1,8 @@
 """Lazy export table for the base config package."""
 
-from __future__ import annotations
-
 from typing import Any
 
+# fmt: off
 LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     'ActionPolicyConfig': ('.core', 'ActionPolicyConfig'),
     'ActionPolicyMatchConfig': ('.core', 'ActionPolicyMatchConfig'),
@@ -87,6 +86,7 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     'validate_for_provider': ('.env.schema', 'validate_for_provider'),
     'validate_runtime_core': ('.env.schema', 'validate_runtime_core'),
 }
+# fmt: on
 
 PUBLIC_EXPORTS = list(LAZY_EXPORTS)
 

@@ -107,4 +107,3 @@ def test_all_markers_use_valid_style_tokens() -> None:
     ]
     for _, token in markers:
         assert isinstance(token, StyleToken)
-

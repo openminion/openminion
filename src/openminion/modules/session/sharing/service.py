@@ -82,7 +82,9 @@ def reject_forbidden_token_transport(
 ) -> None:
     keys = {str(key).lower() for key in dict(query_args or {})}
     if keys & _FORBIDDEN_QUERY_KEYS:
-        raise SessionShareTokenTransportError("share tokens must use Authorization: Bearer")
+        raise SessionShareTokenTransportError(
+            "share tokens must use Authorization: Bearer"
+        )
     if "share_token" in str(cookies or "").lower():
         raise SessionShareTokenTransportError("share tokens are forbidden in cookies")
 
@@ -115,7 +117,9 @@ class SessionShareService:
     def _resolve_record_store(store: Any) -> RecordStore:
         record_store = getattr(store, "_record_store", None)
         if record_store is None:
-            raise TypeError("session sharing requires a session store with a record store")
+            raise TypeError(
+                "session sharing requires a session store with a record store"
+            )
         return record_store
 
     def create_share(
@@ -138,7 +142,9 @@ class SessionShareService:
             created_by=str(created_by or "operator"),
             created_at=_to_iso(current),
             expires_at=_to_iso(current + timedelta(seconds=max(1, int(ttl_seconds)))),
-            projection_policy=dict(projection_policy or {"mode": "structural_read_only"}),
+            projection_policy=dict(
+                projection_policy or {"mode": "structural_read_only"}
+            ),
             meta={"transport": "authorization_bearer"},
         )
         self._record_store.insert(
@@ -179,7 +185,9 @@ class SessionShareService:
         self._audit(record.session_id, _SESSION_SHARE_EVENTS["accessed"], record)
         return projection
 
-    def revoke_share(self, share_id: str, *, now: datetime | None = None) -> SessionShareRecordV1:
+    def revoke_share(
+        self, share_id: str, *, now: datetime | None = None
+    ) -> SessionShareRecordV1:
         record = self.get_share(share_id)
         if record is None:
             raise SessionShareNotFoundError("session share not found")
@@ -200,7 +208,9 @@ class SessionShareService:
 
     def list_shares(self, session_id: str) -> list[dict[str, Any]]:
         rows = self._record_store.query_rows(
-            "session_shares", where={"session_id": str(session_id)}, order="created_at DESC"
+            "session_shares",
+            where={"session_id": str(session_id)},
+            order="created_at DESC",
         )
         return [_record_from_row(row).public_dict() for row in rows]
 
@@ -215,7 +225,11 @@ class SessionShareService:
             WHERE session_id = ? AND event_type = ?
               AND payload_json LIKE ?
             """,
-            (record.session_id, _SESSION_SHARE_EVENTS["accessed"], f'%"share_id":"{share_id}"%'),
+            (
+                record.session_id,
+                _SESSION_SHARE_EVENTS["accessed"],
+                f'%"share_id":"{share_id}"%',
+            ),
         )
         return int(rows[0]["count"]) if rows else 0
 
@@ -264,10 +278,14 @@ class SessionShareService:
             redaction="none",
         )
 
-    def _enforce_rate_limit(self, token_hash: str, *, now: datetime | None = None) -> None:
+    def _enforce_rate_limit(
+        self, token_hash: str, *, now: datetime | None = None
+    ) -> None:
         current = now or _utc_now()
         cutoff = current - timedelta(seconds=max(1, int(self.window_seconds)))
-        attempts = [item for item in self._attempts.get(token_hash, []) if item > cutoff]
+        attempts = [
+            item for item in self._attempts.get(token_hash, []) if item > cutoff
+        ]
         attempts.append(current)
         self._attempts[token_hash] = attempts
         if len(attempts) > max(1, int(self.rate_limit)):
@@ -279,7 +297,9 @@ class SessionShareService:
 
     def _require_session(self, session_id: str) -> None:
         if self.store.get_session(session_id) is None:
-            raise SessionShareError("session not found", details={"session_id": session_id})
+            raise SessionShareError(
+                "session not found", details={"session_id": session_id}
+            )
 
 
 SESSION_SHARING_SCHEMA: tuple[str, ...] = (

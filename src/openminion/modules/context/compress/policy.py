@@ -77,7 +77,9 @@ class PolicyResolver:
         )
 
     # Internal helpers -----------------------------------------------------
-    def _resolve_prepass(self, policy: CompressionPolicy) -> tuple[str | None, list[str]]:
+    def _resolve_prepass(
+        self, policy: CompressionPolicy
+    ) -> tuple[str | None, list[str]]:
         warnings: list[str] = []
         method_id = policy.method_prepass
         if not method_id or method_id.lower() == "none":

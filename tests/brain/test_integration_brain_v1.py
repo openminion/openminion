@@ -429,10 +429,8 @@ class IntegrationBrainV1Tests(unittest.TestCase):
             )
             self.assertIn(yes_output.status, {"active", "waiting_user"})
             self.assertIsNone(yes_output.working_state.pending_confirmation_command)
-            if yes_output.status == "active":
-                self.assertEqual(yes_output.working_state.cursor, 1)
-            else:
-                self.assertEqual(yes_output.working_state.cursor, 0)
+            self.assertEqual(yes_output.working_state.cursor, 1)
+            if yes_output.status == "waiting_user":
                 self.assertEqual(yes_output.working_state.phase, "CLARIFY")
                 self.assertIn(
                     "could not safely determine the next step",
@@ -479,6 +477,6 @@ class IntegrationBrainV1Tests(unittest.TestCase):
                 self.assertEqual(no_output.working_state.cursor, 0)
                 self.assertEqual(no_output.working_state.phase, "CLARIFY")
                 self.assertIn(
-                    "could not safely determine the next step",
+                    "post-confirmation judgment is unavailable",
                     str(no_output.message or "").lower(),
                 )

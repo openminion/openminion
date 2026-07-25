@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from openminion.modules.controlplane.runtime.audit import AuditEvent, AuditLogger
-from openminion.modules.controlplane.runtime.health_probe import ControlPlaneHealthProbeSidecar
+from openminion.modules.controlplane.runtime.health_probe import (
+    ControlPlaneHealthProbeSidecar,
+)
 from openminion.modules.controlplane.runtime.janitor import ControlPlaneJanitor
 from openminion.modules.controlplane.runtime.metrics import (
     MetricsAuditSink,
@@ -53,15 +55,26 @@ def test_observability_e2e_keeps_audit_metrics_health_and_janitor_consistent() -
     ready, readiness = sidecar.readiness()
 
     assert len(store.events) == 5
-    assert metrics.counter_value(
-        "controlplane_inbound_total", labels={"channel": "telegram", "outcome": "accepted"}
-    ) == 1
-    assert metrics.counter_value(
-        "controlplane_inbound_total", labels={"channel": "slack", "outcome": "deny"}
-    ) == 1
-    assert metrics.counter_value(
-        "controlplane_delivery_total", labels={"channel": "slack", "status": "failed"}
-    ) == 1
+    assert (
+        metrics.counter_value(
+            "controlplane_inbound_total",
+            labels={"channel": "telegram", "outcome": "accepted"},
+        )
+        == 1
+    )
+    assert (
+        metrics.counter_value(
+            "controlplane_inbound_total", labels={"channel": "slack", "outcome": "deny"}
+        )
+        == 1
+    )
+    assert (
+        metrics.counter_value(
+            "controlplane_delivery_total",
+            labels={"channel": "slack", "status": "failed"},
+        )
+        == 1
+    )
     assert janitor_result.deleted["cp_audit_events"] == 1
     assert ready is True
     assert readiness["audit"]["healthy"] is True

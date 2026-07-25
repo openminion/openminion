@@ -106,7 +106,9 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
             raw_body=raw_body,
         )
 
-    def _handle_turn_stream(self, *, body: dict[str, Any], request_id: str | None) -> None:
+    def _handle_turn_stream(
+        self, *, body: dict[str, Any], request_id: str | None
+    ) -> None:
         from openminion.api.server.streaming import handle_turn_stream_request
 
         handle_turn_stream_request(
@@ -149,7 +151,9 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         self._write_json(status, response)
 
     def _write_sse_event(self, *, event: str, data: object) -> None:
-        self.wfile.write(f"event: {event}\ndata: {_json_dumps(data)}\n\n".encode("utf-8"))
+        self.wfile.write(
+            f"event: {event}\ndata: {_json_dumps(data)}\n\n".encode("utf-8")
+        )
         self.wfile.flush()
 
     def _write_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -158,7 +162,9 @@ class _OpenMinionAPIHandler(BaseHTTPRequestHandler):
         meta = payload.get("meta", {})
         if request_id := meta.get("request_id"):
             self.send_header("X-Request-ID", request_id)
-        if (retry_after_ms := payload.get("error", {}).get("retry_after_ms")) is not None:
+        if (
+            retry_after_ms := payload.get("error", {}).get("retry_after_ms")
+        ) is not None:
             self.send_header("Retry-After", str(max(1, int(retry_after_ms) // 1000)))
         if meta.get("path") == "/metrics":
             self.send_header("Cache-Control", "no-store")
@@ -199,7 +205,9 @@ class _OpenMinionThreadingHTTPServer(ThreadingHTTPServer):
             super().server_close()
 
 
-def _start_sse_stream_response(handler: _OpenMinionAPIHandler, request_id: str | None) -> None:
+def _start_sse_stream_response(
+    handler: _OpenMinionAPIHandler, request_id: str | None
+) -> None:
     handler.send_response(int(HTTPStatus.OK))
     handler.send_header("Content-Type", "text/event-stream")
     handler.send_header("Cache-Control", "no-cache")

@@ -155,27 +155,15 @@ def normalize_provider_response(
     else:
         thinking = []
 
-    if (
-        text
-        and not tool_calls
-        and (
-            detect_raw_envelope(text)
-            or detect_raw_tool_markup(text)
-            or detect_raw_xml_tool_wrapper(text)
-        )
-    ):
-        parse_result = normalize_tool_calls(
-            assistant_text=text,
-            provider_name=provider_name,
-            model_name=model_name or model,
-            allowed_tool_names=allowed_tool_names,
-        )
-        for key, value in parse_result.metadata.items():
-            normalization.setdefault(key, value)
-        sanitized_text = sanitize_envelope_leak(text, metadata=parse_result.metadata)
-        if sanitized_text != text:
-            normalization["envelope_sanitized"] = True
-            text = sanitized_text
+    text, tool_calls, finish_reason = _normalize_fallback_tool_markup(
+        text=text,
+        tool_calls=tool_calls,
+        finish_reason=finish_reason,
+        normalization=normalization,
+        provider_name=provider_name,
+        model_name=model_name or model,
+        allowed_tool_names=allowed_tool_names,
+    )
 
     if not text and not tool_calls and effective_recover_empty_payload:
         text = effective_fallback_text.strip() or _EMPTY_PROVIDER_RESPONSE_TEXT
@@ -199,6 +187,42 @@ def normalize_provider_response(
         normalization=normalization,
         thinking=thinking,
     )
+
+
+def _normalize_fallback_tool_markup(
+    *,
+    text: str,
+    tool_calls: list[ProviderToolCall],
+    finish_reason: str,
+    normalization: dict[str, Any],
+    provider_name: str,
+    model_name: str,
+    allowed_tool_names: Sequence[str] | None,
+) -> tuple[str, list[ProviderToolCall], str]:
+    has_markup = (
+        detect_raw_envelope(text)
+        or detect_raw_tool_markup(text)
+        or detect_raw_xml_tool_wrapper(text)
+    )
+    if not text or tool_calls or not has_markup:
+        return text, tool_calls, finish_reason
+
+    parse_result = normalize_tool_calls(
+        assistant_text=text,
+        provider_name=provider_name,
+        model_name=model_name,
+        allowed_tool_names=allowed_tool_names,
+    )
+    for key, value in parse_result.metadata.items():
+        normalization.setdefault(key, value)
+    if parse_result.calls:
+        normalization["fallback_tool_calls_promoted"] = True
+        return "", _normalize_tool_calls(parse_result.calls), "tool_calls"
+
+    sanitized_text = sanitize_envelope_leak(text, metadata=parse_result.metadata)
+    if sanitized_text != text:
+        normalization["envelope_sanitized"] = True
+    return sanitized_text, tool_calls, finish_reason
 
 
 def _coerce_provider_response(raw_response: ProviderResponse | Any) -> ProviderResponse:

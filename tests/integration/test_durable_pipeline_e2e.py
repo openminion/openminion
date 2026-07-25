@@ -162,9 +162,9 @@ def test_durable_pipeline_full_flow(tmp_path: Path) -> None:
             ev for ev in audit_logger.events if ev.event_type == "cp.inbox.enqueued"
         ]
         assert inbox_enqueue_events, _audit_event_types(audit_logger)
-        assert (
-            inbox_enqueue_events[-1].details or {}
-        ).get("inbox_id") == inbox_row["inbox_id"]
+        assert (inbox_enqueue_events[-1].details or {}).get("inbox_id") == inbox_row[
+            "inbox_id"
+        ]
 
         inbox_dispatch_events = [
             ev for ev in audit_logger.events if ev.event_type == "cp.chat.dispatched"

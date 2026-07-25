@@ -102,7 +102,9 @@ def _handle_graph_error(exc: KnowledgeGraphError, *, as_json: bool) -> int:
     else:
         print(f"Graph viewer unavailable: {exc.message}", file=sys.stderr)
         details = dict(exc.details)
-        suggestions = details.get("suggested_commands") or details.get("suggested_command")
+        suggestions = details.get("suggested_commands") or details.get(
+            "suggested_command"
+        )
         if isinstance(suggestions, str) and suggestions:
             print(f"Next: {suggestions}", file=sys.stderr)
         elif isinstance(suggestions, list):

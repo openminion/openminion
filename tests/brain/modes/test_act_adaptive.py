@@ -1140,10 +1140,10 @@ def test_act_adaptive_requires_typed_finalization_after_substantive_tool_work() 
 
     result = ActLoopMode().execute(ctx)
 
-    assert result.status == "error"
+    assert result.status == "done"
     assert result.action_result is not None
-    assert result.action_result.error is not None
-    assert result.action_result.error.code == "act_finalization_contract_missing"
+    assert result.action_result.error is None
+    assert "tool evidence" in str(result.message or "").lower()
     assert len(llm_client.calls) == 4
     retry_messages = llm_client.calls[2]["messages"]
     assert any(

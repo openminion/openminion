@@ -17,9 +17,7 @@ from scripts.validate.focus.widget_isolation import main as validate_widget_isol
 
 Check = tuple[str, Callable[[list[str]], int]]
 
-CHECKS: tuple[Check, ...] = (
-    ("focus_widget_isolation", validate_widget_isolation),
-)
+CHECKS: tuple[Check, ...] = (("focus_widget_isolation", validate_widget_isolation),)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

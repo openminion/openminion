@@ -125,9 +125,7 @@ def test_graph_viewer_layer_does_not_replace_durable_memory_backend() -> None:
 def test_workbench_action_fixture_uses_public_sophiagraph_imports_only() -> None:
     tree = ast.parse(Path(__file__).read_text())
     modules = {
-        node.module or ""
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom)
+        node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
     }
 
     assert "sophiagraph.server" not in modules

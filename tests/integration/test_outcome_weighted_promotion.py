@@ -47,6 +47,8 @@ def test_success_provenance_candidate_promotes_ahead_of_neutral_peer(
         title="Procedure: deploy with rollback rehearsal",
         content="Run a rollback rehearsal before rollout.",
         confidence=0.5,
+        claim_key="procedure:deploy_with_rollback_rehearsal",
+        source_class="user_input",
         meta={
             "reconfirmation_count": 1,
             "retrieval_hit_count": 1,

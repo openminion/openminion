@@ -4,7 +4,10 @@ import json
 from pathlib import Path
 
 from openminion.cli.parser.base import build_parser
-from openminion.modules.controlplane.contracts.models import InboundMessage, ParsedCommand
+from openminion.modules.controlplane.contracts.models import (
+    InboundMessage,
+    ParsedCommand,
+)
 from openminion.modules.controlplane.runtime.security import ScopeAuthorizer
 from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
 

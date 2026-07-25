@@ -55,7 +55,9 @@ def _recent_artifact_segments(
     ]
 
 
-def _tool_event_segments(runtime: _SegmentAssemblyRuntime, session_slice: SessionSlice) -> list[ContextSegment]:
+def _tool_event_segments(
+    runtime: _SegmentAssemblyRuntime, session_slice: SessionSlice
+) -> list[ContextSegment]:
     segments: list[ContextSegment] = []
     for tool_event in session_slice.recent_tool_events[:3]:
         excerpt = tool_event.excerpt.strip()
@@ -86,7 +88,9 @@ def _tool_event_segments(runtime: _SegmentAssemblyRuntime, session_slice: Sessio
     return segments
 
 
-def _artifact_digest_segments(runtime: _SegmentAssemblyRuntime, artifact_digests: list[ArtifactDigest]) -> list[ContextSegment]:
+def _artifact_digest_segments(
+    runtime: _SegmentAssemblyRuntime, artifact_digests: list[ArtifactDigest]
+) -> list[ContextSegment]:
     segments: list[ContextSegment] = []
     for artifact in artifact_digests[:10]:
         preview_lines = [f"Artifact: {artifact.ref}"]
@@ -131,7 +135,9 @@ def _plugin_evidence_segments(
     if not plugin_registry.retriever_names:
         return []
     segments: list[ContextSegment] = []
-    plugin_items = run_plugin_evidence_pipeline(request=request, query=request.query, k=10)
+    plugin_items = run_plugin_evidence_pipeline(
+        request=request, query=request.query, k=10
+    )
     runtime.bucket_stats["evidence_refs"]["total_available"] += len(plugin_items)
     for item in plugin_items:
         seg_id = f"plugin_ev:{item.ref}"
@@ -155,7 +161,9 @@ def _plugin_evidence_segments(
     return segments
 
 
-def _append_turn_input(runtime: _SegmentAssemblyRuntime, request: BuildPackRequest) -> None:
+def _append_turn_input(
+    runtime: _SegmentAssemblyRuntime, request: BuildPackRequest
+) -> None:
     turn_rendered, _ = _pidf_route_and_ledger(
         "user_message",
         request.query.strip(),

@@ -28,12 +28,7 @@ def _parse_json(raw: str | None, fallback: object) -> object:
 
 
 def _escape_like_token(value: str) -> str:
-    return (
-        str(value)
-        .replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
-    )
+    return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _create_identity_schema(record_store: RecordStore) -> None:

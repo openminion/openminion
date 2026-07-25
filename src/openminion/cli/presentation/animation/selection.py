@@ -82,4 +82,8 @@ def _resolve_explicit(
         raise AnimationSelectionError(str(exc)) from exc
 
 
-__all__ = ["AnimationSelectionError", "parse_animation_token", "resolve_focus_animation"]
+__all__ = [
+    "AnimationSelectionError",
+    "parse_animation_token",
+    "resolve_focus_animation",
+]

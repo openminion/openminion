@@ -287,7 +287,9 @@ def print_envelope(env: ResultEnvelope, json_out: bool) -> None:
 def _validate_request_args(spec: Any, req: CallRequest) -> dict[str, Any]:
     """Validate request args against the spec, raising INVALID_ARGUMENT on failure."""
     try:
-        return cast(dict[str, Any], spec.args_model.model_validate(req.args).model_dump())
+        return cast(
+            dict[str, Any], spec.args_model.model_validate(req.args).model_dump()
+        )
     except ValidationError as exc:
         raise ToolRuntimeError(
             "INVALID_ARGUMENT",

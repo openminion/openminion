@@ -497,12 +497,11 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 _debit_llm_usage(loop_ctx_adapter, shortlist_result)
             tool_specs = list(getattr(shortlist_result, "active_tool_specs", ()) or ())
             requestable_tool_specs = list(
-                getattr(shortlist_result, "requestable_tool_specs", ()) or full_tool_specs
+                getattr(shortlist_result, "requestable_tool_specs", ())
+                or full_tool_specs
             )
             shortlisting_scratchpad.update(shortlist_result.scratchpad_payload())
-            shortlisting_tokens = int(
-                getattr(shortlist_result, "total_tokens", 0) or 0
-            )
+            shortlisting_tokens = int(getattr(shortlist_result, "total_tokens", 0) or 0)
             if shortlisting_tokens > 0:
                 shortlisting_scratchpad["turn_progress_total_tokens_used"] = (
                     shortlisting_tokens

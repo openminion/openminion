@@ -460,7 +460,9 @@ class BrowserTool(Tool):
             },
         )
         provider_ctx = BrowserProviderContext(
-            tool_context=ctx.runtime if isinstance(ctx.runtime, RuntimeContext) else None,
+            tool_context=ctx.runtime
+            if isinstance(ctx.runtime, RuntimeContext)
+            else None,
             workspace_root=self._workspace_root(ctx),
             trace_id=ctx.trace_id,
             session_id=ctx.session_id,

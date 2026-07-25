@@ -816,7 +816,9 @@ def test_forced_tool_provider_request_includes_visible_canonical_schema(
     assert response.text == "Required tool call missing"
     assert len(provider.calls) == 2
     assert all(call.tool_choice == "required" for call in provider.calls)
-    assert all([spec.name for spec in call.tools] == ["weather"] for call in provider.calls)
+    assert all(
+        [spec.name for spec in call.tools] == ["weather"] for call in provider.calls
+    )
 
 
 def test_forced_unknown_tool_exits_unavailable_before_provider_call() -> None:

@@ -39,6 +39,8 @@ def test_runtime_telemetry_exporter_config_parses_and_round_trips() -> None:
         # does not set them; round-trip preserves the empty shape.
         "backend": "",
         "headers": {},
+        "noncritical_queue_capacity": 1024,
+        "queue_flush_timeout_seconds": 2.0,
     }
 
 

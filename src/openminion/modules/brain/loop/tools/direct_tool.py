@@ -578,7 +578,9 @@ def _matched_requested_direct_tool_call(
     requested_calls: Sequence[Any],
 ) -> Any | None:
     executed_name = str(getattr(tool_call, "name", "") or "").strip()
-    executed_arguments = _direct_tool_call_arguments(getattr(tool_call, "arguments", None))
+    executed_arguments = _direct_tool_call_arguments(
+        getattr(tool_call, "arguments", None)
+    )
     for requested_call in requested_calls:
         requested_name = str(getattr(requested_call, "name", "") or "").strip()
         requested_arguments = _direct_tool_call_arguments(
@@ -595,7 +597,9 @@ def _matched_requested_direct_tool_call(
             tool_call=tool_call,
             requested_name=requested_name,
             requested_arguments=requested_arguments,
-            requested_inputs=_direct_tool_call_inputs(getattr(requested_call, "inputs", None)),
+            requested_inputs=_direct_tool_call_inputs(
+                getattr(requested_call, "inputs", None)
+            ),
         )
     return None
 

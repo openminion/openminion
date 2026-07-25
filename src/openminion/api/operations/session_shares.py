@@ -142,7 +142,9 @@ def _handle_create_session_share(
     session_id: str,
     body: dict[str, Any] | None,
 ) -> RouteResult:
-    service, error = _share_service_or_error(ctx, path="/sessions/{id}/shares", session_id=session_id)
+    service, error = _share_service_or_error(
+        ctx, path="/sessions/{id}/shares", session_id=session_id
+    )
     if error is not None:
         return error
     assert service is not None
@@ -162,14 +164,22 @@ def _handle_create_session_share(
     )
 
 
-def _handle_list_session_shares(ctx: APIRouteContext, *, session_id: str) -> RouteResult:
-    service, error = _share_service_or_error(ctx, path="/sessions/{id}/shares", session_id=session_id)
+def _handle_list_session_shares(
+    ctx: APIRouteContext, *, session_id: str
+) -> RouteResult:
+    service, error = _share_service_or_error(
+        ctx, path="/sessions/{id}/shares", session_id=session_id
+    )
     if error is not None:
         return error
     assert service is not None
     return RouteResult(
         status=HTTPStatus.OK,
-        payload={"ok": True, "shares": service.list_shares(session_id), "meta": _meta()},
+        payload={
+            "ok": True,
+            "shares": service.list_shares(session_id),
+            "meta": _meta(),
+        },
         session_id=session_id,
     )
 
@@ -187,7 +197,9 @@ def _handle_access_session_share(
     try:
         reject_forbidden_token_transport(
             query_args=parse_qs(query or "", keep_blank_values=False),
-            cookies=(ctx.request_headers or {}).get("Cookie") if ctx.request_headers else None,
+            cookies=(ctx.request_headers or {}).get("Cookie")
+            if ctx.request_headers
+            else None,
         )
         projection = service.access_share(
             share_id=share_id,

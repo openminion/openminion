@@ -821,8 +821,7 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
             )
 
         assert any(
-            "session turn lease unavailable" in message
-            for message in captured.output
+            "session turn lease unavailable" in message for message in captured.output
         )
 
     def test_session_continuity_across_restart_with_explicit_session_id(self) -> None:

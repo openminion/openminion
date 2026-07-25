@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field as _dc_field
 from typing import Any, Optional
 
@@ -71,8 +69,6 @@ def _attach_progress_usage_metadata(
 
 @dataclass
 class _RoutingResult:
-    """Resolved routing state for a single gateway turn."""
-
     early_return: Optional[Message]
     normalized_request_id: str = ""
     normalized_inbound_metadata: dict[str, str] = _dc_field(default_factory=dict)

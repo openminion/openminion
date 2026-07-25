@@ -5,6 +5,7 @@ from .budget import BudgetCounters
 from .clarify import BrainMode, ClarifyPolicy, ClarifyQuestion
 from .mission import MissionState
 
+
 def _normalize_skill_ids(values: object) -> list[str]:
     if values is None:
         return []
@@ -21,6 +22,7 @@ def _normalize_skill_ids(values: object) -> list[str]:
         seen.add(lowered)
         normalized.append(text)
     return normalized
+
 
 class StepOutputEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -49,6 +51,7 @@ class StepOutputEntry(BaseModel):
         self.sub_intent_ids = normalize_sub_intent_ids(self.sub_intent_ids)
         return self
 
+
 class MetaDirectiveLogEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -56,6 +59,7 @@ class MetaDirectiveLogEntry(BaseModel):
     meta_state: str = Field(..., min_length=1)
     applied_at: str = Field(default_factory=iso_now)
     directive: dict[str, Any] = Field(default_factory=dict)
+
 
 class WorkingState(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -294,16 +298,14 @@ class WorkingState(BaseModel):
             return None
 
     def _sync_feasibility_reports(self) -> None:
-        if (
-            self.decision_feasibility_report is None
-            and isinstance(self.decision_feasibility_state, dict)
+        if self.decision_feasibility_report is None and isinstance(
+            self.decision_feasibility_state, dict
         ):
             self.decision_feasibility_report = self._feasibility_report_from_state(
                 self.decision_feasibility_state
             )
-        if (
-            self.pending_confirmation_feasibility_report is None
-            and isinstance(self.pending_confirmation_feasibility_state, dict)
+        if self.pending_confirmation_feasibility_report is None and isinstance(
+            self.pending_confirmation_feasibility_state, dict
         ):
             self.pending_confirmation_feasibility_report = (
                 self._feasibility_report_from_state(
@@ -351,6 +353,7 @@ class WorkingState(BaseModel):
         self._sync_feasibility_state_payloads()
         self._sync_intent_execution_states()
         return self
+
 
 class StepOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")

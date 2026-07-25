@@ -159,9 +159,7 @@ def test_local_readonly_matrix_preserves_explicit_claim_statuses() -> None:
         assert evidence.claim_status == expected
 
     assert len(evidence_ids) == len(set(evidence_ids))
-    evidence_by_profile = {
-        item.profile_id: item for item in service.list_evidence()
-    }
+    evidence_by_profile = {item.profile_id: item for item in service.list_evidence()}
     assert hostile in evidence_by_profile["logs.query"].stdout_preview
     assert evidence_by_profile["process.list"].claim_status == "observed"
 

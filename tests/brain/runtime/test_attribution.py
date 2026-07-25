@@ -37,8 +37,6 @@ def _record(
     return SimpleNamespace(record_id=record_id, meta=meta)
 
 
-
-
 def test_projection_emits_one_event_per_retrieved_id() -> None:
     records = [
         _record(
@@ -119,8 +117,6 @@ def test_projection_is_deterministic_and_idempotent() -> None:
     first = project_records_to_learning_events(records)
     second = project_records_to_learning_events(records)
     assert [e.model_dump() for e in first] == [e.model_dump() for e in second]
-
-
 
 
 def test_aggregate_groups_by_retrieved_record_with_bucket_counts() -> None:
@@ -226,8 +222,6 @@ def test_aggregate_distinct_traces_dedups_blank_trace_ids() -> None:
     # Two events share trace-1; one event has no trace id → 1 distinct
     # trace, not 2.
     assert readout.rows[0].distinct_traces == 1
-
-
 
 
 def test_schemas_do_not_expose_learning_happened_or_causal_fields() -> None:

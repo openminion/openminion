@@ -42,6 +42,7 @@ _RESPOND_ENVELOPE_RE = re.compile(
 FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE: str = _FINALIZATION_STATUS_FOLLOW_UP_GUIDANCE
 FINALIZATION_STATUS_RETRY_GUIDANCE: str = _FINALIZATION_STATUS_RETRY_GUIDANCE
 
+
 def _is_mutating_result(result: Any) -> bool:
     try:
         radius = tool_result_blast_radius(result)
@@ -208,9 +209,7 @@ def _unwrap_respond_envelope(text: str) -> tuple[str, dict[str, Any]] | None:
     match = _RESPOND_ENVELOPE_RE.match(text)
     if match is None:
         return None
-    payload_text = str(
-        match.group("call_payload") or match.group("tag_payload") or ""
-    )
+    payload_text = str(match.group("call_payload") or match.group("tag_payload") or "")
     try:
         parsed = json.loads(payload_text)
     except (json.JSONDecodeError, ValueError):

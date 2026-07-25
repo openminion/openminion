@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
+
 from openminion.modules.brain.diagnostics.status import (
     format_phase_status_text,
     phase_status_from_request_readiness,
 )
 from openminion.modules.brain.schemas import RequestReadiness
+
+pytestmark = pytest.mark.e2e
 
 
 def test_hlpe_focus_status_matrix_is_safe_without_live_provider() -> None:
@@ -60,4 +65,3 @@ def test_hlpe_focus_status_matrix_is_safe_without_live_provider() -> None:
     assert "plan review" in rendered["plan_review"].lower()
     assert "confirmation" in rendered["operation_approval"].lower()
     assert "Blocked" in rendered["blocked"]
-

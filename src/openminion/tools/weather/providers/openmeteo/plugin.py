@@ -291,7 +291,11 @@ def _retry_openmeteo_http_error(
         raise ToolRuntimeError(
             "RATE_LIMITED",
             f"{service_name} rate limit exceeded",
-            {"status_code": status_code, "url": request_url, "body": _truncate(body, 500)},
+            {
+                "status_code": status_code,
+                "url": request_url,
+                "body": _truncate(body, 500),
+            },
         ) from exc
     if status_code in WEATHER_OPENMETEO_RETRYABLE_STATUS_CODES and attempt < retries:
         _sleep_before_retry(attempt=attempt)

@@ -50,6 +50,8 @@ def test_phase4_multi_turn_auto_extract_promotion_and_capsule(tmp_path: Path) ->
             title="dark mode preference",
             content="I prefer dark mode.",
             confidence=0.7,
+            claim_key="user_preference:theme",
+            source_class="user_input",
             meta={"reconfirmation_count": 3, "retrieval_hit_count": 3},
         )
     )

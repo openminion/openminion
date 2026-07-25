@@ -34,8 +34,6 @@ def _emission(
     return SimpleNamespace(**fields)
 
 
-
-
 def test_projection_rejects_unknown_seam_id() -> None:
     with pytest.raises(KeyError):
         project_seam_emissions_to_facts([_emission()], seam_id="not_a_seam")  # type: ignore[arg-type]
@@ -84,8 +82,6 @@ def test_projection_skips_emission_with_no_extractable_mapping() -> None:
     emissions = [SimpleNamespace()]  # no details/content/attrs
     facts = project_seam_emissions_to_facts(emissions, seam_id="search_provider")
     assert facts == []
-
-
 
 
 def test_aggregate_groups_by_seam_id_and_reason_code() -> None:
@@ -187,8 +183,6 @@ def test_aggregate_earliest_latest_timestamps_sorted() -> None:
     readout = aggregate_failure_patterns(facts)
     assert readout.rows[0].earliest_recorded_at == "2026-05-13T10:00:00Z"
     assert readout.rows[0].latest_recorded_at == "2026-05-13T12:00:00Z"
-
-
 
 
 def test_schemas_do_not_expose_root_cause_or_pattern_label_fields() -> None:

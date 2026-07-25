@@ -34,7 +34,9 @@ class OnboardingWizardScreen(Screen):
                 yield Label("Step 1 of 3 - config path", id="onboarding-step-label")
                 with Vertical(id="onboarding-step-config", classes="wizard-step"):
                     yield Label("Config path:")
-                    yield Input(value=str(self._config_path), id="onboarding-config-path")
+                    yield Input(
+                        value=str(self._config_path), id="onboarding-config-path"
+                    )
                 with Vertical(
                     id="onboarding-step-provider",
                     classes="wizard-step --hidden",
@@ -126,7 +128,11 @@ class OnboardingWizardScreen(Screen):
             pass
 
     def _finish(self) -> None:
-        from openminion.base.config import AgentProfileConfig, OpenMinionConfig, save_config
+        from openminion.base.config import (
+            AgentProfileConfig,
+            OpenMinionConfig,
+            save_config,
+        )
 
         config_path = Path(
             self.query_one("#onboarding-config-path", Input).value.strip()
@@ -156,8 +162,6 @@ class OnboardingWizardScreen(Screen):
             config.providers.openrouter.model = model
         elif provider == "ollama":
             config.providers.ollama.model = model
-        config.agents = {
-            agent_id: AgentProfileConfig(name=agent_id, provider=provider)
-        }
+        config.agents = {agent_id: AgentProfileConfig(name=agent_id, provider=provider)}
         saved_path = save_config(config, str(config_path), home_root=self._home_root)
         self.app.exit(result=str(saved_path))

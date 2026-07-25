@@ -3,12 +3,14 @@ from .common import *
 from .invocation import ArtifactRef, ToolInvocation
 from .schemas import ToolCapabilities
 
+
 @dataclass
 class PolicyDecision:
     action: PolicyAction
     reason: str = ""
     code: str = "POLICY_DENIED"
     details: dict[str, Any] = field(default_factory=dict)
+
 
 @runtime_checkable
 class ArtifactSink(Protocol):
@@ -21,9 +23,11 @@ class ArtifactSink(Protocol):
         meta: Optional[dict[str, Any]] = None,
     ) -> ArtifactRef: ...
 
+
 @runtime_checkable
 class EventSink(Protocol):
     def emit(self, *, event_name: str, payload: dict[str, Any]) -> None: ...
+
 
 @runtime_checkable
 class PolicyHook(Protocol):
@@ -34,6 +38,7 @@ class PolicyHook(Protocol):
         ctx: "ToolContext",
         capabilities: ToolCapabilities,
     ) -> PolicyDecision: ...
+
 
 @dataclass
 class ToolContext:

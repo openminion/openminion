@@ -21,13 +21,11 @@ from openminion.modules.brain.schemas import (
 )
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
-    ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_CONFIDENT_COMPLETE,
     ADAPTIVE_TERM_DECOMPOSE_INVALID,
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
     ADAPTIVE_TERM_FINALIZATION_BLOCKED,
-    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_ITERATION_CAP,
     ADAPTIVE_TERM_JOB_PENDING,
@@ -3979,7 +3977,7 @@ def test_engine_retries_once_when_explicit_direct_tool_turn_returns_zero_call_su
     )
     assert len(runtime.calls) == 1
     assert any(
-        "explicit tool command for file.write" in str(message.content).lower()
+        "use file.write for the required files" in str(message.content).lower()
         for message in runtime.calls[0]["messages"]
         if getattr(message, "role", "") == "system"
     )
@@ -5072,9 +5070,12 @@ def test_engine_fails_closed_when_typed_finalization_remains_missing() -> None:
         tool_specs=_tool_specs("web.search", "web.fetch"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
-    assert outcome.error_message == (
-        "General act work ended without the required typed finalization_status contract."
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert "tool evidence:" in outcome.final_text
+    assert bool(
+        outcome.state.scratchpad.get(
+            "typed_finalization_contract_used_evidence_fallback"
+        )
     )
 
 
@@ -6208,7 +6209,7 @@ def test_engine_finalizes_from_evidence_when_duplicate_closure_returns_tools() -
 
     assert duplicate_outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert duplicate_outcome.final_text
-    assert "Result:" in duplicate_outcome.final_text
+    assert "result:" in duplicate_outcome.final_text
     assert "file.read" in duplicate_outcome.final_text
     assert "read a" in duplicate_outcome.final_text
     assert len(duplicate_ctx.commands) == 1
@@ -6413,7 +6414,9 @@ def test_engine_stops_on_budget_iteration_cap_and_nonrecoverable_tool_failure() 
         initial_messages=[Message(role="user", content="read once")],
         tool_specs=_tool_specs("file.read"),
     )
-    assert budget_outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
+    assert budget_outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert "tool evidence:" in budget_outcome.final_text
+    assert bool(budget_outcome.state.scratchpad.get("budget_used_evidence_fallback"))
 
     cap_runtime = _FakeRuntime(
         responses=[
@@ -7969,7 +7972,7 @@ def test_duplicate_pattern_finalization_uses_compact_evidence_fallback() -> None
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "Successful tool evidence" in outcome.final_text
+    assert "tool evidence:" in outcome.final_text
     assert "file.read: read a.py" in outcome.final_text
     assert len(runtime.calls) == 3
     final_messages = runtime.calls[-1]["messages"]

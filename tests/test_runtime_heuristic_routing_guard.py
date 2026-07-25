@@ -188,7 +188,7 @@ def test_structured_tool_call_response_can_seed_tool_decision_without_nl_parse()
     assert seeded_commands[0].args == {"path": "/tmp/demo.txt"}
 
 
-def test_explicit_backticked_tool_sequence_recovers_act_decision() -> None:
+def test_backticked_argument_bearing_tool_sequence_stays_model_owned() -> None:
     runner = _runner()
     state = _state()
     recovered = _recover_simple_tool_parity_decision(
@@ -209,13 +209,10 @@ def test_explicit_backticked_tool_sequence_recovers_act_decision() -> None:
         logger=MagicMock(),
         llm_call_id="llm-call-2",
     )
-    assert recovered is not None
-    assert recovered.mode == "act"
-    assert recovered.reason_code == "explicit_tool_sequence"
-    assert not list(getattr(recovered, "_seeded_commands", []) or [])
+    assert recovered is None
 
 
-def test_explicit_plain_tool_sequence_recovers_act_decision() -> None:
+def test_plain_argument_bearing_tool_sequence_stays_model_owned() -> None:
     runner = _runner()
     state = _state()
     recovered = _recover_simple_tool_parity_decision(
@@ -236,6 +233,4 @@ def test_explicit_plain_tool_sequence_recovers_act_decision() -> None:
         logger=MagicMock(),
         llm_call_id="llm-call-3",
     )
-    assert recovered is not None
-    assert recovered.mode == "act"
-    assert recovered.reason_code == "explicit_tool_sequence"
+    assert recovered is None

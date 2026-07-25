@@ -27,7 +27,7 @@ def test_run_room_create_adds_agents_and_prints_summary(capsys) -> None:
         data_root=None,
     )
 
-    with patch.object(room_command, "APIRuntime") as MockRuntime:
+    with patch("openminion.api.runtime.APIRuntime") as MockRuntime:
         MockRuntime.from_config_path.return_value = runtime
         result = room_command.run_room_create(args)
 
@@ -58,7 +58,7 @@ def test_run_room_invite_human_participant(capsys) -> None:
         data_root=None,
     )
 
-    with patch.object(room_command, "APIRuntime") as MockRuntime:
+    with patch("openminion.api.runtime.APIRuntime") as MockRuntime:
         MockRuntime.from_config_path.return_value = runtime
         result = room_command.run_room_invite(args)
 

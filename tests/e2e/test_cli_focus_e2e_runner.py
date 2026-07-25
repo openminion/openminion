@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
+
 import importlib.util
 from pathlib import Path
 import subprocess
 import sys
 from types import ModuleType
+
+pytestmark = pytest.mark.e2e
 
 
 _RUNNER_PATH = (

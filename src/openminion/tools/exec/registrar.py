@@ -58,7 +58,9 @@ def _exec_model_tools() -> tuple[Any, ...]:
     return (
         ModelToolDef(MODEL_EXEC_RUN, _EXEC_RUN_DESCRIPTION, {}, ("exec_run",)),
         ModelToolDef(MODEL_EXEC_POLL, "Poll process status", {}, ("exec_poll",)),
-        ModelToolDef(MODEL_EXEC_SEND_KEYS, "Send keys to process", {}, ("exec_send_keys",)),
+        ModelToolDef(
+            MODEL_EXEC_SEND_KEYS, "Send keys to process", {}, ("exec_send_keys",)
+        ),
         ModelToolDef(MODEL_EXEC_SUBMIT, "Submit new process", {}, ("exec_submit",)),
         ModelToolDef(MODEL_EXEC_PASTE, "Paste to process", {}, ("exec_paste",)),
         ModelToolDef(MODEL_EXEC_KILL, "Kill process", {}, ("exec_kill",)),
@@ -93,7 +95,6 @@ _EXEC_RUN_DESCRIPTION = (
     "host.metrics for disk, memory, and OS status; prefer structured file/web "
     "tools for reads, scaffolding, or web fetches."
 )
-
 
 
 REGISTRAR = ExecRegistrar()

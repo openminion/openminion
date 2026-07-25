@@ -37,6 +37,7 @@ def _append_text_segment(
     refs: list[str] | None = None,
     boundary_kind: str | None = None,
     seam_id: str | None = None,
+    pinned: bool = False,
 ) -> None:
     fitted = runtime.fit_section(section_key, text, token_limit)
     if not fitted.strip():
@@ -49,6 +50,7 @@ def _append_text_segment(
             "retrieval",
             f"{header}\n{fitted}",
             refs=refs,
+            pinned=pinned,
         )
     )
 
@@ -205,6 +207,7 @@ def _append_skill_or_procedure_segment(
             token_limit=runtime.budgets.skills_tokens,
             boundary_kind="skill_prompt",
             seam_id="modules.context.segment_assembly.skill_snippet",
+            pinned=True,
         )
         return
     if not procedure:

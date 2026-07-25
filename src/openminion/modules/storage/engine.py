@@ -112,7 +112,9 @@ def _effective_storage_engine_config(
         default_namespace=namespace,
         record_backend=str(config.record_backend),
         blob_backend=str(config.blob_backend),
-        vector_backend=None if config.vector_backend is None else str(config.vector_backend),
+        vector_backend=None
+        if config.vector_backend is None
+        else str(config.vector_backend),
         record_backend_options=dict(config.record_backend_options),
         blob_backend_options=dict(config.blob_backend_options),
         vector_backend_options=dict(config.vector_backend_options),
@@ -340,7 +342,9 @@ class StorageEngine:
 
         record = backend_registry.create_record(
             config.record_backend,
-            _record_backend_options(config, sqlite=sqlite, telemetry_hook=effective_hook),
+            _record_backend_options(
+                config, sqlite=sqlite, telemetry_hook=effective_hook
+            ),
         )
         blob = backend_registry.create_blob(
             config.blob_backend,

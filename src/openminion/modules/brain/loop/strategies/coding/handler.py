@@ -13,6 +13,7 @@ from openminion.modules.brain.constants import (
     BRAIN_ACT_PROFILE_CODING,
     BRAIN_DECISION_ROUTE_ACT,
     BRAIN_INTERNAL_MODE_ACT_CODING,
+    BRAIN_STATE_CONTINUE,
     BRAIN_STATE_DONE,
     BRAIN_STATE_ERROR,
     CODING_PUBLIC_TAG as _CODING_PUBLIC_TAG,
@@ -70,6 +71,7 @@ from .results import (
     _exit_final_text as _results_exit_final_text,
     _maybe_continue_after_tool_failure as _results_maybe_continue_after_tool_failure,
     _result_from_outcome as _results_from_outcome,
+    _user_explicitly_requested_file_artifact as _results_user_requested_file_artifact,
 )
 from .subtasks import _dispatch_subtasks_if_needed as _subtasks_dispatch_if_needed
 from .verification_flow import CodingVerificationMixin
@@ -457,6 +459,7 @@ class CodingProfileRunner(
         if seeded_replay_result is not None:
             return seeded_replay_result
         if self._coding_plan is not None:
+            self._stage_initial_write_if_required()
             self._emit_phase_status(ctx)
         return tool_specs, seed_response
 
@@ -476,7 +479,10 @@ class CodingProfileRunner(
             )
         self._sync_coding_module_state(ctx)
 
-        if outcome.termination_reason != CODING_TERM_FINAL_TEXT or self._coding_plan is None:
+        if (
+            outcome.termination_reason != CODING_TERM_FINAL_TEXT
+            or self._coding_plan is None
+        ):
             if self._maybe_continue_with_verify_closeout_reserve(ctx, outcome=outcome):
                 self._sync_coding_module_state(ctx)
                 return None
@@ -486,7 +492,7 @@ class CodingProfileRunner(
             if self._maybe_continue_with_verification_reserve(ctx, outcome=outcome):
                 self._sync_coding_module_state(ctx)
                 return None
-            return self._result_from_outcome(
+            return self._result_from_outcome_or_continue_same_turn(
                 ctx,
                 outcome=outcome,
                 allowed_tools=allowed_tools,
@@ -502,7 +508,7 @@ class CodingProfileRunner(
             )
             if verifier_result is not None:
                 return verifier_result
-            return self._result_from_outcome(
+            return self._result_from_outcome_or_continue_same_turn(
                 ctx,
                 outcome=outcome,
                 allowed_tools=allowed_tools,
@@ -539,9 +545,7 @@ class CodingProfileRunner(
                     ),
                     allowed_tools=allowed_tools,
                 )
-            if bool(
-                self._loop_state.scratchpad.pop("coding.pending_continue", False)
-            ):
+            if bool(self._loop_state.scratchpad.pop("coding.pending_continue", False)):
                 return self._exit_continue(
                     ctx,
                     allowed_tools=allowed_tools,
@@ -550,6 +554,46 @@ class CodingProfileRunner(
         self._append_phase_instruction()
         self._sync_coding_module_state(ctx)
         return None
+
+    def _result_from_outcome_or_continue_same_turn(
+        self,
+        ctx: ExecutionContext,
+        *,
+        outcome: AdaptiveToolLoopOutcome,
+        allowed_tools: frozenset[str],
+    ) -> ExecutionResult | None:
+        result = self._result_from_outcome(
+            ctx,
+            outcome=outcome,
+            allowed_tools=allowed_tools,
+        )
+        if (
+            result.status == BRAIN_STATE_CONTINUE
+            and self._should_continue_coding_same_turn()
+        ):
+            self._sync_coding_module_state(ctx)
+            return None
+        return result
+
+    def _should_continue_coding_same_turn(self) -> bool:
+        reason = str(
+            self._loop_state.scratchpad.get("coding.verify_gate_reason", "") or ""
+        ).strip()
+        return reason in {
+            "missing_implementation_write",
+            "readonly_dead_end_missing_write",
+        }
+
+    def _stage_initial_write_if_required(self) -> None:
+        if self._coding_plan is None:
+            return
+        if self._coding_plan.current_phase != "implement":
+            return
+        if self._has_successful_mutating_file_result():
+            return
+        if not _results_user_requested_file_artifact(self._loop_state):
+            return
+        self._stage_required_write_direct_tool()
 
     def snapshot_state(self) -> dict[str, Any]:
         return {

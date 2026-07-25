@@ -113,7 +113,9 @@ def _handle_unanswered_clarify_items(
         getattr(getattr(state, "request_readiness", None), "state", "") or ""
     ).strip()
     if (
-        bool(getattr(getattr(runner, "options", None), "request_handoff_enabled", False))
+        bool(
+            getattr(getattr(runner, "options", None), "request_handoff_enabled", False)
+        )
         and readiness_state == "needs_user"
     ):
         transition(state, "clarify_requested", logger=logger)

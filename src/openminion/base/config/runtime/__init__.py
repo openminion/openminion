@@ -1,7 +1,5 @@
 """Runtime config dataclasses and identity path resolution."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
@@ -39,6 +37,7 @@ from openminion.base.config.runtime.tools import (
     coerce_tool_runtime_config,
 )
 from openminion.base.config.tool_selection import ToolSelectionConfig
+
 _BASE_IDENTITY_DIRNAME = "identity"
 _BASE_IDENTITY_DB_FILENAME = "identity.db"
 
@@ -49,6 +48,7 @@ class ToolPolicyConfig:
     max_calls_per_run: int = 50
     max_calls_per_tool: int = 4
     max_budget_cost_per_run: int = 16
+
 
 @dataclass
 class OTELExporterConfig:

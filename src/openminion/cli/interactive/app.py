@@ -230,7 +230,9 @@ class FocusApp(App):
         self._verbosity: str = (
             verbosity if verbosity in ("quiet", "normal", "verbose") else "normal"
         )
-        self._progress: str = progress if progress in ("full", "minimal", "off") else "full"
+        self._progress: str = (
+            progress if progress in ("full", "minimal", "off") else "full"
+        )
         self._animation = animation
 
     @property

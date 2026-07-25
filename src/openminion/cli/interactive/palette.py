@@ -23,7 +23,10 @@ class CommandPaletteScreen(Screen[str | None]):
         with Vertical(id="palette-overlay"), Vertical(id="palette-dialog"):
             yield Input(placeholder="Type to search...", id="palette-input")
             yield OptionList(
-                *[f"{label}  -  {description}" for label, description, _ in self._filtered],
+                *[
+                    f"{label}  -  {description}"
+                    for label, description, _ in self._filtered
+                ],
                 id="palette-list",
             )
 
@@ -75,5 +78,8 @@ class CommandPaletteScreen(Screen[str | None]):
 
     def action_move_down(self) -> None:
         options = self.query_one("#palette-list", OptionList)
-        if options.highlighted is not None and options.highlighted < options.option_count - 1:
+        if (
+            options.highlighted is not None
+            and options.highlighted < options.option_count - 1
+        ):
             options.highlighted += 1

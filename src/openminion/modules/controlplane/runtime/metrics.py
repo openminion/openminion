@@ -10,7 +10,15 @@ from collections.abc import Callable, Iterable, Mapping
 from .audit import AuditEvent
 
 _ALLOWED_LABELS = frozenset({"channel", "dimension", "outcome", "status", "table"})
-_FORBIDDEN_LABEL_PARTS = ("chat", "session", "user", "subject", "prompt", "token", "error")
+_FORBIDDEN_LABEL_PARTS = (
+    "chat",
+    "session",
+    "user",
+    "subject",
+    "prompt",
+    "token",
+    "error",
+)
 
 
 def _labels_key(labels: Mapping[str, str] | None) -> tuple[tuple[str, str], ...]:
@@ -88,7 +96,7 @@ class MetricsRegistry:
 
     @staticmethod
     def _iter_samples(
-        samples: Iterable[tuple[tuple[str, tuple[tuple[str, str], ...]], float]]
+        samples: Iterable[tuple[tuple[str, tuple[tuple[str, str], ...]], float]],
     ) -> list[tuple[str, tuple[tuple[str, str], ...], float]]:
         return [(name, labels, value) for (name, labels), value in sorted(samples)]
 
@@ -164,7 +172,9 @@ class MetricsAuditSink:
         self.registry.set_gauge("controlplane_audit_sink_failures", float(count))
 
 
-def compose_audit_sinks(*sinks: Callable[[AuditEvent], None] | None) -> Callable[[AuditEvent], None]:
+def compose_audit_sinks(
+    *sinks: Callable[[AuditEvent], None] | None,
+) -> Callable[[AuditEvent], None]:
     active = [sink for sink in sinks if sink is not None]
 
     def emit(event: AuditEvent) -> None:

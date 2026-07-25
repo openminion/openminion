@@ -1293,7 +1293,7 @@ def test_forced_tool_missing_args_conversational_asks_user() -> None:
         assert output.message is not None
 
 
-def test_capability_missing_args_asks_user() -> None:
+def test_capability_missing_args_remains_model_owned() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         registry = ToolRegistry([])
         registry.add(_read_file_tool_spec())
@@ -1309,11 +1309,12 @@ def test_capability_missing_args_asks_user() -> None:
             capability_category="file.read",
         )
 
-        assert output.status == "waiting_user"
+        assert output.status == "done"
         assert output.message is not None
+        assert output.action_result is None
 
 
-def test_capability_weather_missing_location_asks_user() -> None:
+def test_capability_weather_missing_location_remains_model_owned() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         registry = ToolRegistry([])
         registry.add(_weather_tool_spec())
@@ -1329,8 +1330,9 @@ def test_capability_weather_missing_location_asks_user() -> None:
             capability_category="weather",
         )
 
-        assert output.status == "waiting_user"
+        assert output.status == "done"
         assert output.message is not None
+        assert output.action_result is None
 
 
 def test_capability_file_list_fallback_resolves_from_available_tools() -> None:

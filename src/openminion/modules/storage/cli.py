@@ -245,9 +245,7 @@ def _run_storage_store_command(
                 module_id=module_id,
                 sqlite_path=sqlite_path,
             )
-            runner.restore(
-                snapshot_path=args.snapshot_path, target_db_path=sqlite_path
-            )
+            runner.restore(snapshot_path=args.snapshot_path, target_db_path=sqlite_path)
             state = runner.detect()
             _reporter_safe_end(reporter, success=True)
             _print_json({"ok": True, "state": state.to_dict()})
@@ -608,7 +606,6 @@ def _add_storage_cli_subcommands(sub: Any) -> None:
             "OPENMINION_STORAGE_POSTGRES_URL."
         ),
     )
-
 
 
 def _print_json(payload: dict) -> None:

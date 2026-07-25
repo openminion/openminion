@@ -139,13 +139,12 @@ def test_bundled_fix_render_without_arguments_asks_for_target() -> None:
 def test_bundled_fix_markdown_is_packaged_resource() -> None:
     import importlib.resources as resources
 
-    fix_md = resources.files(
-        "openminion.cli.presentation.bundled_commands"
-    ).joinpath("fix.md")
+    fix_md = resources.files("openminion.cli.presentation.bundled_commands").joinpath(
+        "fix.md"
+    )
 
     assert fix_md.is_file()
     assert "focused repair workflow" in fix_md.read_text(encoding="utf-8")
-
 
 
 # ── Frontmatter parsing ──────────────────────────────────────────

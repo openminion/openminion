@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..memory_blocks import build_memory_block_segments_for_context
-from ..schemas import BuildPackRequest, ContextBudgets, ContextSegment, PackingDecisionLog
+from ..schemas import (
+    BuildPackRequest,
+    ContextBudgets,
+    ContextSegment,
+    PackingDecisionLog,
+)
 from .budgeting import _estimate_tokens
 from .finalize import context_drop_visibility_counts
 
@@ -46,7 +51,9 @@ def trim_segments_for_pack(
     total_cap: int,
     bucket_caps: dict[str, int],
     bucket_stats: dict[str, Any],
-    apply_trim_ladder_fn: Callable[..., tuple[list[ContextSegment], PackingDecisionLog, list[str]]],
+    apply_trim_ladder_fn: Callable[
+        ..., tuple[list[ContextSegment], PackingDecisionLog, list[str]]
+    ],
     inject_visibility_note_fn: Callable[..., list[ContextSegment]],
 ) -> tuple[list[ContextSegment], PackingDecisionLog, list[str]]:
     decision_log = PackingDecisionLog()

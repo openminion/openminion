@@ -228,7 +228,9 @@ def _load_checkpoint(
     if normalized_checkpoint_id:
         state = task_manager.get_checkpoint(task_id, normalized_checkpoint_id)
         if state is None:
-            raise KeyError(f"checkpoint not found: {task_id}:{normalized_checkpoint_id}")
+            raise KeyError(
+                f"checkpoint not found: {task_id}:{normalized_checkpoint_id}"
+            )
         return normalized_checkpoint_id, dict(state)
     latest = task_manager.get_latest_checkpoint(task_id)
     if latest is None:
@@ -264,7 +266,9 @@ def _event_log_from_state(state: Mapping[str, Any]) -> tuple[Mapping[str, Any], 
     return ()
 
 
-def _expected_payloads_from_state(state: Mapping[str, Any]) -> Mapping[str, Mapping[str, Any]]:
+def _expected_payloads_from_state(
+    state: Mapping[str, Any],
+) -> Mapping[str, Mapping[str, Any]]:
     raw = state.get("expected_event_payloads")
     if not isinstance(raw, Mapping):
         return {}
@@ -304,8 +308,8 @@ def _result_from_replay(
         events_skipped=replay_result.events_skipped,
         divergences=tuple(_divergence_dict(item) for item in replay_result.divergences),
         nondeterminism_notes=(
-            "replay uses recorded event payloads only; providers and tools are not re-invoked"
-        ,),
+            "replay uses recorded event payloads only; providers and tools are not re-invoked",
+        ),
         metadata={"state": dict(replay_result.final_state)},
     )
 

@@ -36,7 +36,9 @@ def _index_names(path: Path) -> set[str]:
     return {str(row[0]) for row in rows}
 
 
-def test_controlplane_sqlite_store_applies_and_reapplies_migrations(tmp_path: Path) -> None:
+def test_controlplane_sqlite_store_applies_and_reapplies_migrations(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "controlplane" / "cp.db"
     store = SQLiteControlPlaneStore(db_path)
     store.close()
@@ -44,8 +46,14 @@ def test_controlplane_sqlite_store_applies_and_reapplies_migrations(tmp_path: Pa
     assert db_path.exists()
     expected_versions = [version for version, _name, _ddl in CP_MIGRATIONS]
     expected_names = [name for _version, name, _ddl in CP_MIGRATIONS]
-    assert _query_values(db_path, "SELECT version FROM cp_migrations ORDER BY version") == expected_versions
-    assert _query_values(db_path, "SELECT name FROM cp_migrations ORDER BY version") == expected_names
+    assert (
+        _query_values(db_path, "SELECT version FROM cp_migrations ORDER BY version")
+        == expected_versions
+    )
+    assert (
+        _query_values(db_path, "SELECT name FROM cp_migrations ORDER BY version")
+        == expected_names
+    )
     assert _meta_value(db_path, "schema_head") == schema_head_from_migrations(
         list_controlplane_migrations()
     )
@@ -57,14 +65,21 @@ def test_controlplane_sqlite_store_applies_and_reapplies_migrations(tmp_path: Pa
     }.issubset(_index_names(db_path))
 
     with sqlite3.connect(db_path) as conn:
-        conn.execute("DELETE FROM cp_migrations WHERE version = ?", (expected_versions[-1],))
+        conn.execute(
+            "DELETE FROM cp_migrations WHERE version = ?", (expected_versions[-1],)
+        )
         conn.commit()
     store = SQLiteControlPlaneStore(db_path)
     store.close()
-    assert _query_values(db_path, "SELECT version FROM cp_migrations ORDER BY version") == expected_versions
+    assert (
+        _query_values(db_path, "SELECT version FROM cp_migrations ORDER BY version")
+        == expected_versions
+    )
 
 
-def test_telegram_poll_state_store_applies_schema_metadata_and_indexes(tmp_path: Path) -> None:
+def test_telegram_poll_state_store_applies_schema_metadata_and_indexes(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "controlplane" / "telegram-poll-state.db"
     store = TelegramPollStateStore(db_path)
     store.close()

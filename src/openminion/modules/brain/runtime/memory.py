@@ -208,9 +208,7 @@ def _improvement_governance_action(fix: Any) -> dict[str, str] | None:
     return {
         "action": action,
         "title": fix.title,
-        "target_command_id": str(
-            getattr(fix, "target_command_id", "") or ""
-        ).strip(),
+        "target_command_id": str(getattr(fix, "target_command_id", "") or "").strip(),
     }
 
 

@@ -110,7 +110,9 @@ def test_pending_action_resume_survives_controller_restart(tmp_path) -> None:
     first_store = RecordStoreSQLite(db_path, wal=False)
     first_ctl = SqlTaskCtl(first_store)
     try:
-        task = first_ctl.create_task(TaskCreateInput(title="Deploy"), trace_id="trace-2")
+        task = first_ctl.create_task(
+            TaskCreateInput(title="Deploy"), trace_id="trace-2"
+        )
         plan = first_ctl.attach_plan(
             task.task_id,
             PlanDraft(
@@ -161,7 +163,9 @@ def test_pending_action_resume_survives_controller_restart(tmp_path) -> None:
     assert resumed == cursor
     assert repeated == cursor
     assert [event["type"] for event in events].count("mission.resumed") == 1
-    resumed_event = next(event for event in events if event["type"] == "mission.resumed")
+    resumed_event = next(
+        event for event in events if event["type"] == "mission.resumed"
+    )
     assert resumed_event["payload"]["pending_backlog_count"] == 0
 
 
