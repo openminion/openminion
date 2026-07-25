@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_AGENT_GET,
@@ -50,15 +50,23 @@ class TaskDelegateArgs(BaseModel):
     inference). ``instruction`` is the goal handed to the sub-agent.
     """
 
+    mode: str = Field(
+        default="sync",
+        description=(
+            "Delegation lifecycle action: sync, async, status, resume, or cancel."
+        ),
+    )
     agent_id: str = Field(
-        ...,
-        min_length=1,
+        default="",
         description="Target sub-agent identifier.",
     )
     instruction: str = Field(
-        ...,
-        min_length=1,
+        default="",
         description="Instruction to delegate to the sub-agent.",
+    )
+    task_id: str = Field(
+        default="",
+        description="A resumable async task/job handle for status, resume, or cancel.",
     )
     timeout_seconds: int = Field(
         default=120,
@@ -67,8 +75,27 @@ class TaskDelegateArgs(BaseModel):
         description="Per-call timeout for the delegated turn.",
     )
 
+    @model_validator(mode="after")
+    def _validate_action_fields(self) -> "TaskDelegateArgs":
+        normalized_mode = self.mode.strip().lower()
+        if normalized_mode not in {"sync", "async", "status", "resume", "cancel"}:
+            raise ValueError(
+                "mode must be one of: sync, async, status, resume, cancel"
+            )
+        self.mode = normalized_mode
+        if normalized_mode in {"sync", "async"}:
+            if not self.agent_id.strip() or not self.instruction.strip():
+                raise ValueError(
+                    "agent_id and instruction are required for sync/async delegation"
+                )
+            return self
+        if not self.task_id.strip():
+            raise ValueError("task_id is required for status/resume/cancel")
+        return self
+
 
 def _agent_record_to_dict(record: Any) -> dict[str, Any]:
+    status = str(getattr(record, "status", "") or "").strip()
     return {
         "agent_id": getattr(record, "agent_id", ""),
         "display_name": getattr(record, "display_name", ""),
@@ -76,7 +103,17 @@ def _agent_record_to_dict(record: Any) -> dict[str, Any]:
         "config_path": getattr(record, "config_path", ""),
         "workspace_root": getattr(record, "workspace_root", ""),
         "tags": list(getattr(record, "tags", []) or []),
-        "status": getattr(record, "status", ""),
+        "status": status,
+        "configured": False,
+        "registry_present": True,
+        "hot": False,
+        "heartbeat_active": False,
+        "available": True,
+        "running": False,
+        "stopped": status in {"", "registered", "stopped", "starting", "stopping"},
+        "unknown": False,
+        "state": status or "registered",
+        "capabilities": ["delegate.sync"],
         "registered_at": getattr(record, "registered_at", ""),
         "updated_at": getattr(record, "updated_at", ""),
     }
@@ -175,7 +212,11 @@ _A2A_NOT_FOUND_CODES = frozenset(
 
 def _task_delegate_error_code(result_error_code: str, *, status: str) -> str:
     code = str(result_error_code or "").strip()
-    if code in _A2A_NOT_FOUND_CODES:
+    if code in _A2A_NOT_FOUND_CODES or code in {
+        "A2A_JOB_NOT_FOUND",
+        "A2A_JOB_POLL_FAILED",
+        "A2A_JOB_CANCEL_FAILED",
+    }:
         return "NOT_FOUND"
     if code == "TASK_DELEGATE_INVALID_ARGS":
         return "INVALID_ARGUMENT"
@@ -201,16 +242,27 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             },
         )
 
-    result = seam.delegate(
-        agent_id=validated.agent_id,
-        instruction=validated.instruction,
-        timeout_seconds=int(validated.timeout_seconds),
-    )
+    if validated.mode == "status":
+        result = seam.status(task_id=validated.task_id)
+    elif validated.mode == "resume":
+        result = seam.resume(task_id=validated.task_id)
+    elif validated.mode == "cancel":
+        result = seam.cancel(task_id=validated.task_id)
+    else:
+        delegate_kwargs = {
+            "agent_id": validated.agent_id,
+            "instruction": validated.instruction,
+            "timeout_seconds": int(validated.timeout_seconds),
+        }
+        if validated.mode != "sync":
+            delegate_kwargs["mode"] = validated.mode
+        result = seam.delegate(**delegate_kwargs)
 
     if result.ok:
         return {
             "ok": True,
             "agent_id": result.target_agent_id or validated.agent_id,
+            "mode": validated.mode,
             "status": result.status,
             "content": result.content,
             "outputs": dict(result.outputs or {}),

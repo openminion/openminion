@@ -237,6 +237,20 @@ MIGRATIONS: list[tuple[int, str, str]] = [
             ON cp_inbox(status, next_attempt_at, received_at);
         """,
     ),
+    (
+        7,
+        "storage_index_audit_v1",
+        """
+        CREATE INDEX IF NOT EXISTS idx_cp_inbox_status_locked
+            ON cp_inbox(status, locked_at);
+        CREATE INDEX IF NOT EXISTS idx_cp_outbox_status_locked
+            ON cp_outbox(status, locked_at);
+        CREATE INDEX IF NOT EXISTS idx_cp_channel_subjects_channel_status
+            ON cp_channel_subjects(channel, status);
+        CREATE INDEX IF NOT EXISTS idx_cp_pairings_status_channel
+            ON cp_pairings(status, channel);
+        """,
+    ),
 ]
 
 

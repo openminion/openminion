@@ -29,7 +29,8 @@ class SQLiteIdentityRepository:
         actor: str | None = None,
         reason: str | None = None,
     ) -> str:
-        return self._ctl.upsert_profile(profile, actor=actor, reason=reason)
+        del actor, reason
+        return self._ctl.upsert_profile(profile)
 
     def close(self) -> None:
         self._ctl.close()

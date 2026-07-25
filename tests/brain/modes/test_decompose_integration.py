@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 from typing import Any
 
@@ -37,6 +39,27 @@ from openminion.modules.brain.schemas import (
 from openminion.modules.brain.schemas.decisions import DecisionAdapter
 from openminion.modules.task import TaskManager
 from tests.brain.runner_test_support import _profile
+
+
+def _run_git(repo, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _git_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _run_git(repo, "init")
+    _run_git(repo, "config", "user.email", "maer@example.invalid")
+    _run_git(repo, "config", "user.name", "MAER Test")
+    (repo / "seed.py").write_text("VALUE = 0\n", encoding="utf-8")
+    _run_git(repo, "add", "seed.py")
+    _run_git(repo, "commit", "-m", "seed")
+    return repo
 
 
 def _patch_orchestrate_child_invoke(monkeypatch, fake_invoke) -> None:
@@ -84,6 +107,12 @@ class _FakeRunner:
     llm_api: _FakeLLMAPI
     decisions: list[Any]
     session_api: _FakeSessionAPI = _FakeSessionAPI()
+    agent_registry: dict[str, dict[str, Any]] = field(default_factory=dict)
+    options: Any = field(
+        default_factory=lambda: SimpleNamespace(decompose_cancel_requested=False)
+    )
+    command_calls: list[Any] = field(default_factory=list)
+    status_events: list[dict[str, Any]] = field(default_factory=list)
     task_manager: TaskManager = field(
         default_factory=lambda: TaskManager.for_lifecycle_db(db_path=":memory:")
     )
@@ -100,11 +129,40 @@ class _FakeRunner:
             )
         return self.decisions.pop(0)
 
+    def _emit_phase_status(self, **kwargs) -> None:
+        self.status_events.append(dict(kwargs))
+
+    def _direct_response(self, *, user_input, decision) -> str:
+        del user_input
+        return str(getattr(decision, "answer", "") or "").strip()
+
+    def _act(self, *, state, command, logger):
+        del state, logger
+        self.command_calls.append(command)
+        return (
+            ActionResult(
+                command_id="cmd-team-delegate",
+                status="success",
+                summary="team delegate marker",
+                outputs={"answer": "team delegate marker"},
+            ),
+            None,
+        )
+
 
 @dataclass
 class _FakeServices:
     runner: _FakeRunner
     statuses: list[dict[str, Any]]
+    command_calls: list[Any] = field(default_factory=list)
+    action_result: ActionResult = field(
+        default_factory=lambda: ActionResult(
+            command_id="cmd-team-delegate",
+            status="success",
+            summary="team delegate marker",
+            outputs={"answer": "team delegate marker"},
+        )
+    )
 
     def save_state(self, *, state: WorkingState) -> None:
         del state
@@ -148,8 +206,9 @@ class _FakeServices:
         return command
 
     def act_command(self, *, state, command, logger):
-        del state, command, logger
-        raise AssertionError("act_command not used in orchestrate handler tests")
+        del state, logger
+        self.command_calls.append(command)
+        return self.action_result, None
 
     def assess_plan_feasibility(self, *, state, user_input, logger):
         del state, user_input, logger
@@ -293,6 +352,7 @@ def _ctx(*, subtasks: list[dict[str, Any]], decisions: list[Any] | None = None):
         decisions=list(decisions or []),
     )
     services = _FakeServices(runner=runner, statuses=[])
+    runner.command_calls = services.command_calls
     decision = SimpleNamespace(
         mode=OrchestrateMode.mode_name,
         confidence=0.9,
@@ -390,6 +450,23 @@ def test_decompose_handler_collects_results_and_synthesizes(monkeypatch) -> None
     assert {"start", "execute_subtask", "synthesis", "done"}.issubset(
         {item.get("mode_state") for item in services.statuses}
     )
+    policy = ctx.state.module_state["delegation_policy"]
+    assert [item["flow"] for item in policy["projections"]] == [
+        "orchestrate_inline",
+        "orchestrate_inline",
+        "orchestrate_inline",
+    ]
+    assert [item["decision"]["projected_budget"]["source_policy"] for item in policy["projections"]] == [
+        "split_fixed",
+        "split_fixed",
+        "split_fixed",
+    ]
+    assert policy["projections"][0]["decision"]["projected_budget"]["tokens"] == 2000
+    aggregation = policy["aggregations"][0]["aggregation"]
+    assert aggregation["source_policy"] == "structural_merge"
+    assert aggregation["total_children"] == 3
+    assert aggregation["success_count"] == 3
+    assert aggregation["completed_required"] is True
 
 
 def test_orchestrate_validation_does_not_fail_before_execution() -> None:
@@ -584,6 +661,199 @@ def test_decompose_handler_fails_fast_and_preserves_partial_results(
     assert invoked == ["x", "y"]
     assert [item["status"] for item in subtask_results] == ["completed", "failed"]
     assert result.action_result.error is not None
+    aggregation = ctx.state.module_state["delegation_policy"]["aggregations"][0][
+        "aggregation"
+    ]
+    assert aggregation["total_children"] == 2
+    assert aggregation["success_count"] == 1
+    assert aggregation["failure_count"] == 1
+    assert aggregation["completed_required"] is False
+
+
+def test_orchestrate_exact_delegate_assignment_runs_existing_delegate_path() -> None:
+    ctx, runner, services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "weather-child",
+                "goal": "Ask weather specialist",
+                "suggested_mode": "execution_target_delegated",
+                "inputs": {
+                    "target_agent_id": "agent.weather",
+                    "goal": "Return a target marker.",
+                    "constraints": "Use the exact marker.",
+                },
+            },
+            {"subtask_id": "summary", "goal": "Summarize", "suggested_mode": "respond"},
+        ],
+        decisions=[
+            RespondDecision(
+                respond_kind="answer",
+                confidence=0.8,
+                reason_code="summary",
+                sub_intents=["summary"],
+                answer="summary",
+            ),
+        ],
+    )
+    runner.agent_registry = {"agent.weather": {"state": "healthy"}}
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert result.status == "done"
+    assert len(services.command_calls) == 1
+    command = services.command_calls[0]
+    assert command.target_agent_id == "agent.weather"
+    assert command.params["goal"] == "Return a target marker."
+    assert command.params["constraints"] == ["Use the exact marker."]
+    subtask_results = result.action_result.outputs["subtask_results"]
+    assert subtask_results[0]["status"] == "completed"
+    assert subtask_results[0]["output"] == "team delegate marker"
+    policy = ctx.state.module_state["delegation_policy"]
+    assert [item["flow"] for item in policy["projections"][:2]] == [
+        "orchestrate_inline",
+        "a2a_sync",
+    ]
+    assert policy["aggregations"][-1]["aggregation"]["success_count"] == 2
+
+
+def test_orchestrate_unknown_delegate_assignment_fails_structurally() -> None:
+    ctx, _runner, services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "missing-child",
+                "goal": "Ask missing specialist",
+                "suggested_mode": "execution_target_delegated",
+                "inputs": {"target_agent_id": "agent.missing"},
+            },
+            {"subtask_id": "summary", "goal": "Summarize", "suggested_mode": "respond"},
+        ]
+    )
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert result.action_result.status == "failed"
+    assert services.command_calls == []
+    subtask_results = result.action_result.outputs["subtask_results"]
+    assert subtask_results == [
+        {
+            "subtask_id": "missing-child",
+            "goal": "Ask missing specialist",
+            "status": "failed",
+            "mode_used": "execution_target_delegated",
+            "output": "Unknown delegate target agent: agent.missing",
+            "error": "Unknown delegate target agent: agent.missing",
+            "tokens_used": 0,
+        }
+    ]
+
+
+def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    repo = _git_repo(tmp_path)
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "patch-a",
+                "goal": "Patch seed A",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            },
+            {
+                "subtask_id": "patch-b",
+                "goal": "Patch seed B",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            },
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code="patch_a",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["patch-a"],
+            ),
+            ActDecision(
+                confidence=0.8,
+                reason_code="patch_b",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["patch-b"],
+            ),
+        ],
+    )
+    seen_worktrees: list[str] = []
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, user_input, logger, depth
+        worktree = state.module_state["worktree_children"]["worktree_child"][
+            "workspace"
+        ]
+        seen_worktrees.append(worktree)
+        value = 1 if getattr(decision, "reason_code", "") == "patch_a" else 2
+        (Path(worktree) / "seed.py").write_text(
+            f"VALUE = {value}\n",
+            encoding="utf-8",
+        )
+        return _mode_result(state, f"patched:{value}")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert result.status == "done"
+    assert len(set(seen_worktrees)) == 2
+    assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+    bucket = ctx.state.module_state["worktree_children"]
+    assert [child["subtask_id"] for child in bucket["children"]] == [
+        "patch-a",
+        "patch-b",
+    ]
+    assert all(child["touched_paths"] == ["seed.py"] for child in bucket["children"])
+    assert all(child["cleaned_up"] is True for child in bucket["children"])
+    assert all(not Path(path).exists() for path in seen_worktrees)
+    assert bucket["conflicts"] == [
+        {"path": "seed.py", "subtask_ids": ["patch-a", "patch-b"]}
+    ]
+
+
+def test_orchestrate_read_only_child_does_not_allocate_worktree(monkeypatch) -> None:
+    ctx, _runner, _services = _ctx(
+        subtasks=[
+            {"subtask_id": "read-a", "goal": "Read A", "suggested_mode": "act"},
+            {"subtask_id": "read-b", "goal": "Read B", "suggested_mode": "respond"},
+        ],
+        decisions=[
+            ActDecision(
+                confidence=0.8,
+                reason_code="read_a",
+                act_profile="general",
+                execution_target=ExecutionTargetPayload(kind="local"),
+                sub_intents=["read-a"],
+            ),
+            RespondDecision(
+                respond_kind="answer",
+                confidence=0.8,
+                reason_code="read_b",
+                sub_intents=["read-b"],
+                answer="read",
+            ),
+        ],
+    )
+
+    def _fake_invoke(runner, *, state, decision, user_input, logger, depth=0):
+        del runner, decision, user_input, logger, depth
+        assert "worktree_children" not in state.module_state
+        return _mode_result(state, "read-only")
+
+    _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
+
+    result = OrchestrateMode().execute(ctx)
+
+    assert result.status == "done"
+    assert "worktree_children" not in ctx.state.module_state
 
 
 def test_decompose_prepare_rejects_subtask_count_over_limit() -> None:

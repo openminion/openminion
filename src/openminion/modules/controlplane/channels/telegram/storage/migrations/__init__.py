@@ -9,6 +9,7 @@ MODULE_ID = "controlplane_telegram"
 MODULE_APPLICATION_ID = get_module_application_id(MODULE_ID)
 TARGET_USER_VERSION = 0
 BASELINE_REVISION = "0001_baseline"
+POLLING_LEASE_REVISION = "0002_polling_lease_schema"
 
 
 def run_migrations(db_path: str | Path) -> None:
@@ -20,4 +21,4 @@ def run_migrations(db_path: str | Path) -> None:
 
 
 def list_migrations() -> list[str]:
-    return [BASELINE_REVISION]
+    return [BASELINE_REVISION, POLLING_LEASE_REVISION]

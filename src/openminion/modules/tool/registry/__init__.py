@@ -185,26 +185,7 @@ class ToolRegistry:
 
     def policy_for(self, tool_name: str) -> ToolPolicyProfile:
         key = str(tool_name or "").strip()
-        tool = self._tools.get(key)
-        if tool is None:
-            manager = self._binding_manager()
-            model_tool_id = manager.normalize_raw_name(key)
-            if model_tool_id:
-                runtime_map = manager.model_to_runtime_tool_map(set(self._tools.keys()))
-                mapped_runtime_tool = runtime_map.get(model_tool_id)
-                if mapped_runtime_tool:
-                    tool = self._tools.get(mapped_runtime_tool)
-                    if tool is not None:
-                        key = mapped_runtime_tool
-        if tool is None:
-            resolution = resolve_binding_for_call(
-                raw_tool_name=key,
-                available_tool_names=tuple(self._tools.keys()),
-            )
-            if resolution is not None and resolution.runtime_tool_name:
-                tool = self._tools.get(resolution.runtime_tool_name)
-                if tool is not None:
-                    key = resolution.runtime_tool_name
+        key, tool = self._resolve_runtime_tool(key)
         if tool is None:
             return ToolPolicyProfile(
                 tool_name=key or "unknown",
@@ -242,6 +223,34 @@ class ToolRegistry:
             risk=str(policy.risk or "medium").strip().lower() or "medium",
             budget_cost=budget_cost,
         )
+
+    def sidecar_for(self, tool_name: str) -> str:
+        _, tool = self._resolve_runtime_tool(str(tool_name or "").strip())
+        sidecar = getattr(tool, "sidecar", "") if tool is not None else ""
+        return str(sidecar or "").strip()
+
+    def _resolve_runtime_tool(self, key: str) -> tuple[str, Any | None]:
+        tool = self._tools.get(key)
+        if tool is not None:
+            return key, tool
+        manager = self._binding_manager()
+        model_tool_id = manager.normalize_raw_name(key)
+        if model_tool_id:
+            runtime_map = manager.model_to_runtime_tool_map(set(self._tools.keys()))
+            mapped_runtime_tool = runtime_map.get(model_tool_id)
+            if mapped_runtime_tool:
+                tool = self._tools.get(mapped_runtime_tool)
+                if tool is not None:
+                    return mapped_runtime_tool, tool
+        resolution = resolve_binding_for_call(
+            raw_tool_name=key,
+            available_tool_names=tuple(self._tools.keys()),
+        )
+        if resolution is not None and resolution.runtime_tool_name:
+            tool = self._tools.get(resolution.runtime_tool_name)
+            if tool is not None:
+                return resolution.runtime_tool_name, tool
+        return key, None
 
     def _binding_manager(self):
         # Resolver manager is the authoritative, bootstrap-wired source.

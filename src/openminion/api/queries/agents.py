@@ -36,15 +36,17 @@ def list_agents(
         runtime=runtime,
     )
     try:
-        agents = [agent_status_to_dict(item) for item in manager.list_agents()]
-        hot_agent_ids = [
+        discovery = list(active_runtime.agent_discovery_snapshot())
+        hot_agent_ids = sorted(
             str(item.get("agent_id", "")).strip()
-            for item in agents
-            if isinstance(item, dict)
-        ]
+            for item in discovery
+            if isinstance(item, dict) and item.get("running")
+        )
+        manager_agents = [agent_status_to_dict(item) for item in manager.list_agents()]
         return {
             "ok": True,
-            "agents": agents,
+            "agents": discovery,
+            "manager_agents": manager_agents,
             "hot_agent_ids": sorted(item for item in hot_agent_ids if item),
             "registry_agent_ids": configured_agent_ids(active_runtime),
             "default_agent_id": resolve_default_agent_id(active_runtime.config),

@@ -32,7 +32,9 @@ VALIDATE_PATTERN_MODULES := \
 	validate.execution_complexity \
 	validate.helper_duplicates \
 	validate.config_constants \
+	validate.init_loc \
 	validate.max_file_loc \
+	validate.schema_classes \
 	validate.telemetry_event_catalog \
 	validate.module_typed_raises \
 	validate.tool_selection_scoring_contract \
@@ -79,7 +81,9 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/execution_complexity \
 	validate/helper_duplicates \
 	validate/config_constants \
+	validate/init_loc \
 	validate/max_file_loc \
+	validate/schema_classes \
 	validate/telemetry_event_catalog \
 	validate/module_typed_raises \
 	validate/tool_selection_scoring_contract \
@@ -168,6 +172,7 @@ lint: $(DEV_STAMP)
 	$(MAKE) -j $(JOBS) validate-patterns
 	$(PYTHON) scripts/validate/controlplane_delivery.py
 	$(PYTHON) scripts/validate/webhook_secret.py
+	$(PYTHON) "$(REPO_ROOT)/../docs/scripts/validate_browser_tool_family_contract.py" --root "$(REPO_ROOT)/.."
 	$(MAKE) typecheck
 
 typecheck: $(DEV_STAMP)

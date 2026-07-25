@@ -14,7 +14,14 @@ from openminion.modules.llm.schemas import (
     Message,
     UsageInfo,
 )
-from openminion.modules.llm.diagnostics.events import emit_llm_operation
+from openminion.modules.llm.diagnostics.events import (
+    emit_llm_operation,
+    emit_tool_envelope_recovery_event,
+)
+from openminion.modules.telemetry.events.catalog import (
+    TOOL_ENVELOPE_REPAIR_EXHAUSTED,
+    TOOL_ENVELOPE_REPAIR_RETRY,
+)
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
 
 
@@ -107,6 +114,7 @@ def _make_runtime(
                 "default": {
                     "default_provider": provider.name,
                     "default_model": "telemetry-model",
+                    "tool_policy": {"enable_tools": True},
                 }
             },
         },
@@ -146,6 +154,27 @@ async def _call_and_stats(
         )
         module_summary = await service.get_module_summary(session_id)
         return response, provider, module_summary["openminion-llm"]
+    finally:
+        await service.close()
+
+
+async def _call_and_summary(
+    temp_db: str,
+    *,
+    session_id: str,
+    request_payload: dict[str, Any],
+    outcomes: list[Any],
+):
+    service = TelemetryService(temp_db)
+    provider = _SequenceProvider(outcomes)
+    runtime = _make_runtime(
+        telemetryctl=TelemetryCtl(service),
+        provider=provider,
+    )
+    try:
+        response = await runtime.client(agent_name="default").call(request_payload)
+        summary = await service.get_session_summary(session_id)
+        return response, provider, summary
     finally:
         await service.close()
 
@@ -200,6 +229,99 @@ def test_llm_module_emits_terminal_error_without_retry(temp_db: str) -> None:
     assert stats["operation_counts"]["error"] == 1
     assert "retry" not in stats["operation_counts"]
     assert "response" not in stats["operation_counts"]
+
+
+def test_llm_module_emits_safe_tool_envelope_exhausted_event(temp_db: str) -> None:
+    response, _, summary = _run(
+        _call_and_summary(
+            temp_db,
+            session_id="sess-llm-envelope",
+            request_payload={
+                **_request_payload("sess-llm-envelope", "turn-1"),
+                "tools": [
+                    {
+                        "name": "web.search",
+                        "description": "Search the web.",
+                        "input_schema": {"type": "object", "properties": {}},
+                    }
+                ],
+            },
+            outcomes=[
+                _make_response(
+                    output_text=(
+                        '<tool name="not.allowed">'
+                        '<parameter name="q">secret prompt text</parameter>'
+                        "</tool>"
+                    )
+                )
+            ],
+        )
+    )
+
+    assert response.output_text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
+    events = [
+        event
+        for event in summary.events
+        if event.event_type == TOOL_ENVELOPE_REPAIR_EXHAUSTED
+    ]
+    assert len(events) == 1
+    payload = events[0].data
+    assert payload["module_id"] == "openminion-llm"
+    assert payload["status"] == "error"
+    assert payload["recovery_outcome"] == "exhausted"
+    assert payload["provider"] == "telemetry_provider"
+    assert payload["source"] == "llm_response_normalization"
+    assert "secret prompt text" not in str(payload)
+    assert "<tool" not in str(payload)
+
+
+def test_llm_tool_envelope_recovery_helper_emits_retry_event(temp_db: str) -> None:
+    async def _case() -> None:
+        service = TelemetryService(temp_db)
+        ctl = TelemetryCtl(service)
+        try:
+            emitted = emit_tool_envelope_recovery_event(
+                telemetryctl=ctl,
+                session_id="sess-llm-envelope-retry",
+                turn_id="turn-1",
+                outcome="retry",
+                provider="telemetry_provider",
+                model="telemetry-model",
+                parse_strategy="none",
+                parse_mode="minimax_xml",
+                attempt=1,
+                source="required_lane_follow_up",
+                error_code="UNPARSEABLE_TOOL_ENVELOPE",
+            )
+            assert emitted is True
+            assert (
+                emit_tool_envelope_recovery_event(
+                    telemetryctl=ctl,
+                    session_id="sess-llm-envelope-retry",
+                    turn_id="turn-1",
+                    outcome="guess",
+                )
+                is False
+            )
+
+            await asyncio.sleep(0)
+            summary = await service.get_session_summary("sess-llm-envelope-retry")
+        finally:
+            await service.close()
+
+        events = [
+            event
+            for event in summary.events
+            if event.event_type == TOOL_ENVELOPE_REPAIR_RETRY
+        ]
+        assert len(events) == 1
+        payload = events[0].data
+        assert payload["status"] == "retry"
+        assert payload["recovery_outcome"] == "retry"
+        assert payload["parse_mode"] == "minimax_xml"
+        assert payload["source"] == "required_lane_follow_up"
+
+    _run(_case())
 
 
 def test_llm_telemetry_helper_rejects_invalid_name_and_absent_adapter(

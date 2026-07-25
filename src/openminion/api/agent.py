@@ -11,7 +11,7 @@ from pydantic import BaseModel, ValidationError
 from openminion.api.runtime import APIRuntime
 
 if TYPE_CHECKING:  # pragma: no cover
-    from openminion.api.handoff import Handoff
+    from openminion.api.handoff import Handoff, SubagentRunContext
 
 InputT = TypeVar("InputT")
 OutputT = TypeVar("OutputT")
@@ -55,6 +55,7 @@ class Agent(Generic[InputT, OutputT]):
         tools: list[str] | None = None,
         handoffs: list["Handoff"] | None = None,
         name: str | None = None,
+        subagent_context: "SubagentRunContext | None" = None,
     ) -> None:
         self.instructions = instructions
         self.output_type = output_type
@@ -62,6 +63,7 @@ class Agent(Generic[InputT, OutputT]):
         self.tools = list(tools) if tools else []
         self.handoffs: list["Handoff"] = list(handoffs) if handoffs else []
         self.name = name or "agent"
+        self.subagent_context = subagent_context
         self._runtime: APIRuntime | None = runtime
         self._owns_runtime = runtime is None
 
@@ -101,7 +103,49 @@ class Agent(Generic[InputT, OutputT]):
             payload["override_model"] = self.model
         if self.tools:
             payload["allowed_tools"] = list(self.tools)
+        if self.subagent_context is not None:
+            payload["subagent_context"] = self.subagent_context.as_payload()
+            payload["inbound_metadata"] = self.subagent_context.as_inbound_metadata()
         return payload
+
+    def _register_handoff_tools_for_run(self, runtime: APIRuntime) -> list[str]:
+        if not self.handoffs:
+            return []
+        registry = getattr(runtime, "tools", None)
+        add_tool = getattr(registry, "add", None)
+        unregister_tool = getattr(registry, "unregister", None)
+        if not callable(add_tool) or not callable(unregister_tool):
+            return []
+
+        from openminion.api.handoff import build_delegate_family_spec
+        from openminion.modules.tool.errors import ToolRuntimeError
+        from openminion.modules.tool.framework import derive_tool_specs
+
+        family = build_delegate_family_spec(self.handoffs)
+        if family is None:
+            return []
+
+        registered: list[str] = []
+        try:
+            for spec in derive_tool_specs(family):
+                add_tool(spec)
+                registered.append(spec.name)
+        except (ToolRuntimeError, TypeError, ValueError, AttributeError):
+            for name in reversed(registered):
+                unregister_tool(name)
+            raise
+        return registered
+
+    @staticmethod
+    def _unregister_handoff_tools(runtime: APIRuntime, tool_names: list[str]) -> None:
+        if not tool_names:
+            return
+        registry = getattr(runtime, "tools", None)
+        unregister_tool = getattr(registry, "unregister", None)
+        if not callable(unregister_tool):
+            return
+        for name in reversed(tool_names):
+            unregister_tool(name)
 
     def _coerce_output(self, text: str) -> Any:
         if self.output_type is None or self.output_type is str:
@@ -146,7 +190,11 @@ class Agent(Generic[InputT, OutputT]):
     ) -> AgentRunResult[Any]:
         runtime = self._ensure_runtime()
         payload = self._build_payload(self._serialize_input(message))
-        raw = runtime.run_turn(payload=payload, progress_callback=on_delta)
+        registered_handoffs = self._register_handoff_tools_for_run(runtime)
+        try:
+            raw = runtime.run_turn(payload=payload, progress_callback=on_delta)
+        finally:
+            self._unregister_handoff_tools(runtime, registered_handoffs)
         reply_text = self._reply_text(raw)
         output = self._coerce_output(reply_text)
         return AgentRunResult(output=output, text=reply_text, raw=dict(raw or {}))

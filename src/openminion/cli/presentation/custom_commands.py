@@ -4,6 +4,7 @@ import re
 import shlex
 import subprocess
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
 
 
@@ -12,6 +13,7 @@ _ARG_PLACEHOLDER_RE = re.compile(r"\$(\d+|ARGUMENTS)")
 _AT_FILE_RE = re.compile(r"@([^\s@!`]+)")
 _BANG_CMD_RE = re.compile(r"!`([^`]+)`")
 _VALID_SLASH_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
+_BUNDLED_COMMANDS_PACKAGE = "openminion.cli.presentation.bundled_commands"
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,9 @@ def discover_with_warnings(
 ) -> tuple[dict[str, CustomCommand], list[str]]:
     warnings: list[str] = []
     result: dict[str, CustomCommand] = {}
+
+    for cmd in _load_bundled_commands(warnings):
+        result[cmd.slash] = cmd
 
     for source, base in (("user", user_dir), ("project", project_dir)):
         if base is None or not Path(base).is_dir():
@@ -122,16 +127,58 @@ class _CustomCommandError(ValueError):
     pass
 
 
+def _load_bundled_commands(warnings: list[str]) -> list[CustomCommand]:
+    try:
+        root = resources.files(_BUNDLED_COMMANDS_PACKAGE)
+    except (ModuleNotFoundError, AttributeError, ValueError) as exc:
+        warnings.append(f"{_BUNDLED_COMMANDS_PACKAGE}: {exc}")
+        return []
+
+    commands: list[CustomCommand] = []
+    for entry in sorted(root.iterdir(), key=lambda item: item.name):
+        if not entry.name.endswith(".md"):
+            continue
+        pseudo_path = Path("<bundled-commands>") / entry.name
+        try:
+            raw = entry.read_text(encoding="utf-8")
+            commands.append(
+                _load_command_text(
+                    name=entry.name.removesuffix(".md"),
+                    raw=raw,
+                    source="bundled",
+                    path=pseudo_path,
+                )
+            )
+        except (OSError, UnicodeError, _CustomCommandError) as exc:
+            warnings.append(f"{pseudo_path}: {exc}")
+    return commands
+
+
 def _load_command(path: Path, *, source: str) -> CustomCommand:
-    name = path.stem.lower()
-    if not _VALID_SLASH_NAME.match(name):
-        raise _CustomCommandError(
-            f"invalid slash name {name!r} — must match [a-z][a-z0-9_-]*"
-        )
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise _CustomCommandError(f"unreadable: {exc}") from exc
+    return _load_command_text(
+        name=path.stem,
+        raw=raw,
+        source=source,
+        path=path,
+    )
+
+
+def _load_command_text(
+    *,
+    name: str,
+    raw: str,
+    source: str,
+    path: Path,
+) -> CustomCommand:
+    slash_name = name.lower()
+    if not _VALID_SLASH_NAME.match(slash_name):
+        raise _CustomCommandError(
+            f"invalid slash name {slash_name!r} — must match [a-z][a-z0-9_-]*"
+        )
 
     frontmatter: dict[str, str] = {}
     body = raw
@@ -140,7 +187,7 @@ def _load_command(path: Path, *, source: str) -> CustomCommand:
         frontmatter = _parse_minimal_yaml(match.group(1))
         body = raw[match.end() :]
     return CustomCommand(
-        slash=f"/{name}",
+        slash=f"/{slash_name}",
         body=body,
         source=source,
         path=path,

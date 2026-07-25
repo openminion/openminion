@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from openminion.base.config.parse import split_comma_tokens
+
 from .constants import DEFAULT_CONFIG_FILENAME
 from .config import load_config, resolve_default_config_path
 from .runtime.retrieve import RetrieveCtl
@@ -123,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "ingest-text":
-            tags = [item.strip() for item in str(args.tags).split(",") if item.strip()]
+            tags = split_comma_tokens(args.tags)
             result = service.ingest_source(
                 source_type=args.source_type,
                 source_ref=args.source_ref,
@@ -138,13 +140,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "retrieve":
-            tags = [item.strip() for item in str(args.tags).split(",") if item.strip()]
-            types = [
-                item.strip() for item in str(args.types).split(",") if item.strip()
-            ]
+            tags = split_comma_tokens(args.tags)
+            types = split_comma_tokens(args.types)
             scope: dict[str, Any] = {}
             if args.scope.strip():
-                for item in args.scope.split(","):
+                for item in split_comma_tokens(args.scope):
                     key = item.strip().lower()
                     if key in {"session", "agent", "global", "project"}:
                         scope[key] = True

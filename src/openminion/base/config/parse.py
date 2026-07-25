@@ -1,4 +1,4 @@
-"""Small config coercion helpers."""
+"""Small config coercion and token parsing helpers."""
 
 from __future__ import annotations
 
@@ -8,21 +8,25 @@ from openminion.base.constants import BASE_BOOL_FALSE_VALUES, BASE_BOOL_TRUE_VAL
 from openminion.base.config.base import ConfigError
 
 
-def _as_int(value: Any, default: int) -> int:
+def split_comma_tokens(value: Any) -> list[str]:
+    return [part.strip() for part in str(value or "").split(",") if part.strip()]
+
+
+def as_int(value: Any, default: int) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
         return default
 
 
-def _as_float(value: Any, default: float) -> float:
+def as_float(value: Any, default: float) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
 
 
-def _as_optional_float(value: Any) -> float | None:
+def as_optional_float(value: Any) -> float | None:
     if value is None:
         return None
     try:
@@ -31,7 +35,7 @@ def _as_optional_float(value: Any) -> float | None:
         return None
 
 
-def _as_bool(value: Any, default: bool) -> bool:
+def as_bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -45,7 +49,7 @@ def _as_bool(value: Any, default: bool) -> bool:
     return default
 
 
-def _positive_int(value: Any) -> int | None:
+def positive_int(value: Any) -> int | None:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -53,14 +57,21 @@ def _positive_int(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def _as_int_list(value: Any) -> list[int]:
+def as_int_list(value: Any) -> list[int]:
     if isinstance(value, list):
         items = value
     elif isinstance(value, str):
-        items = [part.strip() for part in value.split(",") if part.strip()]
+        items = split_comma_tokens(value)
     else:
         items = []
-    return [parsed for item in items if (parsed := _positive_int(item)) is not None]
+    return [parsed for item in items if (parsed := positive_int(item)) is not None]
+
+
+_as_int = as_int
+_as_float = as_float
+_as_optional_float = as_optional_float
+_as_bool = as_bool
+_as_int_list = as_int_list
 
 
 def _as_string_dict(value: Any, *, lower_keys: bool) -> dict[str, str]:
@@ -189,6 +200,13 @@ def _as_obj(value: Any, default: dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "as_int",
+    "as_float",
+    "as_optional_float",
+    "as_bool",
+    "as_int_list",
+    "positive_int",
+    "split_comma_tokens",
     "_as_int",
     "_as_float",
     "_as_optional_float",

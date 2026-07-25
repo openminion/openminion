@@ -15,6 +15,7 @@ from openminion.services.bootstrap.paths import (
     SERVICES_STATE_DIRNAME,
     SERVICES_TOOL_RUNTIME_SUBDIR,
 )
+from openminion.modules.tool.sidecars import SIDECAR_AUTOSTART_ENV_KEYS
 from .prompts import (
     PINCHTAB_AUTOSTART_PROMPT,
     build_sidecar_policy_prompt,
@@ -34,7 +35,6 @@ from openminion.modules.policy import (
 )
 
 from openminion.base.time import utc_now_iso as _iso_now
-
 
 def _truthy(value: str | None) -> bool:
     raw = str(value or "").strip().lower()
@@ -438,10 +438,12 @@ class PinchTabSidecarAdapter:
         *,
         config_path: str | None,
         runtime_env: Mapping[str, str] | None,
+        event_sink: Callable[[str, dict[str, Any]], None] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._config_path = config_path
         self._runtime_env = dict(runtime_env or {})
+        self._event_sink = event_sink
         self._logger = logger or logging.getLogger("openminion.sidecars")
 
     def _env(self, key: str, default: str = "") -> str:
@@ -449,7 +451,22 @@ class PinchTabSidecarAdapter:
             return str(self._runtime_env[key]).strip()
         return resolve_services_env().get(key, default).strip()
 
-    def _daemon_config(self) -> Any:
+    def _binary_resolver(self) -> Any:
+        from openminion.tools.browser.providers.pinchtab.binary import (
+            build_pinchtab_binary_resolver,
+        )
+
+        roots = resolve_services_roots(
+            config_path=self._config_path,
+            runtime_env=self._runtime_env,
+        )
+        return build_pinchtab_binary_resolver(
+            data_root=roots.data_root,
+            runtime_env=self._runtime_env,
+            event_sink=self._event_sink,
+        )
+
+    def _daemon_config(self, *, allow_binary_download: bool = False) -> Any:
         from openminion.tools.browser.providers.pinchtab.daemon import (
             build_daemon_config,
         )
@@ -465,12 +482,22 @@ class PinchTabSidecarAdapter:
         )
 
         launch_cmd = self._env("PINCHTAB_LAUNCH_CMD", "")
+        pinchtab_binary = None
+        if not launch_cmd:
+            resolver = self._binary_resolver()
+            resolution = (
+                resolver.resolve(allow_download=True)
+                if allow_binary_download
+                else resolver.status()
+            )
+            pinchtab_binary = resolution.binary_path
         launch_timeout = int(self._env("PINCHTAB_LAUNCH_TIMEOUT_SECONDS", "20") or "20")
         launch_env = _parse_env_pairs(self._env("PINCHTAB_LAUNCH_ENV", ""))
         return build_daemon_config(
             base_url=base_url,
             runtime_dir=runtime_dir,
             launch_cmd=launch_cmd or None,
+            pinchtab_binary=pinchtab_binary,
             launch_timeout_s=launch_timeout,
             env=launch_env,
         )
@@ -478,8 +505,9 @@ class PinchTabSidecarAdapter:
     def status(self) -> dict[str, Any]:
         from openminion.tools.browser.providers.pinchtab.daemon import daemon_status
 
-        cfg = self._daemon_config()
-        return daemon_status(cfg)
+        payload = daemon_status(self._daemon_config(allow_binary_download=False))
+        payload["binary"] = self._binary_resolver().status().as_dict()
+        return payload
 
     def start(self) -> dict[str, Any]:
         from openminion.tools.browser.providers.pinchtab.client import (
@@ -488,7 +516,7 @@ class PinchTabSidecarAdapter:
         )
         from openminion.tools.browser.providers.pinchtab.daemon import ensure_daemon
 
-        cfg = self._daemon_config()
+        cfg = self._daemon_config(allow_binary_download=True)
         token = self._env("PINCHTAB_TOKEN", "")
         timeout_seconds = int(self._env("PINCHTAB_TIMEOUT_SECONDS", "30") or "30")
         max_retries = int(self._env("PINCHTAB_MAX_RETRIES", "2") or "2")
@@ -508,7 +536,7 @@ class PinchTabSidecarAdapter:
     def stop(self, *, kill: bool = False) -> dict[str, Any]:
         from openminion.tools.browser.providers.pinchtab.daemon import stop_daemon
 
-        cfg = self._daemon_config()
+        cfg = self._daemon_config(allow_binary_download=False)
         return stop_daemon(cfg, kill=kill)
 
 
@@ -525,12 +553,13 @@ def default_sidecar_manager(
     adapter = PinchTabSidecarAdapter(
         config_path=config_path,
         runtime_env=runtime_env,
+        event_sink=event_sink,
         logger=logger,
     )
     spec = SidecarSpec(
         name="pinchtab",
         description="PinchTab browser bridge daemon",
-        autostart_env_key="PINCHTAB_AUTOSTART",
+        autostart_env_key=SIDECAR_AUTOSTART_ENV_KEYS["pinchtab"],
         prompt=PINCHTAB_AUTOSTART_PROMPT,
         adapter=adapter,
     )

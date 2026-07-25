@@ -178,7 +178,7 @@ src/openminion/modules/brain/runtime/recovery/pipeline.py	6	0	current broad-hand
 src/openminion/modules/brain/runtime/tokens.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/schemas/plan.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/schemas/routing.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/schemas/state.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/brain/schemas/state/working.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/state.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/tool_catalog/runtime.py	6	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/tools/action_dispatch.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -217,7 +217,9 @@ src/openminion/modules/controlplane/runtime/audit.py	1	0	current broad-handler b
 src/openminion/modules/controlplane/runtime/channels.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/runtime/client.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/runtime/cron_delivery.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/controlplane/runtime/dispatcher.py	6	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/controlplane/runtime/dispatch/clarify.py	3	0	CDD split moved existing dispatcher clarify broad handlers; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/controlplane/runtime/dispatch/coordinator.py	1	0	CDD split moved existing dispatcher orchestration broad handler; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/controlplane/runtime/dispatch/wizard.py	2	1	CDD split moved existing dispatcher wizard broad handlers; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/runtime/gate.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/runtime/timeline.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/controlplane/runtime/worker/inbox.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

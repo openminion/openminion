@@ -16,6 +16,7 @@ from openminion.cli.presentation.animation import (
     parse_animation_token,
     resolve_focus_animation,
 )
+from openminion.cli.presentation.browser import render_browser_command
 from openminion.cli.interactive.project_context import (
     resolve_project_context,
     write_init_template,
@@ -81,6 +82,12 @@ class SlashCommandMixin:
     def _slash_tools(self, args: str) -> None:
         text = "/tools" if not str(args or "").strip() else f"/tools {args.strip()}"
         body = self._tools_command_body(text)
+        self.query_one(FocusTranscript).push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
+        )
+
+    def _slash_browser(self, args: str) -> None:
+        body = render_browser_command(args, working_dir=str(self._working_dir))
         self.query_one(FocusTranscript).push_message(
             ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
         )
@@ -503,6 +510,16 @@ class SlashCommandMixin:
             body = result.display_body
         chat.push_message(
             ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
+        )
+
+    def _slash_review(self, args: str) -> None:
+        """Run the existing review.diff analyzer on current or supplied diff."""
+
+        from openminion.cli.presentation.review import run_review_workflow
+
+        result = run_review_workflow(self._working_dir, args)
+        self.query_one(FocusTranscript).push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=result.body)
         )
 
     def _cycle_permission_mode_from_ui(self) -> str:

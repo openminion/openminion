@@ -1,9 +1,11 @@
+from types import SimpleNamespace
 from typing import Any
 
 from pydantic import Field
 
 from openminion.modules.brain.constants import (
     BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE,
+    BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
 )
 from openminion.modules.brain.diagnostics.transitions import (
     set_status_unchecked,
@@ -23,6 +25,16 @@ from openminion.modules.brain.schemas import (
 from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
+)
+from openminion.modules.brain.execution.delegation_policy import (
+    clear_policy_facts,
+    merge_child_policy_facts,
+    record_child_policy_projection,
+    record_result_aggregation,
+)
+from openminion.modules.brain.execution.worktree_children import (
+    allocate_child_worktree,
+    finalize_child_worktree,
 )
 from openminion.modules.brain.execution.dispatch import invoke_decision_direct
 from openminion.modules.brain.execution.preflight import (
@@ -75,6 +87,11 @@ from openminion.modules.brain.loop.services import runner_from_context
 
 ORCHESTRATE_MODE = BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE
 _ORCHESTRATE_PUBLIC_TAG = "[act:orchestrate]"
+_DELEGATE_ASSIGNMENT_MODES = {
+    BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
+    "delegate",
+    "delegated",
+}
 
 
 def _normalize_subtasks(raw: Any) -> list[SubtaskSpec]:
@@ -133,6 +150,33 @@ def _parent_task_id_from_context(ctx: ExecutionContext) -> str:
         if normalized:
             return normalized
     return "orchestrate-parent"
+
+
+def _delegate_assignment_from_subtask(subtask: SubtaskSpec):
+    inputs = subtask.inputs if isinstance(subtask.inputs, dict) else {}
+    suggested = str(subtask.suggested_mode or "").strip().lower()
+    target_agent_id = str(inputs.get("target_agent_id") or "").strip()
+    target_capability = str(inputs.get("target_capability") or "").strip() or None
+    if suggested not in _DELEGATE_ASSIGNMENT_MODES and not (
+        target_agent_id or target_capability
+    ):
+        return None
+    return SimpleNamespace(
+        mode=BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED,
+        confidence=float(inputs.get("confidence") or 1.0),
+        reason_code=str(inputs.get("reason_code") or "orchestrate_exact_delegate"),
+        target_agent_id=target_agent_id,
+        target_capability=target_capability,
+        goal=str(inputs.get("goal") or subtask.goal).strip(),
+        constraints=str(inputs.get("constraints") or subtask.constraints or ""),
+        synthesize_result=bool(inputs.get("synthesize_result", False)),
+        timeout_ms=inputs.get("timeout_ms"),
+        delegation_context=inputs.get("delegation_context"),
+        sub_intents=[subtask.goal],
+        rationale=str(inputs.get("rationale") or ""),
+        question=None,
+        answer=None,
+    )
 
 
 def _normalized_subtask_budget(
@@ -374,6 +418,7 @@ class OrchestrateMode:
         child_state.task_backed_task_id = None
         child_state.task_backed_checkpoint_id = None
         child_state.task_backed_resume_state = {}
+        clear_policy_facts(child_state)
         return child_state
 
     def _fallback_decision(self, subtask: SubtaskSpec):
@@ -402,6 +447,9 @@ class OrchestrateMode:
         subtask: SubtaskSpec,
         prompt: str,
     ):
+        delegate_assignment = _delegate_assignment_from_subtask(subtask)
+        if delegate_assignment is not None:
+            return delegate_assignment
         runner = runner_from_context(ctx)
         if runner is None:
             return self._fallback_decision(subtask)
@@ -507,14 +555,21 @@ class OrchestrateMode:
         runner = runner_from_context(ctx)
         if runner is None:
             raise RuntimeError("OrchestrateMode requires runner-backed services")
-        result = invoke_decision_direct(
-            runner,
-            state=child_state,
-            decision=decision,
-            user_input=prompt,
-            logger=ctx.logger,
-            depth=1,
-        )
+        lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
+        result_status = "error"
+        try:
+            result = invoke_decision_direct(
+                runner,
+                state=child_state,
+                decision=decision,
+                user_input=prompt,
+                logger=ctx.logger,
+                depth=1,
+            )
+            result_status = result.status
+        finally:
+            finalize_child_worktree(ctx, lease=lease, status=result_status)
+        merge_child_policy_facts(ctx, child_state=child_state)
         subtask_result = self._result_from_mode_output(
             subtask=subtask,
             mode_name=mode_name,
@@ -617,14 +672,21 @@ class OrchestrateMode:
         runner = runner_from_context(ctx)
         if runner is None:
             raise RuntimeError("OrchestrateMode requires runner-backed services")
-        result = invoke_decision_direct(
-            runner,
-            state=child_state,
-            decision=decision,
-            user_input=prompt,
-            logger=ctx.logger,
-            depth=1,
-        )
+        lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
+        result_status = "error"
+        try:
+            result = invoke_decision_direct(
+                runner,
+                state=child_state,
+                decision=decision,
+                user_input=prompt,
+                logger=ctx.logger,
+                depth=1,
+            )
+            result_status = result.status
+        finally:
+            finalize_child_worktree(ctx, lease=lease, status=result_status)
+        merge_child_policy_facts(ctx, child_state=child_state)
         subtask_result = self._result_from_mode_output(
             subtask=subtask,
             mode_name=mode_name,
@@ -714,7 +776,17 @@ class OrchestrateMode:
         total: int,
         parent_task_id: str,
     ) -> ChildTaskResult:
-        if self._promoter.should_promote(subtask):
+        should_promote = self._promoter.should_promote(subtask)
+        record_child_policy_projection(
+            ctx,
+            flow="orchestrate_promoted" if should_promote else "orchestrate_inline",
+            child_id=subtask.subtask_id,
+            child_count=total,
+            child_mode="async" if should_promote else "sync",
+            parent_id=parent_task_id,
+            seam_id="brain.orchestrate.child",
+        )
+        if should_promote:
             task_id = self._promoter.promote(
                 subtask=subtask,
                 parent_task_id=parent_task_id,
@@ -777,6 +849,13 @@ class OrchestrateMode:
             cancellation_policy=self._cancellation,
         )
         results = self._collector.collect(child_results)
+        record_result_aggregation(
+            ctx,
+            flow="orchestrate_inline",
+            parent_id=parent_task_id,
+            seam_id="brain.orchestrate.results",
+            results=results,
+        )
         self._emit_status(
             ctx,
             mode_state="synthesis",

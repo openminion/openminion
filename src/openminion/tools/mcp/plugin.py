@@ -6,6 +6,7 @@ import fnmatch
 from typing import TYPE_CHECKING
 from typing import Any
 
+from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
@@ -261,7 +262,7 @@ def _mcp_approval_granted(
 def _metadata_csv(value: Any) -> set[str]:
     if isinstance(value, (list, tuple, set, frozenset)):
         return {str(item or "").strip() for item in value if str(item or "").strip()}
-    return {item.strip() for item in str(value or "").split(",") if item.strip()}
+    return set(split_comma_tokens(value))
 
 
 def build_mcp_prompt_spec(

@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from openminion.base.config import OpenMinionConfig
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config.parse import _as_bool, _as_int
+from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.controlplane.channels.slack.constants import (
     DEFAULT_MAX_MESSAGE_CHARS,
     DEFAULT_RETRY_ATTEMPTS,
@@ -151,7 +152,7 @@ def _tuple(raw: Any) -> tuple[str, ...]:
     if raw is None:
         return ()
     if isinstance(raw, str):
-        return tuple(part.strip() for part in raw.split(",") if part.strip())
+        return tuple(split_comma_tokens(raw))
     return tuple(str(item).strip() for item in raw if str(item).strip())
 
 

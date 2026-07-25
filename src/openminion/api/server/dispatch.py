@@ -10,6 +10,7 @@ from openminion.api.responses.serialization import error_response, normalize_req
 from openminion.api.routes import (
     APIRouteContext,
     RouteResult,
+    handle_a2a_request,
     handle_admin_request,
     handle_agent_request,
     handle_cron_request,
@@ -28,6 +29,7 @@ from openminion.api.server.observability import finalize_api_response
 
 
 _ROUTE_HANDLERS = (
+    handle_a2a_request,
     handle_agent_request,
     handle_tools_request,
     handle_cron_request,

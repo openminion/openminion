@@ -158,11 +158,7 @@ def run_identity_import_from_bundle(
         meta["bundle_import_warnings"] = list(import_warnings)
     profile = profile.model_copy(update={"meta": meta})
 
-    profile_version = ctl.upsert_profile(
-        profile,
-        actor="identity-cli",
-        reason="bundle_import",
-    )
+    profile_version = ctl.upsert_profile(profile)
     print(f"imported: {resolved_agent_id} ({str(profile_version)[:12]})")
     if defaulted_fields:
         print(f"defaulted_fields: {', '.join(defaulted_fields)}")
@@ -425,6 +421,46 @@ def run_identity_render(
         sys.exit(1)
 
 
+def run_identity_validate(agent_id: str | None = None, *, strict: bool = False) -> None:
+    ctl = _get_identityctl()
+    targets = [agent_id] if agent_id else [row.agent_id for row in ctl.list_profiles()]
+    results: dict[str, object] = {}
+    overall_ok = True
+    for target in targets:
+        normalized = str(target or "").strip()
+        if not normalized:
+            continue
+        profile = ctl.get_profile(normalized)
+        if profile is None:
+            print(f"ERROR: Profile for agent '{normalized}' not found", file=sys.stderr)
+            sys.exit(1)
+        result = ctl.validate_profile(profile, strict=strict)
+        overall_ok = overall_ok and result.ok
+        results[normalized] = result.model_dump(mode="python")
+
+    import yaml
+
+    print(yaml.safe_dump({"ok": overall_ok, "results": results}, sort_keys=False))
+    if not overall_ok:
+        sys.exit(1)
+
+
+def run_identity_warm_cache(agent_id: str, purposes: list[str] | None = None) -> None:
+    ctl = _get_identityctl()
+    try:
+        count = ctl.warm_cache(agent_id=agent_id, purposes=purposes or None)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"warmed: {agent_id} ({count})")
+
+
+def run_identity_clear_cache(agent_id: str | None = None) -> None:
+    ctl = _get_identityctl()
+    ctl.clear_cache(agent_id=agent_id)
+    print(f"cleared_cache: {agent_id or 'all'}")
+
+
 def _get_identityctl() -> IdentityCtl:
     config = load_cli_config()
     db_path = resolve_cli_identity_db_path(config).expanduser()
@@ -602,6 +638,25 @@ def _build_identity_bridge_argv(args: argparse.Namespace) -> list[str]:
             "--max-tokens",
             str(args.max_tokens),
         ]
+    if command == "validate":
+        argv = ["validate"]
+        agent_id = str(getattr(args, "agent_id", "") or "").strip()
+        if agent_id:
+            argv.extend(["--agent-id", agent_id])
+        if bool(getattr(args, "strict", False)):
+            argv.append("--strict")
+        return argv
+    if command == "warm-cache":
+        argv = ["warm-cache", "--agent-id", str(args.agent_id)]
+        for purpose in list(getattr(args, "purpose", []) or []):
+            argv.extend(["--purpose", str(purpose)])
+        return argv
+    if command == "clear-cache":
+        argv = ["clear-cache"]
+        agent_id = str(getattr(args, "agent_id", "") or "").strip()
+        if agent_id:
+            argv.extend(["--agent-id", agent_id])
+        return argv
     raise RuntimeError(f"Unknown identity command: {command}")
 
 
@@ -666,16 +721,32 @@ def _add_identity_render_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-tokens", type=int, default=180)
 
 
-def app(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="openminion identity",
-        description=(
-            "Manage agent identity profiles. Startup precedence: YAML sync first, "
-            "markdown bundle sync second, default fallback last."
-        ),
+def _add_identity_validate_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--agent-id", default="", help="Optional agent ID to validate")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Promote semantic warnings to validation errors",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
 
+
+def _add_identity_warm_cache_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--agent-id", required=True)
+    parser.add_argument(
+        "--purpose",
+        action="append",
+        default=[],
+        help="Purpose to warm; repeat for multiple purposes",
+    )
+
+
+def _add_identity_clear_cache_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--agent-id", default="", help="Optional agent ID cache scope")
+
+
+def _register_identity_app_subcommands(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
     list_parser = subparsers.add_parser("list", help="List identity profiles")
     list_parser.set_defaults(_handler=lambda _: run_identity_list())
 
@@ -739,6 +810,48 @@ def app(argv: list[str] | None = None) -> int:
         )
     )
 
+    validate_parser = subparsers.add_parser(
+        "validate", help="Validate identity profiles"
+    )
+    _add_identity_validate_args(validate_parser)
+    validate_parser.set_defaults(
+        _handler=lambda ns: run_identity_validate(
+            agent_id=(ns.agent_id or None),
+            strict=bool(ns.strict),
+        )
+    )
+
+    warm_cache_parser = subparsers.add_parser(
+        "warm-cache", help="Warm cached identity snippets"
+    )
+    _add_identity_warm_cache_args(warm_cache_parser)
+    warm_cache_parser.set_defaults(
+        _handler=lambda ns: run_identity_warm_cache(
+            ns.agent_id,
+            purposes=list(ns.purpose or []),
+        )
+    )
+
+    clear_cache_parser = subparsers.add_parser(
+        "clear-cache", help="Clear cached identity snippets"
+    )
+    _add_identity_clear_cache_args(clear_cache_parser)
+    clear_cache_parser.set_defaults(
+        _handler=lambda ns: run_identity_clear_cache(agent_id=(ns.agent_id or None))
+    )
+
+
+def app(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="openminion identity",
+        description=(
+            "Manage agent identity profiles. Startup precedence: YAML sync first, "
+            "markdown bundle sync second, default fallback last."
+        ),
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    _register_identity_app_subcommands(subparsers)
+
     namespace = parser.parse_args(argv)
     namespace._handler(namespace)
     return 0
@@ -761,6 +874,13 @@ _IDENTITY_SUBCOMMAND_SPECS: tuple[tuple[str, str, Any], ...] = (
     ("diff", "Diff SQLite profile vs markdown bundle", _add_identity_diff_args),
     ("delete", "Delete specific agent profile", _add_identity_delete_args),
     ("render", "Render identity snippet for agent", _add_identity_render_args),
+    ("validate", "Validate identity profiles", _add_identity_validate_args),
+    (
+        "warm-cache",
+        "Warm cached identity snippets",
+        _add_identity_warm_cache_args,
+    ),
+    ("clear-cache", "Clear cached identity snippets", _add_identity_clear_cache_args),
 )
 
 

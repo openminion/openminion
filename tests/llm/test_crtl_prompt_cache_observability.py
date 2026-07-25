@@ -173,6 +173,23 @@ def test_usage_totals_from_mapping_extracts_cached_tokens_from_canonical_keys():
         assert t.cached_tokens == 30
 
 
+def test_usage_totals_from_mapping_extracts_peak_request_tokens():
+    totals = usage_totals_from_mapping(
+        {
+            "total_input_tokens_used": 23546,
+            "total_tokens_used": 23812,
+            "max_single_call_input_tokens": 12426,
+            "max_single_call_total_tokens": 12616,
+        }
+    )
+
+    assert totals is not None
+    assert totals.prompt_tokens == 23546
+    assert totals.total_tokens == 23812
+    assert totals.max_single_call_prompt_tokens == 12426
+    assert totals.max_single_call_total_tokens == 12616
+
+
 def test_footer_renders_cached_suffix_when_turn_cached_tokens_non_none():
     snapshot = TokenUsageSnapshot(
         turn_total_tokens=120,
@@ -193,6 +210,22 @@ def test_footer_omits_cached_suffix_when_turn_cached_tokens_is_none():
     out = format_token_usage_summary(snapshot)
     assert "120" in out
     assert "cached" not in out
+
+
+def test_footer_renders_peak_request_hint_when_available():
+    snapshot = TokenUsageSnapshot(
+        turn_total_tokens=23812,
+        session_total_tokens=23812,
+        context_used_tokens=23812,
+        context_limit_tokens=200000,
+        turn_max_single_call_prompt_tokens=12426,
+        turn_max_single_call_total_tokens=12616,
+    )
+
+    out = format_token_usage_summary(snapshot)
+
+    assert "turn 23.8k" in out
+    assert "peak 12.4k in / 12.6k total" in out
 
 
 def test_footer_includes_cached_suffix_only_in_turn_position_not_session():

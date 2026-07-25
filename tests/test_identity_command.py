@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
@@ -407,6 +408,89 @@ def test_run_identity_show_missing_profile_exits_one(
 
     assert exc_info.value.code == 1
     assert "not found" in capsys.readouterr().err
+
+
+def test_run_identity_validate_outputs_profile_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctl = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+    _seed_profile(ctl, agent_id="ops-agent")
+    monkeypatch.setattr(identity_command, "_get_identityctl", lambda: ctl)
+
+    identity_command.run_identity_validate("ops-agent")
+
+    out = capsys.readouterr().out
+    assert "ok: true" in out
+    assert "ops-agent" in out
+
+
+def test_run_identity_validate_missing_profile_exits_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctl = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+    monkeypatch.setattr(identity_command, "_get_identityctl", lambda: ctl)
+
+    with pytest.raises(SystemExit) as exc_info:
+        identity_command.run_identity_validate("missing-agent")
+
+    assert exc_info.value.code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_run_identity_warm_cache_and_clear_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctl = IdentityCtl(
+        store=SQLiteIdentityStore(sqlite_path=str(tmp_path / "identity.db"))
+    )
+    _seed_profile(ctl, agent_id="ops-agent")
+    monkeypatch.setattr(identity_command, "_get_identityctl", lambda: ctl)
+
+    identity_command.run_identity_warm_cache("ops-agent", purposes=["act"])
+    identity_command.run_identity_clear_cache("ops-agent")
+
+    out = capsys.readouterr().out
+    assert "warmed: ops-agent (1)" in out
+    assert "cleared_cache: ops-agent" in out
+
+
+def test_identity_bridge_argv_includes_admin_commands() -> None:
+    validate_args = argparse.Namespace(
+        identity_command="validate", agent_id="ops-agent", strict=True
+    )
+    warm_args = argparse.Namespace(
+        identity_command="warm-cache",
+        agent_id="ops-agent",
+        purpose=["act", "judge"],
+    )
+    clear_args = argparse.Namespace(identity_command="clear-cache", agent_id="")
+
+    assert identity_command._build_identity_bridge_argv(validate_args) == [
+        "validate",
+        "--agent-id",
+        "ops-agent",
+        "--strict",
+    ]
+    assert identity_command._build_identity_bridge_argv(warm_args) == [
+        "warm-cache",
+        "--agent-id",
+        "ops-agent",
+        "--purpose",
+        "act",
+        "--purpose",
+        "judge",
+    ]
+    assert identity_command._build_identity_bridge_argv(clear_args) == ["clear-cache"]
 
 
 # ── IRGR-05: upsert ────────────────────────────────────────────────────────

@@ -94,6 +94,7 @@ def test_expand_probe_messages_flattens_multiline_prompt_into_one_turn() -> None
 
 
 def test_turn_response_boundary_ignores_typeahead_prompt_until_done() -> None:
+    assert not _turn_response_boundary_detected("❯ hello\nhello\n\n❯ ")
     assert not _turn_response_boundary_detected(
         "❯ hello\nhello\n\n❯ Commands are unavailable while a turn is running."
     )

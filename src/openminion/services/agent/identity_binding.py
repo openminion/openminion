@@ -408,11 +408,7 @@ class AgentIdentityMixin:
         if import_warnings:
             meta["bundle_import_warnings"] = list(import_warnings)
         profile = profile.model_copy(update={"meta": meta})
-        self._identityctl.upsert_profile(
-            profile,
-            actor="identity-runtime",
-            reason="bundle_import",
-        )
+        self._identityctl.upsert_profile(profile)
         summary["status"] = IDENTITY_RUNTIME_STATUS_IMPORTED
         summary["imported"] = True
         summary["defaulted_fields_count"] = len(defaulted_fields)

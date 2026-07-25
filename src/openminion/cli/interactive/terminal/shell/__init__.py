@@ -909,6 +909,7 @@ async def _run_interruptible_agent_turn(
             watcher.stop()
 
 
+
 async def _run_agent_turn(
     *,
     text: str,
@@ -969,6 +970,9 @@ async def _run_agent_turn(
             mark_active_chat_first_text()
             handle.append_token(chunk_str)
         handle.complete(final_text=reply)
+        from .timing import push_phase_timing_report_if_enabled
+
+        push_phase_timing_report_if_enabled(runtime=runtime, transcript=transcript)
     except asyncio.CancelledError:
         try:
             handle.complete(final_text=reply)

@@ -22,6 +22,7 @@ from .profiles import PROFILE_BUILDERS, build_argv
 from .registrar import REGISTRAR as _REGISTRAR
 from .registry import TargetRegistry, registry_from_config
 from .service import OpsService, local_ops_service
+from .specialized import ScopedTargetArgs, TimeWindowArgs
 from .transports import ContainerTransport, LocalTransport, SshTransport
 
 if TYPE_CHECKING:
@@ -50,7 +51,9 @@ __all__ = [
     "OperationTarget",
     "OpsService",
     "SshTransport",
+    "ScopedTargetArgs",
     "TargetRegistry",
+    "TimeWindowArgs",
     "TransportFacts",
     "TransportReadResult",
     "TransportResult",

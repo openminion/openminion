@@ -17,7 +17,10 @@ from ..constants import (
     LLM_TOOL_CHOICE_NONE,
 )
 from ..config import RoutingPolicy, resolve_provider_config
-from ..diagnostics.events import emit_llm_operation as _emit_llm_operation
+from ..diagnostics.events import (
+    emit_llm_operation as _emit_llm_operation,
+    emit_tool_envelope_recovery_event as _emit_tool_envelope_recovery_event,
+)
 from ..errors import ErrorCode, LLMCtlError
 from ..providers.cost import estimate_usage_cost_usd
 from ..schemas import (
@@ -307,6 +310,59 @@ def _emit_operation(
         attempt=attempt,
         error_code=error_code,
         extra=payload_extra or None,
+    )
+
+
+def _emit_tool_envelope_recovery(
+    client: Any,
+    *,
+    request: LLMRequest,
+    response: LLMResponse,
+    provider_name: str,
+    model_name: str,
+    outcome: str,
+    attempt: int | None = None,
+    source: str = "",
+) -> bool:
+    if client._telemetryctl is None:
+        return False
+
+    metadata = dict(request.metadata or {})
+    session_id = str(metadata.get("session_id", "")).strip()
+    turn_id = str(metadata.get("turn_id", "")).strip()
+    if not session_id or not turn_id:
+        return False
+
+    telemetry = response.telemetry if isinstance(response.telemetry, dict) else {}
+    normalization = (
+        telemetry.get("normalization")
+        if isinstance(telemetry.get("normalization"), dict)
+        else {}
+    )
+    parse_metadata = (
+        normalization.get("tool_call_parse_metadata")
+        if isinstance(normalization.get("tool_call_parse_metadata"), dict)
+        else {}
+    )
+    error_code = ""
+    errors = parse_metadata.get("tool_parse_errors")
+    if isinstance(errors, list) and errors:
+        first_error = errors[0]
+        if isinstance(first_error, dict):
+            error_code = str(first_error.get("code", "") or "")
+
+    return _emit_tool_envelope_recovery_event(
+        telemetryctl=client._telemetryctl,
+        session_id=session_id,
+        turn_id=turn_id,
+        outcome=outcome,
+        provider=provider_name,
+        model=model_name,
+        parse_strategy=str(parse_metadata.get("tool_parse_strategy", "") or ""),
+        parse_mode=str(parse_metadata.get("tool_parse_format", "") or ""),
+        attempt=attempt,
+        source=source,
+        error_code=error_code,
     )
 
 

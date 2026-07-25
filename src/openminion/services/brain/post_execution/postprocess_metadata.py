@@ -7,7 +7,7 @@ from openminion.base.config.core import resolve_default_agent_id
 from openminion.modules.brain.runner import BrainRunner
 from openminion.modules.llm.providers.envelope_v2 import CONTRACT_VERSION_V2
 from openminion.services.brain.post_execution.usage import (
-    collect_llm_usage_totals_from_events,
+    collect_llm_usage_summary_from_events,
 )
 
 _STRUCTURED_ACTION_OUTPUT_METADATA_KEYS: tuple[str, ...] = (
@@ -52,16 +52,19 @@ def _build_turn_response_metadata(
         action_outputs.get("total_output_tokens_used", 0) or 0
     )
     total_tokens_used = int(action_outputs.get("total_tokens_used", 0) or 0)
+    (
+        event_input_tokens,
+        event_output_tokens,
+        event_total_tokens,
+        max_single_call_input_tokens,
+        max_single_call_output_tokens,
+        max_single_call_total_tokens,
+    ) = collect_llm_usage_summary_from_events(
+        runner=runner,
+        session_id=session_id,
+        trace_id=request_id,
+    )
     if total_tokens_used <= 0:
-        (
-            event_input_tokens,
-            event_output_tokens,
-            event_total_tokens,
-        ) = collect_llm_usage_totals_from_events(
-            runner=runner,
-            session_id=session_id,
-            trace_id=request_id,
-        )
         if event_total_tokens > 0:
             total_input_tokens_used = event_input_tokens
             total_output_tokens_used = event_output_tokens
@@ -84,6 +87,9 @@ def _build_turn_response_metadata(
         "total_input_tokens_used": str(total_input_tokens_used),
         "total_output_tokens_used": str(total_output_tokens_used),
         "total_tokens_used": str(total_tokens_used),
+        "max_single_call_input_tokens": str(max_single_call_input_tokens),
+        "max_single_call_output_tokens": str(max_single_call_output_tokens),
+        "max_single_call_total_tokens": str(max_single_call_total_tokens),
     }
 
 

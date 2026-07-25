@@ -27,6 +27,15 @@ def _parse_json(raw: str | None, fallback: object) -> object:
         return fallback
 
 
+def _escape_like_token(value: str) -> str:
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
 def _create_identity_schema(record_store: RecordStore) -> None:
     record_store.execute_count(
         """
@@ -218,8 +227,8 @@ class _IdentityStoreMixin(IdentityStore):
             self._record_store.execute_count("DELETE FROM identity_snippet_cache")
             return
         self._record_store.execute_count(
-            "DELETE FROM identity_snippet_cache WHERE cache_key LIKE ?",
-            (f"{agent_id}|%",),
+            "DELETE FROM identity_snippet_cache WHERE cache_key LIKE ? ESCAPE '\\'",
+            (f"{_escape_like_token(agent_id)}|%",),
         )
 
 

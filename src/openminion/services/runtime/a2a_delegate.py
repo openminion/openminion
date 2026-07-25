@@ -6,6 +6,8 @@ from openminion.base.logging import get_logger
 from openminion.modules.tool.runtime.delegation import (
     A2ADelegateApi,
     A2ADelegateResult,
+    map_a2a_delegate_result,
+    run_a2a_job_lifecycle,
 )
 from openminion.services.runtime.constants import A2A_DELEGATE_DEFAULT_TIMEOUT_SECONDS
 
@@ -16,22 +18,6 @@ _LOG = get_logger("services.runtime.a2a_delegate")
 # for handlers that read it directly.
 _DELEGATE_METHOD = "delegate"
 _DEFAULT_TIMEOUT_SECONDS = A2A_DELEGATE_DEFAULT_TIMEOUT_SECONDS
-
-
-def _is_success_status(status: Any) -> bool:
-    from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_SUCCESS
-
-    return str(status or "").strip() == str(BRAIN_ACTION_STATUS_SUCCESS)
-
-
-def _is_running_status(status: Any) -> bool:
-    from openminion.modules.brain.constants import (
-        BRAIN_JOB_STATUS_PENDING,
-        BRAIN_JOB_STATUS_RUNNING,
-    )
-
-    token = str(status or "").strip()
-    return token in {str(BRAIN_JOB_STATUS_RUNNING), str(BRAIN_JOB_STATUS_PENDING)}
 
 
 class A2aRuntimeDelegateAdapter:
@@ -58,9 +44,11 @@ class A2aRuntimeDelegateAdapter:
         agent_id: str,
         instruction: str,
         timeout_seconds: int,
+        mode: str = "sync",
     ) -> A2ADelegateResult:
         target = str(agent_id or "").strip()
         text = str(instruction or "").strip()
+        normalized_mode = str(mode or "sync").strip().lower()
         try:
             timeout = int(timeout_seconds)
         except (TypeError, ValueError):
@@ -84,10 +72,12 @@ class A2aRuntimeDelegateAdapter:
             "command_id": idem,
             "target_agent_id": target,
             "method": _DELEGATE_METHOD,
+            "expect_async": normalized_mode == "async",
             "params": {
                 "goal": text,
                 "instruction": text,
                 "timeout_seconds": timeout,
+                "mode": normalized_mode,
             },
             "timeout_ms": timeout * 1000,
             "idempotency_key": idem,
@@ -108,58 +98,41 @@ class A2aRuntimeDelegateAdapter:
                 trace_id=trace_id,
             )
 
-        return self._map_result(raw, target=target, trace_id=trace_id)
+        return map_a2a_delegate_result(
+            raw,
+            target=target,
+            trace_id=trace_id,
+            async_requested=normalized_mode == "async",
+        )
 
-    @staticmethod
-    def _map_result(raw: Any, *, target: str, trace_id: str) -> A2ADelegateResult:
-        payload = raw if isinstance(raw, dict) else {}
-        status = payload.get("status")
-        summary = str(payload.get("summary", "") or "").strip()
-        outputs = payload.get("outputs")
-        normalized_outputs = dict(outputs) if isinstance(outputs, dict) else {}
-        task_id = str(payload.get("task_id", "") or "").strip()
+    def status(self, *, task_id: str) -> A2ADelegateResult:
+        return self._run_lifecycle("status", task_id, "poll_task")
 
-        if _is_success_status(status):
-            return A2ADelegateResult(
-                ok=True,
-                status="success",
-                content=summary,
-                target_agent_id=target,
-                trace_id=trace_id,
+    def resume(self, *, task_id: str) -> A2ADelegateResult:
+        return self.status(task_id=task_id)
+
+    def cancel(self, *, task_id: str) -> A2ADelegateResult:
+        return self._run_lifecycle("cancel", task_id, "cancel_task")
+
+    def _run_lifecycle(
+        self, operation: str, task_id: str, method_name: str
+    ) -> A2ADelegateResult:
+        try:
+            return run_a2a_job_lifecycle(
+                caller=getattr(self._a2a_call, method_name, None),
+                operation=operation,
                 task_id=task_id,
-                outputs=normalized_outputs,
+                parent_agent_id=self._parent_agent_id,
             )
-        if _is_running_status(status):
-            # v1 is synchronous; surface async as a typed, honest result.
+        except (RuntimeError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            _LOG.warning("task.delegate A2A %s failed: %s", operation, exc)
             return A2ADelegateResult(
                 ok=False,
-                status="running",
-                content=summary or "Delegated A2A job is still running.",
-                error_code="A2A_DELEGATE_ASYNC_UNSUPPORTED",
-                error_message=(
-                    "task.delegate is synchronous in v1; the target returned an "
-                    "async job. Use the brain delegation path for async work."
-                ),
-                target_agent_id=target,
-                trace_id=trace_id,
-                task_id=task_id,
-                outputs=normalized_outputs,
+                status="failed",
+                error_code="A2A_RUNTIME_ERROR",
+                error_message=str(exc),
+                task_id=str(task_id or "").strip(),
             )
-
-        error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
-        return A2ADelegateResult(
-            ok=False,
-            status="failed",
-            content=summary,
-            error_code=str(error.get("code") or "A2A_DELEGATE_FAILED"),
-            error_message=str(
-                error.get("message") or summary or "A2A delegation failed."
-            ),
-            target_agent_id=target,
-            trace_id=trace_id,
-            task_id=task_id,
-            outputs=normalized_outputs,
-        )
 
 
 def build_a2a_delegate_api(

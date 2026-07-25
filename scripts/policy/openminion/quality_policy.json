@@ -141,6 +141,7 @@
   },
   "raw_control_values": {
     "excluded_files": [
+      "modules/brain/loop/tools/exports.py",
       "modules/session/storage/migrations/versions/0001_baseline.py",
       "modules/tool/contracts/schemas.py",
       "services/health/observability.py"

@@ -15,9 +15,10 @@ def test_focus_runner_writes_summary_when_requested(
 ) -> None:
     summary_path = tmp_path / "focus-summary.json"
 
-    def fake_run(paths, *, env, extra_args=()):
+    def fake_run(paths, *, env, extra_args=(), timeout_seconds=None):
         assert paths == ("tests/e2e/cli/focus/test_local.py",)
         assert extra_args == ()
+        assert timeout_seconds is None
         assert env["PYTHONDONTWRITEBYTECODE"] == "1"
         return 0
 

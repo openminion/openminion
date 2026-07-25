@@ -1,6 +1,10 @@
 import logging
 from typing import Any
 
+from openminion.modules.telemetry.events.catalog import (
+    TOOL_ENVELOPE_REPAIR_EXHAUSTED,
+    TOOL_ENVELOPE_REPAIR_RETRY,
+)
 from openminion.modules.telemetry.events.module import (
     emit_module_operation as _emit_module_operation_impl,
     emit_module_telemetry as _emit_module_telemetry_impl,
@@ -83,4 +87,67 @@ def emit_llm_operation(
         count=count,
         status=status,
         extra=payload_extra or None,
+    )
+
+
+def emit_tool_envelope_recovery_event(
+    *,
+    telemetryctl: Any,
+    session_id: str,
+    turn_id: str,
+    outcome: str,
+    provider: str = "",
+    model: str = "",
+    parse_strategy: str = "",
+    parse_mode: str = "",
+    attempt: int | None = None,
+    source: str = "",
+    error_code: str = "",
+) -> bool:
+    """Emit safe tool-envelope recovery telemetry without raw model content."""
+
+    normalized_session_id = str(session_id or "").strip()
+    normalized_turn_id = str(turn_id or "").strip()
+    if not normalized_session_id or not normalized_turn_id:
+        return False
+
+    normalized_outcome = str(outcome or "").strip().lower()
+    if normalized_outcome == "retry":
+        event_type = TOOL_ENVELOPE_REPAIR_RETRY
+        status = "retry"
+    elif normalized_outcome == "exhausted":
+        event_type = TOOL_ENVELOPE_REPAIR_EXHAUSTED
+        status = "error"
+    else:
+        return False
+
+    payload: dict[str, Any] = {
+        "module_id": _MODULE_ID,
+        "status": status,
+        "recovery_outcome": normalized_outcome,
+    }
+    for key, value in {
+        "provider": provider,
+        "model": model,
+        "parse_strategy": parse_strategy,
+        "parse_mode": parse_mode,
+        "source": source,
+        "error_code": error_code,
+    }.items():
+        normalized_value = str(value or "").strip()
+        if normalized_value:
+            payload[key] = normalized_value
+    if attempt is not None:
+        try:
+            payload["attempt"] = int(attempt)
+        except (TypeError, ValueError):
+            pass
+
+    return emit_module_telemetry(
+        telemetryctl,
+        "emit_canonical_event",
+        normalized_session_id,
+        normalized_turn_id,
+        event_type,
+        payload,
     )

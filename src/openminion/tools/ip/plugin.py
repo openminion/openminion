@@ -8,6 +8,7 @@ from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
+from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 
 from openminion.tools.config import resolve_tool_context_env
@@ -100,7 +101,7 @@ def _ip_policy_config(ctx: Any) -> dict[str, Any]:
 def _lookup_urls(cfg: Mapping[str, Any], *, ctx: Any) -> tuple[str, ...]:
     raw = cfg.get("public_lookup_urls")
     if isinstance(raw, str):
-        parsed = tuple(token.strip() for token in raw.split(",") if token.strip())
+        parsed = tuple(split_comma_tokens(raw))
         if parsed:
             return parsed
     if isinstance(raw, list):

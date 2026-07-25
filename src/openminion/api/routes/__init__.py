@@ -5,6 +5,7 @@ from typing import Any
 from .contracts import APIRouteContext, RouteResult
 
 _HANDLER_MODULES = {
+    "handle_a2a_request": ".a2a",
     "handle_admin_request": ".admin",
     "handle_agent_request": ".agent",
     "handle_cron_request": ".cron",
@@ -34,6 +35,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "APIRouteContext",
     "RouteResult",
+    "handle_a2a_request",
     "handle_admin_request",
     "handle_agent_request",
     "handle_cron_request",

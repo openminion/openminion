@@ -24,6 +24,7 @@ from tests.e2e.cli.focus.harness.probe import (
     latest_done_event,
     latest_turn_event,
     screen_after_submission,
+    sidecar_consent_prompt_visible,
 )
 from tests.e2e.cli.focus.harness.pty import PtySession
 
@@ -282,6 +283,24 @@ def test_active_approval_visible_accepts_allow_once_prompt() -> None:
     )
 
     assert active_approval_visible(screen)
+
+
+def test_active_approval_visible_accepts_pinchtab_sidecar_consent() -> None:
+    screen = (
+        "OpenMinion can start the PinchTab browser service locally when needed.\n"
+        "This launches a background process on your machine.\n"
+        "Allow auto-start for PinchTab? [y/N]:"
+    )
+
+    assert sidecar_consent_prompt_visible(screen)
+    assert active_approval_visible(screen)
+
+
+def test_sidecar_consent_prompt_ignores_completed_response() -> None:
+    screen = "Allow auto-start for PinchTab? [y/N]: y\nsidecar started\n"
+
+    assert not sidecar_consent_prompt_visible(screen)
+    assert not active_approval_visible(screen)
 
 
 @pytest.mark.parametrize(

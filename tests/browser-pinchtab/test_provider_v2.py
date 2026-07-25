@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from openminion.base.config.env import resolve_environment_config
+from openminion.base.config.env import (
+    resolve_environment_config,
+    resolve_environment_config_with_explicit_env,
+)
 from openminion.modules.tool.runtime.policy import Policy
 from openminion.modules.tool.runtime import RuntimeContext
 from openminion.tools.browser import BrowserProviderRegistry
@@ -228,3 +231,191 @@ def test_provider_uses_browser_context_env_for_secret_ref(
 
     assert payload["ok"] is True
     assert captured["token"] == "ctx-token-from-runtime"
+
+
+def test_provider_autostart_routes_start_through_sidecar_manager(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: dict[str, object] = {}
+    health_calls = {"count": 0}
+
+    class _FakeClient:
+        def __init__(self, config: PinchTabClientConfig) -> None:
+            calls["base_url"] = config.base_url
+
+        def health(self) -> dict[str, bool]:
+            health_calls["count"] += 1
+            if health_calls["count"] == 1:
+                raise PinchTabClientError("not ready")
+            return {"ok": True}
+
+    class _FakeManager:
+        def __init__(self, **kwargs) -> None:
+            calls["sidecar_manager"] = kwargs
+
+        def ensure_started(self, **kwargs):
+            calls["sidecar_start"] = kwargs
+            return {"started": True}
+
+    monkeypatch.setattr(pinchtab_provider_module, "PinchTabClient", _FakeClient)
+    monkeypatch.setattr(pinchtab_provider_module, "default_sidecar_manager", _FakeManager)
+    provider = PinchTabProvider(
+        PinchTabProviderConfig(
+            base_url="http://127.0.0.1:9867",
+            autostart=True,
+            home_root_dir=str(tmp_path / "pinchtab"),
+        )
+    )
+
+    payload = provider.ensure_ready()
+
+    assert payload == {"ok": True, "raw": {"ok": True}}
+    assert health_calls["count"] == 2
+    assert calls["sidecar_start"] == {"name": "pinchtab", "interactive": False}
+    assert calls["sidecar_manager"]["runtime_env"]
+
+
+def test_runtime_approved_autostart_never_prompts_sidecar_manager(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: dict[str, object] = {}
+    health_calls = {"count": 0}
+
+    class _TtyStdin:
+        def isatty(self) -> bool:
+            return True
+
+    class _FakeClient:
+        def __init__(self, config: PinchTabClientConfig) -> None:
+            calls["base_url"] = config.base_url
+
+        def health(self) -> dict[str, bool]:
+            health_calls["count"] += 1
+            if health_calls["count"] == 1:
+                raise PinchTabClientError("not ready")
+            return {"ok": True}
+
+    class _FakeManager:
+        def __init__(self, **kwargs) -> None:
+            calls["sidecar_manager"] = kwargs
+
+        def ensure_started(self, **kwargs):
+            calls["sidecar_start"] = kwargs
+            return {"started": True}
+
+    monkeypatch.setattr(pinchtab_provider_module.sys, "stdin", _TtyStdin())
+    monkeypatch.setattr(pinchtab_provider_module, "PinchTabClient", _FakeClient)
+    monkeypatch.setattr(pinchtab_provider_module, "default_sidecar_manager", _FakeManager)
+    runtime = RuntimeContext(
+        policy=Policy(raw={"workspace_root": str(tmp_path)}),
+        workspace=tmp_path,
+        run_root=tmp_path / "run",
+        scope="UI_AUTOMATION",
+        confirm=False,
+        env=resolve_environment_config_with_explicit_env({"PINCHTAB_AUTOSTART": "1"}),
+    )
+    provider = PinchTabProvider(
+        PinchTabProviderConfig(
+            base_url="http://127.0.0.1:9867",
+            home_root_dir=str(tmp_path / "pinchtab"),
+        )
+    )
+
+    payload = provider.ensure_ready(BrowserProviderContext(tool_context=runtime))
+
+    assert payload == {"ok": True, "raw": {"ok": True}}
+    assert calls["sidecar_start"] == {"name": "pinchtab", "interactive": False}
+    assert calls["sidecar_manager"]["runtime_env"]["PINCHTAB_AUTOSTART"] == "1"
+
+
+def test_runtime_context_without_autostart_approval_does_not_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+
+    class _TtyStdin:
+        def isatty(self) -> bool:
+            return True
+
+    def _unexpected_prompt(**_kwargs):
+        calls.append("prompt")
+        return {"enabled": True}
+
+    monkeypatch.setattr(pinchtab_provider_module.sys, "stdin", _TtyStdin())
+    monkeypatch.setattr(
+        pinchtab_provider_module,
+        "ensure_pinchtab_autostart",
+        _unexpected_prompt,
+    )
+    runtime = RuntimeContext(
+        policy=Policy(raw={"workspace_root": str(tmp_path)}),
+        workspace=tmp_path,
+        run_root=tmp_path / "run",
+        scope="UI_AUTOMATION",
+        confirm=False,
+        env=resolve_environment_config_with_explicit_env({}),
+    )
+    provider = PinchTabProvider(
+        PinchTabProviderConfig(base_url="http://127.0.0.1:9867")
+    )
+
+    assert provider._should_autostart(
+        ctx=BrowserProviderContext(tool_context=runtime)
+    ) is False
+    assert calls == []
+
+
+def test_pinchtab_daemon_status_reports_not_ready_when_pid_is_absent(tmp_path: Path) -> None:
+    from openminion.tools.browser.providers.pinchtab.daemon import (
+        build_daemon_config,
+        daemon_status,
+    )
+
+    cfg = build_daemon_config(
+        base_url="http://127.0.0.1:9867", runtime_dir=tmp_path / "pinchtab"
+    )
+
+    payload = daemon_status(cfg)
+
+    assert payload["pid_alive"] is False
+    assert payload["ok"] is False
+    assert payload["ready"] is False
+    assert payload["readiness_reason"] == "pid_not_alive"
+
+
+def test_pinchtab_daemon_status_reports_health_when_pid_is_alive(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from openminion.tools.browser.providers.pinchtab.daemon import (
+        build_daemon_config,
+        daemon_status,
+    )
+
+    cfg = build_daemon_config(
+        base_url="http://127.0.0.1:9867", runtime_dir=tmp_path / "pinchtab"
+    )
+    cfg.pid_file.write_text("123\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "openminion.tools.browser.providers.pinchtab.daemon._process_alive",
+        lambda _pid: True,
+    )
+
+    class _FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def health(self):
+            return {"ok": True, "version": "test"}
+
+    monkeypatch.setattr(pinchtab_provider_module, "PinchTabClient", _FakeClient)
+    monkeypatch.setattr(
+        "openminion.tools.browser.providers.pinchtab.daemon.PinchTabClient",
+        _FakeClient,
+    )
+
+    payload = daemon_status(cfg)
+
+    assert payload["pid_alive"] is True
+    assert payload["ok"] is True
+    assert payload["ready"] is True
+    assert payload["health"] == {"ok": True, "version": "test"}

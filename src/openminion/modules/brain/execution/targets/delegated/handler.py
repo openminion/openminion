@@ -26,6 +26,10 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionContext,
     ExecutionResult,
 )
+from openminion.modules.brain.execution.delegation_policy import (
+    record_child_policy_projection,
+    record_result_aggregation,
+)
 from openminion.modules.brain.execution.preflight import (
     ModePreparation,
     ValidationResult,
@@ -144,6 +148,52 @@ def _delegate_result_text(action_result: ActionResult | None) -> str:
         if text:
             return text
     return ""
+
+
+def _record_delegate_result_policy(
+    *,
+    ctx: ExecutionContext,
+    payload: DelegatePayload,
+    mapped_result: ExecutionResult,
+    action_result: ActionResult,
+    async_flow: bool,
+) -> None:
+    record_result_aggregation(
+        ctx,
+        flow="a2a_async" if async_flow else "a2a_sync",
+        parent_id=str(getattr(ctx.state, "trace_id", "") or ctx.state.session_id),
+        seam_id="brain.delegate.result",
+        results=[
+            _delegate_subtask_result(
+                payload=payload,
+                mapped_result=mapped_result,
+                action_result=action_result,
+            )
+        ],
+    )
+
+
+def _synthesize_delegate_result(
+    *,
+    ctx: ExecutionContext,
+    synthesizer: ResultSynthesizer,
+    payload: DelegatePayload,
+    mapped_result: ExecutionResult,
+    action_result: ActionResult,
+) -> ExecutionResult:
+    synthesized = synthesizer.synthesize(
+        ctx=ctx,
+        results=[
+            _delegate_subtask_result(
+                payload=payload,
+                mapped_result=mapped_result,
+                action_result=action_result,
+            )
+        ],
+    )
+    if mapped_result.action_result is not None:
+        synthesized.action_result = mapped_result.action_result
+    return synthesized
 
 
 class DelegateMode:
@@ -380,7 +430,7 @@ class DelegateMode:
                 target_agent_id=payload.target_agent_id,
             )
         try:
-            self._resolved_agent_id(ctx=ctx, payload=payload)
+            resolved_agent_id = self._resolved_agent_id(ctx=ctx, payload=payload)
         except ValueError as exc:
             return ModePreparation(
                 mode_result=_empty_error_result(
@@ -389,6 +439,13 @@ class DelegateMode:
                     code="DELEGATE_TARGET_INVALID",
                 )
             )
+        record_child_policy_projection(
+            ctx,
+            flow="a2a_async" if self.has_resume else "a2a_sync",
+            child_id=resolved_agent_id,
+            child_mode="async" if self.has_resume else "sync",
+            seam_id="brain.delegate.prepare",
+        )
         if not self._budget.check_budget(state=ctx.state):
             return ModePreparation(
                 mode_result=_empty_error_result(
@@ -479,19 +536,20 @@ class DelegateMode:
                 label="[delegated] synthesizing result",
                 target_agent_id=resolved_agent_id,
             )
-            synthesized = self._synthesizer.synthesize(
+            mapped_result = _synthesize_delegate_result(
                 ctx=ctx,
-                results=[
-                    _delegate_subtask_result(
-                        payload=payload,
-                        mapped_result=mapped_result,
-                        action_result=action_result,
-                    )
-                ],
+                synthesizer=self._synthesizer,
+                payload=payload,
+                mapped_result=mapped_result,
+                action_result=action_result,
             )
-            if mapped_result.action_result is not None:
-                synthesized.action_result = mapped_result.action_result
-            mapped_result = synthesized
+        _record_delegate_result_policy(
+            ctx=ctx,
+            payload=payload,
+            mapped_result=mapped_result,
+            action_result=action_result,
+            async_flow=self.has_resume,
+        )
         ctx.state.last_command_id = command.command_id
         if mapped_result.action_result is not None:
             ctx.state.last_result = mapped_result.action_result

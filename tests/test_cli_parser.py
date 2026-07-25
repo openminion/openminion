@@ -1485,3 +1485,40 @@ def test_run_agent_skips_session_context_for_minimal_session_store(
         code = run_agent(args, app)
 
     assert code == 0
+
+
+def test_schedule_command_is_thin_cron_alias() -> None:
+    from openminion.cli.commands.cron import run_cron
+
+    parser = build_parser()
+    args = parser.parse_args(
+        [
+            "schedule",
+            "create",
+            "--instruction",
+            "check CI",
+            "--cron",
+            "0 9 * * *",
+            "--tz",
+            "UTC",
+            "--json",
+        ]
+    )
+
+    assert args.handler is run_cron
+    assert args.cron_command == "create"
+    assert args.instruction == "check CI"
+    assert args.cron_expr == "0 9 * * *"
+    assert args.timezone == "UTC"
+    assert args.json is True
+
+
+def test_schedule_pause_uses_exact_task_id_cron_contract() -> None:
+    from openminion.cli.commands.cron import run_cron
+
+    parser = build_parser()
+    args = parser.parse_args(["schedule", "pause", "task-123", "--json"])
+
+    assert args.handler is run_cron
+    assert args.cron_command == "pause"
+    assert args.task_id == "task-123"

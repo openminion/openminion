@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from openminion.cli.commands.agent_delegation import (
+    render_agent_delegate_result,
+    request_from_slash_args,
+)
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 
 from ..widgets import FocusTranscript
@@ -142,6 +146,25 @@ class RuntimeCommandMixin:
                 return
         self._refresh_header()
         self._push_runtime_message(f"Switched to agent {target}.")
+
+    def _slash_delegate(self, args: str) -> None:
+        runner = getattr(self._runtime, "delegate_task", None)
+        if not callable(runner):
+            self._push_runtime_message("This runtime does not expose delegation.")
+            return
+        try:
+            request = request_from_slash_args(args)
+        except ValueError as exc:
+            self._push_runtime_message(str(exc))
+            return
+        result = runner(
+            mode=request.mode,
+            target_agent_id=request.target_agent_id,
+            instruction=request.instruction,
+            task_id=request.task_id,
+            timeout_seconds=request.timeout_seconds,
+        )
+        self._push_runtime_message(render_agent_delegate_result(dict(result or {})))
 
     def _push_runtime_message(self, body: str) -> None:
         self.query_one(FocusTranscript).push_message(

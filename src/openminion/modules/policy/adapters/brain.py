@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openminion.base.config import ActionPolicyConfig
 from openminion.base.config.action_policy import (
@@ -32,7 +32,7 @@ from ..constants import (
     POLICY_SUBJECT_ID_LOCAL,
 )
 from ..interfaces import POLICY_INTERFACE_VERSION
-from ..models import PolicyConfig, RiskSpec
+from ..models import PolicyConfig, PolicyMode, RiskClass, RiskSpec
 from ..runtime.service import PolicyCtl
 
 _LOGGER = logging.getLogger(__name__)
@@ -178,7 +178,7 @@ class PolicyCtlBrainAdapter:
         if not risk_class:
             return None
         return RiskSpec(
-            risk_class=risk_class,  # type: ignore[arg-type]
+            risk_class=cast(RiskClass, risk_class),
             side_effects=POLICY_SIDE_EFFECT_NONE,
             reversibility=POLICY_REVERSIBILITY_UNKNOWN,
         )
@@ -239,7 +239,7 @@ class PolicyCtlBrainAdapter:
                 or str(getattr(decision, "reason", "") or "").strip()
             )
         return PolicyDecision(
-            outcome=outcome,  # type: ignore[arg-type]
+            outcome=cast(Any, outcome),
             explanation=str(getattr(decision, "reason", "") or ""),
             require_clarification=require_clarification,
             clarification_question=clarification_question or None,
@@ -425,7 +425,7 @@ class PolicyCtlBrainAdapter:
         if not isinstance(base_config, PolicyConfig):
             return PolicyConfig(mode=map_action_policy_mode(session_mode_override))
         return PolicyConfig(
-            mode=map_action_policy_mode(session_mode_override),  # type: ignore[arg-type]
+            mode=cast(PolicyMode, map_action_policy_mode(session_mode_override)),
             default_action=base_config.default_action,
             default_duration=base_config.default_duration,
             sandbox_path_prefixes=list(base_config.sandbox_path_prefixes),

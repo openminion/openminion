@@ -74,6 +74,8 @@ def _prompt_return_after_response_detected(text: str) -> bool:
     lines = [line.strip() for line in normalized.splitlines() if line.strip()]
     if not lines:
         return False
+    if lines[-1].startswith("❯"):
+        return False
     response_lines = [
         line
         for line in lines[:-1]
@@ -89,6 +91,10 @@ def _inline_approval_detected(text: str) -> bool:
 def _turn_response_boundary_detected(text: str) -> bool:
     normalized = _normalize_probe_text(text)
     if _inline_approval_detected(normalized):
+        return True
+    if _CONFIRMATION_REQUIRED_RE.search(normalized) and _ready_prompt_detected(
+        normalized
+    ):
         return True
     return bool(
         _TURN_DONE_RE.search(normalized)

@@ -31,6 +31,10 @@ def run_sidecar(args: Any) -> int:
 
     config = load_cli_config_from_args(args)
     logger = logging.getLogger("openminion.sidecars")
+
+    if action == "pinchtab":
+        return _run_pinchtab_binary_command(args, config, logger=logger)
+
     manager = _build_manager(args, config, logger=logger)
 
     if action == "list":
@@ -134,6 +138,61 @@ def _build_manager(args: Any, config: Any, *, logger: logging.Logger) -> Sidecar
         logger=logger,
     )
     return manager
+
+
+def _run_pinchtab_binary_command(
+    args: Any, config: Any, *, logger: logging.Logger
+) -> int:
+    from openminion.services.config import resolve_services_roots
+    from openminion.tools.browser.providers.pinchtab.binary import (
+        PINCHTAB_ALLOW_EXTERNAL_ENV,
+        PINCHTAB_DOWNLOAD_URL_ENV,
+        PINCHTAB_INSTALL_MODE_ENV,
+        PINCHTAB_SHA256_ENV,
+        PINCHTAB_VERSION_ENV,
+        build_pinchtab_binary_resolver,
+    )
+
+    command = str(getattr(args, "pinchtab_command", "") or "").strip().lower()
+    if command not in {"status", "install"}:
+        raise RuntimeError("pinchtab command is required (status/install)")
+    runtime_env = dict(getattr(getattr(config, "runtime", None), "env", None) or {})
+    if getattr(args, "version", ""):
+        runtime_env[PINCHTAB_VERSION_ENV] = str(getattr(args, "version"))
+    if getattr(args, "sha256", ""):
+        runtime_env[PINCHTAB_SHA256_ENV] = str(getattr(args, "sha256"))
+    if getattr(args, "download_url", ""):
+        runtime_env[PINCHTAB_DOWNLOAD_URL_ENV] = str(getattr(args, "download_url"))
+    if bool(getattr(args, "allow_external", False)):
+        runtime_env[PINCHTAB_ALLOW_EXTERNAL_ENV] = "1"
+    config_path = str(getattr(args, "config", "") or "").strip() or None
+    roots = resolve_services_roots(config_path=config_path, runtime_env=runtime_env)
+    resolver = build_pinchtab_binary_resolver(
+        data_root=roots.data_root,
+        runtime_env=runtime_env,
+        event_sink=lambda event, payload: logger.info(
+            "sidecar event=%s payload=%s", event, payload
+        ),
+    )
+    if command == "install":
+        runtime_env[PINCHTAB_INSTALL_MODE_ENV] = "required"
+        resolver = build_pinchtab_binary_resolver(
+            data_root=roots.data_root,
+            runtime_env=runtime_env,
+            event_sink=lambda event, payload: logger.info(
+                "sidecar event=%s payload=%s", event, payload
+            ),
+        )
+        result = resolver.resolve(allow_download=True).as_dict()
+        payload = {"ok": True, "action": "pinchtab-install", "binary": result}
+    else:
+        payload = {
+            "ok": True,
+            "action": "pinchtab-status",
+            "binary": resolver.status().as_dict(),
+        }
+    _emit_sidecar_payload(payload, as_json=bool(getattr(args, "json", False)))
+    return 0
 
 
 def _collect_statuses(
@@ -277,3 +336,46 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     sidecar_deny.add_argument("name", help="Sidecar name")
     add_json_output_flag(sidecar_deny)
     sidecar_deny.set_defaults(handler=run_sidecar, needs_app=False)
+
+    _register_pinchtab_binary_commands(sidecar_subcommands)
+
+
+def _register_pinchtab_binary_commands(
+    sidecar_subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    pinchtab = sidecar_subcommands.add_parser(
+        "pinchtab", help="PinchTab binary install/status"
+    )
+    add_json_output_flag(pinchtab)
+    pinchtab_subcommands = pinchtab.add_subparsers(dest="pinchtab_command")
+    pinchtab_status = pinchtab_subcommands.add_parser(
+        "status", help="Show PinchTab managed-binary status"
+    )
+    pinchtab_status.add_argument("--version", default="", help="PinchTab version")
+    pinchtab_status.add_argument(
+        "--allow-external",
+        action="store_true",
+        help="Allow explicitly approved external binary fallback",
+    )
+    add_json_output_flag(pinchtab_status)
+    pinchtab_status.set_defaults(handler=run_sidecar, needs_app=False)
+
+    pinchtab_install = pinchtab_subcommands.add_parser(
+        "install", help="Install or verify the managed PinchTab binary"
+    )
+    pinchtab_install.add_argument(
+        "--version", default="latest", help="PinchTab version"
+    )
+    pinchtab_install.add_argument("--sha256", default="", help="Expected sha256")
+    pinchtab_install.add_argument(
+        "--download-url",
+        default="",
+        help="Explicit release asset URL for installation",
+    )
+    pinchtab_install.add_argument(
+        "--allow-external",
+        action="store_true",
+        help="Allow explicitly approved external binary fallback",
+    )
+    add_json_output_flag(pinchtab_install)
+    pinchtab_install.set_defaults(handler=run_sidecar, needs_app=False)

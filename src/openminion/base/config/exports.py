@@ -1,0 +1,100 @@
+"""Lazy export table for the base config package."""
+
+from __future__ import annotations
+
+from typing import Any
+
+LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    'ActionPolicyConfig': ('.core', 'ActionPolicyConfig'),
+    'ActionPolicyMatchConfig': ('.core', 'ActionPolicyMatchConfig'),
+    'ActionPolicyRuleConfig': ('.core', 'ActionPolicyRuleConfig'),
+    'AgentIdentityResolution': ('.core', 'AgentIdentityResolution'),
+    'AgentProfileConfig': ('.core', 'AgentProfileConfig'),
+    'AnthropicProviderConfig': ('.providers', 'AnthropicProviderConfig'),
+    'BaseModuleConfig': ('.interface', 'BaseModuleConfig'),
+    'CapabilityBinding': ('.tool_selection', 'CapabilityBinding'),
+    'CerebrasProviderConfig': ('.providers', 'CerebrasProviderConfig'),
+    'ChannelAuthenticityConfig': ('.core', 'ChannelAuthenticityConfig'),
+    'ChannelPolicyConfig': ('.core', 'ChannelPolicyConfig'),
+    'ConfigError': ('.base', 'ConfigError'),
+    'UnknownProfileError': ('.base', 'UnknownProfileError'),
+    'ConfigManager': ('.manager', 'ConfigManager'),
+    'ConfigManagerError': ('.manager', 'ConfigManagerError'),
+    'EnvValidationResult': ('.env.schema', 'EnvValidationResult'),
+    'EnvironmentConfig': ('.env', 'EnvironmentConfig'),
+    'ContextConfig': ('.runtime', 'ContextConfig'),
+    'CortensorProviderConfig': ('.providers', 'CortensorProviderConfig'),
+    'DEFAULT_CONFIG_DIR': ('.base', 'DEFAULT_CONFIG_DIR'),
+    'DEFAULT_CONFIG_FILENAME': ('.base', 'DEFAULT_CONFIG_FILENAME'),
+    'DEFAULT_CONFIG_PATH': ('.base', 'DEFAULT_CONFIG_PATH'),
+    'DEFAULT_STORAGE_PATH': ('.base', 'DEFAULT_STORAGE_PATH'),
+    'GatewayConfig': ('.core', 'GatewayConfig'),
+    'GroqProviderConfig': ('.providers', 'GroqProviderConfig'),
+    'IdentityConfig': ('.runtime', 'IdentityConfig'),
+    'IdentityBudgetCompactionConfig': ('.runtime', 'IdentityBudgetCompactionConfig'),
+    'IdentityBudgetConfig': ('.runtime', 'IdentityBudgetConfig'),
+    'MCPServerConfig': ('.mcp', 'MCPServerConfig'),
+    'MCPExposureConfig': ('.mcp', 'MCPExposureConfig'),
+    'MCPStdioSandboxConfig': ('.mcp', 'MCPStdioSandboxConfig'),
+    'MCPToolRiskOverrideConfig': ('.mcp', 'MCPToolRiskOverrideConfig'),
+    'OTELExporterConfig': ('.runtime', 'OTELExporterConfig'),
+    'ModeRuntimePolicyConfig': ('.runtime.capability', 'ModeRuntimePolicyConfig'),
+    'ModuleConfigFactory': ('.interface', 'ModuleConfigFactory'),
+    'OllamaProviderConfig': ('.providers', 'OllamaProviderConfig'),
+    'OpenAIProviderConfig': ('.providers', 'OpenAIProviderConfig'),
+    'OpenMinionConfig': ('.core', 'OpenMinionConfig'),
+    'OpenRouterProviderConfig': ('.providers', 'OpenRouterProviderConfig'),
+    'PluginRuntimePolicyConfig': ('.runtime.capability', 'PluginRuntimePolicyConfig'),
+    'ProviderRuntimePolicyConfig': ('.runtime.capability', 'ProviderRuntimePolicyConfig'),
+    'ProvidersConfig': ('.providers', 'ProvidersConfig'),
+    'RunProfileOverrides': ('.runtime.profile', 'RunProfileOverrides'),
+    'RuntimeConfig': ('.runtime', 'RuntimeConfig'),
+    'HomePaths': ('.paths', 'HomePaths'),
+    'SecurityConfig': ('.core', 'SecurityConfig'),
+    'SelfImprovementConfig': ('.runtime', 'SelfImprovementConfig'),
+    'SettingsResolver': ('.settings', 'SettingsResolver'),
+    'StorageConfig': ('.core', 'StorageConfig'),
+    'ThinkingRuntimePolicyConfig': ('.runtime.capability', 'ThinkingRuntimePolicyConfig'),
+    'ToolPolicyConfig': ('.runtime', 'ToolPolicyConfig'),
+    'ToolFamilyRuntimeConfig': ('.runtime.tools', 'ToolFamilyRuntimeConfig'),
+    'ToolRuntimeConfig': ('.runtime.tools', 'ToolRuntimeConfig'),
+    'ToolSelectionConfig': ('.tool_selection', 'ToolSelectionConfig'),
+    'VectorConfig': ('.core', 'VectorConfig'),
+    'bootstrap_home_paths': ('.paths', 'bootstrap_home_paths'),
+    'load_config': ('.io', 'load_config'),
+    'build_capability_runtime_diagnostics': ('.runtime.profile', 'build_capability_runtime_diagnostics'),
+    'build_runtime_config': ('.runtime.profile', 'build_runtime_config'),
+    'combine_run_profile_overrides': ('.runtime.profile', 'combine_run_profile_overrides'),
+    'configured_agent_ids': ('.core', 'configured_agent_ids'),
+    'resolve_agent_config': ('.core', 'resolve_agent_config'),
+    'resolve_agent_identity': ('.core', 'resolve_agent_identity'),
+    'resolve_default_agent_id': ('.core', 'resolve_default_agent_id'),
+    'resolve_runtime_profile': ('.runtime.profile', 'resolve_runtime_profile'),
+    'resolve_config_path': ('.io', 'resolve_config_path'),
+    'resolve_data_root': ('.paths', 'resolve_data_root'),
+    'resolve_module_storage_path': ('.paths', 'resolve_module_storage_path'),
+    'resolve_home_root': ('.paths', 'resolve_home_root'),
+    'resolve_storage_paths': ('.paths', 'resolve_storage_paths'),
+    'save_config': ('.io', 'save_config'),
+    'run_profile_overrides_from_mapping': ('.runtime.profile', 'run_profile_overrides_from_mapping'),
+    'SKILL_SELECTION_AUTO': ('.skill_selection', 'SKILL_SELECTION_AUTO'),
+    'is_skill_auto': ('.skill_selection', 'is_skill_auto'),
+    'normalize_skill_catalog': ('.skill_selection', 'normalize_skill_catalog'),
+    'normalize_skill_value': ('.skill_selection', 'normalize_skill_value'),
+    'skill_value_to_list': ('.skill_selection', 'skill_value_to_list'),
+    'skill_value_to_payload': ('.skill_selection', 'skill_value_to_payload'),
+    '_parse_tool_selection_config': ('.tool_selection', '_parse_tool_selection_config'),
+    'validate_for_provider': ('.env.schema', 'validate_for_provider'),
+    'validate_runtime_core': ('.env.schema', 'validate_runtime_core'),
+}
+
+PUBLIC_EXPORTS = list(LAZY_EXPORTS)
+
+
+def resolve_lazy_export(*, package_name: str, name: str) -> Any:
+    target = LAZY_EXPORTS.get(name)
+    if not target:
+        raise AttributeError(name)
+    module_name, attr_name = target
+    module = __import__(package_name + module_name, fromlist=[attr_name])
+    return getattr(module, attr_name)

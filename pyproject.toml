@@ -164,6 +164,9 @@ scrapling = "openminion.tools.fetch.providers.scrapling.provider:provider"
 [tool.setuptools]
 package-dir = { "" = "src" }
 
+[tool.setuptools.package-data]
+"openminion.cli.presentation.bundled_commands" = ["*.md"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

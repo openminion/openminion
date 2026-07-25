@@ -291,7 +291,11 @@ def _enqueue_outbox(
     envelope: TelegramInboundEnvelope,
 ) -> None:
     store = runner._store  # noqa: SLF001
-    if store is None or not hasattr(store, "enqueue_outbox"):
+    if (
+        store is None
+        or not hasattr(store, "enqueue_outbox")
+        or getattr(runner, "_outbox_worker", None) is None
+    ):
         runner._log.debug(  # noqa: SLF001
             "outbox unavailable; falling back to synchronous deliver "
             "(channel=%s, chat_id=%s)",
@@ -325,7 +329,14 @@ def _enqueue_inbox(
     envelope: TelegramInboundEnvelope,
 ) -> bool:
     store = runner._store  # noqa: SLF001
-    if store is None or not hasattr(store, "enqueue_inbox"):
+    if (
+        store is None
+        or not hasattr(store, "enqueue_inbox")
+        or (
+            getattr(runner, "_outbox_worker", None) is None
+            and getattr(runner, "_inbox_worker", None) is None
+        )
+    ):
         return False
     thread_id = str(envelope.topic_id) if envelope.topic_id is not None else None
     reply_to = str(envelope.message_id) if envelope.message_id is not None else None

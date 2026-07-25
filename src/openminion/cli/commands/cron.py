@@ -451,8 +451,13 @@ def _register_cron_run_subcommand(cron_subcommands) -> None:
     _finalize_cron_subcommand(parser)
 
 
-def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    cron = subparsers.add_parser("cron", help="Cron operations")
+def _register_cron_family(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+    *,
+    command_name: str,
+    help_text: str,
+) -> None:
+    cron = subparsers.add_parser(command_name, help=help_text)
     cron_subcommands = cron.add_subparsers(dest="cron_command")
 
     _register_cron_create_subcommand(cron_subcommands)
@@ -478,4 +483,18 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _register_cron_run_subcommand(cron_subcommands)
     _register_cron_simple_subcommand(
         cron_subcommands, name="tick", help_text="Manually tick the cron scheduler once"
+    )
+
+
+def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    _register_cron_family(subparsers, command_name="cron", help_text="Cron operations")
+
+
+def register_schedule_alias(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    _register_cron_family(
+        subparsers,
+        command_name="schedule",
+        help_text="Friendly schedule facade over cron/task operations",
     )

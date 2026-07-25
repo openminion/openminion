@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.skill.errors import SkillError
 from openminion.modules.skill.runtime.skill import Skill
 from openminion.modules.skill.config import load_config
@@ -103,6 +104,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sub = parser.add_subparsers(dest="cmd", required=True)
+    _add_skill_cli_subcommands(sub)
+
+    return parser
+
+
+def _add_skill_cli_subcommands(sub: Any) -> None:
 
     ingest = sub.add_parser("ingest", help="Ingest a markdown skill file")
     ingest.add_argument("--name", required=True)
@@ -346,7 +353,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     add_storage_subcommands(sub)
 
-    return parser
 
 
 def _add_learning_subcommands(sub: Any) -> None:
@@ -411,6 +417,10 @@ def _add_learning_subcommands(sub: Any) -> None:
 
 
 def _dispatch(ctl: Skill, args: argparse.Namespace) -> None:
+    _dispatch_skill_command(ctl, args)
+
+
+def _dispatch_skill_command(ctl: Skill, args: argparse.Namespace) -> None:
     if args.cmd == "ingest":
         skill_id, version_hash, warnings = ctl.ingest_file(
             args.file,
@@ -462,9 +472,7 @@ def _dispatch(ctl: Skill, args: argparse.Namespace) -> None:
             "tool": args.tool,
         }
         if args.status:
-            filters["status"] = [
-                item.strip() for item in args.status.split(",") if item.strip()
-            ]
+            filters["status"] = split_comma_tokens(args.status)
 
         skills = ctl.list_skills(filters)
         _print_json({"ok": True, "skills": skills})
@@ -473,9 +481,7 @@ def _dispatch(ctl: Skill, args: argparse.Namespace) -> None:
     if args.cmd == "match":
         status_filter = None
         if args.status_filter:
-            status_filter = [
-                item.strip() for item in args.status_filter.split(",") if item.strip()
-            ]
+            status_filter = split_comma_tokens(args.status_filter)
 
         step_hint: dict[str, Any] = {
             "risk": args.risk,
@@ -626,7 +632,7 @@ def _dispatch(ctl: Skill, args: argparse.Namespace) -> None:
         return
 
     if args.cmd == "log-run":
-        evidence = [item.strip() for item in args.evidence.split(",") if item.strip()]
+        evidence = split_comma_tokens(args.evidence)
         run_id = ctl.log_run(
             session_id=args.session_id,
             agent_id=args.agent_id,
@@ -911,7 +917,7 @@ def _learning_replay_proof_from_args(
 ) -> Any:
     from openminion.modules.skill.learning import ReplayProof
 
-    evidence_refs = [item.strip() for item in evidence.split(",") if item.strip()]
+    evidence_refs = split_comma_tokens(evidence)
     return ReplayProof(
         proof_id=proof_id,
         proposal_id=proposal_id,

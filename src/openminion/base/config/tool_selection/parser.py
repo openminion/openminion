@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from openminion.base.config.base import ConfigError
 from openminion.base.config.parse import _as_bool, _as_int
+from openminion.base.config.parse import split_comma_tokens
 
 from .models import (
     CapabilityBinding,
@@ -32,7 +33,7 @@ def _parse_category_map(raw_value: object) -> dict[str, str]:
 
 def _parse_string_list(raw_value: object) -> list[str]:
     if isinstance(raw_value, str):
-        return [part.strip() for part in raw_value.split(",") if part.strip()]
+        return list(split_comma_tokens(raw_value))
     if isinstance(raw_value, list):
         return [str(item).strip() for item in raw_value if str(item).strip()]
     return []

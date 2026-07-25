@@ -9,12 +9,17 @@ from .runtime import _load_runtime_surface_payload
 
 
 def run_self_status(args, *, config) -> int:
-    source, payload, fallback_reason = _load_runtime_surface_payload(
+    loaded = _load_runtime_surface_payload(
         args=args,
         config=config,
         path="/v1/runtime/self-model",
         inproc_call=lambda: _build_inproc_self_model_payload(args),
     )
+    if len(loaded) == 2:
+        source, payload = loaded
+        fallback_reason = ""
+    else:
+        source, payload, fallback_reason = loaded
     self_model = dict(payload.get("self_model", {}) or {})
     output = {
         "ok": bool(payload.get("ok", False)),

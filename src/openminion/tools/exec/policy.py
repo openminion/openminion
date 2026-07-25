@@ -2,10 +2,11 @@ import hashlib
 import re
 import shlex
 import shutil
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
-from collections.abc import Iterable, Mapping
 
+from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_CLEAR,
     MODEL_EXEC_KILL,
@@ -300,7 +301,7 @@ def _parse_safe_bins_from_env(ctx: RuntimeContext) -> set[str]:
     raw = _env_value(ctx, EXEC_SAFE_BINS_ENV)
     if not raw:
         return set(EXEC_SAFE_BINS_DEFAULT)
-    return {item.strip() for item in raw.split(",") if item.strip()}
+    return set(split_comma_tokens(raw))
 
 
 def _parse_safe_bin_trusted_dirs_from_env(ctx: RuntimeContext) -> set[str]:

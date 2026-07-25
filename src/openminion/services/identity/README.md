@@ -20,12 +20,17 @@ Re-exported from `openminion.services.identity`:
 
 Additional symbols available via direct submodule import:
 
-- `client.IdentityBundleClient` — runtime-side bundle resolver.
+- `client.IdentityBundleClient` — direct-import markdown-bundle
+  compatibility adapter. It is intentionally not exported from
+  `openminion.services.identity`, does not enforce purpose-specific
+  render budgets, and should not be used as the canonical runtime
+  identity renderer for new work.
 - `bootstrap.py` — identity bootstrap pass internals.
 
 ## Owned objects
 
-- The runtime `IdentityBundleClient` instance.
+- The compatibility `IdentityBundleClient` implementation for explicit
+  markdown-bundle workflows.
 - The "default profile exists" invariant at runtime start.
 
 ## Non-goals
@@ -49,5 +54,5 @@ Additional symbols available via direct submodule import:
 `modules/identity/` owns the identity feature — record shape,
 bundles, verification math. `services/identity/` owns only the
 runtime wiring: the startup pass that guarantees an identity exists
-and the runtime client through which other services resolve bundles
-at request time.
+and the direct-module compatibility adapter for legacy markdown-bundle
+rendering. New runtime rendering should go through `IdentityCtl.render`.

@@ -1,0 +1,3 @@
+# path	class_count	reason
+src/openminion/modules/brain/schemas/decisions.py	21	VOL-29 existing schema/class-count baseline; split through VOL-15..20 or a later owner-specific slice.
+src/openminion/modules/context/compress/schemas.py	20	VOL-29 existing schema/class-count baseline; split through VOL-15..20 or a later owner-specific slice.

@@ -15,6 +15,7 @@ from .manager import (
     ensure_sidecar_autostart,
     ensure_sidecars_autostart,
 )
+from openminion.modules.tool.sidecars import sidecar_autostart_env_key
 from .prompts import (
     PINCHTAB_AUTOSTART_PROMPT,
     SIDECAR_POLICY_PROMPT_TEMPLATE,
@@ -38,4 +39,5 @@ __all__ = [
     "ensure_pinchtab_autostart",
     "ensure_sidecar_autostart",
     "ensure_sidecars_autostart",
+    "sidecar_autostart_env_key",
 ]

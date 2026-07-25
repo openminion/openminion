@@ -6,6 +6,7 @@ import os
 from dataclasses import replace
 from pathlib import Path
 import sqlite3
+from typing import Any
 
 from openminion.modules.cli_common import print_json_payload
 from openminion.modules.storage.engine import StorageEngine
@@ -107,135 +108,117 @@ def main(argv: list[str] | None = None) -> int:
     module_store = engine.module(args.namespace)
 
     try:
-        if args.cmd == "status":
-            payload = {
-                "ok": True,
-                "status": module_store.status(),
-                "db": engine.record_store.diagnostics(),
+        return _run_storage_store_command(
+            args=args,
+            engine=engine,
+            module_store=module_store,
+            sqlite_path=sqlite_path,
+            env_map=env_map,
+        )
+    finally:
+        engine.close()
+    return 0
+
+
+def _run_storage_store_command(
+    *,
+    args: argparse.Namespace,
+    engine: StorageEngine,
+    module_store: Any,
+    sqlite_path: str,
+    env_map: Any,
+) -> int:
+    if args.cmd == "status":
+        payload = {
+            "ok": True,
+            "status": module_store.status(),
+            "db": engine.record_store.diagnostics(),
+        }
+        _print_json(payload)
+        return 0
+
+    if args.cmd == "db-health":
+        _print_json({"ok": True, "db": engine.record_store.diagnostics()})
+        return 0
+
+    if args.cmd == "reindex":
+        report = module_store.reindex(
+            from_fs=not args.skip_fs,
+            since_ts=args.since_ts,
+            dry_run=args.dry_run,
+            archive_replayed=args.archive_replayed,
+            archive_root=args.archive_root,
+        )
+        _print_json({"ok": True, "report": report.to_dict()})
+        return 0
+
+    if args.cmd == "gc":
+        report = module_store.gc(
+            {
+                "dry_run": bool(args.plan),
+                "max_age_days": int(args.max_age_days),
+                "max_total_bytes": int(args.max_total_bytes),
             }
-            _print_json(payload)
-            return 0
+        )
+        _print_json({"ok": True, "report": report})
+        return 0
 
-        if args.cmd == "db-health":
-            _print_json({"ok": True, "db": engine.record_store.diagnostics()})
-            return 0
+    if args.cmd == "blob-verify":
+        result = engine.blob_store.verify(args.hash)
+        _print_json({"ok": result.get("matches", False), "result": result})
+        return 0
 
-        if args.cmd == "reindex":
-            report = module_store.reindex(
-                from_fs=not args.skip_fs,
-                since_ts=args.since_ts,
-                dry_run=args.dry_run,
-                archive_replayed=args.archive_replayed,
-                archive_root=args.archive_root,
+    if args.cmd == "events":
+        events = module_store.list_events(args.session_id, limit=args.limit)
+        _print_json({"ok": True, "events": events})
+        return 0
+    if args.cmd == "plan":
+        module_id = _resolve_module_id(args.namespace)
+        spec = get_module_spec(module_id)
+        if spec is None:
+            spec = ModuleMigrationSpec(
+                module_id=module_id,
+                module_application_id=get_module_application_id(module_id),
             )
-            _print_json({"ok": True, "report": report.to_dict()})
-            return 0
-
-        if args.cmd == "gc":
-            report = module_store.gc(
-                {
-                    "dry_run": bool(args.plan),
-                    "max_age_days": int(args.max_age_days),
-                    "max_total_bytes": int(args.max_total_bytes),
-                }
+        has_db = Path(sqlite_path).expanduser().resolve(strict=False).exists()
+        spec = replace(spec, has_db=has_db)
+        plan = build_migration_plan([spec])
+        _print_json(
+            {
+                "ok": True,
+                "module_id": module_id,
+                "plan": [item.__dict__ for item in plan],
+            }
+        )
+        return 0
+    if args.cmd == "migrate":
+        module_id = _resolve_module_id(args.namespace)
+        reporter = _select_reporter(args)
+        _reporter_safe_start(reporter, label=f"migrate[{module_id}]")
+        try:
+            run_migrations, list_migrations = _load_module_migrations(module_id)
+            run_migrations(sqlite_path)
+            _ensure_module_identity(
+                sqlite_path=sqlite_path,
+                module_id=module_id,
+                list_migrations=list_migrations,
             )
-            _print_json({"ok": True, "report": report})
-            return 0
-
-        if args.cmd == "blob-verify":
-            result = engine.blob_store.verify(args.hash)
-            _print_json({"ok": result.get("matches", False), "result": result})
-            return 0
-
-        if args.cmd == "events":
-            events = module_store.list_events(args.session_id, limit=args.limit)
-            _print_json({"ok": True, "events": events})
-            return 0
-        if args.cmd == "plan":
-            module_id = _resolve_module_id(args.namespace)
-            spec = get_module_spec(module_id)
-            if spec is None:
-                spec = ModuleMigrationSpec(
-                    module_id=module_id,
-                    module_application_id=get_module_application_id(module_id),
-                )
-            has_db = Path(sqlite_path).expanduser().resolve(strict=False).exists()
-            spec = replace(spec, has_db=has_db)
-            plan = build_migration_plan([spec])
-            _print_json(
-                {
-                    "ok": True,
-                    "module_id": module_id,
-                    "plan": [item.__dict__ for item in plan],
-                }
+            runner = _build_runner(
+                module_id=module_id,
+                sqlite_path=sqlite_path,
             )
+            state = runner.detect()
+            _reporter_safe_end(reporter, success=True)
+            _print_json({"ok": True, "state": state.to_dict()})
             return 0
-        if args.cmd == "migrate":
-            module_id = _resolve_module_id(args.namespace)
-            reporter = _select_reporter(args)
-            _reporter_safe_start(reporter, label=f"migrate[{module_id}]")
-            try:
-                run_migrations, list_migrations = _load_module_migrations(module_id)
-                run_migrations(sqlite_path)
-                _ensure_module_identity(
-                    sqlite_path=sqlite_path,
-                    module_id=module_id,
-                    list_migrations=list_migrations,
-                )
-                runner = _build_runner(
-                    module_id=module_id,
-                    sqlite_path=sqlite_path,
-                )
-                state = runner.detect()
-                _reporter_safe_end(reporter, success=True)
-                _print_json({"ok": True, "state": state.to_dict()})
-                return 0
-            except Exception:
-                _reporter_safe_end(reporter, success=False)
-                raise
-        if args.cmd == "backup":
-            module_id = _resolve_module_id(args.namespace)
-            reporter = _select_reporter(args)
-            _reporter_safe_start(reporter, label=f"backup[{module_id}]")
-            try:
-                _ensure_module_identity(
-                    sqlite_path=sqlite_path,
-                    module_id=module_id,
-                    list_migrations=_load_module_migrations(module_id)[1],
-                )
-                runner = _build_runner(
-                    module_id=module_id,
-                    sqlite_path=sqlite_path,
-                    snapshot_root=args.snapshot_root,
-                )
-                artifact = runner.backup(mode=args.mode)
-                _reporter_safe_end(reporter, success=True)
-                _print_json({"ok": True, "backup": artifact.to_dict()})
-                return 0
-            except Exception:
-                _reporter_safe_end(reporter, success=False)
-                raise
-        if args.cmd == "restore":
-            module_id = _resolve_module_id(args.namespace)
-            reporter = _select_reporter(args)
-            _reporter_safe_start(reporter, label=f"restore[{module_id}]")
-            try:
-                runner = _build_runner(
-                    module_id=module_id,
-                    sqlite_path=sqlite_path,
-                )
-                runner.restore(
-                    snapshot_path=args.snapshot_path, target_db_path=sqlite_path
-                )
-                state = runner.detect()
-                _reporter_safe_end(reporter, success=True)
-                _print_json({"ok": True, "state": state.to_dict()})
-                return 0
-            except Exception:
-                _reporter_safe_end(reporter, success=False)
-                raise
-        if args.cmd == "verify":
-            module_id = _resolve_module_id(args.namespace)
+        except Exception:
+            _reporter_safe_end(reporter, success=False)
+            raise
+    if args.cmd == "backup":
+        module_id = _resolve_module_id(args.namespace)
+        reporter = _select_reporter(args)
+        _reporter_safe_start(reporter, label=f"backup[{module_id}]")
+        try:
             _ensure_module_identity(
                 sqlite_path=sqlite_path,
                 module_id=module_id,
@@ -244,57 +227,81 @@ def main(argv: list[str] | None = None) -> int:
             runner = _build_runner(
                 module_id=module_id,
                 sqlite_path=sqlite_path,
+                snapshot_root=args.snapshot_root,
             )
-            report = runner.verify(level=args.level)
-            _print_json({"ok": report.ok, "report": report.to_dict()})
+            artifact = runner.backup(mode=args.mode)
+            _reporter_safe_end(reporter, success=True)
+            _print_json({"ok": True, "backup": artifact.to_dict()})
             return 0
-        if args.cmd == "export":
-            module_id = _resolve_module_id(args.namespace)
-            backend = str(getattr(args, "backend", "sqlite") or "sqlite").lower()
-            if backend == "sqlite":
-                _ensure_module_identity(
-                    sqlite_path=sqlite_path,
-                    module_id=module_id,
-                    list_migrations=_load_module_migrations(module_id)[1],
-                )
-            since_arg = getattr(args, "since", None)
-            namespace_filter = getattr(args, "namespace_filter", None)
-            where_clause = getattr(args, "where", None)
-            since_dt = None
-            if since_arg:
-                from datetime import datetime as _dt
+        except Exception:
+            _reporter_safe_end(reporter, success=False)
+            raise
+    if args.cmd == "restore":
+        module_id = _resolve_module_id(args.namespace)
+        reporter = _select_reporter(args)
+        _reporter_safe_start(reporter, label=f"restore[{module_id}]")
+        try:
+            runner = _build_runner(
+                module_id=module_id,
+                sqlite_path=sqlite_path,
+            )
+            runner.restore(
+                snapshot_path=args.snapshot_path, target_db_path=sqlite_path
+            )
+            state = runner.detect()
+            _reporter_safe_end(reporter, success=True)
+            _print_json({"ok": True, "state": state.to_dict()})
+            return 0
+        except Exception:
+            _reporter_safe_end(reporter, success=False)
+            raise
+    if args.cmd == "verify":
+        module_id = _resolve_module_id(args.namespace)
+        _ensure_module_identity(
+            sqlite_path=sqlite_path,
+            module_id=module_id,
+            list_migrations=_load_module_migrations(module_id)[1],
+        )
+        runner = _build_runner(
+            module_id=module_id,
+            sqlite_path=sqlite_path,
+        )
+        report = runner.verify(level=args.level)
+        _print_json({"ok": report.ok, "report": report.to_dict()})
+        return 0
+    if args.cmd == "export":
+        module_id = _resolve_module_id(args.namespace)
+        backend = str(getattr(args, "backend", "sqlite") or "sqlite").lower()
+        if backend == "sqlite":
+            _ensure_module_identity(
+                sqlite_path=sqlite_path,
+                module_id=module_id,
+                list_migrations=_load_module_migrations(module_id)[1],
+            )
+        since_arg = getattr(args, "since", None)
+        namespace_filter = getattr(args, "namespace_filter", None)
+        where_clause = getattr(args, "where", None)
+        since_dt = None
+        if since_arg:
+            from datetime import datetime as _dt
 
-                # Accept ISO-8601 with or without trailing Z.
-                normalised = (
-                    since_arg.replace("Z", "+00:00")
-                    if since_arg.endswith("Z")
-                    else since_arg
-                )
-                since_dt = _dt.fromisoformat(normalised)
-            if backend == "postgres":
-                pg_store, pg_close = _open_postgres_record_store(
-                    args, env_map, verb="export"
-                )
-                if pg_store is None:
-                    return 2
-                try:
-                    manifest = export_omx(
-                        db_path=None,
-                        record_store=pg_store,
-                        module_id=module_id,
-                        module_application_id=get_module_application_id(module_id),
-                        export_dir=args.out,
-                        export_notes=args.notes,
-                        since=since_dt,
-                        namespace=namespace_filter,
-                        where_clause=where_clause,
-                        reporter=_select_reporter(args),
-                    )
-                finally:
-                    pg_close()
-            else:
+            # Accept ISO-8601 with or without trailing Z.
+            normalised = (
+                since_arg.replace("Z", "+00:00")
+                if since_arg.endswith("Z")
+                else since_arg
+            )
+            since_dt = _dt.fromisoformat(normalised)
+        if backend == "postgres":
+            pg_store, pg_close = _open_postgres_record_store(
+                args, env_map, verb="export"
+            )
+            if pg_store is None:
+                return 2
+            try:
                 manifest = export_omx(
-                    db_path=sqlite_path,
+                    db_path=None,
+                    record_store=pg_store,
                     module_id=module_id,
                     module_application_id=get_module_application_id(module_id),
                     export_dir=args.out,
@@ -304,38 +311,49 @@ def main(argv: list[str] | None = None) -> int:
                     where_clause=where_clause,
                     reporter=_select_reporter(args),
                 )
-            _print_json({"ok": True, "manifest": manifest.to_dict()})
-            return 0
-        if args.cmd == "import":
-            backend = str(getattr(args, "backend", "sqlite") or "sqlite").lower()
-            if backend == "postgres":
-                pg_store, pg_close = _open_postgres_record_store(
-                    args, env_map, verb="import"
-                )
-                if pg_store is None:
-                    return 2
-                try:
-                    report = import_omx(
-                        omx_dir=args.input,
-                        target_db_path=None,
-                        target_record_store=pg_store,
-                        verify_checksums=not args.skip_checksum,
-                        reporter=_select_reporter(args),
-                    )
-                finally:
-                    pg_close()
-            else:
+            finally:
+                pg_close()
+        else:
+            manifest = export_omx(
+                db_path=sqlite_path,
+                module_id=module_id,
+                module_application_id=get_module_application_id(module_id),
+                export_dir=args.out,
+                export_notes=args.notes,
+                since=since_dt,
+                namespace=namespace_filter,
+                where_clause=where_clause,
+                reporter=_select_reporter(args),
+            )
+        _print_json({"ok": True, "manifest": manifest.to_dict()})
+        return 0
+    if args.cmd == "import":
+        backend = str(getattr(args, "backend", "sqlite") or "sqlite").lower()
+        if backend == "postgres":
+            pg_store, pg_close = _open_postgres_record_store(
+                args, env_map, verb="import"
+            )
+            if pg_store is None:
+                return 2
+            try:
                 report = import_omx(
                     omx_dir=args.input,
-                    target_db_path=sqlite_path,
+                    target_db_path=None,
+                    target_record_store=pg_store,
                     verify_checksums=not args.skip_checksum,
                     reporter=_select_reporter(args),
                 )
-            _print_json({"ok": report.success, "report": report.to_dict()})
-            return 0
-    finally:
-        engine.close()
-    return 0
+            finally:
+                pg_close()
+        else:
+            report = import_omx(
+                omx_dir=args.input,
+                target_db_path=sqlite_path,
+                verify_checksums=not args.skip_checksum,
+                reporter=_select_reporter(args),
+            )
+        _print_json({"ok": report.success, "report": report.to_dict()})
+        return 0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -359,6 +377,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sub = parser.add_subparsers(dest="cmd", required=True)
+    _add_storage_cli_subcommands(sub)
+
+    return parser
+
+
+def _add_storage_cli_subcommands(sub: Any) -> None:
 
     sub.add_parser("status", help="Show storage and DB health summary")
     sub.add_parser("db-health", help="Show SQLite diagnostics")
@@ -585,7 +609,6 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    return parser
 
 
 def _print_json(payload: dict) -> None:

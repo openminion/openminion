@@ -4,6 +4,8 @@ import os
 from collections.abc import Mapping
 from typing import Final
 
+from openminion.base.config.parse import split_comma_tokens
+
 
 SUBPROCESS_ENV_ALLOWLIST_ENV: Final[str] = "OPENMINION_SUBPROCESS_ENV_ALLOW"
 DEFAULT_SUBPROCESS_ENV_ALLOWLIST: Final[frozenset[str]] = frozenset(
@@ -40,7 +42,7 @@ def build_subprocess_env(
     if inherit_parent:
         allowed = set(DEFAULT_SUBPROCESS_ENV_ALLOWLIST)
         raw = os.environ.get(SUBPROCESS_ENV_ALLOWLIST_ENV, "")
-        allowed.update(item.strip() for item in raw.split(",") if item.strip())
+        allowed.update(split_comma_tokens(raw))
         env.update(
             {key: str(os.environ[key]) for key in sorted(allowed) if key in os.environ}
         )

@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Any
 
+from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.brain.retry import (
     STRUCTURED_FAILURE_KIND_KEY,
     STRUCTURED_HAS_TOOL_CALLS_KEY,
@@ -18,7 +19,7 @@ def _normalize_sub_intents(value: Any) -> list[str]:
         if not text:
             return []
         if "," in text:
-            return [part.strip() for part in text.split(",") if part.strip()]
+            return split_comma_tokens(text)
         return [text]
     return []
 

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 import openminion.modules.identity.runtime.renderer as renderer_module
 from openminion.modules.context.builder import BuildOptions, ContextPackBuilder
-from openminion.modules.identity.models import AgentProfile, SkillPostureSpec
+from openminion.modules.identity.config import IdentityCtlConfig
+from openminion.modules.identity.models import AgentProfile, Purpose, SkillPostureSpec
 from openminion.modules.identity.runtime.lockfile import read_identity_lockfile
 from openminion.modules.identity.runtime.renderer import normalize_purpose
 from openminion.modules.identity.runtime.service import IdentityCtl
@@ -532,6 +534,74 @@ def test_render_under_budget_and_deterministic() -> None:
 
     assert len(store._cache) == 4  # type: ignore[attr-defined]
     identity.close()
+
+
+def test_purpose_literal_matches_canonical_renderer_set() -> None:
+    assert set(get_args(Purpose)) == set(renderer_module._CANONICAL_PURPOSES)
+
+
+def test_validate_profile_strict_promotes_warnings_to_errors() -> None:
+    identity = IdentityCtl(store=InMemoryIdentityStore())
+    profile = _profile().model_copy(
+        update={
+            "role": _profile().role.model_copy(update={"responsibilities": []})
+        }
+    )
+
+    default_result = identity.validate_profile(profile)
+    strict_result = identity.validate_profile(profile, strict=True)
+
+    assert default_result.ok is True
+    assert default_result.warnings
+    assert strict_result.ok is False
+    assert strict_result.errors == default_result.warnings
+
+
+def test_agent_id_rejects_cache_key_separator() -> None:
+    with pytest.raises(ValueError, match="agent_id.*\\|"):
+        _profile(agent_id="bad|id")
+
+
+def test_sqlite_clear_cache_escapes_like_wildcards(tmp_path: Path) -> None:
+    store = SQLiteIdentityStore(tmp_path / "identity.db")
+    for key in ("a|act|v|r|1|none|none", "a_|act|v|r|1|none|none"):
+        store.upsert_cached_snippet(
+            cache_key=key,
+            snippet_text=key,
+            used_tokens=1,
+            used_chars=1,
+            sections=None,
+            included_fields=[],
+            omitted_fields=[],
+            warnings=[],
+        )
+
+    store.clear_cache("a")
+
+    assert store.get_cached_snippet("a|act|v|r|1|none|none") is None
+    assert store.get_cached_snippet("a_|act|v|r|1|none|none") is not None
+    store.close()
+
+
+def test_warm_cache_uses_canonical_per_purpose_budgets() -> None:
+    store = InMemoryIdentityStore()
+    identity = IdentityCtl(store=store)
+    profile = _profile(agent_id="warm-budget-agent")
+    identity.upsert_profile(profile)
+
+    assert identity.warm_cache(profile.agent_id) == 4
+
+    cache_keys = set(store._cache)  # type: ignore[attr-defined]
+    assert any("|decide|" in key and "|160|" in key for key in cache_keys)
+    assert any("|plan|" in key and "|220|" in key for key in cache_keys)
+    assert any("|act|" in key and "|180|" in key for key in cache_keys)
+    assert any("|reflect|" in key and "|220|" in key for key in cache_keys)
+
+    custom_cfg = IdentityCtlConfig()
+    custom_cfg.rendering.default_budgets["act"].max_tokens = 111
+    store.clear_cache()
+    assert identity.warm_cache(profile.agent_id, purposes=["act"], identity_cfg=custom_cfg) == 1
+    assert any("|act|" in key and "|111|" in key for key in store._cache)  # type: ignore[attr-defined]
 
 
 def test_skill_posture_changes_profile_version_and_validates() -> None:

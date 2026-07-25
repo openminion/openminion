@@ -20,6 +20,7 @@ COMMAND_SPECS = (
     CommandSpec("config", "openminion.cli.commands.config", "Config operations"),
     CommandSpec("api", "openminion.cli.commands.api", "HTTP API controls"),
     CommandSpec("autonomy", "openminion.cli.commands.autonomy", "Autonomy runs"),
+    CommandSpec("browser", "openminion.cli.commands.browser", "Browser controls"),
     CommandSpec("data", "openminion.cli.commands.data", "Data root operations"),
     CommandSpec(
         "daemon", "openminion.cli.commands.daemon", "Daemon lifecycle controls"
@@ -30,6 +31,9 @@ COMMAND_SPECS = (
         "Unified service lifecycle overview",
     ),
     CommandSpec("run", "openminion.cli.commands.run", "Run a prompt"),
+    CommandSpec(
+        "schedule", "openminion.cli.commands.schedule", "Schedule routine operations"
+    ),
     CommandSpec(
         "room", "openminion.cli.commands.room", "Create and manage room sessions"
     ),

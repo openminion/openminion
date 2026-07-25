@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+from openminion.base.config.parse import split_comma_tokens
 from openminion.base.types import Message
 from openminion.modules.telemetry.usage import RunStats
 
@@ -17,10 +18,7 @@ def envelope_truncation_payload(
         ).strip()
         if not raw_reasons:
             continue
-        for reason in raw_reasons.split(","):
-            normalized_reason = reason.strip()
-            if normalized_reason:
-                envelope_reasons.add(normalized_reason)
+        envelope_reasons.update(split_comma_tokens(raw_reasons))
 
     envelope_truncated = (
         str(memory_context_meta.get("memory_envelope_truncated", "false")).lower()

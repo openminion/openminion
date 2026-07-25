@@ -5,6 +5,12 @@ import time
 from typing import Any
 
 from openminion.cli.config import load_cli_config, resolve_cli_roots
+from openminion.cli.commands.agent_delegation import (
+    agent_delegate_usage,
+    render_agent_delegate_result,
+    request_from_operator_args,
+    run_agent_delegate_request,
+)
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.cli.transport.daemon_client import (
     daemon_is_reachable,
@@ -28,6 +34,7 @@ def run_agent_operator(args) -> int:
 
     config_path = args.config
     config = load_cli_config(config_path)
+    roots = resolve_cli_roots()
     storage_path = str(config.storage.path)
     registry = AgentRegistryStore(storage_path)
 
@@ -56,8 +63,45 @@ def run_agent_operator(args) -> int:
     if action == "inspect":
         agent_id = getattr(args, "agent_id", None) or _default_agent_id(config)
         return agent_inspect(registry, agent_id, as_json=getattr(args, "json", False))
+    if action in {
+        "delegate",
+        "delegate-status",
+        "delegate-resume",
+        "delegate-result",
+        "delegate-cancel",
+    }:
+        return agent_delegate(
+            config=config,
+            home_root=roots.home_root,
+            parent_agent_id=_default_agent_id(config),
+            request=request_from_operator_args(args),
+            as_json=getattr(args, "json", False),
+        )
 
     raise RuntimeError("Unknown agent operator command")
+
+
+def agent_delegate(
+    *,
+    config: Any,
+    home_root: Any,
+    parent_agent_id: str,
+    request,
+    as_json: bool,
+    delegate_api: Any | None = None,
+) -> int:
+    payload = run_agent_delegate_request(
+        config=config,
+        home_root=home_root,
+        parent_agent_id=parent_agent_id,
+        request=request,
+        delegate_api=delegate_api,
+    )
+    if as_json:
+        print_json_payload(payload)
+    else:
+        print(render_agent_delegate_result(payload))
+    return 0 if bool(payload.get("ok", False)) else 1
 
 
 def agent_ls(registry: AgentRegistryStore, *, as_json: bool) -> int:
@@ -76,6 +120,15 @@ def agent_ls(registry: AgentRegistryStore, *, as_json: bool) -> int:
             {
                 "agent_id": a.agent_id,
                 "display_name": a.display_name,
+                "configured": False,
+                "registry_present": True,
+                "hot": hb is not None,
+                "heartbeat_active": hb is not None,
+                "available": True,
+                "running": hb is not None,
+                "stopped": hb is None,
+                "unknown": False,
+                "state": state,
                 "status": state,
                 "pid": hb.pid if hb else 0,
                 "host": hb.host if hb else "",
@@ -146,8 +199,8 @@ def agent_spawn(registry: AgentRegistryStore, agent_id: str) -> int:
         registry.upsert_agent(agent_id=agent_id, display_name=agent_id)
 
     registry.set_agent_status(agent_id=agent_id, status="starting")
-    print(f"Agent '{agent_id}' spawn signal queued (status set to starting).")
-    print("In Topology A, agents are spawned by the main daemon loop.")
+    print(f"Agent '{agent_id}' registry status set to starting.")
+    print("No process was launched by this command; the daemon owns lifecycle work.")
     return 0
 
 
@@ -158,7 +211,8 @@ def agent_stop(registry: AgentRegistryStore, agent_id: str) -> int:
         return 1
 
     registry.set_agent_status(agent_id=agent_id, status="stopping")
-    print(f"Agent '{agent_id}' stop signal queued (status set to stopping).")
+    print(f"Agent '{agent_id}' registry status set to stopping.")
+    print("No process was stopped by this command; the daemon owns lifecycle work.")
     return 0
 
 
@@ -527,6 +581,51 @@ def add_agent_operator_subcommands(agent_parser: argparse.ArgumentParser) -> Non
     )
     add_json_output_flag(agent_inspect_cmd)
     agent_inspect_cmd.set_defaults(handler=run_agent_operator, needs_app=False)
+
+    agent_delegate_cmd = agent_subcommands.add_parser(
+        "delegate",
+        help="Delegate work to another configured agent",
+        description=agent_delegate_usage(),
+    )
+    agent_delegate_cmd.add_argument(
+        "--target-agent-id",
+        required=True,
+        help="Exact configured agent id to receive the delegated work",
+    )
+    agent_delegate_cmd.add_argument(
+        "--instruction",
+        required=True,
+        help="Instruction or goal for the delegated agent",
+    )
+    agent_delegate_cmd.add_argument(
+        "--mode",
+        choices=("sync", "async"),
+        default="sync",
+        help="Run synchronously or return a resumable async task handle",
+    )
+    agent_delegate_cmd.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=120,
+        help="Delegated turn timeout in seconds",
+    )
+    add_json_output_flag(agent_delegate_cmd)
+    agent_delegate_cmd.set_defaults(handler=run_agent_operator, needs_app=False)
+
+    for name, help_text in (
+        ("delegate-status", "Poll a delegated async task"),
+        ("delegate-resume", "Resume/poll a delegated async task"),
+        ("delegate-result", "Fetch the latest delegated task result"),
+        ("delegate-cancel", "Cancel a delegated async task"),
+    ):
+        delegate_lifecycle = agent_subcommands.add_parser(name, help=help_text)
+        delegate_lifecycle.add_argument(
+            "--task-id",
+            required=True,
+            help="Task id returned by `agent-ctl delegate --mode async`",
+        )
+        add_json_output_flag(delegate_lifecycle)
+        delegate_lifecycle.set_defaults(handler=run_agent_operator, needs_app=False)
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

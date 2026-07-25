@@ -62,6 +62,9 @@ boundary summary than the broader docs.
 7. Keep temporary broad-sweep artifacts in the repository scratch area, not in this package root and not mixed into package source or docs surfaces.
 8. Prefer task-scoped validation during slice work; reserve broad repo-wide suites like `make check` for integration closeout or when a release or integration surface explicitly requires them.
 9. Do not include unrelated refactors in the same PR.
+10. For controlplane storage work, preserve the two-database rule documented in
+    `docs/runbooks/controlplane-storage-operations.md`: cross-channel state
+    lives in `cp.db`; channel-private transient state stays in the channel DB.
 
 Commit message guidance:
 

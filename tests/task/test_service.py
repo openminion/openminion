@@ -12,6 +12,8 @@ from openminion.modules.task.schemas import (
     TaskOps,
     TaskStatus,
 )
+from openminion.modules.storage.record_store import RecordStoreSQLite
+from openminion.modules.task.runtime.persistent_service import SqlTaskCtl
 from openminion.modules.task.runtime.service import InMemoryTaskCtl
 
 
@@ -101,6 +103,66 @@ def test_pending_action_resume_returns_same_cursor() -> None:
     assert paused["payload"]["pending_backlog_count"] == 1
     assert resumed_event["payload"]["pending_backlog_count"] == 0
     assert resumed_event["payload"]["resume_latency_ms"] >= 0
+
+
+def test_pending_action_resume_survives_controller_restart(tmp_path) -> None:
+    db_path = tmp_path / "taskctl.db"
+    first_store = RecordStoreSQLite(db_path, wal=False)
+    first_ctl = SqlTaskCtl(first_store)
+    try:
+        task = first_ctl.create_task(TaskCreateInput(title="Deploy"), trace_id="trace-2")
+        plan = first_ctl.attach_plan(
+            task.task_id,
+            PlanDraft(
+                steps=[PlanStepDraft(title="Deploy step", instruction="Run deploy")],
+            ),
+            trace_id="trace-2",
+        )
+
+        cursor = ResumePointer(
+            task_id=task.task_id,
+            plan_id=plan.plan_id,
+            step_id=plan.steps[0].step_id,
+            attempt=1,
+            trace_id="trace-2",
+            turn_id="turn-7",
+            pack_id="pack-3",
+        )
+
+        pending = first_ctl.record_pending_action(
+            policy_request_id="policy-123",
+            cursor=cursor,
+            reason="exec requires approval",
+        )
+        assert pending.cursor == cursor
+        assert [event["type"] for event in first_ctl.list_events()].count(
+            "mission.paused"
+        ) == 1
+    finally:
+        first_store.close()
+
+    second_store = RecordStoreSQLite(db_path, wal=False)
+    second_ctl = SqlTaskCtl(second_store)
+    try:
+        resumed = second_ctl.resume_pending_action(
+            policy_request_id="policy-123",
+            decision_id="decision-9",
+            trace_id="trace-2",
+        )
+        repeated = second_ctl.resume_pending_action(
+            policy_request_id="policy-123",
+            decision_id="decision-9",
+            trace_id="trace-2",
+        )
+    finally:
+        events = second_ctl.list_events()
+        second_store.close()
+
+    assert resumed == cursor
+    assert repeated == cursor
+    assert [event["type"] for event in events].count("mission.resumed") == 1
+    resumed_event = next(event for event in events if event["type"] == "mission.resumed")
+    assert resumed_event["payload"]["pending_backlog_count"] == 0
 
 
 def test_apply_ops_emits_task_ops_telemetry_event() -> None:

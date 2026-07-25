@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from sqlite3 import Connection
+from sqlite3 import Connection, Error as SQLiteError
 from threading import RLock
 from types import SimpleNamespace
 from typing import Any, Optional, cast
@@ -48,6 +48,128 @@ from .infrastructure import (
     scoped_tools_for_agent,
 )
 from .lifecycle import RuntimeFinalizer
+
+
+@dataclass(frozen=True)
+class AgentDiscoveryRecord:
+    agent_id: str
+    display_name: str = ""
+    configured: bool = False
+    registry_present: bool = False
+    hot: bool = False
+    heartbeat_active: bool = False
+    registry_status: str = ""
+    process_status: str = ""
+    pid: int = 0
+    host: str = ""
+    port: int = 0
+    active_run_id: str = ""
+    capabilities: tuple[str, ...] = ()
+
+    @property
+    def available(self) -> bool:
+        return self.configured or self.registry_present or self.hot
+
+    @property
+    def running(self) -> bool:
+        return self.heartbeat_active or self.hot
+
+    @property
+    def stopped(self) -> bool:
+        return self.available and not self.running
+
+    @property
+    def unknown(self) -> bool:
+        return not self.available
+
+    @property
+    def state(self) -> str:
+        if self.running:
+            return self.process_status or "running"
+        if self.configured:
+            return "configured"
+        if self.registry_present:
+            return self.registry_status or "stopped"
+        return "unknown"
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "agent_id": self.agent_id,
+            "display_name": self.display_name,
+            "configured": self.configured,
+            "registry_present": self.registry_present,
+            "hot": self.hot,
+            "heartbeat_active": self.heartbeat_active,
+            "available": self.available,
+            "running": self.running,
+            "stopped": self.stopped,
+            "unknown": self.unknown,
+            "state": self.state,
+            "registry_status": self.registry_status,
+            "process_status": self.process_status,
+            "pid": self.pid,
+            "host": self.host,
+            "port": self.port,
+            "active_run_id": self.active_run_id,
+            "capabilities": list(self.capabilities),
+        }
+
+
+def _load_agent_registry_facts(
+    storage_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        from openminion.modules.storage.runtime.registry_store import (
+            AgentRegistryStore,
+        )
+
+        registry = AgentRegistryStore(str(storage_path))
+        records = {item.agent_id: item for item in registry.list_agents()}
+        heartbeats = {
+            item.agent_id: item
+            for item in registry.list_heartbeats()
+            if not registry.is_agent_stale(item.agent_id)
+        }
+        return records, heartbeats
+    except (ImportError, OSError, RuntimeError, ValueError, SQLiteError):
+        return {}, {}
+
+
+def _build_agent_discovery_record(
+    *,
+    agent_id: str,
+    configured_profile: Any | None,
+    registry_record: Any | None,
+    heartbeat_record: Any | None,
+    hot: bool,
+) -> AgentDiscoveryRecord:
+    configured_name = str(getattr(configured_profile, "name", "") or "").strip()
+    display_name = (
+        str(getattr(registry_record, "display_name", "") or "").strip()
+        or configured_name
+        or agent_id
+    )
+    heartbeat_active = heartbeat_record is not None
+    capabilities = (
+        ("delegate.sync",)
+        if configured_profile is not None or registry_record is not None
+        else ()
+    )
+    return AgentDiscoveryRecord(
+        agent_id=agent_id,
+        display_name=display_name,
+        configured=configured_profile is not None,
+        registry_present=registry_record is not None,
+        hot=hot,
+        heartbeat_active=heartbeat_active,
+        registry_status=str(getattr(registry_record, "status", "") or "").strip(),
+        process_status=str(getattr(heartbeat_record, "status", "") or "").strip(),
+        pid=int(getattr(heartbeat_record, "pid", 0) or 0),
+        host=str(getattr(heartbeat_record, "host", "") or "").strip(),
+        port=int(getattr(heartbeat_record, "port", 0) or 0),
+        active_run_id=str(getattr(heartbeat_record, "active_run_id", "") or "").strip(),
+        capabilities=capabilities,
+    )
 
 
 @dataclass
@@ -293,3 +415,23 @@ class RuntimeProfilesMixin:
                     if str(agent_id).strip()
                 }
             )
+
+    def agent_discovery_snapshot(self) -> list[dict[str, Any]]:
+        configured = {
+            str(agent_id).strip(): profile
+            for agent_id, profile in self.config.agents.items()
+            if str(agent_id).strip()
+        }
+        hot = set(self.list_hot_agents())
+        registry_records, heartbeats = _load_agent_registry_facts(self.storage_path)
+        all_ids = sorted(set(configured) | set(registry_records) | hot | set(heartbeats))
+        return [
+            _build_agent_discovery_record(
+                agent_id=agent_id,
+                configured_profile=configured.get(agent_id),
+                registry_record=registry_records.get(agent_id),
+                heartbeat_record=heartbeats.get(agent_id),
+                hot=agent_id in hot,
+            ).as_payload()
+            for agent_id in all_ids
+        ]

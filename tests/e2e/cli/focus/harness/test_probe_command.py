@@ -1,0 +1,48 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from tests.e2e.cli.focus.harness.probe import FocusProbe
+
+
+def test_focus_probe_adds_demo_flag_for_echo_agent(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"agents": {"openminion": {"provider": "echo"}}}),
+        encoding="utf-8",
+    )
+    probe = FocusProbe(
+        python_bin=Path("python"),
+        openminion_root=tmp_path,
+        framework_root=tmp_path.parent,
+        data_root=tmp_path / "data",
+        config_path=config,
+        agent_id="openminion",
+        workdir=tmp_path,
+        session_id="s1",
+    )
+
+    assert probe.uses_echo_agent() is True
+    assert "--demo" in probe.command()
+
+
+def test_focus_probe_does_not_add_demo_flag_for_real_provider(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"agents": {"minimax": {"provider": "openai"}}}),
+        encoding="utf-8",
+    )
+    probe = FocusProbe(
+        python_bin=Path("python"),
+        openminion_root=tmp_path,
+        framework_root=tmp_path.parent,
+        data_root=tmp_path / "data",
+        config_path=config,
+        agent_id="minimax",
+        workdir=tmp_path,
+        session_id="s1",
+    )
+
+    assert probe.uses_echo_agent() is False
+    assert "--demo" not in probe.command()

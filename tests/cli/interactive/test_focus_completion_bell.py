@@ -148,3 +148,36 @@ def test_bell_helper_handles_invalid_elapsed_input(
     with redirect_stdout(buf):
         screen._on_turn_complete(elapsed_seconds="not a number")  # type: ignore[arg-type]
     assert "\a" not in buf.getvalue()
+
+
+def test_focus_completion_hides_phase_timing_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENMINION_SHOW_PHASE_TIMING", raising=False)
+    screen = _make_screen()
+    probe = _attach_transcript_probe(monkeypatch, screen)
+    screen._runtime.last_chat_phase_timing_payload = lambda: {"total_turn_ms": 120}
+
+    screen._on_turn_complete(elapsed_seconds=1.0)
+
+    assert [message.body for message in probe.messages] == ["Done in 1s"]
+
+
+def test_focus_completion_can_show_phase_timing_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_SHOW_PHASE_TIMING", "1")
+    screen = _make_screen()
+    probe = _attach_transcript_probe(monkeypatch, screen)
+    screen._runtime.last_chat_phase_timing_payload = lambda: {
+        "total_turn_ms": 1200,
+        "time_to_first_text_ms": 30,
+        "phases_instrumented": ["provider_round_trip"],
+        "provider_round_trip_ms": 900,
+    }
+
+    screen._on_turn_complete(elapsed_seconds=1.0)
+
+    bodies = [message.body for message in probe.messages]
+    assert bodies[0] == "Done in 1s"
+    assert bodies[1] == "Timing: total 1.2s; first text 30ms\nPhases: provider 900ms"

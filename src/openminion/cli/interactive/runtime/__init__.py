@@ -33,7 +33,9 @@ from openminion.services.gateway.constants import (
 )
 from openminion.base.config.settings import SettingsResolver
 from openminion.modules.brain.tools.lifecycle import register_settings_lifecycle_hooks
+from .agent_sidebar import build_agent_sidebar_items
 from .controls import RuntimeControlsMixin
+from .delegation import RuntimeDelegationMixin
 from .mcp import RuntimeMCPMixin
 from .messages import (
     TARGET_KIND_FOCUS as _TARGET_KIND_FOCUS,
@@ -84,6 +86,7 @@ def _session_sort_key(session: Any) -> str:
 
 class OpenMinionRuntime(
     RuntimeControlsMixin,
+    RuntimeDelegationMixin,
     RuntimeMCPMixin,
     RuntimeMessageMixin,
 ):
@@ -128,6 +131,7 @@ class OpenMinionRuntime(
         self._current_turn_has_live_deltas = False
         self._current_turn_started_at_monotonic: float | None = None
         self._last_turn_elapsed_seconds: float | None = None
+        self._last_chat_phase_timing_payload: dict[str, object] | None = None
         self._usage_updated_at_monotonic: float | None = None
         self._last_live_usage_update_at: float | None = None
         self._project_context: ProjectContextInfo | None = None
@@ -397,11 +401,7 @@ class OpenMinionRuntime(
         return "other"
 
     def list_agents(self) -> list[SidebarItem]:
-        configured_agents = self._rt.list_registered_agents()
-        return [
-            SidebarItem(agent_id, agent_id, active=(agent_id == self._agent_id))
-            for agent_id in configured_agents
-        ]
+        return build_agent_sidebar_items(self._rt, active_agent_id=self._agent_id)
 
     def list_tools(self) -> list[tuple[str, bool]]:
         tools = self._rt.tools.list()
@@ -607,6 +607,7 @@ class OpenMinionRuntime(
                 process_mode=str(getattr(runtime_settings, "process_mode", "") or ""),
                 transport=self.transport,
             )
+            self._last_chat_phase_timing_payload = payload.as_dict()
             phase_timing.record_chat_phase_timing_payload(
                 getattr(self._rt, "telemetry_service", None),
                 payload,
@@ -623,6 +624,10 @@ class OpenMinionRuntime(
             warning = getattr(logger, "warning", None)
             if callable(warning):
                 warning("chat phase timing emission failed: %s", exc)
+
+    def last_chat_phase_timing_payload(self) -> dict[str, object] | None:
+        payload = self._last_chat_phase_timing_payload
+        return dict(payload) if payload is not None else None
 
     def _turn_inbound_metadata(
         self,
@@ -941,6 +946,7 @@ class OpenMinionRuntime(
         self._current_turn_has_live_deltas = False
         self._current_turn_started_at_monotonic = None
         self._last_turn_elapsed_seconds = None
+        self._last_chat_phase_timing_payload = None
         self._last_live_usage_update_at = None
         self._usage_updated_at_monotonic = None
 

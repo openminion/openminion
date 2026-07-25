@@ -3,7 +3,7 @@ from openminion.base.time import utc_now_iso  # noqa: F401
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 
 from .constants import (
     POLICY_DECISION_REQUIRE_CONFIRM,
@@ -32,7 +32,7 @@ Reversibility = Literal["reversible", "partially_reversible", "irreversible", "u
 def normalize_mode(value: str) -> PolicyMode:
     mode = str(value or "").strip().lower()
     if mode in POLICY_MODE_CHOICES:
-        return mode  # type: ignore[return-value]
+        return cast(PolicyMode, mode)
     raise ValueError(f"Invalid policy mode: {value}")
 
 
@@ -94,11 +94,18 @@ class RiskSpec:
     @staticmethod
     def from_dict(payload: dict[str, Any]) -> "RiskSpec":
         return RiskSpec(
-            risk_class=str(payload.get("risk_class", POLICY_RISK_READ)),  # type: ignore[arg-type]
-            side_effects=str(payload.get("side_effects", POLICY_SIDE_EFFECT_NONE)),  # type: ignore[arg-type]
-            reversibility=str(
-                payload.get("reversibility", POLICY_REVERSIBILITY_UNKNOWN)
-            ),  # type: ignore[arg-type]
+            risk_class=cast(
+                RiskClass,
+                str(payload.get("risk_class", POLICY_RISK_READ)),
+            ),
+            side_effects=cast(
+                SideEffects,
+                str(payload.get("side_effects", POLICY_SIDE_EFFECT_NONE)),
+            ),
+            reversibility=cast(
+                Reversibility,
+                str(payload.get("reversibility", POLICY_REVERSIBILITY_UNKNOWN)),
+            ),
             default_confirm=bool(payload.get("default_confirm", False)),
             sensitive_targets=list(payload.get("sensitive_targets", [])),
         )

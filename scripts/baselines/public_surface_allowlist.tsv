@@ -151,10 +151,9 @@ services/runtime/routine_context.py	openminion.modules.tool.runtime.registry_too
 services/runtime/turn_router.py	openminion.modules.storage.runtime.session_store
 tools/agent/plugin.py	openminion.modules.tool.runtime
 tools/agent/plugin.py	openminion.modules.tool.runtime.environment
-tools/browser/__init__.py	openminion.modules.tool.runtime.registrar
 tools/browser/payloads.py	openminion.modules.tool.runtime.resource_selectors
-tools/browser/providers/__init__.py	openminion.modules.tool.runtime
-tools/browser/providers/__init__.py	openminion.modules.tool.runtime.resource_selectors
+tools/browser/providers/registry.py	openminion.modules.tool.runtime
+tools/browser/providers/registry.py	openminion.modules.tool.runtime.resource_selectors
 tools/browser/providers/pinchtab/__init__.py	openminion.modules.tool.runtime.registrar
 tools/browser/providers/pinchtab/provider.py	openminion.modules.tool.runtime
 tools/browser/providers/pinchtab/provider.py	openminion.modules.tool.runtime.resource_selectors

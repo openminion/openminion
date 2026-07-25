@@ -20,6 +20,7 @@ from openminion.cli.presentation.models import (
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from openminion.cli.presentation.detail_modes import resolve_details_mode
+from .delegation import handle_slash_delegate
 from .labels import _runtime_label
 from openminion.cli.presentation.slash_commands import (
     slash_help_rows,
@@ -35,6 +36,7 @@ from openminion.cli.presentation.visible_parity import (
     render_tasks_report,
     statusline_label,
 )
+from openminion.cli.presentation.browser import render_browser_command
 
 from ..overlays import TerminalOverlayPresenter
 from ..status_line import TerminalStatusLine
@@ -322,6 +324,22 @@ def _handle_slash_diff(
     )
     transcript.handle_tool_completed(event)
 
+def _handle_slash_review(
+    text: str,
+    *,
+    console: Console,
+    working_dir: str,
+) -> None:
+    """Run the existing review.diff analyzer from the terminal renderer."""
+
+    from openminion.cli.presentation.review import run_review_workflow
+
+    parts = text.split(maxsplit=1)
+    args = parts[1].strip() if len(parts) > 1 else ""
+    result = run_review_workflow(working_dir, args)
+    style = _ERR_STYLE if result.action_result is None else _SYSTEM_STYLE
+    console.print(Text(result.body, style=style))
+
 
 def _handle_slash_readonly(
     text: str,
@@ -507,6 +525,13 @@ def _handle_visible_parity_slash(
         console.print(Text(render_memory_report(runtime), style=_SYSTEM_STYLE))
     elif cmd == "/skills":
         console.print(Text(render_skills_report(runtime), style=_SYSTEM_STYLE))
+    elif cmd == "/browser":
+        console.print(
+            Text(
+                render_browser_command(arg, working_dir=working_dir),
+                style=_SYSTEM_STYLE,
+            )
+        )
     elif cmd == "/tasks":
         console.print(Text(render_tasks_report(runtime, arg), style=_SYSTEM_STYLE))
     elif cmd == "/effort":
@@ -532,6 +557,8 @@ def _handle_visible_parity_slash(
             console=console,
             status_line=status_line,
         )
+    elif cmd == "/delegate":
+        handle_slash_delegate(text, runtime=runtime, console=console)
 
 
 def _handle_slash_goal(
@@ -585,6 +612,8 @@ async def _handle_session_slash(
             console=console,
             working_dir=working_dir,
         )
+    elif cmd == "/review":
+        _handle_slash_review(text, console=console, working_dir=working_dir)
     elif cmd == "/expand":
         _handle_slash_expand(text, transcript=transcript, console=console)
     elif cmd == "/sessions":
@@ -636,11 +665,13 @@ async def _handle_slash(
         "/context",
         "/memory",
         "/skills",
+        "/browser",
         "/tasks",
         "/effort",
         "/statusline",
         "/undo",
         "/goal",
+        "/delegate",
     ):
         _handle_visible_parity_slash(
             cmd,

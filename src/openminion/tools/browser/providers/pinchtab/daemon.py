@@ -1,6 +1,5 @@
 import os
 import shlex
-import shutil
 import signal
 import subprocess
 import sys
@@ -11,7 +10,12 @@ from collections.abc import Callable, Mapping, Sequence
 
 from openminion.base.config.env.subprocess import build_subprocess_env
 
-from .client import parse_base_url_targets
+from .client import (
+    PinchTabClient,
+    PinchTabClientError,
+    RetryPolicy,
+    parse_base_url_targets,
+)
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -34,7 +38,7 @@ class PinchTabDaemonConfig:
 
 
 def _normalize_launch_cmd(
-    raw: str | Sequence[str] | None, *, port: int
+    raw: str | Sequence[str] | None, *, port: int, pinchtab_binary: Path | None = None
 ) -> tuple[str, ...]:
     if raw:
         if isinstance(raw, str):
@@ -43,9 +47,8 @@ def _normalize_launch_cmd(
             tokens = [str(item) for item in raw if str(item).strip()]
         if tokens:
             return tuple(token.format(port=port) for token in tokens)
-    pinchtab_bin = shutil.which("pinchtab")
-    if pinchtab_bin:
-        return (pinchtab_bin, "serve", "--port", str(port))
+    if pinchtab_binary is not None:
+        return (str(pinchtab_binary), "serve", "--port", str(port))
     return (sys.executable, "-m", "pinchtab", "serve", "--port", str(port))
 
 
@@ -76,7 +79,7 @@ def _process_alive(pid: int) -> bool:
 def daemon_status(cfg: PinchTabDaemonConfig) -> dict[str, object]:
     pid = _read_pid(cfg.pid_file)
     alive = bool(pid and _process_alive(pid))
-    return {
+    status: dict[str, object] = {
         "base_url": cfg.base_url,
         "pid": pid or 0,
         "pid_alive": alive,
@@ -85,6 +88,24 @@ def daemon_status(cfg: PinchTabDaemonConfig) -> dict[str, object]:
         "runtime_dir": str(cfg.runtime_dir),
         "launch_cmd": list(cfg.launch_cmd),
     }
+    status.update(_daemon_readiness(cfg) if alive else _not_ready("pid_not_alive"))
+    return status
+
+
+def _daemon_readiness(cfg: PinchTabDaemonConfig) -> dict[str, object]:
+    try:
+        payload = PinchTabClient(
+            base_url=cfg.base_url,
+            timeout_seconds=2,
+            retry_policy=RetryPolicy(max_retries=1, backoff_ms=0),
+        ).health()
+    except PinchTabClientError as exc:
+        return {**_not_ready("healthcheck_failed"), "readiness_error": str(exc)}
+    return {"ok": bool(payload.get("ok", True)), "ready": True, "health": payload}
+
+
+def _not_ready(reason: str) -> dict[str, object]:
+    return {"ok": False, "ready": False, "readiness_reason": reason}
 
 
 def build_daemon_config(
@@ -92,13 +113,16 @@ def build_daemon_config(
     base_url: str,
     runtime_dir: Path,
     launch_cmd: str | Sequence[str] | None = None,
+    pinchtab_binary: Path | None = None,
     launch_timeout_s: int = 20,
     env: Mapping[str, str] | None = None,
 ) -> PinchTabDaemonConfig:
     host, port, _ = parse_base_url_targets(base_url)
     if host and host not in _LOCAL_HOSTS:
         raise ValueError("PinchTab autostart requires a localhost base_url")
-    resolved_cmd = _normalize_launch_cmd(launch_cmd, port=port)
+    resolved_cmd = _normalize_launch_cmd(
+        launch_cmd, port=port, pinchtab_binary=pinchtab_binary
+    )
     runtime_dir = runtime_dir.expanduser().resolve()
     runtime_dir.mkdir(parents=True, exist_ok=True)
     return PinchTabDaemonConfig(

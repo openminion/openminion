@@ -549,6 +549,7 @@ class FocusScreen(
         from openminion.cli.constants import (
             CLI_TRUTHY_ENV_VALUES,
             OPENMINION_FOCUS_BELL_ENV,
+            OPENMINION_SHOW_PHASE_TIMING_ENV,
         )
         import sys
 
@@ -557,18 +558,30 @@ class FocusScreen(
         except (TypeError, ValueError):
             return
         env = resolve_environment_config()
-        if env.openminion_show_response_time:
-            try:
-                chat = self.query_one(FocusTranscript)
-                chat.push_message(
-                    ChatMessage(
-                        kind=MessageKind.SYSTEM,
-                        sender="system",
-                        body=f"Done in {_format_response_time(elapsed_float)}",
-                    )
+        try:
+            chat = self.query_one(FocusTranscript)
+        except (QueryError, AttributeError):
+            chat = None
+        if env.openminion_show_response_time and chat is not None:
+            chat.push_message(
+                ChatMessage(
+                    kind=MessageKind.SYSTEM,
+                    sender="system",
+                    body=f"Done in {_format_response_time(elapsed_float)}",
                 )
-            except (QueryError, AttributeError):
-                pass
+            )
+        if env.get_bool(OPENMINION_SHOW_PHASE_TIMING_ENV, False) and chat is not None:
+            from openminion.cli.presentation.timing_report import (
+                format_chat_phase_timing_report,
+            )
+
+            payload_getter = getattr(self._runtime, "last_chat_phase_timing_payload", None)
+            payload = payload_getter() if callable(payload_getter) else None
+            report = format_chat_phase_timing_report(payload)
+            if report:
+                chat.push_message(
+                    ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=report)
+                )
         if elapsed_float <= 10.0:
             return
         raw = str(env.get(OPENMINION_FOCUS_BELL_ENV, "") or "").strip().lower()

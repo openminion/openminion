@@ -376,6 +376,31 @@ def _hydrate_call_with_session_state(
     )
 
 
+def _routing_state_identifiers(
+    self: Any,
+    *,
+    call: BrowserCallArgs,
+    ctx: _BrowserExecutionContext,
+) -> tuple[str, str | None, str | None]:
+    assert self.session_state_store is not None
+    workspace_root = str(
+        Path(self._workspace_root(ctx)).expanduser().resolve(strict=False)
+    )
+    preferred = self.session_state_store.preferred_state_for_session(
+        session_id=ctx.session_id,
+        workspace_root=workspace_root,
+        env=self._runtime_env_from_context(ctx),
+    )
+    instance_id = call.instance_id
+    tab_id = call.tab_id
+    provider_id = ""
+    if preferred is not None:
+        provider_id, state = preferred
+        instance_id = instance_id or state.instance_id or None
+        tab_id = tab_id or state.tab_id or None
+    return provider_id, instance_id, tab_id
+
+
 def _remember_session_state(
     self: Any,
     *,

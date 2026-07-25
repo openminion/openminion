@@ -1,314 +1,26 @@
-from __future__ import annotations
+# ruff: noqa: F403,F405
+from .common import *
+from .action import ActionResult, JobHandle
+from .budget import BudgetCounters
+from .clarify import BrainMode, ClarifyPolicy, ClarifyQuestion
+from .mission import MissionState
 
-from typing import Any, Literal
-from enum import Enum
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-from openminion.modules.brain.constants import (
-    RESPOND_KIND_ASSISTANT,
-    MissionStatus,
-    RespondKindLiteral,
-)
-from .base import ActionStatus, ArtifactRef, iso_now, new_uuid
-from .commands import Command
-from .decisions import ClarifyContext, PendingTurnContext, RequestReadiness
-from .freshness import (
-    FreshnessContract,
-    FreshnessDiagnostics,
-    FreshnessObligations,
-)
-from .plan import (
-    AdaptiveRevisionCheckpoint,
-    FailureType,
-    FeasibilityReport,
-    FixItem,
-    IntentExecutionState,
-    Plan,
-    ProgressCheckpointReport,
-    ReflectOutcome,
-    StepRiskAssessment,
-    SubIntent,
-    build_intent_execution_states,
-    feasibility_report_payload,
-    normalize_sub_intent_ids,
-    select_sub_intents_by_ids,
-    sub_intent_descriptions,
-    to_structured_sub_intents,
-)
-
-
-CognitionTier = Literal["T0_direct", "T1_light", "T2_tool", "T3_high_assurance"]
-WorkingStatus = Literal[
-    "active",
-    "continue",
-    "waiting_user",
-    "job_pending",
-    "done",
-    "error",
-    "stopped",
-]
-MissionLifecycleStatus = MissionStatus
-MissionJudgmentOutcome = Literal["complete", "continue", "ask_user", "halt"]
-PostActionJudgmentOutcome = Literal[
-    "advance",
-    "retry",
-    "replan",
-    "ask_user",
-    "halt",
-    "skip",
-]
-PermissionMode = Literal[
-    "ask",
-    "auto",
-    "bypass",
-    "readonly",
-    "plan",
-    "default",
-    "acceptEdits",
-    "bypassPermissions",
-]
-RunSubstate = Literal[
-    "INTERPRET",
-    "CLARIFY",
-    "DECIDE",
-    "PLAN",
-    "APPROVE",
-    "ACT",
-    "OBSERVE",
-    "VERIFY",
-    "REFLECT",
-    "IMPROVE",
-    "COMPACT",
-    "RESPOND",
-]
-ClarifyQuestionType = Literal[
-    "missing_field",
-    "ambiguous_input",
-    "risk_confirmation",
-    "constraint_check",
-    "tool_permission",
-]
-
-
-class BrainMode(str, Enum):
-    COMMAND = "command"
-    GUIDED = "guided"
-    AUTONOMOUS = "autonomous"
-    BATCH = "batch"
-
-
-class ClarifyPolicy(str, Enum):
-    ALWAYS_ASK = "always_ask"
-    ASK_IF_AMBIGUOUS = "ask_if_ambiguous"
-    ASK_IF_RISKY = "ask_if_risky"
-    ASSUME_DEFAULTS = "assume_defaults"
-    SMART_ASSUME = "smart_assume"
-
-
-class BudgetStopReason(str, Enum):
-    TICKS_EXHAUSTED = "ticks_exhausted"
-    TIME_EXHAUSTED = "time_exhausted"
-
-
-class ClarifyQuestion(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(default_factory=new_uuid, min_length=1)
-    type: ClarifyQuestionType
-    question: str = Field(..., min_length=1)
-    description: str = ""
-    options: list[str] | None = None
-    default_value: str | None = None
-    is_blocking: bool = True
-    reason_code: str = ""
-    source: str = ""
-    requires_validation: bool = False
-    confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-
-
-class ClarifyRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    session_id: str = Field(..., min_length=1)
-    trace_id: str = Field(..., min_length=1)
-    questions: list[ClarifyQuestion] = Field(default_factory=list)
-    mode: BrainMode
-    policy: ClarifyPolicy
-    reason: str = ""
-    context_snapshot: dict[str, Any] | None = None
-    deadline: str | None = None
-
-
-class ClarifyResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    session_id: str = Field(..., min_length=1)
-    trace_id: str = Field(..., min_length=1)
-    answers: dict[str, str] = Field(default_factory=dict)
-    unanswered_ids: list[str] = Field(default_factory=list)
-
-
-class BudgetCounters(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    ticks: int = Field(..., ge=0)
-    tool_calls: int = Field(..., ge=0)
-    a2a_calls: int = Field(..., ge=0)
-    tokens: int = Field(..., ge=0)
-    time_ms: int = Field(..., ge=0)
-
-
-BudgetEnvelopeStatus = Literal["comfortable", "tight", "near_exhaustion"]
-LearningLoopMetricReadiness = Literal["ready", "partial"]
-
-
-class BudgetTelemetryBlock(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    iteration_used: int = Field(default=0, ge=0)
-    iteration_remaining: int = Field(default=0, ge=0)
-    iteration_max: int = Field(default=0, ge=0)
-    tool_calls_used: int = Field(default=0, ge=0)
-    tool_calls_remaining: int = Field(default=0, ge=0)
-    tool_calls_max: int = Field(default=0, ge=0)
-    token_used: int | None = Field(default=None, ge=0)
-    token_remaining: int | None = Field(default=None, ge=0)
-    token_max: int | None = Field(default=None, ge=0)
-    time_elapsed_ms: int | None = Field(default=None, ge=0)
-    time_remaining_ms: int | None = Field(default=None, ge=0)
-    budget_envelope_status: BudgetEnvelopeStatus = "comfortable"
-
-
-class LearningLoopMetric(BaseModel):
-    """Typed learning-loop metric surfaced into the context-pack."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    readiness: LearningLoopMetricReadiness = "partial"
-    improvement_note_count: int = Field(default=0, ge=0)
-    strategy_outcome_count: int = Field(default=0, ge=0)
-    decision_memory_ref_count: int = Field(default=0, ge=0)
-    cross_session_strategy_outcomes_present: bool = False
-
-
-class MissionBudgetEnvelope(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    total_remaining: BudgetCounters
-    per_turn_max: BudgetCounters
-    remaining_llm_calls_total: int = Field(default=0, ge=0)
-    llm_calls_per_turn_max: int = Field(default=0, ge=0)
-    turn_budget_baseline: BudgetCounters | None = None
-    turn_budget_allocated: BudgetCounters | None = None
-    turn_llm_calls_baseline_total: int | None = Field(default=None, ge=0)
-    turns_started: int = Field(default=0, ge=0)
-
-
-class MissionJudgment(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    outcome: MissionJudgmentOutcome = "continue"
-    reason: str = ""
-    final_answer: str | None = None
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-
-
-class PostActionJudgment(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    outcome: PostActionJudgmentOutcome
-    reason: str = ""
-    user_message: str | None = None
-    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-
-
-class MissionState(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
-
-    mission_id: str = Field(..., min_length=1)
-    objective: str = Field(..., min_length=1)
-    status: MissionLifecycleStatus = MissionStatus.ACTIVE
-    started_at: str = Field(default_factory=iso_now)
-    last_progress_at: str | None = None
-    completed_at: str | None = None
-    task_id: str | None = None
-    budget: MissionBudgetEnvelope
-    completion_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-    latest_judgment: MissionJudgment | None = None
-    latest_reason: str = ""
-    latest_reset_policy: str = ""
-    latest_route_action: str = ""
-
-
-class ActionError(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    code: str = Field(..., min_length=1)
-    message: str = Field(..., min_length=1)
-    details: dict[str, Any] = Field(default_factory=dict)
-
-
-class ActionMetrics(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    latency_ms: int | None = Field(default=None, ge=0)
-    tokens_used: int | None = Field(default=None, ge=0)
-    cost_estimate: float | None = Field(default=None, ge=0)
-
-
-class ActionResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    command_id: str = Field(..., min_length=1)
-    status: ActionStatus
-    summary: str = ""
-    outputs: dict[str, Any] = Field(default_factory=dict)
-    artifact_refs: list[ArtifactRef] = Field(default_factory=list)
-    memory_refs: list[str] = Field(default_factory=list)
-    error: ActionError | None = None
-    metrics: ActionMetrics | None = None
-
-
-class JobHandle(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    task_id: str = Field(..., min_length=1)
-    command_id: str = Field(..., min_length=1)
-    provider: Literal["tool", "a2actl"]
-    status: Literal["pending", "running", "done", "failed"]
-    poll_after_ms: int = Field(default=1000, ge=1)
-    created_at: str = Field(default_factory=iso_now)
-
-
-class ReflectReport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    session_id: str = Field(..., min_length=1)
-    agent_id: str = Field(..., min_length=1)
-    command_id: str = Field(..., min_length=1)
-    outcome: ReflectOutcome
-    failure_type: FailureType | None = None
-    root_cause: str = ""
-    evidence_refs: list[ArtifactRef] = Field(default_factory=list)
-    fixes: list[FixItem] = Field(default_factory=list)
-
-
-class PolicyDecision(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    outcome: Literal[
-        "ALLOW",
-        "DENY",
-        "REQUIRE_CONFIRMATION",
-        "MODIFY",
-        "REQUIRE_CLARIFICATION",
-    ]
-    explanation: str = ""
-    patched_command: Command | None = None
-    require_clarification: bool = False
-    clarification_question: str | None = None
-
+def _normalize_skill_ids(values: object) -> list[str]:
+    if values is None:
+        return []
+    raw_values = values if isinstance(values, list) else [values]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        text = str(raw_value or "").strip()
+        if not text:
+            continue
+        lowered = text.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(text)
+    return normalized
 
 class StepOutputEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -337,7 +49,6 @@ class StepOutputEntry(BaseModel):
         self.sub_intent_ids = normalize_sub_intent_ids(self.sub_intent_ids)
         return self
 
-
 class MetaDirectiveLogEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -345,25 +56,6 @@ class MetaDirectiveLogEntry(BaseModel):
     meta_state: str = Field(..., min_length=1)
     applied_at: str = Field(default_factory=iso_now)
     directive: dict[str, Any] = Field(default_factory=dict)
-
-
-def _normalize_skill_ids(values: object) -> list[str]:
-    if values is None:
-        return []
-    raw_values = values if isinstance(values, list) else [values]
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw_value in raw_values:
-        text = str(raw_value or "").strip()
-        if not text:
-            continue
-        lowered = text.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        normalized.append(text)
-    return normalized
-
 
 class WorkingState(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -659,7 +351,6 @@ class WorkingState(BaseModel):
         self._sync_feasibility_state_payloads()
         self._sync_intent_execution_states()
         return self
-
 
 class StepOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")

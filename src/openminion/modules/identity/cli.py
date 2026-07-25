@@ -287,7 +287,6 @@ def warm_cache_cmd(
     purpose: list[str] = typer.Option(
         [], "--purpose", help="Repeat for multiple purposes"
     ),
-    max_tokens: int = typer.Option(220, "--max-tokens"),
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config"),
 ) -> None:
     try:
@@ -295,7 +294,6 @@ def warm_cache_cmd(
             count = identity.warm_cache(
                 agent_id=agent_id,
                 purposes=purpose if purpose else None,
-                max_tokens=max_tokens,
             )
             _print_json({"ok": True, "warmed": count})
     except Exception as exc:  # pragma: no cover - CLI guard

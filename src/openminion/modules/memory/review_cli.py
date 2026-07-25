@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import typer
 
@@ -44,9 +44,9 @@ def _options(
 ) -> MemoryBundleImportOptions:
     return MemoryBundleImportOptions(
         scope_rewrites=_rewrites(scope_rewrite),
-        trust_mode=trust,  # type: ignore[arg-type]
-        conflict_mode=conflict,  # type: ignore[arg-type]
-        id_mode=id_mode,  # type: ignore[arg-type]
+        trust_mode=cast(Any, trust),
+        conflict_mode=cast(Any, conflict),
+        id_mode=cast(Any, id_mode),
     )
 
 
@@ -54,9 +54,9 @@ def _options_from_plan(plan) -> MemoryBundleImportOptions:
     payload = plan.options
     return MemoryBundleImportOptions(
         scope_rewrites=dict(payload.get("scope_rewrites", {})),
-        trust_mode=str(payload.get("trust_mode", "direct")),  # type: ignore[arg-type]
-        conflict_mode=str(payload.get("conflict_mode", "skip")),  # type: ignore[arg-type]
-        id_mode=str(payload.get("id_mode", "preserve")),  # type: ignore[arg-type]
+        trust_mode=cast(Any, str(payload.get("trust_mode", "direct"))),
+        conflict_mode=cast(Any, str(payload.get("conflict_mode", "skip"))),
+        id_mode=cast(Any, str(payload.get("id_mode", "preserve"))),
         dry_run=bool(payload.get("dry_run", False)),
     )
 

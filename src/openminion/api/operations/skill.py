@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from openminion.api.responses.serialization import error_response
+from openminion.base.config.parse import split_comma_tokens
 from openminion.modules.skill.constants import SKILL_STATUS_DEPRECATED
 from openminion.modules.skill.errors import SkillError
 from openminion.modules.skill.runtime.skill import Skill
@@ -70,9 +71,7 @@ def list_skills(ctx: APIRouteContext, *, query: str | None) -> RouteResult:
             "tool": tool,
         }
         if status_raw:
-            filters["status"] = [
-                item.strip() for item in str(status_raw).split(",") if item.strip()
-            ]
+            filters["status"] = split_comma_tokens(status_raw)
         skills = ctl.list_skills(filters)
         return RouteResult(
             status=HTTPStatus.OK,

@@ -329,7 +329,7 @@ def build_agent_memory_service(
     )
     normalized_provider = _normalize_runtime_memory_provider(configured_provider)
 
-    # memory_v2_smoke: ephemeral smoke memory provider; memory_v2_hello_world remains a legacy alias
+    # memory_v2_smoke: ephemeral smoke provider; memory_v2_hello_world is a compat alias.
     if normalized_provider == "memory_v2_smoke":
         return EphemeralMemorySmokeProvider(
             agent_id=agent_id,

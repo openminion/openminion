@@ -450,6 +450,74 @@ def test_build_turn_response_metadata_falls_back_to_llm_event_usage() -> None:
     assert metadata["total_input_tokens_used"] == "400"
     assert metadata["total_output_tokens_used"] == "60"
     assert metadata["total_tokens_used"] == "460"
+    assert metadata["max_single_call_input_tokens"] == "300"
+    assert metadata["max_single_call_output_tokens"] == "40"
+    assert metadata["max_single_call_total_tokens"] == "340"
+
+
+def test_build_turn_response_metadata_keeps_peak_request_usage_with_action_totals() -> (
+    None
+):
+    bridge = DummyBridge()
+    bridge._config = SimpleNamespace(
+        agent=SimpleNamespace(name="agent-1"),
+        agents={"agent-1": SimpleNamespace(name="agent-1")},
+        default_agent="agent-1",
+    )
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    runner = _DummyRunner({})
+    runner.session_api.append_event(
+        "sess-peak",
+        "llm.call.completed",
+        {
+            "purpose": "act",
+            "usage": {
+                "prompt_tokens": 1200,
+                "completion_tokens": 80,
+                "total_tokens": 1280,
+            },
+        },
+        trace_id="trace-peak",
+    )
+    runner.session_api.append_event(
+        "sess-peak",
+        "llm.call.completed",
+        {
+            "purpose": "act",
+            "usage": {
+                "prompt_tokens": 700,
+                "completion_tokens": 90,
+                "total_tokens": 790,
+            },
+        },
+        trace_id="trace-peak",
+    )
+
+    metadata = bridge._build_turn_response_metadata(
+        runner=runner,
+        step_out=SimpleNamespace(
+            status="done",
+            action_result=SimpleNamespace(
+                outputs={
+                    "total_input_tokens_used": 1900,
+                    "total_output_tokens_used": 170,
+                    "total_tokens_used": 2070,
+                }
+            ),
+        ),
+        session_id="sess-peak",
+        request_id="trace-peak",
+        elapsed_ms=1234.5,
+        llm_steps=2,
+        termination_reason="model_final",
+    )
+
+    assert metadata["total_input_tokens_used"] == "1900"
+    assert metadata["total_output_tokens_used"] == "170"
+    assert metadata["total_tokens_used"] == "2070"
+    assert metadata["max_single_call_input_tokens"] == "1200"
+    assert metadata["max_single_call_output_tokens"] == "90"
+    assert metadata["max_single_call_total_tokens"] == "1280"
 
 
 def test_build_turn_response_metadata_uses_selected_runtime_agent_identity() -> None:
