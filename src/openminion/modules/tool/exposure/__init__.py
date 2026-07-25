@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -244,7 +242,9 @@ def apply_model_exposure(request: Any, registry: Any) -> None:
                 **exposure_scope(metadata),
             )
             request.tools = filtered
-            if not filtered and not get_model_exposure_specs(registry, metadata=metadata):
+            if not filtered and not get_model_exposure_specs(
+                registry, metadata=metadata
+            ):
                 request.tools = requested_tools
     else:
         request.tools = get_model_exposure_specs(registry, metadata=metadata)

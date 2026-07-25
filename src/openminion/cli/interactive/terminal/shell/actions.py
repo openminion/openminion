@@ -324,6 +324,7 @@ def _handle_slash_diff(
     )
     transcript.handle_tool_completed(event)
 
+
 def _handle_slash_review(
     text: str,
     *,

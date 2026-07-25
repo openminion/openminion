@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 
 from openminion.services.agent.memory import MEMORY_POLICY_SNAPSHOT_VERSION

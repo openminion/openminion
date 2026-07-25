@@ -49,7 +49,9 @@ class PluginRegistry:
     def manifests(self) -> list[PluginManifest]:
         return [self._manifests[key] for key in sorted(self._manifests.keys())]
 
-    def register_tool_extensions(self, registry: ToolRegistry, context: PluginContext) -> None:
+    def register_tool_extensions(
+        self, registry: ToolRegistry, context: PluginContext
+    ) -> None:
         for plugin in self._plugins:
             try:
                 plugin.register_tools(registry, context)

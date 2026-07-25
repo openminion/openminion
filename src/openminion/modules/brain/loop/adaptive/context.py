@@ -217,12 +217,16 @@ def _explicit_sequence_context(user_text: str) -> DirectToolTurnContext | None:
     explicit_sequence = explicit_tool_name_sequence(user_text)
     if not explicit_sequence or not _looks_like_direct_tool_instruction(user_text):
         return None
-    return _name_only_context(_collapse_repeated_single_tool_mentions(explicit_sequence))
+    return _name_only_context(
+        _collapse_repeated_single_tool_mentions(explicit_sequence)
+    )
 
 
 def _explicit_mention_context(user_text: str) -> DirectToolTurnContext | None:
     explicit_mentions = _explicit_tool_name_mentions(user_text)
-    if len(explicit_mentions) != 1 or not _looks_like_direct_tool_instruction(user_text):
+    if len(explicit_mentions) != 1 or not _looks_like_direct_tool_instruction(
+        user_text
+    ):
         return None
     return _name_only_context(explicit_mentions)
 

@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from typing import Any
 from collections.abc import Iterable, Mapping, Sequence
 
-from .policy_normalization import dedupe as _dedupe, dedupe_normalized as _dedupe_normalized
+from .policy_normalization import (
+    dedupe as _dedupe,
+    dedupe_normalized as _dedupe_normalized,
+)
 
 
 def reorder_runtime_chain(
@@ -25,11 +28,13 @@ def reorder_runtime_chain(
         else None,
     )
 
+
 @dataclass(frozen=True)
 class RuntimeBindingPolicy:
     runtime_binding_id: str
     primary: str
     fallback_tools: tuple[str, ...]
+
 
 class ToolBindingPolicyManager:
     def __init__(

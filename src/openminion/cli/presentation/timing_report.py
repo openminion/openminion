@@ -39,7 +39,9 @@ def format_chat_phase_timing_report(payload: Mapping[str, Any] | None) -> str:
 
 
 def _phase_rows(payload: Mapping[str, Any]) -> list[str]:
-    instrumented = {str(item) for item in list(payload.get("phases_instrumented") or [])}
+    instrumented = {
+        str(item) for item in list(payload.get("phases_instrumented") or [])
+    }
     rows: list[str] = []
     for label, phase_names in _PHASE_GROUPS:
         values = [

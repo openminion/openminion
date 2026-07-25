@@ -189,7 +189,9 @@ class InboxWorker:
                 subject_id=str(row["chat_id"]),
             )
 
-    def _audit_dispatch_done(self, payload: dict[str, Any], ctx: Any, inbox_id: str) -> None:
+    def _audit_dispatch_done(
+        self, payload: dict[str, Any], ctx: Any, inbox_id: str
+    ) -> None:
         self._audit(
             "cp.command.executed"
             if payload.get("type") == "command_result"
@@ -199,9 +201,7 @@ class InboxWorker:
             inbox_id=inbox_id,
         )
 
-    def _mark_retry_or_dead(
-        self, inbox_id: str, exc: Exception
-    ) -> dict[str, Any]:
+    def _mark_retry_or_dead(self, inbox_id: str, exc: Exception) -> dict[str, Any]:
         error = str(exc)[:2000]
         status = self.store.mark_inbox_retry(
             inbox_id,

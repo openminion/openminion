@@ -49,9 +49,7 @@ class ControlPlanePairingAdmin:
         )
         return [_public_pairing(row) for row in rows]
 
-    def show_pairing(
-        self, *, channel: str, subject_id: str
-    ) -> PairingAdminResult:
+    def show_pairing(self, *, channel: str, subject_id: str) -> PairingAdminResult:
         row = self._store.get_channel_subject(
             channel=channel,
             subject_id=subject_id,

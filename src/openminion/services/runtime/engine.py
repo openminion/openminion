@@ -29,8 +29,6 @@ from openminion.base.runtime.sandbox import (
 
 @dataclass
 class ToolCall:
-    """A single side-effecting tool call request."""
-
     tool_call_id: str
     name: str
     kind: str  # "exec" | "fs.write" | "fs.delete" | "net.fetch"
@@ -40,8 +38,6 @@ class ToolCall:
 
 @dataclass
 class RuntimeContext:
-    """Execution context propagated from the agent turn into side-effect calls."""
-
     trace_id: str
     agent_id: str
     session_id: str
@@ -58,8 +54,6 @@ class RuntimeContext:
 
 @dataclass
 class PolicyDecision:
-    """Decision returned by a policy evaluation call."""
-
     outcome: str
     policy_request_id: str
     constraints: dict[str, Any] = field(default_factory=dict)
@@ -75,8 +69,6 @@ class ToolExecutionResult:
 
 
 class PolicyClient(Protocol):
-    """Caller-provided policy evaluation interface."""
-
     contract_version: str
 
     def evaluate(self, tool_call: ToolCall, ctx: RuntimeContext) -> PolicyDecision: ...
@@ -91,9 +83,13 @@ def _blast_radius_tool_shape(tool_call: ToolCall) -> SimpleNamespace:
     kind = str(getattr(tool_call, "kind", "") or "").strip().lower()
     name = str(getattr(tool_call, "name", "") or "").strip()
     if kind == "exec":
-        return SimpleNamespace(name=name or "exec", min_scope="POWER_USER", dangerous=True)
+        return SimpleNamespace(
+            name=name or "exec", min_scope="POWER_USER", dangerous=True
+        )
     if kind in ("fs.write", "fs.delete"):
-        return SimpleNamespace(name=name or kind, min_scope="WRITE_SAFE", dangerous=True)
+        return SimpleNamespace(
+            name=name or kind, min_scope="WRITE_SAFE", dangerous=True
+        )
     if kind == "net.fetch":
         return SimpleNamespace(
             name=name or "net.fetch",
@@ -109,8 +105,6 @@ def _blast_radius_tool_shape(tool_call: ToolCall) -> SimpleNamespace:
 
 
 class RuntimeEngine:
-    """Orchestrates side-effect execution through the policy handshake."""
-
     contract_version = RUNTIME_INTERFACE_VERSION
 
     def __init__(
@@ -135,7 +129,6 @@ class RuntimeEngine:
     def execute_tool_call(
         self, tool_call: ToolCall, ctx: RuntimeContext
     ) -> ToolExecutionResult:
-        """Execute a single side-effecting tool call through the full policy handshake."""
         correlation = self._build_correlation(tool_call=tool_call, ctx=ctx)
 
         cached = self._replay_cached_result(tool_call=tool_call)

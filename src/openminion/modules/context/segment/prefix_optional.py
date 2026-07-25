@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 
 from ..constants import CONTEXT_PURPOSE_DECIDE
-from ..render.sections import _render_active_plan, _render_task_digest, _render_trailer_feedback
+from ..render.sections import (
+    _render_active_plan,
+    _render_task_digest,
+    _render_trailer_feedback,
+)
 from ..schemas import BuildPackRequest, SessionSlice, bucket_caps_for
 from .runtime import _SegmentAssemblyRuntime
 from .self_awareness import render_self_awareness_block
@@ -76,7 +80,9 @@ def append_self_awareness(
 
 
 def append_task_digest(
-    runtime: _SegmentAssemblyRuntime, request: BuildPackRequest, session_slice: SessionSlice
+    runtime: _SegmentAssemblyRuntime,
+    request: BuildPackRequest,
+    session_slice: SessionSlice,
 ) -> None:
     items = 0
     task_digest = session_slice.task_digest
@@ -101,7 +107,9 @@ def append_task_digest(
 
 
 def append_active_plan(
-    runtime: _SegmentAssemblyRuntime, request: BuildPackRequest, session_slice: SessionSlice
+    runtime: _SegmentAssemblyRuntime,
+    request: BuildPackRequest,
+    session_slice: SessionSlice,
 ) -> None:
     items = 0
     active_plan = session_slice.active_task_plan
@@ -126,7 +134,9 @@ def append_active_plan(
 
 
 def append_trailer_feedback(
-    runtime: _SegmentAssemblyRuntime, request: BuildPackRequest, session_slice: SessionSlice
+    runtime: _SegmentAssemblyRuntime,
+    request: BuildPackRequest,
+    session_slice: SessionSlice,
 ) -> None:
     items = 0
     pending_feedback = session_slice.pending_trailer_feedback

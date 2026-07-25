@@ -3,7 +3,11 @@ from __future__ import annotations
 from http import HTTPStatus
 from typing import Any, Mapping
 
-from openminion.api.routes.contracts import APIRouteContext, RouteResult, error_route_result
+from openminion.api.routes.contracts import (
+    APIRouteContext,
+    RouteResult,
+    error_route_result,
+)
 from openminion.base.config.env import resolve_environment_config
 from openminion.modules.a2a.errors import A2AError, ERROR_CODE_JOB_NOT_FOUND
 from openminion.modules.a2a import A2ARuntime
@@ -23,7 +27,12 @@ from openminion.modules.a2a.wire.google_a2a_v1.jsonrpc import (
     JsonRpcErrorCode,
     JsonRpcResponse,
 )
-from openminion.modules.a2a.wire.google_a2a_v1.task import Task, TaskMessage, TaskPart, TaskState
+from openminion.modules.a2a.wire.google_a2a_v1.task import (
+    Task,
+    TaskMessage,
+    TaskPart,
+    TaskState,
+)
 
 A2A_NETWORK_TOKEN_ENV = "OPENMINION_A2A_BEARER_TOKEN"
 
@@ -51,7 +60,10 @@ def build_agent_card_payload() -> dict[str, Any]:
         ],
         documentation_url="https://www.openminion.com/docs/a2a",
     )
-    return {"agentCard": card.to_jsonable(), "auth": {"type": "bearer", "required": True}}
+    return {
+        "agentCard": card.to_jsonable(),
+        "auth": {"type": "bearer", "required": True},
+    }
 
 
 def authorize_a2a_request(headers: Mapping[str, str] | None) -> RouteResult | None:
@@ -84,9 +96,16 @@ def handle_jsonrpc(ctx: APIRouteContext, body: dict[str, Any]) -> RouteResult:
             method=str(body.get("method", "")),
             params=params,
         )
-        return RouteResult(HTTPStatus.OK, JsonRpcResponse(id=request_id, result=result).to_jsonable())
+        return RouteResult(
+            HTTPStatus.OK, JsonRpcResponse(id=request_id, result=result).to_jsonable()
+        )
     except ValueError as exc:
-        return _jsonrpc_error_result(body.get("id"), HTTPStatus.BAD_REQUEST, JsonRpcErrorCode.INVALID_PARAMS, str(exc))
+        return _jsonrpc_error_result(
+            body.get("id"),
+            HTTPStatus.BAD_REQUEST,
+            JsonRpcErrorCode.INVALID_PARAMS,
+            str(exc),
+        )
     except A2AError as exc:
         return _jsonrpc_error_result(
             body.get("id"),
@@ -97,7 +116,9 @@ def handle_jsonrpc(ctx: APIRouteContext, body: dict[str, Any]) -> RouteResult:
         )
 
 
-def dispatch_jsonrpc_method(runtime: A2ARuntime, *, method: str, params: dict[str, Any]) -> dict[str, Any]:
+def dispatch_jsonrpc_method(
+    runtime: A2ARuntime, *, method: str, params: dict[str, Any]
+) -> dict[str, Any]:
     if method == "tasks/send":
         return _send_task(runtime, params)
     if method == "tasks/get":
@@ -114,7 +135,10 @@ def _send_task(runtime: A2ARuntime, params: dict[str, Any]) -> dict[str, Any]:
         to_capability=None,
         type="job.start",
         method=_text(params.get("method"), default="tasks/send"),
-        params={"message": params.get("message", {}), "metadata": params.get("metadata", {})},
+        params={
+            "message": params.get("message", {}),
+            "metadata": params.get("metadata", {}),
+        },
         timeout_ms=int(params.get("timeoutMs", 30_000) or 30_000),
         idempotency_key=_required_text(params, "idempotencyKey"),
         trace_id=_text(params.get("traceId"), default=new_uuid()),
@@ -148,9 +172,17 @@ def _task_payload(job: JobRecord) -> dict[str, Any]:
 def _task_messages(job: JobRecord) -> list[TaskMessage]:
     messages: list[TaskMessage] = []
     if job.result_inline is not None:
-        messages.append(TaskMessage(role="agent", parts=[TaskPart(kind="data", data=job.result_inline)]))
+        messages.append(
+            TaskMessage(
+                role="agent", parts=[TaskPart(kind="data", data=job.result_inline)]
+            )
+        )
     if job.error is not None:
-        messages.append(TaskMessage(role="agent", parts=[TaskPart(kind="data", data={"error": job.error})]))
+        messages.append(
+            TaskMessage(
+                role="agent", parts=[TaskPart(kind="data", data={"error": job.error})]
+            )
+        )
     return messages
 
 

@@ -23,7 +23,6 @@ def is_empty_provider_response(response: Any) -> bool:
 SpecLookup = Callable[[str], object | None]
 
 
-
 def canonical_tool_chain(tool_names: list[str]) -> list[str]:
     chain: list[str] = []
     seen: set[str] = set()

@@ -99,9 +99,7 @@ def map_a2a_delegate_result(
     )
 
 
-def map_a2a_job_result(
-    raw: Any, *, trace_id: str, task_id: str
-) -> A2ADelegateResult:
+def map_a2a_job_result(raw: Any, *, trace_id: str, task_id: str) -> A2ADelegateResult:
     payload = raw if isinstance(raw, dict) else {}
     status = str(payload.get("status") or payload.get("state") or "").strip()
     summary = str(payload.get("summary", "") or "").strip()

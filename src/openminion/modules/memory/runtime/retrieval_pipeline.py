@@ -520,7 +520,6 @@ class RetrievalPipeline:
         return self.mmr_rerank(boosted_hits, k=total_k, lambda_=mmr_lambda)
 
 
-
 __all__ = [
     "RetrievalPipeline",
     "build_empty_meta",

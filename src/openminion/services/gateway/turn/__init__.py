@@ -214,7 +214,7 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                     progress_callback=progress_callback,
                     approval_callback=approval_callback,
                     session_turn_fence_token=session_turn_fence_token,
-            )
+                )
 
             if _response_is_pae_idle_tick_noop(response):
                 return self._complete_suppressed_idle_tick(

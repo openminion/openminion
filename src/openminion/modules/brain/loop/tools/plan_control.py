@@ -218,9 +218,9 @@ def with_plan_tool_spec(tool_specs: list[Any] | tuple[Any, ...]) -> list[Any]:
 
 
 def plan_tool_enabled(profile: Any) -> bool:
-    return bool(getattr(profile, "allow_plan_tool", True)) and (
-        getattr(profile, "tool_choice", "auto") != "none"
-    )
+    # `plan` is a loop-local control surface, not a provider-dispatched tool.
+    # It remains available when ordinary runtime tools are suppressed.
+    return bool(getattr(profile, "allow_plan_tool", True))
 
 
 def with_enabled_plan_tool_spec(

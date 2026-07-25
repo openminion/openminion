@@ -2,7 +2,11 @@ from dataclasses import dataclass
 from typing import Any
 from collections.abc import Mapping
 
-from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse, ProviderToolSpec
+from openminion.modules.llm.providers.base import (
+    ProviderRequest,
+    ProviderResponse,
+    ProviderToolSpec,
+)
 from openminion.modules.tool.base import ToolExecutionContext, ToolExecutionResult
 from openminion.modules.tool.registry import ToolExecutionBatch
 

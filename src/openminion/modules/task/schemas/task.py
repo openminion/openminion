@@ -1,6 +1,8 @@
 # ruff: noqa: F403,F405
 from .common import *
 from .common import _StrictTaskModel
+
+
 class TaskCreateInput(_StrictTaskModel):
     """Payload for creating a durable task."""
 
@@ -12,6 +14,7 @@ class TaskCreateInput(_StrictTaskModel):
     wait_at: datetime | None = None
     labels: list[str] = Field(default_factory=list)
     created_by_mode: str | None = None
+
 
 class TaskRecord(_StrictTaskModel):
     """Canonical task entity persisted by the task module."""

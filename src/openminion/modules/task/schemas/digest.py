@@ -2,6 +2,7 @@
 from .common import *
 from .common import _StrictTaskModel
 
+
 class TaskDigestTask(_StrictTaskModel):
     """Compact task line for context packs."""
 
@@ -12,6 +13,7 @@ class TaskDigestTask(_StrictTaskModel):
     next_step_title: str | None = None
     due_at: datetime | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
 
 class TaskDigest(_StrictTaskModel):
     """Bounded task snapshot used by openminion-context."""

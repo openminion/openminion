@@ -6,7 +6,11 @@ from typing import Any
 from ...contracts.inbound import inbound_metadata
 from ...contracts.models import BrainClient, InboundMessage, ResolvedContext
 from ..audit import emit_audit_event
-from .clarify import ClarifyStateManager, extract_clarify_answer, extract_clarify_request
+from .clarify import (
+    ClarifyStateManager,
+    extract_clarify_answer,
+    extract_clarify_request,
+)
 
 JsonDict = dict[str, Any]
 

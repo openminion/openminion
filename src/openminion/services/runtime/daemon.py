@@ -1,4 +1,5 @@
 import json
+from contextlib import suppress
 from dataclasses import asdict
 from functools import partial
 import hashlib
@@ -69,12 +70,9 @@ class _LifecycleTelemetryBridge:
         return self._telemetry
 
     def close(self) -> None:
-        if not self._owns_telemetry:
-            return
-        try:
-            self._telemetry.close_sync()
-        except Exception:
-            return
+        if self._owns_telemetry:
+            with suppress(Exception):
+                self._telemetry.close_sync()
 
     def handle_runtime_event(self, event_type: str, payload: dict[str, Any]) -> None:
         canonical = lifecycle_event_from_payload(event_type, payload)
@@ -103,7 +101,13 @@ class _LifecycleTelemetryBridge:
         )
 
     def _record(self, event: Any) -> None:
-        self._telemetry.record_event_sync(event)
+        try:
+            self._telemetry.record_event_sync(event)
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning(
+                "lifecycle telemetry emit failed for %s: %s", event.event_type, exc
+            )
+            return
         self._logger.info(
             format_structured_event(
                 event.event_type,
@@ -155,10 +159,7 @@ def attach_cron_scheduler(
     lease_ttl_seconds: int = 60,
     max_concurrent_runs: int = 5,
 ) -> Any:
-    """Attach the cron scheduler to a runtime instance.
-
-    Returns the scheduler instance or None if initialization fails.
-    """
+    """Attach the cron scheduler, returning None when initialization fails."""
     try:
         (
             resolve_database_path,

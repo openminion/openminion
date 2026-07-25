@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class LastResultSummary(BaseModel):
     """ASPM-03: Structured summary of last_result for prompt projection."""
 

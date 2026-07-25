@@ -29,7 +29,9 @@ def _dedupe_current_query_turns(
     return recent_turns
 
 
-def _recent_turn_budget(runtime: _SegmentAssemblyRuntime, request: BuildPackRequest) -> int:
+def _recent_turn_budget(
+    runtime: _SegmentAssemblyRuntime, request: BuildPackRequest
+) -> int:
     recent_turn_budget = runtime.budgets.recent_turn_tokens
     mode_name = normalize_mode_name(request.mode_name)
     if mode_name == _MODE_RESPOND:
@@ -46,7 +48,9 @@ def _trim_recent_turns_to_budget(
     recent_turns: list,
     recent_turn_contents: list[str],
 ) -> None:
-    turn_tokens = sum(runtime.estimate_tokens(content) for content in recent_turn_contents)
+    turn_tokens = sum(
+        runtime.estimate_tokens(content) for content in recent_turn_contents
+    )
     while recent_turns and turn_tokens > _recent_turn_budget(runtime, request):
         protected_indexes = protected_decide_recent_turn_indexes(
             recent_turns,
@@ -61,7 +65,9 @@ def _trim_recent_turns_to_budget(
         recent_turns.pop(drop_index)
         recent_turn_contents.pop(drop_index)
         runtime.bucket_stats[CONTEXT_BUCKET_RECENT_WINDOW]["dropped"] += 1
-        turn_tokens = sum(runtime.estimate_tokens(content) for content in recent_turn_contents)
+        turn_tokens = sum(
+            runtime.estimate_tokens(content) for content in recent_turn_contents
+        )
 
 
 def append_recent_window_segments(

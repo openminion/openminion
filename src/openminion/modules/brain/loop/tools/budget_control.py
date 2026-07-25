@@ -47,7 +47,6 @@ from .budget_extension import (
 from .contracts import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_FINAL_TEXT,
-    ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_NEEDS_USER,
     AdaptiveToolLoopContext,
     AdaptiveToolLoopOutcome,
@@ -640,32 +639,23 @@ def _force_budget_answer_only_finalization(
             **complete_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
-        if not has_tool_evidence:
-            loop_state.scratchpad["budget_answer_only_finalization_error"] = str(exc)
-            return _budget_stop_outcome(
-                loop_ctx=loop_ctx,
-                profile=profile,
-                loop_state=loop_state,
-                allowed_tools=allowed_tools,
-                public_mode_tag=public_mode_tag,
-                reason="answer_only_finalization_failed",
-            )
-        loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
+        loop_state.scratchpad["budget_answer_only_finalization_error"] = str(exc)
+        loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
         emit_adaptive_status(
             loop_ctx,
             profile=profile,
             loop_state=loop_state,
             detail_text=f"{public_mode_tag} answer-only budget finalization failed",
-            mode_state="llm_error",
-            termination_reason=ADAPTIVE_TERM_LLM_ERROR,
+            mode_state="budget_exhausted",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
         )
         return AdaptiveToolLoopOutcome(
             profile_name=profile.profile_name,
             mode_name=profile.mode_name,
-            termination_reason=ADAPTIVE_TERM_LLM_ERROR,
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
             state=loop_state,
             allowed_tools=allowed_tools,
-            error_message=str(exc),
+            error_message="Answer-only budget finalization failed.",
         )
     response, retry_outcome = _retry_answer_only_completion_if_needed(
         response=response,
@@ -688,34 +678,23 @@ def _force_budget_answer_only_finalization(
     if not bool(getattr(response, "ok", False)):
         error = getattr(response, "error", None)
         error_message = str(getattr(error, "message", "") or "LLM returned not-ok")
-        if not has_tool_evidence:
-            loop_state.scratchpad["budget_answer_only_finalization_error"] = (
-                error_message
-            )
-            return _budget_stop_outcome(
-                loop_ctx=loop_ctx,
-                profile=profile,
-                loop_state=loop_state,
-                allowed_tools=allowed_tools,
-                public_mode_tag=public_mode_tag,
-                reason="answer_only_finalization_not_ok",
-            )
-        loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
+        loop_state.scratchpad["budget_answer_only_finalization_error"] = error_message
+        loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
         emit_adaptive_status(
             loop_ctx,
             profile=profile,
             loop_state=loop_state,
             detail_text=f"{public_mode_tag} answer-only budget finalization error",
-            mode_state="llm_error",
-            termination_reason=ADAPTIVE_TERM_LLM_ERROR,
+            mode_state="budget_exhausted",
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
         )
         return AdaptiveToolLoopOutcome(
             profile_name=profile.profile_name,
             mode_name=profile.mode_name,
-            termination_reason=ADAPTIVE_TERM_LLM_ERROR,
+            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
             state=loop_state,
             allowed_tools=allowed_tools,
-            error_message=error_message,
+            error_message="Answer-only budget finalization failed.",
         )
     final_text = _extract_visible_response_text(response)
     if _is_internal_failure_final_text(final_text):

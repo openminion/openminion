@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class IdentitySnippet(BaseModel):
     agent_id: str
     purpose: str = ""

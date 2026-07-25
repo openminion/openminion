@@ -200,7 +200,9 @@ class ToolRuntime:
             return self._policy_rejection_result(inv, ctx, policy)
 
         self._emit_requested(inv, ctx)
-        raw_result, error_result, duration_ms = self._run_registered_method(inv, ctx, reg)
+        raw_result, error_result, duration_ms = self._run_registered_method(
+            inv, ctx, reg
+        )
         if error_result is not None:
             return error_result
 
@@ -284,7 +286,9 @@ class ToolRuntime:
         reg: _RegisteredMethod,
     ) -> tuple[Any, ToolResult | None, int]:
         started = time.perf_counter()
-        timeout_s = inv.timeout_s if inv.timeout_s is not None else self.default_timeout_s
+        timeout_s = (
+            inv.timeout_s if inv.timeout_s is not None else self.default_timeout_s
+        )
         try:
             if timeout_s is None:
                 raw_result = reg.method.run(inv.args, ctx)
@@ -335,7 +339,6 @@ class ToolRuntime:
         )
         self._emit_failed(inv, ctx, metrics=metrics, error=err)
         return ToolResult(status=TOOL_RESULT_STATUS_ERROR, error=err, metrics=metrics)
-
 
     def _register_tool(
         self, plugin: ToolPlugin, tool: ToolDefinition

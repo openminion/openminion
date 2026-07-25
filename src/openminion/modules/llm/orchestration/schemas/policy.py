@@ -2,6 +2,7 @@
 from .common import *
 from .catalog import EnsembleTemplate, Rubric
 
+
 class SingleRoute(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -9,6 +10,7 @@ class SingleRoute(BaseModel):
     profile_id: str = Field(..., min_length=1)
     params_override: Optional[dict[str, Any]] = None
     timeout_ms: Optional[int] = None
+
 
 class EnsembleRoute(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -33,6 +35,7 @@ class EnsembleRoute(BaseModel):
             "Ensemble route requires strategy_id, strategy_inline, or providers"
         )
 
+
 LLMRoute = SingleRoute | EnsembleRoute
 
 
@@ -46,6 +49,7 @@ class AgentLLMBudgets(BaseModel):
     max_ensemble_fanout: int = 3
     max_time_ms_per_turn: int = 120000
 
+
 class FallbackPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -53,6 +57,7 @@ class FallbackPolicy(BaseModel):
     fallback_mode: FallbackMode = "single"
     on_error_codes: Optional[list[str]] = None
     max_fallback_attempts: int = 1
+
 
 class AgentLLMPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")

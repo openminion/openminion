@@ -575,7 +575,9 @@ class FocusScreen(
                 format_chat_phase_timing_report,
             )
 
-            payload_getter = getattr(self._runtime, "last_chat_phase_timing_payload", None)
+            payload_getter = getattr(
+                self._runtime, "last_chat_phase_timing_payload", None
+            )
             payload = payload_getter() if callable(payload_getter) else None
             report = format_chat_phase_timing_report(payload)
             if report:

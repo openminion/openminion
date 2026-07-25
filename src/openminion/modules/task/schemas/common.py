@@ -6,8 +6,10 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+
 class _StrictTaskModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
 
 class TaskStatus(StrEnum):
     PENDING = "PENDING"
@@ -15,6 +17,7 @@ class TaskStatus(StrEnum):
     WAITING = "WAITING"
     DONE = "DONE"
     CANCELED = "CANCELED"
+
 
 class PlanStepStatus(StrEnum):
     PENDING = "PENDING"

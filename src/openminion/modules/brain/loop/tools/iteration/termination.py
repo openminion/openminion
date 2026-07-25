@@ -115,6 +115,16 @@ def finalize_iteration_cap_exit(
         public_mode_tag=public_mode_tag,
     )
     if finalization_outcome is not None:
+        if loop_state.scratchpad.get("budget_answer_only_finalization_error"):
+            loop_state.termination_reason = ADAPTIVE_TERM_ITERATION_CAP
+            return AdaptiveToolLoopOutcome(
+                profile_name=profile.profile_name,
+                mode_name=profile.mode_name,
+                termination_reason=ADAPTIVE_TERM_ITERATION_CAP,
+                state=loop_state,
+                allowed_tools=allowed_tools,
+                error_message=finalization_outcome.error_message,
+            )
         if finalization_outcome.termination_reason != ADAPTIVE_TERM_LLM_ERROR:
             loop_state.scratchpad["iteration_cap_answer_only_finalization_forced"] = (
                 True

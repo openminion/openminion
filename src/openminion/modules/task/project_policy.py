@@ -222,7 +222,6 @@ def _normalize_project_tool_name(tool_name: str) -> str:
     return normalized
 
 
-
 __all__ = [
     "build_project_policy_state",
     "consume_project_permission_grant",

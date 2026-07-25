@@ -39,7 +39,11 @@ def build_controlplane_sidecar_specs(
     if config.janitor_enabled:
         specs.append(_janitor_spec(config, store=store, audit_logger=audit_logger))
     if config.health_probe_enabled:
-        specs.append(_health_probe_spec(config, store=store, audit_logger=audit_logger, metrics=metrics))
+        specs.append(
+            _health_probe_spec(
+                config, store=store, audit_logger=audit_logger, metrics=metrics
+            )
+        )
     return specs
 
 

@@ -114,7 +114,10 @@ def _build_tool_runtime_context(
     tool_name: str,
     context: ToolExecutionContext,
 ) -> Any:
-    from openminion.modules.tool.runtime import RuntimeContext, build_runtime_repositories
+    from openminion.modules.tool.runtime import (
+        RuntimeContext,
+        build_runtime_repositories,
+    )
     from openminion.modules.tool.runtime.policy import DEFAULT_POLICY, Policy
 
     metadata = _normalized_workspace_metadata(context.metadata)
@@ -135,7 +138,9 @@ def _build_tool_runtime_context(
         run_root=resolve_run_root(workspace=workspace, context=context),
         scope=resolve_tool_scope(tool=tool),
         confirm=_context_confirm_requested(context),
-        env=EnvironmentConfig.from_sources(runtime_env=resolve_runtime_env(context=context)),
+        env=EnvironmentConfig.from_sources(
+            runtime_env=resolve_runtime_env(context=context)
+        ),
         repositories=build_runtime_repositories(context_metadata=metadata),
         artifactctl=resolve_artifactctl(),
         memory_service=context.memory_service,
@@ -151,10 +156,14 @@ def _build_tool_runtime_context(
 
 
 def _tool_result_from_payload(*, tool_name: str, payload: Any) -> ToolExecutionResult:
-    payload_dict = dict(payload) if isinstance(payload, Mapping) else {
-        "ok": True,
-        "data": {"result": payload},
-    }
+    payload_dict = (
+        dict(payload)
+        if isinstance(payload, Mapping)
+        else {
+            "ok": True,
+            "data": {"result": payload},
+        }
+    )
     ok_field = payload_dict.get("ok")
     if ok_field is None:
         status = str(payload_dict.get("status", "") or "").strip().lower()
@@ -319,7 +328,9 @@ def resolve_workspace(*, context: ToolExecutionContext) -> Path:
         return Path(os.getcwd()).resolve(strict=False)
 
 
-def _normalized_workspace_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+def _normalized_workspace_metadata(
+    metadata: Mapping[str, Any] | None,
+) -> dict[str, Any]:
     normalized = dict(metadata or {})
     raw_root = str(normalized.get("workspace_root", "") or "").strip()
     raw_working_dir = str(normalized.get("working_dir", "") or "").strip()

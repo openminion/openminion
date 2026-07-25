@@ -48,9 +48,7 @@ def build_failure_reflection(
     )
     if skip_reason is not None:
         status_kwargs = (
-            {"status": "warning"}
-            if skip_reason != "missing_termination_reason"
-            else {}
+            {"status": "warning"} if skip_reason != "missing_termination_reason" else {}
         )
         return emit_skipped(
             logger=logger,

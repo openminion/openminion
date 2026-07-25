@@ -70,29 +70,98 @@ class GithubRegistrar:
 
 def _github_model_tools() -> tuple[ModelToolDef, ...]:
     return (
-        ModelToolDef(MODEL_GITHUB_LIST_PRS, "List open pull requests for a GitHub repo.", {}, ()),
-        ModelToolDef(MODEL_GITHUB_FETCH_PR, "Fetch full pull-request metadata for a number.", {}, ()),
-        ModelToolDef(MODEL_GITHUB_FETCH_DIFF, "Fetch the diff text for a pull request.", {}, ()),
-        ModelToolDef(MODEL_GITHUB_FETCH_COMMENTS, "Fetch issue/review comments for a pull request.", {}, ()),
-        ModelToolDef(MODEL_GITHUB_FETCH_CHECKS, "Fetch CI / check-run status for a head SHA.", {}, ()),
-        ModelToolDef(MODEL_GITHUB_COMMIT_FILES, "Commit allowlisted smoke files to a GitHub branch.", {}, ()),
-        ModelToolDef(MODEL_GITHUB_OPEN_PR, "Open a GitHub pull request from a smoke branch.", {}, ()),
-        ModelToolDef(MODEL_GITHUB_POST_PR_REVIEW, "Post a bounded GitHub PR review comment.", {}, ()),
-        ModelToolDef(MODEL_GITHUB_POST_PR_COMMENT, "Post a bounded GitHub PR thread comment.", {}, ()),
+        ModelToolDef(
+            MODEL_GITHUB_LIST_PRS, "List open pull requests for a GitHub repo.", {}, ()
+        ),
+        ModelToolDef(
+            MODEL_GITHUB_FETCH_PR,
+            "Fetch full pull-request metadata for a number.",
+            {},
+            (),
+        ),
+        ModelToolDef(
+            MODEL_GITHUB_FETCH_DIFF, "Fetch the diff text for a pull request.", {}, ()
+        ),
+        ModelToolDef(
+            MODEL_GITHUB_FETCH_COMMENTS,
+            "Fetch issue/review comments for a pull request.",
+            {},
+            (),
+        ),
+        ModelToolDef(
+            MODEL_GITHUB_FETCH_CHECKS,
+            "Fetch CI / check-run status for a head SHA.",
+            {},
+            (),
+        ),
+        ModelToolDef(
+            MODEL_GITHUB_COMMIT_FILES,
+            "Commit allowlisted smoke files to a GitHub branch.",
+            {},
+            (),
+        ),
+        ModelToolDef(
+            MODEL_GITHUB_OPEN_PR,
+            "Open a GitHub pull request from a smoke branch.",
+            {},
+            (),
+        ),
+        ModelToolDef(
+            MODEL_GITHUB_POST_PR_REVIEW,
+            "Post a bounded GitHub PR review comment.",
+            {},
+            (),
+        ),
+        ModelToolDef(
+            MODEL_GITHUB_POST_PR_COMMENT,
+            "Post a bounded GitHub PR thread comment.",
+            {},
+            (),
+        ),
     )
 
 
 def _github_runtime_bindings() -> tuple[RuntimeBindingDef, ...]:
     return (
-        RuntimeBindingDef(RUNTIME_GITHUB_LIST_PRS, MODEL_GITHUB_LIST_PRS, (TOOL_GITHUB_LIST_PRS,)),
-        RuntimeBindingDef(RUNTIME_GITHUB_FETCH_PR, MODEL_GITHUB_FETCH_PR, (TOOL_GITHUB_FETCH_PR,)),
-        RuntimeBindingDef(RUNTIME_GITHUB_FETCH_DIFF, MODEL_GITHUB_FETCH_DIFF, (TOOL_GITHUB_FETCH_DIFF,)),
-        RuntimeBindingDef(RUNTIME_GITHUB_FETCH_COMMENTS, MODEL_GITHUB_FETCH_COMMENTS, (TOOL_GITHUB_FETCH_COMMENTS,)),
-        RuntimeBindingDef(RUNTIME_GITHUB_FETCH_CHECKS, MODEL_GITHUB_FETCH_CHECKS, (TOOL_GITHUB_FETCH_CHECKS,)),
-        RuntimeBindingDef(RUNTIME_GITHUB_COMMIT_FILES, MODEL_GITHUB_COMMIT_FILES, (TOOL_GITHUB_COMMIT_FILES,)),
-        RuntimeBindingDef(RUNTIME_GITHUB_OPEN_PR, MODEL_GITHUB_OPEN_PR, (TOOL_GITHUB_OPEN_PR,)),
-        RuntimeBindingDef(RUNTIME_GITHUB_POST_PR_REVIEW, MODEL_GITHUB_POST_PR_REVIEW, (TOOL_GITHUB_POST_PR_REVIEW,)),
-        RuntimeBindingDef(RUNTIME_GITHUB_POST_PR_COMMENT, MODEL_GITHUB_POST_PR_COMMENT, (TOOL_GITHUB_POST_PR_COMMENT,)),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_LIST_PRS, MODEL_GITHUB_LIST_PRS, (TOOL_GITHUB_LIST_PRS,)
+        ),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_FETCH_PR, MODEL_GITHUB_FETCH_PR, (TOOL_GITHUB_FETCH_PR,)
+        ),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_FETCH_DIFF,
+            MODEL_GITHUB_FETCH_DIFF,
+            (TOOL_GITHUB_FETCH_DIFF,),
+        ),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_FETCH_COMMENTS,
+            MODEL_GITHUB_FETCH_COMMENTS,
+            (TOOL_GITHUB_FETCH_COMMENTS,),
+        ),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_FETCH_CHECKS,
+            MODEL_GITHUB_FETCH_CHECKS,
+            (TOOL_GITHUB_FETCH_CHECKS,),
+        ),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_COMMIT_FILES,
+            MODEL_GITHUB_COMMIT_FILES,
+            (TOOL_GITHUB_COMMIT_FILES,),
+        ),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_OPEN_PR, MODEL_GITHUB_OPEN_PR, (TOOL_GITHUB_OPEN_PR,)
+        ),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_POST_PR_REVIEW,
+            MODEL_GITHUB_POST_PR_REVIEW,
+            (TOOL_GITHUB_POST_PR_REVIEW,),
+        ),
+        RuntimeBindingDef(
+            RUNTIME_GITHUB_POST_PR_COMMENT,
+            MODEL_GITHUB_POST_PR_COMMENT,
+            (TOOL_GITHUB_POST_PR_COMMENT,),
+        ),
     )
 
 

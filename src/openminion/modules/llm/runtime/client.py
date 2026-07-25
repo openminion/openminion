@@ -71,7 +71,11 @@ def _response_with_assistant_message(normalized: LLMResponse) -> LLMResponse:
     if not normalized.output_text or normalized.assistant_messages:
         return normalized
     return normalized.model_copy(
-        update={"assistant_messages": [Message(role="assistant", content=normalized.output_text)]}
+        update={
+            "assistant_messages": [
+                Message(role="assistant", content=normalized.output_text)
+            ]
+        }
     )
 
 
@@ -92,9 +96,7 @@ def _response_with_valid_tool_statuses(normalized: LLMResponse) -> LLMResponse:
 def _normalized_allowed_tool_names(
     allowed_tool_names: Iterable[str] | None,
 ) -> list[str]:
-    return [
-        str(name).strip() for name in allowed_tool_names or [] if str(name).strip()
-    ]
+    return [str(name).strip() for name in allowed_tool_names or [] if str(name).strip()]
 
 
 def _response_with_inline_tool_calls(
@@ -172,7 +174,9 @@ def _response_without_unexecutable_envelope(normalized: LLMResponse) -> LLMRespo
         and normalized.output_text
         and normalized.output_text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
     ):
-        return normalized.model_copy(update={"output_text": "", "assistant_messages": []})
+        return normalized.model_copy(
+            update={"output_text": "", "assistant_messages": []}
+        )
     return normalized
 
 

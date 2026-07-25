@@ -223,8 +223,7 @@ class CodingVerificationMixin:
                     ctx,
                     allowed_tools=allowed_tools,
                     reason=(
-                        "No typed verifier goal was bound for the coding verify "
-                        "phase."
+                        "No typed verifier goal was bound for the coding verify phase."
                     ),
                 )
             return None
@@ -352,9 +351,7 @@ class CodingVerificationMixin:
                 reason="missing_implementation_write",
                 required_tool="file.write or code.patch",
             )
-            correction_cap = max(
-                1, int(getattr(self, "_max_self_corrections", 0) or 0)
-            )
+            correction_cap = max(1, int(getattr(self, "_max_self_corrections", 0) or 0))
             if attempt > correction_cap:
                 self._loop_state.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
             instruction = (
@@ -372,9 +369,7 @@ class CodingVerificationMixin:
             attempt = self._record_verify_gate_block(
                 ctx, failure_summary=failure_summary
             )
-            correction_cap = max(
-                1, int(getattr(self, "_max_self_corrections", 0) or 0)
-            )
+            correction_cap = max(1, int(getattr(self, "_max_self_corrections", 0) or 0))
             if attempt > correction_cap:
                 self._loop_state.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
             instruction = (

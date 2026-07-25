@@ -230,8 +230,7 @@ def mutating_file_evidence_fallback_text(loop_state: Any) -> str:
             )
         elif normalized in {"follow-ups", "next steps", "remaining follow-ups"}:
             lines.append(
-                f"{normalized}: rerun focused validation if stronger proof is "
-                "needed."
+                f"{normalized}: rerun focused validation if stronger proof is needed."
             )
         else:
             lines.append(
@@ -241,7 +240,5 @@ def mutating_file_evidence_fallback_text(loop_state: Any) -> str:
     if not any(line.startswith(("files:", "files changed:")) for line in lines):
         lines.append(f"files changed: {rendered_paths}")
     if not any(line.startswith("result:") for line in lines):
-        lines.append(
-            "result: successful file writes were closed from tool evidence."
-        )
+        lines.append("result: successful file writes were closed from tool evidence.")
     return "\n".join(lines)

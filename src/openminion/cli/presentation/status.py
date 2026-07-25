@@ -116,7 +116,9 @@ class ThinkingIndicator(Widget):
         except (QueryError, AttributeError):
             pass
 
-    def update_animation(self, animation: AnimationSpec, *, progress: str | None = None) -> None:
+    def update_animation(
+        self, animation: AnimationSpec, *, progress: str | None = None
+    ) -> None:
         self._animation = animation
         if progress in ("full", "minimal", "off"):
             self._progress = progress

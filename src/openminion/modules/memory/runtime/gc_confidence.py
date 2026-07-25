@@ -92,7 +92,9 @@ def _scope_is_exempt(scope: str, record_type: str, exempt: set[str]) -> bool:
         parsed_scope = MemoryScope.parse(scope)
     except ValueError:
         parsed_scope = None
-    return (parsed_scope is not None and parsed_scope.is_session) or record_type in exempt
+    return (
+        parsed_scope is not None and parsed_scope.is_session
+    ) or record_type in exempt
 
 
 def _decay_postgres_records(
@@ -156,14 +158,20 @@ def _decay_postgres_records(
                      WHERE id = :id
                     """
                 ),
-                {"confidence": new_confidence, "updated_at": now.isoformat(), "id": record_id},
+                {
+                    "confidence": new_confidence,
+                    "updated_at": now.isoformat(),
+                    "id": record_id,
+                },
             )
             decayed += 1
             if new_confidence < float(min_confidence):
                 removed_edges.append(
                     (
                         record_id,
-                        soft_delete_postgres_record(conn, record_id, now_iso=now.isoformat()),
+                        soft_delete_postgres_record(
+                            conn, record_id, now_iso=now.isoformat()
+                        ),
                     )
                 )
                 evicted += 1
@@ -227,7 +235,9 @@ def _decay_sqlite_records(
                     removed_edges.append(
                         (
                             record_id,
-                            soft_delete_sqlite_record(conn, record_id, now_iso=now.isoformat()),
+                            soft_delete_sqlite_record(
+                                conn, record_id, now_iso=now.isoformat()
+                            ),
                         )
                     )
                     evicted += 1

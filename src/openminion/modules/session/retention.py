@@ -80,10 +80,14 @@ class SessionRetentionService:
         self.store = store
         self._record_store = getattr(store, "_record_store", None)
         if self._record_store is None:
-            raise TypeError("session retention requires a session store with a record store")
+            raise TypeError(
+                "session retention requires a session store with a record store"
+            )
         self._ensure_schema()
 
-    def add_hold(self, *, session_id: str, reason: str, actor_id: str = "operator") -> str:
+    def add_hold(
+        self, *, session_id: str, reason: str, actor_id: str = "operator"
+    ) -> str:
         hold_id = f"hold-{hashlib.sha256(f'{session_id}:{reason}:{actor_id}'.encode()).hexdigest()[:16]}"
         now = _to_iso(_utc_now())
         self._record_store.insert(
@@ -107,7 +111,9 @@ class SessionRetentionService:
         return hold_id
 
     def release_hold(self, hold_id: str) -> bool:
-        rows = self._record_store.query_rows("session_retention_holds", where={"hold_id": hold_id}, limit=1)
+        rows = self._record_store.query_rows(
+            "session_retention_holds", where={"hold_id": hold_id}, limit=1
+        )
         if not rows:
             return False
         now = _to_iso(_utc_now())
@@ -132,7 +138,9 @@ class SessionRetentionService:
         resolved_policy = policy or SessionRetentionPolicy()
         current = now or _utc_now()
         candidates = tuple(self._candidate_rows(policy=resolved_policy, now=current))
-        snapshot_hash = _snapshot_hash([candidate.to_dict() for candidate in candidates])
+        snapshot_hash = _snapshot_hash(
+            [candidate.to_dict() for candidate in candidates]
+        )
         return SessionRetentionPlan(
             candidates=candidates,
             policy=resolved_policy,
@@ -140,10 +148,14 @@ class SessionRetentionService:
             created_at=_to_iso(current),
         )
 
-    def purge(self, plan: SessionRetentionPlan, *, override_blockers: bool = False) -> dict[str, Any]:
+    def purge(
+        self, plan: SessionRetentionPlan, *, override_blockers: bool = False
+    ) -> dict[str, Any]:
         fresh = self.dry_run(policy=plan.policy)
         if fresh.snapshot_hash != plan.snapshot_hash:
-            raise SessionRetentionSnapshotChangedError("retention candidate snapshot changed")
+            raise SessionRetentionSnapshotChangedError(
+                "retention candidate snapshot changed"
+            )
         blocked = [item for item in fresh.candidates if item.blockers]
         if blocked and not override_blockers:
             raise SessionRetentionBlockedError("retention purge has active blockers")
@@ -170,7 +182,9 @@ class SessionRetentionService:
         for row in rows:
             updated_at = str(row["updated_at"])
             status = str(row["status"])
-            reason = _retention_reason(status=status, updated_at=updated_at, policy=policy, now=now)
+            reason = _retention_reason(
+                status=status, updated_at=updated_at, policy=policy, now=now
+            )
             if reason is None:
                 continue
             session_id = str(row["session_id"])
@@ -272,7 +286,9 @@ def _retention_reason(
     now: datetime,
 ) -> str | None:
     age = now - _parse_iso(updated_at)
-    if status in {"closed", "archived"} and age >= timedelta(seconds=policy.closed_retention_seconds):
+    if status in {"closed", "archived"} and age >= timedelta(
+        seconds=policy.closed_retention_seconds
+    ):
         return "closed_retention_elapsed"
     if age >= timedelta(seconds=policy.inactivity_ttl_seconds):
         return "inactivity_ttl_elapsed"
@@ -280,7 +296,9 @@ def _retention_reason(
 
 
 def _snapshot_hash(candidates: list[dict[str, Any]]) -> str:
-    return hashlib.sha256(json.dumps(candidates, sort_keys=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(candidates, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
 def _utc_now() -> datetime:

@@ -234,7 +234,8 @@ def prompt(
         overrides["max_output_tokens"] = max_output_tokens
 
     response = client.complete(
-        messages=cast(list[Any], [{"role": "user", "content": prompt_text}]), **overrides
+        messages=cast(list[Any], [{"role": "user", "content": prompt_text}]),
+        **overrides,
     )
 
     if json_out:

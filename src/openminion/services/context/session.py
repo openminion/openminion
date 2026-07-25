@@ -151,7 +151,6 @@ class SessionContextService:
         return self._sessions.count_messages(session_id=session_id)
 
     def estimate_token_pressure(self, *, session_id: str) -> tuple[int, int, float]:
-        """Return estimated session token pressure against this service budget."""
         token_budget = max(0, int(self._token_budget))
         if token_budget <= 0:
             return 0, 0, 0.0
@@ -454,7 +453,6 @@ class SessionContextService:
             to_compact[-1].rowid,
         )
 
-
     def build_history(
         self,
         *,
@@ -569,7 +567,6 @@ class SessionContextService:
             thread_id=thread_id,
         )
 
-
     def list_pins(self, *, session_id: str) -> list[PinnedContextEntry]:
         return self._sessions.list_pins(session_id=session_id)
 
@@ -641,7 +638,6 @@ def _ingest_compacted_messages(
     session_id: str,
     messages: list[MessageRecord],
 ) -> None:
-    """Ingest compacted messages into RetrieveCtl as episode units."""
     if self._retrieve_ctl is None:
         return
 
@@ -707,6 +703,7 @@ def _ingest_compacted_messages(
                 )
             i += 1
 
+
 def _maybe_schedule_summary_enrichment(
     self, *, session_id: str, deterministic_summary: str
 ) -> None:
@@ -768,9 +765,11 @@ def _maybe_schedule_summary_enrichment(
             exc,
         )
 
+
 def _default_defer_summary_task(task: Callable[[], None]) -> None:
     thread = Thread(target=task, daemon=True)
     thread.start()
+
 
 def _archive_compacted_messages(
     self,
@@ -822,9 +821,15 @@ def _archive_compacted_messages(
         first_created_at=first.created_at,
         last_created_at=last.created_at,
     )
+
+
 SessionContextService._ingest_compacted_messages = _ingest_compacted_messages
-SessionContextService._maybe_schedule_summary_enrichment = _maybe_schedule_summary_enrichment
-SessionContextService._default_defer_summary_task = staticmethod(_default_defer_summary_task)
+SessionContextService._maybe_schedule_summary_enrichment = (
+    _maybe_schedule_summary_enrichment
+)
+SessionContextService._default_defer_summary_task = staticmethod(
+    _default_defer_summary_task
+)
 SessionContextService._archive_compacted_messages = _archive_compacted_messages
 
 

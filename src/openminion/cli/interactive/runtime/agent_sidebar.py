@@ -5,7 +5,9 @@ from typing import Any
 from openminion.cli.interactive.models import SidebarItem
 
 
-def build_agent_sidebar_items(runtime: Any, *, active_agent_id: str) -> list[SidebarItem]:
+def build_agent_sidebar_items(
+    runtime: Any, *, active_agent_id: str
+) -> list[SidebarItem]:
     snapshot = getattr(runtime, "agent_discovery_snapshot", None)
     if callable(snapshot):
         return [

@@ -310,7 +310,9 @@ class ChannelRuntimeSupervisor:
                     return
                 time.sleep(0.1)
 
-    def _channel_status(self, channel_id: str, runtime: _ChannelRuntime) -> ChannelStatus:
+    def _channel_status(
+        self, channel_id: str, runtime: _ChannelRuntime
+    ) -> ChannelStatus:
         health = _adapter_health(runtime.adapter)
         thread_alive = bool(runtime.thread is not None and runtime.thread.is_alive())
         state = runtime.state
@@ -326,10 +328,14 @@ class ChannelRuntimeSupervisor:
                 or getattr(getattr(runtime.adapter, "_config", None), "mode", "unknown")
             ),
             listener_alive=thread_alive,
-            connected=health.get("connected") if "connected" in health else health.get("ok"),
+            connected=health.get("connected")
+            if "connected" in health
+            else health.get("ok"),
             last_started_at=runtime.last_started_at,
             last_stopped_at=runtime.last_stopped_at,
-            last_error=runtime.last_error or _redact(str(health.get("error") or "")) or None,
+            last_error=runtime.last_error
+            or _redact(str(health.get("error") or ""))
+            or None,
         )
 
     def _emit(self, event_type: str, **payload: object) -> None:
@@ -341,7 +347,9 @@ class ChannelRuntimeSupervisor:
                 session_id="controlplane:channels",
                 turn_id=event_type,
                 event_type=event_type,
-                data={key: value for key, value in payload.items() if value is not None},
+                data={
+                    key: value for key, value in payload.items() if value is not None
+                },
             )
         )
 

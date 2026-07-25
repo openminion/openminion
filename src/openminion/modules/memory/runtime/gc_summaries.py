@@ -113,7 +113,9 @@ def _compress_postgres_summaries(
                 removed_edges.append(
                     (
                         record_id,
-                        soft_delete_postgres_record(conn, record_id, now_iso=now.isoformat()),
+                        soft_delete_postgres_record(
+                            conn, record_id, now_iso=now.isoformat()
+                        ),
                     )
                 )
                 deleted += 1
@@ -187,7 +189,9 @@ def _compress_sqlite_summaries(
                     removed_edges.append(
                         (
                             record_id,
-                            soft_delete_sqlite_record(conn, record_id, now_iso=now.isoformat()),
+                            soft_delete_sqlite_record(
+                                conn, record_id, now_iso=now.isoformat()
+                            ),
                         )
                     )
                     deleted += 1
@@ -206,7 +210,9 @@ def _compress_sqlite_summaries(
                     "UPDATE memory_records SET content_json = ?, updated_at = ? WHERE id = ?",
                     (json.dumps(content, sort_keys=True), now.isoformat(), record_id),
                 )
-                _replace_sqlite_summary_fts(conn, record_id=record_id, shortened=shortened)
+                _replace_sqlite_summary_fts(
+                    conn, record_id=record_id, shortened=shortened
+                )
                 compressed += 1
             conn.execute("COMMIT")
         except Exception:

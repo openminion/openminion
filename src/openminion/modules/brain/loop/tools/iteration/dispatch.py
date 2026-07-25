@@ -523,8 +523,7 @@ def _process_single_review_tool_call(
         extra={
             "tool_name": REVIEW_TOOL_NAME,
             "review_severity": str(
-                (getattr(action_result, "outputs", {}) or {}).get("severity", "")
-                or ""
+                (getattr(action_result, "outputs", {}) or {}).get("severity", "") or ""
             ).strip(),
         },
     )

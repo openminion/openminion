@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class EvidenceItem(BaseModel):
     """A candidate evidence item produced by a ContextRetriever."""
 

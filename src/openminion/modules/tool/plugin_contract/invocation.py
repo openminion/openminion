@@ -1,5 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
+
+
 class ToolInvocation(BaseModel):
     """Canonical invocation payload accepted by ToolRuntime.invoke."""
 
@@ -29,6 +31,7 @@ class ToolInvocation(BaseModel):
             )  # allow-bare-raise: pydantic @field_validator body
         return value
 
+
 class ArtifactRef(BaseModel):
     """Artifact descriptor returned by tools and artifact sinks."""
 
@@ -38,12 +41,14 @@ class ArtifactRef(BaseModel):
     name: str
     meta: dict[str, Any] = Field(default_factory=dict)
 
+
 class ToolError(BaseModel):
     model_config = ConfigDict(extra="forbid")
     code: str
     message: str
     retryable: bool = False
     details: dict[str, Any] = Field(default_factory=dict)
+
 
 class ToolResult(BaseModel):
     """Uniform result for all plugin methods."""

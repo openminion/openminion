@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 from typing import Any, Optional
 
@@ -364,7 +362,6 @@ class AgentTurnFlowMixin:
         progress_callback=None,
         approval_callback=None,
     ) -> AgentResponse:
-        """Run a single interaction turn, including tool execution and fallback handling."""
         self._logger.info(f"Running turn for message: {inbound.id}")
         (
             runtime,

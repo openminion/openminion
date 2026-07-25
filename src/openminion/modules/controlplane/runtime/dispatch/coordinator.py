@@ -46,9 +46,7 @@ def _verify_controlplane_contracts(
     parser: CommandParser,
     brain_client: BrainClient,
 ) -> None:
-    strict_raw = (
-        env.get("OPENMINION_STRICT_CONTROLPLANE_CONTRACTS", "").strip().lower()
-    )
+    strict_raw = env.get("OPENMINION_STRICT_CONTROLPLANE_CONTRACTS", "").strip().lower()
     strict = strict_raw not in {"", "0", "false", "no", "off"}
     components = (
         ("session_store", store),

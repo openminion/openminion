@@ -155,6 +155,7 @@ def resolve_runner_options(
     )
 
     import openminion.services.brain.service as _bridge_module
+
     try:
         memory_policy_snapshot = _bridge_module.build_memory_policy_snapshot(
             config=config
@@ -192,7 +193,9 @@ def resolve_runner_options(
         clarify_config=(
             brain_config.clarify if brain_config is not None else ClarifyConfig()
         ),
-        request_handoff_enabled=bool(getattr(getattr(brain_config, "request_handoff", None), "enabled", False)),
+        request_handoff_enabled=bool(
+            getattr(getattr(brain_config, "request_handoff", None), "enabled", False)
+        ),
         complex_request_plan_policy=str(
             getattr(
                 getattr(config, "runtime", object()),

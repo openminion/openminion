@@ -676,6 +676,7 @@ class AgentIdentityMixin:
             return framed_identity
         return f"{system_prompt}\n\n{framed_identity}".strip()
 
+
 def _identity_runtime_configured(self) -> bool:
     env = self._identity_env()
     return any(
@@ -688,6 +689,7 @@ def _identity_runtime_configured(self) -> bool:
         )
     )
 
+
 def _create_identity_ctl(self) -> None:
     from openminion.modules.identity.runtime.service import IdentityCtl
     from openminion.modules.identity.storage.store import SQLiteIdentityStore
@@ -695,6 +697,7 @@ def _create_identity_ctl(self) -> None:
     db_path = Path(self._resolve_identity_db_path())
     db_path.parent.mkdir(parents=True, exist_ok=True)
     self._identityctl = IdentityCtl(store=SQLiteIdentityStore(sqlite_path=str(db_path)))
+
 
 def _ensure_default_identity_profile(self, *, imported: bool) -> bool:
     if imported or self._identityctl is None:
@@ -710,6 +713,7 @@ def _ensure_default_identity_profile(self, *, imported: bool) -> bool:
         system_prompt=_resolve_system_prompt(self._config),
     )
     return True
+
 
 def _log_identity_startup_sync(
     self,
@@ -733,6 +737,7 @@ def _log_identity_startup_sync(
         int(import_summary.get("errors_count", 0) or 0),
     )
 
+
 def _disable_identity_runtime(self, exc: Exception) -> None:
     self._identityctl = None
     self._identity_tool_filter = None
@@ -741,7 +746,6 @@ def _disable_identity_runtime(self, exc: Exception) -> None:
         self._identity_agent_id,
         exc,
     )
-
 
 
 AgentIdentityMixin._identity_runtime_configured = _identity_runtime_configured

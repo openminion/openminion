@@ -117,15 +117,48 @@ def register(registry: ToolRegistry) -> None:
 
 def _github_tool_specs() -> tuple[ToolSpec, ...]:
     return (
-        _github_tool_spec(TOOL_GITHUB_LIST_PRS, GithubListPrsArgs, _h_list_prs, read_only=True),
-        _github_tool_spec(TOOL_GITHUB_FETCH_PR, GithubFetchPrArgs, _h_fetch_pr, read_only=True),
-        _github_tool_spec(TOOL_GITHUB_FETCH_DIFF, GithubFetchDiffArgs, _h_fetch_diff, read_only=True),
-        _github_tool_spec(TOOL_GITHUB_FETCH_COMMENTS, GithubFetchCommentsArgs, _h_fetch_comments, read_only=True),
-        _github_tool_spec(TOOL_GITHUB_FETCH_CHECKS, GithubFetchChecksArgs, _h_fetch_checks, read_only=True),
-        _github_tool_spec(TOOL_GITHUB_COMMIT_FILES, GithubCommitFilesArgs, _h_commit_files, read_only=False),
-        _github_tool_spec(TOOL_GITHUB_OPEN_PR, GithubOpenPrArgs, _h_open_pr, read_only=False),
-        _github_tool_spec(TOOL_GITHUB_POST_PR_REVIEW, GithubPostPrReviewArgs, _h_post_pr_review, read_only=False),
-        _github_tool_spec(TOOL_GITHUB_POST_PR_COMMENT, GithubPostPrCommentArgs, _h_post_pr_comment, read_only=False),
+        _github_tool_spec(
+            TOOL_GITHUB_LIST_PRS, GithubListPrsArgs, _h_list_prs, read_only=True
+        ),
+        _github_tool_spec(
+            TOOL_GITHUB_FETCH_PR, GithubFetchPrArgs, _h_fetch_pr, read_only=True
+        ),
+        _github_tool_spec(
+            TOOL_GITHUB_FETCH_DIFF, GithubFetchDiffArgs, _h_fetch_diff, read_only=True
+        ),
+        _github_tool_spec(
+            TOOL_GITHUB_FETCH_COMMENTS,
+            GithubFetchCommentsArgs,
+            _h_fetch_comments,
+            read_only=True,
+        ),
+        _github_tool_spec(
+            TOOL_GITHUB_FETCH_CHECKS,
+            GithubFetchChecksArgs,
+            _h_fetch_checks,
+            read_only=True,
+        ),
+        _github_tool_spec(
+            TOOL_GITHUB_COMMIT_FILES,
+            GithubCommitFilesArgs,
+            _h_commit_files,
+            read_only=False,
+        ),
+        _github_tool_spec(
+            TOOL_GITHUB_OPEN_PR, GithubOpenPrArgs, _h_open_pr, read_only=False
+        ),
+        _github_tool_spec(
+            TOOL_GITHUB_POST_PR_REVIEW,
+            GithubPostPrReviewArgs,
+            _h_post_pr_review,
+            read_only=False,
+        ),
+        _github_tool_spec(
+            TOOL_GITHUB_POST_PR_COMMENT,
+            GithubPostPrCommentArgs,
+            _h_post_pr_comment,
+            read_only=False,
+        ),
     )
 
 
@@ -146,7 +179,6 @@ def _github_tool_spec(
         tags=("plugin", "github"),
         capabilities=("read_only" if read_only else "write_safe", "network"),
     )
-
 
 
 __all__ = ["register"]

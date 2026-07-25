@@ -240,7 +240,9 @@ def _staged_tool_outcome(
 def _tool_outcome_staged_command_ids(module_state: dict[str, Any]) -> set[str]:
     return {
         str(item).strip()
-        for item in list(module_state.get(_TOOL_OUTCOME_STAGED_COMMAND_IDS_KEY, []) or [])
+        for item in list(
+            module_state.get(_TOOL_OUTCOME_STAGED_COMMAND_IDS_KEY, []) or []
+        )
         if str(item).strip()
     }
 
@@ -468,7 +470,9 @@ def _normalized_tool_command(command: Command) -> tuple[Command, str]:
     tool_name = str(getattr(command, "tool_name", "") or "").strip()
     normalized_tool_name = normalize_tool_name_for_brain(tool_name) or tool_name
     if normalized_tool_name and normalized_tool_name != tool_name:
-        command = command.model_copy(update={"tool_name": normalized_tool_name}, deep=True)
+        command = command.model_copy(
+            update={"tool_name": normalized_tool_name}, deep=True
+        )
         tool_name = normalized_tool_name
     return command, tool_name
 
@@ -511,7 +515,9 @@ def _readonly_block(
     original_command: Command,
     tool_name: str,
 ) -> PrepareOutcome:
-    result = _readonly_blocked_result(command_id=command.command_id, tool_name=tool_name)
+    result = _readonly_blocked_result(
+        command_id=command.command_id, tool_name=tool_name
+    )
     return _remembered_prepare_outcome(
         runner,
         state=state,
@@ -945,7 +951,6 @@ def finalize_tool_result(
         action_result=normalized,
         job=job,
     )
-
 
 
 __all__ = [

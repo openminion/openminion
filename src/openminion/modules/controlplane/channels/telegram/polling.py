@@ -13,7 +13,10 @@ from openminion.modules.controlplane.interfaces import (
 from openminion.modules.controlplane.constants import (
     AUTH_ROLE_UNPAIRED,
 )
-from openminion.modules.controlplane.contracts.models import AuthContext, DeliveryContext
+from openminion.modules.controlplane.contracts.models import (
+    AuthContext,
+    DeliveryContext,
+)
 from openminion.modules.controlplane.channels.telegram.access import (
     TelegramAccessPolicy,
 )

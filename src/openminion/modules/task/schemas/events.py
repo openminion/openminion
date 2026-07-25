@@ -1,6 +1,8 @@
 # ruff: noqa: F403,F405
 from .common import *
 from .common import _StrictTaskModel
+
+
 class TaskEvent(_StrictTaskModel):
     """Task event contract."""
 

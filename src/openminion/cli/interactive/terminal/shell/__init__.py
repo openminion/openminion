@@ -909,7 +909,6 @@ async def _run_interruptible_agent_turn(
             watcher.stop()
 
 
-
 async def _run_agent_turn(
     *,
     text: str,

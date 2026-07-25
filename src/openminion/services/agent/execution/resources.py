@@ -13,7 +13,10 @@ from openminion.modules.tool.runtime.delegation import A2ADelegateApi
 from openminion.modules.tool.runtime.memory import MemoryToolRuntimeService
 from openminion.modules.tool.runtime.routing import build_runtime_tool_routing_metadata
 from openminion.services.agent.memory import resolve_memory_root
-from openminion.services.agent.memory.gateway_adapter import DisabledMemoryGatewayAdapter, MemoryServiceGatewayAdapter
+from openminion.services.agent.memory.gateway_adapter import (
+    DisabledMemoryGatewayAdapter,
+    MemoryServiceGatewayAdapter,
+)
 from openminion.services.runtime.a2a_delegate import build_a2a_delegate_api
 from openminion.services.runtime.bootstrap import build_agent_memory_service
 

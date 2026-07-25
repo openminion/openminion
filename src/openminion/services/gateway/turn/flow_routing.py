@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Optional
 from uuid import uuid4
 
@@ -11,7 +9,10 @@ from openminion.modules.task.run import (
     resolve_thread_routing_decision,
 )
 from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
-from openminion.services.gateway.routing import find_pending_outbound, parse_metadata_bool
+from openminion.services.gateway.routing import (
+    find_pending_outbound,
+    parse_metadata_bool,
+)
 from openminion.services.gateway.turn.runtime import _normalize_metadata
 
 from .flow_models import _RoutingResult

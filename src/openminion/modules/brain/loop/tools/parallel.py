@@ -294,12 +294,10 @@ def execute_parallel_tool_batch(
         if len(dispatch_indices) <= 1 or capacity == 1:
             tool_calls_sequential += len(dispatch_indices)
             for index in dispatch_indices:
-                results_by_index[index] = (
-                    _finalized_prepared_result(
-                        loop_ctx=loop_ctx,
-                        tool_call=tool_calls[index],
-                        prepared_dispatch=prepared_by_index[index],
-                    )
+                results_by_index[index] = _finalized_prepared_result(
+                    loop_ctx=loop_ctx,
+                    tool_call=tool_calls[index],
+                    prepared_dispatch=prepared_by_index[index],
                 )
             continue
 

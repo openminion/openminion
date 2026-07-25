@@ -254,7 +254,9 @@ def compute_postgres_stats(
         candidate_params["scope"] = scope
 
     with store.gc_connection() as conn:
-        per_type_rows = _postgres_per_type_rows(conn, text=text, where=where, params=params)
+        per_type_rows = _postgres_per_type_rows(
+            conn, text=text, where=where, params=params
+        )
         soft_deleted_count = int(
             conn.execute(
                 text(
@@ -328,7 +330,9 @@ def compute_postgres_stats(
     }
 
 
-def _postgres_per_type_rows(conn: Any, *, text: Any, where: str, params: dict[str, Any]):
+def _postgres_per_type_rows(
+    conn: Any, *, text: Any, where: str, params: dict[str, Any]
+):
     return (
         conn.execute(
             text(

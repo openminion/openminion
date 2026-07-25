@@ -39,7 +39,6 @@ def _append_summary_segment(
     return max(0, remaining_tokens - segment.token_estimate), True
 
 
-
 def append_summary_segments(
     runtime: Any,
     *,
@@ -91,7 +90,6 @@ def append_summary_segments(
         compression_enabled=compression_enabled,
         compressctl=compressctl,
     )
-
 
 
 def _append_session_summaries(

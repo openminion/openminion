@@ -92,7 +92,9 @@ def _meta_metric_aliases(metrics: MetaMetrics) -> dict[str, float | int]:
     recent_failures = getattr(
         metrics, "recent_failures", getattr(metrics, "repeat_error_count", 0)
     )
-    loop_count = getattr(metrics, "loop_count", getattr(metrics, "ticks_without_progress", 0))
+    loop_count = getattr(
+        metrics, "loop_count", getattr(metrics, "ticks_without_progress", 0)
+    )
     replan_count = getattr(
         metrics, "replan_count", getattr(metrics, "no_new_facts_streak", 0)
     )
@@ -171,12 +173,16 @@ def _emit_meta_telemetry(
     aliases = _meta_metric_aliases(metrics)
     logger.emit(
         "meta.metrics",
-        _meta_metrics_payload(metrics=metrics, result=result, hook=hook, aliases=aliases),
+        _meta_metrics_payload(
+            metrics=metrics, result=result, hook=hook, aliases=aliases
+        ),
         trace_id=state.trace_id,
     )
     logger.emit(
         "meta.directive",
-        _meta_directive_payload(metrics=metrics, result=result, hook=hook, aliases=aliases),
+        _meta_directive_payload(
+            metrics=metrics, result=result, hook=hook, aliases=aliases
+        ),
         trace_id=state.trace_id,
     )
     logger.emit(

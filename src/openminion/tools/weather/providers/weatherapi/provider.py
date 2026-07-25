@@ -252,7 +252,9 @@ class WeatherApiProvider:
         _raise_weatherapi_payload_error(payload)
         return _normalize_response(payload, q=q)
 
-    def _read_json_body(self, req: urllib_request.Request, *, ctx: RuntimeContext) -> str:
+    def _read_json_body(
+        self, req: urllib_request.Request, *, ctx: RuntimeContext
+    ) -> str:
         try:
             with urllib_request.urlopen(req, timeout=self._timeout_s(ctx=ctx)) as resp:
                 body: bytes = resp.read()
@@ -265,7 +267,6 @@ class WeatherApiProvider:
                 f"{WEATHERAPI_DISPLAY_NAME} request failed",
                 {"reason": str(getattr(exc, "reason", exc))},
             ) from exc
-
 
 
 __all__ = [

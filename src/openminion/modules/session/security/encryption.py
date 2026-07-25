@@ -54,7 +54,9 @@ class SessionKeyRing(Protocol):
     @property
     def active_key_id(self) -> str: ...
 
-    def encrypt(self, *, plaintext: bytes, purpose: str, record_identity: Mapping[str, str]) -> SessionEncryptionEnvelope: ...
+    def encrypt(
+        self, *, plaintext: bytes, purpose: str, record_identity: Mapping[str, str]
+    ) -> SessionEncryptionEnvelope: ...
 
     def decrypt(self, envelope: SessionEncryptionEnvelope) -> bytes: ...
 
@@ -64,7 +66,12 @@ class SessionKeyRing(Protocol):
 
 
 class FernetSessionKeyRing:
-    def __init__(self, *, active_key_id: str = "k1", keys: Mapping[str, bytes | str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        active_key_id: str = "k1",
+        keys: Mapping[str, bytes | str] | None = None,
+    ) -> None:
         initial = dict(keys or {active_key_id: Fernet.generate_key()})
         if active_key_id not in initial:
             initial[active_key_id] = Fernet.generate_key()
@@ -84,7 +91,11 @@ class FernetSessionKeyRing:
     ) -> SessionEncryptionEnvelope:
         identity = {str(key): str(value) for key, value in record_identity.items()}
         payload = json.dumps(
-            {"purpose": purpose, "record_identity": identity, "plaintext": base64.b64encode(plaintext).decode("ascii")},
+            {
+                "purpose": purpose,
+                "record_identity": identity,
+                "plaintext": base64.b64encode(plaintext).decode("ascii"),
+            },
             ensure_ascii=True,
             sort_keys=True,
         ).encode("utf-8")
@@ -100,12 +111,16 @@ class FernetSessionKeyRing:
     def decrypt(self, envelope: SessionEncryptionEnvelope) -> bytes:
         key = self._keys.get(envelope.key_id)
         if key is None:
-            raise SessionEncryptionKeyError(f"missing session encryption key: {envelope.key_id}")
+            raise SessionEncryptionKeyError(
+                f"missing session encryption key: {envelope.key_id}"
+            )
         try:
             raw = Fernet(key).decrypt(envelope.ciphertext.encode("ascii"))
             payload = json.loads(raw.decode("utf-8"))
         except (InvalidToken, ValueError, json.JSONDecodeError) as exc:
-            raise SessionEncryptionKeyError("session ciphertext could not be decrypted") from exc
+            raise SessionEncryptionKeyError(
+                "session ciphertext could not be decrypted"
+            ) from exc
         if payload.get("purpose") != envelope.purpose:
             raise SessionEncryptionIdentityError("session ciphertext purpose mismatch")
         if dict(payload.get("record_identity") or {}) != envelope.record_identity:
@@ -148,7 +163,9 @@ def encrypt_session_payload(
     purpose: str,
     record_identity: Mapping[str, str],
 ) -> dict[str, Any]:
-    encoded = json.dumps(dict(payload), ensure_ascii=True, sort_keys=True).encode("utf-8")
+    encoded = json.dumps(dict(payload), ensure_ascii=True, sort_keys=True).encode(
+        "utf-8"
+    )
     return key_ring.encrypt(
         plaintext=encoded,
         purpose=purpose,
@@ -163,7 +180,9 @@ def decrypt_session_payload(
     expected_identity: Mapping[str, str],
 ) -> dict[str, Any]:
     envelope = _envelope_from_mapping(envelope_payload)
-    if envelope.record_identity != {str(k): str(v) for k, v in expected_identity.items()}:
+    if envelope.record_identity != {
+        str(k): str(v) for k, v in expected_identity.items()
+    }:
         raise SessionEncryptionIdentityError("session ciphertext identity mismatch")
     decoded = key_ring.decrypt(envelope).decode("utf-8")
     value = json.loads(decoded)
@@ -172,7 +191,9 @@ def decrypt_session_payload(
 
 def assert_content_search_allowed(*, encryption_enabled: bool) -> None:
     if encryption_enabled:
-        raise SessionContentSearchDisabledError("content search is disabled for encrypted sessions")
+        raise SessionContentSearchDisabledError(
+            "content search is disabled for encrypted sessions"
+        )
 
 
 def referenced_key_ids(envelopes: list[Mapping[str, Any]]) -> set[str]:
@@ -196,10 +217,14 @@ def build_migration_checkpoint(
 
 def _envelope_from_mapping(value: Mapping[str, Any]) -> SessionEncryptionEnvelope:
     return SessionEncryptionEnvelope(
-        schema_version=str(value.get("schema_version") or SESSION_ENCRYPTION_SCHEMA_VERSION),
+        schema_version=str(
+            value.get("schema_version") or SESSION_ENCRYPTION_SCHEMA_VERSION
+        ),
         key_id=str(value.get("key_id") or ""),
         purpose=str(value.get("purpose") or ""),
-        record_identity={str(k): str(v) for k, v in dict(value.get("record_identity") or {}).items()},
+        record_identity={
+            str(k): str(v) for k, v in dict(value.get("record_identity") or {}).items()
+        },
         ciphertext=str(value.get("ciphertext") or ""),
     )
 

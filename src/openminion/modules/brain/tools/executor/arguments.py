@@ -114,7 +114,9 @@ def sanitize_tool_command_args(
     )
     if not known_keys:
         return dict(existing_args), []
-    sanitized = {key: value for key, value in existing_args.items() if key in known_keys}
+    sanitized = {
+        key: value for key, value in existing_args.items() if key in known_keys
+    }
     removed = [str(key) for key in existing_args.keys() if key not in known_keys]
     if removed:
         command.args = dict(sanitized)

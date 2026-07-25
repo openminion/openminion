@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from .postprocess_clarify import (
     _attach_clarify_request_metadata,
     _build_clarify_request_payload,

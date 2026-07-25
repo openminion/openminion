@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class BudgetCounters(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -9,6 +10,7 @@ class BudgetCounters(BaseModel):
     a2a_calls: int = Field(..., ge=0)
     tokens: int = Field(..., ge=0)
     time_ms: int = Field(..., ge=0)
+
 
 class BudgetTelemetryBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -26,6 +28,7 @@ class BudgetTelemetryBlock(BaseModel):
     time_remaining_ms: int | None = Field(default=None, ge=0)
     budget_envelope_status: BudgetEnvelopeStatus = "comfortable"
 
+
 class LearningLoopMetric(BaseModel):
     """Typed learning-loop metric surfaced into the context-pack."""
 
@@ -36,6 +39,7 @@ class LearningLoopMetric(BaseModel):
     strategy_outcome_count: int = Field(default=0, ge=0)
     decision_memory_ref_count: int = Field(default=0, ge=0)
     cross_session_strategy_outcomes_present: bool = False
+
 
 class MissionBudgetEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")

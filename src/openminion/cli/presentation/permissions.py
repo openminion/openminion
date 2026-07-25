@@ -201,9 +201,7 @@ def apply_permission_override(
         else:
             setter = getattr(runtime, "set_permission_override", None)
             if not callable(setter):
-                raise RuntimeError(
-                    "runtime does not expose clear_permission_override"
-                )
+                raise RuntimeError("runtime does not expose clear_permission_override")
             setter(tool, "default")
         return PermissionOverrideApplyResult(
             tool_name=tool,
@@ -214,7 +212,9 @@ def apply_permission_override(
     if not callable(setter):
         raise RuntimeError("runtime does not expose set_permission_override")
     applied = str(setter(tool, normalized_mode) or normalized_mode)
-    warning = " — full access for this tool in this session" if applied == "bypass" else ""
+    warning = (
+        " — full access for this tool in this session" if applied == "bypass" else ""
+    )
     return PermissionOverrideApplyResult(
         tool_name=tool,
         mode=applied,

@@ -229,7 +229,9 @@ def format_token_usage_summary(
     )
     peak = _format_peak_request_usage(snapshot)
     peak_suffix = f"   {peak}" if peak else ""
-    summary = f"turn {turn}{cache_suffix}   session {session}   ctx {context}{peak_suffix}"
+    summary = (
+        f"turn {turn}{cache_suffix}   session {session}   ctx {context}{peak_suffix}"
+    )
     return f"{summary}   {timing}" if timing else summary
 
 
@@ -378,9 +380,7 @@ def _max_optional(left: int | None, right: int | None) -> int | None:
 
 
 def _format_peak_request_usage(snapshot: TokenUsageSnapshot) -> str:
-    peak_prompt = _displayable_usage_value(
-        snapshot.turn_max_single_call_prompt_tokens
-    )
+    peak_prompt = _displayable_usage_value(snapshot.turn_max_single_call_prompt_tokens)
     peak_total = _displayable_usage_value(snapshot.turn_max_single_call_total_tokens)
     if peak_prompt is None and peak_total is None:
         return ""

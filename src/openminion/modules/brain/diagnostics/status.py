@@ -426,7 +426,9 @@ def _step_progress_for_event(
             _coerce_int(payload.get("total_steps")),
             "plan_checkpoint",
         )
-    detail_code = "closure_gate" if normalized_event.startswith("brain.closure_gate.") else None
+    detail_code = (
+        "closure_gate" if normalized_event.startswith("brain.closure_gate.") else None
+    )
     return (
         _coerce_int(payload.get("step_index")),
         _coerce_int(payload.get("step_total")),

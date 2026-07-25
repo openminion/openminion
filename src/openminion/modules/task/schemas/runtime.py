@@ -2,6 +2,7 @@
 from .common import *
 from .common import _StrictTaskModel
 
+
 class ResumePointer(_StrictTaskModel):
     """Stable cursor for pausing and resuming execution exactly once."""
 
@@ -12,6 +13,7 @@ class ResumePointer(_StrictTaskModel):
     trace_id: str
     turn_id: str | None = None
     pack_id: str | None = None
+
 
 class PendingAction(_StrictTaskModel):
     """Approval checkpoint returned by runtime when policy blocks execution."""
@@ -24,6 +26,7 @@ class PendingAction(_StrictTaskModel):
     created_at: datetime
     resolved_at: datetime | None = None
     decision_id: str | None = None
+
 
 class DecisionDigest(_StrictTaskModel):
     """Short execution summary suitable for prompt injection."""

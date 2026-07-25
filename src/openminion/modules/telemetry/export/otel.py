@@ -425,9 +425,7 @@ def create_otel_trace_sink(
     trace_provider.add_span_processor(
         BatchSpanProcessor(OTLPSpanExporter(**exporter_kwargs))
     )
-    metric_reader = PeriodicExportingMetricReader(
-        OTLPMetricExporter(**exporter_kwargs)
-    )
+    metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter(**exporter_kwargs))
     metric_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
     tracer = trace_provider.get_tracer("openminion.telemetry.otel")
     meter = metric_provider.get_meter("openminion.telemetry.performance")

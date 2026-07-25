@@ -2,6 +2,7 @@
 from .common import *
 from .budget import MissionBudgetEnvelope
 
+
 class MissionJudgment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -10,6 +11,7 @@ class MissionJudgment(BaseModel):
     final_answer: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
+
 class PostActionJudgment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -17,6 +19,7 @@ class PostActionJudgment(BaseModel):
     reason: str = ""
     user_message: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
 
 class MissionState(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)

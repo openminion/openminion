@@ -224,9 +224,7 @@ class RequestReadiness(BaseModel):
     @model_validator(mode="after")
     def validate_readiness_shape(self) -> "RequestReadiness":
         if self.state == "needs_plan_review" and self.posture != "review_before_act":
-            raise ValueError(
-                "needs_plan_review requires posture='review_before_act'"
-            )
+            raise ValueError("needs_plan_review requires posture='review_before_act'")
         return self
 
 

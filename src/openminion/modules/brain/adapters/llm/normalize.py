@@ -318,7 +318,10 @@ def _normalize_agent_command_arg_aliases(
         normalized.pop("inputs", None)
         normalized_fields.append(f"{field_prefix}.inputs_removed")
     elif isinstance(inputs, dict) and isinstance(normalized.get("params"), dict):
-        merged = {**copy.deepcopy(inputs), **copy.deepcopy(normalized.get("params", {}))}
+        merged = {
+            **copy.deepcopy(inputs),
+            **copy.deepcopy(normalized.get("params", {})),
+        }
         normalized["params"] = merged
         normalized.pop("inputs", None)
         normalized_fields.extend(

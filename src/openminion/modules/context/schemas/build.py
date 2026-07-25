@@ -2,6 +2,7 @@
 from .common import *
 from .budgets import ContextBudgets
 
+
 class SkillSnippetRef(BaseModel):
     skill_id: str
     version_hash: Optional[str] = None

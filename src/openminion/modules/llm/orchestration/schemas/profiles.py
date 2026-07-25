@@ -1,10 +1,13 @@
 # ruff: noqa: F403,F405
 from .common import *
+
+
 class ProfileCostHint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input_per_1k: Optional[float] = None
     output_per_1k: Optional[float] = None
+
 
 class ProfileCapabilities(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -14,6 +17,7 @@ class ProfileCapabilities(BaseModel):
     supports_vision: bool = False
     supports_streaming: bool = False
     supports_prompt_caching: bool = False
+
 
 class ProviderProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")

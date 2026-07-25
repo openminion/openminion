@@ -65,9 +65,7 @@ def daemon_get(
 ) -> tuple[int, dict[str, Any]]:
     return cast(
         tuple[int, dict[str, Any]],
-        daemon_request(
-            endpoint=endpoint, method="GET", path=path, timeout_s=timeout_s
-        ),
+        daemon_request(endpoint=endpoint, method="GET", path=path, timeout_s=timeout_s),
     )
 
 

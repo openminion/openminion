@@ -28,13 +28,13 @@ class TaskCronStoreProtocol(Protocol):
         states: list[str] | None = None,
     ) -> list[dict[str, Any]]: ...
 
+
 class TaskLifecycleState(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
     CANCELLED = "cancelled"
     DONE = "done"
     FAILED = "failed"
-
 
 
 _TERMINAL_TASK_STATES = {
@@ -105,7 +105,6 @@ def _load_state_blob(raw: Any) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-
 @dataclass(frozen=True)
 class TaskLifecycleRecord:
     task_id: str
@@ -120,8 +119,10 @@ class TaskLifecycleRecord:
     failure_reason: str | None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+
 def _new_task_id() -> str:
     return str(uuid.uuid4())
+
 
 class _NullCronRepository:
     def add_cron_job(self, **kwargs: Any) -> str:
@@ -150,6 +151,7 @@ class _NullCronRepository:
     ) -> list[dict[str, Any]]:
         del job_id, limit, states
         return []
+
 
 __all__ = [
     "TaskCronStoreProtocol",

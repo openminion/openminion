@@ -735,7 +735,10 @@ def _third_brain_provider_status(
     snapshot_path = _option_path(options.get("snapshot_path"), roots=roots)
     capabilities = tuple(
         dict.fromkeys(
-            (*provider_config.required_capabilities, *provider_config.optional_capabilities)
+            (
+                *provider_config.required_capabilities,
+                *provider_config.optional_capabilities,
+            )
         )
     )
     ready = bool(
@@ -743,7 +746,10 @@ def _third_brain_provider_status(
         and provider_config.enabled
         and (
             envelope_path is not None
-            or (provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None)
+            or (
+                provider_config.provider == PROVIDER_PRAGMAGRAPH
+                and snapshot_path is not None
+            )
         )
     )
     reason = _third_brain_status_reason(
@@ -790,12 +796,22 @@ def _third_brain_status_reason(
     if not provider_config.enabled:
         return "Provider is disabled."
     if envelope_path is not None:
-        return "" if envelope_path.exists() else "Viewer envelope path is configured but not found yet."
+        return (
+            ""
+            if envelope_path.exists()
+            else "Viewer envelope path is configured but not found yet."
+        )
     if provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None:
-        return "" if snapshot_path.exists() else "PragmaGraph snapshot path is configured but not found yet."
+        return (
+            ""
+            if snapshot_path.exists()
+            else "PragmaGraph snapshot path is configured but not found yet."
+        )
     if provider_config.provider == PROVIDER_PRAGMAGRAPH:
         return "PragmaGraph viewer needs options.snapshot_path or options.viewer_envelope_path."
-    return f"Provider needs options.{_VIEWER_ENVELOPE_PATH_OPTION} for visual inspection."
+    return (
+        f"Provider needs options.{_VIEWER_ENVELOPE_PATH_OPTION} for visual inspection."
+    )
 
 
 def _status_next_commands(
@@ -824,7 +840,9 @@ def _pragmagraph_envelope_provider(
     roots: CLIRoots,
     request: GraphViewerRequest,
 ) -> Any:
-    snapshot_path = _option_path(provider_config.options.get("snapshot_path"), roots=roots)
+    snapshot_path = _option_path(
+        provider_config.options.get("snapshot_path"), roots=roots
+    )
     if snapshot_path is None:
         raise GraphViewerSourceError(
             "PragmaGraph viewer needs options.snapshot_path or "

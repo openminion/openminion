@@ -108,11 +108,14 @@ LayoutDisciplineError = _LayoutDisciplineError
 _WORKING_STATE_MODULE_STATE_ATTR = "".join(("module", "_", "state"))
 _MAINTENANCE_MODULE_STATE_KEY = "".join(("memory", "_", "context", "_", "maintenance"))
 
+
 class IdentityMissingError(RuntimeError):
     pass
 
+
 class MissionContextMissingError(RuntimeError):
     """Raised when the mission_snapshot bucket would be empty (fail-closed)."""
+
 
 @dataclass(frozen=True)
 class _BuildPackRuntimeState:
@@ -126,6 +129,7 @@ class _BuildPackRuntimeState:
     identity: Any
     identity_budget: _IdentityBudgetResult
     cache_key: tuple[str, ...]
+
 
 def _make_segment(
     seg_id: str,
@@ -148,13 +152,16 @@ def _make_segment(
         estimate_tokens=_estimate_tokens,
     )
 
+
 def _position_aware_v1(
     segments: list[ContextSegment], scores: list[float]
 ) -> list[ContextSegment]:
     return _position_aware_v1_impl(segments, scores)
 
+
 def _assert_layout_discipline(segments: list[ContextSegment]) -> None:
     _assert_layout_discipline_impl(segments)
+
 
 class ContextCtlService:
     """V1.5 ContextCtlService: builds segment-first ContextPacks."""

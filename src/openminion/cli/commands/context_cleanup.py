@@ -11,6 +11,7 @@ from openminion.services.bootstrap.paths import (
     SERVICES_STATE_DIRNAME,
 )
 
+
 def main() -> int:
     configure_logging("INFO")
     parser = argparse.ArgumentParser(

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any, Optional
 from collections.abc import Callable
 from uuid import uuid4
@@ -37,7 +35,10 @@ class GatewayTurnSetupMixin:
             THREAD_STATE_DETACHED,
         }
         if routing.attach_id and routing.thread_id == lifecycle.thread_id:
-            if lifecycle.writer_attach_id and lifecycle.writer_attach_id != routing.attach_id:
+            if (
+                lifecycle.writer_attach_id
+                and lifecycle.writer_attach_id != routing.attach_id
+            ):
                 if allow_writer_takeover:
                     attach_role = ATTACH_ROLE_WRITER
                 else:

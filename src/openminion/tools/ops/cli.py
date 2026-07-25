@@ -24,9 +24,7 @@ def target_list_command() -> None:
 @app.command("target-inspect")
 def target_inspect_command(target_id: str) -> None:
     typer.echo(
-        json.dumps(
-            target_inspect(local_ops_service(), target_id), sort_keys=True
-        )
+        json.dumps(target_inspect(local_ops_service(), target_id), sort_keys=True)
     )
 
 

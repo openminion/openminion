@@ -126,7 +126,9 @@ def _validate_interval(value: object) -> int:
     try:
         interval = int(value)
     except (TypeError, ValueError) as exc:
-        raise AnimationSpecError("invalid_interval", "interval_ms must be an integer") from exc
+        raise AnimationSpecError(
+            "invalid_interval", "interval_ms must be an integer"
+        ) from exc
     if interval <= 0:
         raise AnimationSpecError("invalid_interval", "interval_ms must be positive")
     if interval > MAX_INTERVAL_MS:

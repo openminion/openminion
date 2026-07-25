@@ -1,6 +1,8 @@
 # ruff: noqa: F403,F405
 from .common import *
 from .profiles import ProviderProfile
+
+
 class RubricCriterion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -8,17 +10,20 @@ class RubricCriterion(BaseModel):
     description: str = Field(..., min_length=1)
     weight: float = 1.0
 
+
 class Rubric(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     instructions: str = ""
     criteria: list[RubricCriterion] = Field(default_factory=list)
 
+
 class NormalizationRules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     strip_whitespace: bool = True
     lowercase: bool = False
+
 
 class DisagreementConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -27,6 +32,7 @@ class DisagreementConfig(BaseModel):
     method: Literal["simple_text", "json_field_diff"] = "simple_text"
     threshold: float = 0.75
     max_excerpt_chars: int = 240
+
 
 class EnsembleTemplate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -43,6 +49,7 @@ class EnsembleTemplate(BaseModel):
     normalization: Optional[NormalizationRules] = None
     disagreement: Optional[DisagreementConfig] = None
 
+
 class LLMCatalogDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -51,12 +58,14 @@ class LLMCatalogDefaults(BaseModel):
     default_selection_policy: SelectionPolicyName = "pick_primary_if_ok"
     default_rubric: Optional[Rubric] = None
 
+
 class GlobalLimits(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_parallel_global: int = 8
     max_inflight_requests: Optional[int] = None
     max_tokens_per_call_hard: int = 8192
+
 
 class CatalogLoggingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -66,10 +75,12 @@ class CatalogLoggingConfig(BaseModel):
     store_ensemble_report: bool = True
     emit_events: bool = True
 
+
 class SecretResolutionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     env_prefix: str = ""
+
 
 class LLMCatalogConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")

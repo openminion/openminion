@@ -189,7 +189,9 @@ def _add_consolidation_cron_meta(
         consolidation.get("target_scope", "") or ""
     ).strip()
     cron_meta["memory_consolidation_batch_limit"] = str(
-        _int_or_default(consolidation.get("batch_limit"), DEFAULT_CONSOLIDATION_BATCH_LIMIT)
+        _int_or_default(
+            consolidation.get("batch_limit"), DEFAULT_CONSOLIDATION_BATCH_LIMIT
+        )
     )
     cron_meta["memory_consolidation_max_iterations"] = str(
         _int_or_default(
@@ -207,7 +209,9 @@ def _add_consolidation_cron_meta(
 
 def _add_watch_cron_meta(cron_meta: dict[str, str], watch: dict[str, Any]) -> None:
     watch_turn_kind = (
-        str(watch.get("turn_kind", WATCH_TURN_KIND_CHECK) or WATCH_TURN_KIND_CHECK).strip()
+        str(
+            watch.get("turn_kind", WATCH_TURN_KIND_CHECK) or WATCH_TURN_KIND_CHECK
+        ).strip()
         or WATCH_TURN_KIND_CHECK
     )
     cron_meta["watch_job"] = "true"

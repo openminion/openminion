@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class ContextBudgets(BaseModel):
     total_max_tokens: int = Field(ge=1)
     identity_tokens: int = Field(ge=1)
@@ -15,6 +16,7 @@ class ContextBudgets(BaseModel):
     skills_tokens: int = Field(ge=0)
     artifact_tokens: int = Field(ge=0)
     instructions_tokens: int = Field(ge=1)
+
 
 _CONTEXT_BUDGET_PRESETS: dict[str, ContextBudgets] = {
     "decide": ContextBudgets(
@@ -132,8 +134,10 @@ _CONTEXT_BUDGET_PRESETS: dict[str, ContextBudgets] = {
     ),
 }
 
+
 def default_budgets_for(purpose: Purpose) -> ContextBudgets:
     return _CONTEXT_BUDGET_PRESETS[purpose].model_copy(deep=True)
+
 
 def decide_budget_for_turn_depth(turn_count: int) -> ContextBudgets:
     """Return decide budgets keyed only by canonical session turn depth."""
@@ -185,6 +189,7 @@ def decide_budget_for_turn_depth(turn_count: int) -> ContextBudgets:
         instructions_tokens=80,
     )
 
+
 BUCKET_TOKEN_FRACTIONS: dict[str, float] = {
     "static_prefix": 0.15,
     "mission_snapshot": 0.10,
@@ -198,6 +203,7 @@ BUCKET_TOKEN_FRACTIONS: dict[str, float] = {
     "evidence_refs": 0.12,
     "turn_input": 0.06,
 }
+
 
 def bucket_caps_for(budgets: ContextBudgets) -> Dict[str, int]:
     total = budgets.total_max_tokens

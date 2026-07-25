@@ -59,7 +59,9 @@ class BranchDiffResult:
         }
 
 
-def diff_session_branches(store: Any, *, left_session_id: str, right_session_id: str) -> BranchDiffResult:
+def diff_session_branches(
+    store: Any, *, left_session_id: str, right_session_id: str
+) -> BranchDiffResult:
     items = (
         _diff_summary(store, left_session_id, right_session_id),
         _diff_working_state(store, left_session_id, right_session_id),
@@ -157,7 +159,9 @@ def _diff_item(field: str, left_ref: str, right_ref: str) -> BranchDiffItem:
         status = "added_or_removed"
     else:
         status = "changed"
-    return BranchDiffItem(field=field, status=status, left_ref=left_ref, right_ref=right_ref)
+    return BranchDiffItem(
+        field=field, status=status, left_ref=left_ref, right_ref=right_ref
+    )
 
 
 def _carry_summary(store: Any, source: str, child: str) -> None:
@@ -202,7 +206,9 @@ def _carry_message_refs(store: Any, source: str, child: str) -> None:
 def _message_ref_rows(record_store: Any, session_id: str) -> list[dict[str, Any]]:
     if record_store is None:
         return []
-    return record_store.query_rows("message_refs", where={"session_id": session_id}, order="seq ASC")
+    return record_store.query_rows(
+        "message_refs", where={"session_id": session_id}, order="seq ASC"
+    )
 
 
 def _message_ref_refs(record_store: Any, session_id: str) -> list[dict[str, Any]]:

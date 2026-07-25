@@ -358,7 +358,6 @@ def _add_session_cli_subcommands(sub: Any, add_db_arg: Any) -> None:
     add_storage_subcommands(sub)
 
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -533,9 +532,7 @@ def _handle_session_store_command(
         )
 
     if args.command == "get-recent-tool-events":
-        return _print_result(
-            store.get_recent_tool_events(args.session_id, args.limit)
-        )
+        return _print_result(store.get_recent_tool_events(args.session_id, args.limit))
 
     if args.command == "put-working-state":
         inline = _optional_json_arg(args.state_inline_json, default={})
@@ -663,9 +660,7 @@ def _handle_session_store_command(
     if args.command == "cron-runs":
         states = _optional_json_arg(args.states_json, default=[])
         return _print_result(
-            store.list_cron_runs(
-                job_id=args.job_id, states=states, limit=args.limit
-            )
+            store.list_cron_runs(job_id=args.job_id, states=states, limit=args.limit)
         )
 
     if args.command == "storage-status":
@@ -676,7 +671,6 @@ def _handle_session_store_command(
 
     parser.error(f"unsupported command: {args.command}")
     return 2
-
 
 
 def _add_reliability_subcommands(sub: Any, add_db_arg: Any) -> None:
@@ -696,8 +690,12 @@ def _add_reliability_subcommands(sub: Any, add_db_arg: Any) -> None:
 
     retention_dry_run = sub.add_parser("retention-dry-run", help="Preview purge")
     add_db_arg(retention_dry_run)
-    retention_dry_run.add_argument("--inactivity-ttl-seconds", type=int, default=2592000)
-    retention_dry_run.add_argument("--closed-retention-seconds", type=int, default=604800)
+    retention_dry_run.add_argument(
+        "--inactivity-ttl-seconds", type=int, default=2592000
+    )
+    retention_dry_run.add_argument(
+        "--closed-retention-seconds", type=int, default=604800
+    )
 
     retention_purge = sub.add_parser("retention-purge", help="Run purge from snapshot")
     add_db_arg(retention_purge)
@@ -711,13 +709,14 @@ def _add_reliability_subcommands(sub: Any, add_db_arg: Any) -> None:
     branch_diff.add_argument("--left-session-id", required=True)
     branch_diff.add_argument("--right-session-id", required=True)
 
-    branch_carry = sub.add_parser("branch-carry-forward", help="Create carry-forward child")
+    branch_carry = sub.add_parser(
+        "branch-carry-forward", help="Create carry-forward child"
+    )
     add_db_arg(branch_carry)
     branch_carry.add_argument("--source-session-id", required=True)
     branch_carry.add_argument("--target-parent-session-id", required=True)
     branch_carry.add_argument("--fields-json", required=True)
     branch_carry.add_argument("--title", default=None)
-
 
 
 def _handle_reliability_command(
@@ -760,7 +759,10 @@ def _handle_reliability_command(
         return _print_result(result)
     return None
 
-def _handle_retention_command(store: SQLiteSessionStore, args: argparse.Namespace) -> int:
+
+def _handle_retention_command(
+    store: SQLiteSessionStore, args: argparse.Namespace
+) -> int:
     policy = SessionRetentionPolicy(
         inactivity_ttl_seconds=args.inactivity_ttl_seconds,
         closed_retention_seconds=args.closed_retention_seconds,

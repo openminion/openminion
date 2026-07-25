@@ -8,6 +8,7 @@ from .segments import (
     TokenBudgetReport,
 )
 
+
 class IdentityManifest(BaseModel):
     agent_id: str
     profile_version: str

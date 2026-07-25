@@ -1,6 +1,7 @@
 # ruff: noqa: F403,F405
 from .common import *
 
+
 class ToolCapabilities(BaseModel):
     """Policy-relevant capability metadata attached to each tool."""
 
@@ -17,10 +18,12 @@ class ToolCapabilities(BaseModel):
     timeout_policy: str | None = None
     audit_events: tuple[str, ...] = ()
 
+
 class HealthStatus(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ok: bool
     details: dict[str, Any] = Field(default_factory=dict)
+
 
 class RiskSpec(BaseModel):
     """Method-level risk annotation used by policy engines."""
@@ -32,6 +35,7 @@ class RiskSpec(BaseModel):
     default_confirm: bool = False
     sensitive_targets: list[dict[str, Any] | str] = Field(default_factory=list)
 
+
 class MethodSchema(BaseModel):
     model_config = ConfigDict(extra="forbid")
     method_name: str
@@ -40,12 +44,14 @@ class MethodSchema(BaseModel):
     description: Optional[str] = None
     risk_spec: Optional[RiskSpec] = None
 
+
 class ToolSchemaBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tool: str
     description: Optional[str] = None
     methods: list[MethodSchema] = Field(default_factory=list)
     capabilities: ToolCapabilities = Field(default_factory=ToolCapabilities)
+
 
 class ToolDescriptor(BaseModel):
     model_config = ConfigDict(extra="forbid")
