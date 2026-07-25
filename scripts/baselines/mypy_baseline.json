@@ -11,10 +11,10 @@
   "package_errors": {
     "api": 125,
     "cli": 572,
-    "modules": 3838,
+    "modules": 3839,
     "root": 1,
     "services": 368,
     "tools": 279
   },
-  "total_errors": 5183
+  "total_errors": 5184
 }
