@@ -5,6 +5,9 @@ from typing import Any
 
 from openminion.cli.parser.flags import add_json_output_flag, add_runtime_source_flag
 from openminion.cli.presentation.json_output import print_json_payload
+from openminion.cli.commands.status.trace_parser import (
+    register_status_context_trace_subcommand,
+)
 
 
 def run_status(args) -> int:
@@ -285,35 +288,6 @@ def _register_status_tokens_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_context_trace_subcommand(status_subcommands) -> None:
-    parser = status_subcommands.add_parser(
-        "context-trace",
-        help="Inspect persisted context decision traces for a session",
-    )
-    parser.add_argument(
-        "--session",
-        "--session-id",
-        dest="session_id",
-        required=True,
-        help="Session identifier",
-    )
-    parser.add_argument(
-        "--turn",
-        "--turn-id",
-        dest="turn_id",
-        default="",
-        help="Optional turn / LLM-call identifier",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=50,
-        help="Maximum traces to return (default: 50)",
-    )
-    add_json_output_flag(parser)
-    parser.set_defaults(handler=run_status, needs_app=False)
-
-
 def _register_status_notes_subcommand(status_subcommands) -> None:
     parser = status_subcommands.add_parser(
         "notes",
@@ -462,7 +436,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _register_status_runs_subcommand(status_subcommands)
     _register_status_run_events_subcommand(status_subcommands)
     _register_status_tokens_subcommand(status_subcommands)
-    _register_status_context_trace_subcommand(status_subcommands)
+    register_status_context_trace_subcommand(status_subcommands, handler=run_status)
     _register_status_notes_subcommand(status_subcommands)
     _register_status_identity_subcommand(status_subcommands)
     _register_status_onboarding_subcommand(status_subcommands)

@@ -89,6 +89,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "/context", "Show visual context usage", "_slash_context", "_slash_context"
     ),
     SlashCommandMetadata(
+        "/context-review",
+        "Review memory and context evidence",
+        None,
+        "_slash_context_review",
+    ),
+    SlashCommandMetadata(
         "/goal",
         "Create, bind, inspect, or run a session goal",
         "_slash_goal",
