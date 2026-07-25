@@ -1,8 +1,9 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..errors import LLMCtlError
-from .schemas import AgentLLMPolicy, LLMCatalogConfig, LLMRoute
+from .schemas.catalog import LLMCatalogConfig
+from .schemas.policy import AgentLLMPolicy, LLMRoute
 
 try:
     import yaml
@@ -17,7 +18,7 @@ def load_catalog_config(
         return path_or_dict
 
     if isinstance(path_or_dict, dict):
-        return LLMCatalogConfig.model_validate(path_or_dict)
+        return cast(LLMCatalogConfig, LLMCatalogConfig.model_validate(path_or_dict))
 
     path = Path(path_or_dict).expanduser().resolve(strict=False)
     if not path.exists():
@@ -35,7 +36,7 @@ def load_catalog_config(
             "catalog config must parse to an object",
             {"path": str(path)},
         )
-    return LLMCatalogConfig.model_validate(parsed)
+    return cast(LLMCatalogConfig, LLMCatalogConfig.model_validate(parsed))
 
 
 def resolve_route(agent_policy: AgentLLMPolicy, purpose: str) -> LLMRoute:
@@ -43,7 +44,7 @@ def resolve_route(agent_policy: AgentLLMPolicy, purpose: str) -> LLMRoute:
     if route is not None:
         return route
     if agent_policy.default_route is not None:
-        return agent_policy.default_route
+        return cast(LLMRoute, agent_policy.default_route)
     raise LLMCtlError(
         "INVALID_ARGUMENT",
         "No route configured for purpose and no default_route",

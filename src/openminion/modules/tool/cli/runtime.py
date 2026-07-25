@@ -5,7 +5,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, cast
 
 import yaml
 from pydantic import ValidationError
@@ -31,7 +31,8 @@ from .runtime_invocation import (
 from ..errors import ToolRuntimeError
 from ..runtime.plugins import load_plugins
 from ..runtime.policy import Policy
-from ..registry import ToolRegistry, ToolSpec
+from ..registry import ToolRegistry
+from ..registry.catalog import Scope as RegistryScope, ToolSpec
 from ..runtime import (
     RuntimeContext,
     build_runtime_repositories,
@@ -43,9 +44,11 @@ from ..runtime import (
 )
 from ..contracts.schemas import (
     TOOL_ERROR_CONFIRM_REQUIRED,
+    Artifact,
     CallRequest,
     CmdRunArgs,
     CmdWhichArgs,
+    ErrorCode,
     FsCopyMoveArgs,
     FsDeleteArgs,
     FsListDirArgs,
@@ -55,8 +58,8 @@ from ..contracts.schemas import (
     ProcDetailsArgs,
     ProcKillArgs,
     ProcListArgs,
+    LogEntry,
     ResultEnvelope,
-    Scope,
     SysInfoArgs,
 )
 from ..diagnostics.events import emit_tool_exec_operation_for_context
@@ -124,11 +127,11 @@ def _runtime_env_from_policy(policy: Policy) -> Mapping[str, object] | None:
     return None
 
 
-def _resolve_policy_env(policy: Policy):
+def _resolve_policy_env(policy: Policy) -> Any:
     return resolve_tool_env(runtime_env=_runtime_env_from_policy(policy))
 
 
-_FILE_TOOL_SPECS: tuple[tuple[str, Any, str, Any, bool, bool], ...] = (
+_FILE_TOOL_SPECS: tuple[tuple[str, Any, RegistryScope, Any, bool, bool], ...] = (
     ("list_dir", FsListDirArgs, "READ_ONLY", h_fs_list_dir, False, True),
     ("read_file", FsReadFileArgs, "READ_ONLY", h_fs_read_file, False, True),
     ("write_file", FsWriteFileArgs, "WRITE_SAFE", h_fs_write_file, False, True),
@@ -220,14 +223,14 @@ def build_registry(policy: Policy) -> tuple[ToolRegistry, list[Dict[str, Any]]]:
     return reg, plugin_statuses
 
 
-def effective_scope(policy: Policy, scope: Optional[str]) -> Scope:
-    return policy.effective_scope(scope)
+def effective_scope(policy: Policy, scope: Optional[str]) -> RegistryScope:
+    return cast(RegistryScope, policy.effective_scope(scope))
 
 
 def write_run_meta(
     run_root: Path,
     request: CallRequest,
-    effective_scope_value: Scope,
+    effective_scope_value: RegistryScope,
     policy_path: Path,
     plugin_statuses: list[Dict[str, Any]],
 ) -> None:
@@ -250,7 +253,7 @@ def raise_if_denied(
     stage: str, code: str, reason: str, details: Dict[str, Any]
 ) -> None:
     raise ToolRuntimeError(
-        code if code else "POLICY_DENIED",
+        cast(ErrorCode, code) if code else "POLICY_DENIED",
         reason or f"{stage} denied",
         {"stage": stage, **details},
     )
@@ -284,7 +287,7 @@ def print_envelope(env: ResultEnvelope, json_out: bool) -> None:
 def _validate_request_args(spec: Any, req: CallRequest) -> dict[str, Any]:
     """Validate request args against the spec, raising INVALID_ARGUMENT on failure."""
     try:
-        return spec.args_model.model_validate(req.args).model_dump()
+        return cast(dict[str, Any], spec.args_model.model_validate(req.args).model_dump())
     except ValidationError as exc:
         raise ToolRuntimeError(
             "INVALID_ARGUMENT",
@@ -366,7 +369,7 @@ def _maybe_autostart_sidecar_for_spec(
         )
         if not autostart.get("enabled", False):
             raise ToolRuntimeError(
-                TOOL_ERROR_CONFIRM_REQUIRED,
+                cast(ErrorCode, TOOL_ERROR_CONFIRM_REQUIRED),
                 f"sidecar '{spec.sidecar}' not enabled",
                 {"sidecar": spec.sidecar, "autostart": autostart},
             )
@@ -385,10 +388,10 @@ def _build_runtime_context(
     pol: Policy,
     op_workspace: Path,
     run_root: Path,
-    effective_scope_value: Scope,
+    effective_scope_value: RegistryScope,
     confirm_flag: bool,
-    logs: list,
-    artifacts: list,
+    logs: list[LogEntry],
+    artifacts: list[Artifact],
     safety_adapter: AllowAllSafetyAdapter,
     policy_adapter: LocalPolicyAdapter,
     telemetryctl: Any,
@@ -486,11 +489,11 @@ def _build_error_envelope_from(
     *,
     req: Optional[CallRequest],
     run_id: str,
-    effective_scope_value: Scope,
+    effective_scope_value: RegistryScope,
     started_at: str,
     op_workspace: Path,
-    artifacts: list,
-    logs: list,
+    artifacts: list[Artifact],
+    logs: list[LogEntry],
     error: ToolRuntimeError,
 ) -> ResultEnvelope:
     return make_error_envelope(
@@ -527,16 +530,16 @@ def execute_call_payload(
     run_id = new_run_id()
     started_at = iso_now()
     op_workspace = (workspace or Path.cwd()).expanduser().resolve(strict=False)
-    logs: list = []
-    artifacts: list = []
-    effective_scope_value: Scope = pol.max_scope()
+    logs: list[LogEntry] = []
+    artifacts: list[Artifact] = []
+    effective_scope_value: RegistryScope = pol.max_scope()
     req: Optional[CallRequest] = None
     run_root: Optional[Path] = None
     ctx: RuntimeContext | None = None
 
     try:
         req = parse_call_payload(payload)
-        effective_scope_value = effective_scope(pol, scope)
+        effective_scope_value = cast(RegistryScope, effective_scope(pol, scope))
         confirm_flag = confirm or req.meta.confirm
         try:
             spec = reg.get(req.tool)
