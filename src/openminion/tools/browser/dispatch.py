@@ -393,7 +393,9 @@ class BrowserDispatch:
             call=call,
             error_message="tab_id is required for tab.back",
         )
-        return to_payload(provider.tab_back(provider_ctx, tab_id, options=call.navigation))
+        return to_payload(
+            provider.tab_back(provider_ctx, tab_id, options=call.navigation)
+        )
 
     def _handle_tab_forward(
         self,
@@ -430,7 +432,9 @@ class BrowserDispatch:
             )
             if raw_timeout is not None:
                 timeout_ms = int(raw_timeout)
-        return to_payload(provider.tab_wait(provider_ctx, tab_id, timeout_ms=timeout_ms))
+        return to_payload(
+            provider.tab_wait(provider_ctx, tab_id, timeout_ms=timeout_ms)
+        )
 
     def _handle_tab_snapshot(
         self,

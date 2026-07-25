@@ -4,7 +4,10 @@ import argparse
 from typing import Any
 
 from openminion.cli.parser.flags import add_json_output_flag
-from openminion.cli.presentation.browser import browser_command_payload, render_browser_command
+from openminion.cli.presentation.browser import (
+    browser_command_payload,
+    render_browser_command,
+)
 from openminion.cli.presentation.json_output import print_json_payload
 
 
@@ -65,4 +68,3 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     stop.add_argument("--kill", action="store_true", help="Force kill when supported")
     add_json_output_flag(stop)
     stop.set_defaults(handler=run_browser, needs_app=False)
-

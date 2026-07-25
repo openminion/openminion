@@ -258,7 +258,9 @@ def test_provider_autostart_routes_start_through_sidecar_manager(
             return {"started": True}
 
     monkeypatch.setattr(pinchtab_provider_module, "PinchTabClient", _FakeClient)
-    monkeypatch.setattr(pinchtab_provider_module, "default_sidecar_manager", _FakeManager)
+    monkeypatch.setattr(
+        pinchtab_provider_module, "default_sidecar_manager", _FakeManager
+    )
     provider = PinchTabProvider(
         PinchTabProviderConfig(
             base_url="http://127.0.0.1:9867",
@@ -305,7 +307,9 @@ def test_runtime_approved_autostart_never_prompts_sidecar_manager(
 
     monkeypatch.setattr(pinchtab_provider_module.sys, "stdin", _TtyStdin())
     monkeypatch.setattr(pinchtab_provider_module, "PinchTabClient", _FakeClient)
-    monkeypatch.setattr(pinchtab_provider_module, "default_sidecar_manager", _FakeManager)
+    monkeypatch.setattr(
+        pinchtab_provider_module, "default_sidecar_manager", _FakeManager
+    )
     runtime = RuntimeContext(
         policy=Policy(raw={"workspace_root": str(tmp_path)}),
         workspace=tmp_path,
@@ -359,13 +363,16 @@ def test_runtime_context_without_autostart_approval_does_not_prompt(
         PinchTabProviderConfig(base_url="http://127.0.0.1:9867")
     )
 
-    assert provider._should_autostart(
-        ctx=BrowserProviderContext(tool_context=runtime)
-    ) is False
+    assert (
+        provider._should_autostart(ctx=BrowserProviderContext(tool_context=runtime))
+        is False
+    )
     assert calls == []
 
 
-def test_pinchtab_daemon_status_reports_not_ready_when_pid_is_absent(tmp_path: Path) -> None:
+def test_pinchtab_daemon_status_reports_not_ready_when_pid_is_absent(
+    tmp_path: Path,
+) -> None:
     from openminion.tools.browser.providers.pinchtab.daemon import (
         build_daemon_config,
         daemon_status,

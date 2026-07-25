@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import builtins
+import sys
+from types import ModuleType
 
 import pytest
 
@@ -13,7 +15,14 @@ from openminion.tools.browser.providers.playwright.debug_provider import (
 )
 
 
-def test_debug_available_when_provider_registered() -> None:
+@pytest.fixture
+def installed_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = ModuleType("playwright")
+    module.__version__ = "test"
+    monkeypatch.setitem(sys.modules, "playwright", module)
+
+
+def test_debug_available_when_provider_registered(installed_playwright: None) -> None:
     info = get_browser_playwright_debug_info(
         {"registered_providers": ["pinchtab", "playwright"]}
     )
@@ -24,7 +33,9 @@ def test_debug_available_when_provider_registered() -> None:
     assert info["provider_available"] is True
 
 
-def test_debug_routing_misconfig_when_provider_missing_from_registry() -> None:
+def test_debug_routing_misconfig_when_provider_missing_from_registry(
+    installed_playwright: None,
+) -> None:
     info = get_browser_playwright_debug_info({"registered_providers": ["pinchtab"]})
     assert info["status"] == "unavailable"
     assert info["fault_class"] == FAULT_CLASS_ROUTING_MISCONFIG
@@ -34,7 +45,9 @@ def test_debug_routing_misconfig_when_provider_missing_from_registry() -> None:
     assert info["provider_available"] is True
 
 
-def test_debug_policy_denied_takes_priority_over_available() -> None:
+def test_debug_policy_denied_takes_priority_over_available(
+    installed_playwright: None,
+) -> None:
     info = get_browser_playwright_debug_info(
         {
             "registered_providers": ["playwright", "pinchtab"],
@@ -48,7 +61,9 @@ def test_debug_policy_denied_takes_priority_over_available() -> None:
     assert "policy" in info["hint"]
 
 
-def test_debug_routing_misconfig_precedes_policy_denied() -> None:
+def test_debug_routing_misconfig_precedes_policy_denied(
+    installed_playwright: None,
+) -> None:
     info = get_browser_playwright_debug_info(
         {"registered_providers": ["pinchtab"], "policy_denied": True}
     )

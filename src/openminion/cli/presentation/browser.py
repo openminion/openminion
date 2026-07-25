@@ -9,14 +9,18 @@ from openminion.services.runtime.sidecars import default_sidecar_manager
 from openminion.tools.browser import default_browser_tool, provider_registry
 
 
-def browser_command_payload(args: str, *, working_dir: str | None = None) -> dict[str, Any]:
+def browser_command_payload(
+    args: str, *, working_dir: str | None = None
+) -> dict[str, Any]:
     tokens = shlex.split(str(args or ""))
     action = tokens[0].lower() if tokens else "status"
     options = _parse_options(tokens[1:])
     if action == "status":
         return _browser_status_payload()
     if action == "tabs":
-        return _execute_browser_tool({"op": "tab.list", **_provider_args(options)}, working_dir)
+        return _execute_browser_tool(
+            {"op": "tab.list", **_provider_args(options)}, working_dir
+        )
     if action == "navigate":
         url = options.get("url") or (tokens[1] if len(tokens) > 1 else "")
         if not url:
@@ -31,12 +35,21 @@ def browser_command_payload(args: str, *, working_dir: str | None = None) -> dic
                 name="pinchtab",
                 kill=_is_truthy(options.get("kill", "0")),
             )
-            return {"ok": True, "action": "stop", "sidecar": "pinchtab", "result": result}
+            return {
+                "ok": True,
+                "action": "stop",
+                "sidecar": "pinchtab",
+                "result": result,
+            }
         instance_id = options.get("instance") or options.get("instance_id")
         if not instance_id:
             return _error_payload("instance=<id> is required when sidecar=0")
         return _execute_browser_tool(
-            {"op": "instance.kill", "instance_id": instance_id, **_provider_args(options)},
+            {
+                "op": "instance.kill",
+                "instance_id": instance_id,
+                **_provider_args(options),
+            },
             working_dir,
         )
     return _error_payload("usage: /browser [status|tabs|navigate|stop]")
@@ -68,7 +81,9 @@ def render_browser_command(args: str, *, working_dir: str | None = None) -> str:
     if action == "navigate":
         tab = data.get("tab", {}) if isinstance(data, dict) else {}
         if isinstance(tab, dict):
-            return f"Browser: navigated tab={tab.get('id', '')} url={tab.get('url', '')}"
+            return (
+                f"Browser: navigated tab={tab.get('id', '')} url={tab.get('url', '')}"
+            )
     return f"Browser: {action or 'ok'}"
 
 

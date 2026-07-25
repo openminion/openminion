@@ -61,8 +61,9 @@ def test_browser_stop_reuses_sidecar_manager(monkeypatch) -> None:
         browser_ui,
         "default_sidecar_manager",
         lambda: SimpleNamespace(
-            stop=lambda *, name, kill: stop_calls.append((name, kill))
-            or {"stopped": True}
+            stop=lambda *, name, kill: (
+                stop_calls.append((name, kill)) or {"stopped": True}
+            )
         ),
     )
 
@@ -70,4 +71,3 @@ def test_browser_stop_reuses_sidecar_manager(monkeypatch) -> None:
 
     assert "pinchtab sidecar stop requested stopped=True" in body
     assert stop_calls == [("pinchtab", True)]
-

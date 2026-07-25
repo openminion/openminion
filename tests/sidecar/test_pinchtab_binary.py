@@ -20,6 +20,7 @@ from openminion.tools.browser.providers.pinchtab.binary import (
     PinchTabBinaryConfig,
     PinchTabBinaryError,
     PinchTabBinaryResolver,
+    PinchTabReleaseAsset,
 )
 
 
@@ -62,16 +63,31 @@ def _cfg(data_root: Path, **overrides: object) -> PinchTabBinaryConfig:
     return PinchTabBinaryConfig(**payload)
 
 
-def test_resolver_returns_cached_binary_with_manifest(tmp_path: Path) -> None:
+def test_resolver_returns_cached_binary_with_configured_checksum(
+    tmp_path: Path,
+) -> None:
     binary = _write_cached_binary(tmp_path)
+    expected = hashlib.sha256(binary.read_bytes()).hexdigest()
 
-    result = PinchTabBinaryResolver(_cfg(tmp_path)).resolve()
+    result = PinchTabBinaryResolver(_cfg(tmp_path, sha256=expected)).resolve()
 
     assert result.ok is True
     assert result.binary_path == binary
     assert result.managed is True
     assert result.verified is True
     assert result.manifest_path == binary.parent / "manifest.json"
+
+
+def test_cached_checksum_file_does_not_make_untrusted_binary_verified(
+    tmp_path: Path,
+) -> None:
+    binary = _write_cached_binary(tmp_path)
+
+    result = PinchTabBinaryResolver(_cfg(tmp_path)).resolve()
+
+    assert result.ok is True
+    assert result.binary_path == binary
+    assert result.verified is False
 
 
 def test_resolver_rejects_external_explicit_path_without_allow_external(
@@ -132,6 +148,34 @@ def test_resolver_download_uses_injected_downloader_and_verifies_checksum(
     ]
 
 
+def test_resolver_discovers_github_release_asset_with_injected_discoverer(
+    tmp_path: Path,
+) -> None:
+    source_bytes = b"pinchtab-discovered"
+    expected = hashlib.sha256(source_bytes).hexdigest()
+    downloaded_urls: list[str] = []
+
+    def downloader(url: str, destination: Path) -> None:
+        downloaded_urls.append(url)
+        destination.write_bytes(source_bytes)
+
+    resolver = PinchTabBinaryResolver(
+        _cfg(tmp_path, install_mode="required", download_url=""),
+        downloader=downloader,
+        release_discoverer=lambda _cfg: PinchTabReleaseAsset(
+            download_url="https://example.invalid/releases/pinchtab",
+            sha256=expected,
+            resolved_version="v1.2.3",
+        ),
+    )
+
+    result = resolver.resolve(allow_download=True)
+
+    assert result.ok is True
+    assert result.verified is True
+    assert downloaded_urls == ["https://example.invalid/releases/pinchtab"]
+
+
 def test_resolver_rejects_real_download_without_e2e_opt_in(tmp_path: Path) -> None:
     resolver = PinchTabBinaryResolver(
         _cfg(
@@ -173,7 +217,8 @@ def test_sidecar_pinchtab_status_cli_reports_binary_status(
 ) -> None:
     _write_cached_binary(tmp_path)
     config = SimpleNamespace(
-        runtime=SimpleNamespace(env={"OPENMINION_PINCHTAB_PLATFORM": "test-os"}), security=_security_config()
+        runtime=SimpleNamespace(env={"OPENMINION_PINCHTAB_PLATFORM": "test-os"}),
+        security=_security_config(),
     )
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path))
     monkeypatch.setattr(sidecar_cli, "load_cli_config_from_args", lambda _args: config)
