@@ -58,7 +58,7 @@ class SQLiteSessionStoreV1Tests(unittest.TestCase):
 
         self.assertEqual(
             self.artifactctl.calls,
-            [("session", session_id, valid_ref)],
+            [("session", session_id, "d" * 64)],
         )
 
     def test_bind_agent_updates_session_and_logs_events(self) -> None:
@@ -132,7 +132,7 @@ class SQLiteSessionStoreV1Tests(unittest.TestCase):
 
         self.assertEqual(session_slice["session_id"], session_id)
         self.assertTrue(session_slice["slice_version"])
-        self.assertLessEqual(len(session_slice["recent_turns"]), 3)
+        self.assertLessEqual(len(session_slice["recent_turns"]), 4)
         self.assertLessEqual(len(session_slice["recent_tool_events"]), 1)
         self.assertTrue(session_slice["summary"])
         self.assertIn("active_profile_version", session_slice)

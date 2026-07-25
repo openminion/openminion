@@ -127,6 +127,93 @@ async def test_slash_queue_uses_shared_queue_vocabulary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_slash_delegate_routes_to_runtime_delegate_task() -> None:
+    class _DelegateRuntime(_DemoFocusRuntime):
+        def __init__(self, *, working_dir: str) -> None:
+            super().__init__(working_dir=working_dir)
+            self.delegate_calls: list[dict[str, object]] = []
+
+        def delegate_task(self, **kwargs: object) -> dict[str, object]:
+            self.delegate_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "mode": kwargs.get("mode"),
+                "status": "success",
+                "agent_id": kwargs.get("target_agent_id"),
+                "content": "delegated from focus",
+            }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _DelegateRuntime(working_dir=tmp)
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command("/delegate async researcher find release notes")
+            await pilot.pause()
+
+            body = _last_system_body(screen.query_one(FocusTranscript))
+
+    assert runtime.delegate_calls == [
+        {
+            "mode": "async",
+            "target_agent_id": "researcher",
+            "instruction": "find release notes",
+            "task_id": "",
+            "timeout_seconds": 120,
+        }
+    ]
+    assert "Delegation:" in body
+    assert "status    success" in body
+    assert "delegated from focus" in body
+
+
+@pytest.mark.asyncio
+async def test_slash_delegate_result_alias_uses_task_id() -> None:
+    class _DelegateRuntime(_DemoFocusRuntime):
+        def __init__(self, *, working_dir: str) -> None:
+            super().__init__(working_dir=working_dir)
+            self.delegate_calls: list[dict[str, object]] = []
+
+        def delegate_task(self, **kwargs: object) -> dict[str, object]:
+            self.delegate_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "mode": "resume",
+                "status": "success",
+                "task_id": kwargs.get("task_id"),
+                "content": "task result",
+            }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _DelegateRuntime(working_dir=tmp)
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command("/delegate result task-42")
+            await pilot.pause()
+
+            body = _last_system_body(screen.query_one(FocusTranscript))
+
+    assert runtime.delegate_calls == [
+        {
+            "mode": "result",
+            "target_agent_id": "",
+            "instruction": "",
+            "task_id": "task-42",
+            "timeout_seconds": 120,
+        }
+    ]
+    assert "task      task-42" in body
+    assert "task result" in body
+
+
+@pytest.mark.asyncio
 async def test_permissions_menu_applies_ask_for_approval() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         app = _make_app(tmp)
@@ -561,3 +648,56 @@ async def test_slash_tasks_shows_task_inventory() -> None:
             body = _last_system_body(screen.query_one(FocusTranscript))
 
             assert "Tasks" in body
+
+
+@pytest.mark.asyncio
+async def test_slash_review_reports_no_review_target(monkeypatch) -> None:
+    def _fake_run_review_workflow(_working_dir, _args=""):
+        return SimpleNamespace(
+            body="/review: no review target (no pending changes detected)"
+        )
+
+    monkeypatch.setattr(
+        "openminion.cli.presentation.review.run_review_workflow",
+        _fake_run_review_workflow,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command("/review")
+            await pilot.pause()
+            body = _last_system_body(screen.query_one(FocusTranscript))
+
+            assert "no review target" in body
+
+
+@pytest.mark.asyncio
+async def test_slash_review_renders_blocking_result(monkeypatch) -> None:
+    def _fake_run_review_workflow(_working_dir, args=""):
+        assert args == "--file review.diff"
+        return SimpleNamespace(
+            body="Review result (file): severity=block; findings=1; files=1; +1/-60\n"
+            "Findings:\n- [block] large_deletion tests/test_a.py"
+        )
+
+    monkeypatch.setattr(
+        "openminion.cli.presentation.review.run_review_workflow",
+        _fake_run_review_workflow,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        app = _make_app(tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command("/review --file review.diff")
+            await pilot.pause()
+            body = _last_system_body(screen.query_one(FocusTranscript))
+
+            assert "severity=block" in body
+            assert "large_deletion" in body

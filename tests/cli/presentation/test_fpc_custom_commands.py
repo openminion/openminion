@@ -47,12 +47,12 @@ def test_project_shadows_user_on_collision(tmp_path: Path) -> None:
     assert result["/foo"].body == "project version"
 
 
-def test_discover_handles_missing_dirs(tmp_path: Path) -> None:
+def test_discover_handles_missing_dirs_and_keeps_bundled_fix(tmp_path: Path) -> None:
     result = discover_custom_commands(
         project_dir=tmp_path / "does-not-exist",
         user_dir=tmp_path / "also-does-not-exist",
     )
-    assert result == {}
+    assert result["/fix"].source == "bundled"
 
 
 def test_discover_skips_non_md_files(tmp_path: Path) -> None:
@@ -63,7 +63,7 @@ def test_discover_skips_non_md_files(tmp_path: Path) -> None:
     (project / "baz.py").write_text("nope")
 
     result = discover_custom_commands(project_dir=project, user_dir=None)
-    assert set(result.keys()) == {"/foo"}
+    assert set(result.keys()) == {"/fix", "/foo"}
 
 
 def test_discover_with_warnings_reports_invalid_name(tmp_path: Path) -> None:
@@ -72,8 +72,80 @@ def test_discover_with_warnings_reports_invalid_name(tmp_path: Path) -> None:
     (project / "Has-Spaces .md").write_text("invalid")
 
     result, warnings = discover_with_warnings(project_dir=project, user_dir=None)
-    assert result == {}
+    assert set(result) == {"/fix"}
     assert any("invalid slash name" in w for w in warnings)
+
+
+# ── Bundled commands ─────────────────────────────────────────────
+
+
+def test_bundled_fix_command_is_discoverable_without_user_or_project_dirs() -> None:
+    result = discover_custom_commands(project_dir=None, user_dir=None)
+
+    cmd = result["/fix"]
+    assert cmd.source == "bundled"
+    assert cmd.description == "Run a focused fix workflow"
+    assert "Reproduce" in cmd.body
+    assert "Diagnose" in cmd.body
+    assert "Patch" in cmd.body
+    assert "Verify" in cmd.body
+    assert "Report final status" in cmd.body
+
+
+def test_user_fix_command_overrides_bundled_fix(tmp_path: Path) -> None:
+    user = tmp_path / "data" / "commands"
+    user.mkdir(parents=True)
+    (user / "fix.md").write_text("user fix: $ARGUMENTS")
+
+    result = discover_custom_commands(project_dir=None, user_dir=user)
+
+    assert result["/fix"].source == "user"
+    assert result["/fix"].body == "user fix: $ARGUMENTS"
+
+
+def test_project_fix_command_overrides_user_and_bundled_fix(tmp_path: Path) -> None:
+    user = tmp_path / "data" / "commands"
+    user.mkdir(parents=True)
+    (user / "fix.md").write_text("user fix")
+    project = tmp_path / "proj" / ".openminion" / "commands"
+    project.mkdir(parents=True)
+    (project / "fix.md").write_text("project fix")
+
+    result = discover_custom_commands(project_dir=project, user_dir=user)
+
+    assert result["/fix"].source == "project"
+    assert result["/fix"].body == "project fix"
+
+
+def test_bundled_fix_render_substitutes_arguments() -> None:
+    cmd = discover_custom_commands(project_dir=None, user_dir=None)["/fix"]
+
+    rendered = render_command(cmd, arg_string="tests/foo_test.py::test_bar")
+
+    assert "tests/foo_test.py::test_bar" in rendered
+    for needle in ("Reproduce", "Diagnose", "Patch", "Verify", "final status"):
+        assert needle in rendered
+
+
+def test_bundled_fix_render_without_arguments_asks_for_target() -> None:
+    cmd = discover_custom_commands(project_dir=None, user_dir=None)["/fix"]
+
+    rendered = render_command(cmd, arg_string="")
+
+    assert "If no target" in rendered
+    assert "ask me for the missing target" in rendered
+
+
+def test_bundled_fix_markdown_is_packaged_resource() -> None:
+    import importlib.resources as resources
+
+    fix_md = resources.files(
+        "openminion.cli.presentation.bundled_commands"
+    ).joinpath("fix.md")
+
+    assert fix_md.is_file()
+    assert "focused repair workflow" in fix_md.read_text(encoding="utf-8")
+
 
 
 # ── Frontmatter parsing ──────────────────────────────────────────

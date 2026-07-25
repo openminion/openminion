@@ -96,8 +96,71 @@ def test_running_status_maps_to_async_unsupported() -> None:
     )
     assert result.ok is False
     assert result.status == "running"
-    assert result.error_code == "A2A_DELEGATE_ASYNC_UNSUPPORTED"
+    assert result.error_code == "A2A_DELEGATE_ASYNC_UNREQUESTED"
     assert result.task_id == "j1"
+
+
+def test_async_delegate_returns_resumable_running_handle() -> None:
+    call = _RecordingCall(
+        {"status": BRAIN_JOB_STATUS_RUNNING, "summary": "job started", "task_id": "j1"}
+    )
+    adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
+
+    result = adapter.delegate(
+        agent_id="worker",
+        instruction="sleep",
+        timeout_seconds=10,
+        mode="async",
+    )
+
+    assert result.ok is True
+    assert result.status == "running"
+    assert result.task_id == "j1"
+    assert result.error_code == ""
+    assert call.command is not None
+    assert call.command["expect_async"] is True
+    assert call.command["params"]["mode"] == "async"
+
+
+def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
+    class _LifecycleCall(_RecordingCall):
+        def __init__(self) -> None:
+            super().__init__({})
+            self.polled: list[str] = []
+            self.cancelled: list[str] = []
+
+        def poll_task(self, *, task_id, session_id, trace_id):
+            self.polled.append(task_id)
+            return {
+                "status": "running",
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "summary": "still running",
+            }
+
+        def cancel_task(self, *, task_id, session_id, trace_id):
+            self.cancelled.append(task_id)
+            return {
+                "status": "canceled",
+                "task_id": task_id,
+                "trace_id": trace_id,
+                "summary": "cancelled",
+            }
+
+    call = _LifecycleCall()
+    adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
+
+    status = adapter.status(task_id="job-1")
+    resumed = adapter.resume(task_id="job-1")
+    cancelled = adapter.cancel(task_id="job-1")
+
+    assert status.ok is True
+    assert status.status == "running"
+    assert resumed.ok is True
+    assert call.polled == ["job-1", "job-1"]
+    assert cancelled.ok is True
+    assert cancelled.status == "canceled"
+    assert call.cancelled == ["job-1"]
 
 
 def test_empty_args_short_circuit_without_calling_a2a() -> None:

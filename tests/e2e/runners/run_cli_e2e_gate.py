@@ -11,6 +11,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 PYTHON = ROOT / ".venv" / "bin" / "python3.11"
+TIMEOUT_ENV = "OPENMINION_CLI_E2E_GATE_TIMEOUT_SECONDS"
+DEFAULT_LIVE_TIMEOUT_SECONDS = 1800
 
 LOCAL_TESTS = (
     "tests/cli/test_default_invocation.py",
@@ -27,8 +29,32 @@ HELP_COMMANDS = (
 )
 
 
-def _run(command: list[str], *, env: dict[str, str]) -> int:
-    return subprocess.call(command, cwd=ROOT, env=env)
+def _timeout_seconds(env: dict[str, str]) -> int:
+    raw = str(env.get(TIMEOUT_ENV, "")).strip()
+    if not raw:
+        return DEFAULT_LIVE_TIMEOUT_SECONDS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_LIVE_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_LIVE_TIMEOUT_SECONDS
+
+
+def _run(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    timeout_seconds: int | None = None,
+) -> int:
+    try:
+        return subprocess.call(command, cwd=ROOT, env=env, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        rendered = " ".join(command)
+        print(
+            f"OpenMinion CLI E2E gate timed out after {timeout_seconds}s: {rendered}",
+            file=sys.stderr,
+        )
+        return 124
 
 
 def _run_local(env: dict[str, str]) -> int:
@@ -50,6 +76,7 @@ def _run_live(env: dict[str, str]) -> int:
     return _run(
         [str(PYTHON), "tests/e2e/runners/run_cli_focus_e2e.py", "live"],
         env=env,
+        timeout_seconds=_timeout_seconds(env),
     )
 
 

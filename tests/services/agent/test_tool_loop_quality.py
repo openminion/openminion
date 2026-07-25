@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from pydantic import BaseModel
+
 from openminion.base.config import OpenMinionConfig
 from openminion.base.types import Message
 from openminion.modules.llm.providers.base import ProviderToolCall
+from openminion.modules.policy import SecurityPolicyEngine
 from openminion.modules.tool.base import ToolExecutionResult
-from openminion.modules.tool.registry import ToolExecutionBatch
+from openminion.modules.tool.registry import ToolExecutionBatch, ToolRegistry, ToolSpec
 from openminion.services.agent.execution.composition import build_service_port
 from openminion.services.agent.execution.runtime import ExecutorRuntime
 from openminion.services.agent.execution.loop_quality import (
@@ -29,6 +32,10 @@ def _call(command: str, *, call_id: str = "") -> ProviderToolCall:
         id=call_id,
         source="test",
     )
+
+
+class _NoArgs(BaseModel):
+    pass
 
 
 def test_loop_quality_observes_exact_duplicate_call_shapes() -> None:
@@ -165,3 +172,152 @@ def test_executor_observes_without_suppressing_legitimate_calls() -> None:
     assert len(batch.results) == 2
     assert security_events == []
     assert denied is False
+
+
+def test_executor_runtime_routes_sidecar_autostart_through_approval_callback() -> None:
+    captured_env: dict[str, str] = {}
+    approvals: list[tuple[str, dict[str, object], str]] = []
+
+    def _handler(_args, runtime_context):
+        policy_raw = getattr(getattr(runtime_context, "policy", None), "raw", {})
+        context_metadata = dict(policy_raw.get("context_metadata") or {})
+        captured_env.update(dict(context_metadata.get("runtime_env") or {}))
+        return {"ok": True, "content": "browser ready"}
+
+    registry = ToolRegistry()
+    registry.add(
+        ToolSpec(
+            name="browser",
+            args_model=_NoArgs,
+            min_scope="READ_ONLY",
+            handler=_handler,
+            sidecar="pinchtab",
+            prompt_visible_runtime_name=True,
+        )
+    )
+    registry.bind_sidecar_autostart(
+        lambda **kwargs: {
+            "enabled": dict(kwargs.get("runtime_env") or {}).get(
+                "PINCHTAB_AUTOSTART"
+            )
+            == "1",
+            "source": "test",
+        }
+    )
+    inbound = Message(channel="console", target="user", body="browser", metadata={})
+
+    async def _approve(tool_name, args, call_id):
+        approvals.append((tool_name, dict(args), str(call_id)))
+        return True
+
+    runtime = SimpleNamespace(
+        inbound=inbound,
+        progress_callback=None,
+        approval_callback=_approve,
+        tool_call_signature_counts={},
+        tool_loop_observations=[],
+        inference_steps=0,
+    )
+    service = SimpleNamespace(
+        _config=OpenMinionConfig(),
+        _identity_agent_id="agent-1",
+        _tool_selection=None,
+        _tools=registry,
+        _security_policy=SecurityPolicyEngine(),
+        _self_improvement=None,
+        _logger=None,
+        _home_root=None,
+    )
+    runtime_ops = ExecutorRuntime(
+        service_port=build_service_port(service), runtime=runtime
+    )
+
+    batch, security_events, denied = asyncio.run(
+        runtime_ops.execute_tool_calls(
+            [ProviderToolCall(name="browser", arguments={}, id="call-1")],
+            tool_budget_state=None,
+        )
+    )
+
+    assert denied is False
+    assert security_events == []
+    assert batch.has_success
+    assert captured_env["PINCHTAB_AUTOSTART"] == "1"
+    assert approvals == [
+        (
+            "sidecar.pinchtab.autostart",
+            {"sidecar": "pinchtab"},
+            "call-1:sidecar:pinchtab",
+        )
+    ]
+
+
+def test_sidecar_approval_runs_when_security_policy_adapter_is_absent() -> None:
+    captured_env: dict[str, str] = {}
+    approvals: list[str] = []
+
+    def _handler(_args, runtime_context):
+        policy_raw = getattr(getattr(runtime_context, "policy", None), "raw", {})
+        context_metadata = dict(policy_raw.get("context_metadata") or {})
+        captured_env.update(dict(context_metadata.get("runtime_env") or {}))
+        return {"ok": True, "content": "browser ready"}
+
+    registry = ToolRegistry()
+    registry.add(
+        ToolSpec(
+            name="browser",
+            args_model=_NoArgs,
+            min_scope="READ_ONLY",
+            handler=_handler,
+            sidecar="pinchtab",
+        )
+    )
+    registry.bind_sidecar_autostart(
+        lambda **kwargs: {
+            "enabled": dict(kwargs.get("runtime_env") or {}).get(
+                "PINCHTAB_AUTOSTART"
+            )
+            == "1",
+            "source": "test",
+        }
+    )
+    inbound = Message(channel="console", target="user", body="browser", metadata={})
+
+    async def _approve(tool_name, _args, _call_id):
+        approvals.append(str(tool_name))
+        return True
+
+    runtime = SimpleNamespace(
+        inbound=inbound,
+        progress_callback=None,
+        approval_callback=_approve,
+        tool_call_signature_counts={},
+        tool_loop_observations=[],
+        inference_steps=0,
+    )
+    service = SimpleNamespace(
+        _config=OpenMinionConfig(),
+        _identity_agent_id="agent-1",
+        _tool_selection=None,
+        _tools=registry,
+        _security_policy=None,
+        _self_improvement=None,
+        _logger=None,
+        _home_root=None,
+    )
+    runtime_ops = ExecutorRuntime(
+        service_port=build_service_port(service), runtime=runtime
+    )
+
+    batch, security_events, denied = asyncio.run(
+        runtime_ops.execute_tool_calls(
+            [ProviderToolCall(name="browser", arguments={}, id="call-1")],
+            tool_budget_state=None,
+        )
+    )
+
+    assert denied is False
+    assert security_events == []
+    assert batch.has_success
+    assert captured_env["PINCHTAB_AUTOSTART"] == "1"
+    assert approvals == ["sidecar.pinchtab.autostart"]

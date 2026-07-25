@@ -13,7 +13,9 @@ from openminion.modules.llm.providers.base import (
 from openminion.modules.llm.constants import DEFAULT_FINISH_REASON_ALIASES
 from openminion.modules.llm.providers.tool_calling import (
     detect_raw_envelope,
+    detect_raw_tool_markup,
     detect_raw_xml_tool_wrapper,
+    normalize_tool_calls,
     sanitize_envelope_leak,
 )
 
@@ -156,9 +158,21 @@ def normalize_provider_response(
     if (
         text
         and not tool_calls
-        and (detect_raw_envelope(text) or detect_raw_xml_tool_wrapper(text))
+        and (
+            detect_raw_envelope(text)
+            or detect_raw_tool_markup(text)
+            or detect_raw_xml_tool_wrapper(text)
+        )
     ):
-        sanitized_text = sanitize_envelope_leak(text)
+        parse_result = normalize_tool_calls(
+            assistant_text=text,
+            provider_name=provider_name,
+            model_name=model_name or model,
+            allowed_tool_names=allowed_tool_names,
+        )
+        for key, value in parse_result.metadata.items():
+            normalization.setdefault(key, value)
+        sanitized_text = sanitize_envelope_leak(text, metadata=parse_result.metadata)
         if sanitized_text != text:
             normalization["envelope_sanitized"] = True
             text = sanitized_text

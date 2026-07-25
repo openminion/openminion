@@ -3,7 +3,72 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from openminion.cli.commands.agents import agent_ls, agent_status
+from openminion.cli.commands.agent_delegation import (
+    AgentDelegateRequest,
+    run_agent_delegate_request,
+)
+from openminion.cli.commands.agents import agent_delegate, agent_ls, agent_status
+from openminion.modules.tool.runtime.delegation import A2ADelegateResult
+
+
+class _DelegateSeam:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def delegate(
+        self,
+        *,
+        agent_id,
+        instruction,
+        timeout_seconds,
+        mode="sync",
+    ) -> A2ADelegateResult:
+        self.calls.append(
+            (
+                "delegate",
+                {
+                    "agent_id": agent_id,
+                    "instruction": instruction,
+                    "timeout_seconds": timeout_seconds,
+                    "mode": mode,
+                },
+            )
+        )
+        return A2ADelegateResult(
+            ok=True,
+            status="running" if mode == "async" else "success",
+            content="delegated ok",
+            target_agent_id=agent_id,
+            trace_id="trace-1",
+            task_id="task-1" if mode == "async" else "",
+        )
+
+    def status(self, *, task_id) -> A2ADelegateResult:
+        self.calls.append(("status", {"task_id": task_id}))
+        return A2ADelegateResult(
+            ok=True,
+            status="running",
+            content="still running",
+            task_id=task_id,
+        )
+
+    def resume(self, *, task_id) -> A2ADelegateResult:
+        self.calls.append(("resume", {"task_id": task_id}))
+        return A2ADelegateResult(
+            ok=True,
+            status="success",
+            content="final result",
+            task_id=task_id,
+        )
+
+    def cancel(self, *, task_id) -> A2ADelegateResult:
+        self.calls.append(("cancel", {"task_id": task_id}))
+        return A2ADelegateResult(
+            ok=True,
+            status="canceled",
+            content="cancelled",
+            task_id=task_id,
+        )
 
 
 def test_agent_ls_json_output(capsys) -> None:
@@ -32,6 +97,15 @@ def test_agent_ls_json_output(capsys) -> None:
         {
             "agent_id": "agent-1",
             "display_name": "Agent One",
+            "configured": False,
+            "registry_present": True,
+            "hot": True,
+            "heartbeat_active": True,
+            "available": True,
+            "running": True,
+            "stopped": False,
+            "unknown": False,
+            "state": "running",
             "host": "127.0.0.1",
             "pid": 111,
             "port": 8001,
@@ -40,6 +114,15 @@ def test_agent_ls_json_output(capsys) -> None:
         {
             "agent_id": "agent-2",
             "display_name": "Agent Two",
+            "configured": False,
+            "registry_present": True,
+            "hot": False,
+            "heartbeat_active": False,
+            "available": True,
+            "running": False,
+            "stopped": True,
+            "unknown": False,
+            "state": "stopped",
             "host": "",
             "pid": 0,
             "port": 0,
@@ -82,3 +165,145 @@ def test_agent_status_json_output(capsys) -> None:
         "registered": True,
         "status": "running",
     }
+
+
+def test_agent_delegate_sync_json_uses_delegate_seam(capsys) -> None:
+    seam = _DelegateSeam()
+
+    code = agent_delegate(
+        config=SimpleNamespace(),
+        home_root="/tmp/home",
+        parent_agent_id="parent",
+        request=AgentDelegateRequest(
+            mode="sync",
+            target_agent_id="worker",
+            instruction="summarize docs",
+            timeout_seconds=42,
+        ),
+        as_json=True,
+        delegate_api=seam,
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["agent_id"] == "worker"
+    assert payload["mode"] == "sync"
+    assert payload["status"] == "success"
+    assert seam.calls == [
+        (
+            "delegate",
+            {
+                "agent_id": "worker",
+                "instruction": "summarize docs",
+                "timeout_seconds": 42,
+                "mode": "sync",
+            },
+        )
+    ]
+
+
+def test_agent_delegate_async_text_surfaces_task_handle(capsys) -> None:
+    seam = _DelegateSeam()
+
+    code = agent_delegate(
+        config=SimpleNamespace(),
+        home_root="/tmp/home",
+        parent_agent_id="parent",
+        request=AgentDelegateRequest(
+            mode="async",
+            target_agent_id="worker",
+            instruction="run long research",
+        ),
+        as_json=False,
+        delegate_api=seam,
+    )
+
+    body = capsys.readouterr().out
+    assert code == 0
+    assert "status    running" in body
+    assert "task      task-1" in body
+
+
+def test_agent_delegate_lifecycle_modes_use_task_id(capsys) -> None:
+    seam = _DelegateSeam()
+    modes = ("status", "resume", "result", "cancel")
+    payloads: list[dict[str, object]] = []
+
+    for mode in modes:
+        code = agent_delegate(
+            config=SimpleNamespace(),
+            home_root="/tmp/home",
+            parent_agent_id="parent",
+            request=AgentDelegateRequest(mode=mode, task_id="task-1"),
+            as_json=True,
+            delegate_api=seam,
+        )
+        assert code == 0
+        payloads.append(json.loads(capsys.readouterr().out))
+
+    assert [payload["status"] for payload in payloads] == [
+        "running",
+        "success",
+        "success",
+        "canceled",
+    ]
+    assert [name for name, _payload in seam.calls] == [
+        "status",
+        "resume",
+        "resume",
+        "cancel",
+    ]
+
+
+def test_agent_delegate_unavailable_seam_returns_failure(capsys, monkeypatch) -> None:
+    import openminion.cli.commands.agent_delegation as delegation_mod
+
+    monkeypatch.setattr(delegation_mod, "build_a2a_delegate_api", lambda **_: None)
+
+    code = agent_delegate(
+        config=SimpleNamespace(runtime=SimpleNamespace(env={})),
+        home_root="/tmp/home",
+        parent_agent_id="parent",
+        request=AgentDelegateRequest(
+            mode="sync",
+            target_agent_id="worker",
+            instruction="do work",
+        ),
+        as_json=True,
+        delegate_api=None,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "DEPENDENCY_MISSING"
+
+
+def test_delegate_request_threads_runtime_resolver_to_a2a_builder(monkeypatch) -> None:
+    import openminion.cli.commands.agent_delegation as delegation_mod
+
+    seam = _DelegateSeam()
+    seen: dict[str, object] = {}
+    runtime = object()
+
+    def _fake_builder(**kwargs):
+        seen.update(kwargs)
+        return seam
+
+    monkeypatch.setattr(delegation_mod, "build_a2a_delegate_api", _fake_builder)
+
+    payload = run_agent_delegate_request(
+        config=SimpleNamespace(runtime=SimpleNamespace(env={})),
+        home_root="/tmp/home",
+        parent_agent_id="parent",
+        request=AgentDelegateRequest(
+            mode="sync",
+            target_agent_id="worker",
+            instruction="do work",
+        ),
+        runtime_resolver=lambda: runtime,
+    )
+
+    assert payload["ok"] is True
+    assert seen["runtime_resolver"]() is runtime

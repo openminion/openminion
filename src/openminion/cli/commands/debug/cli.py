@@ -6,7 +6,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from openminion.cli.config import load_cli_config, resolve_cli_roots
+from openminion.cli.config import (
+    load_cli_config,
+    load_cli_config_from_args,
+    resolve_cli_roots,
+)
 from openminion.cli.transport.daemon_client import daemon_request
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
@@ -15,14 +19,22 @@ from openminion.services.diagnostics.debug import (
     is_debug_surface_enabled,
 )
 
+from .providers.core import configure_debug_runtime_context
 from .registry import register_core_providers
 
 
 load_config = load_cli_config
 
 
+def _load_debug_config(args: object) -> Any:
+    loader = globals().get("load_config", load_cli_config)
+    if loader in (load_cli_config, load_cli_config_from_args):
+        return load_cli_config_from_args(args)
+    return loader(getattr(args, "config", None))
+
+
 def run_debug(args) -> int:
-    config = load_config(args.config)
+    config = _load_debug_config(args)
     if not is_debug_surface_enabled(config, surface="cli"):
         print(
             "debug CLI is disabled by config (runtime.debug_enabled/runtime.debug_cli_enabled)."
@@ -42,16 +54,22 @@ def run_debug(args) -> int:
 
 def _debug_modules(args) -> int:
     registry = get_debug_registry()
+    _configure_debug_context(args)
     register_core_providers(registry)
 
-    config = load_config(args.config)
+    config = _load_debug_config(args)
     auto_start = bool(getattr(config.runtime, "daemon_auto_start", False))
 
     daemon_payload = None
     try:
         from openminion.cli.commands.daemon import ensure_daemon_running
 
-        endpoint = ensure_daemon_running(args.config, auto_start=auto_start)
+        endpoint = ensure_daemon_running(
+            args.config,
+            auto_start=auto_start,
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
         status, payload = daemon_request(
             endpoint=endpoint,
             method="GET",
@@ -90,20 +108,26 @@ def _debug_modules(args) -> int:
 def _debug_module(args) -> int:
     module_name = str(getattr(args, "module_name", "")).strip()
     if not module_name:
-        print("Error: --name is required", file="__stderr__")
+        print("Error: --name is required", file=sys.stderr)
         return 1
 
     registry = get_debug_registry()
+    _configure_debug_context(args)
     register_core_providers(registry)
 
-    config = load_config(args.config)
+    config = _load_debug_config(args)
     auto_start = bool(getattr(config.runtime, "daemon_auto_start", False))
 
     daemon_payload = None
     try:
         from openminion.cli.commands.daemon import ensure_daemon_running
 
-        endpoint = ensure_daemon_running(args.config, auto_start=auto_start)
+        endpoint = ensure_daemon_running(
+            args.config,
+            auto_start=auto_start,
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
         status, payload = daemon_request(
             endpoint=endpoint,
             method="GET",
@@ -120,12 +144,12 @@ def _debug_module(args) -> int:
     else:
         provider = registry.get_module(module_name)
         if provider is None:
-            print(f"Error: Unknown module '{module_name}'", file="__stderr__")
+            print(f"Error: Unknown module '{module_name}'", file=sys.stderr)
             return 1
         try:
             module = provider.get_debug().to_dict()
         except Exception as exc:
-            print(f"Error: Failed to get debug info: {exc}", file="__stderr__")
+            print(f"Error: Failed to get debug info: {exc}", file=sys.stderr)
             return 1
 
     if getattr(args, "json", False):
@@ -150,6 +174,14 @@ def _debug_module(args) -> int:
             )
 
     return 0
+
+
+def _configure_debug_context(args: object) -> None:
+    configure_debug_runtime_context(
+        config_path=getattr(args, "config", None),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
 
 
 _LAYER_PREFIXES = {

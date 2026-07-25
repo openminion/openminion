@@ -176,6 +176,43 @@ def test_router_affinity_precedes_runtime_preferences() -> None:
     assert resolved.provider_id == "playwright"
 
 
+def test_router_reads_external_affinity_callbacks() -> None:
+    reg = BrowserProviderRegistry()
+    reg.register(_Provider("pinchtab"))
+    reg.register(_Provider("playwright"))
+    tab_affinity: dict[str, str] = {"tab-persisted": "playwright"}
+    instance_affinity: dict[str, str] = {"inst-persisted": "pinchtab"}
+    router = BrowserRouter(
+        reg,
+        config=BrowserRoutingConfig(
+            default_provider="pinchtab",
+            lookup_tab_affinity=tab_affinity.get,
+            lookup_instance_affinity=instance_affinity.get,
+        ),
+    )
+
+    assert (
+        router.select_provider(
+            requested_provider="",
+            agent_profile_provider="",
+            session_provider_override="",
+            tab_id="tab-persisted",
+            runtime_default_provider="pinchtab",
+        ).provider_id
+        == "playwright"
+    )
+    assert (
+        router.select_provider(
+            requested_provider="",
+            agent_profile_provider="",
+            session_provider_override="",
+            instance_id="inst-persisted",
+            runtime_default_provider="playwright",
+        ).provider_id
+        == "pinchtab"
+    )
+
+
 def test_router_full_precedence_chain_pinchtab_playwright_coexistence() -> None:
     reg = BrowserProviderRegistry()
     for pid in ("alpha", "beta", "gamma", "delta", "pinchtab", "playwright"):

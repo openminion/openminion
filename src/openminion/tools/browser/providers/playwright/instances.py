@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, List
 
 
 @dataclass
@@ -101,7 +101,7 @@ class PlaywrightTabManager:
             rows = [row for row in rows if row.instance_id == token]
         return rows
 
-    def clear_for_instance(self, instance_id: str) -> list[PlaywrightTab]:
+    def clear_for_instance(self, instance_id: str) -> List[PlaywrightTab]:
         token = str(instance_id).strip()
         deleted: list[PlaywrightTab] = []
         for tab_id in list(self._tabs.keys()):

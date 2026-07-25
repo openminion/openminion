@@ -34,12 +34,12 @@ def _load_module_from_repo_path(module_name: str, *relative_parts: str):
 
 def _load_cli_gate_module():
     return _load_module_from_repo_path(
-        "run_cli_chat_e2e_gate",
+        "run_cli_e2e_gate",
         "openminion",
         "tests",
         "e2e",
         "runners",
-        "run_cli_chat_e2e_gate.py",
+        "run_cli_e2e_gate.py",
     )
 
 
@@ -212,58 +212,46 @@ def test_identity_yaml_matrix_artifacts_use_openminion_package_home(
     assert artifact_dir.exists()
 
 
-def test_cli_chat_gate_artifacts_root_uses_default_data_root(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_cli_gate_local_mode_runs_help_and_focus_contracts(monkeypatch) -> None:
     gate = _load_cli_gate_module()
-    openminion_home = tmp_path / "openminion-home"
-    openminion_home.mkdir()
+    calls: list[list[str]] = []
 
-    monkeypatch.setenv("OPENMINION_HOME", str(openminion_home))
+    def fake_run(command, *, env, timeout_seconds=None):
+        assert timeout_seconds is None
+        assert env["PYTHONPATH"] == "src"
+        calls.append([str(part) for part in command])
+        return 0
 
-    assert gate.resolve_artifacts_root(openminion_home) == (
-        openminion_home / ".openminion" / "runtime" / "cli-chat-e2e"
-    )
+    monkeypatch.setattr(gate, "_run", fake_run)
 
-    output_path = Path("artifacts/cli-chat-e2e/transcript.txt")
-    resolved = (
-        gate.resolve_artifacts_root(openminion_home)
-        / gate._normalize_artifact_relative_path(output_path)
-    ).resolve()
+    assert gate._run_local({"PYTHONPATH": "src"}) == 0
 
-    assert resolved == (
-        openminion_home / ".openminion" / "runtime" / "cli-chat-e2e" / "transcript.txt"
-    )
+    assert len(calls) == len(gate.HELP_COMMANDS) + 1
+    assert [tuple(call[3:]) for call in calls[:-1]] == list(gate.HELP_COMMANDS)
+    assert calls[-1][1:4] == ["-m", "pytest", "-q"]
+    assert calls[-1][4:] == [*gate.LOCAL_TESTS, "-ra"]
 
 
-def test_cli_chat_gate_rewrites_absolute_repo_artifacts_path(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_cli_gate_live_mode_delegates_to_focus_runner(monkeypatch) -> None:
     gate = _load_cli_gate_module()
-    repo_root = tmp_path / "repo"
-    repo_root.mkdir()
-    openminion_home = tmp_path / "openminion-home"
-    openminion_home.mkdir()
+    captured: dict[str, object] = {}
 
-    monkeypatch.setenv("OPENMINION_HOME", str(openminion_home))
+    def fake_run(command, *, env, timeout_seconds=None):
+        captured["command"] = [str(part) for part in command]
+        captured["env"] = dict(env)
+        captured["timeout_seconds"] = timeout_seconds
+        return 0
 
-    absolute_legacy_path = (
-        repo_root / "artifacts" / "cli-chat-e2e" / "memory-export-import" / "gate.txt"
-    )
-    resolved = gate._normalize_output_path(
-        raw_path=absolute_legacy_path,
-        artifacts_root=gate.resolve_artifacts_root(openminion_home),
-        repo_root=repo_root,
-    )
+    monkeypatch.setattr(gate, "_run", fake_run)
 
-    assert resolved == (
-        openminion_home
-        / ".openminion"
-        / "runtime"
-        / "cli-chat-e2e"
-        / "memory-export-import"
-        / "gate.txt"
-    )
+    assert gate._run_live({"OPENMINION_CLI_E2E_GATE_TIMEOUT_SECONDS": "12"}) == 0
+
+    assert captured["command"][-2:] == [
+        "tests/e2e/runners/run_cli_focus_e2e.py",
+        "live",
+    ]
+    assert captured["env"]["OPENMINION_LIVE_CLI_FOCUS_E2E"] == "1"
+    assert captured["timeout_seconds"] == 12
 
 
 def test_cli_chat_probe_defaults_home_and_data_root_to_openminion_package_root(
@@ -281,6 +269,54 @@ def test_cli_chat_probe_defaults_home_and_data_root_to_openminion_package_root(
 
     assert probe._resolve_home_root() == openminion_root
     assert probe._resolve_data_root(openminion_root) == openminion_root / ".openminion"
+
+
+def test_cli_chat_probe_passes_data_root_to_child_cli(
+    monkeypatch, tmp_path: Path
+) -> None:
+    probe = _load_cli_chat_probe_module()
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"runtime": {"env": {}}}', encoding="utf-8")
+    data_root = tmp_path / "probe-data"
+    captured: dict[str, object] = {}
+
+    def fake_run_probe_session(**kwargs):
+        captured.update(kwargs)
+        return 0, "HRMR_CHAT_OK\n"
+
+    monkeypatch.setattr(probe, "_run_probe_session", fake_run_probe_session)
+    monkeypatch.setattr(probe, "_find_conversation_session_id", lambda **_: None)
+    monkeypatch.setattr(probe, "_collect_tool_audit_rows", lambda **_: ([], []))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cli_chat_probe.py",
+            "--config",
+            str(config_path),
+            "--agent",
+            "openminion",
+            "--session",
+            "probe-session",
+            "--message",
+            "reply with the marker",
+            "--data-root",
+            str(data_root),
+            "--python",
+            sys.executable,
+            "--require-output-marker",
+            "HRMR_CHAT_OK",
+        ],
+    )
+
+    assert probe.main() == 0
+
+    command = captured["cmd"]
+    env = captured["env"]
+    assert isinstance(command, list)
+    assert isinstance(env, dict)
+    assert command[command.index("--data-root") + 1] == str(data_root.resolve())
+    assert env["OPENMINION_DATA_ROOT"] == str(data_root.resolve())
 
 
 @pytest.mark.parametrize(
@@ -381,64 +417,44 @@ def test_cli_chat_probe_leaves_nonlegacy_relative_output_under_cwd(
     assert normalized == openminion_root / "probe-output.txt"
 
 
-def test_cli_chat_gate_resolves_default_agent_from_config_payload() -> None:
+def test_cli_gate_default_mode_is_local() -> None:
     gate = _load_cli_gate_module()
 
-    resolved = gate._resolve_agent_id(
-        requested_agent="",
-        config_payload={
-            "agents": {
-                "alpha": {"provider": "openai"},
-                "beta": {"provider": "openai"},
-            },
-            "default_agent": "beta",
-        },
+    assert gate._parse_args([]).mode == "local"
+
+
+@pytest.mark.parametrize("mode", ["local", "live", "all"])
+def test_cli_gate_accepts_supported_modes(mode: str) -> None:
+    gate = _load_cli_gate_module()
+
+    assert gate._parse_args([mode]).mode == mode
+
+
+def test_cli_gate_timeout_uses_positive_integer_or_default() -> None:
+    gate = _load_cli_gate_module()
+
+    assert gate._timeout_seconds({}) == gate.DEFAULT_LIVE_TIMEOUT_SECONDS
+    assert gate._timeout_seconds({gate.TIMEOUT_ENV: "0"}) == gate.DEFAULT_LIVE_TIMEOUT_SECONDS
+    assert gate._timeout_seconds({gate.TIMEOUT_ENV: "bad"}) == gate.DEFAULT_LIVE_TIMEOUT_SECONDS
+    assert gate._timeout_seconds({gate.TIMEOUT_ENV: "42"}) == 42
+
+
+def test_cli_gate_main_sets_runtime_env_and_runs_local(monkeypatch, tmp_path: Path) -> None:
+    gate = _load_cli_gate_module()
+    captured: dict[str, str] = {}
+    python_path = tmp_path / "python3.11"
+    python_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(gate, "PYTHON", python_path)
+    monkeypatch.setattr(
+        gate,
+        "_run_local",
+        lambda env: captured.update(env) or 0,
     )
 
-    assert resolved == "beta"
-
-
-def test_cli_chat_gate_resolves_single_agent_without_default() -> None:
-    gate = _load_cli_gate_module()
-
-    resolved = gate._resolve_agent_id(
-        requested_agent="",
-        config_payload={"agents": {"solo": {"provider": "openai"}}},
-    )
-
-    assert resolved == "solo"
-
-
-def test_cli_chat_gate_explicit_agent_overrides_config_default() -> None:
-    gate = _load_cli_gate_module()
-
-    resolved = gate._resolve_agent_id(
-        requested_agent="alpha",
-        config_payload={
-            "agents": {
-                "alpha": {"provider": "openai"},
-                "beta": {"provider": "openai"},
-            },
-            "default_agent": "beta",
-        },
-    )
-
-    assert resolved == "alpha"
-
-
-def test_cli_chat_gate_rejects_multi_agent_config_without_default() -> None:
-    gate = _load_cli_gate_module()
-
-    with pytest.raises(ValueError, match="could not resolve an agent id"):
-        gate._resolve_agent_id(
-            requested_agent="",
-            config_payload={
-                "agents": {
-                    "alpha": {"provider": "openai"},
-                    "beta": {"provider": "openai"},
-                }
-            },
-        )
+    assert gate.main(["local"]) == 0
+    assert captured["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert captured["PYTHONPATH"] == str(gate.ROOT / "src")
 
 
 def test_chat_permutations_runner_artifacts_use_generated_root(

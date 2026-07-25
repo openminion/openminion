@@ -3,10 +3,8 @@
 from types import SimpleNamespace
 from typing import Any
 
-from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.tool.base import ToolExecutionResult
 from openminion.modules.policy import (
-    DECISION_REQUIRE_APPROVAL,
     SecurityPolicyContext,
     ToolBudgetState,
     default_internal_actor,
@@ -14,40 +12,17 @@ from openminion.modules.policy import (
 from openminion.modules.policy.adapters.tool import (
     build_execution_boundary_policy_adapter,
 )
+from openminion.modules.tool.sidecars import (
+    approve_sidecar_for_allowed_decision,
+    blocked_tool_result,
+    denied_tool_event,
+    filter_call_without_policy,
+    maybe_allow_denied_call_with_operator_approval,
+    provider_call_from_decision,
+    sidecar_for_tool,
+)
 
 from .ports import ProviderToolCall, TurnFlowServicePort
-
-
-def _blocked_tool_result(
-    *,
-    call: ProviderToolCall,
-    tool_name: str,
-    decision: Any,
-    event_kind: str,
-    denial_source: str,
-) -> ToolExecutionResult:
-    reason_code = str(getattr(decision, "reason", "") or "").strip() or "policy_denied"
-    decision_code = str(getattr(decision, "code", "") or "").strip() or reason_code
-    details = dict(getattr(decision, "details", {}) or {})
-    return ToolExecutionResult(
-        tool_name=tool_name or "unknown",
-        ok=False,
-        verified=False,
-        content="",
-        error=reason_code if denial_source == "budget" else "security_deny",
-        data={
-            "status": "blocked",
-            "error_code": decision_code,
-            "reason_code": reason_code,
-            "denial_source": denial_source,
-            "blocked_kind": event_kind,
-            "error_details": details,
-            "tool_name": tool_name,
-            "call_id": str(getattr(call, "id", "") or ""),
-        },
-        call_id=str(getattr(call, "id", "") or ""),
-        source="policy",
-    )
 
 
 def build_policy_adapter(
@@ -90,17 +65,38 @@ async def filter_allowed_tool_calls(
     tool_calls: list[ProviderToolCall],
     *,
     policy_adapter: Any | None,
-) -> tuple[list[ProviderToolCall], list[dict[str, str]], list[ToolExecutionResult]]:
-    if policy_adapter is None or service_port.tools is None:
-        return list(tool_calls or []), [], []
+) -> tuple[
+    list[ProviderToolCall],
+    list[dict[str, str]],
+    list[ToolExecutionResult],
+    dict[str, str],
+]:
+    if service_port.tools is None:
+        return list(tool_calls or []), [], [], {}
 
     security_events: list[dict[str, str]] = []
     denied_results: list[ToolExecutionResult] = []
     allowed_calls: list[ProviderToolCall] = []
+    runtime_env_overrides: dict[str, str] = {}
     approval_callback = getattr(runtime, "approval_callback", None)
     for call in tool_calls:
         tool_name = str(getattr(call, "name", "") or "").strip()
         tool_args = dict(getattr(call, "arguments", {}) or {})
+        sidecar = sidecar_for_tool(service_port.tools, tool_name)
+        if policy_adapter is None:
+            allowed, denied = await filter_call_without_policy(
+                call=call,
+                tool_name=tool_name,
+                sidecar=sidecar,
+                approval_callback=approval_callback,
+                runtime_env_overrides=runtime_env_overrides,
+            )
+            if denied is not None:
+                denied_results.append(denied)
+                break
+            if allowed is not None:
+                allowed_calls.append(allowed)
+            continue
         profile = service_port.tools.policy_for(tool_name)
         decision = policy_adapter.evaluate(
             tool_name=tool_name,
@@ -111,71 +107,54 @@ async def filter_allowed_tool_calls(
             ),
             args=tool_args,
         )
-        if (
-            not decision.allowed
-            and approval_callback is not None
-            and (
-                decision.requires_confirm or decision.code == DECISION_REQUIRE_APPROVAL
+        approved_call = await maybe_allow_denied_call_with_operator_approval(
+            call=call,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            decision=decision,
+            approval_callback=approval_callback,
+        )
+        if approved_call is not None:
+            allowed_calls.append(approved_call)
+            continue
+        if decision.allowed and sidecar and approval_callback is not None:
+            event, denied = await approve_sidecar_for_allowed_decision(
+                call=call,
+                tool_name=tool_name,
+                sidecar=sidecar,
+                approval_callback=approval_callback,
+                runtime_env_overrides=runtime_env_overrides,
             )
-        ):
-            with active_chat_phase("approval_wait"):
-                approved = bool(
-                    await approval_callback(
-                        tool_name,
-                        tool_args,
-                        str(getattr(call, "id", "") or ""),
-                    )
-                )
-            if approved:
-                allowed_calls.append(
-                    ProviderToolCall(
-                        name=tool_name,
-                        arguments=decision.modified_args or tool_args,
-                        id=str(getattr(call, "id", "") or ""),
-                        source=str(getattr(call, "source", "") or ""),
-                    )
-                )
-                continue
+            if event is not None:
+                security_events.append(event)
+            if denied is not None:
+                denied_results.append(denied)
+                break
         if decision.allowed:
             allowed_calls.append(
-                ProviderToolCall(
-                    name=tool_name,
-                    arguments=decision.modified_args or tool_args,
-                    id=str(getattr(call, "id", "") or ""),
-                    source=str(getattr(call, "source", "") or ""),
+                provider_call_from_decision(
+                    call=call,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    decision=decision,
                 )
             )
             continue
-        event_kind = (
-            "approval_required"
-            if decision.requires_confirm or decision.code == DECISION_REQUIRE_APPROVAL
-            else "policy_denied"
+        event, source = denied_tool_event(
+            call=call, tool_name=tool_name, decision=decision
         )
-        reason_code = str(decision.reason or "policy_denied")
-        source = "budget" if reason_code.startswith("tool_budget") else "policy"
-        details = dict(decision.details or {})
-        security_events.append(
-            {
-                "event_kind": event_kind,
-                "reason_code": reason_code,
-                "policy_version": str(details.get("policy_version", "") or "v1"),
-                "decision": str(details.get("decision", "") or decision.code),
-                "tool_name": tool_name,
-                "call_id": str(getattr(call, "id", "") or ""),
-                "source": source,
-            }
-        )
+        security_events.append(event)
         denied_results.append(
-            _blocked_tool_result(
+            blocked_tool_result(
                 call=call,
                 tool_name=tool_name,
                 decision=decision,
-                event_kind=event_kind,
+                event_kind=event["event_kind"],
                 denial_source=source,
             )
         )
         break
-    return allowed_calls, security_events, denied_results
+    return allowed_calls, security_events, denied_results, runtime_env_overrides
 
 
 __all__ = ["build_policy_adapter", "filter_allowed_tool_calls"]

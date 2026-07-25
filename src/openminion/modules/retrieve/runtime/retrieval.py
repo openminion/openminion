@@ -5,7 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Mapping, Protocol, Sequence, cast
 
 from openminion.modules.memory.runtime.scorer import clamp01
 
@@ -111,17 +111,17 @@ def resolve_retrieval_strategy(
     normalized = str(requested_strategy or "auto").strip().lower()
     if normalized == "semantic":
         if vector_adapter_enabled and embeddings_enabled:
-            return "semantic"  # type: ignore[return-value]
+            return "semantic"
         return "contextual"
     if normalized in {"contextual", "raptor", "longrag_doc_group"}:
-        return normalized  # type: ignore[return-value]
+        return cast(RetrievalStrategy, normalized)
 
     if str(purpose).lower() == "verify":
         return "contextual"
     if bool(scope.get("doc_heavy")):
         return "raptor"
     if default_strategy in {"contextual", "raptor", "longrag_doc_group"}:
-        return default_strategy  # type: ignore[return-value]
+        return cast(RetrievalStrategy, default_strategy)
     return "contextual"
 
 

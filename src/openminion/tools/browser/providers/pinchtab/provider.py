@@ -52,8 +52,10 @@ from .constants import (
     PINCHTAB_TOKEN_REF_ENV,
     PINCHTAB_URL_ENV,
 )
-from .daemon import build_daemon_config, ensure_daemon
-from openminion.services.runtime.sidecars import ensure_pinchtab_autostart
+from openminion.services.runtime.sidecars import (
+    default_sidecar_manager,
+    ensure_pinchtab_autostart,
+)
 
 _LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -190,15 +192,15 @@ def _parse_env_pairs(
     if raw is None:
         return ()
     if isinstance(raw, (list, tuple)):
-        pairs: list[tuple[str, str]] = []
+        sequence_pairs: list[tuple[str, str]] = []
         for item in raw:
             if not item:
                 continue
             key = str(item[0])
             value = str(item[1]) if len(item) > 1 else ""
             if key:
-                pairs.append((key, value))
-        return tuple(pairs)
+                sequence_pairs.append((key, value))
+        return tuple(sequence_pairs)
     cleaned = str(raw).strip()
     if not cleaned:
         return ()
@@ -336,10 +338,11 @@ class PinchTabProvider:
         )
 
     def _runtime_env(self, ctx: BrowserProviderContext | None = None) -> ToolEnv:
+        tool_context = getattr(ctx, "tool_context", None)
         if isinstance(ctx, BrowserProviderContext) and isinstance(
-            getattr(ctx, "tool_context", None), RuntimeContext
+            tool_context, RuntimeContext
         ):
-            return ctx.tool_context.env
+            return tool_context.env
         return self._env
 
     def _client(
@@ -367,10 +370,10 @@ class PinchTabProvider:
 
     def _should_autostart(self, *, ctx: BrowserProviderContext | None = None) -> bool:
         runtime_env = self._runtime_env(ctx)
-        if self.config.autostart or _bool_env(
-            PINCHTAB_AUTOSTART_ENV, False, env=runtime_env
-        ):
+        if self._autostart_already_authorized(runtime_env=runtime_env):
             return True
+        if self._has_runtime_context(ctx=ctx):
+            return False
         config_path = (
             str(runtime_env.get(OPENMINION_CONFIG_PATH_ENV, "")).strip() or None
         )
@@ -381,6 +384,21 @@ class PinchTabProvider:
             logger=logging.getLogger("openminion.sidecars"),
         )
         return bool(autostart.get("enabled"))
+
+    def _autostart_already_authorized(self, *, runtime_env: ToolEnv) -> bool:
+        return bool(self.config.autostart) or _bool_env(
+            PINCHTAB_AUTOSTART_ENV, False, env=runtime_env
+        )
+
+    @staticmethod
+    def _has_runtime_context(*, ctx: BrowserProviderContext | None) -> bool:
+        return isinstance(getattr(ctx, "tool_context", None), RuntimeContext)
+
+    def _sidecar_runtime_env(self, *, runtime_env: ToolEnv) -> dict[str, str]:
+        sidecar_env = runtime_env.snapshot()
+        if self.config.autostart:
+            sidecar_env.setdefault(PINCHTAB_AUTOSTART_ENV, "1")
+        return sidecar_env
 
     def _ensure_daemon_ready(
         self, *, ctx: BrowserProviderContext | None = None
@@ -396,15 +414,19 @@ class PinchTabProvider:
             return
         except PinchTabClientError:
             pass
-        daemon_cfg = build_daemon_config(
-            base_url=self.config.base_url,
-            runtime_dir=Path(self.config.home_root_dir),
-            launch_cmd=self.config.autostart_cmd,
-            launch_timeout_s=self.config.autostart_timeout_s,
-            env=dict(self.config.autostart_env),
+        runtime_env = self._runtime_env(ctx)
+        config_path = (
+            str(runtime_env.get(OPENMINION_CONFIG_PATH_ENV, "")).strip() or None
         )
-        ensure_daemon(
-            daemon_cfg, check_fn=lambda: self._client(ensure=False, ctx=ctx).health()
+        sidecar_env = self._sidecar_runtime_env(runtime_env=runtime_env)
+        already_authorized = self._autostart_already_authorized(runtime_env=runtime_env)
+        default_sidecar_manager(
+            config_path=config_path,
+            runtime_env=sidecar_env,
+            logger=logging.getLogger("openminion.sidecars"),
+        ).ensure_started(
+            name="pinchtab",
+            interactive=bool(sys.stdin.isatty()) and not already_authorized,
         )
 
     def resource_selectors(self, args: Mapping[str, Any]) -> ResourceSelectors:
@@ -595,6 +617,59 @@ class PinchTabProvider:
                 "title": str(payload.get("title") or ""),
             },
             "raw": payload,
+        }
+
+    def tab_reload(
+        self,
+        ctx: BrowserProviderContext | None = None,
+        tab_id: str = "",
+        options: NavigateOptions | Mapping[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        del options
+        payload = self._client(ctx=ctx).tab_reload(tab_id=tab_id)
+        return self._tab_nav_payload(tab_id=tab_id, payload=payload)
+
+    def tab_back(
+        self,
+        ctx: BrowserProviderContext | None = None,
+        tab_id: str = "",
+        options: NavigateOptions | Mapping[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        del options
+        payload = self._client(ctx=ctx).tab_back(tab_id=tab_id)
+        return self._tab_nav_payload(tab_id=tab_id, payload=payload)
+
+    def tab_forward(
+        self,
+        ctx: BrowserProviderContext | None = None,
+        tab_id: str = "",
+        options: NavigateOptions | Mapping[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        del options
+        payload = self._client(ctx=ctx).tab_forward(tab_id=tab_id)
+        return self._tab_nav_payload(tab_id=tab_id, payload=payload)
+
+    def tab_wait(
+        self,
+        ctx: BrowserProviderContext | None = None,
+        tab_id: str = "",
+        timeout_ms: int | None = None,
+    ) -> Dict[str, Any]:
+        payload = self._client(ctx=ctx).tab_wait(
+            tab_id=tab_id,
+            timeout_ms=timeout_ms,
+        )
+        return self._tab_nav_payload(tab_id=tab_id, payload=payload)
+
+    @staticmethod
+    def _tab_nav_payload(*, tab_id: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        return {
+            "tab": {
+                "id": tab_id,
+                "url": str(payload.get("url") or ""),
+                "title": str(payload.get("title") or ""),
+            },
+            "raw": dict(payload),
         }
 
     def tab_snapshot(

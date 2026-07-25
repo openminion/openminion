@@ -2,7 +2,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Purpose = Literal["decide", "plan", "act", "reflect", "summarize", "judge", "validate"]
+Purpose = Literal["decide", "plan", "act", "reflect", "summarize", "judge"]
 Verbosity = Literal["terse", "normal", "detailed"]
 RiskLevel = Literal["low", "medium", "high"]
 ToolUse = Literal["allowed", "restricted", "read_only"]
@@ -131,6 +131,13 @@ class AgentProfile(BaseModel):
         if not text:
             raise ValueError("field must be non-empty")
         return text
+
+    @field_validator("agent_id")
+    @classmethod
+    def _agent_id_cache_key_safe(cls, value: str) -> str:
+        if "|" in value:
+            raise ValueError("agent_id must not contain '|'")
+        return value
 
     @field_validator("inherits", "llm_policy_ref")
     @classmethod

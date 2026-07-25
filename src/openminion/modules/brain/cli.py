@@ -32,7 +32,7 @@ from .adapters.factory import (
 from .interfaces import SessionAPI
 from .runner import BrainRunner, RunnerOptions
 from .schemas.base import new_uuid
-from .schemas.state import StepOutput
+from .schemas.state.working import StepOutput
 from openminion.base.constants import STATE_KEY_WORKING
 
 try:

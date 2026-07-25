@@ -133,7 +133,17 @@ def test_authored_tool_pipeline_end_to_end(monkeypatch) -> None:
             )
             assert registered_v1["tool_name"] == "authored.adder@v1"
             assert registered_v1["policy_grant_id"]
+            assert registered_v1["exposure_profile_id"]
             assert "authored.adder@v1" in runtime.tools.list()
+            runtime.tools.exposure_service.activate(
+                str(registered_v1["exposure_profile_id"]),
+                session_id="aat-e2e",
+                target_id="aat-e2e",
+                approved=True,
+                activation_reason="authored-tool-e2e",
+                approved_by="test",
+                policy_source="test",
+            )
 
             batch = runtime.tools.execute_calls(
                 [

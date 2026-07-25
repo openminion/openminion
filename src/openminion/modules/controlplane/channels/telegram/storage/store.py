@@ -143,6 +143,8 @@ class TelegramPollStateStore(BaseModuleSQLiteStore, TelegramPollStateStoreBase):
                     acquired_at_ts INTEGER NOT NULL,
                     heartbeat_at_ts INTEGER NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_telegram_polling_leases_heartbeat
+                    ON telegram_polling_leases(heartbeat_at_ts);
                 """
             )
 

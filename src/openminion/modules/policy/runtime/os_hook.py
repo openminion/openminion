@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 from openminion.modules.tool.contracts.schemas import TOOL_ERROR_CONFIRM_REQUIRED
 
@@ -24,7 +24,7 @@ from ..constants import (
     POLICY_SIDE_EFFECT_REMOTE,
     POLICY_SIDE_EFFECTS,
 )
-from ..models import RiskSpec
+from ..models import RiskSpec, SideEffects
 from .service import PolicyCtl
 
 
@@ -33,7 +33,7 @@ try:  # pragma: no cover - optional dependency at runtime
         PolicyDecision as ToolPolicyDecision,
     )
 except ModuleNotFoundError:  # pragma: no cover
-    ToolPolicyDecision = None  # type: ignore[assignment]
+    ToolPolicyDecision = None
 
 
 class PolicyToolHook:
@@ -82,9 +82,11 @@ class _FallbackPolicyDecision:
         self.details = details
 
 
-def _side_effect_class(value: Any, *, default: str) -> str:
+def _side_effect_class(value: Any, *, default: SideEffects) -> SideEffects:
     text = str(value)
-    return text if text in POLICY_SIDE_EFFECTS else default
+    if text in POLICY_SIDE_EFFECTS:
+        return cast(SideEffects, text)
+    return default
 
 
 def _risk_from_tool(*, invocation: Any, capabilities: Any) -> RiskSpec:
@@ -114,7 +116,7 @@ def _risk_from_tool(*, invocation: Any, capabilities: Any) -> RiskSpec:
             risk_class=POLICY_RISK_EXEC,
             side_effects=_side_effect_class(
                 side_effects, default=POLICY_SIDE_EFFECT_LOCAL
-            ),  # type: ignore[arg-type]
+            ),
             reversibility=POLICY_REVERSIBILITY_UNKNOWN,
             default_confirm=True,
         )
@@ -127,7 +129,7 @@ def _risk_from_tool(*, invocation: Any, capabilities: Any) -> RiskSpec:
             risk_class=POLICY_RISK_STATE_CHANGE,
             side_effects=_side_effect_class(
                 side_effects, default=POLICY_SIDE_EFFECT_LOCAL
-            ),  # type: ignore[arg-type]
+            ),
             reversibility=POLICY_REVERSIBILITY_PARTIALLY_REVERSIBLE,
             default_confirm=True,
         )
@@ -137,7 +139,7 @@ def _risk_from_tool(*, invocation: Any, capabilities: Any) -> RiskSpec:
             risk_class=POLICY_RISK_SECURITY,
             side_effects=_side_effect_class(
                 side_effects, default=POLICY_SIDE_EFFECT_REMOTE
-            ),  # type: ignore[arg-type]
+            ),
             reversibility=POLICY_REVERSIBILITY_UNKNOWN,
             default_confirm=True,
         )
@@ -147,7 +149,7 @@ def _risk_from_tool(*, invocation: Any, capabilities: Any) -> RiskSpec:
             risk_class=POLICY_RISK_STATE_CHANGE,
             side_effects=_side_effect_class(
                 side_effects, default=POLICY_SIDE_EFFECT_LOCAL
-            ),  # type: ignore[arg-type]
+            ),
             reversibility=POLICY_REVERSIBILITY_PARTIALLY_REVERSIBLE,
             default_confirm=True,
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from openminion.api.runtime import APIRuntime
@@ -11,6 +12,38 @@ from openminion.services.diagnostics.debug import (
     ModuleDebugPayload,
     WiringSource,
 )
+
+_DEBUG_CONFIG_PATH: object | None = None
+_DEBUG_HOME_ROOT: str | Path | None = None
+_DEBUG_DATA_ROOT: str | Path | None = None
+
+
+def configure_debug_runtime_context(
+    *,
+    config_path: object | None,
+    home_root: str | Path | None,
+    data_root: str | Path | None,
+) -> None:
+    global _DEBUG_CONFIG_PATH, _DEBUG_HOME_ROOT, _DEBUG_DATA_ROOT
+    _DEBUG_CONFIG_PATH = config_path
+    _DEBUG_HOME_ROOT = home_root
+    _DEBUG_DATA_ROOT = data_root
+
+
+def _runtime_from_debug_context() -> APIRuntime:
+    return APIRuntime.from_config_path(
+        _DEBUG_CONFIG_PATH,
+        home_root=_DEBUG_HOME_ROOT,
+        data_root=_DEBUG_DATA_ROOT,
+    )
+
+
+def _config_from_debug_context() -> Any:
+    return load_config(
+        _DEBUG_CONFIG_PATH,
+        home_root=_DEBUG_HOME_ROOT,
+        data_root=_DEBUG_DATA_ROOT,
+    )
 
 
 def _runtime_failure_payload(
@@ -107,7 +140,7 @@ class OpenMinionDebugProvider(_CoreDebugProvider):
     def _probe(self) -> ModuleDebugPayload:
         runtime = None
         try:
-            runtime = APIRuntime.from_config_path(None)
+            runtime = _runtime_from_debug_context()
             dependency_failures = self._check_dependencies()
             status = DebugStatus.OK if not dependency_failures else DebugStatus.WARN
 
@@ -151,7 +184,7 @@ class OpenMinionDebugProvider(_CoreDebugProvider):
         try:
             from openminion.services.session_store import SessionStore
 
-            config = load_config(None)
+            config = _config_from_debug_context()
             storage_path = getattr(config.runtime, "storage_path", ".openminion")
 
             store = SessionStore(root=storage_path)
@@ -179,7 +212,7 @@ class OpenMinionToolsDebugProvider(_CoreDebugProvider):
     def _probe(self) -> ModuleDebugPayload:
         runtime = None
         try:
-            runtime = APIRuntime.from_config_path(None)
+            runtime = _runtime_from_debug_context()
             tool_count = len(runtime.tools.provider_specs())
             return ModuleDebugPayload(
                 module=self.MODULE_NAME,
@@ -200,7 +233,7 @@ class OpenMinionPluginsDebugProvider(_CoreDebugProvider):
     def _probe(self) -> ModuleDebugPayload:
         runtime = None
         try:
-            runtime = APIRuntime.from_config_path(None)
+            runtime = _runtime_from_debug_context()
             plugin_names = runtime.plugins.names()
             return ModuleDebugPayload(
                 module=self.MODULE_NAME,

@@ -47,6 +47,7 @@ from .flow import (
     _cache_hit_payload,
     _call_with_retries,
     _emit_operation,
+    _emit_tool_envelope_recovery,
     _error_response,
     _execute_with_routing,
     _finalize_response,
@@ -144,10 +145,23 @@ def _response_with_inline_tool_calls(
     )
     if sanitized_text == normalized.output_text:
         return normalized
+    telemetry = dict(normalized.telemetry or {})
+    normalization_meta = dict(
+        telemetry.get("normalization")
+        if isinstance(telemetry.get("normalization"), dict)
+        else {}
+    )
+    if normalized_fallback:
+        normalization_meta["tool_call_parse_metadata"] = dict(
+            normalized_fallback.metadata
+        )
+    normalization_meta["envelope_sanitized"] = True
+    telemetry["normalization"] = normalization_meta
     return normalized.model_copy(
         update={
             "output_text": sanitized_text,
             "assistant_messages": [Message(role="assistant", content=sanitized_text)],
+            "telemetry": telemetry,
         }
     )
 
@@ -257,6 +271,7 @@ class LLMClient:
     _apply_tool_policy_pre = _apply_tool_policy_pre
     _retry_config = _retry_config
     _emit_operation = _emit_operation
+    _emit_tool_envelope_recovery = _emit_tool_envelope_recovery
     _cache_hit_payload = staticmethod(_cache_hit_payload)
     _execute_with_routing = _execute_with_routing
     _call_with_retries = _call_with_retries
@@ -505,6 +520,18 @@ class LLMClient:
             model_name,
             allowed_tool_names=tool_policy_ctx.allowed_tools,
         )
+        if (
+            response.output_text.startswith("[system: UNEXECUTABLE_TOOL_ENVELOPE]")
+            and not response.tool_calls
+        ):
+            self._emit_tool_envelope_recovery(
+                request=req,
+                response=response,
+                provider_name=provider_name,
+                model_name=model_name,
+                outcome="exhausted",
+                source="llm_response_normalization",
+            )
         response = self._apply_tool_policy_post(response, tool_policy_ctx)
         response = self._apply_cost_budget(response)
 

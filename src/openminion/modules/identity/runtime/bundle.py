@@ -196,6 +196,20 @@ def _build_bundle(
     )
 
 
+def _case_insensitive_child(root: Path, name: str) -> Path:
+    candidate = root / name
+    normalized_name = name.lower()
+    try:
+        for child in root.iterdir():
+            if child.name.lower() == normalized_name:
+                return child
+    except OSError:
+        return candidate
+    if candidate.exists():
+        return candidate
+    return candidate
+
+
 def _load_markdown_document(
     *,
     path: Path,
@@ -203,23 +217,30 @@ def _load_markdown_document(
     required_label: str,
     errors: list[str],
 ) -> IdentityDocument | None:
-    if not path.exists():
+    resolved_path = _case_insensitive_child(path.parent, path.name)
+    if not resolved_path.exists():
         errors.append(f"missing required identity file: {required_label}")
         return None
-    if not path.is_file():
+    if not resolved_path.is_file():
         errors.append(f"required identity file is not a regular file: {required_label}")
         return None
-    return _read_document(path=path, root=root)
+    return _read_document(path=resolved_path, root=root)
 
 
 def _load_tree_documents(
     root: Path, pattern: str, bundle_root: Path
 ) -> list[IdentityDocument]:
-    if not root.exists() or not root.is_dir():
+    resolved_root = _case_insensitive_child(root.parent, root.name)
+    if not resolved_root.exists() or not resolved_root.is_dir():
         return []
     documents: list[IdentityDocument] = []
-    for path in sorted(root.rglob(pattern)):
+    normalized_pattern = pattern.lower()
+    for path in sorted(resolved_root.rglob("*")):
         if not path.is_file():
+            continue
+        if path.name.lower() != normalized_pattern and normalized_pattern != "*.md":
+            continue
+        if normalized_pattern == "*.md" and path.suffix.lower() != ".md":
             continue
         documents.append(_read_document(path=path, root=bundle_root))
     return documents

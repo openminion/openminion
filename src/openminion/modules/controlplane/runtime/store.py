@@ -1,7 +1,8 @@
+import json
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Tuple
 
 from ..constants import PRINCIPAL_BINDING_STATUS_ACTIVE
@@ -24,6 +25,18 @@ class StoredTurn:
     meta: dict[str, Any]
 
 
+def _iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _iso_after(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=max(0, seconds))).isoformat()
+
+
+def _json_dump(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True, sort_keys=True)
+
+
 class InMemoryControlPlaneStore:
     """Thread-safe in-memory persistence suitable for tests and CLI demo."""
 
@@ -42,6 +55,11 @@ class InMemoryControlPlaneStore:
         self._pairings: Dict[Tuple[str, str], dict[str, Any]] = {}
         self._pair_tokens: Dict[str, dict[str, Any]] = {}
         self._pair_attempts: list[dict[str, Any]] = []
+        self._inbox: Dict[str, dict[str, Any]] = {}
+        self._inbox_dedupe: Dict[Tuple[str, str, str], str] = {}
+        self._outbox: Dict[str, dict[str, Any]] = {}
+        self._audit_events: list[dict[str, Any]] = []
+        self._rate_limits: Dict[Tuple[str, str, int], int] = {}
         self._agents: Dict[str, dict[str, Any]] = {
             "agent:default": {"id": "agent:default", "name": "Default Agent"},
             "agent:brain": {"id": "agent:brain", "name": "Brain Agent"},
@@ -265,6 +283,254 @@ class InMemoryControlPlaneStore:
                 entry.setdefault("session_id", session_id)
                 result.append(entry)
             return result
+
+    def enqueue_inbox(
+        self,
+        *,
+        channel: str,
+        chat_id: str,
+        channel_message_id: str,
+        user_id: str,
+        payload: dict[str, Any],
+        thread_id: str | None = None,
+        inbound_id: str | None = None,
+    ) -> tuple[str, bool]:
+        now = _iso_now()
+        dedupe_key = (channel, chat_id, channel_message_id)
+        with self._lock:
+            existing = self._inbox_dedupe.get(dedupe_key)
+            if existing is not None:
+                return existing, False
+            inbox_id = inbound_id or uuid.uuid4().hex
+            self._inbox_dedupe[dedupe_key] = inbox_id
+            self._inbox[inbox_id] = {
+                "inbox_id": inbox_id,
+                "channel": channel,
+                "chat_id": chat_id,
+                "channel_message_id": channel_message_id,
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "received_at": now,
+                "payload_json": _json_dump(payload),
+                "status": "new",
+                "error": None,
+                "attempts": 0,
+                "next_attempt_at": now,
+                "locked_at": None,
+                "lock_owner": None,
+            }
+            return inbox_id, True
+
+    def claim_inbox(
+        self, *, lock_owner: str, reclaim_ttl_s: int = 120
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            claimable = [
+                row
+                for row in self._inbox.values()
+                if row["status"] in {"new", "failed"}
+                and str(row["next_attempt_at"]) <= _iso_now()
+            ]
+            if not claimable:
+                return None
+            row = sorted(claimable, key=lambda item: str(item["received_at"]))[0]
+            row["status"] = "processing"
+            row["attempts"] = int(row.get("attempts") or 0) + 1
+            row["lock_owner"] = lock_owner
+            row["locked_at"] = _iso_now()
+            return dict(row)
+
+    def ack_inbox(self, inbox_id: str) -> None:
+        with self._lock:
+            if inbox_id in self._inbox:
+                self._inbox[inbox_id].update(
+                    {"status": "done", "lock_owner": None, "locked_at": None, "error": None}
+                )
+
+    def fail_inbox(self, inbox_id: str, error: str) -> None:
+        with self._lock:
+            if inbox_id in self._inbox:
+                self._inbox[inbox_id].update(
+                    {
+                        "status": "failed",
+                        "error": error[:2000],
+                        "lock_owner": None,
+                        "locked_at": None,
+                    }
+                )
+
+    def mark_inbox_retry(
+        self,
+        inbox_id: str,
+        *,
+        error: str,
+        max_attempts: int = 8,
+        max_backoff_s: int = 300,
+    ) -> str:
+        with self._lock:
+            row = self._inbox.get(inbox_id)
+            attempts = int(row.get("attempts") if row else 0)
+            if row is None:
+                return "dead"
+            if attempts >= max_attempts:
+                row.update({"status": "dead", "error": error[:2000]})
+                return "dead"
+            delay = min(max_backoff_s, 2 ** max(0, attempts - 1))
+            row.update(
+                {
+                    "status": "failed",
+                    "next_attempt_at": _iso_after(delay),
+                    "error": error[:2000],
+                    "lock_owner": None,
+                    "locked_at": None,
+                }
+            )
+            return "retry"
+
+    def get_inbox(self, inbox_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._inbox.get(inbox_id)
+            return dict(row) if isinstance(row, dict) else None
+
+    def enqueue_outbox(
+        self,
+        *,
+        channel: str,
+        chat_id: str,
+        payload: dict[str, Any],
+        thread_id: str | None = None,
+        reply_to: str | None = None,
+        outbox_id: str | None = None,
+    ) -> str:
+        oid = outbox_id or uuid.uuid4().hex
+        now = _iso_now()
+        with self._lock:
+            self._outbox[oid] = {
+                "outbox_id": oid,
+                "channel": channel,
+                "chat_id": chat_id,
+                "thread_id": thread_id,
+                "reply_to": reply_to,
+                "payload_json": _json_dump(payload),
+                "status": "pending",
+                "created_at": now,
+                "next_attempt_at": now,
+                "attempts": 0,
+                "last_error": None,
+                "lock_owner": None,
+                "locked_at": None,
+            }
+            return oid
+
+    def claim_outbox(
+        self, *, lock_owner: str, reclaim_ttl_s: int = 120
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            claimable = [
+                row
+                for row in self._outbox.values()
+                if row["status"] in {"pending", "failed"}
+                and str(row["next_attempt_at"]) <= _iso_now()
+            ]
+            if not claimable:
+                return None
+            row = sorted(claimable, key=lambda item: str(item["created_at"]))[0]
+            row["status"] = "sending"
+            row["attempts"] = int(row.get("attempts") or 0) + 1
+            row["lock_owner"] = lock_owner
+            row["locked_at"] = _iso_now()
+            return dict(row)
+
+    def mark_outbox_sent(self, outbox_id: str) -> None:
+        with self._lock:
+            if outbox_id in self._outbox:
+                self._outbox[outbox_id].update(
+                    {
+                        "status": "sent",
+                        "lock_owner": None,
+                        "locked_at": None,
+                        "last_error": None,
+                    }
+                )
+
+    def mark_outbox_retry(
+        self,
+        outbox_id: str,
+        *,
+        error: str,
+        max_attempts: int = 8,
+        max_backoff_s: int = 300,
+    ) -> str:
+        with self._lock:
+            row = self._outbox.get(outbox_id)
+            attempts = int(row.get("attempts") if row else 0)
+            if row is None:
+                return "dead"
+            if attempts >= max_attempts:
+                row.update({"status": "dead", "last_error": error[:2000]})
+                return "dead"
+            delay = min(max_backoff_s, 2 ** max(0, attempts - 1))
+            row.update(
+                {
+                    "status": "failed",
+                    "next_attempt_at": _iso_after(delay),
+                    "last_error": error[:2000],
+                    "lock_owner": None,
+                    "locked_at": None,
+                }
+            )
+            return "retry"
+
+    def get_outbox(self, outbox_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._outbox.get(outbox_id)
+            return dict(row) if isinstance(row, dict) else None
+
+    def increment_rate_limit(
+        self,
+        *,
+        key_type: str,
+        key_id: str,
+        window_seconds: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        now = int(datetime.now(timezone.utc).timestamp())
+        seconds = max(1, int(window_seconds))
+        window_start = now - (now % seconds)
+        key = (key_type, key_id, window_start)
+        with self._lock:
+            self._rate_limits[key] = int(self._rate_limits.get(key, 0)) + 1
+            count = self._rate_limits[key]
+        return {
+            "allowed": count <= int(limit),
+            "count": count,
+            "limit": int(limit),
+            "window_start": window_start,
+            "window_seconds": seconds,
+        }
+
+    def put_audit(self, event: Any) -> None:
+        row = event.to_dict() if hasattr(event, "to_dict") else dict(event)
+        with self._lock:
+            self._audit_events.append(dict(row))
+
+    def list_audit(
+        self,
+        *,
+        event_type: str | None = None,
+        session_id: str | None = None,
+        trace_id: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = list(self._audit_events)
+        if event_type:
+            rows = [row for row in rows if row.get("event_type") == event_type]
+        if session_id:
+            rows = [row for row in rows if row.get("session_id") == session_id]
+        if trace_id:
+            rows = [row for row in rows if row.get("trace_id") == trace_id]
+        return rows[: max(1, min(int(limit), 5000))]
 
     # Cross-channel pairing token storage
 

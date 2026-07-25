@@ -306,6 +306,82 @@ class PlaywrightProvider:
         del ctx, options
         return self.navigate(tab_id=tab_id, url=url)
 
+    def tab_reload(
+        self,
+        ctx: BrowserProviderContext | None = None,
+        tab_id: str = "",
+        options: NavigateOptions | Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del ctx
+        tab = self._tabs.get(tab_id)
+        timeout_ms = self._navigation_timeout_ms(options)
+        response = tab.page.reload(timeout=timeout_ms)
+        return self._tab_control_payload(tab_id=tab.id, page=tab.page, response=response)
+
+    def tab_back(
+        self,
+        ctx: BrowserProviderContext | None = None,
+        tab_id: str = "",
+        options: NavigateOptions | Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del ctx
+        tab = self._tabs.get(tab_id)
+        timeout_ms = self._navigation_timeout_ms(options)
+        response = tab.page.go_back(timeout=timeout_ms)
+        return self._tab_control_payload(tab_id=tab.id, page=tab.page, response=response)
+
+    def tab_forward(
+        self,
+        ctx: BrowserProviderContext | None = None,
+        tab_id: str = "",
+        options: NavigateOptions | Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del ctx
+        tab = self._tabs.get(tab_id)
+        timeout_ms = self._navigation_timeout_ms(options)
+        response = tab.page.go_forward(timeout=timeout_ms)
+        return self._tab_control_payload(tab_id=tab.id, page=tab.page, response=response)
+
+    def tab_wait(
+        self,
+        ctx: BrowserProviderContext | None = None,
+        tab_id: str = "",
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        del ctx
+        tab = self._tabs.get(tab_id)
+        tab.page.wait_for_timeout(timeout_ms or self.config.timeouts.action_ms)
+        payload = self._tab_control_payload(tab_id=tab.id, page=tab.page)
+        payload["waited_ms"] = timeout_ms or self.config.timeouts.action_ms
+        return payload
+
+    @staticmethod
+    def _navigation_timeout_ms(
+        options: NavigateOptions | Mapping[str, Any] | None,
+    ) -> int | None:
+        if isinstance(options, NavigateOptions):
+            return options.timeout_ms
+        if isinstance(options, Mapping):
+            raw = options.get("timeout_ms") or options.get("timeoutMs")
+            return int(raw) if raw is not None else None
+        return None
+
+    @staticmethod
+    def _tab_control_payload(
+        *,
+        tab_id: str,
+        page: Any,
+        response: Any | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "tab": {
+                "id": tab_id,
+                "url": safe_url(page),
+                "title": safe_title(page),
+            },
+            "response_status": response_status(response),
+        }
+
     def snapshot(
         self,
         *,

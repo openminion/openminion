@@ -103,7 +103,7 @@ class CronCommandTests(unittest.TestCase):
             code = run_cron(args, app)
 
         self.assertEqual(code, 0)
-        self.assertIn("Cron job created", stdout.getvalue())
+        self.assertIn("Scheduled task created", stdout.getvalue())
         app.tools.execute_calls.assert_called_once()
         call = app.tools.execute_calls.call_args
         tool_calls = call.args[0]
@@ -137,7 +137,7 @@ class CronCommandTests(unittest.TestCase):
         ):
             code = run_cron(args, app)
         self.assertEqual(code, 0)
-        self.assertIn("Cron job paused", stdout.getvalue())
+        self.assertIn("Scheduled task paused", stdout.getvalue())
         tool_call = app.tools.execute_calls.call_args.args[0][0]
         self.assertEqual(tool_call.name, "task.pause")
         self.assertEqual(tool_call.arguments, {"task_id": "job-123"})
@@ -169,7 +169,7 @@ class CronCommandTests(unittest.TestCase):
         ):
             code = run_cron(args, app)
         self.assertEqual(code, 0)
-        self.assertIn("Cron job resumed", stdout.getvalue())
+        self.assertIn("Scheduled task resumed", stdout.getvalue())
         tool_call = app.tools.execute_calls.call_args.args[0][0]
         self.assertEqual(tool_call.name, "task.resume")
 
@@ -207,7 +207,7 @@ class CronCommandTests(unittest.TestCase):
         ):
             code = run_cron(args, app)
         self.assertEqual(code, 0)
-        self.assertIn("Cron job details", stdout.getvalue())
+        self.assertIn("Scheduled task details", stdout.getvalue())
         tool_call = app.tools.execute_calls.call_args.args[0][0]
         self.assertEqual(tool_call.name, "task.show")
         self.assertEqual(tool_call.arguments, {"task_id": "job-123", "runs_limit": 7})

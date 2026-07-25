@@ -5,7 +5,9 @@ scope	max_python_files	max_loc
 # into bounded metadata, response, tool-result, policy, and clarify owners.
 # CUS (2026-07-20) intentionally wires the controlplane inbox worker into
 # shared runtime composition and channel supervision.
-services	204	37897
+# PTB (2026-07-24) intentionally wires PinchTab managed-binary status/start
+# through the shared sidecar manager while keeping resolver logic in tools.
+services	204	37924
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

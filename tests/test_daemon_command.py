@@ -22,9 +22,7 @@ def test_daemon_status_json_output_when_reachable(monkeypatch, capsys) -> None:
         daemon_command, "resolve_daemon_endpoint", lambda _cfg: endpoint
     )
     monkeypatch.setattr(daemon_command, "load_config", lambda _cfg: config)
-    monkeypatch.setattr(
-        daemon_core, "resolve_daemon_pid_file", lambda _cfg: pid_file
-    )
+    monkeypatch.setattr(daemon_core, "resolve_daemon_pid_file", lambda _cfg: pid_file)
     monkeypatch.setattr(daemon_core, "read_pid", lambda _path: 4321)
     monkeypatch.setattr(daemon_core, "process_alive", lambda _pid: True)
     monkeypatch.setattr(
@@ -32,17 +30,17 @@ def test_daemon_status_json_output_when_reachable(monkeypatch, capsys) -> None:
         "probe_daemon_endpoint",
         lambda _endpoint: ("ok", {"daemon": {"config_path": "/tmp/openminion.json"}}),
     )
-    monkeypatch.setattr(
-        daemon_core, "resolve_daemon_log_file", lambda _cfg: log_file
-    )
+    monkeypatch.setattr(daemon_core, "resolve_daemon_log_file", lambda _cfg: log_file)
 
     code = daemon_command.daemon_status("config.json")
 
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload == {
+        "config_path": "/tmp/openminion.json",
         "endpoint_status": "ok",
         "host": "127.0.0.1",
+        "lifecycle": "running",
         "log_file": str(log_file),
         "ok": True,
         "pid": 4321,
@@ -51,6 +49,7 @@ def test_daemon_status_json_output_when_reachable(monkeypatch, capsys) -> None:
         "port": 4100,
         "reachable": True,
         "remote_config_path": "/tmp/openminion.json",
+        "status": "running",
     }
 
 
@@ -68,9 +67,7 @@ def test_daemon_status_json_output_when_unreachable(monkeypatch, capsys) -> None
         daemon_command, "resolve_daemon_endpoint", lambda _cfg: endpoint
     )
     monkeypatch.setattr(daemon_command, "load_config", lambda _cfg: config)
-    monkeypatch.setattr(
-        daemon_core, "resolve_daemon_pid_file", lambda _cfg: pid_file
-    )
+    monkeypatch.setattr(daemon_core, "resolve_daemon_pid_file", lambda _cfg: pid_file)
     monkeypatch.setattr(daemon_core, "read_pid", lambda _path: None)
     monkeypatch.setattr(daemon_core, "process_alive", lambda _pid: False)
     monkeypatch.setattr(
@@ -78,9 +75,7 @@ def test_daemon_status_json_output_when_unreachable(monkeypatch, capsys) -> None
         "probe_daemon_endpoint",
         lambda _endpoint: ("unreachable", {}),
     )
-    monkeypatch.setattr(
-        daemon_core, "resolve_daemon_log_file", lambda _cfg: log_file
-    )
+    monkeypatch.setattr(daemon_core, "resolve_daemon_log_file", lambda _cfg: log_file)
 
     code = daemon_command.daemon_status("config.json")
 

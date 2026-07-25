@@ -2,7 +2,7 @@ import json
 import sys
 from pathlib import Path
 import asyncio
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import typer
 
@@ -72,13 +72,13 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def _load_structured_file(path: Path) -> dict[str, Any]:
     if path.suffix.lower() == ".json":
-        return json.loads(path.read_text(encoding="utf-8"))
+        return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
     return _load_yaml(path)
 
 
 def _load_agent_policy(path: Path) -> AgentLLMPolicy:
     data = _load_structured_file(path)
-    return AgentLLMPolicy.model_validate(data)
+    return cast(AgentLLMPolicy, AgentLLMPolicy.model_validate(data))
 
 
 def _result_ok(result: Any) -> bool:
@@ -234,7 +234,7 @@ def prompt(
         overrides["max_output_tokens"] = max_output_tokens
 
     response = client.complete(
-        messages=[{"role": "user", "content": prompt_text}], **overrides
+        messages=cast(list[Any], [{"role": "user", "content": prompt_text}]), **overrides
     )
 
     if json_out:
@@ -298,7 +298,7 @@ def chat(
 ) -> None:
     llmctl = _runtime(config)
     client = llmctl.client(agent)
-    messages = []
+    messages: list[dict[str, Any]] = []
 
     while True:
         try:
@@ -313,7 +313,7 @@ def chat(
             break
 
         messages.append({"role": "user", "content": line})
-        response = client.complete(messages=messages)
+        response = client.complete(messages=cast(list[Any], messages))
         if response.ok:
             _write_stdout(f"assistant> {response.output_text}")
             messages.append({"role": "assistant", "content": response.output_text})

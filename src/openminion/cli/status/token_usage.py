@@ -25,6 +25,11 @@ _CACHED_KEYS = (
     "cached_tokens",
     "cache_read_input_tokens",
 )
+_MAX_SINGLE_CALL_PROMPT_KEYS = (
+    "max_single_call_input_tokens",
+    "max_single_call_prompt_tokens",
+)
+_MAX_SINGLE_CALL_TOTAL_KEYS = ("max_single_call_total_tokens",)
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,8 @@ class TokenUsageTotals:
     completion_tokens: int | None = None
     total_tokens: int | None = None
     cached_tokens: int | None = None
+    max_single_call_prompt_tokens: int | None = None
+    max_single_call_total_tokens: int | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -41,6 +48,8 @@ class TokenUsageTotals:
             and self.completion_tokens is None
             and self.total_tokens is None
             and self.cached_tokens is None
+            and self.max_single_call_prompt_tokens is None
+            and self.max_single_call_total_tokens is None
         )
 
 
@@ -59,6 +68,8 @@ class TokenUsageSnapshot:
     updated_at_monotonic: float | None = None
     turn_cached_tokens: int | None = None
     session_cached_tokens: int | None = None
+    turn_max_single_call_prompt_tokens: int | None = None
+    turn_max_single_call_total_tokens: int | None = None
 
     @property
     def context_pct(self) -> int | None:
@@ -90,6 +101,8 @@ def usage_totals_from_mapping(
     completion_tokens = _first_int(payload, _COMPLETION_KEYS)
     total_tokens = _first_int(payload, _TOTAL_KEYS)
     cached_tokens = _first_int(payload, _CACHED_KEYS)
+    max_single_call_prompt_tokens = _first_int(payload, _MAX_SINGLE_CALL_PROMPT_KEYS)
+    max_single_call_total_tokens = _first_int(payload, _MAX_SINGLE_CALL_TOTAL_KEYS)
     if total_tokens is None and (
         prompt_tokens is not None or completion_tokens is not None
     ):
@@ -99,6 +112,8 @@ def usage_totals_from_mapping(
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
         cached_tokens=cached_tokens,
+        max_single_call_prompt_tokens=max_single_call_prompt_tokens,
+        max_single_call_total_tokens=max_single_call_total_tokens,
     )
     return None if totals.is_empty else totals
 
@@ -116,7 +131,14 @@ def _payload_mapping(
         if isinstance(dumped, Mapping):
             return dumped
     attrs: dict[str, Any] = {}
-    for key in (*_PROMPT_KEYS, *_COMPLETION_KEYS, *_TOTAL_KEYS, *_CACHED_KEYS):
+    for key in (
+        *_PROMPT_KEYS,
+        *_COMPLETION_KEYS,
+        *_TOTAL_KEYS,
+        *_CACHED_KEYS,
+        *_MAX_SINGLE_CALL_PROMPT_KEYS,
+        *_MAX_SINGLE_CALL_TOTAL_KEYS,
+    ):
         if hasattr(payload, key):
             attrs[key] = getattr(payload, key)
     return attrs or None
@@ -138,6 +160,14 @@ def accumulate_usage(
         ),
         total_tokens=_sum_optional(previous.total_tokens, increment.total_tokens),
         cached_tokens=_sum_optional(previous.cached_tokens, increment.cached_tokens),
+        max_single_call_prompt_tokens=_max_optional(
+            previous.max_single_call_prompt_tokens,
+            increment.max_single_call_prompt_tokens,
+        ),
+        max_single_call_total_tokens=_max_optional(
+            previous.max_single_call_total_tokens,
+            increment.max_single_call_total_tokens,
+        ),
     )
 
 
@@ -165,6 +195,16 @@ def build_token_usage_snapshot(
         updated_at_monotonic=updated_at_monotonic,
         turn_cached_tokens=getattr(turn, "cached_tokens", None),
         session_cached_tokens=getattr(session, "cached_tokens", None),
+        turn_max_single_call_prompt_tokens=getattr(
+            turn,
+            "max_single_call_prompt_tokens",
+            None,
+        ),
+        turn_max_single_call_total_tokens=getattr(
+            turn,
+            "max_single_call_total_tokens",
+            None,
+        ),
     )
 
 
@@ -187,7 +227,9 @@ def format_token_usage_summary(
     cache_suffix = (
         f" ({format_token_count(cached)} cached)" if cached is not None else ""
     )
-    summary = f"turn {turn}{cache_suffix}   session {session}   ctx {context}"
+    peak = _format_peak_request_usage(snapshot)
+    peak_suffix = f"   {peak}" if peak else ""
+    summary = f"turn {turn}{cache_suffix}   session {session}   ctx {context}{peak_suffix}"
     return f"{summary}   {timing}" if timing else summary
 
 
@@ -328,6 +370,28 @@ def _sum_optional(left: int | None, right: int | None) -> int | None:
     if left is None and right is None:
         return None
     return int(left or 0) + int(right or 0)
+
+
+def _max_optional(left: int | None, right: int | None) -> int | None:
+    values = [int(value) for value in (left, right) if value is not None]
+    return max(values) if values else None
+
+
+def _format_peak_request_usage(snapshot: TokenUsageSnapshot) -> str:
+    peak_prompt = _displayable_usage_value(
+        snapshot.turn_max_single_call_prompt_tokens
+    )
+    peak_total = _displayable_usage_value(snapshot.turn_max_single_call_total_tokens)
+    if peak_prompt is None and peak_total is None:
+        return ""
+    if peak_prompt is not None and peak_total is not None:
+        return (
+            f"peak {format_token_count(peak_prompt)} in / "
+            f"{format_token_count(peak_total)} total"
+        )
+    if peak_prompt is not None:
+        return f"peak {format_token_count(peak_prompt)} in"
+    return f"peak {format_token_count(peak_total)} total"
 
 
 __all__ = [

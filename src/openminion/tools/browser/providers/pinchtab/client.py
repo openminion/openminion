@@ -285,6 +285,42 @@ class PinchTabClient:
             ]
         )
 
+    def tab_reload(self, tab_id: str) -> dict[str, Any]:
+        return self._try_post_json(
+            [
+                (f"/tabs/{tab_id}/reload", None),
+                ("/tabs/reload", {"tabId": tab_id, "tab_id": tab_id}),
+            ]
+        )
+
+    def tab_back(self, tab_id: str) -> dict[str, Any]:
+        return self._try_post_json(
+            [
+                (f"/tabs/{tab_id}/back", None),
+                ("/tabs/back", {"tabId": tab_id, "tab_id": tab_id}),
+            ]
+        )
+
+    def tab_forward(self, tab_id: str) -> dict[str, Any]:
+        return self._try_post_json(
+            [
+                (f"/tabs/{tab_id}/forward", None),
+                ("/tabs/forward", {"tabId": tab_id, "tab_id": tab_id}),
+            ]
+        )
+
+    def tab_wait(self, tab_id: str, timeout_ms: int | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {"tabId": tab_id, "tab_id": tab_id}
+        if timeout_ms is not None:
+            payload["timeout_ms"] = timeout_ms
+            payload["timeoutMs"] = timeout_ms
+        return self._try_post_json(
+            [
+                (f"/tabs/{tab_id}/wait", payload),
+                ("/tabs/wait", payload),
+            ]
+        )
+
     def snapshot(
         self,
         tab_id: str,

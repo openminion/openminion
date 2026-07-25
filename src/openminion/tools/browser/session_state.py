@@ -31,6 +31,8 @@ class BrowserSessionStateStore:
         )
         self._session_state: dict[tuple[str, str, str], SessionBrowserState] = {}
         self._loaded_workspace_roots: set[str] = set()
+        self._instance_affinity: dict[str, str] = {}
+        self._tab_affinity: dict[str, str] = {}
 
     @property
     def session_state(self) -> dict[tuple[str, str, str], SessionBrowserState]:
@@ -39,6 +41,67 @@ class BrowserSessionStateStore:
     @property
     def loaded_workspace_roots(self) -> set[str]:
         return self._loaded_workspace_roots
+
+    def lookup_instance_affinity(self, instance_id: str) -> str | None:
+        key = str(instance_id or "").strip()
+        if not key:
+            return None
+        provider_id = self._instance_affinity.get(key, "")
+        if provider_id:
+            return provider_id
+        for (_workspace, provider, _session), state in self._session_state.items():
+            if state.instance_id == key:
+                return provider
+        return None
+
+    def lookup_tab_affinity(self, tab_id: str) -> str | None:
+        key = str(tab_id or "").strip()
+        if not key:
+            return None
+        provider_id = self._tab_affinity.get(key, "")
+        if provider_id:
+            return provider_id
+        for (_workspace, provider, _session), state in self._session_state.items():
+            if state.tab_id == key:
+                return provider
+        return None
+
+    def remember_instance_affinity(self, instance_id: str, provider_id: str) -> None:
+        key = str(instance_id or "").strip()
+        provider = str(provider_id or "").strip()
+        if key and provider:
+            self._instance_affinity[key] = provider
+
+    def remember_tab_affinity(self, tab_id: str, provider_id: str) -> None:
+        key = str(tab_id or "").strip()
+        provider = str(provider_id or "").strip()
+        if key and provider:
+            self._tab_affinity[key] = provider
+
+    def preferred_state_for_session(
+        self,
+        *,
+        session_id: str,
+        workspace_root: str | None,
+        env: EnvironmentConfig | Mapping[str, Any] | None = None,
+    ) -> tuple[str, SessionBrowserState] | None:
+        workspace = str(workspace_root or "").strip()
+        session = str(session_id or "").strip()
+        if not workspace or not session:
+            return None
+        self.load_persisted_session_state(workspace_root=workspace, env=env)
+        instance_candidate: tuple[str, SessionBrowserState] | None = None
+        for state_workspace, provider_id, state_session in sorted(
+            self._session_state.keys()
+        ):
+            if state_workspace != workspace or state_session != session:
+                continue
+            state = self._session_state[(state_workspace, provider_id, state_session)]
+            if state.tab_id:
+                return provider_id, state
+            if state.instance_id and instance_candidate is None:
+                instance_candidate = (provider_id, state)
+        return instance_candidate
 
     def state_key(
         self,

@@ -281,7 +281,10 @@ class A2actlAdapter:
             SQLiteStateStore,
         )
 
-        cfg = load_config(self._config) if self._config is not None else RuntimeConfig()
+        if isinstance(self._config, (str, Path)):
+            cfg = load_config(self._config)
+        else:
+            cfg = RuntimeConfig()
 
         if self._home_root is not None:
             data_root = resolve_data_root(

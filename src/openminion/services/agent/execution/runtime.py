@@ -106,14 +106,20 @@ class ExecutorRuntime:
             allowed_calls,
             security_events,
             denied_results,
+            runtime_env_overrides,
         ) = await filter_allowed_tool_calls(
             self._service_port,
             self._runtime,
             tool_calls,
             policy_adapter=policy_adapter,
         )
+        context_overrides = dict(context_metadata_overrides or {})
+        if runtime_env_overrides:
+            runtime_env = dict(context_overrides.get("runtime_env") or {})
+            runtime_env.update(runtime_env_overrides)
+            context_overrides["runtime_env"] = runtime_env
         context = self._resources.build_context_with_overrides(
-            context_metadata_overrides=context_metadata_overrides,
+            context_metadata_overrides=context_overrides,
             turn_boundary_adapter=boundary_adapter,
         )
         results = execute_allowed_tool_calls(

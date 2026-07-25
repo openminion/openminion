@@ -175,6 +175,11 @@ def test_agent_list_returns_records_from_registry(monkeypatch) -> None:
     assert out["count"] == 1
     assert out["agents"][0]["agent_id"] == "alpha"
     assert out["agents"][0]["tags"] == ["a", "b"]
+    assert out["agents"][0]["registry_present"] is True
+    assert out["agents"][0]["configured"] is False
+    assert out["agents"][0]["running"] is False
+    assert out["agents"][0]["state"] == "registered"
+    assert out["agents"][0]["capabilities"] == ["delegate.sync"]
     assert calls["list_called_with"] == "registered"
 
 
@@ -277,6 +282,85 @@ def test_task_delegate_happy_path_maps_seam_result() -> None:
         "instruction": "ship it",
         "timeout_seconds": 45,
     }
+
+
+def test_task_delegate_async_mode_returns_task_handle() -> None:
+    from openminion.modules.tool.runtime.delegation import A2ADelegateResult
+
+    calls: dict[str, Any] = {}
+
+    class _Seam:
+        def delegate(self, *, agent_id, instruction, timeout_seconds, mode="sync"):
+            calls.update(
+                agent_id=agent_id,
+                instruction=instruction,
+                timeout_seconds=timeout_seconds,
+                mode=mode,
+            )
+            return A2ADelegateResult(
+                ok=True,
+                status="running",
+                content="started",
+                target_agent_id=agent_id,
+                trace_id="t-async",
+                task_id="job-1",
+            )
+
+    out = _h_task_delegate(
+        {
+            "mode": "async",
+            "agent_id": "beta",
+            "instruction": "ship it later",
+            "timeout_seconds": 45,
+        },
+        _ctx_with_seam(_Seam()),  # type: ignore[arg-type]
+    )
+    assert out["ok"] is True
+    assert out["mode"] == "async"
+    assert out["status"] == "running"
+    assert out["task_id"] == "job-1"
+    assert calls == {
+        "agent_id": "beta",
+        "instruction": "ship it later",
+        "timeout_seconds": 45,
+        "mode": "async",
+    }
+
+
+def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
+    from openminion.modules.tool.runtime.delegation import A2ADelegateResult
+
+    calls: list[tuple[str, str]] = []
+
+    class _Seam:
+        def status(self, *, task_id):
+            calls.append(("status", task_id))
+            return A2ADelegateResult(ok=True, status="running", task_id=task_id)
+
+        def resume(self, *, task_id):
+            calls.append(("resume", task_id))
+            return A2ADelegateResult(ok=True, status="running", task_id=task_id)
+
+        def cancel(self, *, task_id):
+            calls.append(("cancel", task_id))
+            return A2ADelegateResult(ok=True, status="canceled", task_id=task_id)
+
+    seam = _Seam()
+
+    assert _h_task_delegate(  # type: ignore[arg-type]
+        {"mode": "status", "task_id": "job-1"}, _ctx_with_seam(seam)
+    )["status"] == "running"
+    assert _h_task_delegate(  # type: ignore[arg-type]
+        {"mode": "resume", "task_id": "job-1"}, _ctx_with_seam(seam)
+    )["status"] == "running"
+    assert _h_task_delegate(  # type: ignore[arg-type]
+        {"mode": "cancel", "task_id": "job-1"}, _ctx_with_seam(seam)
+    )["status"] == "canceled"
+    assert calls == [
+        ("status", "job-1"),
+        ("resume", "job-1"),
+        ("cancel", "job-1"),
+    ]
 
 
 def test_task_delegate_unknown_target_maps_not_found() -> None:

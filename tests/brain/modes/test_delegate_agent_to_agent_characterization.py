@@ -193,6 +193,19 @@ def test_builtin_only_runtime_fails_for_ops_safe() -> None:
     assert "ops-safe" in runtime.call_attempts
 
 
+def test_a2actl_adapter_accepts_loaded_config_object(tmp_path) -> None:
+    adapter = A2actlAdapter(
+        home_root=tmp_path,
+        config=SimpleNamespace(runtime=SimpleNamespace(env={})),
+        agent_id="parent-agent",
+    )
+
+    runtime = adapter._ensure_runtime()
+
+    assert runtime is not None
+    adapter.close()
+
+
 # (c) Missing-target path fails deterministically
 
 

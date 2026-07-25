@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from openminion.base.time import utc_now_iso
+from openminion.modules.tool.exposure import ToolExposureProfile, ToolRiskAnnotations
 from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 
 from .config import (
@@ -257,18 +258,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
             draft.local_name, version_hash
         )
         if existing is not None:
-            return {
-                "ok": True,
-                "tool_name": existing.tool_name,
-                "local_name": existing.local_name,
-                "version_number": existing.version_number,
-                "version_hash": existing.version_hash,
-                "tier": existing.tier,
-                "min_scope": existing.min_scope,
-                "policy_grant_id": existing.policy_grant_id,
-                "registered_at": existing.created_at,
-                "idempotent": True,
-            }
+            return _registration_payload(existing, idempotent=True)
         if (
             draft.status != TOOL_AUTHORING_STATUS_INSPECTED
             or not draft.inspect_result_json
@@ -367,18 +357,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
                 "issued_by": "auto_register",
             },
         )
-        return {
-            "ok": True,
-            "tool_name": row.tool_name,
-            "local_name": row.local_name,
-            "version_number": row.version_number,
-            "version_hash": row.version_hash,
-            "tier": row.tier,
-            "min_scope": row.min_scope,
-            "policy_grant_id": row.policy_grant_id,
-            "registered_at": row.created_at,
-            "idempotent": False,
-        }
+        return _registration_payload(row, idempotent=False)
 
     def invoke(
         self,
@@ -600,6 +579,7 @@ class ToolAuthoringService(ToolAuthoringServiceInterface):
     def _register_runtime_tool(self, *, row: AuthoredToolRow) -> None:
         if self._tool_registry is None:
             return
+        _register_authored_exposure_profile(self._tool_registry, row=row)
         if row.tool_name in self._tool_registry.list():
             return
 
@@ -762,6 +742,67 @@ def _recommend_reason(*, risk_level: str, test_results: dict[str, Any]) -> str:
 
 def _error(code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "error": {"code": code, "message": message}}
+
+
+def _registration_payload(
+    row: AuthoredToolRow,
+    *,
+    idempotent: bool,
+) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "tool_name": row.tool_name,
+        "local_name": row.local_name,
+        "version_number": row.version_number,
+        "version_hash": row.version_hash,
+        "tier": row.tier,
+        "min_scope": row.min_scope,
+        "policy_grant_id": row.policy_grant_id,
+        "exposure_profile_id": _authored_exposure_profile_id(row.tool_name),
+        "registered_at": row.created_at,
+        "idempotent": idempotent,
+    }
+
+
+def _authored_exposure_profile_id(tool_name: str) -> str:
+    normalized = "".join(
+        char if char.isalnum() else "_" for char in str(tool_name or "").strip()
+    ).strip("_")
+    return f"authored_{normalized or 'tool'}"
+
+
+def _register_authored_exposure_profile(
+    registry: ToolRegistry,
+    *,
+    row: AuthoredToolRow,
+) -> None:
+    exposure_service = getattr(registry, "exposure_service", None)
+    register_profiles = getattr(exposure_service, "register_profiles", None)
+    if not callable(register_profiles):
+        return
+    register_profiles(
+        (
+            ToolExposureProfile(
+                profile_id=_authored_exposure_profile_id(row.tool_name),
+                title=f"Authored tool: {row.local_name}",
+                summary="Session-scoped activation for an inspected authored tool.",
+                tool_names=frozenset({row.tool_name}),
+                risk=ToolRiskAnnotations(
+                    tier="apply",
+                    requires_approval=True,
+                    mutates_state=True,
+                ),
+                evidence_expectations=(
+                    "cite policy grant and authored-tool audit evidence",
+                ),
+                stop_rules=("stop if source, tests, or policy grant are unclear",),
+                guidance_names=("tool-authoring.safety.v1",),
+                activation_hint=(
+                    "Activate only after inspecting the authored tool for this session."
+                ),
+            ),
+        )
+    )
 
 
 def _json(value: Any) -> str:

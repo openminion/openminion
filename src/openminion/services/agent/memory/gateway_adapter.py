@@ -60,6 +60,7 @@ class MemoryServiceGatewayAdapter(
         retrieval_max_chars: int = 2000,
         capsule_max_chars: int = 1600,
         log_retention_days: int = 30,
+        patch_retention_count: int = 200,
         max_facts: int = 200,
         max_todos: int = 200,
         session_summary_max_chars: int = 500,
@@ -86,6 +87,7 @@ class MemoryServiceGatewayAdapter(
             session_summary_max_chars=session_summary_max_chars,
             session_handoff_max_summaries=session_handoff_max_summaries,
             log_retention_days=log_retention_days,
+            patch_retention_count=patch_retention_count,
             max_facts=max_facts,
             max_todos=max_todos,
             memory_config=memory_config,
@@ -283,6 +285,7 @@ class MemoryServiceGatewayAdapter(
         session_summary_max_chars: int,
         session_handoff_max_summaries: int,
         log_retention_days: int,
+        patch_retention_count: int,
         max_facts: int,
         max_todos: int,
         memory_config: Any | None,
@@ -319,6 +322,7 @@ class MemoryServiceGatewayAdapter(
         self._summary_compression_age_days = 14
         self._summary_compression_max_chars = 100
         self._log_retention_days = max(1, int(log_retention_days))
+        self._patch_retention_count = max(1, int(patch_retention_count))
         self._max_facts = max(1, int(max_facts))
         self._max_todos = max(1, int(max_todos))
         self._retrieve_ctl = retrieve_ctl

@@ -7,6 +7,7 @@ from openminion.modules.identity.runtime.md_generator import (
     export_profile_to_markdown_bundle,
 )
 from openminion.modules.identity.models import AgentProfile
+from openminion.modules.identity.runtime.bundle import load_identity_bundle
 from openminion.modules.identity.runtime.lockfile import (
     IDENTITY_LOCKFILE_NAME,
     IdentityLockfile,
@@ -111,6 +112,28 @@ def test_export_profile_to_markdown_bundle_reports_lossy_fields() -> None:
         "allowed_capabilities",
         "meta.*",
     )
+
+
+def test_load_identity_bundle_accepts_lowercase_file_layout(tmp_path: Path) -> None:
+    bundle_root = tmp_path / "agents" / "ops-agent"
+    (bundle_root / "skills" / "ops").mkdir(parents=True)
+    (bundle_root / "notes").mkdir()
+    (bundle_root / "agent.md").write_text("# Agent\n", encoding="utf-8")
+    (bundle_root / "soul.md").write_text("# Soul\n", encoding="utf-8")
+    (bundle_root / "skills" / "ops" / "skill.md").write_text(
+        "# Skill\n", encoding="utf-8"
+    )
+    (bundle_root / "notes" / "note.md").write_text("# Note\n", encoding="utf-8")
+
+    bundle = load_identity_bundle("ops-agent", root=tmp_path)
+
+    assert bundle.ok is True
+    assert bundle.agent is not None
+    assert bundle.soul is not None
+    assert [item.relative_path for item in bundle.skills] == [
+        "skills/ops/skill.md"
+    ]
+    assert [item.relative_path for item in bundle.notes] == ["notes/note.md"]
 
 
 def test_identity_lockfile_round_trip_is_deterministic(tmp_path: Path) -> None:

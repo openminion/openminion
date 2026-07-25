@@ -60,6 +60,40 @@ def test_run_api_keyboard_interrupt_stops_gracefully() -> None:
     assert "API server stopped" in output
 
 
+def test_run_api_passes_roots_to_server_factory() -> None:
+    args = Namespace(
+        config="agents.json",
+        host=None,
+        port=None,
+        home_root="/tmp/openminion-home",
+        data_root="/tmp/openminion-home/.openminion",
+    )
+    server = mock.Mock()
+    server.server_address = ("127.0.0.1", 9090)
+    server.serve_forever.side_effect = KeyboardInterrupt()
+    mocked_load_config = mock.Mock(return_value=_config(port=9090))
+    mocked_build_server = mock.Mock(return_value=server)
+
+    with mock.patch.dict(
+        run_api.__globals__,
+        {
+            "load_config": mocked_load_config,
+            "build_api_server": mocked_build_server,
+        },
+    ):
+        with redirect_stdout(io.StringIO()):
+            code = run_api(args)
+
+    assert code == 0
+    mocked_build_server.assert_called_once_with(
+        config_path="agents.json",
+        host="127.0.0.1",
+        port=9090,
+        home_root="/tmp/openminion-home",
+        data_root="/tmp/openminion-home/.openminion",
+    )
+
+
 def test_run_api_unexpected_server_failure_returns_nonzero() -> None:
     args = Namespace(config=None, host=None, port=None)
     server = mock.Mock()

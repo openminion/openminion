@@ -6,7 +6,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from openminion.modules.identity.config import load_yaml_file
+from openminion.modules.identity.config import (
+    IdentityCtlConfig,
+    load_yaml_file,
+    resolve_default_render_budget,
+)
 from openminion.modules.identity.runtime.generated_bundle import (
     materialize_generated_identity_bundle,
     resolve_generated_bundle_root_for_profile_path,
@@ -127,13 +131,7 @@ class IdentityCtl:
             )
         return summaries
 
-    def upsert_profile(
-        self,
-        profile: AgentProfile,
-        actor: str | None = None,
-        reason: str | None = None,
-    ) -> str:
-        del actor, reason
+    def upsert_profile(self, profile: AgentProfile) -> str:
         profile_version = self._compute_profile_version(profile)
         self.store.upsert_profile(profile, profile_version)
         self._refresh_versions()
@@ -247,7 +245,7 @@ class IdentityCtl:
         )
 
     def validate_profile(
-        self, profile: AgentProfile | dict[str, Any]
+        self, profile: AgentProfile | dict[str, Any], *, strict: bool = False
     ) -> ValidationResult:
         errors: list[str] = []
         warnings: list[str] = []
@@ -261,7 +259,9 @@ class IdentityCtl:
         except ValidationError as exc:
             return ValidationResult(ok=False, errors=[str(exc)], warnings=[])
 
-        if parsed.role.mission.count("\n") > 1:
+        if not parsed.role.mission.strip():
+            errors.append("role.mission must be non-empty")
+        elif parsed.role.mission.count("\n") > 1:
             warnings.append("role.mission should be 1-2 lines")
         if not (3 <= len(parsed.role.responsibilities) <= 7):
             warnings.append("role.responsibilities recommended range is 3-7")
@@ -271,6 +271,10 @@ class IdentityCtl:
             warnings.append(
                 "risk.confirm_before should usually include at least one category"
             )
+
+        if strict and warnings:
+            errors.extend(warnings)
+            warnings = []
 
         return ValidationResult(ok=not errors, errors=errors, warnings=warnings)
 
@@ -301,12 +305,23 @@ class IdentityCtl:
         return ValidationResult(ok=not errors, errors=errors, warnings=warnings)
 
     def warm_cache(
-        self, agent_id: str, purposes: list[str] | None = None, max_tokens: int = 220
+        self,
+        agent_id: str,
+        purposes: list[str] | None = None,
+        identity_cfg: IdentityCtlConfig | None = None,
     ) -> int:
         purposes_to_warm = purposes or ["decide", "plan", "act", "reflect"]
+        resolved_cfg = identity_cfg or IdentityCtlConfig()
         rendered = 0
         for purpose in purposes_to_warm:
-            self.render(agent_id, purpose=purpose, max_tokens=max_tokens)
+            self.render(
+                agent_id,
+                purpose=purpose,
+                max_tokens=resolve_default_render_budget(
+                    purpose,
+                    identity_cfg=resolved_cfg,
+                ),
+            )
             rendered += 1
         return rendered
 

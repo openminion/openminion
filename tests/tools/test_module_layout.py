@@ -23,7 +23,6 @@ def test_tool_core_is_canonicalized_under_modules_tool() -> None:
         "dispatch.py",
         "interfaces.py",
         "plugin_api.py",
-        "plugin_contract.py",
         "__init__.py",
         "__main__.py",
         "errors.py",
@@ -36,6 +35,7 @@ def test_tool_core_is_canonicalized_under_modules_tool() -> None:
         "contracts",
         "diagnostics",
         "family",
+        "plugin_contract",
         "registry",
         "runtime",
     ):
@@ -181,6 +181,7 @@ def test_legacy_tool_core_imports_fail_fast() -> None:
         "interfaces",
         "plugins",
         "policy",
+        "plugin_contract",
         "registry",
         "runtime",
         "schemas",

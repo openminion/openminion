@@ -54,6 +54,7 @@ def test_interactive_runtime_records_complete_turn_timing(monkeypatch) -> None:
     assert event.data["provider_input_tokens"] == 7
     assert event.data["time_to_first_text_ms"] is not None
     assert event.data["transport"] == "gateway"
+    assert runtime.last_chat_phase_timing_payload() == event.data
 
 
 def test_interactive_runtime_records_provider_token_before_visible_text(

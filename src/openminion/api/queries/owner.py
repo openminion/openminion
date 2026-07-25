@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from os import PathLike
 from typing import Any
 
 from openminion.api.runtime import APIRuntime
@@ -23,6 +24,8 @@ def get_owner_status(
     run_limit_per_session: int = 20,
     window_hours: int = 24,
     runtime: APIRuntime | None = None,
+    home_root: str | PathLike[str] | None = None,
+    data_root: str | PathLike[str] | None = None,
 ) -> dict[str, Any]:
     if int(session_limit) <= 0:
         raise OwnerStatusQueryError("`session_limit` must be greater than zero.")
@@ -32,7 +35,11 @@ def get_owner_status(
         raise OwnerStatusQueryError("`hours` must be greater than zero.")
 
     own_runtime = runtime is None
-    active_runtime = runtime or APIRuntime.from_config_path(config_path)
+    active_runtime = runtime or APIRuntime.from_config_path(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
     try:
         return build_owner_status(
             config_path=config_path,

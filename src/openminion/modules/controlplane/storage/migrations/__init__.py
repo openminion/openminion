@@ -9,6 +9,7 @@ MODULE_ID = "controlplane"
 MODULE_APPLICATION_ID = get_module_application_id(MODULE_ID)
 TARGET_USER_VERSION = 0
 BASELINE_REVISION = "0001_baseline"
+INDEX_AUDIT_REVISION = "0002_index_audit"
 
 
 def run_migrations(db_path: str | Path) -> None:
@@ -20,4 +21,4 @@ def run_migrations(db_path: str | Path) -> None:
 
 
 def list_migrations() -> list[str]:
-    return [BASELINE_REVISION]
+    return [BASELINE_REVISION, INDEX_AUDIT_REVISION]

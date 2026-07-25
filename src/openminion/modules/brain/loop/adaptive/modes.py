@@ -43,7 +43,9 @@ from openminion.modules.brain.loop.tools import (
     resolve_loop_model,
     run_adaptive_tool_loop,
     should_shortlist_tool_schemas,
+    shortlist_tool_schemas,  # noqa: F401 - public monkeypatch seam
 )
+from openminion.modules.brain.loop.tools.budget import _debit_llm_usage  # noqa: F401 - public monkeypatch seam
 from openminion.modules.brain.loop.tools.budget_extension import (
     consume_approved_extension,
 )
@@ -484,24 +486,27 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
                 tool_specs=full_tool_specs,
             )
         ):
-            tool_specs = []
-            requestable_tool_specs = list(full_tool_specs)
-            shortlisting_scratchpad.update(
-                {
-                    "tool_schema_shortlisting.enabled": True,
-                    "tool_schema_shortlisting.reason": "progressive_exact_name",
-                    "tool_schema_shortlisting.candidate_count": len(full_tool_specs),
-                    "tool_schema_shortlisting.active_count": 0,
-                    "tool_schema_shortlisting.selected_tools": [],
-                    "tool_schema_shortlisting.inactive_tools": [
-                        str(spec.name) for spec in full_tool_specs
-                    ],
-                    "tool_schema_shortlisting.input_tokens": 0,
-                    "tool_schema_shortlisting.output_tokens": 0,
-                    "tool_schema_shortlisting.total_tokens": 0,
-                    "tool_schema_shortlisting.llm_call_made": False,
-                }
+            shortlist_result = shortlist_tool_schemas(
+                runtime=runtime,
+                model=model,
+                user_messages=messages,
+                tool_specs=full_tool_specs,
+                metadata=_adaptive_loop_metadata(ctx, purpose="tool_shortlist"),
             )
+            if bool(getattr(shortlist_result, "llm_call_made", False)):
+                _debit_llm_usage(loop_ctx_adapter, shortlist_result)
+            tool_specs = list(getattr(shortlist_result, "active_tool_specs", ()) or ())
+            requestable_tool_specs = list(
+                getattr(shortlist_result, "requestable_tool_specs", ()) or full_tool_specs
+            )
+            shortlisting_scratchpad.update(shortlist_result.scratchpad_payload())
+            shortlisting_tokens = int(
+                getattr(shortlist_result, "total_tokens", 0) or 0
+            )
+            if shortlisting_tokens > 0:
+                shortlisting_scratchpad["turn_progress_total_tokens_used"] = (
+                    shortlisting_tokens
+                )
         if (
             str(profile.profile_name or "").strip() == "general_adaptive_v1"
             and decision_reason_code != "research_iteration_fallback"

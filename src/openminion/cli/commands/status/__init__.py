@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from openminion.cli.parser.flags import add_json_output_flag
+from openminion.cli.parser.flags import add_json_output_flag, add_runtime_source_flag
 from openminion.cli.presentation.json_output import print_json_payload
 
 
@@ -12,7 +12,11 @@ def run_status(args) -> int:
         from .runtime import run_onboarding_status
 
         return run_onboarding_status(args)
-    config = _load_status_config(args.config)
+    if args.status_command == "readiness":
+        from .readiness import run_readiness_status
+
+        return run_readiness_status(args)
+    config = _load_status_config(args)
     from .action_policy import run_action_policy_status
     from .context_trace import run_context_trace_status
     from .identity import run_identity_status, run_self_improvement_status
@@ -50,6 +54,8 @@ def run_status(args) -> int:
                 session_limit=args.session_limit,
                 run_limit_per_session=args.run_limit,
                 window_hours=args.hours,
+                home_root=getattr(args, "home_root", None),
+                data_root=getattr(args, "data_root", None),
             ),
         }
         _print_owner_status(payload=payload, as_json=bool(args.json))
@@ -114,10 +120,10 @@ def _run_session_storage_status(args: Any, *, config: Any) -> int:
         runtime_storage.close()
 
 
-def _load_status_config(config_path: str) -> Any:
-    from openminion.cli.config import load_cli_config
+def _load_status_config(args: Any) -> Any:
+    from openminion.cli.config import load_cli_config_from_args
 
-    return load_cli_config(config_path)
+    return load_cli_config_from_args(args)
 
 
 def _build_session_payload(session) -> dict[str, object]:
@@ -219,9 +225,15 @@ def _print_owner_status(*, payload: dict, as_json: bool) -> None:
 
 
 def _register_simple_status_subcommand(
-    status_subcommands, name: str, help_text: str
+    status_subcommands,
+    name: str,
+    help_text: str,
+    *,
+    runtime_source: bool = False,
 ) -> argparse.ArgumentParser:
     parser = status_subcommands.add_parser(name, help=help_text)
+    if runtime_source:
+        add_runtime_source_flag(parser)
     add_json_output_flag(parser)
     parser.set_defaults(handler=run_status, needs_app=False)
     return parser
@@ -362,6 +374,22 @@ def _register_status_onboarding_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
+def _register_status_readiness_subcommand(
+    status_subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    parser = status_subcommands.add_parser(
+        "readiness",
+        help="Show safe day-to-day assistant readiness without starting runtime",
+    )
+    parser.add_argument(
+        "--agent-id",
+        default=None,
+        help="Optional agent id for provider/profile-specific readiness inspection",
+    )
+    add_json_output_flag(parser)
+    parser.set_defaults(handler=run_status, needs_app=False)
+
+
 def _register_status_owner_subcommand(status_subcommands) -> None:
     parser = status_subcommands.add_parser(
         "owner",
@@ -438,18 +466,24 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     _register_status_notes_subcommand(status_subcommands)
     _register_status_identity_subcommand(status_subcommands)
     _register_status_onboarding_subcommand(status_subcommands)
+    _register_status_readiness_subcommand(status_subcommands)
     _register_simple_status_subcommand(
-        status_subcommands, "tools", "Inspect tool inventory status and readiness"
+        status_subcommands,
+        "tools",
+        "Inspect tool inventory status and readiness",
+        runtime_source=True,
     )
     _register_simple_status_subcommand(
         status_subcommands,
         "capabilities",
         "Inspect effective tools/providers/modes/plugins capability posture",
+        runtime_source=True,
     )
     _register_simple_status_subcommand(
         status_subcommands,
         "runtime",
         "Inspect runtime mode, bridge posture, and execution-boundary posture",
+        runtime_source=True,
     )
     _register_simple_status_subcommand(
         status_subcommands,

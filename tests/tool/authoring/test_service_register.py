@@ -59,7 +59,12 @@ def test_register_draft_first_registration_is_v1(tmp_path) -> None:
         )
         assert result["ok"] is True
         assert result["tool_name"] == "authored.adder@v1"
+        assert result["exposure_profile_id"] == "authored_authored_adder_v1"
         assert "authored.adder@v1" in registry.list()
+        profile = registry.exposure_service.profile(result["exposure_profile_id"])
+        assert profile is not None
+        assert profile.tool_names == frozenset({"authored.adder@v1"})
+        assert profile.default_active is False
         assert policy_ctl.list_grants(active_only=True)
     finally:
         service.close()

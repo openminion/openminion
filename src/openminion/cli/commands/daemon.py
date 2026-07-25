@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.cli.transport.daemon_client import (
@@ -25,24 +26,57 @@ def _remote_config_path_from_probe_payload(payload: object) -> str:
     return str(daemon_payload.get("config_path", "")).strip()
 
 
-def run_daemon(args) -> int:
+def run_daemon(args: Any) -> int:
     action = str(getattr(args, "daemon_command", "")).strip().lower()
     if action == "start":
-        return daemon_start(args.config)
+        return daemon_start(
+            args.config,
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
     if action == "stop":
-        return daemon_stop(args.config)
+        return daemon_stop(
+            args.config,
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
+    if action == "restart":
+        return daemon_restart(
+            args.config,
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
     if action == "status":
-        return daemon_status(args.config)
+        return daemon_status(
+            args.config,
+            as_json=bool(getattr(args, "json", False)),
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
     if action == "logs":
         lines = int(getattr(args, "lines", 200) or 200)
-        return daemon_logs(args.config, lines=lines)
+        return daemon_logs(
+            args.config,
+            lines=lines,
+            follow=bool(getattr(args, "follow", False)),
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
     raise RuntimeError("Unknown daemon command")
 
 
 def ensure_daemon_running(
-    config_path: str | None, *, auto_start: bool
+    config_path: str | None,
+    *,
+    auto_start: bool,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
 ) -> DaemonEndpoint:
-    endpoint = resolve_daemon_endpoint(config_path)
+    endpoint = resolve_daemon_endpoint(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
     probe_status, payload = probe_daemon_endpoint(endpoint)
     if probe_status == "ok":
         return endpoint
@@ -68,8 +102,17 @@ def ensure_daemon_running(
     return endpoint
 
 
-def daemon_start(config_path: str | None) -> int:
-    endpoint = resolve_daemon_endpoint(config_path)
+def daemon_start(
+    config_path: str | None,
+    *,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> int:
+    endpoint = resolve_daemon_endpoint(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
     result = _start_daemon(endpoint)
     if result["ok"]:
         print(result["message"])
@@ -78,10 +121,19 @@ def daemon_start(config_path: str | None) -> int:
     return 1
 
 
-def daemon_stop(config_path: str | None) -> int:
+def daemon_stop(
+    config_path: str | None,
+    *,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> int:
     from openminion.daemon import process_alive, read_pid, resolve_daemon_pid_file
 
-    endpoint = resolve_daemon_endpoint(config_path)
+    endpoint = resolve_daemon_endpoint(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
     config = load_config(endpoint.config_path)
     pid_file = resolve_daemon_pid_file(config)
     pid = read_pid(pid_file)
@@ -129,7 +181,53 @@ def daemon_stop(config_path: str | None) -> int:
     return 1
 
 
-def daemon_status(config_path: str | None) -> int:
+def daemon_restart(
+    config_path: str | None,
+    *,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> int:
+    stop_code = daemon_stop(config_path, home_root=home_root, data_root=data_root)
+    if stop_code != 0:
+        return stop_code
+    return daemon_start(config_path, home_root=home_root, data_root=data_root)
+
+
+def daemon_status(
+    config_path: str | None,
+    *,
+    as_json: bool = True,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> int:
+    payload = _build_daemon_status_payload(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
+    if as_json:
+        print_json_payload(payload)
+    else:
+        print(
+            "daemon status: "
+            f"status={payload['status']} lifecycle={payload['lifecycle']} "
+            f"endpoint={payload['host']}:{payload['port']} pid={payload['pid'] or '-'}"
+        )
+        print(f"config: expected={payload['config_path']}")
+        remote_config_path = str(payload.get("remote_config_path", "") or "")
+        if remote_config_path and remote_config_path != payload["config_path"]:
+            print(f"config mismatch: running={remote_config_path}")
+        print(f"pid_file: {payload['pid_file']}")
+        print(f"log_file: {payload['log_file']}")
+    return 0 if bool(payload.get("reachable", False)) else 1
+
+
+def _build_daemon_status_payload(
+    config_path: str | None,
+    *,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> dict[str, object]:
     from openminion.daemon import (
         process_alive,
         read_pid,
@@ -137,7 +235,14 @@ def daemon_status(config_path: str | None) -> int:
         resolve_daemon_pid_file,
     )
 
-    endpoint = resolve_daemon_endpoint(config_path)
+    if home_root is not None or data_root is not None:
+        endpoint = resolve_daemon_endpoint(
+            config_path,
+            home_root=home_root,
+            data_root=data_root,
+        )
+    else:
+        endpoint = resolve_daemon_endpoint(config_path)
     config = load_config(endpoint.config_path)
     pid_file = resolve_daemon_pid_file(config)
     pid = read_pid(pid_file)
@@ -150,27 +255,38 @@ def daemon_status(config_path: str | None) -> int:
     remote_config_path = ""
     if isinstance(daemon_payload, dict):
         remote_config_path = str(daemon_payload.get("config_path", "")).strip()
-
-    payload = {
+    return {
         "ok": reachable,
         "pid": pid,
         "pid_alive": alive,
         "reachable": reachable,
+        "status": "running" if reachable else "unreachable",
+        "lifecycle": "running" if alive else "stopped",
         "endpoint_status": probe_status,
         "remote_config_path": remote_config_path,
         "host": endpoint.host,
         "port": endpoint.port,
+        "config_path": endpoint.config_path,
         "pid_file": str(pid_file),
         "log_file": str(resolve_daemon_log_file(config)),
     }
-    print_json_payload(payload)
-    return 0 if reachable else 1
 
 
-def daemon_logs(config_path: str | None, *, lines: int = 200) -> int:
+def daemon_logs(
+    config_path: str | None,
+    *,
+    lines: int = 200,
+    follow: bool = False,
+    home_root: str | Path | None = None,
+    data_root: str | Path | None = None,
+) -> int:
     from openminion.daemon import resolve_daemon_log_file
 
-    endpoint = resolve_daemon_endpoint(config_path)
+    endpoint = resolve_daemon_endpoint(
+        config_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
     config = load_config(endpoint.config_path)
     log_file = resolve_daemon_log_file(config)
     if not log_file.exists():
@@ -183,7 +299,26 @@ def daemon_logs(config_path: str | None, *, lines: int = 200) -> int:
     tail = chunks[-safe_lines:]
     for line in tail:
         print(line)
+    if follow:
+        _follow_log_file(
+            log_file, start_offset=len(text.encode("utf-8", errors="replace"))
+        )
     return 0
+
+
+def _follow_log_file(log_file: Path, *, start_offset: int) -> None:
+    offset = max(0, start_offset)
+    try:
+        while True:
+            with log_file.open("r", encoding="utf-8", errors="replace") as stream:
+                stream.seek(offset)
+                chunk = stream.read()
+                offset = stream.tell()
+            if chunk:
+                print(chunk, end="")
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        return
 
 
 def _start_daemon(endpoint: DaemonEndpoint) -> dict[str, object]:
@@ -300,11 +435,27 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     daemon_stop_cmd = daemon_subcommands.add_parser("stop", help="Stop openminiond")
     daemon_stop_cmd.set_defaults(handler=run_daemon, needs_app=False)
 
+    daemon_restart_cmd = daemon_subcommands.add_parser(
+        "restart", help="Stop and start openminiond"
+    )
+    daemon_restart_cmd.set_defaults(handler=run_daemon, needs_app=False)
+
     daemon_status = daemon_subcommands.add_parser("status", help="Show daemon status")
+    daemon_status.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable daemon status JSON",
+    )
     daemon_status.set_defaults(handler=run_daemon, needs_app=False)
 
     daemon_logs_cmd = daemon_subcommands.add_parser("logs", help="Show daemon logs")
     daemon_logs_cmd.add_argument(
         "--lines", type=int, default=200, help="Tail line count (default: 200)"
+    )
+    daemon_logs_cmd.add_argument(
+        "--follow",
+        "-f",
+        action="store_true",
+        help="Keep streaming appended daemon log lines",
     )
     daemon_logs_cmd.set_defaults(handler=run_daemon, needs_app=False)

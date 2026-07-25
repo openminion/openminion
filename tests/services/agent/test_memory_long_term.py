@@ -37,6 +37,23 @@ def _profile(
             responsibilities=responsibilities,
             hard_constraints=hard_constraints,
             domain=domain,
+            escalation_rules=["Escalate when blocked"],
+        ),
+        personality=SimpleNamespace(
+            tone="direct",
+            verbosity="normal",
+            formatting=["use bullets"],
+            interaction_style=["be explicit"],
+        ),
+        risk=SimpleNamespace(
+            risk_level="medium",
+            confirm_before=["destructive_actions"],
+            auto_proceed_rules=["safe reads are allowed"],
+        ),
+        tool_posture=SimpleNamespace(
+            tool_use="restricted",
+            blocked_patterns=["rm -rf"],
+            allowed_tools=["file.read"],
         ),
     )
 
@@ -231,7 +248,7 @@ def test_identity_seeder_integration(tmp_path: Path) -> None:
         memory_service=service,
         agent_id="identity-test-agent",
     )
-    assert count > 0
+    assert count >= 12
 
     agent_records = service.list(
         ListQueryOptions(scopes=["agent:identity-test-agent"], limit=50)
@@ -240,6 +257,9 @@ def test_identity_seeder_integration(tmp_path: Path) -> None:
         str(getattr(record, "content", "") or "") for record in agent_records
     )
     assert "Python code" in all_content
+    assert "identity_tool_posture_tool_use" in {
+        str(getattr(record, "title", "") or "") for record in agent_records
+    }
 
 
 def test_identity_seeder_idempotent(tmp_path: Path) -> None:

@@ -48,6 +48,19 @@ TOOL_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         expected_markers=("nasm",),
         timeout=240,
     ),
+    FocusScenario(
+        scenario_id="browser_tool_status",
+        prompt=(
+            "Use the browser tool with the daemon.status operation to check "
+            "browser/provider readiness, then summarize the browser status in "
+            "one sentence."
+        ),
+        expected_markers=("browser",),
+        timeout=360,
+        requires_approval=True,
+        max_auto_approvals=4,
+        approval_reply="session",
+    ),
 )
 
 
@@ -176,7 +189,9 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             f"directory. {SCRATCH_RELATIVE_PATH_RULE}"
             "Pick a minimal design for a Python CLI that summarizes "
             "text-file word counts, implement it with file.write/file.read, and "
-            "avoid installs and exec.run. Validate by reading back one created "
+            "avoid installs and exec.run. Begin by using file.write for "
+            "`word_count_cli.py`; do not inspect the repo first. "
+            "Validate by reading back one created "
             "file. Close with `design:`, `implementation:`, `validation:`, and "
             "`next steps:`."
         ),
@@ -197,6 +212,8 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
             "Python CLI that summarizes Markdown sections, pick the simpler one, "
             "and implement a tiny package with module code, CLI entry, tests, "
             "and README using file.write/file.read. Avoid installs and exec.run. "
+            "Begin by using file.write for `section_summary.py`; do not inspect "
+            "the repo first. "
             "Validate by reading back one created file. Finish with `design:`, "
             "`files:`, `validation:`, and `follow-ups:`."
         ),

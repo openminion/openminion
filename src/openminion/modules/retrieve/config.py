@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from string import Template
-from typing import Any, Mapping, MutableMapping, Optional
+from typing import Any, Mapping, MutableMapping, Optional, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -100,7 +100,7 @@ def resolve_home_root() -> Path:
 
 
 def is_standalone_mode() -> bool:
-    return _is_module_standalone_mode(resolve_environment_config())
+    return bool(_is_module_standalone_mode(resolve_environment_config()))
 
 
 def get_default_storage_paths(
@@ -127,7 +127,7 @@ def get_default_storage_paths(
 
 def resolve_default_config_path(*, home_root: Optional[Path] = None) -> Path:
     """Return the default retrievectl config path under the generated root."""
-    return resolve_generated_config_path(DEFAULT_CONFIG_FILENAME, home_root=home_root)
+    return cast(Path, resolve_generated_config_path(DEFAULT_CONFIG_FILENAME, home_root=home_root))
 
 
 def load_config(
@@ -280,7 +280,7 @@ def _resolve_path(path: str | Path, *, env: Mapping[str, str]) -> Path:
     else:
         candidate = env.get(RETRIEVECTL_CONFIG_ENV, str(resolve_default_config_path()))
     expanded = _expand_env(candidate, env)
-    return resolve_module_config_path(expanded)
+    return cast(Path, resolve_module_config_path(expanded))
 
 
 def _resolve_storage_path(

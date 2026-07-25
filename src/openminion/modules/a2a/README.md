@@ -34,6 +34,24 @@ Re-exported from `openminion.modules.a2a`:
 - Wire types: `AgentDescriptor`, `ArtifactRef`, `Envelope`, `JobRecord`
 - Config: `RuntimeConfig`, `load_config`
 
+## Current maturity
+
+`modules/a2a` owns the in-process A2A runtime, storage/audit primitives, and
+Google A2A v1 Agent Card, JSON-RPC, and task DTOs. OpenMinion now exposes a
+bounded external v1 route through the API server:
+
+- `GET /.well-known/agent.json` returns public Agent Card metadata.
+- `POST /a2a/v1/jsonrpc` requires `Authorization: Bearer <token>` with
+  `OPENMINION_A2A_BEARER_TOKEN` configured.
+- Supported JSON-RPC methods are `tasks/send`, `tasks/get`, and `tasks/cancel`.
+- Task streaming is not enabled in v1; the task-events route fails closed with a
+  typed unsupported response and the Agent Card reports `streaming=false`.
+
+External endpoint scope and validation evidence are tracked in
+`docs/trackers/qa/openminion-external-a2a-network-endpoint-2026-07-24-tracker.md`.
+Public readiness claims should say "authenticated local external A2A endpoint"
+until third-party peer interoperability is separately proven.
+
 ## Dependencies
 
 - `modules/registry/` — agent descriptor / route resolution

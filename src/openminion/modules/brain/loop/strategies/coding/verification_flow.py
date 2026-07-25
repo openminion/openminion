@@ -352,7 +352,10 @@ class CodingVerificationMixin:
                 reason="missing_implementation_write",
                 required_tool="file.write or code.patch",
             )
-            if attempt >= self._max_self_corrections:
+            correction_cap = max(
+                1, int(getattr(self, "_max_self_corrections", 0) or 0)
+            )
+            if attempt > correction_cap:
                 self._loop_state.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
             instruction = (
                 "Stay in implement and use a mutating implementation tool "
@@ -369,7 +372,10 @@ class CodingVerificationMixin:
             attempt = self._record_verify_gate_block(
                 ctx, failure_summary=failure_summary
             )
-            if attempt >= self._max_self_corrections:
+            correction_cap = max(
+                1, int(getattr(self, "_max_self_corrections", 0) or 0)
+            )
+            if attempt > correction_cap:
                 self._loop_state.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
             instruction = (
                 "Stay in implement and run at least one verification readback "

@@ -4,6 +4,8 @@ import argparse
 from collections.abc import Callable
 from typing import Any
 
+from openminion.cli.config import load_cli_config_from_args
+
 
 def _resolve_run_api_dependencies() -> tuple[Callable[..., Any], Callable[..., Any]]:
     patched_load_config = globals().get("load_config")
@@ -12,19 +14,24 @@ def _resolve_run_api_dependencies() -> tuple[Callable[..., Any], Callable[..., A
         return patched_load_config, patched_build_api_server
 
     from openminion.api.server import build_api_server
-    from openminion.cli.bootstrap.loader import load_config
 
-    return load_config, build_api_server
+    return load_cli_config_from_args, build_api_server
 
 
-def run_api(args) -> int:
+def run_api(args: Any) -> int:
     load_config, build_api_server = _resolve_run_api_dependencies()
-    config = load_config(args.config)
+    config = _load_api_config(load_config, args)
     host = str(args.host or config.gateway.host)
     port = int(args.port or config.gateway.port)
 
     try:
-        server = build_api_server(config_path=args.config, host=host, port=port)
+        server = build_api_server(
+            config_path=args.config,
+            host=host,
+            port=port,
+            home_root=getattr(args, "home_root", None),
+            data_root=getattr(args, "data_root", None),
+        )
     except Exception as exc:
         print(f"API server failed to start on {host}:{port}: {exc}")
         return 1
@@ -46,6 +53,12 @@ def run_api(args) -> int:
             print(f"API server shutdown failed: {exc}")
             exit_code = 1
     return exit_code
+
+
+def _load_api_config(loader: Callable[..., Any], args: Any) -> Any:
+    if loader is load_cli_config_from_args:
+        return loader(args)
+    return loader(args.config)
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:

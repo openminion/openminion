@@ -59,6 +59,7 @@ from .runtime import (
     _remember_affinity,
     _remember_session_state,
     _resolve_tab,
+    _routing_state_identifiers,
     _runtime_context_from_execution_context,
     _runtime_env_from_context,
     _runtime_provider_preferences,
@@ -188,6 +189,7 @@ _SESSION_STATE_RELATIVE_PATH = DEFAULT_BROWSER_SESSION_STATE_RELATIVE_PATH
 @dataclass
 class BrowserTool(Tool):
     name = "browser"
+    sidecar = "pinchtab"
     description = (
         "Provider-neutral browser automation for interactive or visual web tasks. "
         "Use web.fetch for static URL content retrieval that does not require page "
@@ -228,6 +230,7 @@ class BrowserTool(Tool):
     _state_key = _state_key
     _state_for = _state_for
     _hydrate_call_with_session_state = _hydrate_call_with_session_state
+    _routing_state_identifiers = _routing_state_identifiers
     _remember_session_state = _remember_session_state
     _clear_session_state = _clear_session_state
     _runtime_env_from_context = _runtime_env_from_context
@@ -334,41 +337,11 @@ class BrowserTool(Tool):
         call: BrowserCallArgs | None = None
         provider_id = ""
         try:
-            call = BrowserCallArgs.model_validate(args)
-            runtime_default_provider, runtime_provider_order = (
-                self._runtime_provider_preferences(ctx)
-            )
-            provider = self.router.select_provider(
-                requested_provider=call.provider,
-                agent_profile_provider=self._agent_profile_provider(ctx),
-                session_provider_override=self._session_provider_override(ctx),
-                instance_id=call.instance_id,
-                tab_id=call.tab_id,
-                runtime_default_provider=runtime_default_provider,
-                runtime_provider_order=runtime_provider_order,
+            provider, provider_ctx, call = self._select_provider_for_call(
+                args=args,
+                ctx=ctx,
             )
             provider_id = provider.provider_id
-            emit_family_event(
-                ctx.runtime,
-                event="tool.browser.provider.selected",
-                payload={
-                    "requested_provider": str(call.provider or "").strip(),
-                    "selected_provider": provider.provider_id,
-                    "op": call.op,
-                },
-            )
-            provider_ctx = BrowserProviderContext(
-                tool_context=ctx.runtime
-                if isinstance(ctx.runtime, RuntimeContext)
-                else None,
-                workspace_root=self._workspace_root(ctx),
-                trace_id=ctx.trace_id,
-                session_id=ctx.session_id,
-                extras=dict(ctx.extras),
-            )
-            call = self._hydrate_call_with_session_state(
-                provider=provider, provider_ctx=provider_ctx, call=call
-            )
             self._emit_event(
                 "requested",
                 provider_id=provider.provider_id,
@@ -451,6 +424,54 @@ class BrowserTool(Tool):
                     "details": {},
                 },
             }
+
+    def _select_provider_for_call(
+        self,
+        *,
+        args: Dict[str, Any],
+        ctx: _BrowserExecutionContext,
+    ) -> tuple[BrowserProvider, BrowserProviderContext, BrowserCallArgs]:
+        call = BrowserCallArgs.model_validate(args)
+        routing_provider_id, routing_instance_id, routing_tab_id = (
+            self._routing_state_identifiers(call=call, ctx=ctx)
+        )
+        session_provider_override = (
+            self._session_provider_override(ctx) or routing_provider_id
+        )
+        runtime_default_provider, runtime_provider_order = (
+            self._runtime_provider_preferences(ctx)
+        )
+        provider = self.router.select_provider(
+            requested_provider=call.provider,
+            agent_profile_provider=self._agent_profile_provider(ctx),
+            session_provider_override=session_provider_override,
+            instance_id=routing_instance_id,
+            tab_id=routing_tab_id,
+            runtime_default_provider=runtime_default_provider,
+            runtime_provider_order=runtime_provider_order,
+        )
+        emit_family_event(
+            ctx.runtime,
+            event="tool.browser.provider.selected",
+            payload={
+                "requested_provider": str(call.provider or "").strip(),
+                "selected_provider": provider.provider_id,
+                "op": call.op,
+            },
+        )
+        provider_ctx = BrowserProviderContext(
+            tool_context=ctx.runtime if isinstance(ctx.runtime, RuntimeContext) else None,
+            workspace_root=self._workspace_root(ctx),
+            trace_id=ctx.trace_id,
+            session_id=ctx.session_id,
+            extras=dict(ctx.extras),
+        )
+        hydrated = self._hydrate_call_with_session_state(
+            provider=provider,
+            provider_ctx=provider_ctx,
+            call=call,
+        )
+        return provider, provider_ctx, hydrated
 
     def _dispatch(
         self,
@@ -604,7 +625,13 @@ _DEFAULT_PROVIDER = (
 _TOOL = BrowserTool(
     router=BrowserRouter(
         _PROVIDER_REGISTRY,
-        config=BrowserRoutingConfig(default_provider=_DEFAULT_PROVIDER),
+        config=BrowserRoutingConfig(
+            default_provider=_DEFAULT_PROVIDER,
+            lookup_instance_affinity=_SESSION_STATE_STORE.lookup_instance_affinity,
+            lookup_tab_affinity=_SESSION_STATE_STORE.lookup_tab_affinity,
+            remember_instance_affinity=_SESSION_STATE_STORE.remember_instance_affinity,
+            remember_tab_affinity=_SESSION_STATE_STORE.remember_tab_affinity,
+        ),
     )
 )
 _DISCOVERED_PROVIDER_ENTRYPOINTS = False
@@ -628,6 +655,11 @@ def register_provider(provider: BrowserProvider) -> None:
 def provider_registry() -> BrowserProviderRegistry:
     _ensure_discovered_providers()
     return _PROVIDER_REGISTRY
+
+
+def default_browser_tool() -> BrowserTool:
+    _ensure_discovered_providers()
+    return _TOOL
 
 
 def register(registry: Any) -> None:

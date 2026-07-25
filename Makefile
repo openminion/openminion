@@ -9,6 +9,7 @@ PIP := $(PYTHON) -m pip
 PRE_COMMIT := $(PYTHON) -m pre_commit
 PYTEST := $(PYTHON) -m pytest
 RUFF := $(PYTHON) -m ruff
+BROWSER_TOOL_FAMILY_VALIDATOR ?= $(REPO_ROOT)/../docs/scripts/validate_browser_tool_family_contract.py
 
 # I-17 (2026-06-02): parallel `validate-patterns` job count. Defaults to the
 # host CPU count (capped at 8 to keep output readable on big servers).
@@ -32,7 +33,9 @@ VALIDATE_PATTERN_MODULES := \
 	validate.execution_complexity \
 	validate.helper_duplicates \
 	validate.config_constants \
+	validate.init_loc \
 	validate.max_file_loc \
+	validate.schema_classes \
 	validate.telemetry_event_catalog \
 	validate.module_typed_raises \
 	validate.tool_selection_scoring_contract \
@@ -79,7 +82,9 @@ VALIDATE_PATTERN_SCRIPTS := \
 	validate/execution_complexity \
 	validate/helper_duplicates \
 	validate/config_constants \
+	validate/init_loc \
 	validate/max_file_loc \
+	validate/schema_classes \
 	validate/telemetry_event_catalog \
 	validate/module_typed_raises \
 	validate/tool_selection_scoring_contract \
@@ -168,6 +173,11 @@ lint: $(DEV_STAMP)
 	$(MAKE) -j $(JOBS) validate-patterns
 	$(PYTHON) scripts/validate/controlplane_delivery.py
 	$(PYTHON) scripts/validate/webhook_secret.py
+	@if [ -f "$(BROWSER_TOOL_FAMILY_VALIDATOR)" ]; then \
+		$(PYTHON) "$(BROWSER_TOOL_FAMILY_VALIDATOR)" --root "$(REPO_ROOT)/.."; \
+	else \
+		echo "Skipping workspace browser tool-family contract validator (not present in standalone checkout)."; \
+	fi
 	$(MAKE) typecheck
 
 typecheck: $(DEV_STAMP)

@@ -178,6 +178,36 @@ class _FakeRuntime:
     def list_registered_agents(self) -> list[str]:
         return ["alpha", "beta"]
 
+    def agent_discovery_snapshot(self) -> list[dict[str, object]]:
+        return [
+            {
+                "agent_id": "alpha",
+                "display_name": "Alpha Prime",
+                "configured": True,
+                "registry_present": False,
+                "hot": True,
+                "heartbeat_active": False,
+                "available": True,
+                "running": True,
+                "stopped": False,
+                "unknown": False,
+                "state": "running",
+            },
+            {
+                "agent_id": "beta",
+                "display_name": "Beta",
+                "configured": True,
+                "registry_present": False,
+                "hot": False,
+                "heartbeat_active": False,
+                "available": True,
+                "running": False,
+                "stopped": True,
+                "unknown": False,
+                "state": "configured",
+            },
+        ]
+
     def resolve_agent_profile(self, agent_id: str | None = None) -> SimpleNamespace:
         name = str(agent_id or "").strip() or "alpha"
         if name not in {"alpha", "beta"}:
@@ -654,6 +684,20 @@ async def test_openminion_runtime_switch_agent_and_new_session() -> None:
 
     tools = tui_rt.list_tools()
     assert tools == [("exec.run", False), ("weather", True)]
+
+
+def test_openminion_runtime_agent_sidebar_uses_discovery_truth() -> None:
+    rt = _FakeRuntime()
+    tui_rt = OpenMinionRuntime(rt)
+
+    agents = tui_rt.list_agents()
+
+    assert [agent.id for agent in agents] == ["alpha", "beta"]
+    assert agents[0].label == "Alpha Prime"
+    assert agents[0].active is True
+    assert agents[0].meta["configured"] is True
+    assert agents[0].meta["running"] is True
+    assert agents[1].meta["running"] is False
 
 
 def test_openminion_runtime_preserves_created_at_for_header_formatting() -> None:

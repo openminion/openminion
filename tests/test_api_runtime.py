@@ -934,6 +934,15 @@ class APIRuntimectlTests(unittest.TestCase):
                 self.assertTrue(agents_payload["agents"])
                 agent_ids = {entry["agent_id"] for entry in agents_payload["agents"]}
                 self.assertIn("openminion", agent_ids)
+                openminion_agent = next(
+                    entry
+                    for entry in agents_payload["agents"]
+                    if entry["agent_id"] == "openminion"
+                )
+                self.assertTrue(openminion_agent["configured"])
+                self.assertTrue(openminion_agent["available"])
+                self.assertIn(openminion_agent["state"], {"configured", "running"})
+                self.assertIn("manager_agents", agents_payload)
 
                 status_stream, stream_payload = dispatch_request(
                     "POST",

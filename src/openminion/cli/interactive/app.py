@@ -101,6 +101,32 @@ class _DemoFocusRuntime:
     def list_agents(self) -> list[SidebarItem]:
         return [SidebarItem(self._agent_id, self._agent_id, active=True)]
 
+    def delegate_task(
+        self,
+        *,
+        mode: str,
+        target_agent_id: str = "",
+        instruction: str = "",
+        task_id: str = "",
+        timeout_seconds: int = 120,
+    ) -> dict[str, object]:
+        if mode in {"status", "resume", "result", "cancel"}:
+            return {
+                "ok": True,
+                "mode": "resume" if mode == "result" else mode,
+                "status": "success" if mode in {"resume", "result"} else mode,
+                "task_id": task_id,
+                "content": "Demo delegated task result.",
+            }
+        return {
+            "ok": True,
+            "mode": mode or "sync",
+            "status": "success",
+            "agent_id": target_agent_id,
+            "content": f"Demo delegated work: {instruction}",
+            "timeout_seconds": timeout_seconds,
+        }
+
     def list_tools(self) -> list[tuple[str, bool]]:
         return []
 

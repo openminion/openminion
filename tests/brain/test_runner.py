@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from openminion.modules.brain.adapters.llm import LocalLLMAdapter
+from openminion.modules.brain.state import update_session_summary
 
 from tests.brain.runner_test_support import (
     BudgetCounters,
@@ -170,7 +171,11 @@ class RunnerTests(unittest.TestCase):
         ]
         runner = BrainRunner(profile=_profile(), session_api=session_api)
 
-        runner._update_session_summary(session_id="s-summary", agent_id="router-agent")
+        update_session_summary(
+            runner,
+            session_id="s-summary",
+            agent_id="router-agent",
+        )
 
         session_api.update_summary.assert_called_once()
         kwargs = session_api.update_summary.call_args.kwargs

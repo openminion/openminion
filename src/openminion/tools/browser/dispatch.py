@@ -60,6 +60,10 @@ class BrowserDispatch:
             BrowserOp.TAB_SELECT.value: self._handle_tab_select,
             BrowserOp.TAB_CLOSE.value: self._handle_tab_close,
             BrowserOp.TAB_NAVIGATE.value: self._handle_tab_navigate,
+            BrowserOp.TAB_RELOAD.value: self._handle_tab_reload,
+            BrowserOp.TAB_BACK.value: self._handle_tab_back,
+            BrowserOp.TAB_FORWARD.value: self._handle_tab_forward,
+            BrowserOp.TAB_WAIT.value: self._handle_tab_wait,
             BrowserOp.TAB_SNAPSHOT.value: self._handle_tab_snapshot,
             BrowserOp.TAB_TEXT.value: self._handle_tab_text,
             BrowserOp.TAB_SCREENSHOT.value: self._handle_tab_screenshot,
@@ -360,6 +364,73 @@ class BrowserDispatch:
             "strategy": "bootstrap_new_tab",
         }
         return payload
+
+    def _handle_tab_reload(
+        self,
+        provider: BrowserProvider,
+        provider_ctx: BrowserProviderContext,
+        call: BrowserCallArgs,
+    ) -> dict[str, Any]:
+        tab_id = self._resolve_required_tab_id(
+            provider=provider,
+            provider_ctx=provider_ctx,
+            call=call,
+            error_message="tab_id is required for tab.reload",
+        )
+        return to_payload(
+            provider.tab_reload(provider_ctx, tab_id, options=call.navigation)
+        )
+
+    def _handle_tab_back(
+        self,
+        provider: BrowserProvider,
+        provider_ctx: BrowserProviderContext,
+        call: BrowserCallArgs,
+    ) -> dict[str, Any]:
+        tab_id = self._resolve_required_tab_id(
+            provider=provider,
+            provider_ctx=provider_ctx,
+            call=call,
+            error_message="tab_id is required for tab.back",
+        )
+        return to_payload(provider.tab_back(provider_ctx, tab_id, options=call.navigation))
+
+    def _handle_tab_forward(
+        self,
+        provider: BrowserProvider,
+        provider_ctx: BrowserProviderContext,
+        call: BrowserCallArgs,
+    ) -> dict[str, Any]:
+        tab_id = self._resolve_required_tab_id(
+            provider=provider,
+            provider_ctx=provider_ctx,
+            call=call,
+            error_message="tab_id is required for tab.forward",
+        )
+        return to_payload(
+            provider.tab_forward(provider_ctx, tab_id, options=call.navigation)
+        )
+
+    def _handle_tab_wait(
+        self,
+        provider: BrowserProvider,
+        provider_ctx: BrowserProviderContext,
+        call: BrowserCallArgs,
+    ) -> dict[str, Any]:
+        tab_id = self._resolve_required_tab_id(
+            provider=provider,
+            provider_ctx=provider_ctx,
+            call=call,
+            error_message="tab_id is required for tab.wait",
+        )
+        timeout_ms = None
+        if isinstance(call.options, Mapping):
+            raw_timeout = call.options.get("timeout_ms") or call.options.get(
+                "timeoutMs"
+            )
+            if raw_timeout is not None:
+                timeout_ms = int(raw_timeout)
+        return to_payload(provider.tab_wait(provider_ctx, tab_id, timeout_ms=timeout_ms))
 
     def _handle_tab_snapshot(
         self,

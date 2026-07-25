@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Literal, Optional
+from typing import Any, Dict, Iterable, Literal, Optional, cast
 from urllib.parse import urlparse
 
 from ..models import (
@@ -15,8 +15,10 @@ from ..models import (
     PolicyDecision,
     PolicyGrant,
     PolicyGrantInput,
+    DurationType,
     RiskClass,
     RiskSpec,
+    SideEffects,
     sanitize_args,
     stable_invocation_hash,
     utc_now_iso,
@@ -311,7 +313,7 @@ class PolicyCtl:
                 tool=inv.tool,
                 method=inv.method,
                 target_json=target,
-                duration_type=duration,  # type: ignore[arg-type]
+                duration_type=cast(DurationType, duration),
                 expires_at=expires_at,
                 session_id=session_id,
                 invocation_hash=invocation_hash,
@@ -867,7 +869,7 @@ class PolicyCtl:
             )
             return RiskSpec(
                 risk_class=POLICY_RISK_EXEC,
-                side_effects=side,  # type: ignore[arg-type]
+                side_effects=cast(SideEffects, side),
                 reversibility=POLICY_REVERSIBILITY_UNKNOWN,
                 default_confirm=True,
             )
@@ -892,7 +894,7 @@ class PolicyCtl:
             )
             return RiskSpec(
                 risk_class=POLICY_RISK_STATE_CHANGE,
-                side_effects=side,  # type: ignore[arg-type]
+                side_effects=cast(SideEffects, side),
                 reversibility=POLICY_REVERSIBILITY_PARTIALLY_REVERSIBLE,
                 default_confirm=True,
             )

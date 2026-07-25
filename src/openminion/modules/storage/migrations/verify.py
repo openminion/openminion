@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from openminion.modules.storage.migrations.errors import VerificationError
 from openminion.modules.storage.migrations.models import Finding, VerificationReport
@@ -47,13 +47,13 @@ def run_verification(
     if connection is not None:
         if engine is not None:
             raise ValueError("pass either engine or connection, not both")
-        try:
-            from sqlalchemy import text
-        except Exception:
-            text = None  # type: ignore[assignment]
-
         if hasattr(connection, "exec_driver_sql"):
-            result = connection.execute(text("SELECT 1 AS ok")).scalar()  # type: ignore[union-attr]
+            try:
+                from sqlalchemy import text
+            except Exception as exc:  # pragma: no cover - dependency mismatch
+                raise VerificationError("SQLAlchemy text helper unavailable.") from exc
+
+            result = cast(Any, connection).execute(text("SELECT 1 AS ok")).scalar()
             quick_result = "ok" if int(result or 0) == 1 else "error"
             if quick_result != "ok":
                 findings.append(
@@ -65,7 +65,8 @@ def run_verification(
                     )
                 )
         else:
-            quick_result = _run_pragma(connection, "quick_check")  # type: ignore[arg-type]
+            sqlite_connection = cast(sqlite3.Connection, connection)
+            quick_result = _run_pragma(sqlite_connection, "quick_check")
             if quick_result != "ok":
                 findings.append(
                     Finding(
@@ -76,7 +77,7 @@ def run_verification(
                     )
                 )
             if normalized == "full":
-                integrity_result = _run_pragma(connection, "integrity_check")  # type: ignore[arg-type]
+                integrity_result = _run_pragma(sqlite_connection, "integrity_check")
                 if integrity_result != "ok":
                     findings.append(
                         Finding(

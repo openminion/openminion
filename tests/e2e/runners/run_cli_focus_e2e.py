@@ -12,6 +12,7 @@ import time
 _ROOT = Path(__file__).resolve().parents[3]
 _PYTHON = _ROOT / ".venv" / "bin" / "python3.11"
 _SUMMARY_ENV = "OPENMINION_CLI_FOCUS_E2E_SUMMARY_OUTPUT"
+_TIMEOUT_ENV = "OPENMINION_CLI_FOCUS_E2E_RUNNER_TIMEOUT_SECONDS"
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,7 @@ def _run(
     *,
     env: dict[str, str],
     extra_args: tuple[str, ...] = (),
+    timeout_seconds: int | None = None,
 ) -> int:
     command = [
         str(_PYTHON),
@@ -178,7 +180,31 @@ def _run(
         *(extra_args or []),
         "-ra",
     ]
-    return subprocess.call(command, cwd=_ROOT, env=env)
+    try:
+        return subprocess.call(command, cwd=_ROOT, env=env, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        rendered = " ".join(command)
+        print(
+            f"OpenMinion Focus E2E runner timed out after {timeout_seconds}s: {rendered}",
+            file=sys.stderr,
+        )
+        return 124
+
+
+def _runner_timeout_seconds(env: dict[str, str], suite: Suite) -> int | None:
+    raw = str(env.get(_TIMEOUT_ENV, "")).strip()
+    if raw:
+        try:
+            parsed = int(raw)
+        except ValueError:
+            parsed = 0
+        if parsed > 0:
+            return parsed
+    if suite.complex:
+        return 4200
+    if suite.live:
+        return 1500
+    return None
 
 
 def _write_run_summary(
@@ -232,7 +258,12 @@ def main(argv: list[str] | None = None) -> int:
     summary_path_raw = str(env.get(_SUMMARY_ENV, "")).strip()
     summary_path = Path(summary_path_raw).expanduser() if summary_path_raw else None
     started = time.monotonic()
-    exit_code = _run(suite.paths, env=env, extra_args=suite.extra_args)
+    exit_code = _run(
+        suite.paths,
+        env=env,
+        extra_args=suite.extra_args,
+        timeout_seconds=_runner_timeout_seconds(env, suite),
+    )
     _write_run_summary(
         path=summary_path,
         mode=mode,

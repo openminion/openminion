@@ -87,6 +87,12 @@ def _build_parser() -> argparse.ArgumentParser:
         )
 
     sub = parser.add_subparsers(dest="command", required=True)
+    _add_session_cli_subcommands(sub, add_db_arg)
+
+    return parser
+
+
+def _add_session_cli_subcommands(sub: Any, add_db_arg: Any) -> None:
 
     init = sub.add_parser("init", help="Initialize database and schema")
     add_db_arg(init)
@@ -351,7 +357,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     add_storage_subcommands(sub)
 
-    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -372,297 +377,305 @@ def main(argv: list[str] | None = None) -> int:
 
     store = SQLiteSessionStore(db_path)
     try:
-        if args.command == "init":
-            return _print_result({"ok": True, "db_path": str(store.database_path)})
-
-        if args.command == "create-session":
-            meta = _json_arg(args.meta_json, default={})
-            tags = _json_arg(args.tags_json, default=[])
-            session_id = store.create_session(
-                title=args.title,
-                status=args.status,
-                session_id=args.session_id,
-                meta=meta,
-                initial_agent_id=args.initial_agent_id,
-                profile_version=args.profile_version,
-                tags=tags,
-            )
-            return _print_result({"session_id": session_id})
-
-        if args.command == "get-session":
-            return _print_result(store.get_session(args.session_id))
-
-        if args.command == "list-sessions":
-            filters = {
-                "status": args.status,
-                "active_agent_id": args.active_agent_id,
-            }
-            return _print_result(store.list_sessions(limit=args.limit, filters=filters))
-
-        if args.command == "set-status":
-            store.set_status(args.session_id, args.status)
-            return _print_result(
-                {"ok": True, "session_id": args.session_id, "status": args.status}
-            )
-
-        if args.command == "archive-session":
-            store.archive_session(args.session_id)
-            return _print_result(
-                {"ok": True, "session_id": args.session_id, "status": "archived"}
-            )
-
-        if args.command == "bind-agent":
-            store.bind_agent(
-                args.session_id,
-                agent_id=args.agent_id,
-                profile_version=args.profile_version,
-                render_version=args.render_version,
-                reason=args.reason,
-            )
-            return _print_result(
-                {
-                    "ok": True,
-                    "session_id": args.session_id,
-                    "agent_id": args.agent_id,
-                    "profile_version": args.profile_version,
-                }
-            )
-
-        if args.command == "log-llm-request-started":
-            event_id = store.append_llm_request_started(
-                args.session_id,
-                purpose=args.purpose,
-                profile_version=args.profile_version,
-                render_version=args.render_version,
-                agent_id=args.agent_id,
-                trace_id=args.trace_id,
-                task_id=args.task_id,
-                parent_event_id=args.parent_event_id,
-            )
-            return _print_result(
-                {
-                    "ok": True,
-                    "event_id": event_id,
-                    "session_id": args.session_id,
-                    "purpose": args.purpose,
-                    "profile_version": args.profile_version,
-                    "render_version": args.render_version,
-                }
-            )
-
-        if args.command == "append-turn":
-            turn_id = store.append_turn(
-                args.session_id,
-                role=args.role,
-                content=args.content,
-                attachments=_json_arg(args.attachments_json, default=[]),
-                meta=_json_arg(args.meta_json, default={}),
-            )
-            return _print_result({"turn_id": turn_id})
-
-        if args.command == "list-turns":
-            return _print_result(store.list_turns(args.session_id, limit=args.limit))
-
-        if args.command == "get-recent-turns":
-            return _print_result(store.get_recent_turns(args.session_id, args.limit))
-
-        if args.command == "append-event":
-            trace = _optional_json_arg(args.trace_json)
-            refs = _optional_json_arg(args.refs_json)
-            event_id = store.append_event(
-                args.session_id,
-                event_type=args.event_type,
-                payload=_json_arg(args.payload_json, default={}),
-                actor_type=args.actor_type,
-                actor_id=args.actor_id,
-                trace=trace,
-                refs=refs,
-                parent_event_id=args.parent_event_id,
-                importance=args.importance,
-                redaction=args.redaction,
-                agent_id=args.agent_id,
-                trace_id=args.trace_id,
-                span_id=args.span_id,
-                task_id=args.task_id,
-                parent_id=args.parent_id,
-                artifact_refs=_json_arg(args.artifact_refs_json, default=[]),
-                memory_refs=_json_arg(args.memory_refs_json, default=[]),
-                status=args.status,
-                error=_optional_json_arg(args.error_json, default={}),
-            )
-            return _print_result({"event_id": event_id})
-
-        if args.command == "list-events":
-            return _print_result(
-                store.list_events(
-                    args.session_id,
-                    limit=args.limit,
-                    event_type=args.event_type,
-                    trace_id=args.trace_id,
-                    agent_id=args.agent_id,
-                    status=args.status,
-                )
-            )
-
-        if args.command == "get-events":
-            return _print_result(
-                store.get_events(
-                    args.session_id,
-                    after_seq=args.after_seq,
-                    types=_optional_json_arg(args.types_json, default=[]),
-                    limit=args.limit,
-                )
-            )
-
-        if args.command == "get-recent-tool-events":
-            return _print_result(
-                store.get_recent_tool_events(args.session_id, args.limit)
-            )
-
-        if args.command == "put-working-state":
-            inline = _optional_json_arg(args.state_inline_json, default={})
-            version = store.put_working_state(
-                args.session_id,
-                state_ref=args.state_ref,
-                state_inline=inline,
-            )
-            return _print_result({"version": version})
-
-        if args.command == "get-working-state":
-            return _print_result(store.get_latest_working_state(args.session_id))
-
-        if args.command == "get-active-state":
-            return _print_result(store.get_active_state(args.session_id))
-
-        if args.command == "set-summary-base":
-            store.set_summary_base(args.session_id, args.base_ref)
-            return _print_result(
-                {"ok": True, "session_id": args.session_id, "base_ref": args.base_ref}
-            )
-
-        if args.command == "append-summary-delta":
-            store.append_summary_delta(args.session_id, args.delta_ref)
-            return _print_result(
-                {"ok": True, "session_id": args.session_id, "delta_ref": args.delta_ref}
-            )
-
-        if args.command == "get-summaries":
-            return _print_result(store.get_summaries(args.session_id))
-
-        if args.command == "get-summary":
-            return _print_result(
-                {
-                    "session_id": args.session_id,
-                    "summary": store.get_summary(args.session_id, variant=args.variant),
-                }
-            )
-
-        if args.command == "update-summary":
-            store.update_summary(
-                args.session_id,
-                summary_short=args.summary_short,
-                summary_long=args.summary_long,
-                based_on_seq=args.based_on_seq,
-            )
-            return _print_result({"ok": True, "session_id": args.session_id})
-
-        if args.command == "needs-summary-update":
-            needs = store.needs_summary_update(
-                args.session_id, threshold_events=args.threshold_events
-            )
-            return _print_result(
-                {"session_id": args.session_id, "needs_summary_update": needs}
-            )
-
-        if args.command == "create-snapshot":
-            snapshot_id = store.create_snapshot(args.session_id, seq_upto=args.seq_upto)
-            return _print_result(
-                {"session_id": args.session_id, "snapshot_id": snapshot_id}
-            )
-
-        if args.command == "get-slice":
-            limits = {
-                "max_turns": args.max_turns,
-                "max_tool_events": args.max_tool_events,
-                "summary_variant": args.summary_variant,
-                "include_open_tasks": args.include_open_tasks,
-                "include_active_state": args.include_active_state,
-            }
-            return _print_result(
-                store.get_slice(args.session_id, purpose=args.purpose, limits=limits)
-            )
-        reliability_result = _handle_reliability_command(store, args)
-        if reliability_result is not None:
-            return reliability_result
-        if args.command == "cron-add":
-            created_job_id = store.add_cron_job(
-                name=args.name,
-                description=args.description,
-                enabled=args.enabled,
-                agent_id=args.agent_id,
-                schedule=_json_arg(args.schedule_json, default={}),
-                session_target=args.session_target,
-                wake_mode=args.wake_mode,
-                payload=_json_arg(args.payload_json, default={}),
-                delivery=_json_arg(args.delivery_json, default={"mode": "none"}),
-                delete_after_run=args.delete_after_run,
-                misfire_policy=args.misfire_policy,
-                max_lateness_s=args.max_lateness_s,
-                max_concurrency=args.max_concurrency,
-                job_id=args.job_id,
-            )
-            return _print_result({"ok": True, "job_id": created_job_id})
-        if args.command == "cron-list":
-            enabled_filter: bool | None
-            if args.enabled == "true":
-                enabled_filter = True
-            elif args.enabled == "false":
-                enabled_filter = False
-            else:
-                enabled_filter = None
-            return _print_result(
-                store.list_cron_jobs(enabled=enabled_filter, limit=args.limit)
-            )
-        if args.command == "cron-get":
-            return _print_result(store.get_cron_job(args.job_id))
-
-        if args.command == "cron-enable":
-            store.set_cron_job_enabled(args.job_id, True)
-            return _print_result({"ok": True, "job_id": args.job_id, "enabled": True})
-
-        if args.command == "cron-disable":
-            store.set_cron_job_enabled(args.job_id, False)
-            return _print_result({"ok": True, "job_id": args.job_id, "enabled": False})
-
-        if args.command == "cron-remove":
-            store.delete_cron_job(args.job_id)
-            return _print_result({"ok": True, "job_id": args.job_id, "removed": True})
-
-        if args.command == "cron-run":
-            run_id = store.trigger_cron_run(args.job_id, due_at=args.due_at)
-            return _print_result({"ok": True, "job_id": args.job_id, "run_id": run_id})
-
-        if args.command == "cron-runs":
-            states = _optional_json_arg(args.states_json, default=[])
-            return _print_result(
-                store.list_cron_runs(
-                    job_id=args.job_id, states=states, limit=args.limit
-                )
-            )
-
-        if args.command == "storage-status":
-            return _print_result(store.storage_status())
-
-        if args.command == "reindex-sidecars":
-            return _print_result(store.reindex_sidecars(since_ts=args.since_ts))
-
-        parser.error(f"unsupported command: {args.command}")
-        return 2
+        return _handle_session_store_command(parser, store, args)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     finally:
         store.close()
+
+
+def _handle_session_store_command(
+    parser: argparse.ArgumentParser,
+    store: SQLiteSessionStore,
+    args: argparse.Namespace,
+) -> int:
+    if args.command == "init":
+        return _print_result({"ok": True, "db_path": str(store.database_path)})
+
+    if args.command == "create-session":
+        meta = _json_arg(args.meta_json, default={})
+        tags = _json_arg(args.tags_json, default=[])
+        session_id = store.create_session(
+            title=args.title,
+            status=args.status,
+            session_id=args.session_id,
+            meta=meta,
+            initial_agent_id=args.initial_agent_id,
+            profile_version=args.profile_version,
+            tags=tags,
+        )
+        return _print_result({"session_id": session_id})
+
+    if args.command == "get-session":
+        return _print_result(store.get_session(args.session_id))
+
+    if args.command == "list-sessions":
+        filters = {
+            "status": args.status,
+            "active_agent_id": args.active_agent_id,
+        }
+        return _print_result(store.list_sessions(limit=args.limit, filters=filters))
+
+    if args.command == "set-status":
+        store.set_status(args.session_id, args.status)
+        return _print_result(
+            {"ok": True, "session_id": args.session_id, "status": args.status}
+        )
+
+    if args.command == "archive-session":
+        store.archive_session(args.session_id)
+        return _print_result(
+            {"ok": True, "session_id": args.session_id, "status": "archived"}
+        )
+
+    if args.command == "bind-agent":
+        store.bind_agent(
+            args.session_id,
+            agent_id=args.agent_id,
+            profile_version=args.profile_version,
+            render_version=args.render_version,
+            reason=args.reason,
+        )
+        return _print_result(
+            {
+                "ok": True,
+                "session_id": args.session_id,
+                "agent_id": args.agent_id,
+                "profile_version": args.profile_version,
+            }
+        )
+
+    if args.command == "log-llm-request-started":
+        event_id = store.append_llm_request_started(
+            args.session_id,
+            purpose=args.purpose,
+            profile_version=args.profile_version,
+            render_version=args.render_version,
+            agent_id=args.agent_id,
+            trace_id=args.trace_id,
+            task_id=args.task_id,
+            parent_event_id=args.parent_event_id,
+        )
+        return _print_result(
+            {
+                "ok": True,
+                "event_id": event_id,
+                "session_id": args.session_id,
+                "purpose": args.purpose,
+                "profile_version": args.profile_version,
+                "render_version": args.render_version,
+            }
+        )
+
+    if args.command == "append-turn":
+        turn_id = store.append_turn(
+            args.session_id,
+            role=args.role,
+            content=args.content,
+            attachments=_json_arg(args.attachments_json, default=[]),
+            meta=_json_arg(args.meta_json, default={}),
+        )
+        return _print_result({"turn_id": turn_id})
+
+    if args.command == "list-turns":
+        return _print_result(store.list_turns(args.session_id, limit=args.limit))
+
+    if args.command == "get-recent-turns":
+        return _print_result(store.get_recent_turns(args.session_id, args.limit))
+
+    if args.command == "append-event":
+        trace = _optional_json_arg(args.trace_json)
+        refs = _optional_json_arg(args.refs_json)
+        event_id = store.append_event(
+            args.session_id,
+            event_type=args.event_type,
+            payload=_json_arg(args.payload_json, default={}),
+            actor_type=args.actor_type,
+            actor_id=args.actor_id,
+            trace=trace,
+            refs=refs,
+            parent_event_id=args.parent_event_id,
+            importance=args.importance,
+            redaction=args.redaction,
+            agent_id=args.agent_id,
+            trace_id=args.trace_id,
+            span_id=args.span_id,
+            task_id=args.task_id,
+            parent_id=args.parent_id,
+            artifact_refs=_json_arg(args.artifact_refs_json, default=[]),
+            memory_refs=_json_arg(args.memory_refs_json, default=[]),
+            status=args.status,
+            error=_optional_json_arg(args.error_json, default={}),
+        )
+        return _print_result({"event_id": event_id})
+
+    if args.command == "list-events":
+        return _print_result(
+            store.list_events(
+                args.session_id,
+                limit=args.limit,
+                event_type=args.event_type,
+                trace_id=args.trace_id,
+                agent_id=args.agent_id,
+                status=args.status,
+            )
+        )
+
+    if args.command == "get-events":
+        return _print_result(
+            store.get_events(
+                args.session_id,
+                after_seq=args.after_seq,
+                types=_optional_json_arg(args.types_json, default=[]),
+                limit=args.limit,
+            )
+        )
+
+    if args.command == "get-recent-tool-events":
+        return _print_result(
+            store.get_recent_tool_events(args.session_id, args.limit)
+        )
+
+    if args.command == "put-working-state":
+        inline = _optional_json_arg(args.state_inline_json, default={})
+        version = store.put_working_state(
+            args.session_id,
+            state_ref=args.state_ref,
+            state_inline=inline,
+        )
+        return _print_result({"version": version})
+
+    if args.command == "get-working-state":
+        return _print_result(store.get_latest_working_state(args.session_id))
+
+    if args.command == "get-active-state":
+        return _print_result(store.get_active_state(args.session_id))
+
+    if args.command == "set-summary-base":
+        store.set_summary_base(args.session_id, args.base_ref)
+        return _print_result(
+            {"ok": True, "session_id": args.session_id, "base_ref": args.base_ref}
+        )
+
+    if args.command == "append-summary-delta":
+        store.append_summary_delta(args.session_id, args.delta_ref)
+        return _print_result(
+            {"ok": True, "session_id": args.session_id, "delta_ref": args.delta_ref}
+        )
+
+    if args.command == "get-summaries":
+        return _print_result(store.get_summaries(args.session_id))
+
+    if args.command == "get-summary":
+        return _print_result(
+            {
+                "session_id": args.session_id,
+                "summary": store.get_summary(args.session_id, variant=args.variant),
+            }
+        )
+
+    if args.command == "update-summary":
+        store.update_summary(
+            args.session_id,
+            summary_short=args.summary_short,
+            summary_long=args.summary_long,
+            based_on_seq=args.based_on_seq,
+        )
+        return _print_result({"ok": True, "session_id": args.session_id})
+
+    if args.command == "needs-summary-update":
+        needs = store.needs_summary_update(
+            args.session_id, threshold_events=args.threshold_events
+        )
+        return _print_result(
+            {"session_id": args.session_id, "needs_summary_update": needs}
+        )
+
+    if args.command == "create-snapshot":
+        snapshot_id = store.create_snapshot(args.session_id, seq_upto=args.seq_upto)
+        return _print_result(
+            {"session_id": args.session_id, "snapshot_id": snapshot_id}
+        )
+
+    if args.command == "get-slice":
+        limits = {
+            "max_turns": args.max_turns,
+            "max_tool_events": args.max_tool_events,
+            "summary_variant": args.summary_variant,
+            "include_open_tasks": args.include_open_tasks,
+            "include_active_state": args.include_active_state,
+        }
+        return _print_result(
+            store.get_slice(args.session_id, purpose=args.purpose, limits=limits)
+        )
+    reliability_result = _handle_reliability_command(store, args)
+    if reliability_result is not None:
+        return reliability_result
+    if args.command == "cron-add":
+        created_job_id = store.add_cron_job(
+            name=args.name,
+            description=args.description,
+            enabled=args.enabled,
+            agent_id=args.agent_id,
+            schedule=_json_arg(args.schedule_json, default={}),
+            session_target=args.session_target,
+            wake_mode=args.wake_mode,
+            payload=_json_arg(args.payload_json, default={}),
+            delivery=_json_arg(args.delivery_json, default={"mode": "none"}),
+            delete_after_run=args.delete_after_run,
+            misfire_policy=args.misfire_policy,
+            max_lateness_s=args.max_lateness_s,
+            max_concurrency=args.max_concurrency,
+            job_id=args.job_id,
+        )
+        return _print_result({"ok": True, "job_id": created_job_id})
+    if args.command == "cron-list":
+        enabled_filter: bool | None
+        if args.enabled == "true":
+            enabled_filter = True
+        elif args.enabled == "false":
+            enabled_filter = False
+        else:
+            enabled_filter = None
+        return _print_result(
+            store.list_cron_jobs(enabled=enabled_filter, limit=args.limit)
+        )
+    if args.command == "cron-get":
+        return _print_result(store.get_cron_job(args.job_id))
+
+    if args.command == "cron-enable":
+        store.set_cron_job_enabled(args.job_id, True)
+        return _print_result({"ok": True, "job_id": args.job_id, "enabled": True})
+
+    if args.command == "cron-disable":
+        store.set_cron_job_enabled(args.job_id, False)
+        return _print_result({"ok": True, "job_id": args.job_id, "enabled": False})
+
+    if args.command == "cron-remove":
+        store.delete_cron_job(args.job_id)
+        return _print_result({"ok": True, "job_id": args.job_id, "removed": True})
+
+    if args.command == "cron-run":
+        run_id = store.trigger_cron_run(args.job_id, due_at=args.due_at)
+        return _print_result({"ok": True, "job_id": args.job_id, "run_id": run_id})
+
+    if args.command == "cron-runs":
+        states = _optional_json_arg(args.states_json, default=[])
+        return _print_result(
+            store.list_cron_runs(
+                job_id=args.job_id, states=states, limit=args.limit
+            )
+        )
+
+    if args.command == "storage-status":
+        return _print_result(store.storage_status())
+
+    if args.command == "reindex-sidecars":
+        return _print_result(store.reindex_sidecars(since_ts=args.since_ts))
+
+    parser.error(f"unsupported command: {args.command}")
+    return 2
 
 
 

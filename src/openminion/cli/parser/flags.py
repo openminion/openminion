@@ -29,9 +29,11 @@ def add_tool_session_arg(
 def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
     """Add options for the canonical root interactive surface."""
     parser.add_argument(
+        "--profile",
         "--agent",
+        dest="agent",
         default=None,
-        help="Agent id to activate for the interactive session",
+        help="Configured profile id to activate (compat: --agent)",
     )
     parser.add_argument(
         "--session",
@@ -83,8 +85,42 @@ def add_interactive_session_flags(parser: argparse.ArgumentParser) -> None:
     add_progress_flag(parser, include_aliases=True)
 
 
+def add_profile_selector(
+    parser: argparse.ArgumentParser,
+    *,
+    dest: str = "agent",
+    default: str | None = None,
+    legacy_flags: tuple[str, ...] = ("--agent",),
+    help_text: str = "Configured profile id to use",
+) -> None:
+    parser.add_argument(
+        "--profile",
+        *legacy_flags,
+        dest=dest,
+        default=default,
+        help=(
+            f"{help_text}"
+            + (f" (compat: {', '.join(legacy_flags)})" if legacy_flags else "")
+        ),
+    )
+
+
+def add_runtime_source_flag(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--runtime-source",
+        choices=("auto", "daemon", "inproc"),
+        default="auto",
+        help=(
+            "Runtime source policy: auto tries daemon then reports fallback, "
+            "daemon fails closed if unavailable, inproc bypasses daemon."
+        ),
+    )
+
+
 __all__ = [
     "add_interactive_session_flags",
     "add_json_output_flag",
+    "add_profile_selector",
+    "add_runtime_source_flag",
     "add_tool_session_arg",
 ]

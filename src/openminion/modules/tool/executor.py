@@ -482,9 +482,12 @@ def execute_single_call(
 
     from openminion.modules.tool.exposure import exposure_scope
 
-    scope = exposure_scope(
-        context.metadata if isinstance(context.metadata, Mapping) else None
-    )
+    scope_metadata = dict(context.metadata) if isinstance(context.metadata, Mapping) else {}
+    if context.session_id and not scope_metadata.get("session_id"):
+        scope_metadata["session_id"] = str(context.session_id)
+    if context.target and not scope_metadata.get("target_id"):
+        scope_metadata["target_id"] = str(context.target)
+    scope = exposure_scope(scope_metadata)
     exposure_service = getattr(registry, "exposure_service", None)
     decision = None
     if exposure_service is not None and exposure_service.profiles:

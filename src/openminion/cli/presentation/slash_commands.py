@@ -47,6 +47,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         ("/agent",),
     ),
     SlashCommandMetadata(
+        "/delegate",
+        "Delegate work or inspect a delegated task",
+        "_slash_delegate",
+        "_slash_delegate",
+    ),
+    SlashCommandMetadata(
         "/model",
         "Show or switch the active provider/model",
         "_slash_model",
@@ -66,6 +72,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/tools", "Show available tools", "_slash_tools", "_slash_tools", ("/tool",)
+    ),
+    SlashCommandMetadata(
+        "/browser",
+        "Show browser status or control tabs",
+        "_slash_browser",
+        "_slash_browser",
     ),
     SlashCommandMetadata(
         "/mcp", "Show configured MCP servers and tools", "_slash_mcp", "_slash_mcp"
@@ -111,6 +123,12 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/diff", "Show workspace git diff", "_slash_diff", "_slash_diff"
+    ),
+    SlashCommandMetadata(
+        "/review",
+        "Review current or supplied diff",
+        "_slash_review",
+        "_slash_review",
     ),
     SlashCommandMetadata(
         "/compact",

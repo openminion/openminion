@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+from typing import Any
 
 from openminion.base.config.bootstrap import bootstrap_env, bootstrap_env_strict
 from openminion.base.config.env import EnvironmentConfig
@@ -14,6 +15,23 @@ from openminion.base.config import (
     resolve_config_path,
     run_profile_overrides_from_mapping,
 )
+from openminion.services.bootstrap.onboarding import OnboardingRequestedMode
+
+
+def resolve_surface_onboarding_route(**kwargs: Any) -> Any:
+    from openminion.services.bootstrap.onboarding import (
+        resolve_surface_onboarding_route as _resolve_surface_onboarding_route,
+    )
+
+    return _resolve_surface_onboarding_route(**kwargs)
+
+
+def format_fail_fast_message(**kwargs: Any) -> str:
+    from openminion.services.bootstrap.onboarding import (
+        format_fail_fast_message as _format_fail_fast_message,
+    )
+
+    return str(_format_fail_fast_message(**kwargs))
 
 
 def _prepare_runtime_roots(
@@ -143,7 +161,7 @@ def _run_piped_prompt(args: object, prompt: str) -> int:
 
 def _run_no_handler(
     args: object,
-    parser,
+    parser: Any,
     home_root: str,
     data_root: str,
     effective_home_root: str,
@@ -152,12 +170,6 @@ def _run_no_handler(
     has_tty = bool(getattr(sys.stdin, "isatty", lambda: False)()) and bool(
         getattr(sys.stdout, "isatty", lambda: False)()
     )
-    from openminion.services.bootstrap.onboarding import (
-        OnboardingRequestedMode,
-        format_fail_fast_message,
-        resolve_surface_onboarding_route,
-    )
-
     config_path = resolve_config_path(
         getattr(args, "config", None),
         home_root=_default_route_home_root(effective_home_root)
@@ -255,6 +267,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(handler(args) or 0)
     except (ConfigError, RuntimeError, KeyError) as exc:
         parser.exit(status=2, message=f"openminion: {exc}\n")
+        return 2
 
 
 if __name__ == "__main__":

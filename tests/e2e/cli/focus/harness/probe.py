@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from hashlib import sha1
+import json
 from pathlib import Path
 import re
 import time
@@ -32,6 +33,11 @@ _APPROVAL_PROMPT_PATTERN = (
     r"Policy confirmation required|Reply exactly yes to (?:allow once|confirm)|"
     r"session to allow this tool"
 )
+_SIDECAR_CONSENT_RE = re.compile(
+    r"(?:Allow auto-start for PinchTab|Allow [a-z_ -]+ for sidecar '[^']+')\? "
+    r"\[y/N\]:\s*$",
+    re.IGNORECASE,
+)
 _APPROVAL_PATTERN = rf"{_APPROVAL_PROMPT_PATTERN}|Waiting for your reply"
 _APPROVAL_PROMPT_RE = re.compile(_APPROVAL_PROMPT_PATTERN)
 _APPROVAL_RE = re.compile(_APPROVAL_PATTERN)
@@ -46,6 +52,22 @@ _ACTIVE_TURN_STATUS_RE = re.compile(
 )
 _COMPOSER_ECHO_PROBE_LENGTH = 48
 _TRAILING_PUNCTUATION = ".,;:!?"
+
+
+def _config_uses_echo_agent(config_path: Path, agent_id: str) -> bool:
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    agents = payload.get("agents")
+    if not isinstance(agents, dict):
+        return False
+    agent = agents.get(agent_id)
+    if not isinstance(agent, dict):
+        return False
+    return str(agent.get("provider", "") or "").strip() == "echo"
 
 
 def _visible_offset(text: str, *, offset: int) -> int:
@@ -92,9 +114,15 @@ def approval_prompt_needs_reply(transcript: str, *, offset: int) -> bool:
 
 
 def active_approval_visible(screen_text: str) -> bool:
-    return inline_approval_menu(screen_text) is not None or approval_prompt_needs_reply(
-        screen_text, offset=0
+    return (
+        inline_approval_menu(screen_text) is not None
+        or sidecar_consent_prompt_visible(screen_text)
+        or approval_prompt_needs_reply(screen_text, offset=0)
     )
+
+
+def sidecar_consent_prompt_visible(screen_text: str) -> bool:
+    return _SIDECAR_CONSENT_RE.search(screen_text) is not None
 
 
 def inline_approval_menu(screen_text: str) -> str | None:
@@ -276,6 +304,9 @@ class FocusProbe:
             ),
         )
 
+    def uses_echo_agent(self) -> bool:
+        return _config_uses_echo_agent(self.config_path, self.agent_id)
+
     def command(self) -> tuple[str, ...]:
         command = (
             str(self.python_bin),
@@ -293,6 +324,8 @@ class FocusProbe:
             "--progress",
             "minimal",
         )
+        if self.uses_echo_agent():
+            command += ("--demo",)
         if not self.include_project_context:
             command += ("--no-context",)
         return command
@@ -461,6 +494,19 @@ class FocusProbe:
             f"Focus inline approval did not resolve\n{session.screen_text[-2000:]}"
         )
 
+    @staticmethod
+    def _submit_sidecar_consent(session: PtySession, reply: str) -> None:
+        decision = str(reply or "").strip().lower()
+        session.send("n\r" if decision in {"no", "deny", "denied"} else "y\r")
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if not sidecar_consent_prompt_visible(session.screen_text):
+                return
+            time.sleep(0.05)
+        raise AssertionError(
+            f"Focus sidecar consent did not resolve\n{session.screen_text[-2000:]}"
+        )
+
     def run_turn(self, session: PtySession, scenario: FocusScenario) -> str:
         turn_offset = len(session.visible_transcript)
         self._submit_composer_line(session, scenario.prompt)
@@ -478,6 +524,14 @@ class FocusProbe:
             )
             approval_visible = active_approval_visible(screen_text)
             inline_approval_visible = inline_approval_menu(screen_text) is not None
+            sidecar_consent_visible = sidecar_consent_prompt_visible(screen_text)
+            if sidecar_consent_visible:
+                assert scenario.requires_approval, transcript[-2000:]
+                approvals += 1
+                assert approvals <= scenario.max_auto_approvals, transcript[-2000:]
+                self._submit_sidecar_consent(session, scenario.approval_reply)
+                event_offset = len(session.visible_transcript)
+                continue
             if inline_approval_visible:
                 assert scenario.requires_approval, transcript[-2000:]
                 approvals += 1
@@ -505,9 +559,10 @@ class FocusProbe:
             )
         final_turn_slice = session.visible_transcript[turn_offset:]
         assert_focus_turn_completed(final_turn_slice)
-        assert_expected_markers(
-            final_turn_slice, scenario.prompt, scenario.expected_markers
-        )
+        if not self.uses_echo_agent():
+            assert_expected_markers(
+                final_turn_slice, scenario.prompt, scenario.expected_markers
+            )
         return final_turn_slice
 
 

@@ -59,6 +59,10 @@ class _Provider:
     instance_start_calls: int = 0
     tab_new_calls: list[tuple[str, str | None]] = field(default_factory=list)
     tab_navigate_calls: list[tuple[str, str]] = field(default_factory=list)
+    tab_reload_calls: list[str] = field(default_factory=list)
+    tab_back_calls: list[str] = field(default_factory=list)
+    tab_forward_calls: list[str] = field(default_factory=list)
+    tab_wait_calls: list[tuple[str, int | None]] = field(default_factory=list)
     tab_action_calls: list[tuple[str, str]] = field(default_factory=list)
     tabs_payload: list[dict] = field(
         default_factory=lambda: [
@@ -119,6 +123,29 @@ class _Provider:
         del ctx, options
         self.tab_navigate_calls.append((tab_id, url))
         return {"tab": {"id": tab_id, "url": url, "title": "Updated"}}
+
+    def tab_reload(self, ctx, tab_id: str, options: NavigateOptions | None = None):
+        del ctx, options
+        self.tab_reload_calls.append(tab_id)
+        return {"tab": {"id": tab_id, "url": "https://reloaded.test", "title": "R"}}
+
+    def tab_back(self, ctx, tab_id: str, options: NavigateOptions | None = None):
+        del ctx, options
+        self.tab_back_calls.append(tab_id)
+        return {"tab": {"id": tab_id, "url": "https://back.test", "title": "B"}}
+
+    def tab_forward(self, ctx, tab_id: str, options: NavigateOptions | None = None):
+        del ctx, options
+        self.tab_forward_calls.append(tab_id)
+        return {"tab": {"id": tab_id, "url": "https://forward.test", "title": "F"}}
+
+    def tab_wait(self, ctx, tab_id: str, timeout_ms: int | None = None):
+        del ctx
+        self.tab_wait_calls.append((tab_id, timeout_ms))
+        return {
+            "tab": {"id": tab_id, "url": "https://wait.test", "title": "W"},
+            "waited_ms": timeout_ms,
+        }
 
     def tab_snapshot(self, ctx, tab_id: str, options: SnapshotOptions | None = None):
         del ctx, options
@@ -764,6 +791,64 @@ def test_browser_tool_persists_session_state_across_tool_restart(
     assert provider_2.tab_action_calls[-1] == ("t1", "click")
 
 
+def test_browser_tool_uses_persisted_state_before_provider_selection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("OPENMINION_HOME", str(workspace))
+    monkeypatch.delenv("OPENMINION_DATA_ROOT", raising=False)
+
+    store_1 = BrowserSessionStateStore(state_relative_path="browser/session_state.json")
+    first_playwright = _Provider(provider_id="playwright")
+    reg_1 = BrowserProviderRegistry()
+    reg_1.register(first_playwright)
+    tool_1 = BrowserTool(
+        router=BrowserRouter(
+            reg_1,
+            config=BrowserRoutingConfig(default_provider="playwright"),
+        ),
+        session_state_store=store_1,
+    )
+    created = tool_1.execute(
+        {
+            "op": "tab.new",
+            "provider": "playwright",
+            "instance_id": "i1",
+            "url": "https://example.com",
+        },
+        ToolContext(
+            session_id="persist-routes", extras={"workspace_root": str(workspace)}
+        ),
+    )
+    assert created.ok is True
+
+    store_2 = BrowserSessionStateStore(state_relative_path="browser/session_state.json")
+    pinchtab = _Provider(provider_id="pinchtab")
+    playwright = _Provider(provider_id="playwright")
+    reg_2 = BrowserProviderRegistry()
+    reg_2.register(pinchtab)
+    reg_2.register(playwright)
+    tool_2 = BrowserTool(
+        router=BrowserRouter(
+            reg_2,
+            config=BrowserRoutingConfig(default_provider="pinchtab"),
+        ),
+        session_state_store=store_2,
+    )
+
+    acted = tool_2.execute(
+        {"op": "tab.action", "action": {"kind": "click", "target": {"ref": "e5"}}},
+        ToolContext(
+            session_id="persist-routes", extras={"workspace_root": str(workspace)}
+        ),
+    )
+
+    assert acted.ok is True
+    assert playwright.tab_action_calls[-1] == ("t1", "click")
+    assert pinchtab.tab_action_calls == []
+
+
 def test_browser_session_state_store_uses_injected_env_data_root(
     tmp_path: Path,
 ) -> None:
@@ -812,6 +897,50 @@ def test_browser_tool_mode_forwarding() -> None:
     result = tool.execute({"op": "instance.start", "mode": "ui"}, ToolContext())
     assert result.ok is True
     assert result.data["instance"]["mode"] == "ui"
+
+
+@pytest.mark.parametrize(
+    ("op", "call_attr"),
+    [
+        ("tab.reload", "tab_reload_calls"),
+        ("tab.back", "tab_back_calls"),
+        ("tab.forward", "tab_forward_calls"),
+    ],
+)
+def test_browser_tool_dispatches_direct_tab_navigation_ops(
+    op: str,
+    call_attr: str,
+) -> None:
+    provider = _Provider()
+    reg = BrowserProviderRegistry()
+    reg.register(provider)
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider="mock"))
+    )
+
+    result = tool.execute({"op": op, "tab_id": "t1"}, ToolContext())
+
+    assert result.ok is True
+    assert getattr(provider, call_attr) == ["t1"]
+    assert result.data["tab"]["id"] == "t1"
+
+
+def test_browser_tool_dispatches_tab_wait_timeout() -> None:
+    provider = _Provider()
+    reg = BrowserProviderRegistry()
+    reg.register(provider)
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider="mock"))
+    )
+
+    result = tool.execute(
+        {"op": "tab.wait", "tab_id": "t1", "options": {"timeout_ms": 250}},
+        ToolContext(),
+    )
+
+    assert result.ok is True
+    assert provider.tab_wait_calls == [("t1", 250)]
+    assert result.data["data"]["op"] == "tab.wait"
 
 
 def test_browser_tool_audit_records_selected_provider(tmp_path: Path) -> None:
@@ -900,3 +1029,12 @@ def test_browser_tool_uses_shared_emit_family_event_helper(tmp_path: Path) -> No
     assert mock_emit.called, "emit_family_event must be called by browser tool"
     emitted_events = [call.kwargs.get("event") for call in mock_emit.call_args_list]
     assert "tool.browser.provider.selected" in emitted_events
+
+
+def test_browser_tool_declares_pinchtab_sidecar_for_runtime_approval() -> None:
+    reg = BrowserProviderRegistry()
+    tool = BrowserTool(
+        router=BrowserRouter(reg, config=BrowserRoutingConfig(default_provider="mock"))
+    )
+
+    assert tool.sidecar == "pinchtab"

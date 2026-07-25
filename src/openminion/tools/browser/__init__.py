@@ -1,6 +1,6 @@
-from openminion.modules.tool.runtime.registrar import ToolModuleRegistrar
+from typing import TYPE_CHECKING
 
-from .registrar import REGISTRAR
+from .registrar import REGISTRAR as _REGISTRAR
 from .models import (
     BrowserCallArgs,
     BrowserCapabilities,
@@ -13,12 +13,16 @@ from .providers import BrowserProvider, BrowserProviderContext, BrowserProviderR
 from .router import BrowserRouter, BrowserRoutingConfig
 from .tool import (
     BROWSER_TOOL_INPUT_SCHEMA,
+    default_browser_tool,
     provider_registry,
     register,
     register_provider,
 )
 
-REGISTRAR: ToolModuleRegistrar
+if TYPE_CHECKING:
+    from openminion.modules.tool.runtime.registrar import ToolModuleRegistrar
+
+REGISTRAR: "ToolModuleRegistrar" = _REGISTRAR
 
 __all__ = [
     "REGISTRAR",
@@ -33,6 +37,7 @@ __all__ = [
     "BrowserRouter",
     "BrowserRoutingConfig",
     "SUPPORTED_OPS",
+    "default_browser_tool",
     "normalize_op",
     "provider_registry",
     "register",

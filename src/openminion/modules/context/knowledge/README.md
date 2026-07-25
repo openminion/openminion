@@ -93,6 +93,22 @@ block with `graph_scope=provider`. This block is additive to second-brain
 memory context; it does not write memories and does not infer preferences,
 decisions, or summaries.
 
+`openminion graph status` and `openminion graph view` are the operator-facing
+visual inspection surface for this state. `status` checks whether GraphFakos is
+installed, whether the second-brain memory SQLite store is available, which
+third-brain providers are active, and which exact view command should be run
+next. `view` launches the shared GraphFakos viewer over either the second-brain
+memory SQLite store or configured third-brain graph providers. The viewer is
+optional package surface (`openminion[viewer]`) and must stay a lens: it may
+inspect current graph state, but it must not replace `runtime.memory_provider`,
+`memory.backend.provider`, or provider-owned graph indexers.
+
+The second-brain viewer maps memory records into GraphFakos nodes with
+OpenMinion-specific visual metadata: memory type, tier, scope, confidence,
+namespace, timestamps, provenance, citations, and relation labels. Third-brain
+providers open visually when they expose `options.viewer_envelope_path`; the
+PragmaGraph adapter can also build a viewer envelope from `options.snapshot_path`.
+
 Provider failures are typed and degrade locally. If every active third-brain
 provider fails, the turn continues without graph context and emits
 `knowledge_graph.query.failed`. If one provider fails while another returns
@@ -134,6 +150,7 @@ differently, but they must remain compatible at the OpenMinion contract layer.
 | `errors.py` | Typed error hierarchy rooted at `KnowledgeGraphError` |
 | `registry.py` | Provider factory registry and capability validation |
 | `service.py` | Active provider service and capability-gated dispatch |
+| `viewer.py` | GraphFakos-backed operator viewer status + launch helpers |
 | `adapters/graphify.py` | Read-oriented Graphify third-brain adapter |
 | `adapters/pragmagraph.py` | Read-oriented PragmaGraph third-brain adapter |
 

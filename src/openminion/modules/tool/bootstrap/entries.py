@@ -242,6 +242,42 @@ _TOOL_BOOTSTRAP_ENTRIES: tuple[_ToolBootstrapEntry, ...] = (
     ),
     _ToolBootstrapEntry(
         kind="tool",
+        module_name="openminion.tools.cloud_ops",
+        label="Cloud operations",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
+        module_name="openminion.tools.observability",
+        label="Observability operations",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
+        module_name="openminion.tools.k8s",
+        label="Kubernetes operations",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
+        module_name="openminion.tools.iac",
+        label="IaC planning",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
+        module_name="openminion.tools.gitops",
+        label="GitOps operations",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
+        module_name="openminion.tools.config_mgmt",
+        label="Configuration management checks",
+        required=False,
+    ),
+    _ToolBootstrapEntry(
+        kind="tool",
         module_name="openminion.tools.ip",
         label="IP",
         required=False,

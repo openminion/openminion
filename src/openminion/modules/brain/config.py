@@ -23,7 +23,7 @@ from .schemas.agent import (
     ProactiveAutonomousEntrypointConfig,
     SuccessMemoryConfig,
 )
-from .schemas.state import BrainMode, ClarifyPolicy
+from .schemas.state.clarify import BrainMode, ClarifyPolicy
 from .constants import (
     DEFAULT_CONFIG_FILENAMES,
     DEFAULT_INTEGRATED_CONFIG_SUBDIR,

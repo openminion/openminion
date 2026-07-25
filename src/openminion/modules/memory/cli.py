@@ -3,7 +3,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import typer
 
@@ -428,6 +428,10 @@ def _register_namespace_search_command(app: typer.Typer) -> None:
 
 def _register_read_commands(app: typer.Typer) -> None:
     _register_namespace_list_command(app)
+    _register_memory_read_command_handlers(app)
+
+
+def _register_memory_read_command_handlers(app: typer.Typer) -> None:
 
     @app.command("get")
     def cmd_get(
@@ -589,9 +593,9 @@ def _register_read_commands(app: typer.Typer) -> None:
                 snapshot,
                 MemoryBundleImportOptions(
                     scope_rewrites=rewrites,
-                    trust_mode=str(trust or "direct"),  # type: ignore[arg-type]
-                    conflict_mode=str(conflict or "skip"),  # type: ignore[arg-type]
-                    id_mode=str(id_mode or "preserve"),  # type: ignore[arg-type]
+                    trust_mode=cast(Any, str(trust or "direct")),
+                    conflict_mode=cast(Any, str(conflict or "skip")),
+                    id_mode=cast(Any, str(id_mode or "preserve")),
                     dry_run=bool(dry_run),
                 ),
             )

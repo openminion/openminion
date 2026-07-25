@@ -37,12 +37,7 @@ class IdentityCtlInterface(Protocol):
 
     def list_profiles(self) -> list[Any]: ...  # AgentProfileSummary[]
 
-    def upsert_profile(
-        self,
-        profile: Any,  # AgentProfile
-        actor: str | None = None,
-        reason: str | None = None,
-    ) -> str: ...
+    def upsert_profile(self, profile: Any) -> str: ...  # AgentProfile
 
     def delete_profile(self, agent_id: str) -> None: ...
 
@@ -67,7 +62,7 @@ class IdentityCtlInterface(Protocol):
     ) -> Any: ...  # IdentitySnippet
 
     def validate_profile(
-        self, profile: Any | dict[str, Any]
+        self, profile: Any | dict[str, Any], *, strict: bool = False
     ) -> Any: ...  # ValidationResult
 
     def validate_render(
@@ -75,7 +70,7 @@ class IdentityCtlInterface(Protocol):
     ) -> Any: ...  # ValidationResult
 
     def warm_cache(
-        self, agent_id: str, purposes: list[str] | None = None, max_tokens: int = 220
+        self, agent_id: str, purposes: list[str] | None = None, identity_cfg: Any = None
     ) -> int: ...
 
     def clear_cache(self, agent_id: str | None = None) -> None: ...

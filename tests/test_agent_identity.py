@@ -88,6 +88,26 @@ def test_identity_bundle_client_renders_bundle(tmp_path: Path) -> None:
     assert snippet.render_version == "v1:real"
 
 
+def test_identity_bundle_client_is_budget_ignoring_compatibility_adapter(
+    tmp_path: Path,
+) -> None:
+    _write_bundle(
+        tmp_path,
+        "compat-agent",
+        agent_text="# Compatibility Agent\n\n" + ("long identity line\n" * 12),
+        soul_text="# Compatibility Soul\n",
+    )
+    client = IdentityBundleClient(agent_id="compat-agent", root=tmp_path)
+
+    tiny = client.render(agent_id="compat-agent", purpose="decide", max_tokens=1)
+    larger = client.render(agent_id="compat-agent", purpose="judge", max_tokens=800)
+
+    assert tiny.text == larger.text
+    assert tiny.purpose == "decide"
+    assert larger.purpose == "judge"
+    assert "long identity line" in tiny.text
+
+
 def test_identity_bundle_client_fallback_on_missing_bundle(tmp_path: Path) -> None:
     client = IdentityBundleClient(agent_id="nonexistent-agent", root=tmp_path)
     snippet = client.render(agent_id="nonexistent-agent", purpose="act", max_tokens=200)

@@ -20,7 +20,7 @@ from .orchestrator import (
     run_adaptive_loop,
     validate_adaptive_loop,
 )
-from openminion.modules.brain.loop.tools import run_adaptive_tool_loop
+from openminion.modules.brain.loop.tools.engine import run_adaptive_tool_loop
 from .events import (
     _active_plan_id,
     _active_step_ids,

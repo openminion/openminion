@@ -134,18 +134,12 @@ def _build_memory_v2_gateway_adapter(
     return adapter_cls(
         service,
         agent_id=agent_id,
-        project_id=_resolve_project_id(
-            config_manager=config_manager,
-            config=config,
-        ),
+        project_id=_resolve_project_id(config_manager=config_manager, config=config),
         session_context=session_context,
         logger=logger.getChild("v2_adapter"),
-        retrieval_max_chars=int(
-            getattr(config.runtime, "memory_retrieval_max_chars", 2000)
-        ),
-        log_retention_days=int(
-            getattr(config.runtime, "memory_log_retention_days", 30)
-        ),
+        retrieval_max_chars=int(getattr(config.runtime, "memory_retrieval_max_chars", 2000)),
+        log_retention_days=int(getattr(config.runtime, "memory_log_retention_days", 30)),
+        patch_retention_count=int(getattr(config.runtime, "memory_patch_retention_count", 200)),
         max_facts=int(getattr(config.runtime, "memory_max_facts", 200)),
         max_todos=int(getattr(config.runtime, "memory_max_todos", 200)),
         session_summary_max_chars=_session_summary_max_chars(memory_config),

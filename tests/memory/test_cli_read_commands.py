@@ -237,6 +237,7 @@ class TestCLIReadCommands(unittest.TestCase):
                 "gc",
                 "provenance",
                 "forget",
+                "review",
                 "storage",
                 "trace",
             ],

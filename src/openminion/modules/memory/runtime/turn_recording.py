@@ -1,7 +1,12 @@
+import sqlite3
 import uuid
 from typing import Any
 
 from openminion.modules.memory.models import MemoryPatchResult
+from openminion.modules.memory.runtime.retention import (
+    RuntimeMemoryRetentionPolicy,
+    enforce_runtime_memory_retention,
+)
 from openminion.modules.memory.storage.base import SearchQueryOptions
 from openminion.modules.memory.runtime.extraction.records import (
     _extract_facts_todos_done,
@@ -254,6 +259,39 @@ class TurnRecordingMixin:
                 )
         return completed
 
+    def _enforce_runtime_retention(self, *, session_id: str) -> None:
+        store = getattr(self._service, "_store", None)
+        if store is None:
+            return
+        try:
+            result = enforce_runtime_memory_retention(
+                store,
+                RuntimeMemoryRetentionPolicy(
+                    log_retention_days=max(
+                        1, int(getattr(self, "_log_retention_days", 30))
+                    ),
+                    patch_retention_count=max(
+                        1, int(getattr(self, "_patch_retention_count", 200))
+                    ),
+                ),
+            )
+            self._trace(
+                "memory.retention.enforced",
+                {
+                    "session_id": session_id,
+                    "status": result.status,
+                    "eligible_count": result.eligible_count,
+                    "deleted_count": result.deleted_count,
+                    "unsupported_reason": result.unsupported_reason,
+                },
+            )
+        except (sqlite3.Error, RuntimeError, OSError, TypeError, ValueError) as exc:
+            self._logger.warning(
+                "memory.record_turn: retention enforcement failed session_id=%s error=%s",
+                session_id,
+                exc,
+            )
+
     def record_turn(
         self,
         *,
@@ -305,6 +343,7 @@ class TurnRecordingMixin:
         if self._auto_extract_enabled:
             facts_auto_extracted = 0
         notify_count = facts_auto_extracted if self._auto_extract_notify else 0
+        self._enforce_runtime_retention(session_id=session_id)
 
         self._trace(
             "memory.turn.recorded",

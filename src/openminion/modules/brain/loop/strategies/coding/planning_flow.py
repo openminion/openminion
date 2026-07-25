@@ -280,10 +280,22 @@ class CodingPlanningMixin:
                 f"Open issues: {', '.join(self._coding_plan.open_issues) if self._coding_plan.open_issues else 'none'}."
             )
         else:
+            write_requirement = (
+                " This phase requires a mutating implementation tool before any "
+                "final answer: call `file.write` or `code.patch` with concrete "
+                "path/content, then verify with `file.read` or `file.read_range`."
+                if (
+                    phase.name == "implement"
+                    and bool(getattr(self._coding_plan, "requires_file_change", False))
+                    and not self._has_successful_mutating_file_result()
+                )
+                else ""
+            )
             instruction = (
                 f"Continue the coding task in phase '{phase.name}'. "
                 f"Goal: {self._coding_plan.goal}. "
                 f"Steps: {', '.join(phase.steps) if phase.steps else 'advance this phase'}. "
+                f"{write_requirement} "
                 f"Open issues: {', '.join(self._coding_plan.open_issues) if self._coding_plan.open_issues else 'none'}."
             )
         self._loop_state.messages.append(

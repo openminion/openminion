@@ -57,7 +57,16 @@ def config_init(args) -> int:
 
 
 def config_show(args) -> int:
-    config = load_cli_config(args.config)
+    roots = resolve_cli_roots(
+        config_path=args.config or None,
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
+    config = load_cli_config(
+        args.config,
+        home_root=roots.home_root,
+        data_root=roots.data_root,
+    )
     print_json_payload(config.to_dict())
     return 0
 

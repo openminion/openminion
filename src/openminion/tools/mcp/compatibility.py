@@ -1,5 +1,10 @@
 """Compatibility and hostile-fixture matrix for MCP release evidence."""
 
+# COMPAT: kept because 1 direct test surface
+# (`tests/mcp/test_compatibility_matrix.py`) consumes this release-evidence
+# matrix. Remove only when MCP release compatibility evidence moves to a
+# canonical docs/reference owner with equivalent structural validation.
+
 from dataclasses import dataclass, field
 
 

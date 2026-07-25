@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from openminion.cli.config import load_cli_config_from_args
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
 
@@ -16,10 +17,9 @@ _BACKEND_POSTGRES: str = "postgres"
 
 
 def run_storage(args) -> int:
-    from openminion.cli.bootstrap.loader import load_config
     from openminion.modules.storage.engine import StorageEngine
 
-    cfg = load_config(args.config)
+    cfg = load_cli_config_from_args(args)
     sqlite_path = _resolve_sqlite_path(args.sqlite, default=cfg.storage.path)
     root = _resolve_root(args.root, sqlite_path=sqlite_path)
     fallback = Path(args.fallback).expanduser().resolve() if args.fallback else root

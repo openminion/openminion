@@ -53,6 +53,32 @@ OPS_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     "runtime.ops.job.cancel",
 )
 
+SPECIALIZED_OPS_RUNTIME_BINDING_IDS: tuple[str, ...] = (
+    "runtime.cloud.ssm.inventory",
+    "runtime.cloud.ssm.command_status",
+    "runtime.observability.prometheus.rules",
+    "runtime.observability.prometheus.alerts",
+    "runtime.observability.prometheus.query",
+    "runtime.observability.otel.trace",
+    "runtime.k8s.workload.get",
+    "runtime.k8s.workload.list",
+    "runtime.k8s.events.list",
+    "runtime.k8s.logs.get",
+    "runtime.k8s.rollout.status",
+    "runtime.iac.validate",
+    "runtime.iac.plan.create",
+    "runtime.iac.plan.show",
+    "runtime.iac.provider.facts",
+    "runtime.gitops.app.status",
+    "runtime.gitops.app.diff",
+    "runtime.gitops.source.revision",
+    "runtime.gitops.drift.inspect",
+    "runtime.config.ansible.check",
+    "runtime.config.ansible.facts",
+    "runtime.config.salt.test",
+    "runtime.config.salt.job_status",
+)
+
 RUNTIME_GWS_CALL = "runtime.gws.call"
 RUNTIME_GWS_SCHEMA = "runtime.gws.schema"
 RUNTIME_GWS_AUTH_SETUP = "runtime.gws.auth.setup"
@@ -147,6 +173,7 @@ ALL_RUNTIME_BINDING_IDS: tuple[str, ...] = (
     RUNTIME_IP_LOCAL,
     RUNTIME_BROWSER,
     *OPS_RUNTIME_BINDING_IDS,
+    *SPECIALIZED_OPS_RUNTIME_BINDING_IDS,
     RUNTIME_GWS_CALL,
     RUNTIME_GWS_SCHEMA,
     RUNTIME_GWS_AUTH_SETUP,

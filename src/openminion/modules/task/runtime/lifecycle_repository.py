@@ -20,6 +20,12 @@ from .lifecycle_checkpoints import TaskLifecycleRepositoryCheckpointMixin
 from .lifecycle_schema import TaskLifecycleRepositorySchemaMixin
 
 
+def _require_task_record(record: TaskLifecycleRecord | None, *, task_id: str) -> TaskLifecycleRecord:
+    if record is None:
+        raise KeyError(f"task not found after write: {task_id}")
+    return record
+
+
 class TaskLifecycleRepository(
     TaskLifecycleRepositoryCheckpointMixin,
     TaskLifecycleRepositorySchemaMixin,
@@ -62,7 +68,7 @@ class TaskLifecycleRepository(
                 ),
             )
             self._conn.commit()
-        return self.get(record.task_id)  # type: ignore[return-value]
+        return _require_task_record(self.get(record.task_id), task_id=record.task_id)
 
     def _row_to_record(self, row: sqlite3.Row | None) -> TaskLifecycleRecord | None:
         if row is None:
@@ -141,7 +147,7 @@ class TaskLifecycleRepository(
                 ),
             )
             self._conn.commit()
-        return self.get(normalized_task_id)  # type: ignore[return-value]
+        return _require_task_record(self.get(normalized_task_id), task_id=normalized_task_id)
 
     def get(self, task_id: str) -> TaskLifecycleRecord | None:
         normalized = str(task_id or "").strip()
@@ -242,7 +248,7 @@ class TaskLifecycleRepository(
                 ),
             )
             self._conn.commit()
-        return self.get(record.task_id)  # type: ignore[return-value]
+        return _require_task_record(self.get(record.task_id), task_id=record.task_id)
 
 
 __all__ = ["TaskLifecycleRepository"]

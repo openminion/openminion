@@ -265,6 +265,16 @@ class SqlTaskCtl:
         if existing_plan_row is not None:
             return self._dict_to_plan_record(existing_plan_row)
 
+        self._repo.create_plan(
+            plan_id=plan_id,
+            task_id=task_id,
+            plan_name=draft.plan_name,
+            root_goal_id=draft.root_goal_id,
+            created_by_mode=task.created_by_mode,
+            created_at=now,
+            updated_at=now,
+        )
+
         steps: list[PlanStepRecord] = []
         for idx, step in enumerate(draft.steps, start=1):
             step_id = step.step_id or _new_id("stp")
@@ -299,20 +309,11 @@ class SqlTaskCtl:
             plan_id=plan_id,
             task_id=task_id,
             plan_name=draft.plan_name,
+            root_goal_id=draft.root_goal_id,
             created_by_mode=task.created_by_mode,
             steps=steps,
             created_at=now,
             updated_at=now,
-        )
-
-        self._repo.create_plan(
-            plan_id=plan.plan_id,
-            task_id=plan.task_id,
-            plan_name=plan.plan_name,
-            root_goal_id=plan.root_goal_id,
-            created_by_mode=plan.created_by_mode,
-            created_at=plan.created_at,
-            updated_at=plan.updated_at,
         )
 
         self._repo.attach_plan_to_task(task_id, plan_id)

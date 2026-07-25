@@ -241,6 +241,21 @@ def test_delegate_handler_executes_success_path_and_emits_statuses() -> None:
     assert {"resolve_target", "delegating", "delegate_result", "done"}.issubset(
         mode_states
     )
+    policy = ctx.state.module_state["delegation_policy"]
+    projection = policy["projections"][0]
+    assert projection["flow"] == "a2a_sync"
+    assert projection["decision"]["child_id"] == "agent.weather"
+    assert projection["decision"]["budget_policy"] == "share_pool"
+    assert projection["decision"]["projected_budget"]["a2a_calls"] == 2
+    assert [event["event_kind"] for event in projection["events"]] == [
+        "budget_projected",
+        "deadline_projected",
+        "cancellation_evaluated",
+    ]
+    aggregation = policy["aggregations"][0]["aggregation"]
+    assert aggregation["source_policy"] == "all_required"
+    assert aggregation["success_count"] == 1
+    assert aggregation["completed_required"] is True
 
 
 def test_delegate_prepare_rejects_unknown_target_agent() -> None:
@@ -475,3 +490,13 @@ def test_delegate_prepare_cancels_before_dispatch_when_cancel_flag_is_set() -> N
     assert result.status == "stopped"
     assert "cancelled before execution" in str(result.message).lower()
     assert services.command_calls == []
+    projection = ctx.state.module_state["delegation_policy"]["projections"][0]
+    assert projection["cascade"]["source_policy"] == "cascade_all"
+    assert projection["cascade"]["steps"] == [
+        {
+            "child_id": "agent.weather",
+            "directive": "cancel",
+            "mode": "sync",
+            "source_policy": "cascade_all",
+        }
+    ]

@@ -1,5 +1,12 @@
 """OpenAI-dialect request compatibility profiles."""
 
+# COMPAT: kept because 3 behavior-profile test surfaces exercise this OpenAI
+# dialect owner (`tests/llm/providers/behavior/test_resolver.py`,
+# `test_pbpgh_baseline.py`, and
+# `test_pbpgh_04_request_compat_profile_driven.py`). Remove only when
+# provider-dialect request shaping is folded into the canonical behavior-profile
+# registry with equivalent Minimax/OpenAI-compat coverage.
+
 from dataclasses import dataclass
 from typing import Any
 from collections.abc import Mapping

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler
+from os import PathLike
 
 from openminion.api.runtime import APIRuntime
 
@@ -13,9 +14,21 @@ class APIRuntimeBootstrap:
     runtime_bootstrap_error: str | None
 
 
-def bootstrap_api_runtime(config_path: str | None) -> APIRuntimeBootstrap:
+def bootstrap_api_runtime(
+    config_path: str | None,
+    *,
+    home_root: str | PathLike[str] | None = None,
+    data_root: str | PathLike[str] | None = None,
+) -> APIRuntimeBootstrap:
     try:
-        return APIRuntimeBootstrap(APIRuntime.from_config_path(config_path), None)
+        return APIRuntimeBootstrap(
+            APIRuntime.from_config_path(
+                config_path,
+                home_root=home_root,
+                data_root=data_root,
+            ),
+            None,
+        )
     except Exception as exc:  # noqa: BLE001
         runtime_bootstrap_error = str(exc)
         logging.getLogger("openminion.api").warning(

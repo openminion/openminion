@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any
 from urllib.parse import urlencode
 
-from openminion.cli.commands.daemon import ensure_daemon_running
-from openminion.cli.transport.daemon_client import daemon_request
-from openminion.cli.bootstrap.loader import load_config
-from openminion.cli.parser.flags import add_tool_session_arg
+from openminion.cli.config import load_cli_config_from_args
+from openminion.cli.parser.flags import add_runtime_source_flag, add_tool_session_arg
 from openminion.cli.presentation.json_output import print_json_payload
+from openminion.cli.transport.runtime_source import call_daemon_or_inproc, daemon_get
 from openminion.modules.llm.providers.base import ProviderToolCall
 from openminion.api.runtime import APIRuntime
 from openminion.modules.tool.base import ToolExecutionContext
@@ -44,15 +44,12 @@ def _tools_list(args) -> int:
 
     payload = _from_daemon_or_inproc(
         args,
-        daemon_call=lambda endpoint: daemon_request(
-            endpoint=endpoint,
-            method="GET",
-            path="/v1/tools",
-            timeout_s=10,
+        daemon_call=lambda endpoint: daemon_get(
+            endpoint, path="/v1/tools", timeout_s=10
         ),
         inproc_call=lambda: {
             "ok": True,
-            "tools": _inproc_tool_specs(args.config),
+            "tools": _inproc_tool_specs(args),
         },
     )
 
@@ -138,13 +135,12 @@ def _tools_schema(args) -> int:
 
     payload = _from_daemon_or_inproc(
         args,
-        daemon_call=lambda endpoint: daemon_request(
-            endpoint=endpoint,
-            method="GET",
+        daemon_call=lambda endpoint: daemon_get(
+            endpoint,
             path=f"/v1/tools/{tool_name}/schema",
             timeout_s=10,
         ),
-        inproc_call=lambda: _inproc_tool_schema(args.config, tool_name=tool_name),
+        inproc_call=lambda: _inproc_tool_schema(args, tool_name=tool_name),
     )
     print_json_payload(payload)
     return 0 if payload.get("ok", False) else 1
@@ -175,15 +171,14 @@ def _tools_run(args) -> int:
 
     payload = _from_daemon_or_inproc(
         args,
-        daemon_call=lambda endpoint: daemon_request(
+        daemon_call=lambda endpoint: _daemon_post(
             endpoint=endpoint,
-            method="POST",
             path=f"/v1/tools/{tool_name}/run",
             payload=request_payload,
             timeout_s=30,
         ),
         inproc_call=lambda: _inproc_tool_run(
-            args.config,
+            args,
             tool_name=tool_name,
             arguments=arguments,
             session_id=session_id,
@@ -216,13 +211,12 @@ def _tools_exposure(args) -> int:
         )
         result = _from_daemon_or_inproc(
             args,
-            daemon_call=lambda endpoint: daemon_request(
+            daemon_call=lambda endpoint: daemon_get(
                 endpoint=endpoint,
-                method="GET",
                 path=f"/v1/tools/exposure?{query}",
                 timeout_s=10,
             ),
-            inproc_call=lambda: _inproc_exposure_status(args.config, payload),
+            inproc_call=lambda: _inproc_exposure_status(args, payload),
         )
     elif action == "activate":
         payload.update(
@@ -239,26 +233,24 @@ def _tools_exposure(args) -> int:
         )
         result = _from_daemon_or_inproc(
             args,
-            daemon_call=lambda endpoint: daemon_request(
+            daemon_call=lambda endpoint: _daemon_post(
                 endpoint=endpoint,
-                method="POST",
                 path="/v1/tools/exposure/activate",
                 payload=payload,
                 timeout_s=10,
             ),
-            inproc_call=lambda: _inproc_exposure_activate(args.config, payload),
+            inproc_call=lambda: _inproc_exposure_activate(args, payload),
         )
     elif action == "deactivate":
         result = _from_daemon_or_inproc(
             args,
-            daemon_call=lambda endpoint: daemon_request(
+            daemon_call=lambda endpoint: _daemon_post(
                 endpoint=endpoint,
-                method="POST",
                 path="/v1/tools/exposure/deactivate",
                 payload=payload,
                 timeout_s=10,
             ),
-            inproc_call=lambda: _inproc_exposure_deactivate(args.config, payload),
+            inproc_call=lambda: _inproc_exposure_deactivate(args, payload),
         )
     else:
         raise RuntimeError("Unknown tools exposure command")
@@ -267,20 +259,50 @@ def _tools_exposure(args) -> int:
 
 
 def _from_daemon_or_inproc(args, *, daemon_call, inproc_call) -> dict:
-    config = load_config(args.config)
-    auto_start = bool(config.runtime.daemon_auto_start)
-    try:
-        endpoint = ensure_daemon_running(args.config, auto_start=auto_start)
-        status, payload = daemon_call(endpoint)
-        if status < 400:
-            return payload
-    except RuntimeError:
-        pass
-    return inproc_call()
+    config = load_cli_config_from_args(args)
+    result = call_daemon_or_inproc(
+        args=args,
+        auto_start=bool(config.runtime.daemon_auto_start),
+        daemon_call=daemon_call,
+        inproc_call=inproc_call,
+    )
+    payload = dict(result.payload)
+    payload.setdefault("runtime_source", result.source)
+    if result.fallback_reason:
+        payload.setdefault("runtime_fallback_reason", result.fallback_reason)
+    return payload
 
 
-def _inproc_tool_specs(config_path: str | None) -> list[dict]:
-    runtime = APIRuntime.from_config_path(config_path)
+def _daemon_post(
+    *,
+    endpoint: object,
+    path: str,
+    payload: dict,
+    timeout_s: float,
+) -> tuple[int, dict[str, Any]]:
+    from openminion.cli.transport.daemon_client import daemon_request
+
+    return daemon_request(
+        endpoint=endpoint,
+        method="POST",
+        path=path,
+        payload=payload,
+        timeout_s=timeout_s,
+    )
+
+
+def _runtime_from_args(args_or_config_path: object) -> APIRuntime:
+    if isinstance(args_or_config_path, (str, type(None))):
+        return APIRuntime.from_config_path(args_or_config_path)
+    return APIRuntime.from_config_path(
+        getattr(args_or_config_path, "config", None),
+        home_root=getattr(args_or_config_path, "home_root", None),
+        data_root=getattr(args_or_config_path, "data_root", None),
+    )
+
+
+def _inproc_tool_specs(args_or_config_path: object) -> list[dict]:
+    runtime = _runtime_from_args(args_or_config_path)
     try:
         return runtime.tool_inventory_report()
     finally:
@@ -307,10 +329,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     tools_list.add_argument(
         "--disabled", action="store_true", help="Show disabled tools"
     )
+    add_runtime_source_flag(tools_list)
     tools_list.set_defaults(handler=run_tools, needs_app=False)
 
     tools_schema = tools_subcommands.add_parser("schema", help="Show tool schema")
     tools_schema.add_argument("tool", help="Tool name")
+    add_runtime_source_flag(tools_schema)
     tools_schema.set_defaults(handler=run_tools, needs_app=False)
 
     tools_run = tools_subcommands.add_parser("run", help="Execute one tool call")
@@ -327,6 +351,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Confirm a policy-gated tool call such as a write or admin operation",
     )
     add_tool_session_arg(tools_run, default="tools")
+    add_runtime_source_flag(tools_run)
     tools_run.set_defaults(handler=run_tools, needs_app=False)
 
     exposure = tools_subcommands.add_parser(
@@ -336,6 +361,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     exposure_subcommands = exposure.add_subparsers(dest="exposure_command")
     exposure_status = exposure_subcommands.add_parser("status", help="Show profiles")
     _add_exposure_scope_args(exposure_status, include_profile=False)
+    add_runtime_source_flag(exposure_status)
     exposure_status.set_defaults(handler=run_tools, needs_app=False)
 
     exposure_activate = exposure_subcommands.add_parser(
@@ -350,12 +376,14 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     exposure_activate.add_argument("--reason", default="")
     exposure_activate.add_argument("--approved-by", default="")
     exposure_activate.add_argument("--policy-source", default="")
+    add_runtime_source_flag(exposure_activate)
     exposure_activate.set_defaults(handler=run_tools, needs_app=False)
 
     exposure_deactivate = exposure_subcommands.add_parser(
         "deactivate", help="Deactivate one profile"
     )
     _add_exposure_scope_args(exposure_deactivate)
+    add_runtime_source_flag(exposure_deactivate)
     exposure_deactivate.set_defaults(handler=run_tools, needs_app=False)
 
 
@@ -367,8 +395,8 @@ def _add_exposure_scope_args(parser, *, include_profile: bool = True) -> None:
     parser.add_argument("--target", default="")
 
 
-def _inproc_tool_schema(config_path: str | None, *, tool_name: str) -> dict:
-    runtime = APIRuntime.from_config_path(config_path)
+def _inproc_tool_schema(args_or_config_path: object, *, tool_name: str) -> dict:
+    runtime = _runtime_from_args(args_or_config_path)
     try:
         schema = runtime.tool_schema_report(tool_name=tool_name)
         if schema is None:
@@ -388,14 +416,14 @@ def _inproc_tool_schema(config_path: str | None, *, tool_name: str) -> dict:
 
 
 def _inproc_tool_run(
-    config_path: str | None,
+    args_or_config_path: object,
     *,
     tool_name: str,
     arguments: dict,
     session_id: str,
     confirm: bool = False,
 ) -> dict:
-    runtime = APIRuntime.from_config_path(config_path)
+    runtime = _runtime_from_args(args_or_config_path)
     try:
         provider_spec = None
         if callable(getattr(runtime.tools, "provider_spec_for_name", None)):
@@ -465,8 +493,8 @@ def _inproc_tool_run(
         runtime.close()
 
 
-def _inproc_exposure_status(config_path: str | None, payload: dict) -> dict:
-    runtime = APIRuntime.from_config_path(config_path)
+def _inproc_exposure_status(args_or_config_path: object, payload: dict) -> dict:
+    runtime = _runtime_from_args(args_or_config_path)
     try:
         return {
             "ok": True,
@@ -480,8 +508,8 @@ def _inproc_exposure_status(config_path: str | None, payload: dict) -> dict:
         runtime.close()
 
 
-def _inproc_exposure_activate(config_path: str | None, payload: dict) -> dict:
-    runtime = APIRuntime.from_config_path(config_path)
+def _inproc_exposure_activate(args_or_config_path: object, payload: dict) -> dict:
+    runtime = _runtime_from_args(args_or_config_path)
     try:
         try:
             activation = runtime.activate_tool_profile(
@@ -505,8 +533,8 @@ def _inproc_exposure_activate(config_path: str | None, payload: dict) -> dict:
         runtime.close()
 
 
-def _inproc_exposure_deactivate(config_path: str | None, payload: dict) -> dict:
-    runtime = APIRuntime.from_config_path(config_path)
+def _inproc_exposure_deactivate(args_or_config_path: object, payload: dict) -> dict:
+    runtime = _runtime_from_args(args_or_config_path)
     try:
         return {
             "ok": True,

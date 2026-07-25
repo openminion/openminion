@@ -35,6 +35,14 @@ class APIV1RuntimeTests(unittest.TestCase):
             self.assertIn("agents", agents_payload)
             self.assertIn("registry_agent_ids", agents_payload)
             self.assertIn("openminion", agents_payload["registry_agent_ids"])
+            openminion_agent = next(
+                item
+                for item in agents_payload["agents"]
+                if item["agent_id"] == "openminion"
+            )
+            self.assertTrue(openminion_agent["configured"])
+            self.assertTrue(openminion_agent["available"])
+            self.assertIn(openminion_agent["state"], {"configured", "running"})
 
     def test_v1_tools_list_schema_and_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

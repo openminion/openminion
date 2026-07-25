@@ -86,6 +86,14 @@ def load_cli_manager(
     return manager
 
 
+def load_cli_manager_from_args(args: object) -> ConfigManager:
+    return load_cli_manager(
+        getattr(args, "config", None),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
+
+
 def load_cli_config(
     config_path: object | None = None,
     *,
@@ -97,6 +105,10 @@ def load_cli_config(
         home_root=home_root,
         data_root=data_root,
     ).base_config
+
+
+def load_cli_config_from_args(args: object) -> OpenMinionConfig:
+    return load_cli_manager_from_args(args).base_config
 
 
 def load_cli_config_with_path(
@@ -237,8 +249,10 @@ __all__ = [
     "CLIRoots",
     "infer_workspace_home_root",
     "load_cli_config",
+    "load_cli_config_from_args",
     "load_cli_config_with_path",
     "load_cli_manager",
+    "load_cli_manager_from_args",
     "resolve_cli_tool_provider_specs_and_dispatch_map",
     "resolve_cli_identity_db_path",
     "resolve_cli_policy_db_path",
