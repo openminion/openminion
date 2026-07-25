@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from openminion.base.version import OPENMINION_VERSION as OPENMINION_VERSION
+
 from .exports import LAZY_EXPORTS, PUBLIC_EXPORTS, resolve_lazy_export
 
 __all__ = PUBLIC_EXPORTS
