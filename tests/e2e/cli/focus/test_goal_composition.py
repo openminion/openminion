@@ -172,3 +172,53 @@ def test_default_terminal_goal_start_updates_status_and_cap_stop(tmp_path) -> No
     assert "status=paused" in capped
     assert "turns=2/3" in capped
     assert '"repeated_no_progress_count":2' in capped
+
+
+def test_default_terminal_goal_create_then_live_run_persists_steps(tmp_path) -> None:
+    session_id = "focus-goal-create-session"
+    storage_path = tmp_path / "openminion.db"
+    runtime = _runtime(storage_path=storage_path, session_id=session_id)
+    runtime._working_dir = str(tmp_path)
+    status_line = TerminalStatusLine()
+
+    created = asyncio.run(
+        _dispatch(
+            (
+                '/goal create "finish focus-created goal" --id goal-focus-created '
+                '--criterion "focused proof passes" '
+                '--deliverable "focus-created proof"'
+            ),
+            runtime=runtime,
+            status_line=status_line,
+        )
+    )
+    assert "created goal-focus-created [active] finish focus-created goal" in created
+    assert "bound=current-session" in created
+
+    completed = asyncio.run(
+        _dispatch(
+            "/goal run goal-focus-created --live "
+            "continue:need-focus-created-proof,satisfied:focus-created-proof-passes",
+            runtime=runtime,
+            status_line=status_line,
+        )
+    )
+    assert "status=completed" in completed
+    assert "turns=2/3" in completed
+
+    db_path = resolve_brain_sessions_db_path(storage_path=storage_path)
+    state = SQLiteGoalRunStore(db_path).latest_for_session(session_id)
+    assert state is not None
+    steps = SQLiteGoalRunStepLedger(db_path).list_for_run(state.run_id)
+    assert [step.evaluator_outcome for step in steps] == ["continue", "satisfied"]
+
+    inspected = asyncio.run(
+        _dispatch(
+            "/goal inspect",
+            runtime=runtime,
+            status_line=status_line,
+        )
+    )
+    assert "ledger_steps=2" in inspected
+    assert "focused proof passes" in inspected
+    assert "focus-created proof" in inspected

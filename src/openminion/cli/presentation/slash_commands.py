@@ -90,7 +90,7 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
     SlashCommandMetadata(
         "/goal",
-        "Inspect or control the active goal run",
+        "Create, bind, inspect, or run a session goal",
         "_slash_goal",
         "_slash_goal",
     ),
