@@ -23,10 +23,10 @@
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-6B7280">
 </p>
 
-OpenMinion `v0.0.4` is an early public alpha for running inspectable agents on
-your own machine. It brings CLI, Python, HTTP, daemon-backed workflows, tools,
-sessions, and local integrations into one runtime instead of splitting them
-across unrelated wrappers.
+The current OpenMinion release is an early public alpha for running inspectable
+agents on your own machine. It brings CLI, Python, HTTP, daemon-backed
+workflows, tools, sessions, and local integrations into one runtime instead of
+splitting them across unrelated wrappers.
 
 ## Read This First
 
@@ -53,7 +53,7 @@ and should be treated as a scam.
 | | |
 | --- | --- |
 | Package | `openminion` |
-| Current line | `v0.0.4` alpha |
+| Current line | Public alpha; see the PyPI version badge above |
 | Python | 3.11+ |
 | Best fit | Bounded local workflows, tool use, integrations, and operator-driven agents |
 | Main surfaces | CLI, Python API, local HTTP API, and daemon-backed execution |
