@@ -6,9 +6,9 @@ import time
 
 from rich.console import Console
 
-from openminion.cli.interactive.terminal.shell import (
-    _run_agent_turn,
-    _tick_turn_status_line,
+from openminion.cli.interactive.terminal.shell import _run_agent_turn
+from openminion.cli.interactive.terminal.shell.progress import (
+    tick_turn_status_line as _tick_turn_status_line,
 )
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.streaming import TerminalTurnHandle
