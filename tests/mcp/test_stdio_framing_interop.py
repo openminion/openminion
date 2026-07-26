@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+from os import environ
 from pathlib import Path
 
 import pytest
@@ -69,10 +70,12 @@ def test_stdio_transport_supports_legacy_lsp_fixture_fallback() -> None:
         manager.close()
 
 
+@pytest.mark.mcp_live
 @pytest.mark.skipif(
-    shutil.which("npx") is None,
-    reason="npx is required for official MCP stdio interop smoke",
+    environ.get("OPENMINION_LIVE_MCP_E2E") != "1",
+    reason="set OPENMINION_LIVE_MCP_E2E=1 to run official MCP stdio interop smoke",
 )
+@pytest.mark.skipif(shutil.which("npx") is None, reason="npx is required")
 def test_stdio_transport_smoke_against_official_server_everything() -> None:
     manager = MCPFleetManager.from_runtime_config(
         _runtime_config(

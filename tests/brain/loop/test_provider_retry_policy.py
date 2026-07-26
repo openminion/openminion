@@ -1,5 +1,3 @@
-"""Unit tests for the typed provider retry policy."""
-
 from __future__ import annotations
 
 import pytest

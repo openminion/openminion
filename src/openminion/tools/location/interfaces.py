@@ -1,17 +1,12 @@
 from typing import Literal, TypedDict
 
+from .constants import LOCATION_SOURCE_VALUES
+
 LOCATION_PLUGIN_INTERFACE_VERSION = "v1"
 
 LocationSource = Literal["session.override", "identity.default", "ip.geo", "none"]
 LocationPrivacyLevel = Literal["none", "city", "region", "precise"]
 LocationConfidence = Literal["high", "medium", "low"]
-
-LOCATION_SOURCE_VALUES: tuple[LocationSource, ...] = (
-    "session.override",
-    "identity.default",
-    "ip.geo",
-    "none",
-)
 
 
 class LocationError(TypedDict, total=False):

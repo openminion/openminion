@@ -1,0 +1,39 @@
+{
+  "approval_reference": "Codex task request 2026-07-26: execute ready OpenMinion trackers fully",
+  "approved_by": "j",
+  "command": ".venv/bin/python3.11 -m mypy src/openminion --explicit-package-bases --hide-error-context --no-error-summary --show-error-codes",
+  "config_sha256": "dd10cc04c2f64d6dd0aa53cd0e623250e9afaf8ca0ba5760f3053cb782266c0f",
+  "created_at": "2026-07-26T08:43:51Z",
+  "expires_at": "2026-08-09T08:43:51Z",
+  "mypy_version": "mypy 1.20.2 (compiled: yes)",
+  "owner": "openminion-typing",
+  "previous_baseline": {
+    "package_errors": {
+      "api": 124,
+      "cli": 571,
+      "modules": 3836,
+      "root": 1,
+      "services": 368,
+      "tools": 279
+    },
+    "total_errors": 5179
+  },
+  "proposed_baseline": {
+    "package_errors": {
+      "api": 124,
+      "cli": 571,
+      "modules": 3836,
+      "root": 1,
+      "services": 368,
+      "tools": 279
+    },
+    "total_errors": 5179
+  },
+  "python_version": "3.11.15",
+  "reason": "Recover monotonic type-ratchet control after the July 2026 upward ceiling rewrite. This reviewed artifact preserves the active 5179-error ceiling as temporary debt against the historical 4019 floor while normal baseline emission remains monotonic.",
+  "recovery_tracker": "docs/trackers/wip/openminion-type-ratchet-monotonicity-recovery-2026-07-25-tracker.md",
+  "review_id": "july-2026-reset-recovery",
+  "schema_version": 1,
+  "source_commit": "fdb6afca9d0a4fafdf5518f48680d19f0bdf49e8",
+  "source_snapshot_sha256": "88f6084b6b07bb8c058b210f9121a2fce432d40dc90a21eb8452d7b45bc465e5"
+}

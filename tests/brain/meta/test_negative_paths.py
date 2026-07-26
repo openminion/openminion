@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
+import pytest
 from pydantic import ValidationError
 
 from openminion.modules.brain.meta.evaluator import MetaRulesEngine
+from openminion.modules.brain.meta.reasons import ReasonCode
 from openminion.modules.brain.meta.schemas import (
     MetaDirective,
     MetaMetrics,
@@ -11,25 +15,24 @@ from openminion.modules.brain.meta.schemas import (
 )
 
 
-def _fallback_result(reason_code, exc: Exception):
+def _fallback_result(reason_code: ReasonCode, exc: Exception) -> MetaResult:
     return MetaRulesEngine()._fallback(MetaMetrics(), reason_code, exc)
 
 
-def test_invalid_metrics_input_rejection() -> None:
-    for factory in (
+@pytest.mark.parametrize(
+    "factory",
+    (
         lambda: MetaMetrics(definitely_not_a_real_field="oops"),  # type: ignore[call-arg]
         lambda: MetaMetrics(risk_class="catastrophic"),  # type: ignore[arg-type]
         lambda: MetaDirective(override_next_state="FLYING"),  # type: ignore[arg-type]
         lambda: MetaDirective(tier_override="T9_impossible"),  # type: ignore[arg-type]
         lambda: MetaDirective(not_a_field=True),  # type: ignore[call-arg]
         lambda: MetaMetrics(last_verify_outcome="maybe"),  # type: ignore[arg-type]
-    ):
-        try:
-            factory()
-        except ValidationError:
-            pass
-        else:
-            raise AssertionError("expected ValidationError")
+    ),
+)
+def test_invalid_metrics_input_rejection(factory: Callable[[], object]) -> None:
+    with pytest.raises(ValidationError):
+        factory()
 
 
 def test_evaluator_never_raises_on_valid_metrics() -> None:
@@ -44,8 +47,6 @@ def test_evaluator_never_raises_on_valid_metrics() -> None:
 
 
 def test_fallback_directive_is_conservative() -> None:
-    from openminion.modules.brain.meta.reasons import ReasonCode
-
     fallback_result = _fallback_result(
         ReasonCode.FALLBACK_EVALUATION_ERROR, RuntimeError("sim")
     )
@@ -55,15 +56,11 @@ def test_fallback_directive_is_conservative() -> None:
 
 
 def test_fallback_always_returns_complete_meta_result() -> None:
-    from openminion.modules.brain.meta.reasons import ReasonCode
-
     result = _fallback_result(ReasonCode.FALLBACK_INVALID_METRICS, ValueError("bad"))
     MetaResult.model_validate(result.model_dump())
 
 
 def test_fallback_has_reason_codes_and_exception_hints() -> None:
-    from openminion.modules.brain.meta.reasons import ReasonCode
-
     result = _fallback_result(ReasonCode.FALLBACK_EVALUATION_ERROR, ValueError("test"))
     assert result.reasons
     assert any(

@@ -26,10 +26,6 @@ def _make_console_and_transcript(
     return console, TerminalTranscript(console, verbosity=verbosity), buf
 
 
-class _StubOverlay:
-    pass
-
-
 async def _dispatch(
     text: str,
     *,
@@ -42,7 +38,7 @@ async def _dispatch(
         runtime=runtime,
         console=console,
         transcript=transcript,
-        overlay=_StubOverlay(),  # type: ignore[arg-type]
+        overlay=object(),  # type: ignore[arg-type]
         status_line=TerminalStatusLine(),
         working_dir="/tmp",
     )

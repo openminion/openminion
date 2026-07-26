@@ -13,6 +13,7 @@ from openminion.base.version import OPENMINION_VERSION
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.modules.tool.runtime.context import RuntimeContext
+from openminion.tools.weather.constants import DEFAULT_WEATHER_PROVIDER_ID
 
 from .constants import (
     WEATHER_OPENMETEO_BACKOFF_SECONDS,
@@ -829,7 +830,7 @@ def _h_weather_openmeteo_current(
 
 
 class OpenMeteoWeatherProvider:
-    provider_id = "openmeteo"
+    provider_id = DEFAULT_WEATHER_PROVIDER_ID
 
     def lookup(
         self,

@@ -2,6 +2,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Callable
 
+from .constants import (
+    BROWSER_PROVIDER_AUTO,
+    BROWSER_PROVIDER_PINCHTAB,
+    BROWSER_PROVIDER_PLAYWRIGHT,
+)
 from .providers import BrowserProvider, BrowserProviderRegistry
 
 
@@ -65,7 +70,7 @@ class BrowserRouter:
     @staticmethod
     def _normalize_provider_token(value: str | None) -> str:
         token = str(value or "").strip().lower()
-        if token in {"", "auto"}:
+        if token in {"", BROWSER_PROVIDER_AUTO}:
             return ""
         return token
 
@@ -121,7 +126,7 @@ class BrowserRouter:
         )
         if preferred_provider:
             return preferred_provider
-        for preferred in ("pinchtab", "playwright"):
+        for preferred in (BROWSER_PROVIDER_PINCHTAB, BROWSER_PROVIDER_PLAYWRIGHT):
             if preferred in provider_ids:
                 return preferred
         return provider_ids[0]

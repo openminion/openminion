@@ -24,7 +24,9 @@ from openminion.tools.browser.providers.pinchtab.binary import (
 )
 
 
-def _write_cached_binary(data_root: Path, *, version: str = "v1") -> Path:
+def _write_cached_binary(
+    data_root: Path, *, version: str = "v1", verified: bool = True
+) -> Path:
     binary = (
         data_root
         / "sidecars"
@@ -41,7 +43,14 @@ def _write_cached_binary(data_root: Path, *, version: str = "v1") -> Path:
         f"{digest}  pinchtab\n", encoding="utf-8"
     )
     (binary.parent / "manifest.json").write_text(
-        json.dumps({"version": version, "platform": "test-os", "verified": True}),
+        json.dumps(
+            {
+                "version": version,
+                "platform": "test-os",
+                "verified": verified,
+                "sha256": digest if verified else "",
+            }
+        ),
         encoding="utf-8",
     )
     return binary
@@ -81,13 +90,15 @@ def test_resolver_returns_cached_binary_with_configured_checksum(
 def test_cached_checksum_file_does_not_make_untrusted_binary_verified(
     tmp_path: Path,
 ) -> None:
-    binary = _write_cached_binary(tmp_path)
+    binary = _write_cached_binary(tmp_path, verified=False)
 
-    result = PinchTabBinaryResolver(_cfg(tmp_path)).resolve()
+    result = PinchTabBinaryResolver(_cfg(tmp_path)).status()
 
-    assert result.ok is True
-    assert result.binary_path == binary
+    assert result.ok is False
+    assert result.binary_path is None
     assert result.verified is False
+    assert result.error_code == "PINCHTAB_UNVERIFIED_MANAGED_BINARY"
+    assert binary.exists()
 
 
 def test_resolver_rejects_external_explicit_path_without_allow_external(
@@ -123,6 +134,7 @@ def test_resolver_download_uses_injected_downloader_and_verifies_checksum(
     source_bytes = b"pinchtab-test"
     expected = hashlib.sha256(source_bytes).hexdigest()
     events: list[str] = []
+    payloads: list[dict[str, object]] = []
 
     def downloader(_url: str, destination: Path) -> None:
         destination.write_bytes(source_bytes)
@@ -135,7 +147,10 @@ def test_resolver_download_uses_injected_downloader_and_verifies_checksum(
             sha256=expected,
         ),
         downloader=downloader,
-        event_sink=lambda event, _payload: events.append(event),
+        event_sink=lambda event, payload: (
+            events.append(event),
+            payloads.append(payload),
+        ),
     )
 
     result = resolver.resolve(allow_download=True)
@@ -144,8 +159,10 @@ def test_resolver_download_uses_injected_downloader_and_verifies_checksum(
     assert result.verified is True
     assert events == [
         "sidecar.pinchtab.download.requested",
+        "sidecar.pinchtab.download.approved",
         "sidecar.pinchtab.download.completed",
     ]
+    assert all(payload["verified"] is True for payload in payloads)
 
 
 def test_resolver_discovers_github_release_asset_with_injected_discoverer(
@@ -174,6 +191,97 @@ def test_resolver_discovers_github_release_asset_with_injected_discoverer(
     assert result.ok is True
     assert result.verified is True
     assert downloaded_urls == ["https://example.invalid/releases/pinchtab"]
+
+
+def test_resolver_rejects_download_without_trusted_digest(tmp_path: Path) -> None:
+    resolver = PinchTabBinaryResolver(
+        _cfg(
+            tmp_path,
+            install_mode="required",
+            download_url="https://example.invalid/pinchtab",
+        ),
+        downloader=lambda _url, destination: destination.write_bytes(b"untrusted"),
+    )
+
+    with pytest.raises(PinchTabBinaryError) as exc_info:
+        resolver.resolve(allow_download=True)
+
+    assert exc_info.value.code == "PINCHTAB_UNVERIFIED_MANAGED_BINARY"
+
+
+def test_resolver_rejects_malformed_trust_digest_before_download(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    resolver = PinchTabBinaryResolver(
+        _cfg(
+            tmp_path,
+            install_mode="required",
+            download_url="https://example.invalid/pinchtab",
+            sha256="not-a-sha256",
+        ),
+        downloader=lambda url, destination: (
+            calls.append(url),
+            destination.write_bytes(b"should-not-download"),
+        ),
+    )
+
+    with pytest.raises(PinchTabBinaryError) as exc_info:
+        resolver.resolve(allow_download=True)
+
+    assert exc_info.value.code == "PINCHTAB_INVALID_TRUST_DIGEST"
+    assert calls == []
+
+
+def test_resolver_quarantines_checksum_mismatch(tmp_path: Path) -> None:
+    resolver = PinchTabBinaryResolver(
+        _cfg(
+            tmp_path,
+            install_mode="required",
+            download_url="https://example.invalid/pinchtab",
+            sha256="0" * 64,
+        ),
+        downloader=lambda _url, destination: destination.write_bytes(b"mismatch"),
+    )
+
+    with pytest.raises(PinchTabBinaryError) as exc_info:
+        resolver.resolve(allow_download=True)
+
+    assert exc_info.value.code == "PINCHTAB_CHECKSUM_MISMATCH"
+    release_dir = tmp_path / "sidecars" / "pinchtab" / "releases" / "v1" / "test-os"
+    assert not (release_dir / "pinchtab").exists()
+    assert not any(release_dir.glob("*.tmp"))
+
+
+def test_resolver_reuses_locked_verified_publish_for_second_installer(
+    tmp_path: Path,
+) -> None:
+    payload = b"trusted"
+    expected = hashlib.sha256(payload).hexdigest()
+    calls: list[str] = []
+
+    def downloader(url: str, destination: Path) -> None:
+        calls.append(url)
+        destination.write_bytes(payload)
+
+    cfg = _cfg(
+        tmp_path,
+        install_mode="required",
+        download_url="https://example.invalid/pinchtab",
+        sha256=expected,
+    )
+
+    first = PinchTabBinaryResolver(cfg, downloader=downloader).resolve(
+        allow_download=True
+    )
+    second = PinchTabBinaryResolver(cfg, downloader=downloader).resolve(
+        allow_download=True
+    )
+
+    assert first.ok is True
+    assert second.ok is True
+    assert first.binary_path == second.binary_path
+    assert calls == ["https://example.invalid/pinchtab"]
 
 
 def test_resolver_rejects_real_download_without_e2e_opt_in(tmp_path: Path) -> None:

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import subprocess
+import hashlib
+import json
+import tempfile
 from contextlib import contextmanager
 import copy
 from dataclasses import dataclass
@@ -12,6 +15,7 @@ from typing import Any, Iterator
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.modules.brain.execution.child_tasks import SubtaskSpec
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
+from openminion.modules.brain.loop.services import runner_from_context
 from openminion.modules.brain.loop.rollouts import WorktreeIsolator
 from openminion.modules.brain.schemas import WorkingState
 
@@ -54,6 +58,19 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _git_input(
+    repo: Path, *args: str, input_text: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        input=input_text,
+        timeout=30,
+    )
+
+
 def _status_paths(worktree: Path) -> list[str]:
     result = _git(worktree, "status", "--short")
     paths: list[str] = []
@@ -67,6 +84,138 @@ def _status_paths(worktree: Path) -> list[str]:
 def _diff_text(worktree: Path) -> str:
     result = _git(worktree, "diff", "--")
     return result.stdout if result.returncode == 0 else ""
+
+
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifactctl_from_context(ctx: ExecutionContext) -> tuple[Any | None, bool]:
+    runner = runner_from_context(ctx)
+    candidates = [
+        getattr(runner, "artifactctl", None),
+        getattr(getattr(runner, "tool_api", None), "artifactctl", None),
+        getattr(getattr(ctx, "_services", None), "artifactctl", None),
+    ]
+    for candidate in candidates:
+        if candidate is not None:
+            return candidate, False
+    try:
+        from openminion.modules.artifact.refs import create_default_artifactctl
+
+        return create_default_artifactctl(), True
+    except (ImportError, OSError, RuntimeError, ValueError):
+        return None, False
+
+
+def _stage_child_commit(lease: ChildWorktreeLease) -> str | None:
+    _git(lease.worktree, "add", "-A", "--")
+    if not _status_paths(lease.worktree):
+        return None
+    result = _git(
+        lease.worktree,
+        "-c",
+        "user.email=openminion-child@example.invalid",
+        "-c",
+        "user.name=OpenMinion Child",
+        "commit",
+        "-m",
+        f"openminion child handoff {lease.subtask_id}",
+    )
+    if result.returncode != 0:
+        return None
+    head = _git(lease.worktree, "rev-parse", "HEAD")
+    return head.stdout.strip() if head.returncode == 0 else None
+
+
+def _create_child_artifacts(
+    ctx: ExecutionContext,
+    *,
+    lease: ChildWorktreeLease,
+    touched_paths: list[str],
+    status: str,
+    validation: dict[str, Any],
+) -> dict[str, Any]:
+    artifactctl, should_close = _artifactctl_from_context(ctx)
+    if artifactctl is None:
+        return {"status": "artifact_unavailable"}
+    owner_id = f"{ctx.state.session_id}:{ctx.state.trace_id}:{lease.subtask_id}"
+    try:
+        with tempfile.TemporaryDirectory(prefix="openminion-child-handoff-") as tmp:
+            scratch = Path(tmp)
+            child_revision = _stage_child_commit(lease)
+            if not child_revision:
+                return {"status": "no_commit"}
+            bundle_path = scratch / "child.bundle"
+            bundle = _git(
+                lease.worktree,
+                "bundle",
+                "create",
+                str(bundle_path),
+                "HEAD",
+                f"^{lease.base_revision}",
+            )
+            if bundle.returncode != 0:
+                return {
+                    "status": "bundle_failed",
+                    "stderr": bundle.stderr.strip()[:500],
+                }
+            bundle_sha = _sha256_path(bundle_path)
+            manifest = {
+                "schema_version": 1,
+                "owner_type": "a2a",
+                "owner_id": owner_id,
+                "subtask_id": lease.subtask_id,
+                "base_revision": lease.base_revision,
+                "child_revision": child_revision,
+                "touched_paths": touched_paths,
+                "status": status,
+                "validation": validation,
+                "bundle_sha256": bundle_sha,
+            }
+            manifest_path = scratch / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=True, sort_keys=True),
+                encoding="utf-8",
+            )
+            bundle_ref = artifactctl.ingest_file(
+                bundle_path,
+                mime="application/vnd.git.bundle",
+                label=f"maer-child-bundle:{lease.subtask_id}",
+                meta=manifest,
+                session_id=ctx.state.session_id,
+                trace_id=ctx.state.trace_id,
+                agent_id=ctx.state.agent_id,
+            )
+            manifest_ref = artifactctl.ingest_file(
+                manifest_path,
+                mime="application/json",
+                label=f"maer-child-manifest:{lease.subtask_id}",
+                meta={"bundle_ref": bundle_ref.ref, **manifest},
+                session_id=ctx.state.session_id,
+                trace_id=ctx.state.trace_id,
+                agent_id=ctx.state.agent_id,
+            )
+            artifactctl.ref_add("a2a", owner_id, bundle_ref.ref)
+            artifactctl.ref_add("a2a", owner_id, manifest_ref.ref)
+            return {
+                "status": "stored",
+                "owner_type": "a2a",
+                "owner_id": owner_id,
+                "bundle_ref": bundle_ref.ref,
+                "manifest_ref": manifest_ref.ref,
+                "bundle_sha256": bundle_sha,
+                "child_revision": child_revision,
+            }
+    finally:
+        if should_close:
+            close = getattr(artifactctl, "close", None)
+            if callable(close):
+                close()
 
 
 def _record_conflicts(bucket: dict[str, Any]) -> None:
@@ -174,15 +323,28 @@ def finalize_child_worktree(
     if lease is None:
         return
     touched_paths = _status_paths(lease.worktree)
+    validation_payload = dict(validation or {})
+    artifact_record = (
+        _create_child_artifacts(
+            ctx,
+            lease=lease,
+            touched_paths=touched_paths,
+            status=status,
+            validation=validation_payload,
+        )
+        if touched_paths
+        else {"status": "not_applicable"}
+    )
     child_record = {
         "subtask_id": lease.subtask_id,
         "base_revision": lease.base_revision,
         "workspace": str(lease.worktree),
         "touched_paths": touched_paths,
         "diff": _diff_text(lease.worktree),
-        "validation": dict(validation or {}),
+        "validation": validation_payload,
         "status": status,
         "integration_status": "pending_parent_review" if touched_paths else "read_only",
+        "artifact": artifact_record,
     }
     lease.isolator.release()
     child_record["cleaned_up"] = not lease.worktree.exists()
@@ -191,9 +353,67 @@ def finalize_child_worktree(
     _record_conflicts(bucket)
 
 
+def accept_child_worktree_artifact(
+    *,
+    repo_root: str | Path,
+    record: dict[str, Any],
+    artifactctl: Any,
+) -> dict[str, Any]:
+    """Apply a stored child bundle to the parent checkout after safety checks."""
+    repo = Path(repo_root).expanduser().resolve(strict=True)
+    artifact = record.get("artifact") if isinstance(record, dict) else {}
+    if not isinstance(artifact, dict) or artifact.get("status") != "stored":
+        return {"ok": False, "status": "missing_artifact"}
+    base_revision = str(record.get("base_revision") or "").strip()
+    head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    if not base_revision or head != base_revision:
+        return {"ok": False, "status": "stale_base", "head": head}
+    touched_paths = [str(item) for item in record.get("touched_paths", []) or []]
+    if _git(repo, "status", "--porcelain", "--", *touched_paths).stdout.strip():
+        return {"ok": False, "status": "dirty_affected_paths"}
+
+    with tempfile.TemporaryDirectory(prefix="openminion-child-accept-") as tmp:
+        bundle_path = Path(tmp) / "child.bundle"
+        bundle_path.write_bytes(artifactctl.read_bytes(str(artifact["bundle_ref"])))
+        if _sha256_path(bundle_path) != str(artifact.get("bundle_sha256")):
+            return {"ok": False, "status": "digest_mismatch"}
+        temp_ref = f"refs/openminion/child/{artifact['bundle_sha256'][:16]}"
+        fetch = _git(repo, "fetch", str(bundle_path), f"HEAD:{temp_ref}")
+        if fetch.returncode != 0:
+            return {"ok": False, "status": "bundle_fetch_failed"}
+        diff = _git(repo, "diff", "--binary", base_revision, temp_ref)
+        if diff.returncode != 0:
+            _git(repo, "update-ref", "-d", temp_ref)
+            return {"ok": False, "status": "diff_failed"}
+        apply = _git_input(
+            repo, "apply", "--index", "--binary", "-", input_text=diff.stdout
+        )
+        _git(repo, "update-ref", "-d", temp_ref)
+        if apply.returncode != 0:
+            return {"ok": False, "status": "apply_failed"}
+    record["integration_status"] = "accepted"
+    return {"ok": True, "status": "accepted", "touched_paths": touched_paths}
+
+
+def reject_child_worktree_artifact(
+    *, record: dict[str, Any], artifactctl: Any | None = None
+) -> dict[str, Any]:
+    artifact = record.get("artifact") if isinstance(record, dict) else {}
+    if isinstance(artifact, dict) and artifactctl is not None:
+        owner_id = str(artifact.get("owner_id") or "")
+        for key in ("bundle_ref", "manifest_ref"):
+            ref = str(artifact.get(key) or "")
+            if owner_id and ref:
+                artifactctl.ref_remove("a2a", owner_id, ref)
+    record["integration_status"] = "rejected"
+    return {"ok": True, "status": "rejected"}
+
+
 __all__ = [
     "ChildWorktreeLease",
+    "accept_child_worktree_artifact",
     "allocate_child_worktree",
     "bind_runner_tool_workspace",
     "finalize_child_worktree",
+    "reject_child_worktree_artifact",
 ]

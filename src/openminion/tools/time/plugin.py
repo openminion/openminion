@@ -25,6 +25,18 @@ from .constants import (
     DEFAULT_PARSE_TIMEZONE,
     MAX_NEXT_CRON_COUNT,
     OPENMINION_TIMEZONE_ENV,
+    TIME_DIFF_UNIT_DAYS,
+    TIME_DIFF_UNIT_HOURS,
+    TIME_DIFF_UNIT_MINUTES,
+    TIME_DIFF_UNIT_SECONDS,
+    TIME_DIFF_UNITS,
+    TIME_FORMAT_CUSTOM,
+    TIME_FORMAT_DATE,
+    TIME_FORMAT_DATETIME,
+    TIME_FORMAT_ISO,
+    TIME_FORMAT_RFC3339,
+    TIME_FORMAT_TIME,
+    TIME_FORMATS,
     TIME_REASON_STORAGE_EXEC_ERROR,
     TIME_REASON_STORAGE_UNAVAILABLE,
     TIME_REASON_STORAGE_UNCONFIGURED,
@@ -597,21 +609,24 @@ def _h_parse_iso(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
 def _h_diff(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     started_at = time.perf_counter()
     error_code = ""
-    unit = str(args.get("unit") or "seconds").strip().lower() or "seconds"
+    unit = (
+        str(args.get("unit") or TIME_DIFF_UNIT_SECONDS).strip().lower()
+        or TIME_DIFF_UNIT_SECONDS
+    )
     try:
         a_utc, _ = _parse_iso8601(iso=str(args.get("a") or "").strip())
         b_utc, _ = _parse_iso8601(iso=str(args.get("b") or "").strip())
         unit_divisor = {
-            "seconds": 1.0,
-            "minutes": 60.0,
-            "hours": 3600.0,
-            "days": 86400.0,
+            TIME_DIFF_UNIT_SECONDS: 1.0,
+            TIME_DIFF_UNIT_MINUTES: 60.0,
+            TIME_DIFF_UNIT_HOURS: 3600.0,
+            TIME_DIFF_UNIT_DAYS: 86400.0,
         }.get(unit)
         if unit_divisor is None:
             raise ToolRuntimeError(
                 "OUT_OF_RANGE",
                 f"unsupported unit: {unit}",
-                {"unit": unit, "supported": ["seconds", "minutes", "hours", "days"]},
+                {"unit": unit, "supported": list(TIME_DIFF_UNITS)},
             )
         seconds = (b_utc - a_utc).total_seconds()
         if bool(args.get("abs", True)):
@@ -647,17 +662,20 @@ def _h_format(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         timezone_name = str(args.get("timezone") or "").strip() or "UTC"
         zone = _load_timezone(timezone_name)
         local_dt = dt_utc.astimezone(zone)
-        fmt = str(args.get("format") or "iso").strip().lower() or "iso"
+        fmt = (
+            str(args.get("format") or TIME_FORMAT_ISO).strip().lower()
+            or TIME_FORMAT_ISO
+        )
         custom_pattern = str(args.get("custom") or "").strip()
-        if fmt in {"iso", "rfc3339"}:
+        if fmt in {TIME_FORMAT_ISO, TIME_FORMAT_RFC3339}:
             formatted = _iso_local(local_dt).replace("+00:00", "Z")
-        elif fmt == "date":
+        elif fmt == TIME_FORMAT_DATE:
             formatted = local_dt.strftime("%Y-%m-%d")
-        elif fmt == "time":
+        elif fmt == TIME_FORMAT_TIME:
             formatted = local_dt.strftime("%H:%M:%S")
-        elif fmt == "datetime":
+        elif fmt == TIME_FORMAT_DATETIME:
             formatted = local_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
-        elif fmt == "custom":
+        elif fmt == TIME_FORMAT_CUSTOM:
             if not custom_pattern:
                 raise ToolRuntimeError(
                     "OUT_OF_RANGE",
@@ -671,14 +689,7 @@ def _h_format(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
                 f"unsupported format: {fmt}",
                 {
                     "format": fmt,
-                    "supported": [
-                        "iso",
-                        "rfc3339",
-                        "date",
-                        "time",
-                        "datetime",
-                        "custom",
-                    ],
+                    "supported": list(TIME_FORMATS),
                 },
             )
         return {"formatted": formatted, "source": _TIME_TOOL_SOURCE}

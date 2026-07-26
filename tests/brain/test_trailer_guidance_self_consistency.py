@@ -44,10 +44,7 @@ def test_guidance_empty_outside_decision_decide_surface() -> None:
     )
     from openminion.modules.brain.schemas import DecisionAdapter
 
-    class NotDecision:
-        pass
-
     assert (
         _build_task_plan_guidance_message(purpose="act", schema=DecisionAdapter) == ""
     )
-    assert _build_task_plan_guidance_message(purpose="decide", schema=NotDecision) == ""
+    assert _build_task_plan_guidance_message(purpose="decide", schema=object) == ""

@@ -26,8 +26,6 @@ def _state() -> WorkingState:
 
 
 def test_runner_command_executor_executes_approve_act_in_order() -> None:
-    # Plan-phase observe and reflect were removed with the plan mode deletion (PTO).
-    # The executor now runs: approve → act only.
     state = _state()
     logger = MagicMock()
     command = ToolCommand(

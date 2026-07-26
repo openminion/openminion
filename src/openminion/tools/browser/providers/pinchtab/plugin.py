@@ -4,11 +4,12 @@ from collections.abc import Mapping
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.tools.browser import BrowserProviderRegistry, register_provider
+from openminion.tools.browser.constants import BROWSER_PROVIDER_PINCHTAB
 
 from .interfaces import PINCHTAB_PLUGIN_INTERFACE_VERSION
 from .provider import PinchTabProvider, PinchTabProviderConfig
 
-provider_id = "pinchtab"
+provider_id = BROWSER_PROVIDER_PINCHTAB
 
 
 def provider_from_config(
@@ -32,7 +33,7 @@ def register_browser_provider(
 
 class PinchTabPlugin:
     tool_id = "browser.pinchtab"
-    capabilities = ("browser", "pinchtab", "automation")
+    capabilities = ("browser", BROWSER_PROVIDER_PINCHTAB, "automation")
     contract_version = PINCHTAB_PLUGIN_INTERFACE_VERSION
 
     def register(

@@ -42,10 +42,7 @@ from .labels import _runtime_label
 from .approval import (
     build_terminal_approval_callback as _build_terminal_approval_callback,
 )
-from .progress import (
-    normalize_progress_kind as _normalize_progress_kind,
-    tick_turn_status_line as _tick_turn_status_line,
-)
+from . import progress as _progress
 from .queue_control import apply_queue_command
 from .startup import (
     cancel_startup_notice as _cancel_startup_notice,
@@ -826,19 +823,24 @@ def _build_turn_progress_callback(
     """Build the progress callback passed to ``runtime.send_message``."""
 
     def _set_turn_status(label: str) -> None:
-        if status_line is None:
-            return
-        status_line.set_state(state="responding", turn_status=label)
-        if callable(invalidate_prompt):
-            invalidate_prompt()
+        _progress.apply_turn_progress_status(
+            handle=handle,
+            status_line=status_line,
+            invalidate_prompt=invalidate_prompt,
+            label=label,
+        )
 
     def _handle_progress(payload: dict[str, Any]) -> None:
-        kind = _normalize_progress_kind(payload)
+        kind = _progress.normalize_progress_kind(payload)
         if kind == "tool_started":
             transcript.handle_tool_started(payload)
+            label = _progress.tool_progress_status_label(payload, verb="Running")
+            _set_turn_status(label)
             return
         if kind == "tool_completed":
             transcript.handle_tool_completed(payload)
+            label = _progress.tool_progress_status_label(payload, verb="Ran")
+            _set_turn_status(label)
             return
         if payload and _route_durable_activity_event(transcript, payload):
             return
@@ -850,9 +852,6 @@ def _build_turn_progress_callback(
             if view is None:
                 return
             label = str(getattr(view, "primary_text", "") or "")
-            setter = getattr(handle, "set_status_label", None)
-            if callable(setter):
-                setter(label)
             _set_turn_status(label)
 
     return _handle_progress
@@ -925,7 +924,7 @@ async def _run_agent_turn(
     status_tick_task: asyncio.Task[None] | None = None
     if status_line is not None:
         status_tick_task = asyncio.create_task(
-            _tick_turn_status_line(
+            _progress.tick_turn_status_line(
                 status_line=status_line,
                 invalidate_prompt=invalidate_prompt,
             )

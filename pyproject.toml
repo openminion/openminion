@@ -182,6 +182,7 @@ markers = [
   "benchmark: explicit benchmark / regression harness tests",
   "memory_eval: lightweight memory evaluation scenarios",
   "memory_eval_benchmark: slower memory evaluation benchmark scenarios",
+  "mcp_live: hits a real off-the-shelf MCP server through npx; skipped unless OPENMINION_LIVE_MCP_E2E=1",
   "package_integration: requires optional package-integration dependencies",
   "telegram_live: hits real api.telegram.org; skipped unless TELEGRAM_BOT_TOKEN + TELEGRAM_LIVE_CHAT_ID set",
   "slack_live: hits real Slack APIs; skipped unless SLACK_BOT_TOKEN + SLACK_APP_TOKEN + SLACK_TEST_CHANNEL set",

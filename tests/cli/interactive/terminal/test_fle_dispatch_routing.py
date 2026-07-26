@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 
 from rich.console import Console
 
-from openminion.cli.interactive.terminal.shell import (
-    _normalize_progress_kind,
-    _run_agent_turn,
+from openminion.cli.interactive.terminal.shell import _run_agent_turn
+from openminion.cli.interactive.terminal.shell.progress import (
+    normalize_progress_kind as _normalize_progress_kind,
 )
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.transcript import TerminalTranscript
@@ -419,7 +419,8 @@ def test_footer_owns_turn_state_without_taking_tool_event_ownership() -> None:
         )
     )
     assert "tool" not in state_history, state_history
-    assert any("Working" in label for label in turn_status_history)
+    assert any(label.startswith("Running Bash") for label in turn_status_history)
+    assert any(label.startswith("Ran Bash") for label in turn_status_history)
     assert status_line.state == "idle"
 
 

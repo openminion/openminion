@@ -39,6 +39,7 @@ SHAPE_TOKENS = {
     "Shape: `engine-owning`",
     "Shape: `outlier`",
 }
+IGNORED_GENERATED_FILES = {".DS_Store"}
 
 
 def _iter_subsystems(root: Path) -> list[Path]:
@@ -50,7 +51,11 @@ def _iter_subsystems(root: Path) -> list[Path]:
 
 def validate_root_files(root: Path = MODULES_ROOT) -> list[str]:
     errors: list[str] = []
-    root_files = sorted(p.name for p in root.glob("*") if p.is_file())
+    root_files = sorted(
+        p.name
+        for p in root.glob("*")
+        if p.is_file() and p.name not in IGNORED_GENERATED_FILES
+    )
     unexpected = [name for name in root_files if name not in ALLOWED_ROOT_FILES]
     if unexpected:
         errors.append("Unexpected root files under modules/: " + ", ".join(unexpected))

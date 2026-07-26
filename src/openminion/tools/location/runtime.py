@@ -1,15 +1,42 @@
 """Location tool runtime helpers."""
 
+import ipaddress
+import socket
+import urllib.parse
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
-from collections.abc import Mapping
 
 from openminion.modules.tool.family.events import emit_family_event
 
-from .interfaces import LOCATION_SOURCE_VALUES
+from .constants import (
+    LOCATION_PRIVACY_CITY,
+    LOCATION_PRIVACY_LEVELS,
+    LOCATION_PRIVACY_NONE,
+    LOCATION_PRIVACY_REGION,
+    LOCATION_SOURCE_IDENTITY_DEFAULT,
+    LOCATION_SOURCE_IP_GEO,
+    LOCATION_SOURCE_NONE,
+    LOCATION_SOURCE_SESSION_OVERRIDE,
+    LOCATION_SOURCE_VALUES,
+)
 
 LOCATION_TOOL_SOURCE = "location_module"
 _NULLISH_LOCATION_TOKENS = frozenset({"none", "null", "nil", "undefined"})
+ForbiddenIpCheck = Callable[
+    [ipaddress.IPv4Address | ipaddress.IPv6Address],
+    bool,
+]
+
+
+class NetworkPolicyError(Exception):
+    def __init__(
+        self, code: str, message: str, details: dict[str, Any] | None = None
+    ) -> None:
+        super().__init__(message)
+        self.code = str(code or "NETWORK_DENIED")
+        self.message = str(message)
+        self.details = dict(details or {})
 
 
 def utc_now() -> str:
@@ -21,11 +48,13 @@ def error_payload(
     message: str,
     *,
     method: str,
-    source: str = "none",
+    source: str = LOCATION_SOURCE_NONE,
     warnings: list[str] | None = None,
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    normalized_source = source if source in LOCATION_SOURCE_VALUES else "none"
+    normalized_source = (
+        source if source in LOCATION_SOURCE_VALUES else LOCATION_SOURCE_NONE
+    )
     warning_items = [str(item) for item in (warnings or []) if str(item).strip()]
     reason_code = str((details or {}).get("reason_code") or str(code).lower())
     return {
@@ -114,7 +143,7 @@ def success_set_default_payload(
         "data": {
             "source": "openminion-tool-location",
             "method": "location.set_default",
-            "location_source": "identity.default",
+            "location_source": LOCATION_SOURCE_IDENTITY_DEFAULT,
             "agent_id": agent_id,
             "location": {
                 "city": city,
@@ -175,31 +204,155 @@ def has_location_data(record: Mapping[str, Any]) -> bool:
     return False
 
 
+def normalize_host_allowlist(raw: Any) -> tuple[str, ...]:
+    if isinstance(raw, str):
+        token = raw.strip().lower()
+        return (token,) if token else ()
+    if not isinstance(raw, list):
+        return ()
+    out: list[str] = []
+    for item in raw:
+        token = str(item or "").strip().lower()
+        if token:
+            out.append(token)
+    return tuple(out)
+
+
+def host_allowed(host: str, allowlist: tuple[str, ...]) -> bool:
+    normalized = str(host or "").strip().lower()
+    if not normalized:
+        return False
+    if not allowlist:
+        return True
+    for token in allowlist:
+        if normalized == token or normalized.endswith(f".{token}"):
+            return True
+    return False
+
+
+def validate_ip_lookup_url(
+    url: str,
+    *,
+    cfg: Mapping[str, Any],
+    is_forbidden_ip: ForbiddenIpCheck,
+) -> str:
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    if not parsed.scheme or not parsed.netloc:
+        raise NetworkPolicyError(
+            "NETWORK_DENIED",
+            "ip_lookup_url must be absolute",
+            {"url": url},
+        )
+
+    allow_http = policy_flag(cfg, "allow_http", default=False)
+    default_schemes = ["https", "http"] if allow_http else ["https"]
+    scheme_allowlist = normalize_host_allowlist(
+        cfg.get("scheme_allowlist", default_schemes)
+    )
+    if parsed.scheme.lower() not in set(scheme_allowlist):
+        raise NetworkPolicyError(
+            "NETWORK_DENIED",
+            "ip_lookup_url scheme is not allowed",
+            {"url": url, "scheme": parsed.scheme.lower()},
+        )
+
+    host = str(parsed.hostname or "").strip().lower()
+    if not host:
+        raise NetworkPolicyError(
+            "NETWORK_DENIED",
+            "ip_lookup_url host is missing",
+            {"url": url},
+        )
+
+    host_allowlist = normalize_host_allowlist(cfg.get("allowed_hosts", ["ipapi.co"]))
+    if not host_allowed(host, host_allowlist):
+        raise NetworkPolicyError(
+            "NETWORK_DENIED",
+            "ip_lookup_url host is not allowed",
+            {"host": host},
+        )
+    if policy_flag(cfg, "allow_private_hosts", default=False):
+        return parsed.geturl()
+    if host in {"localhost", "ip6-localhost", "0.0.0.0"}:
+        raise NetworkPolicyError(
+            "NETWORK_DENIED",
+            "ip_lookup_url host is blocked by SSRF policy",
+            {"host": host},
+        )
+    try:
+        direct_ip = ipaddress.ip_address(host)
+    except ValueError:
+        direct_ip = None
+    if direct_ip is not None and bool(is_forbidden_ip(direct_ip)):
+        raise NetworkPolicyError(
+            "NETWORK_DENIED",
+            "ip_lookup_url host is blocked by SSRF policy",
+            {"host": host},
+        )
+    try:
+        resolved = socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
+    except (socket.gaierror, OSError):
+        return parsed.geturl()
+    for row in resolved:
+        sockaddr = row[4]
+        if not isinstance(sockaddr, tuple) or not sockaddr:
+            continue
+        candidate = str(sockaddr[0] or "").strip()
+        if not candidate:
+            continue
+        try:
+            ip = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if bool(is_forbidden_ip(ip)):
+            raise NetworkPolicyError(
+                "NETWORK_DENIED",
+                "ip_lookup_url host resolves to private/loopback address",
+                {"host": host, "resolved_ip": str(ip)},
+            )
+    return parsed.geturl()
+
+
+def policy_flag(cfg: Mapping[str, Any], key: str, *, default: bool) -> bool:
+    value = cfg.get(key, default)
+    if isinstance(value, bool):
+        return value
+    token = str(value).strip().lower()
+    if token in {"1", "true", "yes", "on"}:
+        return True
+    if token in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def confidence_for_source(source: str) -> str:
-    if source in {"session.override", "identity.default"}:
+    if source in {LOCATION_SOURCE_SESSION_OVERRIDE, LOCATION_SOURCE_IDENTITY_DEFAULT}:
         return "high"
-    if source == "ip.geo":
+    if source == LOCATION_SOURCE_IP_GEO:
         return "low"
     return "low"
 
 
 def apply_privacy(record: dict[str, Any], *, max_privacy: str) -> dict[str, Any]:
     normalized = dict(record)
-    privacy = str(max_privacy or "city").strip().lower() or "city"
-    if privacy not in {"none", "city", "region", "precise"}:
-        privacy = "city"
-    if privacy == "none":
+    privacy = (
+        str(max_privacy or LOCATION_PRIVACY_CITY).strip().lower()
+        or LOCATION_PRIVACY_CITY
+    )
+    if privacy not in LOCATION_PRIVACY_LEVELS:
+        privacy = LOCATION_PRIVACY_CITY
+    if privacy == LOCATION_PRIVACY_NONE:
         normalized["city"] = None
         normalized["region"] = None
         normalized["country"] = None
         normalized["timezone"] = None
         normalized["lat"] = None
         normalized["lon"] = None
-    elif privacy == "region":
+    elif privacy == LOCATION_PRIVACY_REGION:
         normalized["city"] = None
         normalized["lat"] = None
         normalized["lon"] = None
-    elif privacy == "city":
+    elif privacy == LOCATION_PRIVACY_CITY:
         normalized["lat"] = None
         normalized["lon"] = None
     return normalized
@@ -213,7 +366,10 @@ def location_set_default_args(
     country = str(args.get("country", "")).strip() or None
     timezone_name = str(args.get("timezone", "")).strip() or None
     privacy_level = (
-        str(args.get("privacy_level", "city") or "city").strip().lower() or "city"
+        str(args.get("privacy_level", LOCATION_PRIVACY_CITY) or LOCATION_PRIVACY_CITY)
+        .strip()
+        .lower()
+        or LOCATION_PRIVACY_CITY
     )
     if not city:
         return (
@@ -226,9 +382,9 @@ def location_set_default_args(
                 "INVALID_ARGUMENT",
                 "city is required",
                 method="location.set_default",
-                source="none",
+                source=LOCATION_SOURCE_NONE,
             ),
         )
-    if privacy_level not in {"none", "city", "region", "precise"}:
-        privacy_level = "city"
+    if privacy_level not in LOCATION_PRIVACY_LEVELS:
+        privacy_level = LOCATION_PRIVACY_CITY
     return city, region, country, timezone_name, privacy_level, None

@@ -1,6 +1,11 @@
 from typing import Any, Mapping
 
 from openminion.base.time import utc_now_iso as _utc_now
+from openminion.tools.browser.constants import (
+    BROWSER_SNAPSHOT_MODE_A11Y,
+    BROWSER_SNAPSHOT_MODE_DOM,
+    BROWSER_SNAPSHOT_MODE_MIN,
+)
 
 
 _ACTIONABLE_ROLES = {
@@ -31,8 +36,8 @@ class SnapshotAdapter:
         max_nodes: int,
         max_text_chars: int,
     ) -> tuple[dict[str, Any], dict[str, str]]:
-        normalized_mode = str(mode or "a11y").strip().lower()
-        if normalized_mode == "a11y":
+        normalized_mode = str(mode or BROWSER_SNAPSHOT_MODE_A11Y).strip().lower()
+        if normalized_mode == BROWSER_SNAPSHOT_MODE_A11Y:
             try:
                 return self._from_a11y(
                     page=page, max_nodes=max_nodes, max_text_chars=max_text_chars
@@ -41,7 +46,7 @@ class SnapshotAdapter:
                 return self._from_dom(
                     page=page, max_nodes=max_nodes, max_text_chars=max_text_chars
                 )
-        if normalized_mode == "dom":
+        if normalized_mode == BROWSER_SNAPSHOT_MODE_DOM:
             return self._from_dom(
                 page=page, max_nodes=max_nodes, max_text_chars=max_text_chars
             )
@@ -110,7 +115,9 @@ class SnapshotAdapter:
         snapshot = {
             "nodes": nodes,
             "action_candidates": action_candidates,
-            "meta": self._meta(page=page, mode="a11y", truncated=truncated),
+            "meta": self._meta(
+                page=page, mode=BROWSER_SNAPSHOT_MODE_A11Y, truncated=truncated
+            ),
         }
         return snapshot, hints
 
@@ -187,7 +194,9 @@ class SnapshotAdapter:
         snapshot = {
             "nodes": nodes,
             "action_candidates": action_candidates,
-            "meta": self._meta(page=page, mode="dom", truncated=truncated),
+            "meta": self._meta(
+                page=page, mode=BROWSER_SNAPSHOT_MODE_DOM, truncated=truncated
+            ),
         }
         return snapshot, hints
 
@@ -218,7 +227,7 @@ class SnapshotAdapter:
             "nodes": nodes,
             "action_candidates": [],
             "meta": {
-                "mode": "min",
+                "mode": BROWSER_SNAPSHOT_MODE_MIN,
                 "truncated": len(visible_text) > len(text),
                 "url": url,
                 "title": title,

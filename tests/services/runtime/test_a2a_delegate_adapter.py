@@ -46,7 +46,12 @@ def test_success_status_maps_to_ok_result() -> None:
 def test_command_shape_carries_model_named_target_and_instruction() -> None:
     call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS, "summary": "ok"})
     adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")
-    adapter.delegate(agent_id="researcher", instruction="find X", timeout_seconds=30)
+    adapter.delegate(
+        agent_id="researcher",
+        instruction="find X",
+        timeout_seconds=30,
+        permission_mode="bypass",
+    )
 
     assert call.command is not None
     assert call.command["target_agent_id"] == "researcher"
@@ -55,6 +60,7 @@ def test_command_shape_carries_model_named_target_and_instruction() -> None:
     assert call.command["params"]["goal"] == "find X"
     assert call.command["params"]["instruction"] == "find X"
     assert call.command["params"]["timeout_seconds"] == 30
+    assert call.command["params"]["permission_mode"] == "bypass"
     assert call.command["timeout_ms"] == 30_000
     # Deterministic idempotency key (replay-safe across identical retries).
     assert call.command["idempotency_key"].startswith("task-delegate:")

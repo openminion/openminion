@@ -9,6 +9,7 @@ from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.config.env import EnvironmentConfig
 from openminion.modules.artifact.refs import create_default_artifactctl
 from openminion.services.runtime.plugins import PluginManifest, PluginRegistry
+from openminion.services.runtime.a2a_delegate import A2aRuntimeDelegateAdapter
 from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.modules.tool import ToolRegistry
@@ -598,13 +599,46 @@ def _try_seed_identity(
         )
 
 
+def _build_delegate_api_from_a2a(a2a_api: Any, *, parent_agent_id: str) -> Any | None:
+    call = getattr(a2a_api, "call", None)
+    if not callable(call):
+        return None
+    return A2aRuntimeDelegateAdapter(
+        a2a_call=call,
+        parent_agent_id=parent_agent_id,
+    )
+
+
+def _build_a2a_runtime_apis(
+    *, service: Any, bridge_module: Any, config: Any
+) -> tuple[str, Any, Any, Any | None]:
+    default_agent_id = resolve_default_agent_id(config)
+    default_profile = config.agents[default_agent_id]
+    a2a_api = bridge_module.create_a2a_api(
+        mode=service.mode,
+        home_root=service._context.home_paths.home_root,
+        agent_name=str(getattr(default_profile, "name", "") or ""),
+        config=service._get_manager_config("a2a"),
+        env=service._env,
+        runtime_resolver=lambda: service._runtime_handle,
+    )
+    return (
+        default_agent_id,
+        default_profile,
+        a2a_api,
+        _build_delegate_api_from_a2a(
+            a2a_api,
+            parent_agent_id=str(default_profile.name or default_agent_id),
+        ),
+    )
+
+
 def build_brain_runner_bundle(service: Any) -> Any:
     """BBSE-02: canonical bootstrap path for the bridge's runner bundle."""
     from pathlib import Path as _Path
 
     import openminion.services.brain.service as bridge_module
     from openminion.base.config import configured_agent_ids
-    from openminion.base.config.core import resolve_default_agent_id
     from openminion.modules.session.storage.repository import (
         create_sqlite_cron_repository,
     )
@@ -659,16 +693,12 @@ def build_brain_runner_bundle(service: Any) -> Any:
         telemetryctl=service._telemetryctl,
     )
 
-    a2a_config = service._get_manager_config("a2a")
-    default_agent_id = resolve_default_agent_id(config)
-    default_profile = config.agents[default_agent_id]
-    a2a_api = bridge_module.create_a2a_api(
-        mode=service.mode,
-        home_root=service._context.home_paths.home_root,
-        agent_name=str(getattr(default_profile, "name", "") or ""),
-        config=a2a_config,
-        env=service._env,
-        runtime_resolver=lambda: service._runtime_handle,
+    default_agent_id, default_profile, a2a_api, a2a_delegate_api = (
+        _build_a2a_runtime_apis(
+            service=service,
+            bridge_module=bridge_module,
+            config=config,
+        )
     )
 
     db_dir = (
@@ -771,6 +801,7 @@ def build_brain_runner_bundle(service: Any) -> Any:
         runtime_registry=service._tools,
         agent_name=default_profile.name or default_agent_id,
         skill_api=skill_api,
+        a2a_delegate_api=a2a_delegate_api,
         agent_profile=default_profile,
     )
 

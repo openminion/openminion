@@ -1,5 +1,6 @@
+from typing import cast
+
 from openminion.modules.tool.base import ToolCategoryInfo
-from openminion.modules.tool.contracts import normalize_raw_model_tool_name
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_KILL,
     MODEL_EXEC_LIST,
@@ -18,6 +19,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_WEB_FETCH,
     MODEL_WEB_SEARCH,
 )
+from openminion.modules.tool.contracts.normalization import normalize_raw_model_tool_name
 
 # Canonical category mapping keyed by model-facing tool IDs and a minimal set of
 # non-model runtime tool names that remain intentionally exposed.
@@ -108,7 +110,7 @@ def _resolve_category_key(tool_name: str) -> str:
     if token in DEFAULT_TOOL_CATEGORY_MAP:
         return token
 
-    canonical = normalize_raw_model_tool_name(token)
+    canonical = cast(str | None, normalize_raw_model_tool_name(token))
     if canonical and canonical in DEFAULT_TOOL_CATEGORY_MAP:
         return canonical
 
@@ -116,7 +118,7 @@ def _resolve_category_key(tool_name: str) -> str:
     if lowered in DEFAULT_TOOL_CATEGORY_MAP:
         return lowered
 
-    canonical_lower = normalize_raw_model_tool_name(lowered)
+    canonical_lower = cast(str | None, normalize_raw_model_tool_name(lowered))
     if canonical_lower and canonical_lower in DEFAULT_TOOL_CATEGORY_MAP:
         return canonical_lower
 

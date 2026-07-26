@@ -108,12 +108,8 @@ def test_render_sessions_list_empty() -> None:
 
 
 def test_render_sessions_list_missing_lister() -> None:
-
-    class _Bare:
-        pass
-
     console, buf = _make_console()
-    _render_sessions_list(runtime=_Bare(), console=console)
+    _render_sessions_list(runtime=object(), console=console)
     out = buf.getvalue()
     assert "does not expose list_sessions" in out
 

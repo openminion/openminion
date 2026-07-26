@@ -211,6 +211,7 @@ class RuntimeContext:
     sandbox_runner: Any | None = None
     authored_tools_api: Any | None = None
     a2a_delegate_api: A2ADelegateApi | None = None
+    permission_mode: str = "ask"
     agent_query: Callable[[], list[dict[str, Any]]] | None = None
     agent_profile: Optional[Any] = None
 

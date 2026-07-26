@@ -3,6 +3,12 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .constants import (
+    BROWSER_OUTPUT_FORMAT_AUTO,
+    BROWSER_SNAPSHOT_MODE_AUTO,
+    BROWSER_TEXT_MODE_READABILITY,
+)
+
 
 class BrowserOp(str, Enum):
     DAEMON_ENSURE = "daemon.ensure"
@@ -87,7 +93,7 @@ class BrowserAction(BaseModel):
 
 
 class SnapshotOptions(BaseModel):
-    mode: str = "auto"
+    mode: str = BROWSER_SNAPSHOT_MODE_AUTO
     compact: bool = True
     interactive: bool = True
     max_nodes: int = 800
@@ -124,7 +130,7 @@ class NavigateOptions(BaseModel):
 
 
 class TextOptions(BaseModel):
-    mode: str = "readability"
+    mode: str = BROWSER_TEXT_MODE_READABILITY
     include_text: bool = True
     max_chars: int | None = None
 
@@ -188,7 +194,7 @@ class TabInfo(BaseModel):
 
 
 class SnapshotResult(BaseModel):
-    format: str = "auto"
+    format: str = BROWSER_OUTPUT_FORMAT_AUTO
     nodes: list[Any] = Field(default_factory=list)
     interactive_refs: list[str] = Field(default_factory=list)
     meta: dict[str, Any] = Field(default_factory=dict)

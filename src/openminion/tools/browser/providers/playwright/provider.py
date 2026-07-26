@@ -3,6 +3,12 @@ from typing import Any, Mapping
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 from openminion.modules.tool.runtime.resource_selectors import ResourceSelectors
 from openminion.tools.browser import BrowserCapabilities, BrowserProviderContext
+from openminion.tools.browser.constants import (
+    BROWSER_DAEMON_STATUS_KILLED,
+    BROWSER_DAEMON_STATUS_STOPPED,
+    BROWSER_PROVIDER_PLAYWRIGHT,
+    BROWSER_SNAPSHOT_MODE_A11Y,
+)
 from openminion.tools.browser.models import (
     BrowserAction,
     InstanceSpec,
@@ -26,7 +32,7 @@ from .snapshots import SnapshotAdapter
 
 
 class PlaywrightProvider:
-    provider_id = "playwright"
+    provider_id = BROWSER_PROVIDER_PLAYWRIGHT
     provider_version = "1"
 
     def __init__(
@@ -200,7 +206,7 @@ class PlaywrightProvider:
                 "profile": inst.profile,
                 "mode": inst.mode,
             },
-            "stopped": True,
+            BROWSER_DAEMON_STATUS_STOPPED: True,
         }
 
     def instance_list(
@@ -225,7 +231,7 @@ class PlaywrightProvider:
         self, ctx: BrowserProviderContext | None = None, instance_id: str = ""
     ) -> dict[str, Any]:
         payload = self.instance_stop(ctx=ctx, instance_id=instance_id)
-        payload["killed"] = True
+        payload[BROWSER_DAEMON_STATUS_KILLED] = True
         return payload
 
     def tab_new(
@@ -392,7 +398,7 @@ class PlaywrightProvider:
         self,
         *,
         tab_id: str,
-        mode: str = "a11y",
+        mode: str = BROWSER_SNAPSHOT_MODE_A11Y,
         max_nodes: int = 800,
         max_text_chars: int = 20000,
         interactive: bool = True,

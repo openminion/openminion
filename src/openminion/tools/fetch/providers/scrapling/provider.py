@@ -4,6 +4,15 @@ from openminion.tools.fetch.providers.core_http import provider as core_http_pro
 
 from .interfaces import FetchProviderProtocol, ProviderCapabilities
 from .schemas import ScraplingProviderOptions
+from .constants import (
+    FETCH_BACKEND_AUTO,
+    FETCH_EXTRACT_MODE_NONE,
+    FETCH_PROVIDER_ID_CORE_HTTP,
+    FETCH_SCRAPLING_MODE_DYNAMIC,
+    FETCH_SCRAPLING_MODE_STATIC,
+    FETCH_SCRAPLING_MODE_STEALTH,
+    FETCH_SCRAPLING_PROVIDER_ID,
+)
 
 
 class ScraplingFetchProvider(FetchProviderProtocol):
@@ -13,11 +22,17 @@ class ScraplingFetchProvider(FetchProviderProtocol):
     provider to resolve mode semantics with deterministic fallback behavior.
     """
 
-    name = "scrapling"
+    name = FETCH_SCRAPLING_PROVIDER_ID
     capabilities: ProviderCapabilities = {
-        "render": ["none", "dom"],
-        "extract": ["auto", "readability_like", "selector", "raw_text", "json"],
-        "anti_bot": ["none", "stealth"],
+        "render": [FETCH_EXTRACT_MODE_NONE, "dom"],
+        "extract": [
+            FETCH_BACKEND_AUTO,
+            "readability_like",
+            "selector",
+            "raw_text",
+            "json",
+        ],
+        "anti_bot": [FETCH_EXTRACT_MODE_NONE, FETCH_SCRAPLING_MODE_STEALTH],
         "concurrency": ["max_pages", "session_pool"],
     }
 
@@ -25,7 +40,7 @@ class ScraplingFetchProvider(FetchProviderProtocol):
         policy_cfg = _resolve_policy_config(ctx)
         provider_opts = request.get("provider_options", {})
         scrapling_opts_payload = (
-            provider_opts.get("scrapling", {})
+            provider_opts.get(FETCH_SCRAPLING_PROVIDER_ID, {})
             if isinstance(provider_opts, dict)
             else {}
         )
@@ -38,13 +53,15 @@ class ScraplingFetchProvider(FetchProviderProtocol):
                     "code": "INVALID_ARGUMENT",
                     "message": f"invalid scrapling provider options: {exc}",
                 },
-                "backend": "scrapling",
+                "backend": FETCH_SCRAPLING_PROVIDER_ID,
             }
 
-        mode = str(opts.mode or "auto").strip().lower()
-        effective_mode = "static" if mode == "auto" else mode
+        mode = str(opts.mode or FETCH_BACKEND_AUTO).strip().lower()
+        effective_mode = (
+            FETCH_SCRAPLING_MODE_STATIC if mode == FETCH_BACKEND_AUTO else mode
+        )
 
-        if effective_mode == "dynamic" and not bool(
+        if effective_mode == FETCH_SCRAPLING_MODE_DYNAMIC and not bool(
             policy_cfg.get("allow_dynamic", False)
         ):
             return {
@@ -54,9 +71,9 @@ class ScraplingFetchProvider(FetchProviderProtocol):
                     "message": "dynamic scrapling mode requires tool.fetch.browser authorization",
                     "details": {"required_scope": "tool.fetch.browser"},
                 },
-                "backend": "scrapling",
+                "backend": FETCH_SCRAPLING_PROVIDER_ID,
             }
-        if effective_mode == "stealth" and not bool(
+        if effective_mode == FETCH_SCRAPLING_MODE_STEALTH and not bool(
             policy_cfg.get("allow_stealth", False)
         ):
             return {
@@ -66,7 +83,7 @@ class ScraplingFetchProvider(FetchProviderProtocol):
                     "message": "stealth scrapling mode requires tool.fetch.stealth authorization",
                     "details": {"required_scope": "tool.fetch.stealth"},
                 },
-                "backend": "scrapling",
+                "backend": FETCH_SCRAPLING_PROVIDER_ID,
             }
         if opts.geoip and not bool(policy_cfg.get("allow_geoip", False)):
             return {
@@ -76,18 +93,21 @@ class ScraplingFetchProvider(FetchProviderProtocol):
                     "message": "geoip option requires tool.fetch.geoip authorization",
                     "details": {"required_scope": "tool.fetch.geoip"},
                 },
-                "backend": "scrapling",
+                "backend": FETCH_SCRAPLING_PROVIDER_ID,
             }
 
         downgraded = False
-        if effective_mode in {"dynamic", "stealth"}:
+        if effective_mode in {
+            FETCH_SCRAPLING_MODE_DYNAMIC,
+            FETCH_SCRAPLING_MODE_STEALTH,
+        }:
             # V1 reference adapter keeps behavior deterministic by downgrading
             # to static mode when advanced browser stack is unavailable.
-            effective_mode = "static"
+            effective_mode = FETCH_SCRAPLING_MODE_STATIC
             downgraded = True
 
         delegated_request = dict(request)
-        delegated_request["prefer_backend"] = "core-http"
+        delegated_request["prefer_backend"] = FETCH_PROVIDER_ID_CORE_HTTP
         result = core_http_provider.fetch(delegated_request, ctx)
 
         warnings: list[str] = []
@@ -98,7 +118,7 @@ class ScraplingFetchProvider(FetchProviderProtocol):
             if downgraded:
                 warnings.append("DOWNGRADED_TO_STATIC")
             result["warnings"] = warnings
-            result["backend"] = f"scrapling:{effective_mode}"
+            result["backend"] = f"{FETCH_SCRAPLING_PROVIDER_ID}:{effective_mode}"
             return result
 
         return {
@@ -107,7 +127,7 @@ class ScraplingFetchProvider(FetchProviderProtocol):
                 "code": "INTERNAL_ERROR",
                 "message": "scrapling provider returned invalid delegate payload",
             },
-            "backend": "scrapling",
+            "backend": FETCH_SCRAPLING_PROVIDER_ID,
         }
 
 

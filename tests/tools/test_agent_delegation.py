@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -26,6 +26,7 @@ from openminion.modules.tool.contracts.display_names import (
     display_name_for_tool_name,
 )
 from openminion.modules.tool.errors import ToolRuntimeError
+from openminion.modules.tool.runtime.context import RuntimeContext
 from openminion.tools.agent.plugin import (
     AgentGetArgs,
     AgentListArgs,
@@ -82,6 +83,17 @@ def test_task_delegate_manifest_describes_implemented_lifecycle() -> None:
     assert "sync" in description
     assert "async" in description
     assert "cancel" in description
+
+
+def test_task_delegate_schema_makes_lifecycle_order_explicit() -> None:
+    mode_description = TaskDelegateArgs.model_fields["mode"].description or ""
+    artifact_description = (
+        TaskDelegateArgs.model_fields["child_artifact"].description or ""
+    )
+
+    assert "Use sync or async to start child work" in mode_description
+    assert "There is no create mode" in mode_description
+    assert "required for accept/reject" in artifact_description
 
 
 def test_readonly_blocks_task_delegate() -> None:
@@ -336,11 +348,14 @@ def test_task_delegate_happy_path_maps_seam_result() -> None:
     calls: dict[str, Any] = {}
 
     class _Seam:
-        def delegate(self, *, agent_id, instruction, timeout_seconds):
+        def delegate(
+            self, *, agent_id, instruction, timeout_seconds, permission_mode="ask"
+        ):
             calls.update(
                 agent_id=agent_id,
                 instruction=instruction,
                 timeout_seconds=timeout_seconds,
+                permission_mode=permission_mode,
             )
             return A2ADelegateResult(
                 ok=True,
@@ -367,6 +382,7 @@ def test_task_delegate_happy_path_maps_seam_result() -> None:
         "agent_id": "beta",
         "instruction": "ship it",
         "timeout_seconds": 45,
+        "permission_mode": "ask",
     }
 
 
@@ -376,12 +392,21 @@ def test_task_delegate_async_mode_returns_task_handle() -> None:
     calls: dict[str, Any] = {}
 
     class _Seam:
-        def delegate(self, *, agent_id, instruction, timeout_seconds, mode="sync"):
+        def delegate(
+            self,
+            *,
+            agent_id,
+            instruction,
+            timeout_seconds,
+            mode="sync",
+            permission_mode="ask",
+        ):
             calls.update(
                 agent_id=agent_id,
                 instruction=instruction,
                 timeout_seconds=timeout_seconds,
                 mode=mode,
+                permission_mode=permission_mode,
             )
             return A2ADelegateResult(
                 ok=True,
@@ -410,6 +435,7 @@ def test_task_delegate_async_mode_returns_task_handle() -> None:
         "instruction": "ship it later",
         "timeout_seconds": 45,
         "mode": "async",
+        "permission_mode": "ask",
     }
 
 
@@ -458,11 +484,64 @@ def test_task_delegate_status_resume_and_cancel_use_lifecycle_methods() -> None:
     ]
 
 
+def test_task_delegate_accept_and_reject_use_child_artifact_helpers(
+    monkeypatch,
+) -> None:
+    import openminion.tools.agent.plugin as plugin_mod
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def _accept(*, repo_root, record, artifactctl):
+        del artifactctl
+        calls.append(("accept", {"repo_root": repo_root, "record": record}))
+        return {"ok": True, "status": "accepted", "touched_paths": ["seed.py"]}
+
+    def _reject(*, record, artifactctl):
+        del artifactctl
+        calls.append(("reject", {"record": record}))
+        return {"ok": True, "status": "rejected"}
+
+    monkeypatch.setattr(plugin_mod, "accept_child_worktree_artifact", _accept)
+    monkeypatch.setattr(plugin_mod, "reject_child_worktree_artifact", _reject)
+    ctx = cast(
+        RuntimeContext,
+        SimpleNamespace(policy=SimpleNamespace(raw={}), env={}, artifactctl=object()),
+    )
+    child_record = {
+        "subtask_id": "child-1",
+        "artifact": {"status": "stored", "bundle_ref": "artifact://sha256/a"},
+    }
+
+    accepted = _h_task_delegate(
+        {
+            "mode": "accept",
+            "workspace_root": "/repo",
+            "child_artifact": child_record,
+        },
+        ctx,
+    )
+    rejected = _h_task_delegate(
+        {"mode": "reject", "child_artifact": child_record},
+        ctx,
+    )
+
+    assert accepted["status"] == "accepted"
+    assert accepted["mode"] == "accept"
+    assert rejected["status"] == "rejected"
+    assert rejected["mode"] == "reject"
+    assert calls == [
+        ("accept", {"repo_root": "/repo", "record": child_record}),
+        ("reject", {"record": child_record}),
+    ]
+
+
 def test_task_delegate_unknown_target_maps_not_found() -> None:
     from openminion.modules.tool.runtime.delegation import A2ADelegateResult
 
     class _Seam:
-        def delegate(self, *, agent_id, instruction, timeout_seconds):
+        def delegate(
+            self, *, agent_id, instruction, timeout_seconds, permission_mode="ask"
+        ):
             return A2ADelegateResult(
                 ok=False,
                 status="failed",
@@ -487,7 +566,9 @@ def test_task_delegate_failure_maps_upstream_error() -> None:
     from openminion.modules.tool.runtime.delegation import A2ADelegateResult
 
     class _Seam:
-        def delegate(self, *, agent_id, instruction, timeout_seconds):
+        def delegate(
+            self, *, agent_id, instruction, timeout_seconds, permission_mode="ask"
+        ):
             return A2ADelegateResult(
                 ok=False,
                 status="failed",

@@ -2,7 +2,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .constants import DEFAULT_NEXT_CRON_COUNT, MAX_NEXT_CRON_COUNT
+from .constants import (
+    DEFAULT_NEXT_CRON_COUNT,
+    MAX_NEXT_CRON_COUNT,
+    TIME_DIFF_UNIT_SECONDS,
+    TIME_FORMAT_ISO,
+)
 
 
 class _StrictModel(BaseModel):
@@ -72,7 +77,10 @@ class TimeParseISOArgs(_StrictModel):
 class TimeDiffArgs(_StrictModel):
     a: str = Field(..., min_length=1, description="ISO8601 timestamp")
     b: str = Field(..., min_length=1, description="ISO8601 timestamp")
-    unit: str = Field(default="seconds", description="seconds|minutes|hours|days")
+    unit: str = Field(
+        default=TIME_DIFF_UNIT_SECONDS,
+        description="seconds|minutes|hours|days",
+    )
     abs: bool = Field(default=True, description="Absolute delta")
 
     @field_validator("a", "b", mode="before")
@@ -86,14 +94,18 @@ class TimeDiffArgs(_StrictModel):
     @field_validator("unit", mode="before")
     @classmethod
     def _normalize_unit(cls, value: Any) -> str:
-        return str(value or "seconds").strip().lower() or "seconds"
+        return (
+            str(value or TIME_DIFF_UNIT_SECONDS).strip().lower()
+            or TIME_DIFF_UNIT_SECONDS
+        )
 
 
 class TimeFormatArgs(_StrictModel):
     iso: str = Field(..., min_length=1, description="ISO8601 timestamp")
     timezone: str | None = Field(default=None, description="IANA timezone")
     format: str = Field(
-        default="iso", description="iso|rfc3339|date|time|datetime|custom"
+        default=TIME_FORMAT_ISO,
+        description="iso|rfc3339|date|time|datetime|custom",
     )
     custom: str | None = Field(
         default=None, description="strftime pattern if format=custom"
@@ -110,7 +122,7 @@ class TimeFormatArgs(_StrictModel):
     @field_validator("format", mode="before")
     @classmethod
     def _normalize_format(cls, value: Any) -> str:
-        return str(value or "iso").strip().lower() or "iso"
+        return str(value or TIME_FORMAT_ISO).strip().lower() or TIME_FORMAT_ISO
 
 
 class TimeDayBoundaryArgs(_StrictModel):

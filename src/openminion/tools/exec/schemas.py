@@ -15,11 +15,23 @@ from openminion.modules.brain.runtime.escalation import (
     ActionRiskTier,
     ApprovalResponse,
 )
+from openminion.tools.exec.constants import (
+    EXEC_ASK_MODE_OFF,
+    EXEC_ASK_MODE_ON_MISS,
+    EXEC_SECURITY_MODE_DENY,
+)
 
 HostMode = Literal["sandbox", "gateway", "node"]
 SecurityMode = Literal["deny", "allowlist", "full"]
 AskMode = Literal["off", "on-miss", "always"]
-ExecStatus = Literal["ok", "error", "running", "approval-pending", "denied", "timeout"]
+ExecStatus = Literal[
+    "ok",
+    "error",
+    "running",
+    "approval-pending",
+    "denied",
+    "timeout",
+]
 
 _EXEC_RUN_COMMAND_ALIASES = ("cmd", "command_line")
 _EXEC_RUN_WORKDIR_ALIASES = ("cwd", "working_directory", "path")
@@ -82,9 +94,9 @@ class ExecRunArgs(BaseModel):
     timeout_s: int = Field(default=1800, ge=1, le=86_400)
     pty: bool = False
     host: HostMode = "sandbox"
-    security: SecurityMode = "deny"
-    ask: AskMode = "on-miss"
-    ask_fallback: AskMode = "off"
+    security: SecurityMode = EXEC_SECURITY_MODE_DENY
+    ask: AskMode = EXEC_ASK_MODE_ON_MISS
+    ask_fallback: AskMode = EXEC_ASK_MODE_OFF
     node: Optional[str] = None
 
     @model_validator(mode="before")

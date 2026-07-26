@@ -22,9 +22,13 @@ from openminion.modules.brain.runtime.escalation import (
 from .constants import (
     EXEC_APPROVAL_PENDING_STATUSES,
     EXEC_ARTIFACT_THRESHOLD_BYTES,
+    EXEC_PROCESS_STATUS_KILLED,
+    EXEC_STATUS_ERROR,
+    EXEC_STATUS_OK,
 )
 from .process import PROCESS_MANAGER
 from .schemas import (
+    AckStatus,
     ExecErrorModel,
     ExecRunArgs,
     ProcessAckResult,
@@ -188,12 +192,12 @@ def _h_process_poll(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
             ctx,
             operation="poll",
             tool_name=MODEL_EXEC_POLL,
-            status="error",
+            status=EXEC_STATUS_ERROR,
             error_code="NOT_FOUND",
             extra={"session_id": params.session_id},
         )
         result = ProcessPollResult(
-            status="killed",
+            status=EXEC_PROCESS_STATUS_KILLED,
             summary="Session not found.",
             error=ExecErrorModel(code="NOT_FOUND", message="session not found"),
         )
@@ -226,7 +230,7 @@ def _h_process_poll(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
         ctx,
         operation="poll",
         tool_name=MODEL_EXEC_POLL,
-        status="ok",
+        status=EXEC_STATUS_OK,
         extra={"session_id": params.session_id, "status": result.status},
     )
     return result.model_dump()
@@ -239,14 +243,14 @@ def _h_process_send_keys(args: dict[str, Any], ctx: RuntimeContext) -> dict[str,
     snapshot = session_backend.snapshot(session_id=params.session_id, agent_id=agent_id)
     if snapshot is None:
         return ProcessAckResult(
-            status="error",
+            status=EXEC_STATUS_ERROR,
             summary="Session not found.",
             session_id=params.session_id,
             error=ExecErrorModel(code="NOT_FOUND", message="session not found"),
         ).model_dump()
     if not bool(snapshot.use_pty):
         return ProcessAckResult(
-            status="error",
+            status=EXEC_STATUS_ERROR,
             summary="send_keys requires a PTY session.",
             session_id=params.session_id,
             error=ExecErrorModel(
@@ -257,7 +261,7 @@ def _h_process_send_keys(args: dict[str, Any], ctx: RuntimeContext) -> dict[str,
     payload = _encode_keys(params.keys)
     if not payload:
         return ProcessAckResult(
-            status="error",
+            status=EXEC_STATUS_ERROR,
             summary="No encodable keys were provided.",
             session_id=params.session_id,
             error=ExecErrorModel(
@@ -270,7 +274,7 @@ def _h_process_send_keys(args: dict[str, Any], ctx: RuntimeContext) -> dict[str,
         session_id=params.session_id, agent_id=agent_id, payload=payload
     )
     return ProcessAckResult(
-        status="ok" if ok else "error",
+        status=EXEC_STATUS_OK if ok else EXEC_STATUS_ERROR,
         summary=message,
         session_id=params.session_id,
         error=None if ok else ExecErrorModel(code="EXEC_ERROR", message=message),
@@ -285,7 +289,7 @@ def _h_process_submit(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, An
         session_id=params.session_id, agent_id=agent_id, payload=b"\r"
     )
     return ProcessAckResult(
-        status="ok" if ok else "error",
+        status=EXEC_STATUS_OK if ok else EXEC_STATUS_ERROR,
         summary=message,
         session_id=params.session_id,
         error=None if ok else ExecErrorModel(code="EXEC_ERROR", message=message),
@@ -303,7 +307,7 @@ def _h_process_paste(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
         session_id=params.session_id, agent_id=agent_id, payload=payload
     )
     return ProcessAckResult(
-        status="ok" if ok else "error",
+        status=EXEC_STATUS_OK if ok else EXEC_STATUS_ERROR,
         summary=message,
         session_id=params.session_id,
         error=None if ok else ExecErrorModel(code="EXEC_ERROR", message=message),
@@ -319,7 +323,7 @@ def _h_process_kill(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
         agent_id=agent_id,
         signal_name=params.signal,
     )
-    status = "ok" if ok else "error"
+    status: AckStatus = EXEC_STATUS_OK if ok else EXEC_STATUS_ERROR
     details = {"status": _status_for_entry(snapshot)} if snapshot is not None else {}
     requested_signal = str(params.signal or "TERM").strip().upper() or "TERM"
     operation = "kill" if requested_signal in {"KILL", "SIGKILL"} else "stop"
@@ -332,7 +336,7 @@ def _h_process_kill(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]
         extra={"session_id": params.session_id, "signal": requested_signal, **details},
     )
     return ProcessAckResult(
-        status=status,  # type: ignore[arg-type]
+        status=status,
         summary=message,
         session_id=params.session_id,
         error=None
@@ -347,7 +351,7 @@ def _h_process_clear(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
     session_backend = _session_backend_for_ctx(ctx, params.session_id)
     ok, message = session_backend.clear(session_id=params.session_id, agent_id=agent_id)
     return ProcessAckResult(
-        status="ok" if ok else "error",
+        status=EXEC_STATUS_OK if ok else EXEC_STATUS_ERROR,
         summary=message,
         session_id=params.session_id,
         error=None if ok else ExecErrorModel(code="INVALID_REQUEST", message=message),

@@ -10,6 +10,13 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.modules.tool.runtime import RuntimeContext
 
 from .constants import (
+    REACTION_ACTION_ADDED,
+    REACTION_ACTION_NOOP,
+    REACTION_ACTION_REMOVED_ALL_BOT,
+    REACTION_ACTION_REMOVED_ONE,
+    REACTION_CHANNEL_SIGNAL,
+    REACTION_CHANNEL_WHATSAPP,
+    REACTION_LIST_SCOPE_BOT_ONLY,
     REACTIONS_LIST_TOOL,
     REACTIONS_SET_TOOL,
     REMOVE_ALL_WITH_EMPTY_EMOJI_CHANNELS,
@@ -280,7 +287,7 @@ def _signal_reaction_notifications_enabled(ctx: RuntimeContext) -> bool:
     plugin_channels = reactions_cfg.get("channels", {})
     signal_cfg = _lookup_channel_config(
         plugin_channels if isinstance(plugin_channels, Mapping) else {},
-        "signal",
+        REACTION_CHANNEL_SIGNAL,
     )
     flag = _nested_bool(signal_cfg, ("reactionNotifications",))
     if flag is not None:
@@ -289,7 +296,7 @@ def _signal_reaction_notifications_enabled(ctx: RuntimeContext) -> bool:
     root_channels = _policy_root(ctx).get("channels", {})
     root_signal_cfg = _lookup_channel_config(
         root_channels if isinstance(root_channels, Mapping) else {},
-        "signal",
+        REACTION_CHANNEL_SIGNAL,
     )
     root_flag = _nested_bool(root_signal_cfg, ("reactionNotifications",))
     return bool(root_flag)
@@ -350,7 +357,7 @@ def _noop_set_result(args: ReactionsSetArgs, warning: str) -> Dict[str, Any]:
     return _coerce_set_result(
         {
             "ok": True,
-            "applied": {"action": "noop", "emoji": args.emoji},
+            "applied": {"action": REACTION_ACTION_NOOP, "emoji": args.emoji},
             "message": _message_dict(args.message),
             "warnings": [warning],
         }
@@ -369,13 +376,16 @@ def _dispatch_set(args: ReactionsSetArgs, ctx: RuntimeContext) -> Dict[str, Any]
         if adapter is None:
             return _noop_set_result(args, "adapter_not_configured")
 
-        if channel == "whatsapp":
+        if channel == REACTION_CHANNEL_WHATSAPP:
             if not _call_adapter(adapter, "react_remove_all_bot", args.message):
                 return _noop_set_result(args, "adapter_missing_capability")
             return _coerce_set_result(
                 {
                     "ok": True,
-                    "applied": {"action": "removed_one", "emoji": emoji},
+                    "applied": {
+                        "action": REACTION_ACTION_REMOVED_ONE,
+                        "emoji": emoji,
+                    },
                     "message": _message_dict(args.message),
                     "warnings": [],
                 }
@@ -386,7 +396,7 @@ def _dispatch_set(args: ReactionsSetArgs, ctx: RuntimeContext) -> Dict[str, Any]
         return _coerce_set_result(
             {
                 "ok": True,
-                "applied": {"action": "removed_one", "emoji": emoji},
+                "applied": {"action": REACTION_ACTION_REMOVED_ONE, "emoji": emoji},
                 "message": _message_dict(args.message),
                 "warnings": [],
             }
@@ -406,7 +416,10 @@ def _dispatch_set(args: ReactionsSetArgs, ctx: RuntimeContext) -> Dict[str, Any]
         return _coerce_set_result(
             {
                 "ok": True,
-                "applied": {"action": "removed_all_bot", "emoji": emoji},
+                "applied": {
+                    "action": REACTION_ACTION_REMOVED_ALL_BOT,
+                    "emoji": emoji,
+                },
                 "message": _message_dict(args.message),
                 "warnings": [],
             }
@@ -419,7 +432,7 @@ def _dispatch_set(args: ReactionsSetArgs, ctx: RuntimeContext) -> Dict[str, Any]
     return _coerce_set_result(
         {
             "ok": True,
-            "applied": {"action": "added", "emoji": emoji},
+            "applied": {"action": REACTION_ACTION_ADDED, "emoji": emoji},
             "message": _message_dict(args.message),
             "warnings": [],
         }
@@ -451,7 +464,7 @@ def _normalize_reaction_rows(raw_rows: Any, *, scope: str) -> list[Dict[str, Any
         except (TypeError, ValueError):
             count = 0
 
-        if scope == "bot_only" and not reacted_by_bot:
+        if scope == REACTION_LIST_SCOPE_BOT_ONLY and not reacted_by_bot:
             continue
 
         row = ReactionsListRow(emoji=emoji, count=count, reacted_by_bot=reacted_by_bot)
@@ -485,7 +498,7 @@ def emit_signal_reaction_received(ctx: RuntimeContext, payload: Dict[str, Any]) 
     _emit_event(
         ctx,
         event_name="signal.reaction_received",
-        payload={"channel": "signal", "payload": payload},
+        payload={"channel": REACTION_CHANNEL_SIGNAL, "payload": payload},
     )
     return True
 
@@ -535,7 +548,10 @@ def _h_reactions_set(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any
         result = _coerce_set_result(
             {
                 "ok": False,
-                "applied": {"action": "noop", "emoji": parsed.emoji},
+                "applied": {
+                    "action": REACTION_ACTION_NOOP,
+                    "emoji": parsed.emoji,
+                },
                 "message": _message_dict(parsed.message),
                 "warnings": ["adapter_error"],
                 "error": f"{type(exc).__name__}: {exc}",

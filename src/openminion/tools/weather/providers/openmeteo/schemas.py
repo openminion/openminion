@@ -2,6 +2,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .constants import WEATHER_OPENMETEO_TIMEZONE_AUTO
+
 DEFAULT_CURRENT_FIELDS = [
     "temperature_2m",
     "relative_humidity_2m",
@@ -41,7 +43,7 @@ class WeatherOpenMeteoConfig(BaseModel):
     default_language: str = "en"
     default_country_code: Optional[str] = None
     geocoding_count: int = Field(default=1, ge=1, le=10)
-    timezone: str = "auto"
+    timezone: str = WEATHER_OPENMETEO_TIMEZONE_AUTO
     current_fields: list[str] = Field(
         default_factory=lambda: list(DEFAULT_CURRENT_FIELDS)
     )
@@ -66,7 +68,7 @@ class WeatherOpenMeteoConfig(BaseModel):
     @classmethod
     def _normalize_timezone(cls, value: Any) -> str:
         normalized = str(value or "").strip()
-        return normalized or "auto"
+        return normalized or WEATHER_OPENMETEO_TIMEZONE_AUTO
 
     @field_validator("default_country_code", mode="before")
     @classmethod

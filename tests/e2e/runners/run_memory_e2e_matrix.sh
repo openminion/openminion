@@ -64,7 +64,7 @@ fi
 
 echo "[memory-e2e-matrix] openminion-eval memory regression slice"
 (cd "${OPENMINION_EVAL_ROOT}" && \
-  PYTHONPATH=src "${OPENMINION_PY_BIN}" -m pytest \
+  PYTHONPATH=src:tests/eval/runners "${OPENMINION_PY_BIN}" -m pytest \
     tests/eval/test_memory_eval.py \
     tests/eval/test_eval.py \
     tests/eval/test_interfaces_contract.py \

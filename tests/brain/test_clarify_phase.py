@@ -5,9 +5,7 @@ import pytest
 from openminion.modules.brain.runner import BrainRunner, RunnerOptions
 from openminion.modules.brain.schemas import RunSubstate
 from openminion.modules.brain.config import ClarifyConfig
-from openminion.modules.brain.interfaces import (
-    SessionAPI,
-)
+from openminion.modules.brain.interfaces import SessionAPI
 
 
 def _build_runner() -> BrainRunner:

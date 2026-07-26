@@ -4,6 +4,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .constants import GWS_DEFAULT_EXECUTABLE
+
 RiskLevel = Literal["read", "write", "admin"]
 RedactionMode = Literal["none", "basic", "strict"]
 
@@ -172,7 +174,7 @@ class GwsToolConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    gws_path: str = "gws"
+    gws_path: str = GWS_DEFAULT_EXECUTABLE
     env: GwsEnvConfig = Field(default_factory=GwsEnvConfig)
     defaults: GwsDefaultsConfig = Field(default_factory=GwsDefaultsConfig)
     safety: GwsSafetyConfig = Field(default_factory=GwsSafetyConfig)
@@ -184,7 +186,7 @@ class GwsToolConfig(BaseModel):
     @classmethod
     def _normalize_gws_path(cls, value: Any) -> str:
         normalized = str(value or "").strip()
-        return normalized or "gws"
+        return normalized or GWS_DEFAULT_EXECUTABLE
 
 
 GWS_CALL_INPUT_SCHEMA: dict[str, Any] = GwsCallArgs.model_json_schema(by_alias=True)

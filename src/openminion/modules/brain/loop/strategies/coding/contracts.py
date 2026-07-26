@@ -25,6 +25,7 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_LIST,
     MODEL_EXEC_POLL,
     MODEL_EXEC_RUN,
+    MODEL_TASK_DELEGATE,
     MODEL_FILE_FIND,
     MODEL_FILE_LIST_DIR,
     MODEL_FILE_READ,
@@ -50,6 +51,7 @@ CODING_ALLOWED_TOOLS: frozenset[str] = frozenset(
         MODEL_EXEC_POLL,
         MODEL_EXEC_LIST,
         MODEL_EXEC_KILL,
+        MODEL_TASK_DELEGATE,
     )
 )
 

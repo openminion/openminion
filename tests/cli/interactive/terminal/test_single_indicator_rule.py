@@ -6,9 +6,9 @@ import time
 
 from rich.console import Console
 
-from openminion.cli.interactive.terminal.shell import (
-    _run_agent_turn,
-    _tick_turn_status_line,
+from openminion.cli.interactive.terminal.shell import _run_agent_turn
+from openminion.cli.interactive.terminal.shell.progress import (
+    tick_turn_status_line as _tick_turn_status_line,
 )
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
 from openminion.cli.interactive.terminal.streaming import TerminalTurnHandle
@@ -100,6 +100,38 @@ def test_turn_status_ticker_refreshes_footer_elapsed_counter() -> None:
     assert invalidations >= 2
     assert "1s" in line.live_turn_footer()
     assert "1s" in line.bottom_toolbar()
+
+
+def test_turn_status_ticker_seeds_missing_label_so_footer_stays_visible() -> None:
+    line = TerminalStatusLine()
+    line.set_state(state="responding")
+    invalidations = 0
+
+    def _invalidate() -> None:
+        nonlocal invalidations
+        invalidations += 1
+
+    async def _run() -> None:
+        task = asyncio.create_task(
+            _tick_turn_status_line(
+                status_line=line,
+                invalidate_prompt=_invalidate,
+            )
+        )
+        try:
+            await asyncio.sleep(0.05)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(_run())
+
+    assert line.turn_status_label == "Working..."
+    assert "brain: Working..." in line.bottom_toolbar()
+    assert invalidations >= 1
 
 
 def test_bottom_toolbar_contains_no_responding_text_during_idle_mode() -> None:

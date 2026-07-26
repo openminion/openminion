@@ -13,6 +13,10 @@ from openminion.modules.tool.runtime import RuntimeContext
 from openminion.modules.tool.runtime.environment import (
     storage_path_from_context,
 )
+from openminion.modules.brain.execution.worktree_children import (
+    accept_child_worktree_artifact,
+    reject_child_worktree_artifact,
+)
 
 
 class AgentListArgs(BaseModel):
@@ -53,16 +57,18 @@ class TaskDelegateArgs(BaseModel):
     mode: str = Field(
         default="sync",
         description=(
-            "Delegation lifecycle action: sync, async, status, resume, or cancel."
+            "Delegation lifecycle action. Use sync or async to start child work; "
+            "use status, resume, or cancel with task_id; use accept or reject "
+            "only after a child_artifact is returned. There is no create mode."
         ),
     )
     agent_id: str = Field(
         default="",
-        description="Target sub-agent identifier.",
+        description="Exact target sub-agent identifier for sync/async delegation.",
     )
     instruction: str = Field(
         default="",
-        description="Instruction to delegate to the sub-agent.",
+        description="Instruction to delegate to the exact sub-agent for sync/async.",
     )
     task_id: str = Field(
         default="",
@@ -74,18 +80,39 @@ class TaskDelegateArgs(BaseModel):
         le=3600,
         description="Per-call timeout for the delegated turn.",
     )
+    child_artifact: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Durable child worktree artifact record returned by delegated "
+            "code-bearing work; required for accept/reject."
+        ),
+    )
+    workspace_root: str = Field(
+        default="",
+        description="Parent repository root; required only when accepting artifacts.",
+    )
 
     @model_validator(mode="after")
     def _validate_action_fields(self) -> "TaskDelegateArgs":
         normalized_mode = self.mode.strip().lower()
-        if normalized_mode not in {"sync", "async", "status", "resume", "cancel"}:
-            raise ValueError("mode must be one of: sync, async, status, resume, cancel")
+        allowed = {"sync", "async", "status", "resume", "cancel", "accept", "reject"}
+        if normalized_mode not in allowed:
+            raise ValueError(
+                "mode must be one of: sync, async, status, resume, cancel, "
+                "accept, reject"
+            )
         self.mode = normalized_mode
         if normalized_mode in {"sync", "async"}:
             if not self.agent_id.strip() or not self.instruction.strip():
                 raise ValueError(
                     "agent_id and instruction are required for sync/async delegation"
                 )
+            return self
+        if normalized_mode in {"accept", "reject"}:
+            if not self.child_artifact:
+                raise ValueError("child_artifact is required for accept/reject")
+            if normalized_mode == "accept" and not self.workspace_root.strip():
+                raise ValueError("workspace_root is required for accept")
             return self
         if not self.task_id.strip():
             raise ValueError("task_id is required for status/resume/cancel")
@@ -290,6 +317,9 @@ def _task_delegate_error_code(result_error_code: str, *, status: str) -> str:
 
 def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = TaskDelegateArgs.model_validate(args)
+    if validated.mode in {"accept", "reject"}:
+        return _handle_child_artifact_disposition(validated, ctx)
+
     seam = getattr(ctx, "a2a_delegate_api", None)
     if seam is None:
         raise ToolRuntimeError(
@@ -316,6 +346,7 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             "agent_id": validated.agent_id,
             "instruction": validated.instruction,
             "timeout_seconds": int(validated.timeout_seconds),
+            "permission_mode": str(getattr(ctx, "permission_mode", "ask") or "ask"),
         }
         if validated.mode != "sync":
             delegate_kwargs["mode"] = validated.mode
@@ -345,6 +376,36 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             "trace_id": result.trace_id,
             "task_id": result.task_id,
         },
+    )
+
+
+def _handle_child_artifact_disposition(
+    args: TaskDelegateArgs, ctx: RuntimeContext
+) -> dict[str, Any]:
+    artifactctl = getattr(ctx, "artifactctl", None)
+    if artifactctl is None:
+        raise ToolRuntimeError(
+            "DEPENDENCY_MISSING",
+            "Child artifact disposition requires ArtifactCtl.",
+            {"reason_code": "artifactctl_unavailable"},
+        )
+    if args.mode == "reject":
+        result = reject_child_worktree_artifact(
+            record=dict(args.child_artifact), artifactctl=artifactctl
+        )
+        return {"ok": True, "mode": args.mode, **result}
+
+    result = accept_child_worktree_artifact(
+        repo_root=args.workspace_root,
+        record=dict(args.child_artifact),
+        artifactctl=artifactctl,
+    )
+    if result.get("ok") is True:
+        return {"ok": True, "mode": args.mode, **result}
+    raise ToolRuntimeError(
+        "POLICY_DENIED",
+        "Child artifact acceptance was blocked.",
+        {"reason_code": str(result.get("status") or "accept_blocked"), **result},
     )
 
 
