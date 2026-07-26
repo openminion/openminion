@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hmac
+import json
 from http import HTTPStatus
 from typing import Any, Mapping
 
@@ -9,12 +11,12 @@ from openminion.api.routes.contracts import (
     error_route_result,
 )
 from openminion.base.config.env import resolve_environment_config
-from openminion.modules.a2a.errors import A2AError, ERROR_CODE_JOB_NOT_FOUND
 from openminion.modules.a2a import A2ARuntime
 from openminion.modules.a2a.endpoint import (
     EXTERNAL_A2A_RUNTIME_ATTR,
     resolve_external_a2a_runtime,
 )
+from openminion.modules.a2a.errors import A2AError, ERROR_CODE_JOB_NOT_FOUND
 from openminion.modules.a2a.models import Envelope, JobRecord, new_uuid
 from openminion.modules.a2a.wire.google_a2a_v1.agent_card import (
     AGENT_CARD_WELL_KNOWN_PATH,
@@ -35,6 +37,11 @@ from openminion.modules.a2a.wire.google_a2a_v1.task import (
 )
 
 A2A_NETWORK_TOKEN_ENV = "OPENMINION_A2A_BEARER_TOKEN"
+_MAX_MESSAGE_BYTES = 64 * 1024
+_MAX_METADATA_ITEMS = 64
+_MAX_IDEMPOTENCY_KEY_BYTES = 256
+_MIN_TIMEOUT_MS = 1_000
+_MAX_TIMEOUT_MS = 5 * 60 * 1000
 
 
 def build_agent_card_payload() -> dict[str, Any]:
@@ -76,7 +83,8 @@ def authorize_a2a_request(headers: Mapping[str, str] | None) -> RouteResult | No
             details={"token_env": A2A_NETWORK_TOKEN_ENV},
             retryable=False,
         )
-    if _bearer_token_from_headers(headers) == expected:
+    token = _bearer_token_from_headers(headers)
+    if token and hmac.compare_digest(token.encode(), expected.encode()):
         return None
     return error_route_result(
         HTTPStatus.UNAUTHORIZED,
@@ -89,8 +97,12 @@ def authorize_a2a_request(headers: Mapping[str, str] | None) -> RouteResult | No
 
 def handle_jsonrpc(ctx: APIRouteContext, body: dict[str, Any]) -> RouteResult:
     try:
+        _validate_jsonrpc_body(body)
         request_id = body.get("id")
-        params = body.get("params") if isinstance(body.get("params"), dict) else {}
+        raw_params = body.get("params")
+        params: dict[str, Any] = (
+            dict(raw_params) if isinstance(raw_params, dict) else {}
+        )
         result = dispatch_jsonrpc_method(
             _resolve_a2a_runtime(ctx),
             method=str(body.get("method", "")),
@@ -136,11 +148,11 @@ def _send_task(runtime: A2ARuntime, params: dict[str, Any]) -> dict[str, Any]:
         type="job.start",
         method=_text(params.get("method"), default="tasks/send"),
         params={
-            "message": params.get("message", {}),
-            "metadata": params.get("metadata", {}),
+            "message": _bounded_message(params.get("message", {})),
+            "metadata": _bounded_metadata(params.get("metadata", {})),
         },
-        timeout_ms=int(params.get("timeoutMs", 30_000) or 30_000),
-        idempotency_key=_required_text(params, "idempotencyKey"),
+        timeout_ms=_bounded_timeout_ms(params.get("timeoutMs", 30_000)),
+        idempotency_key=_bounded_idempotency_key(params),
         trace_id=_text(params.get("traceId"), default=new_uuid()),
     )
     return _task_payload(runtime.job_status(runtime.job_start(envelope)))
@@ -221,16 +233,75 @@ def _jsonrpc_code_for_a2a_error(exc: A2AError) -> JsonRpcErrorCode:
 def _bearer_token_from_headers(headers: Mapping[str, str] | None) -> str:
     if not headers:
         return ""
+    tokens = []
     for key, value in headers.items():
-        if str(key).lower() == "authorization":
-            scheme, _, token = str(value).partition(" ")
-            if scheme.lower() == "bearer":
-                return token.strip()
-    return ""
+        if str(key).lower() != "authorization":
+            continue
+        scheme, _, token = str(value).partition(" ")
+        if scheme.lower() == "bearer":
+            tokens.append(token.strip())
+    if len(tokens) != 1:
+        return ""
+    return tokens[0]
+
+
+def _validate_jsonrpc_body(body: dict[str, Any]) -> None:
+    if body.get("jsonrpc", "2.0") != "2.0":
+        raise ValueError("A2A JSON-RPC version must be '2.0'")
+    method = body.get("method")
+    if not isinstance(method, str) or not method.strip():
+        raise ValueError("A2A JSON-RPC method is required")
+    params = body.get("params", {})
+    if params is not None and not isinstance(params, dict):
+        raise ValueError("A2A JSON-RPC params must be an object")
 
 
 def _task_id(params: dict[str, Any]) -> str:
     return _required_text(params, "id" if "id" in params else "taskId")
+
+
+def _bounded_timeout_ms(value: object) -> int:
+    if isinstance(value, bool):
+        raise ValueError("A2A parameter 'timeoutMs' must be an integer")
+    if isinstance(value, int):
+        timeout_ms = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        timeout_ms = int(value.strip())
+    else:
+        raise ValueError("A2A parameter 'timeoutMs' must be an integer")
+    if not _MIN_TIMEOUT_MS <= timeout_ms <= _MAX_TIMEOUT_MS:
+        raise ValueError(
+            f"A2A parameter 'timeoutMs' must be between {_MIN_TIMEOUT_MS} and "
+            f"{_MAX_TIMEOUT_MS}"
+        )
+    return timeout_ms
+
+
+def _bounded_idempotency_key(params: dict[str, Any]) -> str:
+    value = _required_text(params, "idempotencyKey")
+    if len(value.encode("utf-8")) > _MAX_IDEMPOTENCY_KEY_BYTES:
+        raise ValueError("A2A parameter 'idempotencyKey' is too large")
+    return value
+
+
+def _bounded_message(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("A2A parameter 'message' must be an object")
+    encoded = _json_bytes(value)
+    if len(encoded) > _MAX_MESSAGE_BYTES:
+        raise ValueError("A2A parameter 'message' is too large")
+    return dict(value)
+
+
+def _bounded_metadata(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("A2A parameter 'metadata' must be an object")
+    if len(value) > _MAX_METADATA_ITEMS:
+        raise ValueError("A2A parameter 'metadata' has too many entries")
+    forbidden = {"workspace", "workspace_root", "cwd"}
+    if forbidden.intersection(value):
+        raise ValueError("A2A parameter 'metadata' includes local workspace fields")
+    return dict(value)
 
 
 def _required_text(params: dict[str, Any], name: str) -> str:
@@ -243,6 +314,10 @@ def _required_text(params: dict[str, Any], name: str) -> str:
 def _text(value: object, *, default: str) -> str:
     text = str(value or "").strip()
     return text or default
+
+
+def _json_bytes(value: object) -> bytes:
+    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
 __all__ = [

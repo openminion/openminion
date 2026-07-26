@@ -7,10 +7,12 @@ from typing import Any
 from openminion.modules.a2a import A2ARuntime
 from openminion.modules.a2a.models import Envelope
 from openminion.modules.a2a.storage import (
+    build_a2a_audit_store,
     MemoryAuditStore,
     MemoryStateStore,
     SQLiteStateStore,
 )
+from openminion.modules.storage.engine import StorageEngineConfig
 
 EXTERNAL_A2A_RUNTIME_ATTR = "_external_a2a_runtime"
 _EXTERNAL_A2A_RUNTIME_LOCK = threading.RLock()
@@ -40,12 +42,16 @@ def close_external_a2a_runtime(owner: object) -> None:
 
 def build_external_a2a_runtime(owner: object) -> A2ARuntime:
     storage_path = getattr(owner, "storage_path", None)
-    state_store = (
-        SQLiteStateStore(_state_db_path(Path(storage_path)))
-        if storage_path is not None
-        else MemoryStateStore()
-    )
-    runtime = A2ARuntime(state_store=state_store, audit_store=MemoryAuditStore())
+    if storage_path is None:
+        runtime = A2ARuntime(
+            state_store=MemoryStateStore(), audit_store=MemoryAuditStore()
+        )
+    else:
+        db_path = Path(storage_path)
+        runtime = A2ARuntime(
+            state_store=SQLiteStateStore(_state_db_path(db_path)),
+            audit_store=_build_durable_audit_store(owner, db_path=db_path),
+        )
     runtime.register_agent(
         "openminion.local",
         ["tasks/", "echo.", "message."],
@@ -129,6 +135,31 @@ def _inbound_metadata(
 def _state_db_path(storage_path: Path) -> str:
     return str(
         storage_path.expanduser().resolve(strict=False).parent / "a2a-network-state.db"
+    )
+
+
+def _build_durable_audit_store(owner: object, *, db_path: Path) -> object:
+    config = getattr(owner, "config", None)
+    storage = getattr(config, "storage", None)
+    backend = (
+        storage.record_backend()
+        if callable(getattr(storage, "record_backend", None))
+        else "record.sqlite"
+    )
+    options = (
+        storage.record_backend_options()
+        if callable(getattr(storage, "record_backend_options", None))
+        else {}
+    )
+    return build_a2a_audit_store(
+        config=StorageEngineConfig(
+            root_dir=db_path.expanduser().resolve(strict=False).parent,
+            sqlite_path=db_path,
+            fallback_root=db_path.expanduser().resolve(strict=False).parent,
+            record_backend=backend,
+            record_backend_options=dict(options),
+        ),
+        audit_root=db_path.expanduser().resolve(strict=False).parent / "a2a-audit",
     )
 
 
