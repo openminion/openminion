@@ -1,5 +1,7 @@
+import shlex
 from pathlib import Path
 from typing import Any, Callable, Literal, cast
+from uuid import uuid4
 
 from openminion.modules.brain import (
     GoalContinuationDriver,
@@ -19,7 +21,7 @@ from openminion.modules.brain import (
     render_goal_summary,
     render_goal_verification,
 )
-from openminion.modules.brain.schemas.goals import Goal
+from openminion.modules.brain.schemas.goals import Deliverable, Goal, SuccessCriterion
 from openminion.modules.brain.schemas.state import BudgetCounters, WorkingState
 from openminion.modules.brain.storage.goals import GoalStore, SQLiteGoalStore
 from openminion.modules.brain.storage.missions import SQLiteMissionStateStore
@@ -106,6 +108,12 @@ def execute_goal_cli_command(
     if stripped in {"/goal all", "/goals"}:
         return _goal_all_response(goal_store)
 
+    if stripped.startswith("/goal create "):
+        return _goal_create_response(stripped, runtime, session_id=session_id)
+
+    if stripped.startswith("/goal bind "):
+        return _goal_bind_response(stripped, runtime, session_id=session_id)
+
     if stripped.startswith("/goal show "):
         return _goal_show_response(stripped, runtime, session_id=session_id)
 
@@ -136,7 +144,7 @@ def execute_goal_cli_command(
 
     return (
         "error",
-        "usage: /goal [list|all|show <id>|abort <id>|verify <id>|run <id>|status|inspect|evidence|pause|resume|stop|clear]",
+        "usage: /goal [list|all|create <description>|bind <id>|show <id>|abort <id>|verify <id>|run <id>|status|inspect|evidence|pause|resume|stop|clear]",
     )
 
 
@@ -156,6 +164,93 @@ def _goal_all_response(goal_store: GoalStore) -> tuple[GoalCliTone, str]:
     if not goals:
         return ("info", "No active workspace goals.")
     return ("info", "\n".join(render_goal_summary(goal) for goal in goals))
+
+
+def _goal_create_response(
+    line: str,
+    runtime: LongRunningGoalRuntime,
+    *,
+    session_id: str,
+) -> tuple[GoalCliTone, str]:
+    try:
+        parts = shlex.split(line)
+    except ValueError as exc:
+        return ("error", f"invalid /goal create syntax: {exc}")
+    args = parts[2:]
+    description = _goal_create_description(args)
+    goal_id = _first_option_value(args, "--id") or f"goal_{uuid4().hex[:12]}"
+    if not description:
+        return ("error", "usage: /goal create <description> [--id <goal_id>]")
+    if runtime.goal_store.get(goal_id) is not None:
+        return ("error", f"Goal already exists: {goal_id}")
+    goal = Goal(
+        goal_id=goal_id,
+        description=description,
+        success_criteria=_goal_success_criteria(args, description),
+        deliverables=_goal_deliverables(args, description),
+    )
+    try:
+        created = runtime.goal_store.create(goal)
+        if not _flag_present(args, "--no-bind"):
+            created = runtime.bind_goal_to_session(
+                goal_id=created.goal_id,
+                session_id=session_id,
+            )
+    except (KeyError, ValueError) as exc:
+        return ("error", str(exc))
+    bind_note = "" if _flag_present(args, "--no-bind") else " | bound=current-session"
+    return ("success", f"created {render_goal_summary(created)}{bind_note}")
+
+
+def _goal_create_description(args: list[str]) -> str:
+    description_parts: list[str] = []
+    for item in args:
+        if item.startswith("--"):
+            break
+        description_parts.append(item)
+    return " ".join(description_parts).strip()
+
+
+def _goal_success_criteria(
+    args: list[str],
+    description: str,
+) -> list[SuccessCriterion]:
+    values = _option_values(args, "--criterion") or (description,)
+    return [
+        SuccessCriterion(
+            criterion_id=f"criterion-{index}",
+            description=value,
+            structural_check="operator_review",
+        )
+        for index, value in enumerate(values, start=1)
+    ]
+
+
+def _goal_deliverables(args: list[str], description: str) -> list[Deliverable]:
+    values = _option_values(args, "--deliverable") or (description,)
+    return [
+        Deliverable(
+            deliverable_id=f"deliverable-{index}",
+            description=value,
+        )
+        for index, value in enumerate(values, start=1)
+    ]
+
+
+def _goal_bind_response(
+    line: str,
+    runtime: LongRunningGoalRuntime,
+    *,
+    session_id: str,
+) -> tuple[GoalCliTone, str]:
+    parts = line.split()
+    if len(parts) != 3:
+        return ("error", "usage: /goal bind <goal_id>")
+    try:
+        goal = runtime.bind_goal_to_session(goal_id=parts[2], session_id=session_id)
+    except (KeyError, ValueError) as exc:
+        return ("error", str(exc))
+    return ("success", f"bound {render_goal_summary(goal)}")
 
 
 def _goal_show_response(
@@ -384,6 +479,27 @@ def _option_value(args: list[str], name: str) -> str:
         if item.startswith(prefix):
             return item.removeprefix(prefix).strip()
     return ""
+
+
+def _first_option_value(args: list[str], name: str) -> str:
+    values = _option_values(args, name)
+    return values[0] if values else ""
+
+
+def _option_values(args: list[str], name: str) -> tuple[str, ...]:
+    values: list[str] = []
+    for index, item in enumerate(args):
+        if item == name and index + 1 < len(args):
+            values.append(args[index + 1].strip())
+        else:
+            prefix = f"{name}="
+            if item.startswith(prefix):
+                values.append(item.removeprefix(prefix).strip())
+    return tuple(value for value in values if value)
+
+
+def _flag_present(args: list[str], name: str) -> bool:
+    return name in args
 
 
 def _scripted_goal_turn_runner(raw: str) -> Callable[[str], GoalTurnResult]:

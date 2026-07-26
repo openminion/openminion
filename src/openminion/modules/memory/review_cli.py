@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Any, Callable, cast
 
 import typer
@@ -19,6 +20,10 @@ from openminion.modules.memory.portability.review_contracts import (
 from openminion.modules.memory.portability.models import (
     MemoryBundleExportOptions,
     MemoryBundleImportOptions,
+)
+from openminion.modules.memory.runtime.utility_planner import (
+    build_utility_plan_from_canary,
+    stage_utility_plan,
 )
 
 ServiceFactory = Callable[[str | None], Any]
@@ -208,6 +213,43 @@ def _register_apply(review: typer.Typer, service_factory: ServiceFactory) -> Non
         typer.echo(f"staged_candidates: {result.staged_candidates}")
 
 
+def _register_utility_plan(
+    review: typer.Typer, service_factory: ServiceFactory
+) -> None:
+    @review.command("utility-plan")
+    def utility_plan_command(
+        canary: Path = typer.Option(..., "--canary"),
+        stage: bool = typer.Option(False, "--stage"),
+        json_out: bool = typer.Option(False, "--json"),
+        db: str | None = typer.Option(None, "--db"),
+    ) -> None:
+        """Plan memory lifecycle review candidates from typed canary evidence."""
+
+        try:
+            plan = build_utility_plan_from_canary(canary)
+            if stage:
+                plan = stage_utility_plan(plan, service_factory(db))
+        except _CLI_ERRORS as exc:
+            _fail(exc)
+        if json_out:
+            typer.echo(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
+            return
+        typer.echo(f"schema_version: {plan.schema_version}")
+        typer.echo(f"source_run_id: {plan.source_run_id}")
+        typer.echo(f"source_artifact_sha256: {plan.source_artifact_sha256}")
+        typer.echo(f"staged: {plan.staged}")
+        for item in plan.items:
+            suffix = (
+                f" staged_candidate_id={item.staged_candidate_id}"
+                if item.staged_candidate_id
+                else ""
+            )
+            typer.echo(
+                f"- {item.case_id}: {item.disposition} "
+                f"reason={item.reason_code}{suffix}"
+            )
+
+
 def register_review_commands(
     app: typer.Typer,
     *,
@@ -221,6 +263,7 @@ def register_review_commands(
     _register_plan(review, service_factory)
     _register_decide(review, service_factory)
     _register_apply(review, service_factory)
+    _register_utility_plan(review, service_factory)
     app.add_typer(review, name="review")
 
 

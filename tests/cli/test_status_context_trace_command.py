@@ -29,13 +29,23 @@ class _SessionStore:
         self.closed = True
 
 
-def _args(*, session_id: str, as_json: bool = False) -> Namespace:
+def _args(
+    *,
+    session_id: str,
+    as_json: bool = False,
+    review: bool = False,
+    canary: str = "",
+    calibration: str = "",
+) -> Namespace:
     return Namespace(
         config="",
         session_id=session_id,
         turn_id="",
         limit=50,
         json=as_json,
+        review=review,
+        canary=canary,
+        calibration=calibration,
     )
 
 
@@ -74,6 +84,26 @@ def test_status_context_trace_parser_registration() -> None:
     assert args.turn_id == "turn-1"
 
 
+def test_status_context_trace_review_parser_registration() -> None:
+    args = build_parser().parse_args(
+        [
+            "status",
+            "context-trace",
+            "--session",
+            "session-1",
+            "--review",
+            "--canary",
+            "canary.json",
+            "--calibration",
+            "calibration.json",
+        ]
+    )
+
+    assert args.review is True
+    assert args.canary == "canary.json"
+    assert args.calibration == "calibration.json"
+
+
 def test_status_context_trace_json_output(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -97,6 +127,79 @@ def test_status_context_trace_json_output(
         payload["traces"][0]["decision_trace"]["decisions"][0]["action"] == "included"
     )
     assert store.closed is True
+
+
+def test_status_context_trace_review_output_redacts_sensitive_values(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    event = _trace_event()
+    event["payload"]["decision_trace"]["decisions"].append(
+        {
+            "segment_id": "secret-token-segment",
+            "bucket": "retrieval",
+            "action": "dropped",
+            "reason_code": "password_budget",
+        }
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.context_trace.build_status_session_store",
+        lambda _args, _config: _SessionStore([event]),
+    )
+
+    code = run_context_trace_status(
+        _args(session_id="sess-1", review=True),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "context review:" in output
+    assert "retrieval:1" in output
+    assert "secret-token-segment" not in output
+    assert "[redacted]" in output
+
+
+def test_status_context_trace_review_json_includes_optional_degradation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    canary = tmp_path / "canary.json"
+    canary.write_text('{"report_version": "wrong.v1", "summary": {}}\n')
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.context_trace.build_status_session_store",
+        lambda _args, _config: _SessionStore([_trace_event()]),
+    )
+
+    code = run_context_trace_status(
+        _args(session_id="sess-1", as_json=True, review=True, canary=str(canary)),
+        config=OpenMinionConfig(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["review"]["schema_version"] == "memory-context-review.v1"
+    assert payload["review"]["degraded_reasons"]
+
+
+def test_status_context_trace_handles_malformed_event_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    event = {"event_type": "context.manifest.created", "payload": "bad"}
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.context_trace.build_status_session_store",
+        lambda _args, _config: _SessionStore([event]),
+    )
+
+    code = run_context_trace_status(
+        _args(session_id="sess-1", as_json=True, review=True),
+        config=OpenMinionConfig(),
+    )
+
+    assert code == 1
+    assert "CONTEXT_TRACE_NOT_FOUND" in capsys.readouterr().out
 
 
 def test_status_context_trace_missing_trace_returns_nonzero(

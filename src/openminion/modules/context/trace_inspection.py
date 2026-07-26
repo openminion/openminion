@@ -79,7 +79,9 @@ def _trace_from_event(
     *,
     turn_id: str | None,
 ) -> dict[str, Any] | None:
-    payload = dict(event.get("payload", {}) or {})
+    payload = event.get("payload", {}) or {}
+    if not isinstance(payload, Mapping):
+        return None
     trace = payload.get("decision_trace")
     if not isinstance(trace, dict):
         return None

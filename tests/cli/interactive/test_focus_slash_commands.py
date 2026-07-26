@@ -214,6 +214,51 @@ async def test_slash_delegate_result_alias_uses_task_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_slash_context_review_uses_runtime_trace_payload() -> None:
+    class _ContextReviewRuntime(_DemoFocusRuntime):
+        def context_trace_payload(self, *, session_id: str) -> dict[str, object]:
+            return {
+                "session_id": session_id,
+                "traces": [
+                    {
+                        "decision_trace": {
+                            "decisions": [
+                                {
+                                    "segment_id": "memory:included",
+                                    "action": "included",
+                                    "reason_code": "selected",
+                                },
+                                {
+                                    "segment_id": "secret-token-value",
+                                    "action": "dropped",
+                                    "reason_code": "password_budget",
+                                },
+                            ]
+                        }
+                    }
+                ],
+            }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _ContextReviewRuntime(working_dir=tmp)
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command("/context-review session=session-review")
+            await pilot.pause()
+
+            body = _last_system_body(screen.query_one(FocusTranscript))
+
+    assert "context review: session=session-review" in body
+    assert "memory:included" in body
+    assert "secret-token-value" not in body
+    assert "[redacted]" in body
+
+
+@pytest.mark.asyncio
 async def test_permissions_menu_applies_ask_for_approval() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         app = _make_app(tmp)

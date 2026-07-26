@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from openminion.cli.commands.status.session_store import build_status_session_store
+from openminion.cli.status.models import (
+    build_memory_context_review,
+    render_memory_context_review,
+)
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.context.trace_inspection import (
     ContextTraceLookupError,
@@ -42,7 +46,21 @@ def run_context_trace_status(args: Any, *, config: Any) -> int:
         store.close()
 
     if getattr(args, "json", False):
+        if getattr(args, "review", False):
+            payload["review"] = build_memory_context_review(
+                payload,
+                canary_path=getattr(args, "canary", None),
+                calibration_path=getattr(args, "calibration", None),
+            ).to_dict()
         print_json_payload(payload)
+        return 0
+    if getattr(args, "review", False):
+        review = build_memory_context_review(
+            payload,
+            canary_path=getattr(args, "canary", None),
+            calibration_path=getattr(args, "calibration", None),
+        )
+        print(render_memory_context_review(review))
         return 0
     _print_context_trace_status(payload)
     return 0

@@ -48,9 +48,13 @@ bounded external v1 route through the API server:
   typed unsupported response and the Agent Card reports `streaming=false`.
 
 External endpoint scope and validation evidence are tracked in
-`docs/trackers/qa/openminion-external-a2a-network-endpoint-2026-07-24-tracker.md`.
-Public readiness claims should say "authenticated local external A2A endpoint"
-until third-party peer interoperability is separately proven.
+`docs/trackers/wip/openminion-external-a2a-network-endpoint-2026-07-24-tracker.md`.
+The turn bridge, synchronized runtime cache, and APIRuntime-owned close path are
+implemented. Independent QA keeps the endpoint in hardening until bounded
+request/auth handling, concurrent lifecycle proof, and a terminal-result local
+HTTP matrix pass. Public readiness claims should say "authenticated local
+external A2A v1 preview" until that tracker closes; third-party peer
+certification remains separate.
 
 ## Dependencies
 

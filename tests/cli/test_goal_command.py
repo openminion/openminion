@@ -83,6 +83,80 @@ def test_goal_command_list_show_abort_and_verify(tmp_path, monkeypatch) -> None:
     assert "[cancelled]" in aborted
 
 
+def test_goal_command_create_defaults_and_binds_to_current_session(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "brain.db"
+
+    _, created = _capture(
+        '/goal create "ship durable goal creation" --id goal-created',
+        session_id="sess-goal",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+
+    assert "created goal-created [active] ship durable goal creation" in created
+    assert "bound=current-session" in created
+
+    store = SQLiteGoalStore(db_path)
+    goal = store.get("goal-created")
+    assert goal is not None
+    assert goal.description == "ship durable goal creation"
+    assert goal.success_criteria[0].description == "ship durable goal creation"
+    assert goal.success_criteria[0].structural_check == "operator_review"
+    assert goal.deliverables[0].description == "ship durable goal creation"
+    assert store.is_bound_to_session("goal-created", "sess-goal") is True
+
+    _, listed = _capture(
+        "/goal list",
+        session_id="sess-goal",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "goal-created [active] ship durable goal creation" in listed
+
+
+def test_goal_command_create_no_bind_then_bind_existing_goal(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "brain.db"
+
+    _, created = _capture(
+        (
+            '/goal create "prepare long task" --id goal-unbound '
+            '--criterion "tests pass" --deliverable "operator report" --no-bind'
+        ),
+        session_id="sess-a",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "created goal-unbound [active] prepare long task" in created
+    assert "bound=current-session" not in created
+
+    _, empty = _capture(
+        "/goal list",
+        session_id="sess-a",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "No active goals for this session." in empty
+
+    _, bound = _capture(
+        "/goal bind goal-unbound",
+        session_id="sess-a",
+        db_path=db_path,
+        monkeypatch=monkeypatch,
+    )
+    assert "bound goal-unbound [active] prepare long task" in bound
+
+    store = SQLiteGoalStore(db_path)
+    goal = store.get("goal-unbound")
+    assert goal is not None
+    assert goal.success_criteria[0].description == "tests pass"
+    assert goal.deliverables[0].description == "operator report"
+    assert store.is_bound_to_session("goal-unbound", "sess-a") is True
+
+
 def test_goal_command_list_is_session_scoped_and_all_is_explicit(
     tmp_path, monkeypatch
 ) -> None:

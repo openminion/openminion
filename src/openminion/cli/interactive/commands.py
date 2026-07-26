@@ -38,6 +38,10 @@ from openminion.cli.presentation.queue import (
     queue_listing,
 )
 from openminion.cli.presentation.slash_commands import rich_slash_command_registry
+from openminion.cli.status.models import (
+    build_memory_context_review,
+    render_memory_context_review,
+)
 from openminion.cli.ux.verbosity import write_focus_preferences
 from openminion.services.runtime.turn_input import TurnInputQueueStatus
 
@@ -172,8 +176,50 @@ class SlashCommandMixin:
             ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
         )
 
+    def _slash_context_review(self, args: str) -> None:
+        options = self._parse_context_review_args(args)
+        payload_getter = getattr(self._runtime, "context_trace_payload", None)
+        if callable(payload_getter):
+            payload = payload_getter(session_id=options["session_id"])
+        else:
+            payload = {
+                "session_id": options["session_id"],
+                "traces": [],
+                "count": 0,
+                "degraded": "runtime_context_trace_unavailable",
+            }
+        review = build_memory_context_review(
+            payload,
+            canary_path=options["canary"],
+            calibration_path=options["calibration"],
+        )
+        body = render_memory_context_review(review)
+        self.query_one(FocusTranscript).push_message(
+            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
+        )
+
     def _slash_sessions(self, _args: str) -> None:
         self.action_show_sessions()
+
+    def _parse_context_review_args(self, args: str) -> dict[str, str]:
+        options = {
+            "session_id": str(getattr(self._runtime, "session_id", "") or ""),
+            "canary": "",
+            "calibration": "",
+        }
+        try:
+            parts = shlex.split(str(args or ""))
+        except ValueError:
+            return options
+        for token in parts:
+            key, separator, value = token.partition("=")
+            if not separator:
+                continue
+            if key in {"session", "session_id"}:
+                options["session_id"] = value
+            elif key in {"canary", "calibration"}:
+                options[key] = value
+        return options
 
     def _slash_theme(self, args: str) -> None:
         from openminion.cli.presentation.theme import handle_theme
