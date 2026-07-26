@@ -3,6 +3,7 @@
 import hashlib
 import json
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
@@ -210,6 +211,7 @@ class RuntimeContext:
     sandbox_runner: Any | None = None
     authored_tools_api: Any | None = None
     a2a_delegate_api: A2ADelegateApi | None = None
+    agent_query: Callable[[], list[dict[str, Any]]] | None = None
     agent_profile: Optional[Any] = None
 
     def add_log(

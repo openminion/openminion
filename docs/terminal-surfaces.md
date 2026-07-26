@@ -76,6 +76,29 @@ canonical CLI, bounded resource commands, and typed APIs:
 | Agents | Interactive `/agents`, `openminion agent`, and agent APIs. |
 | Third Brain | Its optional provider/API integration; it is not a core terminal owner. |
 
+## Token Usage Visibility
+
+Interactive sessions show a compact live token line when the active runtime has
+usage facts. Inside the interactive CLI, `/cost` shows the current session,
+last turn, context-window, and available cost estimate.
+
+For persisted session inspection, use the status surface:
+
+```bash
+openminion status tokens
+openminion status tokens --session-id <session-id>
+openminion status tokens --run-id <run-id>
+openminion status tokens --session-id <session-id> --run-id <run-id>
+openminion status tokens --session-id <session-id> --json
+```
+
+Without `--session-id`, `status tokens` inspects the newest session in the
+configured data root. With `--run-id` and no session id, it resolves the owning
+session from the run record. Text output is the human insight view: provider
+and derived totals, cache dimensions, context estimates, context buckets,
+coverage/correlation warnings, and next-step hints. `--json` emits the raw
+`openminion.token_usage.v1` envelope for scripts and future package consumers.
+
 ## Privacy-safe usage evidence
 
 When a live telemetry service exists, OpenMinion records only the fixed

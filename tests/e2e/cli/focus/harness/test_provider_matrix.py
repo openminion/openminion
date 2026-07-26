@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tests.e2e.cli.focus.harness.provider_matrix import (
     build_provider_matrix,
     load_provider_matrix,
     write_provider_matrix,
 )
+
+pytestmark = pytest.mark.e2e
 
 
 def _write_config(path: Path, *, env_name: str | None = None) -> None:

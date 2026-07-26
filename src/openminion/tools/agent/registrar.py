@@ -58,9 +58,9 @@ class AgentRegistrar:
                 ModelToolDef(
                     model_tool_id=MODEL_TASK_DELEGATE,
                     description=(
-                        "Delegate a sub-task to a named agent. Surface "
-                        "is published but A2A wiring is pending — handler "
-                        "returns NOT_IMPLEMENTED until enabled."
+                        "Delegate a sub-task to a named agent, or inspect and "
+                        "control an existing delegated task by using sync, "
+                        "async, status, resume, or cancel mode."
                     ),
                     parameters={},
                     aliases=(),

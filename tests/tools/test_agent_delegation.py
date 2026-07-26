@@ -34,6 +34,7 @@ from openminion.tools.agent.plugin import (
     _h_agent_list,
     _h_task_delegate,
 )
+from openminion.tools.agent.registrar import REGISTRAR
 
 
 def test_canonical_tool_ids_registered() -> None:
@@ -64,6 +65,23 @@ def test_default_registry_includes_agent_family() -> None:
     assert "agent.list" in tools
     assert "agent.get" in tools
     assert "task.delegate" in tools
+
+
+def test_task_delegate_manifest_describes_implemented_lifecycle() -> None:
+    runtime: Any = SimpleNamespace()
+    manifest = REGISTRAR.get_manifest(runtime)
+    task_delegate = next(
+        item
+        for item in manifest.model_tools
+        if item.model_tool_id == MODEL_TASK_DELEGATE
+    )
+
+    description = task_delegate.description.lower()
+    assert "pending" not in description
+    assert "not_implemented" not in description
+    assert "sync" in description
+    assert "async" in description
+    assert "cancel" in description
 
 
 def test_readonly_blocks_task_delegate() -> None:
@@ -111,6 +129,14 @@ def _ctx_without_storage() -> SimpleNamespace:
     )
 
 
+def _ctx_with_agent_query(agents: list[dict[str, Any]]) -> SimpleNamespace:
+    return SimpleNamespace(
+        policy=SimpleNamespace(raw={}),
+        env={},
+        agent_query=lambda: list(agents),
+    )
+
+
 def _ctx_with_registry(records: list[Any]) -> tuple[SimpleNamespace, dict[str, Any]]:
     calls: dict[str, Any] = {"list_called_with": None, "get_called_with": None}
 
@@ -151,6 +177,64 @@ def test_agent_get_raises_when_storage_unconfigured() -> None:
     assert exc_info.value.details["reason_code"] == "agent_registry_unconfigured"
 
 
+def test_agent_list_prefers_runtime_discovery_snapshot() -> None:
+    ctx = _ctx_with_agent_query(
+        [
+            {
+                "agent_id": "configured-cold",
+                "state": "configured",
+                "configured": True,
+                "hot": False,
+                "registry_present": False,
+            },
+            {
+                "agent_id": "heartbeat-active",
+                "state": "running",
+                "configured": False,
+                "hot": False,
+                "heartbeat_active": True,
+            },
+        ]
+    )
+
+    out = _h_agent_list({"status": "running", "limit": 10}, ctx)  # type: ignore[arg-type]
+
+    assert out["source"] == "runtime_agent_discovery"
+    assert out["count"] == 1
+    assert out["agents"][0]["agent_id"] == "heartbeat-active"
+    assert out["agents"][0]["heartbeat_active"] is True
+
+
+def test_agent_get_prefers_runtime_discovery_snapshot() -> None:
+    ctx = _ctx_with_agent_query(
+        [
+            {
+                "agent_id": "hot-agent",
+                "state": "running",
+                "configured": True,
+                "hot": True,
+                "registry_present": True,
+            }
+        ]
+    )
+
+    out = _h_agent_get({"agent_id": "hot-agent"}, ctx)  # type: ignore[arg-type]
+
+    assert out["source"] == "runtime_agent_discovery"
+    assert out["agent"]["agent_id"] == "hot-agent"
+    assert out["agent"]["hot"] is True
+
+
+def test_agent_get_runtime_snapshot_not_found_does_not_fall_back_to_storage() -> None:
+    ctx = _ctx_with_agent_query([])
+
+    with pytest.raises(ToolRuntimeError) as exc_info:
+        _h_agent_get({"agent_id": "registry-only"}, ctx)  # type: ignore[arg-type]
+
+    assert exc_info.value.code == "NOT_FOUND"
+    assert exc_info.value.details["reason_code"] == "agent_not_found"
+
+
 def test_agent_list_returns_records_from_registry(monkeypatch) -> None:
     record = SimpleNamespace(
         agent_id="alpha",
@@ -172,6 +256,7 @@ def test_agent_list_returns_records_from_registry(monkeypatch) -> None:
     )
     out = _h_agent_list({"status": "registered", "limit": 10}, ctx)  # type: ignore[arg-type]
     assert out["ok"] is True
+    assert out["source"] == "registry_compatibility_fallback"
     assert out["count"] == 1
     assert out["agents"][0]["agent_id"] == "alpha"
     assert out["agents"][0]["tags"] == ["a", "b"]
@@ -203,6 +288,7 @@ def test_agent_get_returns_record(monkeypatch) -> None:
     )
     out = _h_agent_get({"agent_id": "alpha"}, ctx)  # type: ignore[arg-type]
     assert out["ok"] is True
+    assert out["source"] == "registry_compatibility_fallback"
     assert out["agent"]["agent_id"] == "alpha"
     assert calls["get_called_with"] == "alpha"
 

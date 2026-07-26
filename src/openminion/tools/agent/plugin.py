@@ -117,6 +117,38 @@ def _agent_record_to_dict(record: Any) -> dict[str, Any]:
     }
 
 
+def _agent_payload_matches_status(agent: dict[str, Any], status: str) -> bool:
+    if not status:
+        return True
+    normalized = status.strip().lower()
+    if not normalized:
+        return True
+    state = str(agent.get("state") or agent.get("status") or "").strip().lower()
+    if state == normalized:
+        return True
+    value = agent.get(normalized)
+    return bool(value) if isinstance(value, bool) else False
+
+
+def _agents_from_runtime_query(ctx: RuntimeContext) -> list[dict[str, Any]] | None:
+    query = getattr(ctx, "agent_query", None)
+    if query is None:
+        return None
+    try:
+        raw_agents = query()
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise ToolRuntimeError(
+            "EXEC_ERROR",
+            f"Failed to query runtime agent discovery snapshot: {exc}",
+            {"reason_code": "agent_query_exec_error"},
+        ) from exc
+    agents: list[dict[str, Any]] = []
+    for raw in raw_agents or []:
+        if isinstance(raw, dict):
+            agents.append(dict(raw))
+    return agents
+
+
 def _resolve_agent_registry(ctx: RuntimeContext) -> Any | None:
     """Resolve an ``AgentRegistryStore`` from runtime context."""
     storage_path = storage_path_from_context(ctx)
@@ -136,6 +168,23 @@ def _resolve_agent_registry(ctx: RuntimeContext) -> Any | None:
 
 def _h_agent_list(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = AgentListArgs.model_validate(args)
+    effective_limit = max(1, min(int(validated.limit), 200))
+    status_filter = validated.status.strip()
+    runtime_agents = _agents_from_runtime_query(ctx)
+    if runtime_agents is not None:
+        agents = [
+            agent
+            for agent in runtime_agents
+            if _agent_payload_matches_status(agent, status_filter)
+        ][:effective_limit]
+        return {
+            "ok": True,
+            "agents": agents,
+            "count": len(agents),
+            "limit": effective_limit,
+            "source": "runtime_agent_discovery",
+        }
+
     registry = _resolve_agent_registry(ctx)
     if registry is None:
         return {
@@ -144,29 +193,44 @@ def _h_agent_list(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             "count": 0,
             "limit": int(validated.limit),
             "storage_unavailable": True,
+            "source": "registry_compatibility_fallback",
         }
-    status_filter = validated.status.strip() or None
     try:
-        rows = registry.list_agents(status=status_filter)
+        rows = registry.list_agents(status=status_filter or None)
     except Exception as exc:
         raise ToolRuntimeError(
             "EXEC_ERROR",
             f"Failed to list agents: {exc}",
             {"reason_code": "agent_registry_exec_error"},
         ) from exc
-    effective_limit = max(1, min(int(validated.limit), 200))
     agents = [_agent_record_to_dict(row) for row in rows[:effective_limit]]
     return {
         "ok": True,
         "agents": agents,
         "count": len(agents),
         "limit": effective_limit,
+        "source": "registry_compatibility_fallback",
     }
 
 
 def _h_agent_get(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     validated = AgentGetArgs.model_validate(args)
     agent_id = validated.agent_id.strip()
+    runtime_agents = _agents_from_runtime_query(ctx)
+    if runtime_agents is not None:
+        for agent in runtime_agents:
+            if str(agent.get("agent_id", "") or "").strip() == agent_id:
+                return {
+                    "ok": True,
+                    "agent": agent,
+                    "source": "runtime_agent_discovery",
+                }
+        raise ToolRuntimeError(
+            "NOT_FOUND",
+            f"Agent {agent_id!r} is not visible in the current runtime",
+            {"reason_code": "agent_not_found", "agent_id": agent_id},
+        )
+
     registry = _resolve_agent_registry(ctx)
     if registry is None:
         raise ToolRuntimeError(
@@ -194,6 +258,7 @@ def _h_agent_get(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     return {
         "ok": True,
         "agent": _agent_record_to_dict(record),
+        "source": "registry_compatibility_fallback",
     }
 
 

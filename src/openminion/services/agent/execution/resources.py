@@ -147,10 +147,8 @@ class ExecutionResources:
         tool_metadata.setdefault("agent_id", self._service_port.identity_agent_id)
         tool_metadata.setdefault("tool_call_origin", "model")
         if self._service_port.tool_selection is not None:
-            for (
-                key,
-                value,
-            ) in self._service_port.tool_selection.runtime_binding_policy_metadata().items():
+            selection = self._service_port.tool_selection
+            for key, value in selection.runtime_binding_policy_metadata().items():
                 tool_metadata.setdefault(key, value)
         tool_metadata.setdefault("storage_path", str(resolved_storage_path or ""))
         tool_metadata.setdefault(
@@ -170,6 +168,7 @@ class ExecutionResources:
             sandbox_runner=getattr(self._runtime, "sandbox_runner", None),
             authored_tools_api=getattr(self._runtime, "authored_tools", None),
             a2a_delegate_api=self._resolve_a2a_delegate_api(),
+            agent_query=getattr(self._runtime, "agent_discovery_snapshot", None),
         )
 
     def build_context_with_overrides(

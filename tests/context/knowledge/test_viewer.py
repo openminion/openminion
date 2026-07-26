@@ -511,6 +511,10 @@ def test_second_brain_static_html_uses_real_graphfakos_shell(tmp_path) -> None:
 def test_second_brain_provider_matches_graphfakos_conformance(tmp_path) -> None:
     graphfakos = pytest.importorskip("graphfakos")
     testing = pytest.importorskip("graphfakos.testing")
+    if not hasattr(testing, "assert_provider_conformance") or not hasattr(
+        testing, "GraphFakosProviderConformanceCase"
+    ):
+        pytest.skip("graphfakos.testing conformance helpers are unavailable")
     db_path = tmp_path / "memory.db"
     store = SQLiteMemoryStore(db_path)
     now = "2026-07-21T00:00:00+00:00"
@@ -602,6 +606,10 @@ def test_third_brain_example_fixture_status_and_html(tmp_path) -> None:
 def test_third_brain_example_fixture_matches_graphfakos_conformance(tmp_path) -> None:
     graphfakos = pytest.importorskip("graphfakos")
     testing = pytest.importorskip("graphfakos.testing")
+    if not hasattr(testing, "assert_provider_conformance") or not hasattr(
+        testing, "GraphFakosProviderConformanceCase"
+    ):
+        pytest.skip("graphfakos.testing conformance helpers are unavailable")
     provider = graphfakos.ProviderEnvelopeGraphProvider(str(_example_envelope_path()))
 
     result = testing.assert_provider_conformance(

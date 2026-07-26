@@ -147,6 +147,7 @@ def _build_tool_runtime_context(
         sandbox_runner=context.sandbox_runner,
         authored_tools_api=context.authored_tools_api,
         a2a_delegate_api=context.a2a_delegate_api,
+        agent_query=context.agent_query,
     )
     runtime_ctx.session_id = str(context.session_id or "").strip() or None
     runtime_ctx.trace_id = str(metadata.get("trace_id", "")).strip()
