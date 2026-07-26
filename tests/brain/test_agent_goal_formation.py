@@ -120,10 +120,7 @@ def test_engine_extractor_returns_none_on_absence() -> None:
         _goal_declaration_payload,
     )
 
-    class _Empty:
-        pass
-
-    assert _goal_declaration_payload(_Empty()) is None
+    assert _goal_declaration_payload(object()) is None
 
 
 def test_engine_extractor_returns_none_on_invalid_payload() -> None:
@@ -323,11 +320,8 @@ def test_render_policy_degrades_when_profile_absent() -> None:
         render_goal_execution_policy,
     )
 
-    class _NoField:
-        pass
-
     assert render_goal_execution_policy(None) == ""
-    assert render_goal_execution_policy(_NoField()) == ""
+    assert render_goal_execution_policy(object()) == ""
 
 
 # ── End-to-end seam: LLMResponse → normalizer → engine extractor ─────────────

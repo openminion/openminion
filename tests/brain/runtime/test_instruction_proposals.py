@@ -11,6 +11,8 @@ from openminion.modules.brain.runtime.improvement.instructions import (
     compute_instruction_proposal_hash,
 )
 
+_TARGET = {"target_file": "project/OPENMINION.md", "target_name": "OPENMINION.md"}
+
 
 def test_instruction_opportunity_is_structural_only() -> None:
     opportunity = InstructionOpportunity(
@@ -27,8 +29,7 @@ def test_instruction_opportunity_is_structural_only() -> None:
 def test_instruction_proposal_hash_round_trips() -> None:
     proposal = build_instruction_proposal(
         candidate_id="cand-1",
-        target_file="/tmp/project/OPENMINION.md",
-        target_name="OPENMINION.md",
+        **_TARGET,
         proposal_kind="append_bullet",
         summary="Add validation note",
         evidence_refs=["trace:1"],
@@ -39,8 +40,7 @@ def test_instruction_proposal_hash_round_trips() -> None:
 
     assert proposal.proposal_hash == compute_instruction_proposal_hash(
         candidate_id="cand-1",
-        target_file="/tmp/project/OPENMINION.md",
-        target_name="OPENMINION.md",
+        **_TARGET,
         proposal_kind="append_bullet",
         suggested_text="Run focused tests before closeout.",
         suggested_patch="",
@@ -53,8 +53,7 @@ def test_instruction_proposal_rejects_runtime_author_source() -> None:
     with pytest.raises(ValidationError):
         build_instruction_proposal(
             candidate_id="cand-1",
-            target_file="/tmp/project/OPENMINION.md",
-            target_name="OPENMINION.md",
+            **_TARGET,
             proposal_kind="append_bullet",
             summary="Bad source",
             evidence_refs=["trace:1"],
@@ -68,8 +67,7 @@ def test_instruction_proposal_requires_authored_text_except_manual_review() -> N
     with pytest.raises(ValidationError, match="authored_instruction_text"):
         build_instruction_proposal(
             candidate_id="cand-1",
-            target_file="/tmp/project/OPENMINION.md",
-            target_name="OPENMINION.md",
+            **_TARGET,
             proposal_kind="append_bullet",
             summary="Missing text",
             evidence_refs=["trace:1"],
@@ -80,8 +78,7 @@ def test_instruction_proposal_requires_authored_text_except_manual_review() -> N
 
     proposal_hash = compute_instruction_proposal_hash(
         candidate_id="cand-2",
-        target_file="/tmp/project/OPENMINION.md",
-        target_name="OPENMINION.md",
+        **_TARGET,
         proposal_kind="manual_review",
         suggested_text="",
         suggested_patch="",
@@ -89,8 +86,7 @@ def test_instruction_proposal_requires_authored_text_except_manual_review() -> N
     )
     proposal = InstructionProposal(
         candidate_id="cand-2",
-        target_file="/tmp/project/OPENMINION.md",
-        target_name="OPENMINION.md",
+        **_TARGET,
         proposal_kind="manual_review",
         summary="Needs human text",
         evidence_refs=["trace:1"],
@@ -107,8 +103,7 @@ def test_instruction_proposal_rejects_hash_mismatch() -> None:
     with pytest.raises(ValidationError, match="proposal_hash_mismatch"):
         InstructionProposal(
             candidate_id="cand-1",
-            target_file="/tmp/project/OPENMINION.md",
-            target_name="OPENMINION.md",
+            **_TARGET,
             proposal_kind="append_bullet",
             summary="Hash mismatch",
             evidence_refs=["trace:1"],
@@ -125,7 +120,7 @@ def test_instruction_approval_record_requires_trusted_actor_and_session() -> Non
             approval_id="approval-1",
             candidate_id="cand-1",
             proposal_hash="hash",
-            target_file="/tmp/project/OPENMINION.md",
+            target_file=_TARGET["target_file"],
             target_content_hash="abc",
             actor_id="",
             session_id="session-1",
