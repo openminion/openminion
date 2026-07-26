@@ -38,12 +38,15 @@ def normalize_progress_kind(payload: dict[str, Any] | None) -> str:
 
 def tool_progress_status_label(payload: dict[str, Any], *, verb: str) -> str:
     name = (
-        str(payload.get("tool_name") or payload.get("name") or payload.get("tool") or "")
-        .strip()
+        str(
+            payload.get("tool_name") or payload.get("name") or payload.get("tool") or ""
+        ).strip()
         or "tool"
     )
     args = payload.get("args") or payload.get("arguments")
-    preview = format_tool_args_preview(name, args if isinstance(args, Mapping) else None)
+    preview = format_tool_args_preview(
+        name, args if isinstance(args, Mapping) else None
+    )
     call = f"{name}({preview})" if preview else name
     label = f"{verb} {call}"
     if len(label) > _TOOL_STATUS_MAX:

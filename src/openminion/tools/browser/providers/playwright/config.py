@@ -12,6 +12,7 @@ from openminion.tools.config import (
     resolve_tool_env,
     resolve_tool_workspace_root,
 )
+from openminion.tools.browser.constants import BROWSER_SNAPSHOT_MODE_A11Y
 
 from .constants import (
     DEFAULT_PLAYWRIGHT_ARTIFACTS_ROOT_DIR,
@@ -54,7 +55,7 @@ class PlaywrightTimeoutConfig:
 
 @dataclass(frozen=True)
 class PlaywrightSnapshotConfig:
-    mode: str = "a11y"
+    mode: str = BROWSER_SNAPSHOT_MODE_A11Y
     max_nodes: int = 800
     max_text_chars: int = 20000
     include_css_path: bool = False
@@ -248,7 +249,7 @@ def provider_config_from_mapping(
     )
 
     snapshot = PlaywrightSnapshotConfig(
-        mode=str(snapshot_cfg.get("mode", "a11y")),
+        mode=str(snapshot_cfg.get("mode", BROWSER_SNAPSHOT_MODE_A11Y)),
         max_nodes=_clamp_int(
             snapshot_cfg.get("max_nodes"), default=800, lower=50, upper=5000
         ),

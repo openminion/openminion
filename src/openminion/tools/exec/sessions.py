@@ -30,6 +30,11 @@ from .command_parser import (
 from .constants import (
     EXEC_APPROVAL_PENDING_STATUSES,
     EXEC_ARTIFACT_THRESHOLD_BYTES,
+    EXEC_SECURITY_MODE_ALLOWLIST,
+    EXEC_SECURITY_MODE_DENY,
+    EXEC_STATUS_DENIED,
+    EXEC_STATUS_OK,
+    EXEC_STATUS_RUNNING,
 )
 from .process import PROCESS_MANAGER, ShellFamily, _select_shell
 from openminion.modules.runtime.sandboxes.daytona import DaytonaClientError
@@ -241,7 +246,7 @@ def _prepare_exec_run(
             message=env_error,
             details={"host": params.host},
             summary=env_error,
-            status="denied",
+            status=EXEC_STATUS_DENIED,
         )
 
     context_metadata = (getattr(ctx.policy, "raw", {}) or {}).get("context_metadata")
@@ -262,11 +267,11 @@ def _prepare_exec_run(
                 "command": _sanitize_command(params.command),
             },
             summary="Watch turns only allow read-only exec.run commands.",
-            status="denied",
+            status=EXEC_STATUS_DENIED,
         )
 
     if params.host != "sandbox":
-        if params.security == "deny":
+        if params.security == EXEC_SECURITY_MODE_DENY:
             return None, _exec_run_error_result(
                 ctx=ctx,
                 request_payload=request_payload,
@@ -276,10 +281,10 @@ def _prepare_exec_run(
                 message="host execution denied by security mode",
                 details={"host": params.host, "security": params.security},
                 summary="host execution denied by security=deny",
-                status="denied",
+                status=EXEC_STATUS_DENIED,
             )
 
-        if params.security == "allowlist":
+        if params.security == EXEC_SECURITY_MODE_ALLOWLIST:
             allowed, message, details = _validate_host_allowlist(params.command, ctx)
             if not allowed:
                 return None, _exec_run_error_result(
@@ -291,7 +296,7 @@ def _prepare_exec_run(
                     message=message,
                     details=details,
                     summary=message,
-                    status="denied",
+                    status=EXEC_STATUS_DENIED,
                 )
 
         if not _host_execution_enabled(ctx):
@@ -308,7 +313,7 @@ def _prepare_exec_run(
                     "(set --allow-unsandboxed-exec or "
                     "OPENMINION_TOOL_EXEC_ENABLE_HOST_EXEC=1 to enable)."
                 ),
-                status="denied",
+                status=EXEC_STATUS_DENIED,
             )
 
         if params.ask in _APPROVAL_PENDING_STATUSES:
@@ -349,7 +354,7 @@ def _prepare_exec_run(
             message=message,
             details=details,
             summary=message,
-            status="denied",
+            status=EXEC_STATUS_DENIED,
         )
 
     env = ctx.policy.filter_env(dict(params.env))
@@ -524,7 +529,7 @@ def _start_exec_run_session(
 
     if prepared_params.background:
         running_result = ExecRunResult(
-            status="running",
+            status=EXEC_STATUS_RUNNING,
             session_id=session.session_id,
             summary="Command started in background.",
             metrics=_metrics(_duration_ms_since(started), b"", b""),
@@ -533,7 +538,7 @@ def _start_exec_run_session(
             ctx,
             operation="run",
             tool_name=tool_name,
-            status="ok",
+            status=EXEC_STATUS_OK,
             extra={"status": running_result.status, "session_id": session.session_id},
         )
         return running_result.model_dump()
@@ -554,7 +559,7 @@ def _start_exec_run_session(
             payload={"request": request_payload, "session_id": session.session_id},
         )
         running_result = ExecRunResult(
-            status="running",
+            status=EXEC_STATUS_RUNNING,
             session_id=session.session_id,
             summary="Command still running; use exec.poll with returned session_id.",
             metrics=_metrics(_duration_ms_since(started), b"", b""),
@@ -563,7 +568,7 @@ def _start_exec_run_session(
             ctx,
             operation="run",
             tool_name=tool_name,
-            status="ok",
+            status=EXEC_STATUS_OK,
             extra={"status": running_result.status, "session_id": session.session_id},
         )
         return running_result.model_dump()

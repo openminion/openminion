@@ -10,6 +10,7 @@ from openminion.modules.brain.loop.strategies.coding import CodingMode
 from openminion.modules.brain.loop.strategies.coding.contracts import (
     CODING_V1_ALLOWED_TOOLS,
 )
+from openminion.modules.tool.contracts.model_ids import MODEL_TASK_DELEGATE
 from openminion.modules.brain.execution.workflow import WorkflowMode
 
 
@@ -46,4 +47,5 @@ def test_public_decision_descriptions_keep_coding_guidance_under_act() -> None:
 
 def test_coding_mode_v1_allowlist_is_frozen_set() -> None:
     assert isinstance(CODING_V1_ALLOWED_TOOLS, frozenset)
-    assert len(CODING_V1_ALLOWED_TOOLS) == 15
+    assert len(CODING_V1_ALLOWED_TOOLS) == 16
+    assert MODEL_TASK_DELEGATE in CODING_V1_ALLOWED_TOOLS

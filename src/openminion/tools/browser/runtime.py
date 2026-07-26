@@ -28,6 +28,7 @@ from .models import (
     TabInfo,
     normalize_op,
 )
+from .constants import BROWSER_OUTPUT_FORMAT_AUTO
 from .payloads import normalize_path
 from .providers import BrowserProvider, BrowserProviderContext
 from .session_state import SessionBrowserState
@@ -96,7 +97,7 @@ def _snapshot_result(self: Any, snapshot: Mapping[str, Any]) -> SnapshotResult:
         nodes = []
     refs = snapshot.get("interactive_refs")
     return SnapshotResult(
-        format=str(snapshot.get("format", "auto")),
+        format=str(snapshot.get("format", BROWSER_OUTPUT_FORMAT_AUTO)),
         nodes=nodes,
         interactive_refs=[str(item) for item in refs] if isinstance(refs, list) else [],
         meta=dict(snapshot.get("meta", {}))

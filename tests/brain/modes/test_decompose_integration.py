@@ -19,6 +19,12 @@ from openminion.modules.brain.execution.loop_contracts import (
 from openminion.modules.brain.execution.orchestrate.handler import (
     OrchestrateMode,
 )
+from openminion.modules.brain.execution.worktree_children import (
+    accept_child_worktree_artifact,
+    allocate_child_worktree,
+    finalize_child_worktree,
+    reject_child_worktree_artifact,
+)
 from openminion.modules.brain.execution.child_tasks import (
     DecomposePayload,
     SubtaskSpec,
@@ -39,6 +45,7 @@ from openminion.modules.brain.schemas import (
 from openminion.modules.brain.schemas.decisions import DecisionAdapter
 from openminion.modules.task import TaskManager
 from tests.brain.runner_test_support import _profile
+from tests.artifact.utils import artifact_ctl
 
 
 def _run_git(repo, *args: str) -> subprocess.CompletedProcess[str]:
@@ -57,7 +64,11 @@ def _git_repo(tmp_path: Path) -> Path:
     _run_git(repo, "config", "user.email", "maer@example.invalid")
     _run_git(repo, "config", "user.name", "MAER Test")
     (repo / "seed.py").write_text("VALUE = 0\n", encoding="utf-8")
+    (repo / "delete_me.txt").write_text("delete me\n", encoding="utf-8")
+    (repo / "rename_me.txt").write_text("rename me\n", encoding="utf-8")
     _run_git(repo, "add", "seed.py")
+    _run_git(repo, "add", "delete_me.txt")
+    _run_git(repo, "add", "rename_me.txt")
     _run_git(repo, "commit", "-m", "seed")
     return repo
 
@@ -863,6 +874,135 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     assert bucket["conflicts"] == [
         {"path": "seed.py", "subtask_ids": ["patch-a", "patch-b"]}
     ]
+
+
+def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) -> None:
+    repo = _git_repo(tmp_path)
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "artifact-child",
+                "goal": "Create durable artifact",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            }
+        ]
+    )
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    child_state = _state()
+    with artifact_ctl(tmp_path / ".openminion") as ctl:
+        runner.artifactctl = ctl
+        lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
+        assert lease is not None
+        (lease.worktree / "seed.py").write_text("VALUE = 9\n", encoding="utf-8")
+        (lease.worktree / "new.txt").write_text("new file\n", encoding="utf-8")
+        (lease.worktree / "image.bin").write_bytes(b"\x00\x01openminion")
+        (lease.worktree / "delete_me.txt").unlink()
+        (lease.worktree / "rename_me.txt").rename(lease.worktree / "renamed.txt")
+
+        finalize_child_worktree(ctx, lease=lease, status="done")
+
+        record = ctx.state.module_state["worktree_children"]["children"][0]
+        artifact = record["artifact"]
+        assert artifact["status"] == "stored"
+        assert artifact["bundle_ref"].startswith("artifact://sha256/")
+        assert artifact["manifest_ref"].startswith("artifact://sha256/")
+        assert set(record["touched_paths"]) == {
+            "delete_me.txt",
+            "image.bin",
+            "new.txt",
+            "renamed.txt",
+            "rename_me.txt",
+            "seed.py",
+        }
+        assert not Path(record["workspace"]).exists()
+        assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+        accepted = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+
+        assert accepted == {
+            "ok": True,
+            "status": "accepted",
+            "touched_paths": record["touched_paths"],
+        }
+        assert record["integration_status"] == "accepted"
+        assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 9\n"
+        assert (repo / "new.txt").read_text(encoding="utf-8") == "new file\n"
+        assert (repo / "image.bin").read_bytes() == b"\x00\x01openminion"
+        assert not (repo / "delete_me.txt").exists()
+        assert not (repo / "rename_me.txt").exists()
+        assert (repo / "renamed.txt").read_text(encoding="utf-8") == "rename me\n"
+
+
+def test_child_worktree_artifact_reject_leaves_parent_unchanged(tmp_path) -> None:
+    repo = _git_repo(tmp_path)
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "reject-child",
+                "goal": "Reject artifact",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            }
+        ]
+    )
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    child_state = _state()
+    with artifact_ctl(tmp_path / ".openminion") as ctl:
+        runner.artifactctl = ctl
+        lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
+        assert lease is not None
+        (lease.worktree / "seed.py").write_text("VALUE = 5\n", encoding="utf-8")
+
+        finalize_child_worktree(ctx, lease=lease, status="done")
+        record = ctx.state.module_state["worktree_children"]["children"][0]
+        rejected = reject_child_worktree_artifact(record=record, artifactctl=ctl)
+
+    assert rejected == {"ok": True, "status": "rejected"}
+    assert record["integration_status"] == "rejected"
+    assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+
+def test_child_worktree_accept_blocks_stale_base_and_dirty_paths(tmp_path) -> None:
+    repo = _git_repo(tmp_path)
+    ctx, runner, _services = _ctx(
+        subtasks=[
+            {
+                "subtask_id": "blocked-child",
+                "goal": "Blocked artifact",
+                "suggested_mode": "act",
+                "inputs": {"code_bearing": True, "workspace_root": str(repo)},
+            }
+        ]
+    )
+    subtask = SubtaskSpec.model_validate(ctx.decision.subtasks[0])
+    child_state = _state()
+    with artifact_ctl(tmp_path / ".openminion") as ctl:
+        runner.artifactctl = ctl
+        lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
+        assert lease is not None
+        (lease.worktree / "seed.py").write_text("VALUE = 7\n", encoding="utf-8")
+        finalize_child_worktree(ctx, lease=lease, status="done")
+        record = ctx.state.module_state["worktree_children"]["children"][0]
+
+        (repo / "seed.py").write_text("dirty\n", encoding="utf-8")
+        dirty = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+        assert dirty["status"] == "dirty_affected_paths"
+        _run_git(repo, "checkout", "--", "seed.py")
+        (repo / "other.txt").write_text("parent commit\n", encoding="utf-8")
+        _run_git(repo, "add", "other.txt")
+        _run_git(repo, "commit", "-m", "parent moved")
+
+        stale = accept_child_worktree_artifact(
+            repo_root=repo, record=record, artifactctl=ctl
+        )
+
+    assert stale["status"] == "stale_base"
+    assert (repo / "seed.py").read_text(encoding="utf-8") == "VALUE = 0\n"
 
 
 def test_orchestrate_read_only_child_does_not_allocate_worktree(monkeypatch) -> None:

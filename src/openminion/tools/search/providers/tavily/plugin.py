@@ -8,7 +8,8 @@ from openminion.tools.env import (
     get_tavily_timeout_seconds,
 )
 
-from .constants import DEFAULT_TAVILY_API_URL
+from .constants import DEFAULT_TAVILY_API_URL, TAVILY_SEARCH_DEPTH_VALUES
+from openminion.tools.search.constants import SEARCH_TAVILY_PROVIDER_ID
 from .interfaces import TAVILY_PLUGIN_INTERFACE_VERSION
 from .search import (
     TavilySearchTool,
@@ -18,7 +19,7 @@ from .search import (
 
 
 class TavilySearchProvider:
-    provider_id = "tavily"
+    provider_id = SEARCH_TAVILY_PROVIDER_ID
     display_name = "Tavily"
 
     def search(
@@ -42,7 +43,7 @@ class TavilySearchProvider:
             "max_results": max_results,
         }
         search_depth = str(args.get("search_depth", "")).strip().lower()
-        if search_depth in {"basic", "advanced"}:
+        if search_depth in TAVILY_SEARCH_DEPTH_VALUES:
             payload_args["search_depth"] = search_depth
         include_answer = args.get("include_answer")
         if isinstance(include_answer, bool):
@@ -88,7 +89,7 @@ class TavilySearchProvider:
             )
 
         normalized: dict[str, Any] = {
-            "provider": "tavily",
+            "provider": SEARCH_TAVILY_PROVIDER_ID,
             "query": {
                 "original": str(data.get("query", query) or query),
                 "more_results_available": False,

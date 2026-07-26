@@ -2,6 +2,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .constants import SEARCH_PROVIDER_AUTO
+
 
 class SearchArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -9,7 +11,7 @@ class SearchArgs(BaseModel):
     query: Optional[str] = Field(default=None, description="Search query text")
     q: Optional[str] = Field(default=None, description="Alias for query")
     provider: str = Field(
-        default="auto",
+        default=SEARCH_PROVIDER_AUTO,
         description="Provider selection: auto, tavily, brave, serpapi, firecrawl, serper, tinyfish",
     )
     max_results: int = Field(default=5, ge=1, le=20)
@@ -56,7 +58,10 @@ class SearchArgs(BaseModel):
             self.max_results = int(self.count)
         if not self.query:
             raise ValueError("query is required")
-        self.provider = str(self.provider or "auto").strip().lower() or "auto"
+        self.provider = (
+            str(self.provider or SEARCH_PROVIDER_AUTO).strip().lower()
+            or SEARCH_PROVIDER_AUTO
+        )
         return self
 
 

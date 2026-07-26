@@ -2,6 +2,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .constants import FETCH_BACKEND_AUTO
+
 
 class FetchExtractArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -21,7 +23,7 @@ class FetchGetArgs(BaseModel):
     max_bytes: int = Field(default=2_000_000, ge=1_024, le=10_000_000)
     max_redirects: int = Field(default=5, ge=0, le=10)
     follow_redirects: bool = True
-    prefer_backend: str = Field(default="auto", max_length=64)
+    prefer_backend: str = Field(default=FETCH_BACKEND_AUTO, max_length=64)
     backend: str | None = Field(default=None, max_length=64)
     render: Literal["none"] = "none"
     extract: FetchExtractArgs = Field(default_factory=FetchExtractArgs)
@@ -40,7 +42,7 @@ class FetchHeadArgs(BaseModel):
     max_bytes: int = Field(default=2_000_000, ge=1_024, le=10_000_000)
     max_redirects: int = Field(default=5, ge=0, le=10)
     follow_redirects: bool = True
-    prefer_backend: str = Field(default="auto", max_length=64)
+    prefer_backend: str = Field(default=FETCH_BACKEND_AUTO, max_length=64)
     backend: str | None = Field(default=None, max_length=64)
     provider_options: dict[str, Any] = Field(default_factory=dict)
 

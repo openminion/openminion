@@ -22,6 +22,7 @@ class _DelegateSeam:
         instruction,
         timeout_seconds,
         mode="sync",
+        permission_mode="ask",
     ) -> A2ADelegateResult:
         self.calls.append(
             (
@@ -31,6 +32,7 @@ class _DelegateSeam:
                     "instruction": instruction,
                     "timeout_seconds": timeout_seconds,
                     "mode": mode,
+                    "permission_mode": permission_mode,
                 },
             )
         )
@@ -198,6 +200,7 @@ def test_agent_delegate_sync_json_uses_delegate_seam(capsys) -> None:
                 "instruction": "summarize docs",
                 "timeout_seconds": 42,
                 "mode": "sync",
+                "permission_mode": "ask",
             },
         )
     ]

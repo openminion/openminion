@@ -609,6 +609,7 @@ def _delegated_inbound_metadata(
         "a2a_trace_id": str(getattr(envelope, "trace_id", "") or "").strip(),
         "a2a_delegate_target": str(target_agent_id or "").strip(),
         "a2a_delegated_child": "true",
+        "permission_mode": str(params.get("permission_mode", "") or "").strip(),
     }
     parent_context = _delegation_context_from_payload(params)
     if parent_context is not None:

@@ -108,10 +108,25 @@ def handle_jsonrpc(ctx: APIRouteContext, body: dict[str, Any]) -> RouteResult:
             method=str(body.get("method", "")),
             params=params,
         )
+        _record_boundary_event(
+            ctx,
+            method=str(body.get("method", "")),
+            status="accepted",
+            body=body,
+            result=result,
+        )
         return RouteResult(
             HTTPStatus.OK, JsonRpcResponse(id=request_id, result=result).to_jsonable()
         )
     except ValueError as exc:
+        _record_boundary_event(
+            ctx,
+            method=str(body.get("method", "invalid") or "invalid"),
+            status="invalid",
+            body=body,
+            error_code="invalid_request",
+            error_message=str(exc),
+        )
         return _jsonrpc_error_result(
             body.get("id"),
             HTTPStatus.BAD_REQUEST,
@@ -126,6 +141,17 @@ def handle_jsonrpc(ctx: APIRouteContext, body: dict[str, Any]) -> RouteResult:
             exc.message,
             data=exc.to_dict(),
         )
+
+
+def record_auth_denial(ctx: APIRouteContext, *, path: str, reason: str) -> None:
+    _record_boundary_event(
+        ctx,
+        method=path,
+        status="auth_denied",
+        body={},
+        error_code=reason,
+        error_message="External A2A authentication failed.",
+    )
 
 
 def dispatch_jsonrpc_method(
@@ -320,6 +346,51 @@ def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
 
+def _record_boundary_event(
+    ctx: APIRouteContext,
+    *,
+    method: str,
+    status: str,
+    body: dict[str, Any],
+    result: dict[str, Any] | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    runtime_owner = ctx.runtime
+    if runtime_owner is None:
+        return
+    try:
+        params = body.get("params", {})
+        metadata = params.get("metadata", {}) if isinstance(params, dict) else {}
+        trace_id = (
+            _text(params.get("traceId"), default="") if isinstance(params, dict) else ""
+        )
+        if not trace_id and isinstance(metadata, dict):
+            trace_id = _text(metadata.get("trace_id"), default="")
+        task = result.get("task") if isinstance(result, dict) else None
+        task_id = None
+        if isinstance(task, dict):
+            task_id = _text(task.get("id"), default="") or None
+            task_metadata = task.get("metadata", {})
+            if isinstance(task_metadata, dict):
+                trace_id = _text(task_metadata.get("traceId"), default=trace_id)
+        resolve_external_a2a_runtime(runtime_owner).record_boundary_event(
+            method=method,
+            status=status,
+            trace_id=trace_id or ctx.request_id or new_uuid(),
+            request_id=ctx.request_id,
+            task_id=task_id,
+            error_code=error_code,
+            error_message=error_message,
+            data={
+                "jsonrpc_id_present": body.get("id") is not None,
+                "body_size_bytes": len(_json_bytes(body)),
+            },
+        )
+    except (A2AError, AttributeError, RuntimeError, TypeError, ValueError):
+        return
+
+
 __all__ = [
     "A2A_NETWORK_TOKEN_ENV",
     "AGENT_CARD_WELL_KNOWN_PATH",
@@ -328,4 +399,5 @@ __all__ = [
     "build_agent_card_payload",
     "dispatch_jsonrpc_method",
     "handle_jsonrpc",
+    "record_auth_denial",
 ]

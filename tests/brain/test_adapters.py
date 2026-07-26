@@ -639,6 +639,70 @@ class ToolAdapterTests(unittest.TestCase):
 
             self.assertEqual(adapter._effective_workspace_root(), focused)
 
+    def test_tool_adapter_passes_a2a_delegate_seam_to_runtime_context(self) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.modules.tool.runtime.delegation import A2ADelegateResult
+
+        calls = []
+
+        class _DelegateSeam:
+            def delegate(
+                self, *, agent_id, instruction, timeout_seconds, permission_mode="ask"
+            ):
+                calls.append(
+                    {
+                        "agent_id": agent_id,
+                        "instruction": instruction,
+                        "timeout_seconds": timeout_seconds,
+                        "permission_mode": permission_mode,
+                    }
+                )
+                return A2ADelegateResult(
+                    ok=True,
+                    status="success",
+                    content="child done",
+                    target_agent_id=agent_id,
+                    trace_id="trace-child",
+                    task_id="task-child",
+                    outputs={"artifact": {"status": "read_only"}},
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                a2a_delegate_api=_DelegateSeam(),
+            )
+            result = adapter.execute(
+                command={
+                    "tool_name": "task.delegate",
+                    "args": {
+                        "agent_id": "child-agent",
+                        "instruction": "inspect",
+                        "timeout_seconds": 45,
+                    },
+                    "inputs": {"permission_mode": "bypass"},
+                },
+                session_id="s1",
+                trace_id="t1",
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["outputs"]["agent_id"], "child-agent")
+        self.assertEqual(
+            result["outputs"]["outputs"]["artifact"], {"status": "read_only"}
+        )
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "agent_id": "child-agent",
+                    "instruction": "inspect",
+                    "timeout_seconds": 45,
+                    "permission_mode": "bypass",
+                }
+            ],
+        )
+
     def test_tool_workspace_binding_updates_adapter_and_policy(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.services.brain.post_execution.mixin import (

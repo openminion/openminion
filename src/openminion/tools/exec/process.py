@@ -8,10 +8,15 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config.env.subprocess import build_subprocess_env
+from openminion.tools.exec.constants import (
+    EXEC_PROCESS_STATUS_EXITED,
+    EXEC_PROCESS_STATUS_KILLED,
+    EXEC_PROCESS_STATUS_RUNNING,
+)
 
 if os.name != "nt":
     import fcntl
@@ -42,7 +47,7 @@ def _set_nonblocking(fd: int) -> None:
 def _open_session_pty() -> tuple[int, int]:
     openpty = getattr(os, "openpty", None)
     if callable(openpty):
-        return openpty()
+        return cast(tuple[int, int], openpty())
     return pty.openpty()
 
 
@@ -430,10 +435,10 @@ class ProcessManager:
 
     def _status_locked(self, entry: SessionRecord) -> str:
         if entry.exit_code is None:
-            return "running"
+            return str(EXEC_PROCESS_STATUS_RUNNING)
         if entry.killed or entry.timed_out or entry.exit_code < 0:
-            return "killed"
-        return "exited"
+            return str(EXEC_PROCESS_STATUS_KILLED)
+        return str(EXEC_PROCESS_STATUS_EXITED)
 
     def _reset_for_tests(self) -> None:
         with self._lock:

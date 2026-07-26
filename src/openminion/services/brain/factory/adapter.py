@@ -34,6 +34,7 @@ def create_tool_api(
     runtime_registry: Any | None = None,
     agent_name: str | None = None,
     skill_api: Any | None = None,
+    a2a_delegate_api: Any | None = None,
     agent_profile: Any | None = None,
 ) -> Any:
     return create_tool_adapter(
@@ -46,6 +47,7 @@ def create_tool_api(
         reactions_enabled=getattr(runtime_config, "reactions_enabled", True),
         agent_id=str(agent_name or "").strip() or None,
         skill_api=skill_api,
+        a2a_delegate_api=a2a_delegate_api,
         agent_profile=agent_profile,
     )
 

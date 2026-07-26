@@ -12,7 +12,7 @@ from openminion.modules.tool.runtime.routing import (
     resolve_runtime_tool_family_config,
 )
 
-from .constants import DEFAULT_WEATHER_PROVIDER_ID
+from .constants import DEFAULT_WEATHER_PROVIDER_ID, WEATHER_PROVIDER_AUTO
 from .providers import provider_registry, register_provider
 
 _CANONICAL_TOOL = MODEL_WEATHER
@@ -65,7 +65,7 @@ class WeatherArgs(BaseModel):
         },
     )
 
-    provider: str = Field(default="auto")
+    provider: str = Field(default=WEATHER_PROVIDER_AUTO)
 
     location: str | None = Field(
         default=None,
@@ -107,7 +107,7 @@ class WeatherArgs(BaseModel):
     @classmethod
     def _normalize_provider(cls, value: Any) -> str:
         token = str(value or "").strip().lower()
-        return token or "auto"
+        return token or WEATHER_PROVIDER_AUTO
 
     @field_validator("location", "city", "query", "place", "language", mode="before")
     @classmethod
@@ -154,7 +154,11 @@ def _normalize_query_payload(
     validated: WeatherArgs,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     payload = validated.model_dump(exclude_none=True)
-    requested_provider = str(payload.pop("provider", "auto") or "auto").strip().lower()
+    requested_provider = (
+        str(payload.pop("provider", WEATHER_PROVIDER_AUTO) or WEATHER_PROVIDER_AUTO)
+        .strip()
+        .lower()
+    )
 
     extension_args = dict(validated.model_extra or {})
 
@@ -205,7 +209,7 @@ def _provider_chain(requested_provider: str, ctx: RuntimeContext) -> list[str]:
             "No weather providers are registered",
         )
 
-    if requested_provider not in {"", "auto"}:
+    if requested_provider not in {"", WEATHER_PROVIDER_AUTO}:
         if requested_provider not in available:
             raise ToolRuntimeError(
                 "INVALID_ARGUMENT",

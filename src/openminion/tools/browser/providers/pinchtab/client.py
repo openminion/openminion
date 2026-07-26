@@ -7,6 +7,11 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from openminion.tools.browser.constants import (
+    BROWSER_DAEMON_STATUS_STOPPED,
+    BROWSER_TEXT_MODE_READABILITY,
+)
+
 from .constants import (
     DEFAULT_PINCHTAB_API_TIMEOUT_SECONDS,
     DEFAULT_PINCHTAB_BASE_URL,
@@ -233,8 +238,8 @@ class PinchTabClient:
                 ),
             ]
         )
-        if "stopped" not in payload:
-            payload["stopped"] = True
+        if BROWSER_DAEMON_STATUS_STOPPED not in payload:
+            payload[BROWSER_DAEMON_STATUS_STOPPED] = True
         return payload
 
     def instance_kill(self, instance_id: str) -> dict[str, Any]:
@@ -344,7 +349,9 @@ class PinchTabClient:
             ]
         )
 
-    def text(self, tab_id: str, mode: str = "readability") -> dict[str, Any]:
+    def text(
+        self, tab_id: str, mode: str = BROWSER_TEXT_MODE_READABILITY
+    ) -> dict[str, Any]:
         return self._try_get_json(
             [
                 (f"/tabs/{tab_id}/text", {"mode": mode}),

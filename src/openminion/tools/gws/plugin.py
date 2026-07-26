@@ -36,6 +36,11 @@ from .runtime import summarize_data as _summarize_data
 from .constants import (
     GWS_DEFAULT_EXECUTABLE,
     GWS_READ_METHOD_HINTS,
+    GWS_REDACTION_BASIC,
+    GWS_REDACTION_MODES,
+    GWS_RISK_ADMIN,
+    GWS_RISK_READ,
+    GWS_RISK_WRITE,
     GWS_SECRET_ENV_PREFIX,
     GWS_WRITE_METHODS,
 )
@@ -256,12 +261,12 @@ def _classify_risk(args: GwsCallArgs) -> RiskLevel:
     method = str(args.method or "").strip().lower()
 
     if service == "admin" or service.startswith("admin") or service == "directory":
-        return "admin"
+        return GWS_RISK_ADMIN
     if method in GWS_WRITE_METHODS:
-        return "write"
+        return GWS_RISK_WRITE
     if args.json_payload is not None and method not in GWS_READ_METHOD_HINTS:
-        return "write"
-    return "read"
+        return GWS_RISK_WRITE
+    return GWS_RISK_READ
 
 
 def _ensure_call_allowed(
@@ -275,22 +280,30 @@ def _ensure_call_allowed(
             {"service": service},
         )
 
-    if risk == "write" and config.safety.require_prompt_for_write and not ctx.confirm:
+    if (
+        risk == GWS_RISK_WRITE
+        and config.safety.require_prompt_for_write
+        and not ctx.confirm
+    ):
         raise ToolRuntimeError(
             "POLICY_DENIED",
             "gws write operations require explicit confirmation",
             {
-                "risk": "write",
+                "risk": GWS_RISK_WRITE,
                 "suggestion": "Retry with meta.confirm=true or --confirm",
             },
         )
 
-    if risk == "admin" and config.safety.require_prompt_for_admin and not ctx.confirm:
+    if (
+        risk == GWS_RISK_ADMIN
+        and config.safety.require_prompt_for_admin
+        and not ctx.confirm
+    ):
         raise ToolRuntimeError(
             "POLICY_DENIED",
             "gws admin operations require explicit confirmation",
             {
-                "risk": "admin",
+                "risk": GWS_RISK_ADMIN,
                 "suggestion": "Retry with meta.confirm=true or --confirm",
             },
         )
@@ -531,9 +544,9 @@ def _execute_common(
 
 def _resolve_redaction_mode(config: GwsToolConfig, override: Optional[str]) -> str:
     token = str(override or "").strip().lower()
-    if token in {"none", "basic", "strict"}:
+    if token in GWS_REDACTION_MODES:
         return token
-    return str(config.safety.redaction_mode or "basic")
+    return str(config.safety.redaction_mode or GWS_REDACTION_BASIC)
 
 
 def _sanitize_call_request(args: GwsCallArgs, *, risk: RiskLevel) -> Dict[str, Any]:
@@ -635,7 +648,9 @@ def _run_auth_command(
         )
     if require_confirm:
         _require_confirm(
-            ctx, message=f"{tool_name} requires explicit confirmation", risk="admin"
+            ctx,
+            message=f"{tool_name} requires explicit confirmation",
+            risk=GWS_RISK_ADMIN,
         )
 
     gws_exec = _resolve_gws_executable(config)
@@ -762,7 +777,9 @@ def _auth_export_failure_result(
 def _h_auth_export(args: Dict[str, Any], ctx: RuntimeContext) -> Dict[str, Any]:
     validated = GwsAuthExportArgs.model_validate(args)
     _require_confirm(
-        ctx, message="gws.auth.export requires explicit confirmation", risk="admin"
+        ctx,
+        message="gws.auth.export requires explicit confirmation",
+        risk=GWS_RISK_ADMIN,
     )
 
     config = _resolve_config(ctx)

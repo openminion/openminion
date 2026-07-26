@@ -4,15 +4,20 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .constants import (
+    REACTION_CHANNEL_SIGNAL,
+    REACTION_CHANNEL_WHATSAPP,
+)
+
 CHANNEL_ALIASES: dict[str, str] = {
     "discord": "discord",
     "slack": "slack",
     "telegram": "telegram",
-    "whatsapp": "whatsapp",
+    "whatsapp": REACTION_CHANNEL_WHATSAPP,
     "google_chat": "google_chat",
     "googlechat": "google_chat",
     "gchat": "google_chat",
-    "signal": "signal",
+    REACTION_CHANNEL_SIGNAL: REACTION_CHANNEL_SIGNAL,
     "zalo_personal": "zalo_personal",
     "zalouser": "zalo_personal",
     "zalo": "zalo_personal",

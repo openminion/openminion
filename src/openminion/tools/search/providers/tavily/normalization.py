@@ -1,5 +1,7 @@
 from typing import Any
 
+from .constants import TAVILY_SEARCH_DEPTH_BASIC, TAVILY_SEARCH_DEPTH_VALUES
+
 
 def _coerce_int(
     raw_value: Any,
@@ -31,9 +33,9 @@ def _coerce_bool(raw_value: Any, *, default_value: bool) -> bool:
 
 def _normalize_search_depth(raw_value: Any) -> str:
     normalized = str(raw_value or "").strip().lower()
-    if normalized in {"basic", "advanced"}:
+    if normalized in TAVILY_SEARCH_DEPTH_VALUES:
         return normalized
-    return "basic"
+    return TAVILY_SEARCH_DEPTH_BASIC
 
 
 def _normalize_results(raw_results: Any) -> list[dict[str, Any]]:

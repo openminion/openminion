@@ -30,6 +30,13 @@ from .constants import (
     EXEC_APPROVAL_PENDING_STATUSES,
     EXEC_ARTIFACT_THRESHOLD_BYTES,
     EXEC_MAX_PREVIEW_CHARS,
+    EXEC_PROCESS_STATUS_EXITED,
+    EXEC_PROCESS_STATUS_KILLED,
+    EXEC_PROCESS_STATUS_RUNNING,
+    EXEC_STATUS_APPROVAL_PENDING,
+    EXEC_STATUS_ERROR,
+    EXEC_STATUS_OK,
+    EXEC_STATUS_TIMEOUT,
 )
 from .command_parser import CommandParseError, parse_command
 from .process import resolve_shell_family
@@ -37,6 +44,7 @@ from .schemas import (
     ExecErrorModel,
     ExecMetricsModel,
     ExecRunResult,
+    ExecStatus,
 )
 
 from .events import (
@@ -166,10 +174,10 @@ def _decode_preview(payload: bytes, *, tail_lines: Optional[int] = None) -> str:
 
 def _status_for_entry(entry: Any) -> str:
     if entry.exit_code is None:
-        return "running"
+        return EXEC_PROCESS_STATUS_RUNNING
     if bool(entry.killed) or bool(entry.timed_out) or int(entry.exit_code) < 0:
-        return "killed"
-    return "exited"
+        return EXEC_PROCESS_STATUS_KILLED
+    return EXEC_PROCESS_STATUS_EXITED
 
 
 def _build_error(
@@ -280,7 +288,7 @@ def _exec_run_result_from_sandbox(
     elif stderr_bytes:
         stderr_preview = _decode_preview(stderr_bytes)
 
-    status = "ok"
+    status: ExecStatus = EXEC_STATUS_OK
     summary = _command_summary(
         exit_code=exec_result.returncode,
         stdout_preview=stdout_preview,
@@ -288,7 +296,7 @@ def _exec_run_result_from_sandbox(
     )
     error_payload = None
     if exec_result.timed_out:
-        status = "timeout"
+        status = EXEC_STATUS_TIMEOUT
         summary = f"Command timed out after {timeout_s}s."
         error_payload = _build_error(
             code="SANDBOX_RESOURCE_LIMIT",
@@ -306,9 +314,9 @@ def _exec_run_result_from_sandbox(
         if details.get("discovery_status") == "not_found":
             tool = str(details.get("discovery_tool", "tool") or "tool")
             summary = f"Toolchain discovery did not find {tool}."
-            status = "ok"
+            status = EXEC_STATUS_OK
         else:
-            status = "error"
+            status = EXEC_STATUS_ERROR
             error_payload = _build_error(
                 code="EXEC_ERROR",
                 message=message,
@@ -316,7 +324,7 @@ def _exec_run_result_from_sandbox(
             )
 
     result = ExecRunResult(
-        status=status,  # type: ignore[arg-type]
+        status=status,
         exit_code=exec_result.returncode,
         summary=summary,
         stdout_artifact=stdout_artifact,
@@ -331,7 +339,7 @@ def _exec_run_result_from_sandbox(
         error=ExecErrorModel.model_validate(error_payload) if error_payload else None,
     )
 
-    if status == "ok":
+    if status == EXEC_STATUS_OK:
         emit_family_event(
             ctx,
             event="tool.completed",
@@ -345,7 +353,7 @@ def _exec_run_result_from_sandbox(
             ctx,
             operation="run",
             tool_name=tool_name,
-            status="ok",
+            status=EXEC_STATUS_OK,
             extra={"exit_code": exec_result.returncode, "sandbox_runner": True},
         )
     else:
@@ -366,16 +374,16 @@ def _exec_run_result_from_sandbox(
             ctx,
             operation="run",
             tool_name=tool_name,
-            status="error",
+            status=EXEC_STATUS_ERROR,
             error_code=error_code,
             extra={"exit_code": exec_result.returncode, "sandbox_runner": True},
         )
-        if status == "timeout":
+        if status == EXEC_STATUS_TIMEOUT:
             _emit_exec_operation(
                 ctx,
                 operation="timeout",
                 tool_name=tool_name,
-                status="error",
+                status=EXEC_STATUS_ERROR,
                 error_code="TIMEOUT",
                 extra={"timeout_s": timeout_s, "sandbox_runner": True},
             )
@@ -393,22 +401,23 @@ def _sandbox_error_result(
     message: str,
     details: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    error = ExecErrorModel(
+        code=code,
+        message=message,
+        details=details or {},
+    )
     result = ExecRunResult(
-        status="error",
+        status=EXEC_STATUS_ERROR,
         summary=message,
         metrics=ExecMetricsModel(duration_ms=int((time.monotonic() - started) * 1000)),
-        error=ExecErrorModel(
-            code=code,
-            message=message,
-            details=details or {},
-        ),
+        error=error,
     )
     emit_family_event(
         ctx,
         event="tool.failed",
         payload={
             "request": dict(request_payload),
-            "error": result.error.model_dump(),
+            "error": error.model_dump(),
             "sandbox_runner": True,
         },
     )
@@ -416,7 +425,7 @@ def _sandbox_error_result(
         ctx,
         operation="run",
         tool_name=tool_name,
-        status="error",
+        status=EXEC_STATUS_ERROR,
         error_code=code,
         extra={"sandbox_runner": True},
     )
@@ -437,26 +446,27 @@ def _exec_run_error_result(
     message: str,
     details: dict[str, Any] | None = None,
     summary: str | None = None,
-    status: str = "error",
+    status: ExecStatus = EXEC_STATUS_ERROR,
     stdout_bytes: bytes = b"",
     stderr_bytes: bytes = b"",
 ) -> dict[str, Any]:
+    error = ExecErrorModel(code=code, message=message, details=details or {})
     result = ExecRunResult(
-        status=status,  # type: ignore[arg-type]
+        status=status,
         summary=summary or message,
         metrics=_metrics(_duration_ms_since(started), stdout_bytes, stderr_bytes),
-        error=ExecErrorModel(code=code, message=message, details=details or {}),
+        error=error,
     )
     emit_family_event(
         ctx,
         event="tool.failed",
-        payload={"request": request_payload, "error": result.error.model_dump()},
+        payload={"request": request_payload, "error": error.model_dump()},
     )
     _emit_exec_operation(
         ctx,
         operation="run",
         tool_name=tool_name,
-        status="error",
+        status=EXEC_STATUS_ERROR,
         error_code=code,
     )
     return result.model_dump()
@@ -474,7 +484,7 @@ def _exec_run_approval_pending_result(
         reason="host_execution_requires_approval",
     )
     result = ExecRunResult(
-        status="approval-pending",
+        status=EXEC_STATUS_APPROVAL_PENDING,
         risk_tier=approval.risk_tier,
         approval_id=approval_id,
         approval_response=approval.response,
@@ -485,7 +495,7 @@ def _exec_run_approval_pending_result(
         ctx,
         operation="run",
         tool_name=tool_name,
-        status="ok",
+        status=EXEC_STATUS_OK,
         extra={"status": result.status, "approval_id": approval_id},
     )
     return result.model_dump()
@@ -523,7 +533,7 @@ def _build_completed_exec_run_result(
     elif stderr_bytes:
         stderr_preview = _decode_preview(stderr_bytes)
 
-    status = "ok"
+    status: ExecStatus = EXEC_STATUS_OK
     summary = _command_summary(
         exit_code=snapshot.exit_code,
         stdout_preview=stdout_preview,
@@ -531,7 +541,7 @@ def _build_completed_exec_run_result(
     )
     error_payload = None
     if bool(snapshot.timed_out):
-        status = "timeout"
+        status = EXEC_STATUS_TIMEOUT
         summary = f"Command timed out after {snapshot.timeout_s}s."
         error_payload = _build_error(
             code="TIMEOUT",
@@ -549,9 +559,9 @@ def _build_completed_exec_run_result(
         if details.get("discovery_status") == "not_found":
             tool = str(details.get("discovery_tool", "tool") or "tool")
             summary = f"Toolchain discovery did not find {tool}."
-            status = "ok"
+            status = EXEC_STATUS_OK
         else:
-            status = "error"
+            status = EXEC_STATUS_ERROR
             error_payload = _build_error(
                 code="EXEC_ERROR",
                 message=message,
@@ -559,7 +569,7 @@ def _build_completed_exec_run_result(
             )
 
     result = ExecRunResult(
-        status=status,  # type: ignore[arg-type]
+        status=status,
         exit_code=snapshot.exit_code,
         summary=summary,
         stdout_artifact=stdout_artifact,
@@ -571,7 +581,7 @@ def _build_completed_exec_run_result(
         metrics=_metrics(_duration_ms_since(started), stdout_bytes, stderr_bytes),
         error=ExecErrorModel.model_validate(error_payload) if error_payload else None,
     )
-    if status == "ok":
+    if status == EXEC_STATUS_OK:
         emit_family_event(
             ctx,
             event="tool.completed",
@@ -585,7 +595,7 @@ def _build_completed_exec_run_result(
             ctx,
             operation="run",
             tool_name=tool_name,
-            status="ok",
+            status=EXEC_STATUS_OK,
             extra={"session_id": session_id, "exit_code": snapshot.exit_code},
         )
         return result.model_dump()
@@ -607,16 +617,16 @@ def _build_completed_exec_run_result(
         ctx,
         operation="run",
         tool_name=tool_name,
-        status="error",
+        status=EXEC_STATUS_ERROR,
         error_code=error_code,
         extra={"session_id": session_id, "exit_code": snapshot.exit_code},
     )
-    if status == "timeout":
+    if status == EXEC_STATUS_TIMEOUT:
         _emit_exec_operation(
             ctx,
             operation="timeout",
             tool_name=tool_name,
-            status="error",
+            status=EXEC_STATUS_ERROR,
             error_code="TIMEOUT",
             extra={"session_id": session_id, "timeout_s": snapshot.timeout_s},
         )

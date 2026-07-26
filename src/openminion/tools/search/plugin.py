@@ -110,11 +110,11 @@ def _policy_provider_order(ctx: RuntimeContext) -> list[str]:
 
     ordered: list[str] = []
     primary = _provider_pref_from_token(web_policy.get("primary"))
-    if primary and primary != "auto":
+    if primary and primary != SEARCH_PROVIDER_AUTO:
         ordered.append(primary)
     for token in web_policy.get("fallback_tools", ()):
         candidate = _provider_pref_from_token(token)
-        if candidate and candidate != "auto" and candidate not in ordered:
+        if candidate and candidate != SEARCH_PROVIDER_AUTO and candidate not in ordered:
             ordered.append(candidate)
     return ordered
 
@@ -126,7 +126,7 @@ def _resolve_provider_chain(
     chain: list[str] = []
 
     requested = _provider_pref_from_token(validated.provider)
-    if validated.provider not in {"", "auto"} and not requested:
+    if validated.provider not in {"", SEARCH_PROVIDER_AUTO} and not requested:
         raise SearchProviderError(
             f"unsupported search provider '{validated.provider}'",
             code="INVALID_REQUEST",
@@ -135,7 +135,7 @@ def _resolve_provider_chain(
 
     def _add(candidate: str) -> None:
         token = _normalize_provider_id(candidate)
-        if token and token != "auto" and token not in chain:
+        if token and token != SEARCH_PROVIDER_AUTO and token not in chain:
             chain.append(token)
 
     family_cfg = resolve_runtime_tool_family_config(ctx, family_name="search")
@@ -146,7 +146,7 @@ def _resolve_provider_chain(
     if env_provider and env_provider != SEARCH_PROVIDER_AUTO:
         hinted_order.append(env_provider)
 
-    if requested and requested != "auto":
+    if requested and requested != SEARCH_PROVIDER_AUTO:
         _add(requested)
         if getattr(family_cfg, "allow_fallback", None) is False:
             return chain, warnings
@@ -170,7 +170,9 @@ def _resolve_provider_chain(
         return [], warnings
 
     healthy: list[str] = []
-    explicit_request = requested if requested and requested != "auto" else ""
+    explicit_request = (
+        requested if requested and requested != SEARCH_PROVIDER_AUTO else ""
+    )
     for provider_id in existing:
         provider = _registered_provider(provider_id)
         if provider is None:
@@ -467,7 +469,7 @@ def _handle_web_search_tavily(
     args: dict[str, Any], ctx: RuntimeContext
 ) -> dict[str, Any]:
     forced = dict(args)
-    forced["provider"] = "tavily"
+    forced["provider"] = SEARCH_TAVILY_PROVIDER_ID
     return _handle_web_search(forced, ctx)
 
 
@@ -475,7 +477,7 @@ def _handle_web_search_brave(
     args: dict[str, Any], ctx: RuntimeContext
 ) -> dict[str, Any]:
     forced = dict(args)
-    forced["provider"] = "brave"
+    forced["provider"] = SEARCH_BRAVE_PROVIDER_ID
     return _handle_web_search(forced, ctx)
 
 

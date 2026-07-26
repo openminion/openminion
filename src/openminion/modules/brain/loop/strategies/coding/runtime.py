@@ -139,6 +139,12 @@ def _build_tool_specs(
         "exec.poll": "Poll the status or output of a running process.",
         "exec.list": "List currently running processes.",
         "exec.kill": "Kill a running process by ID.",
+        "task.delegate": (
+            "Delegate coding work to an exact named agent. For code-bearing "
+            "child work, inspect the returned outputs for a child artifact "
+            "record, then call task.delegate again with mode='accept' or "
+            "mode='reject'; parent integration is always explicit."
+        ),
     }
     runtime_schemas = _runtime_tool_schemas_by_name(ctx)
     specs = []

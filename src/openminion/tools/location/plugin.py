@@ -1,10 +1,7 @@
 """Location tool plugin."""
 
 import json
-import ipaddress
-import socket
 import time
-import urllib.parse
 import urllib.request
 from typing import Any, Mapping
 
@@ -22,11 +19,20 @@ from openminion.modules.tool.runtime.context import resolve_identity_repository
 
 from .config import LOCATION_IP_FALLBACK_URL, LOCATION_IP_RETRY_BACKOFF_SECONDS
 from .constants import (
+    LOCATION_PREFER_AUTO,
+    LOCATION_PREFER_IDENTITY,
+    LOCATION_PREFER_IP,
+    LOCATION_PREFER_SESSION,
+    LOCATION_PRIVACY_CITY,
     LOCATION_REASON_RECORD_NOT_FOUND,
     LOCATION_REASON_STORAGE_EXEC_ERROR,
     LOCATION_REASON_STORAGE_UNAVAILABLE,
     LOCATION_REASON_STORAGE_UNCONFIGURED,
     LOCATION_SCOPE_ORDER,
+    LOCATION_SOURCE_IDENTITY_DEFAULT,
+    LOCATION_SOURCE_IP_GEO,
+    LOCATION_SOURCE_NONE,
+    LOCATION_SOURCE_SESSION_OVERRIDE,
 )
 from .runtime import apply_privacy as _apply_privacy
 from .runtime import confidence_for_source as _confidence_for_source
@@ -34,23 +40,16 @@ from .runtime import emit_event as _emit_event
 from .runtime import error_payload as _error
 from .runtime import has_location_data as _has_location_data
 from .runtime import location_set_default_args as _location_set_default_args
+from .runtime import NetworkPolicyError as _NetworkPolicyError
 from .runtime import normalize_location_record as _normalize_location_record
+from .runtime import policy_flag as _policy_flag
 from .runtime import success_payload as _success
 from .runtime import success_set_default_payload as _success_set_default
 from .runtime import utc_now as _utc_now
+from .runtime import validate_ip_lookup_url as _validate_ip_lookup_url
 from .schemas import LocationGetArgs, LocationGetIPArgs, LocationSetDefaultArgs
 
 _IP_CACHE: dict[str, Any] = {"expires_at": 0.0, "record": None}
-
-
-class _NetworkPolicyError(Exception):
-    def __init__(
-        self, code: str, message: str, details: dict[str, Any] | None = None
-    ) -> None:
-        super().__init__(message)
-        self.code = str(code or "NETWORK_DENIED")
-        self.message = str(message)
-        self.details = dict(details or {})
 
 
 def _location_policy_config(ctx: Any) -> dict[str, Any]:
@@ -64,124 +63,6 @@ def _location_policy_config(ctx: Any) -> dict[str, Any]:
         return {}
     location_cfg = tools_cfg.get("location")
     return dict(location_cfg) if isinstance(location_cfg, Mapping) else {}
-
-
-def _policy_flag(cfg: Mapping[str, Any], key: str, *, default: bool) -> bool:
-    value = cfg.get(key, default)
-    if isinstance(value, bool):
-        return value
-    token = str(value).strip().lower()
-    if token in {"1", "true", "yes", "on"}:
-        return True
-    if token in {"0", "false", "no", "off"}:
-        return False
-    return default
-
-
-def _normalize_host_allowlist(raw: Any) -> tuple[str, ...]:
-    if isinstance(raw, str):
-        token = raw.strip().lower()
-        return (token,) if token else ()
-    if not isinstance(raw, list):
-        return ()
-    out: list[str] = []
-    for item in raw:
-        token = str(item or "").strip().lower()
-        if token:
-            out.append(token)
-    return tuple(out)
-
-
-def _host_allowed(host: str, allowlist: tuple[str, ...]) -> bool:
-    normalized = str(host or "").strip().lower()
-    if not normalized:
-        return False
-    if not allowlist:
-        return True
-    for token in allowlist:
-        if normalized == token or normalized.endswith(f".{token}"):
-            return True
-    return False
-
-
-def _validate_ip_lookup_url(url: str, *, cfg: Mapping[str, Any]) -> str:
-    parsed = urllib.parse.urlparse(str(url or "").strip())
-    if not parsed.scheme or not parsed.netloc:
-        raise _NetworkPolicyError(
-            "NETWORK_DENIED",
-            "ip_lookup_url must be absolute",
-            {"url": url},
-        )
-
-    allow_http = _policy_flag(cfg, "allow_http", default=False)
-    default_schemes = ["https", "http"] if allow_http else ["https"]
-    scheme_allowlist = _normalize_host_allowlist(
-        cfg.get("scheme_allowlist", default_schemes)
-    )
-    if parsed.scheme.lower() not in set(scheme_allowlist):
-        raise _NetworkPolicyError(
-            "NETWORK_DENIED",
-            "ip_lookup_url scheme is not allowed",
-            {"url": url, "scheme": parsed.scheme.lower()},
-        )
-
-    host = str(parsed.hostname or "").strip().lower()
-    if not host:
-        raise _NetworkPolicyError(
-            "NETWORK_DENIED",
-            "ip_lookup_url host is missing",
-            {"url": url},
-        )
-
-    host_allowlist = _normalize_host_allowlist(cfg.get("allowed_hosts", ["ipapi.co"]))
-    if not _host_allowed(host, host_allowlist):
-        raise _NetworkPolicyError(
-            "NETWORK_DENIED",
-            "ip_lookup_url host is not allowed",
-            {"host": host},
-        )
-
-    if _policy_flag(cfg, "allow_private_hosts", default=False):
-        return parsed.geturl()
-
-    if host in {"localhost", "ip6-localhost", "0.0.0.0"}:
-        raise _NetworkPolicyError(
-            "NETWORK_DENIED",
-            "ip_lookup_url host is blocked by SSRF policy",
-            {"host": host},
-        )
-    try:
-        direct_ip = ipaddress.ip_address(host)
-    except ValueError:
-        direct_ip = None
-    if direct_ip is not None and _is_forbidden_ip(direct_ip):
-        raise _NetworkPolicyError(
-            "NETWORK_DENIED",
-            "ip_lookup_url host is blocked by SSRF policy",
-            {"host": host},
-        )
-    try:
-        resolved = socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
-    except (socket.gaierror, OSError):
-        return parsed.geturl()
-    for row in resolved:
-        sockaddr = row[4]
-        if not isinstance(sockaddr, tuple) or not sockaddr:
-            continue
-        candidate = str(sockaddr[0] or "").strip()
-        if not candidate:
-            continue
-        try:
-            ip = ipaddress.ip_address(candidate)
-        except ValueError:
-            continue
-        if _is_forbidden_ip(ip):
-            raise _NetworkPolicyError(
-                "NETWORK_DENIED",
-                "ip_lookup_url host resolves to private/loopback address",
-                {"host": host, "resolved_ip": str(ip)},
-            )
-    return parsed.geturl()
 
 
 def _scope_rank(value: str) -> int:
@@ -199,7 +80,7 @@ def _require_scope(
         "POLICY_DENIED",
         f"{method} requires scope {required_scope}",
         method=method,
-        source="none",
+        source=LOCATION_SOURCE_NONE,
         details={
             "required_scope": required_scope,
             "current_scope": current_scope,
@@ -438,6 +319,7 @@ def _lookup_ip_location_with_error(
                 or LOCATION_IP_FALLBACK_URL
             ),
             cfg=cfg,
+            is_forbidden_ip=_is_forbidden_ip,
         )
     except _NetworkPolicyError as exc:
         return None, exc.code
@@ -516,25 +398,31 @@ def _resolve_location(
     refresh_ip_lookup: bool = False,
 ) -> dict[str, Any] | None:
     order: list[str]
-    normalized_prefer = str(prefer or "auto").strip().lower() or "auto"
+    normalized_prefer = (
+        str(prefer or LOCATION_PREFER_AUTO).strip().lower() or LOCATION_PREFER_AUTO
+    )
     if force_ip_only:
-        order = ["ip.geo"]
-    elif normalized_prefer == "session":
-        order = ["session.override"]
-    elif normalized_prefer == "identity":
-        order = ["identity.default"]
-    elif normalized_prefer == "ip":
-        order = ["ip.geo"]
+        order = [LOCATION_SOURCE_IP_GEO]
+    elif normalized_prefer == LOCATION_PREFER_SESSION:
+        order = [LOCATION_SOURCE_SESSION_OVERRIDE]
+    elif normalized_prefer == LOCATION_PREFER_IDENTITY:
+        order = [LOCATION_SOURCE_IDENTITY_DEFAULT]
+    elif normalized_prefer == LOCATION_PREFER_IP:
+        order = [LOCATION_SOURCE_IP_GEO]
     else:
-        order = ["session.override", "identity.default", "ip.geo"]
+        order = [
+            LOCATION_SOURCE_SESSION_OVERRIDE,
+            LOCATION_SOURCE_IDENTITY_DEFAULT,
+            LOCATION_SOURCE_IP_GEO,
+        ]
 
     for source in order:
         candidate: dict[str, Any] | None = None
-        if source == "session.override":
+        if source == LOCATION_SOURCE_SESSION_OVERRIDE:
             candidate = _location_from_session_override(ctx)
-        elif source == "identity.default":
+        elif source == LOCATION_SOURCE_IDENTITY_DEFAULT:
             candidate = _location_from_identity_profile(ctx)
-        elif source == "ip.geo":
+        elif source == LOCATION_SOURCE_IP_GEO:
             if not allow_ip_lookup:
                 continue
             candidate = _lookup_ip_location(ctx, refresh=refresh_ip_lookup)
@@ -576,7 +464,7 @@ def _h_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             "RUNTIME_CONTEXT_REQUIRED",
             "location.get requires runtime context",
             method="location.get",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     scope_error = _require_scope(ctx, required="READ_ONLY", method="location.get")
     if scope_error is not None:
@@ -592,19 +480,27 @@ def _h_get(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             "POLICY_DENIED",
             "location tool is disabled by policy",
             method="location.get",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     if not _policy_flag(cfg, "read_enabled", default=True):
         return _error(
             "POLICY_DENIED",
             "location.read is disabled by policy",
             method="location.get",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     allow_ip_lookup = _policy_flag(cfg, "ip_lookup_enabled", default=True)
-    prefer = str(args.get("prefer", "auto") or "auto").strip().lower() or "auto"
+    prefer = (
+        str(args.get("prefer", LOCATION_PREFER_AUTO) or LOCATION_PREFER_AUTO)
+        .strip()
+        .lower()
+        or LOCATION_PREFER_AUTO
+    )
     max_privacy = (
-        str(args.get("max_privacy", "city") or "city").strip().lower() or "city"
+        str(args.get("max_privacy", LOCATION_PRIVACY_CITY) or LOCATION_PRIVACY_CITY)
+        .strip()
+        .lower()
+        or LOCATION_PRIVACY_CITY
     )
     _emit_event(
         ctx,
@@ -639,7 +535,7 @@ def _location_unavailable_payload(
     warnings_list.append("LOCATION_UNAVAILABLE")
     payload = _success(
         method="location.get",
-        source="none",
+        source=LOCATION_SOURCE_NONE,
         privacy_level=max_privacy,
         confidence="low",
         city=None,
@@ -653,7 +549,11 @@ def _location_unavailable_payload(
     _emit_event(
         ctx,
         event_name="location.resolved",
-        payload={"method": "location.get", "source": "none", "confidence": "low"},
+        payload={
+            "method": "location.get",
+            "source": LOCATION_SOURCE_NONE,
+            "confidence": "low",
+        },
     )
     return payload
 
@@ -663,7 +563,7 @@ def _resolved_location_payload(
 ) -> dict[str, Any]:
     payload = _success(
         method="location.get",
-        source=str(resolved.get("source", "none")),
+        source=str(resolved.get("source", LOCATION_SOURCE_NONE)),
         privacy_level=max_privacy,
         confidence=str(resolved.get("confidence", "low")),
         city=resolved.get("city"),
@@ -679,7 +579,7 @@ def _resolved_location_payload(
         event_name="location.resolved",
         payload={
             "method": "location.get",
-            "source": str(resolved.get("source", "none")),
+            "source": str(resolved.get("source", LOCATION_SOURCE_NONE)),
             "confidence": str(resolved.get("confidence", "low")),
             "warnings": list(resolved.get("warnings", []) or []),
         },
@@ -695,7 +595,7 @@ def _set_default_preflight(
             "RUNTIME_CONTEXT_REQUIRED",
             "location.set_default requires runtime context",
             method="location.set_default",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     scope_error = _require_scope(
         ctx, required="WRITE_SAFE", method="location.set_default"
@@ -713,14 +613,14 @@ def _set_default_preflight(
             "POLICY_DENIED",
             "location tool is disabled by policy",
             method="location.set_default",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     if not _policy_flag(cfg, "write_enabled", default=True):
         return ctx, _error(
             "POLICY_DENIED",
             "location.write is disabled by policy",
             method="location.set_default",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     if _policy_flag(cfg, "require_confirm_for_set_default", default=True) and not bool(
         ctx.confirm
@@ -737,7 +637,7 @@ def _set_default_preflight(
             TOOL_ERROR_CONFIRM_REQUIRED,
             "location.set_default requires explicit confirmation",
             method="location.set_default",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
             details={"suggestion": "Retry with meta.confirm=true or --confirm"},
         )
     return ctx, None
@@ -774,7 +674,7 @@ def _persist_default_location_result(
                 exc.code,
                 exc.message,
                 method="location.set_default",
-                source="none",
+                source=LOCATION_SOURCE_NONE,
                 details=dict(exc.details or {}),
             ),
         )
@@ -791,7 +691,7 @@ def _persist_default_location_result(
                 "EXEC_ERROR",
                 "Failed to persist default location",
                 method="location.set_default",
-                source="none",
+                source=LOCATION_SOURCE_NONE,
                 details={
                     "reason": str(exc),
                     "reason_code": LOCATION_REASON_STORAGE_EXEC_ERROR,
@@ -871,7 +771,7 @@ def _h_get_ip(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             "RUNTIME_CONTEXT_REQUIRED",
             "location.get_ip requires runtime context",
             method="location.get_ip",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     scope_error = _require_scope(ctx, required="READ_ONLY", method="location.get_ip")
     if scope_error is not None:
@@ -887,17 +787,20 @@ def _h_get_ip(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             "POLICY_DENIED",
             "location tool is disabled by policy",
             method="location.get_ip",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     if not _policy_flag(cfg, "ip_lookup_enabled", default=True):
         return _error(
             "POLICY_DENIED",
             "location.ip.read is disabled by policy",
             method="location.get_ip",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     max_privacy = (
-        str(args.get("max_privacy", "city") or "city").strip().lower() or "city"
+        str(args.get("max_privacy", LOCATION_PRIVACY_CITY) or LOCATION_PRIVACY_CITY)
+        .strip()
+        .lower()
+        or LOCATION_PRIVACY_CITY
     )
     refresh = bool(args.get("refresh", False))
     _emit_event(
@@ -905,7 +808,7 @@ def _h_get_ip(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         event_name="location.requested",
         payload={
             "method": "location.get_ip",
-            "prefer": "ip",
+            "prefer": LOCATION_PREFER_IP,
             "max_privacy": max_privacy,
         },
     )
@@ -913,8 +816,8 @@ def _h_get_ip(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
     resolved: dict[str, Any] | None = None
     if resolved_raw is not None:
         resolved = _apply_privacy(resolved_raw, max_privacy=max_privacy)
-        resolved["source"] = "ip.geo"
-        resolved["confidence"] = _confidence_for_source("ip.geo")
+        resolved["source"] = LOCATION_SOURCE_IP_GEO
+        resolved["confidence"] = _confidence_for_source(LOCATION_SOURCE_IP_GEO)
     if resolved is None:
         error_code = str(lookup_error or "IP_GEO_UNAVAILABLE")
         message = "IP geolocation backend unavailable"
@@ -929,11 +832,11 @@ def _h_get_ip(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
             error_code,
             message,
             method="location.get_ip",
-            source="none",
+            source=LOCATION_SOURCE_NONE,
         )
     payload = _success(
         method="location.get_ip",
-        source="ip.geo",
+        source=LOCATION_SOURCE_IP_GEO,
         privacy_level=max_privacy,
         confidence=str(resolved.get("confidence", "low")),
         city=resolved.get("city"),
@@ -949,7 +852,7 @@ def _h_get_ip(args: dict[str, Any], ctx: Any) -> dict[str, Any]:
         event_name="location.resolved",
         payload={
             "method": "location.get_ip",
-            "source": "ip.geo",
+            "source": LOCATION_SOURCE_IP_GEO,
             "confidence": str(resolved.get("confidence", "low")),
             "warnings": list(resolved.get("warnings", []) or []),
         },

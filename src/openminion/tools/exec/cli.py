@@ -12,7 +12,11 @@ from openminion.tools.config import get_tool_env
 
 from openminion.modules.tool.constants import DEFAULT_POLICY_FILENAME
 
-from .constants import EXEC_POLICY_PATH_ENV
+from .constants import (
+    EXEC_ASK_MODE_ON_MISS,
+    EXEC_POLICY_PATH_ENV,
+    EXEC_SECURITY_MODE_DENY,
+)
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
@@ -80,8 +84,8 @@ def run_cmd(
     timeout_s: int = typer.Option(1800, "--timeout-s"),
     pty: bool = typer.Option(False, "--pty"),
     host: str = typer.Option("sandbox", "--host"),
-    security: str = typer.Option("deny", "--security"),
-    ask: str = typer.Option("on-miss", "--ask"),
+    security: str = typer.Option(EXEC_SECURITY_MODE_DENY, "--security"),
+    ask: str = typer.Option(EXEC_ASK_MODE_ON_MISS, "--ask"),
     node: Optional[str] = typer.Option(None, "--node"),
     policy: Path = typer.Option(DEFAULT_POLICY_PATH, "--policy"),
     workspace: Optional[Path] = typer.Option(None, "--workspace"),

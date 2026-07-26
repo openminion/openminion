@@ -362,6 +362,36 @@ class A2ARuntime:
         )
         return [row.to_dict() for row in rows]
 
+    def record_boundary_event(
+        self,
+        *,
+        method: str,
+        status: str,
+        trace_id: str,
+        request_id: str | None = None,
+        task_id: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        self._append_audit(
+            AuditRecord(
+                ts=iso_now(),
+                msg_id=request_id or new_uuid(),
+                trace_id=trace_id,
+                from_agent="external",
+                to_agent="openminion.local",
+                to_capability=None,
+                type="external.boundary",
+                method=method,
+                status=status,
+                task_id=task_id,
+                error_code=error_code,
+                error_message=error_message,
+                data=data,
+            )
+        )
+
     def close(self, *, wait: bool = False) -> None:
         self._executor.shutdown(wait=wait, cancel_futures=True)
         self.state_store.close()

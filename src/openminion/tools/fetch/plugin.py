@@ -18,7 +18,15 @@ from openminion.modules.tool.runtime.routing import (
     resolve_runtime_tool_family_config,
 )
 
-from .constants import FETCH_ARTIFACTS_SUBDIR
+from .constants import (
+    FETCH_ARTIFACTS_SUBDIR,
+    FETCH_BACKEND_AUTO,
+    FETCH_PROVIDER_ID_CORE_HTTP,
+    FETCH_PROVIDER_ID_FIRECRAWL,
+    FETCH_PROVIDER_ID_SCRAPLING,
+    FETCH_PROVIDER_ID_TINYFISH,
+    FETCH_SCRAPLING_MODES,
+)
 from .policy import (
     FetchPolicyError,
     enforce_url_policy,
@@ -74,7 +82,7 @@ def _ensure_provider_registry() -> Any:
 def _normalize_backend_token(value: str) -> str:
     token = str(value or "").strip().lower()
     if token in {"core", "core-http"}:
-        return "core-http"
+        return FETCH_PROVIDER_ID_CORE_HTTP
     return token
 
 
@@ -90,9 +98,9 @@ def _provider_option_block(
 def _requested_backend_name(request: dict[str, Any], *, available: set[str]) -> str:
     preferred_token = request.get("prefer_backend")
     if preferred_token in (None, ""):
-        preferred_token = request.get("backend", "auto")
-    preferred = _normalize_backend_token(str(preferred_token or "auto"))
-    if preferred and preferred != "auto":
+        preferred_token = request.get("backend", FETCH_BACKEND_AUTO)
+    preferred = _normalize_backend_token(str(preferred_token or FETCH_BACKEND_AUTO))
+    if preferred and preferred != FETCH_BACKEND_AUTO:
         if preferred not in available:
             raise ValueError(preferred)
         return preferred
@@ -105,19 +113,32 @@ def _choose_provider_name(request: dict[str, Any], *, available: set[str]) -> st
         return explicit
     provider_options = request.get("provider_options", {})
     if isinstance(provider_options, dict):
-        tinyfish_cfg = _provider_option_block(provider_options, "tinyfish")
-        if tinyfish_cfg and "tinyfish" in available:
-            return "tinyfish"
-        firecrawl_cfg = _provider_option_block(provider_options, "firecrawl")
-        if firecrawl_cfg and "firecrawl" in available:
-            return "firecrawl"
-        scrapling_cfg = _provider_option_block(provider_options, "scrapling")
+        tinyfish_cfg = _provider_option_block(
+            provider_options, FETCH_PROVIDER_ID_TINYFISH
+        )
+        if tinyfish_cfg and FETCH_PROVIDER_ID_TINYFISH in available:
+            return FETCH_PROVIDER_ID_TINYFISH
+        firecrawl_cfg = _provider_option_block(
+            provider_options, FETCH_PROVIDER_ID_FIRECRAWL
+        )
+        if firecrawl_cfg and FETCH_PROVIDER_ID_FIRECRAWL in available:
+            return FETCH_PROVIDER_ID_FIRECRAWL
+        scrapling_cfg = _provider_option_block(
+            provider_options, FETCH_PROVIDER_ID_SCRAPLING
+        )
         if scrapling_cfg:
-            mode = str(scrapling_cfg.get("mode", "auto") or "auto").strip().lower()
-            if mode in {"static", "dynamic", "stealth"} and "scrapling" in available:
-                return "scrapling"
+            mode = (
+                str(scrapling_cfg.get("mode", FETCH_BACKEND_AUTO) or FETCH_BACKEND_AUTO)
+                .strip()
+                .lower()
+            )
+            if (
+                mode in FETCH_SCRAPLING_MODES
+                and FETCH_PROVIDER_ID_SCRAPLING in available
+            ):
+                return FETCH_PROVIDER_ID_SCRAPLING
 
-    return "core-http"
+    return FETCH_PROVIDER_ID_CORE_HTTP
 
 
 def _hinted_backend_order(request: dict[str, Any], *, available: set[str]) -> list[str]:
@@ -125,17 +146,25 @@ def _hinted_backend_order(request: dict[str, Any], *, available: set[str]) -> li
     if not isinstance(provider_options, dict):
         return []
     hinted: list[str] = []
-    tinyfish_cfg = _provider_option_block(provider_options, "tinyfish")
-    if tinyfish_cfg and "tinyfish" in available:
-        hinted.append("tinyfish")
-    firecrawl_cfg = _provider_option_block(provider_options, "firecrawl")
-    if firecrawl_cfg and "firecrawl" in available:
-        hinted.append("firecrawl")
-    scrapling_cfg = _provider_option_block(provider_options, "scrapling")
+    tinyfish_cfg = _provider_option_block(provider_options, FETCH_PROVIDER_ID_TINYFISH)
+    if tinyfish_cfg and FETCH_PROVIDER_ID_TINYFISH in available:
+        hinted.append(FETCH_PROVIDER_ID_TINYFISH)
+    firecrawl_cfg = _provider_option_block(
+        provider_options, FETCH_PROVIDER_ID_FIRECRAWL
+    )
+    if firecrawl_cfg and FETCH_PROVIDER_ID_FIRECRAWL in available:
+        hinted.append(FETCH_PROVIDER_ID_FIRECRAWL)
+    scrapling_cfg = _provider_option_block(
+        provider_options, FETCH_PROVIDER_ID_SCRAPLING
+    )
     if scrapling_cfg:
-        mode = str(scrapling_cfg.get("mode", "auto") or "auto").strip().lower()
-        if mode in {"static", "dynamic", "stealth"} and "scrapling" in available:
-            hinted.append("scrapling")
+        mode = (
+            str(scrapling_cfg.get("mode", FETCH_BACKEND_AUTO) or FETCH_BACKEND_AUTO)
+            .strip()
+            .lower()
+        )
+        if mode in FETCH_SCRAPLING_MODES and FETCH_PROVIDER_ID_SCRAPLING in available:
+            hinted.append(FETCH_PROVIDER_ID_SCRAPLING)
     return hinted
 
 
@@ -287,6 +316,21 @@ def _format_head_response(
     }
 
 
+def _fetch_request_context(
+    args: dict[str, Any], *, method: str
+) -> tuple[dict[str, Any], str, str]:
+    request = dict(args)
+    request["method"] = method
+    preferred = _normalize_backend_token(
+        str(
+            request.get("prefer_backend", request.get("backend", FETCH_BACKEND_AUTO))
+            or FETCH_BACKEND_AUTO
+        )
+    )
+    url_hash = hashlib.sha256(str(request.get("url", "")).encode("utf-8")).hexdigest()
+    return request, preferred, url_hash[:16]
+
+
 def _invoke_fetch(args: dict[str, Any], ctx: Any, *, method: str) -> dict[str, Any]:
     if is_tool_disabled_by_policy(ctx, "fetch"):
         payload = _error(
@@ -338,14 +382,7 @@ def _invoke_fetch(args: dict[str, Any], ctx: Any, *, method: str) -> dict[str, A
             method=f"fetch.{method.lower()}",
         )
 
-    request = dict(args)
-    request["method"] = method
-    preferred = _normalize_backend_token(
-        str(request.get("prefer_backend", request.get("backend", "auto")) or "auto")
-    )
-    url_hash = hashlib.sha256(str(request.get("url", "")).encode("utf-8")).hexdigest()[
-        :16
-    ]
+    request, preferred, url_hash = _fetch_request_context(args, method=method)
 
     def _attempt_payload(
         provider_name: str, _attempt_index: int, _total: int

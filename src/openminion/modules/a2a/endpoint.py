@@ -37,7 +37,7 @@ def close_external_a2a_runtime(owner: object) -> None:
             delattr(owner, EXTERNAL_A2A_RUNTIME_ATTR)
         except AttributeError:
             pass
-    runtime.close(wait=False)
+    runtime.close(wait=True)
 
 
 def build_external_a2a_runtime(owner: object) -> A2ARuntime:

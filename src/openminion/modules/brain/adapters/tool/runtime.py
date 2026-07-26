@@ -102,6 +102,7 @@ class ToolAdapter:
         policy_adapter: PolicyAdapter | None = None,
         reactions_enabled: bool = True,
         skill_api: Any | None = None,
+        a2a_delegate_api: Any | None = None,
         agent_id: str | None = None,
         agent_profile: Any | None = None,
     ) -> None:
@@ -114,6 +115,7 @@ class ToolAdapter:
         )
         self.reactions_enabled = reactions_enabled
         self.skill_api = skill_api
+        self.a2a_delegate_api = a2a_delegate_api
         self.agent_profile = agent_profile
         self.allow_background_write_authorization = (
             _runtime_background_write_authorization_enabled(runtime_config)
@@ -544,6 +546,8 @@ class ToolAdapter:
             policy_adapter=policy_adapter,
             skill_api=self.skill_api,
             artifactctl=self.artifactctl,
+            a2a_delegate_api=self.a2a_delegate_api,
+            permission_mode=permission_mode,
             agent_profile=self.agent_profile,
         )
         ctx.session_id = session_id
@@ -711,7 +715,8 @@ class ToolAdapter:
             inner_status = "ok"
         status = (
             BRAIN_ACTION_STATUS_SUCCESS
-            if inner_status in ("ok", BRAIN_JOB_STATUS_RUNNING)
+            if inner_status
+            in ("ok", BRAIN_ACTION_STATUS_SUCCESS, BRAIN_JOB_STATUS_RUNNING)
             else BRAIN_STATE_ERROR
         )
         summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)

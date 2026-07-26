@@ -45,8 +45,7 @@ def _review_payload(
         .isoformat()
         .replace("+00:00", "Z"),
         "expires_at": (
-            expires_at
-            or datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+            expires_at or datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
         )
         .isoformat()
         .replace("+00:00", "Z"),
@@ -339,8 +338,7 @@ def test_reviewed_reset_rejects_expired_review(tmp_path: Path) -> None:
                 repo,
                 previous={"modules": 5},
                 proposed={"modules": 6},
-                expires_at=datetime.now(UTC).replace(microsecond=0)
-                - timedelta(days=1),
+                expires_at=datetime.now(UTC).replace(microsecond=0) - timedelta(days=1),
             )
         ),
         encoding="utf-8",

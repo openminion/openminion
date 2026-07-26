@@ -30,6 +30,7 @@ ALLOWED_TOP_LEVEL_DIRS = {
     "services",
     "tools",
 }
+IGNORED_GENERATED_FILES = {".DS_Store"}
 
 
 def validate_root_layout(root: Path = OPENMINION_ROOT) -> list[str]:
@@ -37,7 +38,11 @@ def validate_root_layout(root: Path = OPENMINION_ROOT) -> list[str]:
     if not root.exists():
         return [f"OpenMinion package root missing at {root}"]
 
-    root_files = sorted(path.name for path in root.iterdir() if path.is_file())
+    root_files = sorted(
+        path.name
+        for path in root.iterdir()
+        if path.is_file() and path.name not in IGNORED_GENERATED_FILES
+    )
     unexpected_files = [name for name in root_files if name not in ALLOWED_ROOT_FILES]
     if unexpected_files:
         errors.append(

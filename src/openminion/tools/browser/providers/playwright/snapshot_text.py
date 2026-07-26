@@ -3,6 +3,7 @@
 from typing import Any
 from collections.abc import Mapping
 
+from openminion.tools.browser.constants import BROWSER_SNAPSHOT_MODE_A11Y
 from openminion.tools.browser.models import SnapshotOptions, TextOptions
 
 from .coercion import tab_metadata
@@ -12,7 +13,7 @@ def snapshot(
     provider: Any,
     *,
     tab_id: str,
-    mode: str = "a11y",
+    mode: str = BROWSER_SNAPSHOT_MODE_A11Y,
     max_nodes: int = 800,
     max_text_chars: int = 20000,
     interactive: bool = True,

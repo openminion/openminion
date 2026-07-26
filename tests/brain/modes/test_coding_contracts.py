@@ -56,6 +56,7 @@ def test_v1_allowlist_contains_expected_tools() -> None:
         "exec.poll",
         "exec.list",
         "exec.kill",
+        "task.delegate",
     }
     assert expected == CODING_ALLOWED_TOOLS
     assert CODING_V1_ALLOWED_TOOLS == CODING_ALLOWED_TOOLS
@@ -161,6 +162,20 @@ def test_loop_state_telemetry_payload_structure() -> None:
     assert set(payload["coding.tool_calls"]) == {"file.read", "exec.run"}
     assert payload["coding.termination_reason"] == "final_text"
     assert set(payload["coding.allowed_tools"]) == set(CODING_ALLOWED_TOOLS)
+
+
+def test_coding_tool_specs_describe_delegate_artifact_disposition() -> None:
+    from openminion.modules.brain.loop.strategies.coding.runtime import (
+        _build_tool_specs,
+    )
+
+    specs = {spec.name: spec for spec in _build_tool_specs(CODING_ALLOWED_TOOLS)}
+
+    description = specs["task.delegate"].description
+    assert "exact named agent" in description
+    assert "child artifact" in description
+    assert "mode='accept'" in description
+    assert "mode='reject'" in description
 
 
 # DefaultCodingLLMRuntime — adapter unwrapping

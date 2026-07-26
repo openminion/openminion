@@ -172,8 +172,7 @@ class TestHighAssuranceRule:
         result = _engine().evaluate(MetaMetrics(candidate_disagreement_score=0.6))
         assert result.meta_state != MetaState.HIGH_ASSURANCE
         assert (
-            ReasonCode.HIGH_ASSURANCE_CANDIDATE_DISAGREEMENT.value
-            not in result.reasons
+            ReasonCode.HIGH_ASSURANCE_CANDIDATE_DISAGREEMENT.value not in result.reasons
         )
 
     def test_candidate_disagreement_triggers_above_0_6(self) -> None:

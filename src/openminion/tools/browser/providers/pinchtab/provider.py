@@ -19,6 +19,12 @@ from openminion.tools.config import (
     resolve_tool_workspace_root,
 )
 from openminion.tools.browser import BrowserCapabilities, BrowserProviderContext
+from openminion.tools.browser.constants import (
+    BROWSER_DAEMON_STATUS_KILLED,
+    BROWSER_DAEMON_STATUS_STOPPED,
+    BROWSER_PROVIDER_PINCHTAB,
+    BROWSER_SNAPSHOT_MODE_REFS,
+)
 from openminion.tools.browser.models import (
     BrowserAction,
     InstanceSpec,
@@ -227,7 +233,7 @@ def _resolve_outputs_root(value: str, *, data_root: Path) -> str:
 
 
 class PinchTabProvider:
-    provider_id = "pinchtab"
+    provider_id = BROWSER_PROVIDER_PINCHTAB
     provider_version = "2"
     capabilities = BrowserCapabilities(
         snapshot_refs=True,
@@ -425,7 +431,7 @@ class PinchTabProvider:
             runtime_env=sidecar_env,
             logger=logging.getLogger("openminion.sidecars"),
         ).ensure_started(
-            name="pinchtab",
+            name=BROWSER_PROVIDER_PINCHTAB,
             interactive=bool(sys.stdin.isatty()) and not already_authorized,
         )
 
@@ -486,7 +492,9 @@ class PinchTabProvider:
         payload = self._client(ctx=ctx).instance_stop(instance_id=instance_id)
         return {
             "instance": {"id": instance_id, "profile": None, "mode": None},
-            "stopped": bool(payload.get("stopped", True)),
+            BROWSER_DAEMON_STATUS_STOPPED: bool(
+                payload.get(BROWSER_DAEMON_STATUS_STOPPED, True)
+            ),
             "raw": payload,
         }
 
@@ -533,7 +541,12 @@ class PinchTabProvider:
         payload = self._client(ctx=ctx).instance_kill(instance_id=instance_id)
         return {
             "instance": {"id": instance_id, "profile": None, "mode": None},
-            "killed": bool(payload.get("killed", payload.get("stopped", True))),
+            BROWSER_DAEMON_STATUS_KILLED: bool(
+                payload.get(
+                    BROWSER_DAEMON_STATUS_KILLED,
+                    payload.get(BROWSER_DAEMON_STATUS_STOPPED, True),
+                )
+            ),
             "raw": payload,
         }
 
@@ -692,7 +705,7 @@ class PinchTabProvider:
         refs = _extract_interactive_refs(root)
         return {
             "snapshot": {
-                "format": "refs",
+                "format": BROWSER_SNAPSHOT_MODE_REFS,
                 "nodes": [root],
                 "interactive_refs": refs,
                 "meta": {

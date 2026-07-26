@@ -6,6 +6,8 @@ import re
 from typing import Any, Optional, cast
 from collections.abc import Mapping
 
+from .constants import GWS_REDACTION_BASIC, GWS_REDACTION_NONE, GWS_REDACTION_STRICT
+
 _SENSITIVE_KEY_PATTERN = re.compile(
     r"(token|secret|password|authorization|credential)", re.IGNORECASE
 )
@@ -149,10 +151,10 @@ def redact_basic(value: Any, *, key_hint: str = "") -> Any:
 
 
 def result_for_event(result: dict[str, Any], *, redaction_mode: str) -> dict[str, Any]:
-    mode = str(redaction_mode or "basic")
-    if mode == "none":
+    mode = str(redaction_mode or GWS_REDACTION_BASIC)
+    if mode == GWS_REDACTION_NONE:
         return dict(result)
-    if mode == "strict":
+    if mode == GWS_REDACTION_STRICT:
         payload: dict[str, Any] = {
             "ok": bool(result.get("ok", False)),
             "source": str(result.get("source", "gws")),

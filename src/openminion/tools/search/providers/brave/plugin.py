@@ -6,6 +6,7 @@ from typing import Any
 
 from openminion.modules.tool.registry import ToolRegistry
 from openminion.tools.search import register_provider
+from openminion.tools.search.constants import SEARCH_BRAVE_PROVIDER_ID
 from openminion.tools.search.providers import SearchProviderError
 from openminion.tools.search.providers.brave.provider import (
     BraveSearchError,
@@ -16,7 +17,7 @@ from openminion.tools.search.providers.brave.provider import (
 
 
 class BraveSearchFacadeProvider:
-    provider_id = "brave"
+    provider_id = SEARCH_BRAVE_PROVIDER_ID
     display_name = "Brave Search"
 
     def __init__(self, provider: BraveSearchProvider | None = None) -> None:
@@ -90,7 +91,7 @@ class BraveSearchFacadeProvider:
             payload.get("query") if isinstance(payload.get("query"), Mapping) else {}
         )
         normalized: dict[str, Any] = {
-            "provider": "brave",
+            "provider": SEARCH_BRAVE_PROVIDER_ID,
             "query": {
                 "original": str(query_payload.get("original") or query),
                 "more_results_available": bool(

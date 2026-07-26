@@ -9,6 +9,7 @@ from pathlib import Path
 from collections.abc import Callable, Mapping, Sequence
 
 from openminion.base.config.env.subprocess import build_subprocess_env
+from openminion.tools.browser.constants import BROWSER_DAEMON_STATUS_STOPPED
 
 from .client import (
     PinchTabClient,
@@ -194,19 +195,35 @@ def stop_daemon(
     status = daemon_status(cfg)
     pid = int(status["pid"])
     if not pid:
-        return {"stopped": False, "status": status, "reason": "no_pid"}
+        return {
+            BROWSER_DAEMON_STATUS_STOPPED: False,
+            "status": status,
+            "reason": "no_pid",
+        }
     if not status["pid_alive"]:
         cfg.pid_file.unlink(missing_ok=True)
-        return {"stopped": True, "status": daemon_status(cfg), "reason": "stale_pid"}
+        return {
+            BROWSER_DAEMON_STATUS_STOPPED: True,
+            "status": daemon_status(cfg),
+            "reason": "stale_pid",
+        }
     sig = signal.SIGKILL if kill else signal.SIGTERM
     try:
         os.kill(pid, sig)
     except OSError as exc:
-        return {"stopped": False, "status": status, "error": str(exc)}
+        return {
+            BROWSER_DAEMON_STATUS_STOPPED: False,
+            "status": status,
+            "error": str(exc),
+        }
     deadline = time.monotonic() + max(1, int(timeout_s))
     while time.monotonic() < deadline:
         if not _process_alive(pid):
             cfg.pid_file.unlink(missing_ok=True)
-            return {"stopped": True, "status": daemon_status(cfg)}
+            return {BROWSER_DAEMON_STATUS_STOPPED: True, "status": daemon_status(cfg)}
         time.sleep(0.2)
-    return {"stopped": False, "status": daemon_status(cfg), "reason": "timeout"}
+    return {
+        BROWSER_DAEMON_STATUS_STOPPED: False,
+        "status": daemon_status(cfg),
+        "reason": "timeout",
+    }
