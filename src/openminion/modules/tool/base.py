@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
-from collections.abc import Mapping
 
 from openminion.modules.tool.contracts import ProviderToolSpec
 from openminion.modules.tool.runtime.delegation import A2ADelegateApi
@@ -20,6 +20,7 @@ class ToolExecutionContext:
     # optional A2A delegation seam threaded to RuntimeContext so the
     # task.delegate handler can perform a real sub-agent delegation.
     a2a_delegate_api: A2ADelegateApi | None = None
+    agent_query: Callable[[], list[dict[str, Any]]] | None = None
     blast_radius_adapter: Any | None = None
     telemetryctl: Any | None = None
     confirm: bool = False
