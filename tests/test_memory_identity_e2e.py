@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import importlib
-import json
-import tempfile
-import unittest
 from pathlib import Path
+
+import pytest
 
 try:
     importlib.import_module("openminion.modules.identity")
@@ -17,60 +16,45 @@ except ImportError:
     HAS_OPENMINION = False
 
 
-class TestMemoryIdentityE2EFixtures(unittest.TestCase):
+class TestMemoryIdentityE2EFixtures:
     def test_valid_identity_fixture_exists(self) -> None:
         fixture_path = (
             Path(__file__).parent / "fixtures" / "identity" / "valid_profile.yaml"
         )
-        self.assertTrue(fixture_path.exists(), f"Fixture not found: {fixture_path}")
+        assert fixture_path.exists(), f"Fixture not found: {fixture_path}"
         content = fixture_path.read_text()
-        self.assertIn("agent_id: mide-valid-agent", content)
-        self.assertIn("fixture_type: valid_identity", content)
+        assert "agent_id: mide-valid-agent" in content
+        assert "fixture_type: valid_identity" in content
 
     def test_degraded_identity_fixture_exists(self) -> None:
         fixture_path = (
             Path(__file__).parent / "fixtures" / "identity" / "degraded_profile.yaml"
         )
-        self.assertTrue(fixture_path.exists(), f"Fixture not found: {fixture_path}")
+        assert fixture_path.exists(), f"Fixture not found: {fixture_path}"
         content = fixture_path.read_text()
-        self.assertIn("fixture_type: degraded_identity", content)
-        self.assertIn("degraded_marker: true", content)
+        assert "fixture_type: degraded_identity" in content
+        assert "degraded_marker: true" in content
 
     def test_memory_seeded_session_fixture_exists(self) -> None:
         fixture_path = (
             Path(__file__).parent / "fixtures" / "memory" / "seeded_session.yaml"
         )
-        self.assertTrue(fixture_path.exists(), f"Fixture not found: {fixture_path}")
+        assert fixture_path.exists(), f"Fixture not found: {fixture_path}"
         content = fixture_path.read_text()
-        self.assertIn("fixture_type: memory_seeded_session", content)
-        self.assertIn("seed_turns:", content)
+        assert "fixture_type: memory_seeded_session" in content
+        assert "seed_turns:" in content
 
 
-@unittest.skipUnless(HAS_OPENMINION, "openminion not available")
-class TestMemoryIdentityInProcessE2E(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp_dir = tempfile.TemporaryDirectory()
-        self.config_path = Path(self.tmp_dir.name) / "test_config.json"
-
-        config = {
-            "runtime": {
-                "storage_path": self.tmp_dir.name,
-                "debug_enabled": True,
-            }
-        }
-        self.config_path.write_text(json.dumps(config))
-
-    def tearDown(self) -> None:
-        self.tmp_dir.cleanup()
-
+@pytest.mark.skipif(not HAS_OPENMINION, reason="openminion not available")
+class TestMemoryIdentityInProcessE2E:
     def test_inprocess_identity_debug_module_returns_ok(self) -> None:
         from openminion.cli.commands.debug import OpenMinionIdentityDebugProvider
 
         provider = OpenMinionIdentityDebugProvider()
         payload = provider.get_debug()
 
-        self.assertEqual(payload.module, "openminion-identity")
-        self.assertIn(payload.status, [DebugStatus.OK, DebugStatus.WARN])
+        assert payload.module == "openminion-identity"
+        assert payload.status in [DebugStatus.OK, DebugStatus.WARN]
 
     def test_inprocess_memory_debug_module_returns_ok(self) -> None:
         from openminion.cli.commands.debug import OpenMinionMemoryDebugProvider
@@ -78,8 +62,8 @@ class TestMemoryIdentityInProcessE2E(unittest.TestCase):
         provider = OpenMinionMemoryDebugProvider()
         payload = provider.get_debug()
 
-        self.assertEqual(payload.module, "openminion-memory")
-        self.assertIn(payload.status, [DebugStatus.OK, DebugStatus.WARN])
+        assert payload.module == "openminion-memory"
+        assert payload.status in [DebugStatus.OK, DebugStatus.WARN]
 
     def test_inprocess_retrieve_debug_module_returns_ok(self) -> None:
         from openminion.cli.commands.debug import OpenMinionRetrieveDebugProvider
@@ -87,28 +71,12 @@ class TestMemoryIdentityInProcessE2E(unittest.TestCase):
         provider = OpenMinionRetrieveDebugProvider()
         payload = provider.get_debug()
 
-        self.assertEqual(payload.module, "openminion-retrieve")
-        self.assertIn(payload.status, [DebugStatus.OK, DebugStatus.WARN])
+        assert payload.module == "openminion-retrieve"
+        assert payload.status in [DebugStatus.OK, DebugStatus.WARN]
 
 
-@unittest.skipUnless(HAS_OPENMINION, "openminion not available")
-class TestMemoryIdentityDaemonE2E(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp_dir = tempfile.TemporaryDirectory()
-        self.config_path = Path(self.tmp_dir.name) / "test_config.json"
-
-        config = {
-            "runtime": {
-                "storage_path": self.tmp_dir.name,
-                "debug_enabled": True,
-                "daemon_auto_start": False,  # Don't auto-start for tests
-            }
-        }
-        self.config_path.write_text(json.dumps(config))
-
-    def tearDown(self) -> None:
-        self.tmp_dir.cleanup()
-
+@pytest.mark.skipif(not HAS_OPENMINION, reason="openminion not available")
+class TestMemoryIdentityDaemonE2E:
     def test_daemon_lane_parity_with_inprocess(self) -> None:
         from openminion.cli.commands.debug import (
             OpenMinionIdentityDebugProvider,
@@ -120,13 +88,13 @@ class TestMemoryIdentityDaemonE2E(unittest.TestCase):
         memory_inproc = OpenMinionMemoryDebugProvider().get_debug()
         retrieve_inproc = OpenMinionRetrieveDebugProvider().get_debug()
 
-        self.assertIsNotNone(identity_inproc.details.get("import_ok"))
-        self.assertIsNotNone(memory_inproc.details.get("import_ok"))
-        self.assertIsNotNone(retrieve_inproc.details.get("import_ok"))
+        assert identity_inproc.details.get("import_ok") is not None
+        assert memory_inproc.details.get("import_ok") is not None
+        assert retrieve_inproc.details.get("import_ok") is not None
 
 
-@unittest.skipUnless(HAS_OPENMINION, "openminion not available")
-class TestMemoryIdentityNegativePaths(unittest.TestCase):
+@pytest.mark.skipif(not HAS_OPENMINION, reason="openminion not available")
+class TestMemoryIdentityNegativePaths:
     def test_missing_identity_bundle_returns_degraded(self) -> None:
         from openminion.modules.identity.runtime.service import IdentityCtl
         from openminion.modules.identity.storage import InMemoryIdentityStore
@@ -135,7 +103,7 @@ class TestMemoryIdentityNegativePaths(unittest.TestCase):
         ctl = IdentityCtl(store=store)
 
         profile = ctl.get_profile("nonexistent-agent-12345")
-        self.assertIsNone(profile)
+        assert profile is None
 
     def test_invalid_profile_validation_fails(self) -> None:
         from openminion.modules.identity.runtime.service import IdentityCtl
@@ -151,19 +119,17 @@ class TestMemoryIdentityNegativePaths(unittest.TestCase):
         }
 
         result = ctl.validate_profile(invalid_data)
-        self.assertFalse(result.ok)
-        self.assertGreater(len(result.errors), 0)
+        assert not result.ok
+        assert len(result.errors) > 0
 
 
-class TestMemoryIdentityPerformanceBudget(unittest.TestCase):
+class TestMemoryIdentityPerformanceBudget:
     def test_fixture_files_within_size_bounds(self) -> None:
         fixtures_dir = Path(__file__).parent / "fixtures"
 
         for fixture_file in fixtures_dir.rglob("*.yaml"):
             size = fixture_file.stat().st_size
-            self.assertLess(
-                size, 10 * 1024, f"Fixture {fixture_file} too large: {size} bytes"
-            )
+            assert size < 10 * 1024, f"Fixture {fixture_file} too large: {size} bytes"
 
     def test_identity_fixture_has_bounded_content(self) -> None:
         fixture_path = (
@@ -171,4 +137,4 @@ class TestMemoryIdentityPerformanceBudget(unittest.TestCase):
         )
         content = fixture_path.read_text()
 
-        self.assertLess(len(content), 5000, "Identity fixture content too long")
+        assert len(content) < 5000, "Identity fixture content too long"
