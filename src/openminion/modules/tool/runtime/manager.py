@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, cast
 
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.contracts import (
@@ -10,9 +10,11 @@ from openminion.modules.tool.contracts import (
     ToolBindingManifest,
     is_valid_model_tool_id,
     is_valid_runtime_binding_id,
+    validate_manifest,
+)
+from openminion.modules.tool.contracts.normalization import (
     normalize_raw_model_tool_name,
     strip_tool_wrapper_prefix,
-    validate_manifest,
 )
 
 
@@ -272,7 +274,7 @@ class ToolRegistryManager:
             if lower:
                 return lower
 
-            canonical = normalize_raw_model_tool_name(token)
+            canonical = cast(str | None, normalize_raw_model_tool_name(token))
             if canonical and canonical in compiled.model_to_runtime_binding_id:
                 return canonical
         return None
@@ -297,7 +299,7 @@ class ToolRegistryManager:
             if lower:
                 return lower
 
-            canonical = normalize_raw_model_tool_name(token)
+            canonical = cast(str | None, normalize_raw_model_tool_name(token))
             if canonical and is_valid_model_tool_id(canonical):
                 return canonical
         return None
