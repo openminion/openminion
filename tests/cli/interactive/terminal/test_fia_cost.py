@@ -55,11 +55,8 @@ def test_cost_in_catalog() -> None:
 
 
 def test_render_cost_snapshot_missing_method() -> None:
-    class _Bare:
-        pass
-
     console, buf = _make_console()
-    _render_cost_snapshot(runtime=_Bare(), console=console)
+    _render_cost_snapshot(runtime=object(), console=console)
     assert "does not expose token_usage_snapshot" in buf.getvalue()
 
 

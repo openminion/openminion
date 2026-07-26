@@ -73,11 +73,8 @@ def test_render_tools_list_empty() -> None:
 
 
 def test_render_tools_list_missing_lister() -> None:
-    class _Bare:
-        pass
-
     console, buf = _make_console()
-    _render_tools_list(runtime=_Bare(), console=console)
+    _render_tools_list(runtime=object(), console=console)
     assert "does not expose list_tools" in buf.getvalue()
 
 
