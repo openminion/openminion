@@ -135,7 +135,11 @@ that should not become part of the public validator surface.
     work, but it is not a generic repo gate and does not belong in
     `scripts/validate/`.
 14. `scripts/validate/mypy_error_budget.py` is the canonical typecheck ratchet
-    entrypoint; keep historical or temporary names out of the filename.
+    entrypoint; keep historical or temporary names out of the filename. Normal
+    baseline updates must use `--emit-baseline` and may only lower package and
+    total ceilings. Any upward reset requires a tracked review artifact under
+    `scripts/baselines/mypy_resets/` and must run through
+    `--emit-reviewed-reset <artifact>` rather than direct JSON editing.
 15. When a validator emits machine-readable JSON, keep the JSON payload on
     stdout and put human-readable headings, summaries, and findings on stderr
     so CLI users get readable output without breaking JSON consumers.

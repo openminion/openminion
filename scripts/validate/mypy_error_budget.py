@@ -123,11 +123,11 @@ def _metadata(repo_root: Path, *, counts: dict[str, int], total: int) -> dict[st
         "total_errors": total,
         "package_errors": dict(sorted(counts.items())),
         "historical_floor": HISTORICAL_FLOOR,
-        "reset_debt": _reset_debt(counts),
+        "reset_debt": _reset_debt(counts, total=total),
     }
 
 
-def _reset_debt(counts: dict[str, int]) -> dict[str, Any]:
+def _reset_debt(counts: dict[str, int], *, total: int) -> dict[str, Any]:
     floor = HISTORICAL_FLOOR["package_errors"]
     package_errors = {
         pkg: max(0, int(count) - int(floor.get(pkg, 0)))
@@ -136,7 +136,7 @@ def _reset_debt(counts: dict[str, int]) -> dict[str, Any]:
     return {
         "review_artifact": "",
         "package_errors": package_errors,
-        "total_errors": sum(package_errors.values()),
+        "total_errors": max(0, total - int(HISTORICAL_FLOOR["total_errors"])),
     }
 
 
@@ -272,7 +272,10 @@ def _emit_reviewed_reset(
         return 1
     payload = _metadata(repo_root, counts=current, total=total)
     payload["historical_floor"] = prior.get("historical_floor", HISTORICAL_FLOOR)
-    payload["reset_debt"]["review_artifact"] = review_path.relative_to(
+    resolved_review_path = (
+        review_path if review_path.is_absolute() else repo_root / review_path
+    ).resolve(strict=False)
+    payload["reset_debt"]["review_artifact"] = resolved_review_path.relative_to(
         repo_root
     ).as_posix()
     _write_json_atomic(baseline_path, payload)
@@ -304,14 +307,20 @@ def _load_review(*, repo_root: Path, baseline_path: Path, path: Path) -> dict[st
         raise SystemExit("[tcr] reviewed reset artifact must be tracked by git")
     review = json.loads(resolved.read_text(encoding="utf-8"))
     required = [
+        "schema_version",
+        "review_id",
+        "created_at",
         "source_commit",
         "source_snapshot_sha256",
         "python_version",
         "mypy_version",
         "config_sha256",
         "command",
+        "owner",
         "approved_by",
         "approval_reference",
+        "reason",
+        "recovery_tracker",
         "expires_at",
         "previous_baseline",
         "proposed_baseline",
@@ -321,11 +330,16 @@ def _load_review(*, repo_root: Path, baseline_path: Path, path: Path) -> dict[st
         raise SystemExit(
             f"[tcr] reviewed reset is missing required fields: {', '.join(missing)}"
         )
+    if int(review["schema_version"]) != 1:
+        raise SystemExit("[tcr] reviewed reset schema_version must be 1")
+    _parse_review_time(review["created_at"], field="created_at")
     expires_at = datetime.fromisoformat(
         str(review["expires_at"]).replace("Z", "+00:00")
     )
     if expires_at <= datetime.now(UTC):
         raise SystemExit("[tcr] reviewed reset is expired")
+    _assert_count_block(review["previous_baseline"], field="previous_baseline")
+    _assert_count_block(review["proposed_baseline"], field="proposed_baseline")
     current_meta = _metadata(repo_root, counts={}, total=0)
     for key in (
         "source_commit",
@@ -340,6 +354,35 @@ def _load_review(*, repo_root: Path, baseline_path: Path, path: Path) -> dict[st
                 f"[tcr] reviewed reset {key} does not match current environment"
             )
     return review
+
+
+def _parse_review_time(value: object, *, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SystemExit(f"[tcr] reviewed reset {field} is not valid ISO time") from exc
+    if parsed.tzinfo is None:
+        raise SystemExit(f"[tcr] reviewed reset {field} must include timezone")
+    return parsed
+
+
+def _assert_count_block(value: object, *, field: str) -> None:
+    if not isinstance(value, dict):
+        raise SystemExit(f"[tcr] reviewed reset {field} must be an object")
+    package_errors = value.get("package_errors")
+    if not isinstance(package_errors, dict) or not package_errors:
+        raise SystemExit(f"[tcr] reviewed reset {field}.package_errors is required")
+    try:
+        total = int(value["total_errors"])
+        package_total = sum(int(count) for count in package_errors.values())
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(
+            f"[tcr] reviewed reset {field} counts must be integers"
+        ) from exc
+    if total != package_total:
+        raise SystemExit(
+            f"[tcr] reviewed reset {field}.total_errors does not equal package sum"
+        )
 
 
 def _package_error_lines(lines: list[str], package: str, *, limit: int) -> list[str]:

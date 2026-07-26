@@ -29,6 +29,49 @@ def _write_baseline(path: Path, package_errors: dict[str, int]) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _review_payload(
+    repo: Path,
+    *,
+    previous: dict[str, int],
+    proposed: dict[str, int],
+    expires_at: datetime | None = None,
+) -> dict[str, object]:
+    metadata = budget._metadata(repo, counts=proposed, total=sum(proposed.values()))
+    return {
+        "schema_version": 1,
+        "review_id": "test-reset",
+        "created_at": datetime.now(UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "expires_at": (
+            expires_at
+            or datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+        )
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "source_commit": metadata["source_commit"],
+        "source_snapshot_sha256": metadata["source_snapshot_sha256"],
+        "python_version": metadata["python_version"],
+        "mypy_version": metadata["mypy_version"],
+        "config_sha256": metadata["config_sha256"],
+        "command": metadata["command"],
+        "owner": "openminion-typing",
+        "approved_by": "reviewer",
+        "approval_reference": "review-thread",
+        "reason": "test reset",
+        "recovery_tracker": "docs/trackers/wip/test-tracker.md",
+        "previous_baseline": {
+            "package_errors": previous,
+            "total_errors": sum(previous.values()),
+        },
+        "proposed_baseline": {
+            "package_errors": proposed,
+            "total_errors": sum(proposed.values()),
+        },
+    }
+
+
 @pytest.fixture(autouse=True)
 def _stable_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(budget, "_git_output", lambda *_args: "abc123")
@@ -112,6 +155,22 @@ def test_read_only_report_includes_floor_and_debt(
     assert "reset debt total: 100" in out
 
 
+def test_reset_debt_total_keeps_total_floor_separate_from_package_debt(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+
+    metadata = budget._metadata(
+        repo,
+        counts={"api": 124, "modules": 3836, "tools": 279},
+        total=5179,
+    )
+
+    assert metadata["reset_debt"]["package_errors"]["modules"] == 1119
+    assert metadata["reset_debt"]["package_errors"]["tools"] == 52
+    assert metadata["reset_debt"]["total_errors"] == 1160
+
+
 def test_source_snapshot_hash_changes_when_checked_source_changes(
     tmp_path: Path,
 ) -> None:
@@ -143,23 +202,176 @@ def test_reviewed_reset_requires_named_approval(tmp_path: Path) -> None:
     review_dir = repo / "scripts" / "baselines" / "mypy_resets"
     review_dir.mkdir(parents=True)
     review = review_dir / "reset.json"
-    metadata = budget._metadata(repo, counts={}, total=0)
-    payload = {
-        "source_commit": metadata["source_commit"],
-        "source_snapshot_sha256": metadata["source_snapshot_sha256"],
-        "python_version": metadata["python_version"],
-        "mypy_version": metadata["mypy_version"],
-        "config_sha256": metadata["config_sha256"],
-        "command": metadata["command"],
-        "approved_by": "",
-        "approval_reference": "review-thread",
-        "expires_at": (datetime.now(UTC).replace(microsecond=0) + timedelta(days=1))
-        .isoformat()
-        .replace("+00:00", "Z"),
-        "previous_baseline": {"package_errors": {"modules": 5}, "total_errors": 5},
-        "proposed_baseline": {"package_errors": {"modules": 6}, "total_errors": 6},
-    }
+    payload = _review_payload(repo, previous={"modules": 5}, proposed={"modules": 6})
+    payload["approved_by"] = ""
     review.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(SystemExit, match="approved_by"):
         budget._load_review(repo_root=repo, baseline_path=baseline, path=review)
+
+
+def test_reviewed_reset_accepts_matching_canonical_review(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    baseline = repo / "scripts" / "baselines" / "mypy_baseline.json"
+    _write_baseline(baseline, {"modules": 5})
+    review_dir = repo / "scripts" / "baselines" / "mypy_resets"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "reset.json"
+    review.write_text(
+        json.dumps(
+            _review_payload(repo, previous={"modules": 5}, proposed={"modules": 6})
+        ),
+        encoding="utf-8",
+    )
+
+    result = budget._emit_reviewed_reset(
+        repo_root=repo,
+        baseline_path=baseline,
+        review_path=review,
+        current={"modules": 6},
+        total=6,
+    )
+
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    assert result == 0
+    assert payload["package_errors"] == {"modules": 6}
+    assert payload["reset_debt"]["review_artifact"] == (
+        "scripts/baselines/mypy_resets/reset.json"
+    )
+
+
+def test_reviewed_reset_accepts_relative_review_path(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    baseline = repo / "scripts" / "baselines" / "mypy_baseline.json"
+    _write_baseline(baseline, {"modules": 5})
+    review_dir = repo / "scripts" / "baselines" / "mypy_resets"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "reset.json"
+    review.write_text(
+        json.dumps(
+            _review_payload(repo, previous={"modules": 5}, proposed={"modules": 6})
+        ),
+        encoding="utf-8",
+    )
+
+    result = budget._emit_reviewed_reset(
+        repo_root=repo,
+        baseline_path=baseline,
+        review_path=Path("scripts/baselines/mypy_resets/reset.json"),
+        current={"modules": 6},
+        total=6,
+    )
+
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    assert result == 0
+    assert payload["reset_debt"]["review_artifact"] == (
+        "scripts/baselines/mypy_resets/reset.json"
+    )
+
+
+def test_reviewed_reset_rejects_untracked_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    baseline = repo / "scripts" / "baselines" / "mypy_baseline.json"
+    _write_baseline(baseline, {"modules": 5})
+    review_dir = repo / "scripts" / "baselines" / "mypy_resets"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "reset.json"
+    review.write_text(
+        json.dumps(
+            _review_payload(repo, previous={"modules": 5}, proposed={"modules": 6})
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(budget, "_git_output", lambda *_args: "")
+
+    with pytest.raises(SystemExit, match="must be tracked"):
+        budget._load_review(repo_root=repo, baseline_path=baseline, path=review)
+
+
+def test_reviewed_reset_rejects_stale_metadata(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    baseline = repo / "scripts" / "baselines" / "mypy_baseline.json"
+    _write_baseline(baseline, {"modules": 5})
+    review_dir = repo / "scripts" / "baselines" / "mypy_resets"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "reset.json"
+    payload = _review_payload(repo, previous={"modules": 5}, proposed={"modules": 6})
+    payload["source_snapshot_sha256"] = "stale"
+    review.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="source_snapshot_sha256"):
+        budget._load_review(repo_root=repo, baseline_path=baseline, path=review)
+
+
+def test_reviewed_reset_rejects_count_block_total_mismatch(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    baseline = repo / "scripts" / "baselines" / "mypy_baseline.json"
+    _write_baseline(baseline, {"modules": 5})
+    review_dir = repo / "scripts" / "baselines" / "mypy_resets"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "reset.json"
+    payload = _review_payload(repo, previous={"modules": 5}, proposed={"modules": 6})
+    payload["proposed_baseline"] = {
+        "package_errors": {"modules": 6},
+        "total_errors": 7,
+    }
+    review.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="total_errors"):
+        budget._load_review(repo_root=repo, baseline_path=baseline, path=review)
+
+
+def test_reviewed_reset_rejects_expired_review(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    baseline = repo / "scripts" / "baselines" / "mypy_baseline.json"
+    _write_baseline(baseline, {"modules": 5})
+    review_dir = repo / "scripts" / "baselines" / "mypy_resets"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "reset.json"
+    review.write_text(
+        json.dumps(
+            _review_payload(
+                repo,
+                previous={"modules": 5},
+                proposed={"modules": 6},
+                expires_at=datetime.now(UTC).replace(microsecond=0)
+                - timedelta(days=1),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="expired"):
+        budget._load_review(repo_root=repo, baseline_path=baseline, path=review)
+
+
+def test_reviewed_reset_preserves_baseline_on_count_mismatch(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    baseline = repo / "scripts" / "baselines" / "mypy_baseline.json"
+    _write_baseline(baseline, {"modules": 5})
+    before = baseline.read_text(encoding="utf-8")
+    review_dir = repo / "scripts" / "baselines" / "mypy_resets"
+    review_dir.mkdir(parents=True)
+    review = review_dir / "reset.json"
+    review.write_text(
+        json.dumps(
+            _review_payload(repo, previous={"modules": 5}, proposed={"modules": 6})
+        ),
+        encoding="utf-8",
+    )
+
+    result = budget._emit_reviewed_reset(
+        repo_root=repo,
+        baseline_path=baseline,
+        review_path=review,
+        current={"modules": 7},
+        total=7,
+    )
+
+    assert result == 1
+    assert baseline.read_text(encoding="utf-8") == before
