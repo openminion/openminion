@@ -924,7 +924,7 @@ async def _run_agent_turn(
     status_tick_task: asyncio.Task[None] | None = None
     if status_line is not None:
         status_tick_task = asyncio.create_task(
-            _tick_turn_status_line(
+            _progress.tick_turn_status_line(
                 status_line=status_line,
                 invalidate_prompt=invalidate_prompt,
             )
