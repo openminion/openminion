@@ -276,7 +276,11 @@ def _register_status_tokens_subcommand(status_subcommands) -> None:
         "tokens",
         help="Inspect token usage for a session or run",
     )
-    parser.add_argument("--session-id", required=True, help="Session identifier")
+    parser.add_argument(
+        "--session-id",
+        default="",
+        help="Session identifier (default: newest session, or run owner with --run-id)",
+    )
     parser.add_argument("--run-id", default="", help="Optional run identifier")
     parser.add_argument(
         "--event-limit",

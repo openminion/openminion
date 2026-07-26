@@ -40,6 +40,13 @@ def test_status_tokens_parser_registration() -> None:
     assert args.event_limit == 3
 
 
+def test_status_tokens_parser_defaults_to_latest_session() -> None:
+    args = build_parser().parse_args(["status", "tokens"])
+
+    assert args.status_command == "tokens"
+    assert args.session_id == ""
+
+
 def test_status_tokens_json_is_raw_versioned_envelope(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -129,6 +136,79 @@ def test_status_tokens_text_reports_empty_and_incomplete_states(
     assert "incomplete: event_limit=2" in output
 
 
+def test_status_tokens_uses_latest_session_when_session_id_is_omitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-latest.db")
+    old_session = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1", session_id="session-old"
+    )
+    latest_session = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1", session_id="session-new"
+    )
+    store.append_event(
+        old_session,
+        event_type="llm.call.completed",
+        payload={"usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}},
+    )
+    store.append_event(
+        latest_session,
+        event_type="llm.call.completed",
+        payload={"usage": {"input_tokens": 4, "output_tokens": 2, "total_tokens": 6}},
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id=""),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "session=session-new" in output
+    assert "provider=6" in output
+
+
+def test_status_tokens_run_id_can_resolve_session_when_session_id_is_omitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-run-only.db")
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1", session_id="session-run"
+    )
+    run_id = store.create_run_record(session_id, run_type="llm", run_id="run-1")
+    store.finish_run_record(run_id, status="completed")
+    store.append_event(
+        session_id,
+        event_type="llm.call.completed",
+        payload={
+            "run_id": run_id,
+            "usage": {"input_tokens": 4, "output_tokens": 2, "total_tokens": 6},
+        },
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id="", run_id=run_id),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "session=session-run run=run-1" in output
+    assert "provider=6" in output
+
+
 def test_status_tokens_text_separates_provider_and_derived_totals(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -168,6 +248,59 @@ def test_status_tokens_text_separates_provider_and_derived_totals(
     assert (
         "totals: provider=7 derived=4 input=7 output=3 cache_read=0 cache_write=0"
     ) in capsys.readouterr().out
+
+
+def test_status_tokens_text_shows_insights_and_navigation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-insights.db")
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1"
+    )
+    store.append_event(
+        session_id,
+        event_type="llm.call.completed",
+        payload={
+            "provider": "openai",
+            "model": "gpt-test",
+            "usage": {
+                "input_tokens": 8,
+                "output_tokens": 3,
+                "total_tokens": 11,
+                "cached_tokens": 5,
+            },
+        },
+    )
+    store.append_event(
+        session_id,
+        event_type="context.manifest.created",
+        payload={
+            "used_tokens": 20,
+            "buckets": {
+                "recent_window": {"used_tokens": 12},
+                "retrieval": {"used_tokens": 8},
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id=session_id),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "insights: top_model=openai/gpt-test 11" in output
+    assert "by surface: context_pack=20, llm_total=11" in output
+    assert "context buckets: recent_window=12, retrieval=8" in output
+    assert "breakdown:" in output
+    assert "next: add `--run-id <run-id>`" in output
 
 
 def test_status_tokens_rejects_cross_session_run(
