@@ -1,5 +1,35 @@
 # ruff: noqa: F403,F405
+from typing import Any, cast
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
 from .common import *
+from .common import (
+    CognitionTier,
+    PermissionMode,
+    RunSubstate,
+    WorkingStatus,
+)
+from ...constants import RESPOND_KIND_ASSISTANT, RespondKindLiteral
+from ..base import ArtifactRef, iso_now
+from ..commands import Command
+from ..decisions import ClarifyContext, PendingTurnContext, RequestReadiness
+from ..freshness import FreshnessContract, FreshnessDiagnostics, FreshnessObligations
+from ..plan import (
+    AdaptiveRevisionCheckpoint,
+    FeasibilityReport,
+    IntentExecutionState,
+    Plan,
+    ProgressCheckpointReport,
+    StepRiskAssessment,
+    SubIntent,
+    build_intent_execution_states,
+    feasibility_report_payload,
+    normalize_sub_intent_ids,
+    select_sub_intents_by_ids,
+    sub_intent_descriptions,
+    to_structured_sub_intents,
+)
 from .action import ActionResult, JobHandle
 from .budget import BudgetCounters
 from .clarify import BrainMode, ClarifyPolicy, ClarifyQuestion
@@ -153,7 +183,7 @@ class WorkingState(BaseModel):
     awaiting_continuation_reply: bool = False
     active_workflow_name: str | None = None
     active_workflow_kind: str | None = None
-    mode: BrainMode = BrainMode.COMMAND
+    mode: BrainMode = cast(BrainMode, BrainMode.COMMAND)
     pending_confirmation_command: Command | None = None
     pending_confirmation_sub_intents: list[str] = Field(default_factory=list)
     pending_confirmation_sub_intent_refs: list[SubIntent] = Field(default_factory=list)
@@ -199,7 +229,7 @@ class WorkingState(BaseModel):
     delegation_goal: str = ""
     delegation_synthesize_result: bool = False
     intent_execution_states: list[IntentExecutionState] = Field(default_factory=list)
-    policy: ClarifyPolicy = ClarifyPolicy.ALWAYS_ASK
+    policy: ClarifyPolicy = cast(ClarifyPolicy, ClarifyPolicy.ALWAYS_ASK)
 
     @field_validator("adaptive_satisfied_intent_ids", mode="before")
     @classmethod
