@@ -21,6 +21,7 @@ from tests.helpers.live_cli_chat_alibaba import (
     python_bin,
     require_live_flag,
     runtime_home_root,
+    run_cli_session,
     skip_if_completion_contract_failed,
     timeout_seconds,
 )
@@ -288,44 +289,22 @@ def _run_skill_chat(
     *,
     target: SkillLiveTarget,
     data_root: Path,
-    trace_root: Path,
     transcript_dir: Path,
     prompt: str,
     slug: str,
 ) -> tuple[str, Path, str]:
-    session_id = f"live-skill-dense-{target.agent_id}-{slug}-{uuid.uuid4().hex[:8]}"
+    result = run_cli_session(
+        session_id_prefix=f"live-skill-dense-{target.agent_id}-{slug}",
+        user_input=f"{prompt}\n/debug\n/exit\n",
+        agent_id=target.agent_id,
+        config_path=target.config_path,
+        data_root_override=data_root,
+        matrix_type=target.matrix_type,
+    )
+    transcript = result.transcript
+    session_id = result.session_id
     transcript_path = transcript_dir / f"{session_id}.txt"
-    completed = subprocess.run(
-        [
-            str(python_bin()),
-            "-m",
-            "openminion",
-            "--config",
-            str(target.config_path),
-            "--agent",
-            target.agent_id,
-            "--session",
-            session_id,
-            "--verbosity",
-            "quiet",
-            "--progress",
-            "off",
-        ],
-        cwd=str(openminion_root()),
-        env=_run_env(data_root=data_root, trace_root=trace_root / session_id),
-        input=f"{prompt}\n/debug\n/exit\n",
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout_seconds("skill_dense"),
-        check=False,
-    )
-    transcript = completed.stdout or ""
     transcript_path.write_text(transcript, encoding="utf-8")
-    assert completed.returncode == 0, (
-        f"cli chat failed for session={session_id} exit={completed.returncode}\n"
-        f"transcript={transcript_path}\n{transcript}"
-    )
     return session_id, transcript_path, transcript
 
 
@@ -378,10 +357,8 @@ def test_live_skill_dense_catalog_named_selection_matrix(
     run_stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{target.target_id}-{run_stamp}-{uuid.uuid4().hex[:6]}"
     data_root = artifact_root / "data-roots" / run_id
-    trace_root = artifact_root / "traces"
     transcript_dir = artifact_root / "transcripts"
     data_root.mkdir(parents=True, exist_ok=True)
-    trace_root.mkdir(parents=True, exist_ok=True)
     transcript_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[dict[str, object]] = []
@@ -405,7 +382,6 @@ def test_live_skill_dense_catalog_named_selection_matrix(
             session_id, transcript_path, transcript = _run_skill_chat(
                 target=target,
                 data_root=data_root,
-                trace_root=trace_root,
                 transcript_dir=transcript_dir,
                 prompt=scenario.prompt,
                 slug=scenario.skill_id,
@@ -541,7 +517,6 @@ def test_live_skill_dense_catalog_named_selection_matrix(
         session_id, transcript_path, transcript = _run_skill_chat(
             target=target,
             data_root=data_root,
-            trace_root=trace_root,
             transcript_dir=transcript_dir,
             prompt=_MISSING_SKILL_PROMPT,
             slug="missing",
