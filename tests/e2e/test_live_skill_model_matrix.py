@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-import subprocess
 import uuid
 
 import pytest
@@ -18,12 +16,10 @@ from tests.helpers.live_cli_chat_alibaba import (
     extract_assistant_messages,
     extract_last_debug_payload,
     has_completion_contract_failure,
-    openminion_root,
-    python_bin,
     require_live_flag,
     runtime_home_root,
+    run_cli_session,
     skip_if_completion_contract_failed,
-    timeout_seconds,
 )
 from tests.helpers.live_skill_targets import SkillLiveTarget
 from tests.helpers.live_skill_targets import skill_simple_targets
@@ -73,74 +69,20 @@ def _ingest_linear_skill(*, config_path: Path, agent_id: str, data_root: Path) -
 def _run_skill_cli_smoke(
     *, config_path: Path, agent_id: str, data_root: Path
 ) -> tuple[str, Path, str]:
-    session_id = f"live-skill-support-{agent_id}-{uuid.uuid4().hex[:8]}"
-    skill_artifacts = artifact_dir() / "skill-support"
-    skill_artifacts.mkdir(parents=True, exist_ok=True)
-    transcript_path = skill_artifacts / f"{session_id}.txt"
-    trace_root = skill_artifacts / "traces" / session_id
-    trace_root.mkdir(parents=True, exist_ok=True)
-
-    env = dict(os.environ)
-    for key in (
-        "OPENMINION_CONFIG",
-        "OPENMINION_DATA_ROOT",
-        "OPENMINION_IDENTITY_DB",
-        "OPENMINION_IDENTITY_ROOT",
-        "OPENMINION_TRACE_REQUESTS_DIR",
-    ):
-        env.pop(key, None)
-
-    env["OPENMINION_HOME"] = str(runtime_home_root())
-    env["OPENMINION_DATA_ROOT"] = str(data_root)
-    env["OPENMINION_TRACE_REQUESTS"] = "1"
-    env["OPENMINION_TRACE_REQUESTS_DIR"] = str(trace_root)
-    current_pythonpath = str(env.get("PYTHONPATH", "")).strip()
-    src_root = str(openminion_root() / "src")
-    env["PYTHONPATH"] = (
-        src_root
-        if not current_pythonpath
-        else f"{src_root}{os.pathsep}{current_pythonpath}"
-    )
-
-    command = [
-        str(python_bin()),
-        "-m",
-        "openminion",
-        "--config",
-        str(config_path),
-        "--agent",
-        agent_id,
-        "--session",
-        session_id,
-        "--verbosity",
-        "quiet",
-        "--progress",
-        "off",
-    ]
-    completed = subprocess.run(
-        command,
-        cwd=str(openminion_root()),
-        env=env,
-        input=(
+    result = run_cli_session(
+        session_id_prefix=f"live-skill-support-{agent_id}",
+        agent_id=agent_id,
+        config_path=config_path,
+        data_root_override=data_root,
+        matrix_type="skill_simple",
+        user_input=(
             "I need to triage a Linear issue ENG-123. "
             "Use the relevant skill and tell me the first two steps only.\n"
             "/debug\n"
             "/exit\n"
         ),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout_seconds("skill_simple"),
-        check=False,
     )
-    transcript = completed.stdout or ""
-    transcript_path.write_text(transcript, encoding="utf-8")
-    assert completed.returncode == 0, (
-        f"cli chat failed for session={session_id} exit={completed.returncode}\n"
-        f"transcript={transcript_path}\n"
-        f"{transcript}"
-    )
-    return session_id, transcript_path, transcript
+    return result.session_id, result.transcript_path, result.transcript
 
 
 def test_skill_matrix_bundle_agents_resolve_from_canonical_registry() -> None:
