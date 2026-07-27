@@ -116,9 +116,7 @@ def _scenario_prompt(
         "fetch_get": 'tool web.fetch {"url":"https://example.com"}',
         "file_list_dir": f'tool file.list_dir {{"path":"{repo_root}"}}',
         "file_find": f'tool file.find {{"path":"{repo_root}","pattern":"README*"}}',
-        "file_read": (
-            f"use file.read on {readme_path} and reply with the first sentence only"
-        ),
+        "file_read": f'tool file.read {{"path":"{readme_path}","max_chars":220}}',
         "file_write": (
             f'tool file.write {{"path":"{write_path}","content":"official minimax write smoke\\n"}}'
         ),
@@ -173,6 +171,18 @@ def test_confirmation_required_scenarios_are_classified_explicitly() -> None:
     assert scenarios["file_write"].expected_outcome == "non_success_without_execution"
     assert scenarios["exec_run"].expected_outcome == "tool_execution"
     assert scenarios["time_now"].expected_outcome == "tool_execution"
+
+
+def test_file_read_scenario_uses_explicit_tool_prompt() -> None:
+    scenarios = {scenario.id: scenario for scenario in _SCENARIOS}
+    prompt, artifact_path = _scenario_prompt(
+        target=_TARGETS[0],
+        scenario=scenarios["file_read"],
+    )
+
+    assert artifact_path is None
+    assert prompt.startswith("tool file.read ")
+    assert '"max_chars":220' in prompt
 
 
 def test_truthful_no_execution_helper_requires_no_tool_results() -> None:

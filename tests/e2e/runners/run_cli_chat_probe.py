@@ -14,7 +14,7 @@ import termios
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 
@@ -25,10 +25,10 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
 _CONFIRMATION_REQUIRED_RE = re.compile(r"Policy confirmation required\.", re.IGNORECASE)
 _INLINE_APPROVAL_RE = re.compile(
-    r"Approval required:[^\n]*\n\[y\]es / \[N\]o / \[a\]lways:\s*",
+    r"(?:Approval required:[^\n]*\n)?\[y\]es / \[N\]o / \[a\]lways:\s*",
     re.IGNORECASE,
 )
-_TURN_DONE_RE = re.compile(r"(?:^|\n)Done in \d+s\s*(?:\n|$)")
+_TURN_DONE_RE = re.compile(r"(?:^|\n)Done in (?:\d+m)?\d+s\s*(?:\n|$)")
 _TIMEOUT_EXIT_CODE = 124
 _PROBE_STATUS_PREFIX = "[probe-status]"
 _AUTO_CONFIRM_LIMIT_ENV = "OPENMINION_LIVE_CLI_CHAT_AUTO_CONFIRM_LIMIT"
@@ -101,20 +101,44 @@ def _turn_response_boundary_detected(text: str) -> bool:
     ) or _prompt_return_after_response_detected(normalized)
 
 
-def _latest_prompt_requires_confirmation(previous: str, current: str) -> bool:
+def _text_delta(previous: str, current: str) -> str:
     normalized_current = _normalize_probe_text(current)
     normalized_previous = _normalize_probe_text(previous)
-    delta = (
-        normalized_current[len(normalized_previous) :]
-        if normalized_current.startswith(normalized_previous)
-        else normalized_current
+    if normalized_current.startswith(normalized_previous):
+        return normalized_current[len(normalized_previous) :]
+    return normalized_current
+
+
+def _turn_response_boundary_detected_since(previous: str, current: str) -> bool:
+    delta = _text_delta(previous, current)
+    if not delta:
+        return False
+    if _inline_approval_detected(delta):
+        return True
+    if _CONFIRMATION_REQUIRED_RE.search(delta) and _ready_prompt_detected(delta):
+        return True
+    return bool(_TURN_DONE_RE.search(delta)) or _prompt_return_after_response_detected(
+        delta
     )
+
+
+def _latest_prompt_requires_confirmation(previous: str, current: str) -> bool:
+    delta = _text_delta(previous, current)
     if not delta:
         return False
     return bool(
         (_CONFIRMATION_REQUIRED_RE.search(delta) and _ready_prompt_detected(delta))
         or _inline_approval_detected(delta)
     )
+
+
+def _turn_response_or_confirmation_prompt_detected(previous: str):
+    def predicate(current: str) -> bool:
+        return _turn_response_boundary_detected_since(
+            previous, current
+        ) or _latest_prompt_requires_confirmation(previous, current)
+
+    return predicate
 
 
 def _full_transcript(transcript: list[str], trailing_text: str = "") -> str:
@@ -161,6 +185,12 @@ def _auto_confirm_limit() -> int:
 
 @dataclass(frozen=True, slots=True)
 class _ProbeReadTimeout(TimeoutError):
+    phase: str
+    trailing_text: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _ProbeDurableCompletion(TimeoutError):
     phase: str
     trailing_text: str = ""
 
@@ -651,13 +681,24 @@ def _read_until(
     predicate,
     timeout_seconds: float,
     phase: str,
+    durable_completion_predicate: Callable[[], bool] | None = None,
 ) -> str:
     deadline = time.monotonic() + timeout_seconds
     combined = ""
+    last_durable_completion_check = 0.0
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
+        if durable_completion_predicate is not None:
+            now = time.monotonic()
+            if now - last_durable_completion_check >= 1.0:
+                last_durable_completion_check = now
+                if durable_completion_predicate():
+                    raise _ProbeDurableCompletion(
+                        phase=phase,
+                        trailing_text=combined,
+                    )
         try:
             ready, _, _ = select.select([master_fd], [], [], min(0.05, remaining))
             if not ready:
@@ -691,6 +732,20 @@ def _read_until(
             return combined
         trailing_reads += 1
     raise _ProbeReadTimeout(phase=phase, trailing_text=combined)
+
+
+def _read_timeout_remaining(deadline: float, *, phase: str) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _ProbeReadTimeout(phase=phase)
+    return remaining
+
+
+def _write_timeout_remaining(deadline: float, *, phase: str) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _ProbeWriteTimeout(phase=phase)
+    return remaining
 
 
 def _drain_until_process_exit(
@@ -854,6 +909,7 @@ def _run_probe_session(
     timeout_seconds: float,
     dump_debug_on_exit: bool = False,
     auto_confirm: bool = False,
+    durable_completion_predicate: Callable[[], bool] | None = None,
 ) -> tuple[int, str]:
     master_fd, slave_fd = _open_probe_pty()
     _configure_probe_slave_tty(slave_fd)
@@ -871,6 +927,7 @@ def _run_probe_session(
     transcript: list[str] = []
     messages_completed = False
     expanded_messages = _expand_probe_messages(messages)
+    session_deadline = time.monotonic() + timeout_seconds
     caller_requested_exit = bool(expanded_messages) and expanded_messages[-1] in {
         "/exit",
         "/quit",
@@ -882,7 +939,10 @@ def _run_probe_session(
                 master_fd=master_fd,
                 transcript=transcript,
                 predicate=_ready_prompt_detected,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=_read_timeout_remaining(
+                    session_deadline,
+                    phase="startup_timeout",
+                ),
                 phase="startup_timeout",
             )
         except _ProbeReadTimeout as exc:
@@ -900,7 +960,10 @@ def _run_probe_session(
                 _write_all(
                     master_fd=master_fd,
                     payload=(message + "\n").encode("utf-8"),
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=_write_timeout_remaining(
+                        session_deadline,
+                        phase="input_write_timeout",
+                    ),
                     phase="input_write_timeout",
                     transcript=transcript,
                 )
@@ -916,20 +979,34 @@ def _run_probe_session(
                 wait_predicate = (
                     _ready_prompt_detected
                     if message.startswith("/")
-                    else _turn_response_boundary_detected
+                    else _turn_response_or_confirmation_prompt_detected(
+                        previous_output
+                    )
                 )
                 current_output = _read_until(
                     master_fd=master_fd,
                     transcript=transcript,
                     predicate=wait_predicate,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=_read_timeout_remaining(
+                        session_deadline,
+                        phase="turn_timeout",
+                    ),
                     phase="turn_timeout",
+                    durable_completion_predicate=(
+                        None if message.startswith("/") else durable_completion_predicate
+                    ),
                 )
             except _ProbeReadTimeout as exc:
                 return _TIMEOUT_EXIT_CODE, _append_probe_status(
                     _full_transcript(transcript, exc.trailing_text),
                     phase=exc.phase,
                     exit_code=_TIMEOUT_EXIT_CODE,
+                )
+            except _ProbeDurableCompletion as exc:
+                return 0, _append_probe_status(
+                    _full_transcript(transcript, exc.trailing_text),
+                    phase="durable_turn_completed",
+                    exit_code=0,
                 )
             confirmation_turns = 0
             confirmation_limit = _auto_confirm_limit()
@@ -945,8 +1022,11 @@ def _run_probe_session(
                 try:
                     _write_all(
                         master_fd=master_fd,
-                        payload=b"yes\n" if auto_confirm else b"no\n",
-                        timeout_seconds=timeout_seconds,
+                        payload=b"always\n" if auto_confirm else b"no\n",
+                        timeout_seconds=_write_timeout_remaining(
+                            session_deadline,
+                            phase="confirmation_write_timeout",
+                        ),
                         phase="confirmation_write_timeout",
                         transcript=transcript,
                     )
@@ -960,15 +1040,27 @@ def _run_probe_session(
                     current_output = _read_until(
                         master_fd=master_fd,
                         transcript=transcript,
-                        predicate=_turn_response_boundary_detected,
-                        timeout_seconds=timeout_seconds,
+                        predicate=_turn_response_or_confirmation_prompt_detected(
+                            previous_output
+                        ),
+                        timeout_seconds=_read_timeout_remaining(
+                            session_deadline,
+                            phase="confirmation_timeout",
+                        ),
                         phase="confirmation_timeout",
+                        durable_completion_predicate=durable_completion_predicate,
                     )
                 except _ProbeReadTimeout as exc:
                     return _TIMEOUT_EXIT_CODE, _append_probe_status(
                         _full_transcript(transcript, exc.trailing_text),
                         phase=exc.phase,
                         exit_code=_TIMEOUT_EXIT_CODE,
+                    )
+                except _ProbeDurableCompletion as exc:
+                    return 0, _append_probe_status(
+                        _full_transcript(transcript, exc.trailing_text),
+                        phase="durable_turn_completed",
+                        exit_code=0,
                     )
         messages_completed = True
         if dump_debug_on_exit:

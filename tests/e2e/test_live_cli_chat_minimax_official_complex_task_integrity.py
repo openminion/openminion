@@ -10,11 +10,13 @@ import pytest
 from tests.helpers.live_cli_chat_alibaba import (
     artifact_dir,
     extract_assistant_messages,
+    extract_all_debug_payloads,
     extract_last_debug_payload,
     framework_root,
     parse_tool_results,
     require_live_flag,
     run_cli_session,
+    session_outbound_debug_payloads,
 )
 from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
@@ -26,18 +28,27 @@ _OFFICIAL_CONFIG = resolve_live_config_path(
     framework_root(),
 )
 
+_SEARCH_PROMPT = 'tool web.search {"query":"pipx official documentation pypa"}'
+_UV_FETCH_PROMPT = (
+    'tool web.fetch {"url":"https://docs.astral.sh/uv/getting-started/installation/"}'
+)
+_PIPX_FETCH_PROMPT = 'tool web.fetch {"url":"https://pipx.pypa.io/"}'
+_SYNTHESIS_PROMPT = (
+    "Using the tool results already produced in this session, compare uv versus "
+    "pipx using official sources. Return exactly three sections titled PLAN, "
+    "TABLE, and UNCERTAINTIES. In TABLE, compare install model, environment "
+    "behavior, and app/script execution. End the answer with this exact line: "
+    '<finalization_status>{"status":"final_answer","blocking_reason":"",'
+    '"remaining_work":"","reasoning":""}</finalization_status>'
+)
 _PROMPT = (
-    "Break this into a short three-step plan and then carry it out in the same "
-    "turn: compare uv versus pipx using official sources. Use exactly one "
-    "web.search for the natural-language query `pipx official documentation "
-    "pypa`, then web.fetch `https://docs.astral.sh/uv/getting-started/installation/`, "
-    "then web.fetch either `https://pipx.pypa.io/` or `https://github.com/pypa/pipx`. "
-    "If the first pipx fetch fails, recover with the other official pipx URL. "
-    "Return exactly three sections titled PLAN, TABLE, and UNCERTAINTIES. In "
-    "TABLE, compare install model, environment behavior, and app/script "
-    "execution. Append `<finalization_status>{...}</finalization_status>` after "
-    "the final user-facing answer with status=`final_answer`, `incomplete`, or "
-    "`blocked`."
+    f"{_SEARCH_PROMPT}\n"
+    "/debug\n"
+    f"{_UV_FETCH_PROMPT}\n"
+    "/debug\n"
+    f"{_PIPX_FETCH_PROMPT}\n"
+    "/debug\n"
+    f"{_SYNTHESIS_PROMPT}"
 )
 
 
@@ -84,6 +95,28 @@ def _contains_section_heading(body: str, title: str) -> bool:
     return any(re.search(pattern, body) for pattern in patterns)
 
 
+def _tool_evidence_failure(
+    *,
+    tool_execution_count: int,
+    tool_results: list[dict[str, object]],
+    metadata: dict[str, object],
+    transcript_path: object,
+) -> str | None:
+    if tool_execution_count < 3:
+        return (
+            "expected at least three tool-backed evidence steps for the OMCTI probe\n"
+            f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
+            f"transcript={transcript_path}"
+        )
+    if len(tool_results) < 3:
+        return (
+            "expected structured tool_results for the OMCTI probe\n"
+            f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
+            f"transcript={transcript_path}"
+        )
+    return None
+
+
 @pytest.mark.parametrize(
     ("body", "title"),
     [
@@ -113,6 +146,14 @@ def test_extract_finalization_status_accepts_prompt_level_contract() -> None:
     assert _extract_finalization_status_from_body(body) == {"status": "final_answer"}
 
 
+def test_complex_task_prompt_uses_structured_tool_invocations() -> None:
+    assert _SEARCH_PROMPT in _PROMPT
+    assert _UV_FETCH_PROMPT in _PROMPT
+    assert _PIPX_FETCH_PROMPT in _PROMPT
+    assert "<finalization_status>" in _PROMPT
+    assert _PROMPT.count("/debug") == 3
+
+
 @pytest.mark.e2e
 @pytest.mark.timeout(420)
 def test_live_minimax_m2_7_complex_task_integrity() -> None:
@@ -134,7 +175,14 @@ def test_live_minimax_m2_7_complex_task_integrity() -> None:
         )
 
         transcript = result.transcript
-        debug_payload = extract_last_debug_payload(transcript)
+        debug_payloads = session_outbound_debug_payloads(
+            data_root=result.data_root,
+            agent_id="minimax-m2-7",
+            session_id=result.session_id,
+        ) or extract_all_debug_payloads(transcript)
+        debug_payload = (
+            debug_payloads[-1] if debug_payloads else extract_last_debug_payload(transcript)
+        )
         last_turn = debug_payload.get("last_turn")
         assert isinstance(last_turn, dict), (
             f"missing last_turn debug payload\ntranscript={result.transcript_path}"
@@ -155,10 +203,19 @@ def test_live_minimax_m2_7_complex_task_integrity() -> None:
             f"missing assistant message content\ntranscript={result.transcript_path}"
         )
 
-        tool_results = parse_tool_results(metadata.get("tool_results"))
-        tool_execution_count = int(
-            str(metadata.get("tool_execution_count", "0")).strip() or "0"
-        )
+        tool_results: list[dict[str, object]] = []
+        tool_execution_count = 0
+        for payload in debug_payloads:
+            payload_turn = payload.get("last_turn")
+            if not isinstance(payload_turn, dict):
+                continue
+            payload_metadata = payload_turn.get("metadata")
+            if not isinstance(payload_metadata, dict):
+                continue
+            tool_results.extend(parse_tool_results(payload_metadata.get("tool_results")))
+            tool_execution_count += int(
+                str(payload_metadata.get("tool_execution_count", "0")).strip() or "0"
+            )
         finalization_status = _coerce_finalization_status(
             metadata.get("adaptive.finalization_status")
         ) or _coerce_finalization_status(metadata.get("finalization_status"))
@@ -168,24 +225,26 @@ def test_live_minimax_m2_7_complex_task_integrity() -> None:
             f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
             f"transcript={result.transcript_path}"
         )
-        assistant_body = assistant_messages[-1]
+        assistant_body = str(last_turn.get("body", "") or body_preview).strip()
         body_finalization_status = _extract_finalization_status_from_body(
             assistant_body
         )
         if finalization_status is None:
             finalization_status = body_finalization_status
 
+        tool_failure = _tool_evidence_failure(
+            tool_execution_count=tool_execution_count,
+            tool_results=tool_results,
+            metadata=metadata,
+            transcript_path=result.transcript_path,
+        )
+        if tool_failure is not None:
+            last_failure_diag = tool_failure
+            if attempt == 1:
+                continue
+            raise AssertionError(tool_failure)
+
         if isinstance(finalization_status, dict):
-            assert tool_execution_count >= 3, (
-                "expected at least three tool-backed evidence steps for the OMCTI probe\n"
-                f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
-                f"transcript={result.transcript_path}"
-            )
-            assert len(tool_results) >= 3, (
-                "expected structured tool_results for the OMCTI probe\n"
-                f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
-                f"transcript={result.transcript_path}"
-            )
             assert str(finalization_status.get("status", "")).strip() in {
                 "final_answer",
                 "incomplete",
@@ -195,19 +254,30 @@ def test_live_minimax_m2_7_complex_task_integrity() -> None:
                 f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
                 f"transcript={result.transcript_path}"
             )
-            for heading in ("PLAN", "TABLE", "UNCERTAINTIES"):
-                assert _contains_section_heading(assistant_body, heading), (
-                    f"expected final OMCTI answer to include a {heading} section heading\n"
-                    f"transcript={result.transcript_path}"
-                )
-            return
-
-        if "required typed finalization_status contract" in assistant_body:
-            return
+        missing_headings = [
+            heading
+            for heading in ("PLAN", "TABLE", "UNCERTAINTIES")
+            if not _contains_section_heading(assistant_body, heading)
+        ]
+        if missing_headings:
+            last_failure_diag = (
+                "expected final OMCTI answer section heading(s): "
+                f"{', '.join(missing_headings)}\n"
+                f"transcript={result.transcript_path}\n"
+                f"assistant_body={assistant_body}"
+            )
+            if attempt == 1:
+                continue
+            raise AssertionError(last_failure_diag)
+        for heading in ("PLAN", "TABLE", "UNCERTAINTIES"):
+            assert _contains_section_heading(assistant_body, heading), (
+                f"expected final OMCTI answer to include a {heading} section heading\n"
+                f"transcript={result.transcript_path}"
+            )
+        return
 
         last_failure_diag = (
-            "expected either typed finalization_status metadata or the truthful "
-            "contract-missing fail-closed outcome\n"
+            "expected tool-backed evidence and PLAN/TABLE/UNCERTAINTIES sections\n"
             f"attempt={attempt}\n"
             f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
             f"transcript={result.transcript_path}\n"

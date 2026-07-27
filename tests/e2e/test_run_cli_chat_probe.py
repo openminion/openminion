@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import textwrap
+import time
 
 from tests.e2e.runners import run_cli_chat_probe as probe_runner
 from tests.e2e.runners.run_cli_chat_probe import _open_probe_pty, _run_probe_session
@@ -60,6 +61,11 @@ def test_probe_waits_for_real_prompt_boundary_after_echoed_input() -> None:
     assert "[probe|agent] agent: handled alpha" in transcript
     assert "[probe|agent] agent: handled beta" in transcript
     assert transcript.count("[probe|agent] you> ") >= 3
+
+
+@pytest.mark.parametrize("done_line", ("Done in 9s\n", "Done in 1m10s\n"))
+def test_probe_detects_turn_done_duration_boundaries(done_line: str) -> None:
+    assert probe_runner._turn_response_boundary_detected(done_line)
 
 
 def test_probe_timeout_preserves_full_transcript_and_classifies_turn_timeout() -> None:
@@ -204,7 +210,7 @@ def test_probe_dump_debug_on_exit_captures_debug_block_before_clean_exit() -> No
     assert "[probe-status]" not in transcript
 
 
-def test_probe_auto_confirm_replies_yes_to_confirmation_prompts() -> None:
+def test_probe_auto_confirm_replies_always_to_confirmation_prompts() -> None:
     command = _helper_command(
         """
         import sys
@@ -244,8 +250,149 @@ def test_probe_auto_confirm_replies_yes_to_confirmation_prompts() -> None:
 
     assert exit_code == 0
     assert "Policy confirmation required." in transcript
-    assert "[probe|agent] agent: confirmed yes" in transcript
+    assert "[probe|agent] agent: confirmed always" in transcript
     assert "[probe-status]" not in transcript
+
+
+def test_probe_auto_confirm_replies_always_to_budget_approval_prompt() -> None:
+    command = _helper_command(
+        """
+        import sys
+
+        PREFIX = "[probe|agent]"
+
+        def write(text: str) -> None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+        awaiting_confirmation = False
+        write("chat ready\\n")
+        write(f"{PREFIX} you> ")
+        for raw in sys.stdin:
+            message = raw.rstrip("\\n")
+            if message == "/exit":
+                break
+            if not awaiting_confirmation:
+                write("Budget: allocated\\n\\n")
+                write("[y]es / [N]o / [a]lways: ")
+                awaiting_confirmation = True
+                continue
+            write(f"{PREFIX} agent: confirmed {message}\\n")
+            write(f"{PREFIX} you> ")
+        """
+    )
+
+    exit_code, transcript = _run_probe_session(
+        cmd=command,
+        env=dict(os.environ),
+        cwd=os.getcwd(),
+        messages=["write scratch file"],
+        timeout_seconds=1.5,
+        auto_confirm=True,
+    )
+
+    assert exit_code == 0
+    assert "Budget: allocated" in transcript
+    assert "[probe|agent] agent: confirmed always" in transcript
+    assert "[probe-status]" not in transcript
+
+
+def test_probe_confirmation_wait_ignores_stale_approval_prompt() -> None:
+    previous = "Budget: allocated\n\n[y]es / [N]o / [a]lways: "
+    predicate = probe_runner._turn_response_or_confirmation_prompt_detected(previous)
+
+    assert not predicate(f"{previous}yes\n")
+    assert predicate(f"{previous}yes\n[probe|agent] agent: confirmed\n[probe|agent] you> ")
+
+
+def test_probe_confirmation_wait_can_return_on_durable_completion(tmp_path) -> None:
+    marker = tmp_path / "completed"
+    command = _helper_command(
+        f"""
+        import sys
+        import time
+        from pathlib import Path
+
+        PREFIX = "[probe|agent]"
+        MARKER = Path({str(marker)!r})
+
+        def write(text: str) -> None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+        awaiting_confirmation = False
+        write("chat ready\\n")
+        write(f"{{PREFIX}} you> ")
+        for raw in sys.stdin:
+            message = raw.rstrip("\\n")
+            if message == "/exit":
+                break
+            if not awaiting_confirmation:
+                write("Budget: allocated\\n\\n")
+                write("[y]es / [N]o / [a]lways: ")
+                awaiting_confirmation = True
+                continue
+            MARKER.write_text("done", encoding="utf-8")
+            time.sleep(10)
+        """
+    )
+
+    exit_code, transcript = _run_probe_session(
+        cmd=command,
+        env=dict(os.environ),
+        cwd=os.getcwd(),
+        messages=["write scratch file"],
+        timeout_seconds=5.0,
+        auto_confirm=True,
+        durable_completion_predicate=marker.exists,
+    )
+
+    assert exit_code == 0
+    assert "[probe-status] phase=durable_turn_completed exit_code=0" in transcript
+
+
+def test_probe_uses_one_timeout_budget_across_confirmation_wait() -> None:
+    command = _helper_command(
+        """
+        import sys
+        import time
+
+        PREFIX = "[probe|agent]"
+
+        def write(text: str) -> None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+
+        awaiting_confirmation = False
+        write("chat ready\\n")
+        write(f"{PREFIX} you> ")
+        for raw in sys.stdin:
+            message = raw.rstrip("\\n")
+            if message == "/exit":
+                break
+            if not awaiting_confirmation:
+                write("Budget: allocated\\n\\n")
+                write("[y]es / [N]o / [a]lways: ")
+                awaiting_confirmation = True
+                continue
+            time.sleep(10)
+        """
+    )
+
+    started = time.monotonic()
+    exit_code, transcript = _run_probe_session(
+        cmd=command,
+        env=dict(os.environ),
+        cwd=os.getcwd(),
+        messages=["write scratch file"],
+        timeout_seconds=1.0,
+        auto_confirm=True,
+    )
+    elapsed = time.monotonic() - started
+
+    assert exit_code == probe_runner._TIMEOUT_EXIT_CODE
+    assert "[probe-status] phase=confirmation_timeout exit_code=124" in transcript
+    assert elapsed < 2.0
 
 
 def test_probe_auto_confirm_limit_is_configurable(

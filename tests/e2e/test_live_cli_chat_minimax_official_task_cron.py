@@ -459,10 +459,7 @@ def test_tcoh_08_minimax_schedule_show_pause_list_resume_cancel_live() -> None:
         agent_id=_AGENT_ID,
         config_path=_CONFIG,
         data_root_override=data_root,
-        user_input=(
-            f"Use the task.cancel tool with task_id={persisted_task_id}. "
-            "Use the exact task_id and do not transform it."
-        ),
+        user_input=f'tool task.cancel {{"task_id":"{persisted_task_id}"}}',
     )
     assert _trace_proves_tool_execution(cancel_result.trace_root, "task.cancel")
     assert _read_cron_jobs(db_path) == []
