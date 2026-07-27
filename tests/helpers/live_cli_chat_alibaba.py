@@ -11,7 +11,7 @@ from typing import Literal
 
 import pytest
 
-from tests.e2e.runners.run_cli_chat_probe import _run_probe_session
+from tests.e2e.runners.run_cli_chat_probe import _TIMEOUT_EXIT_CODE, _run_probe_session
 from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
 RAW_TOOL_MARKUP_RE = re.compile(
@@ -43,6 +43,7 @@ _TIMEOUT_DEFAULTS = {
     "skill_dense": 420,
     "coding_project": 1200,
 }
+_PROBE_TIMEOUT_MARGIN_SECONDS = 30
 _MATRIX_TIMEOUT_ENVS = {
     "skill_simple": LIVE_SKILL_SIMPLE_TIMEOUT_ENV,
     "skill_dense": LIVE_SKILL_DENSE_TIMEOUT_ENV,
@@ -135,6 +136,31 @@ def timeout_seconds(matrix_type: str = "generic") -> int:
     except ValueError:
         return default_value
     return max(value, 30)
+
+
+def _probe_timeout_seconds(matrix_type: str = "generic") -> int:
+    configured_timeout = timeout_seconds(matrix_type)
+    if configured_timeout <= _PROBE_TIMEOUT_MARGIN_SECONDS * 2:
+        return configured_timeout
+    return configured_timeout - _PROBE_TIMEOUT_MARGIN_SECONDS
+
+
+def _probe_input_turn_count(user_input: str) -> int:
+    count = 0
+    buffered_turn = False
+    for line in str(user_input or "").splitlines():
+        token = line.strip()
+        if not token:
+            continue
+        if token.startswith("/"):
+            if buffered_turn:
+                count += 1
+                buffered_turn = False
+            continue
+        buffered_turn = True
+    if buffered_turn:
+        count += 1
+    return count
 
 
 def artifact_dir() -> Path:
@@ -393,41 +419,91 @@ def _latest_outbound_debug_payload(
     *,
     data_root: Path,
     agent_id: str,
+    session_id: str | None = None,
 ) -> dict | None:
     db_path = data_root / "state" / "openminion.db"
     if not db_path.exists():
         return None
     conn = sqlite3.connect(db_path)
     try:
-        row = conn.execute(
+        rows = conn.execute(
             """
             select body, metadata_json
             from messages
             where role = 'outbound'
             order by created_at desc, rowid desc
-            limit 1
+            limit 20
             """
-        ).fetchone()
+        ).fetchall()
     except sqlite3.Error:
         return None
     finally:
         conn.close()
-    if row is None:
-        return None
-    body = _strip_agent_namespace(str(row[0] or ""), agent_id=agent_id)
-    try:
-        metadata = json.loads(str(row[1] or "{}"))
-    except json.JSONDecodeError:
-        metadata = {}
-    if not isinstance(metadata, dict):
-        metadata = {}
-    return {
-        "last_turn": {
-            "body": body,
-            "body_preview": body[:2000],
-            "metadata": metadata,
+    for row in rows:
+        body = _strip_agent_namespace(str(row[0] or ""), agent_id=agent_id)
+        try:
+            metadata = json.loads(str(row[1] or "{}"))
+        except json.JSONDecodeError:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if session_id and str(metadata.get("session_id", "") or "") != session_id:
+            continue
+        return {
+            "last_turn": {
+                "body": body,
+                "body_preview": body[:2000],
+                "metadata": metadata,
+            }
         }
-    }
+    return None
+
+
+def session_outbound_debug_payloads(
+    *,
+    data_root: Path,
+    agent_id: str,
+    session_id: str,
+) -> list[dict]:
+    db_path = data_root / "state" / "openminion.db"
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            """
+            select body, metadata_json
+            from messages
+            where role = 'outbound'
+            order by created_at asc, rowid asc
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+    payloads: list[dict] = []
+    for row in rows:
+        body = _strip_agent_namespace(str(row[0] or ""), agent_id=agent_id)
+        try:
+            metadata = json.loads(str(row[1] or "{}"))
+        except json.JSONDecodeError:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        if str(metadata.get("session_id", "") or "") != session_id:
+            continue
+        payloads.append(
+            {
+                "last_turn": {
+                    "body": body,
+                    "body_preview": body[:2000],
+                    "metadata": metadata,
+                }
+            }
+        )
+    return payloads
 
 
 def _append_structured_probe_debug(
@@ -435,15 +511,49 @@ def _append_structured_probe_debug(
     transcript: str,
     data_root: Path,
     agent_id: str,
+    session_id: str | None = None,
 ) -> str:
     if extract_all_debug_payloads(transcript):
         return transcript
-    payload = _latest_outbound_debug_payload(data_root=data_root, agent_id=agent_id)
+    payload = _latest_outbound_debug_payload(
+        data_root=data_root,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
     if payload is None:
         return transcript
     return (
         f"{transcript.rstrip()}\n\n[probe-debug]\n"
         f"{json.dumps(payload, sort_keys=True)}\n"
+    )
+
+
+def _durable_outbound_turn_completed(
+    *, data_root: Path, agent_id: str, session_id: str | None = None
+) -> bool:
+    payload = _latest_outbound_debug_payload(
+        data_root=data_root,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+    if payload is None:
+        return False
+    last_turn = payload.get("last_turn")
+    if not isinstance(last_turn, dict):
+        return False
+    body = str(last_turn.get("body") or last_turn.get("body_preview") or "").strip()
+    if not body:
+        return False
+    metadata = last_turn.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    brain_status = str(metadata.get("brain_status", "") or "").strip().lower()
+    run_state = str(metadata.get("run_state", "") or "").strip().lower()
+    finish_reason = str(metadata.get("finish_reason", "") or "").strip().lower()
+    return (
+        brain_status in {"done", "completed"}
+        or run_state == "completed"
+        or finish_reason == "stop"
     )
 
 
@@ -513,6 +623,16 @@ def run_cli_session(
         else f"{src_root}{os.pathsep}{current_pythonpath}"
     )
     resolved_agent_id = agent_id or default_agent_id()
+    durable_completion_predicate = None
+    if _probe_input_turn_count(user_input) <= 1:
+        def _current_session_completed() -> bool:
+            return _durable_outbound_turn_completed(
+                data_root=data_root,
+                agent_id=resolved_agent_id,
+                session_id=session_id,
+            )
+
+        durable_completion_predicate = _current_session_completed
 
     command = [
         str(resolved_python),
@@ -534,14 +654,30 @@ def run_cli_session(
         cwd=str(workspace_root_override or openminion_root()),
         env=env,
         messages=[user_input.rstrip("\n")],
-        timeout_seconds=float(timeout_seconds(matrix_type)),
+        timeout_seconds=float(_probe_timeout_seconds(matrix_type)),
         auto_confirm=auto_confirm,
+        durable_completion_predicate=durable_completion_predicate,
     )
     transcript = _append_structured_probe_debug(
         transcript=transcript,
         data_root=data_root,
         agent_id=resolved_agent_id,
+        session_id=session_id,
     )
+    if (
+        exit_code == _TIMEOUT_EXIT_CODE
+        and durable_completion_predicate is not None
+        and _durable_outbound_turn_completed(
+        data_root=data_root,
+        agent_id=resolved_agent_id,
+        session_id=session_id,
+        )
+    ):
+        exit_code = 0
+        transcript = (
+            f"{transcript.rstrip()}\n"
+            "[probe-status] phase=durable_turn_recovered exit_code=0\n"
+        )
     transcript_path.write_text(transcript, encoding="utf-8")
     skip_if_provider_auth_rejected(
         transcript=transcript,

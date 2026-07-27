@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -193,6 +194,188 @@ def test_live_cli_chat_helper_ignores_placeholder_when_env_present(
     )
     monkeypatch.setenv("MINIMAX_API_KEY", "present")
     assert live_cli_chat_alibaba._config_has_unset_runtime_env(config_path) == ()
+
+
+def test_live_cli_chat_helper_probe_timeout_leaves_pytest_margin(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv(
+        live_cli_chat_alibaba.LIVE_CODING_PROJECT_TIMEOUT_ENV, raising=False
+    )
+    monkeypatch.delenv(live_cli_chat_alibaba.LIVE_CLI_CHAT_TIMEOUT_ENV, raising=False)
+
+    assert live_cli_chat_alibaba.timeout_seconds("coding_project") == 1200
+    assert live_cli_chat_alibaba._probe_timeout_seconds("coding_project") == 1170
+
+
+def test_live_cli_chat_helper_counts_probe_input_turns() -> None:
+    assert (
+        live_cli_chat_alibaba._probe_input_turn_count("hello\n/debug\n/exit\n") == 1
+    )
+    assert (
+        live_cli_chat_alibaba._probe_input_turn_count(
+            "tool time {}\n/debug\ntool location {}\n/debug\n/exit\n"
+        )
+        == 2
+    )
+
+
+def test_live_cli_chat_helper_detects_completed_durable_outbound_turn(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "openminion.db"
+    db_path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "create table messages (role text, body text, metadata_json text, created_at integer)"
+        )
+        conn.execute(
+            "insert into messages values (?, ?, ?, ?)",
+            (
+                "outbound",
+                "agent: final answer",
+                json.dumps(
+                    {
+                        "brain_status": "done",
+                        "run_state": "completed",
+                        "session_id": "session-a",
+                    }
+                ),
+                1,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert live_cli_chat_alibaba._durable_outbound_turn_completed(
+        data_root=tmp_path,
+        agent_id="agent",
+    )
+    assert live_cli_chat_alibaba._durable_outbound_turn_completed(
+        data_root=tmp_path,
+        agent_id="agent",
+        session_id="session-a",
+    )
+
+
+def test_live_cli_chat_helper_rejects_incomplete_durable_outbound_turn(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "openminion.db"
+    db_path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "create table messages (role text, body text, metadata_json text, created_at integer)"
+        )
+        conn.execute(
+            "insert into messages values (?, ?, ?, ?)",
+            ("outbound", "agent: still thinking", json.dumps({"run_state": "running"}), 1),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert not live_cli_chat_alibaba._durable_outbound_turn_completed(
+        data_root=tmp_path,
+        agent_id="agent",
+    )
+
+
+def test_live_cli_chat_helper_durable_completion_matches_current_session(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "openminion.db"
+    db_path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "create table messages (role text, body text, metadata_json text, created_at integer)"
+        )
+        conn.execute(
+            "insert into messages values (?, ?, ?, ?)",
+            (
+                "outbound",
+                "agent: old final answer",
+                json.dumps(
+                    {
+                        "brain_status": "done",
+                        "run_state": "completed",
+                        "session_id": "old-session",
+                    }
+                ),
+                1,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert live_cli_chat_alibaba._durable_outbound_turn_completed(
+        data_root=tmp_path,
+        agent_id="agent",
+        session_id="old-session",
+    )
+    assert not live_cli_chat_alibaba._durable_outbound_turn_completed(
+        data_root=tmp_path,
+        agent_id="agent",
+        session_id="new-session",
+    )
+
+    transcript = live_cli_chat_alibaba._append_structured_probe_debug(
+        transcript="probe text",
+        data_root=tmp_path,
+        agent_id="agent",
+        session_id="new-session",
+    )
+    assert transcript == "probe text"
+
+
+def test_live_cli_chat_helper_reads_session_outbound_debug_payloads(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "state" / "openminion.db"
+    db_path.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "create table messages (role text, body text, metadata_json text, created_at integer)"
+        )
+        rows = [
+            (
+                "outbound",
+                "agent: older",
+                json.dumps({"session_id": "other", "tool_execution_count": "1"}),
+                1,
+            ),
+            (
+                "outbound",
+                "agent: first",
+                json.dumps({"session_id": "target", "tool_execution_count": "1"}),
+                2,
+            ),
+            (
+                "outbound",
+                "agent: second",
+                json.dumps({"session_id": "target", "tool_execution_count": "0"}),
+                3,
+            ),
+        ]
+        conn.executemany("insert into messages values (?, ?, ?, ?)", rows)
+        conn.commit()
+    finally:
+        conn.close()
+
+    payloads = live_cli_chat_alibaba.session_outbound_debug_payloads(
+        data_root=tmp_path,
+        agent_id="agent",
+        session_id="target",
+    )
+
+    bodies = [payload["last_turn"]["body"] for payload in payloads]
+    assert bodies == ["first", "second"]
 
 
 def test_identity_yaml_matrix_artifacts_use_openminion_package_home(
@@ -449,6 +632,7 @@ def test_cli_gate_main_sets_runtime_env_and_runs_local(
     python_path = tmp_path / "python3.11"
     python_path.write_text("", encoding="utf-8")
 
+    monkeypatch.delenv("PYTHONPATH", raising=False)
     monkeypatch.setattr(gate, "PYTHON", python_path)
     monkeypatch.setattr(
         gate,

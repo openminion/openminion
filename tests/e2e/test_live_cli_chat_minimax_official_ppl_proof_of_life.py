@@ -17,7 +17,7 @@ from tests.helpers.live_cli_chat_alibaba import (
 )
 from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.timeout(420)]
 
 
 _AGENT_ID = "minimax-m2-7"

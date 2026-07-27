@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import unittest
 from dataclasses import dataclass
 from typing import List, Optional
 from unittest.mock import MagicMock
@@ -97,67 +96,51 @@ def _make_service(
     return service
 
 
-class TaskCategoryPreferenceTableTests(unittest.TestCase):
+class TestTaskCategoryPreferenceTable:
     def test_task_schedule_category_lists_model_task_schedule(self) -> None:
-        self.assertIn("task.schedule", _PREFERRED_MODEL_TOOLS_BY_CATEGORY)
-        self.assertEqual(
-            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.schedule"],
-            [MODEL_TASK_SCHEDULE],
-        )
+        assert "task.schedule" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.schedule"] == [
+            MODEL_TASK_SCHEDULE
+        ]
 
     def test_task_list_category_lists_model_task_list(self) -> None:
-        self.assertIn("task.list", _PREFERRED_MODEL_TOOLS_BY_CATEGORY)
-        self.assertEqual(
-            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.list"],
-            [MODEL_TASK_LIST],
-        )
+        assert "task.list" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.list"] == [MODEL_TASK_LIST]
 
     def test_task_cancel_category_lists_model_task_cancel(self) -> None:
-        self.assertIn("task.cancel", _PREFERRED_MODEL_TOOLS_BY_CATEGORY)
-        self.assertEqual(
-            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.cancel"],
-            [MODEL_TASK_CANCEL],
-        )
+        assert "task.cancel" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.cancel"] == [
+            MODEL_TASK_CANCEL
+        ]
 
     def test_task_watch_category_lists_model_task_watch(self) -> None:
-        self.assertIn("task.watch", _PREFERRED_MODEL_TOOLS_BY_CATEGORY)
-        self.assertEqual(
-            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.watch"],
-            [MODEL_TASK_WATCH],
-        )
+        assert "task.watch" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.watch"] == [MODEL_TASK_WATCH]
 
     def test_task_pause_category_lists_model_task_pause(self) -> None:
-        self.assertIn("task.pause", _PREFERRED_MODEL_TOOLS_BY_CATEGORY)
-        self.assertEqual(
-            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.pause"],
-            [MODEL_TASK_PAUSE],
-        )
+        assert "task.pause" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.pause"] == [MODEL_TASK_PAUSE]
 
     def test_task_resume_category_lists_model_task_resume(self) -> None:
-        self.assertIn("task.resume", _PREFERRED_MODEL_TOOLS_BY_CATEGORY)
-        self.assertEqual(
-            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.resume"],
-            [MODEL_TASK_RESUME],
-        )
+        assert "task.resume" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.resume"] == [
+            MODEL_TASK_RESUME
+        ]
 
     def test_task_show_category_lists_model_task_show(self) -> None:
-        self.assertIn("task.show", _PREFERRED_MODEL_TOOLS_BY_CATEGORY)
-        self.assertEqual(
-            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.show"],
-            [MODEL_TASK_SHOW],
-        )
+        assert "task.show" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.show"] == [MODEL_TASK_SHOW]
 
     def test_task_consolidate_memory_category_lists_consolidate_memory_tool(
         self,
     ) -> None:
-        self.assertIn("task.consolidate_memory", _PREFERRED_MODEL_TOOLS_BY_CATEGORY)
-        self.assertEqual(
-            _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.consolidate_memory"],
-            [MODEL_TASK_CONSOLIDATE_MEMORY],
-        )
+        assert "task.consolidate_memory" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.consolidate_memory"] == [
+            MODEL_TASK_CONSOLIDATE_MEMORY
+        ]
 
 
-class TaskCategoryDeterministicSelectionTests(unittest.TestCase):
+class TestTaskCategoryDeterministicSelection:
     def test_task_schedule_intent_category_selects_task_schedule_tool(
         self,
     ) -> None:
@@ -174,10 +157,10 @@ class TaskCategoryDeterministicSelectionTests(unittest.TestCase):
             query="schedule a weekly cleanup",
             intent_categories=["task.schedule"],
         )
-        self.assertEqual(result.mode, "deterministic")
-        self.assertIn(MODEL_TASK_SCHEDULE, result.shortlist)
+        assert result.mode == "deterministic"
+        assert MODEL_TASK_SCHEDULE in result.shortlist
         # Negative path: weather tool must NOT slip into the task shortlist.
-        self.assertNotIn(MODEL_WEATHER, result.shortlist)
+        assert MODEL_WEATHER not in result.shortlist
 
     def test_task_list_forced_category_selects_task_list_tool(self) -> None:
         service = _make_service(
@@ -193,10 +176,10 @@ class TaskCategoryDeterministicSelectionTests(unittest.TestCase):
             query="show pending tasks",
             forced_category="task.list",
         )
-        self.assertEqual(result.mode, "deterministic")
-        self.assertIn(MODEL_TASK_LIST, result.shortlist)
+        assert result.mode == "deterministic"
+        assert MODEL_TASK_LIST in result.shortlist
         # Negative path: sibling task.schedule must not slip in via category leak.
-        self.assertNotIn(MODEL_TASK_SCHEDULE, result.shortlist)
+        assert MODEL_TASK_SCHEDULE not in result.shortlist
 
     def test_task_cancel_intent_category_selects_task_cancel_tool(self) -> None:
         service = _make_service(
@@ -212,8 +195,8 @@ class TaskCategoryDeterministicSelectionTests(unittest.TestCase):
             query="stop the scheduled task",
             intent_categories=["task.cancel"],
         )
-        self.assertEqual(result.mode, "deterministic")
-        self.assertIn(MODEL_TASK_CANCEL, result.shortlist)
+        assert result.mode == "deterministic"
+        assert MODEL_TASK_CANCEL in result.shortlist
 
     def test_task_show_forced_category_selects_task_show_tool(self) -> None:
         service = _make_service(
@@ -229,22 +212,22 @@ class TaskCategoryDeterministicSelectionTests(unittest.TestCase):
             query="show one scheduled task",
             forced_category="task.show",
         )
-        self.assertEqual(result.mode, "deterministic")
-        self.assertIn(MODEL_TASK_SHOW, result.shortlist)
-        self.assertNotIn(MODEL_TASK_LIST, result.shortlist)
+        assert result.mode == "deterministic"
+        assert MODEL_TASK_SHOW in result.shortlist
+        assert MODEL_TASK_LIST not in result.shortlist
 
 
-class TaskAdaptiveAllowedToolTests(unittest.TestCase):
+class TestTaskAdaptiveAllowedTool:
     def test_general_adaptive_allowed_tools_include_task_crud(self) -> None:
-        self.assertIn(MODEL_TASK_SCHEDULE, ACT_ADAPTIVE_ALLOWED_TOOLS)
-        self.assertIn(MODEL_TASK_LIST, ACT_ADAPTIVE_ALLOWED_TOOLS)
-        self.assertIn(MODEL_TASK_CANCEL, ACT_ADAPTIVE_ALLOWED_TOOLS)
-        self.assertIn(MODEL_TASK_PAUSE, ACT_ADAPTIVE_ALLOWED_TOOLS)
-        self.assertIn(MODEL_TASK_RESUME, ACT_ADAPTIVE_ALLOWED_TOOLS)
-        self.assertIn(MODEL_TASK_SHOW, ACT_ADAPTIVE_ALLOWED_TOOLS)
+        assert MODEL_TASK_SCHEDULE in ACT_ADAPTIVE_ALLOWED_TOOLS
+        assert MODEL_TASK_LIST in ACT_ADAPTIVE_ALLOWED_TOOLS
+        assert MODEL_TASK_CANCEL in ACT_ADAPTIVE_ALLOWED_TOOLS
+        assert MODEL_TASK_PAUSE in ACT_ADAPTIVE_ALLOWED_TOOLS
+        assert MODEL_TASK_RESUME in ACT_ADAPTIVE_ALLOWED_TOOLS
+        assert MODEL_TASK_SHOW in ACT_ADAPTIVE_ALLOWED_TOOLS
 
 
-class UnrelatedCategoryDoesNotPullTaskToolsTests(unittest.TestCase):
+class TestUnrelatedCategoryDoesNotPullTaskTools:
     def test_weather_category_does_not_surface_task_tools(self) -> None:
         service = _make_service(
             [
@@ -266,8 +249,8 @@ class UnrelatedCategoryDoesNotPullTaskToolsTests(unittest.TestCase):
             query="temperature in tokyo",
             forced_category="weather",
         )
-        self.assertEqual(result.mode, "deterministic")
-        self.assertIn(MODEL_WEATHER, result.shortlist)
-        self.assertNotIn(MODEL_TASK_SCHEDULE, result.shortlist)
-        self.assertNotIn(MODEL_TASK_LIST, result.shortlist)
-        self.assertNotIn(MODEL_TASK_CANCEL, result.shortlist)
+        assert result.mode == "deterministic"
+        assert MODEL_WEATHER in result.shortlist
+        assert MODEL_TASK_SCHEDULE not in result.shortlist
+        assert MODEL_TASK_LIST not in result.shortlist
+        assert MODEL_TASK_CANCEL not in result.shortlist
