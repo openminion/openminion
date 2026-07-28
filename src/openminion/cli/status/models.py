@@ -102,6 +102,7 @@ def build_memory_context_review(
     *,
     canary_path: str | Path | None = None,
     calibration_path: str | Path | None = None,
+    artifacts_dir: str | Path | None = None,
 ) -> MemoryContextReviewViewModel:
     included: list[str] = []
     dropped: list[str] = []
@@ -128,15 +129,36 @@ def build_memory_context_review(
                 dropped.append(segment_id)
             if action == "truncated" or bool(decision.get("truncated", False)):
                 truncated.append(segment_id)
-    canary, canary_reason = _optional_summary(
+    canary_source, canary_lookup_reason = _resolve_summary_path(
         canary_path,
+        artifacts_dir=artifacts_dir,
+        filename_token="canary",
+        expected_version="memory-context-operational-canary.v1",
+    )
+    calibration_source, calibration_lookup_reason = _resolve_summary_path(
+        calibration_path,
+        artifacts_dir=artifacts_dir,
+        filename_token="calibration",
+        expected_version="context-budget-calibration.v1",
+    )
+    canary, canary_reason = _optional_summary(
+        canary_source,
         expected_version="memory-context-operational-canary.v1",
     )
     calibration, calibration_reason = _optional_summary(
-        calibration_path,
+        calibration_source,
         expected_version="context-budget-calibration.v1",
     )
-    degraded.extend(item for item in (canary_reason, calibration_reason) if item)
+    degraded.extend(
+        item
+        for item in (
+            canary_lookup_reason,
+            calibration_lookup_reason,
+            canary_reason,
+            calibration_reason,
+        )
+        if item
+    )
     return MemoryContextReviewViewModel(
         schema_version="memory-context-review.v1",
         session_id=_safe_text(payload.get("session_id")),
@@ -184,6 +206,35 @@ def _optional_summary(
         return {}, f"{expected_version}:wrong_version:{report_version or 'missing'}"
     summary = payload.get("summary", {})
     return dict(summary if isinstance(summary, Mapping) else {}), ""
+
+
+def _resolve_summary_path(
+    path: str | Path | None,
+    *,
+    artifacts_dir: str | Path | None,
+    filename_token: str,
+    expected_version: str,
+) -> tuple[str | Path | None, str]:
+    if path is not None and str(path).strip():
+        return path, ""
+    if artifacts_dir is None or not str(artifacts_dir).strip():
+        return path, ""
+    root = Path(artifacts_dir).expanduser()
+    if not root.exists() or not root.is_dir():
+        return None, f"{expected_version}:artifact_dir_unavailable"
+    matches: list[Path] = []
+    for candidate in root.rglob("*.json"):
+        if filename_token not in candidate.name.lower():
+            continue
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, Mapping) and payload.get("report_version") == expected_version:
+            matches.append(candidate)
+    if not matches:
+        return None, f"{expected_version}:artifact_not_found"
+    return max(matches, key=lambda item: (item.stat().st_mtime_ns, str(item))), ""
 
 
 def _summary_text(summary: Mapping[str, Any]) -> str:

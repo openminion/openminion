@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from argparse import Namespace
 from types import SimpleNamespace
 
@@ -36,6 +37,7 @@ def _args(
     review: bool = False,
     canary: str = "",
     calibration: str = "",
+    artifacts_dir: str = "",
 ) -> Namespace:
     return Namespace(
         config="",
@@ -46,6 +48,7 @@ def _args(
         review=review,
         canary=canary,
         calibration=calibration,
+        artifacts_dir=artifacts_dir,
     )
 
 
@@ -96,12 +99,15 @@ def test_status_context_trace_review_parser_registration() -> None:
             "canary.json",
             "--calibration",
             "calibration.json",
+            "--artifacts-dir",
+            "artifacts",
         ]
     )
 
     assert args.review is True
     assert args.canary == "canary.json"
     assert args.calibration == "calibration.json"
+    assert args.artifacts_dir == "artifacts"
 
 
 def test_status_context_trace_json_output(
@@ -181,6 +187,56 @@ def test_status_context_trace_review_json_includes_optional_degradation(
     assert code == 0
     assert payload["review"]["schema_version"] == "memory-context-review.v1"
     assert payload["review"]["degraded_reasons"]
+
+
+def test_status_context_trace_review_artifacts_dir_discovers_latest_reports(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    old_canary = tmp_path / "old-canary.json"
+    new_canary = tmp_path / "new-canary.json"
+    calibration = tmp_path / "context-budget-calibration.json"
+    old_canary.write_text(
+        json.dumps(
+            {
+                "report_version": "memory-context-operational-canary.v1",
+                "summary": {"score": "old"},
+            }
+        )
+    )
+    new_canary.write_text(
+        json.dumps(
+            {
+                "report_version": "memory-context-operational-canary.v1",
+                "summary": {"score": "new"},
+            }
+        )
+    )
+    calibration.write_text(
+        json.dumps(
+            {
+                "report_version": "context-budget-calibration.v1",
+                "summary": {"recommendation": "keep"},
+            }
+        )
+    )
+    os.utime(old_canary, ns=(1, 1))
+    os.utime(new_canary, ns=(2, 2))
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.context_trace.build_status_session_store",
+        lambda _args, _config: _SessionStore([_trace_event()]),
+    )
+
+    code = run_context_trace_status(
+        _args(session_id="sess-1", review=True, artifacts_dir=str(tmp_path)),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "- canary: score=new" in output
+    assert "- calibration: recommendation=keep" in output
 
 
 def test_status_context_trace_handles_malformed_event_payload(

@@ -51,6 +51,7 @@ def run_context_trace_status(args: Any, *, config: Any) -> int:
                 payload,
                 canary_path=getattr(args, "canary", None),
                 calibration_path=getattr(args, "calibration", None),
+                artifacts_dir=getattr(args, "artifacts_dir", None),
             ).to_dict()
         print_json_payload(payload)
         return 0
@@ -59,6 +60,7 @@ def run_context_trace_status(args: Any, *, config: Any) -> int:
             payload,
             canary_path=getattr(args, "canary", None),
             calibration_path=getattr(args, "calibration", None),
+            artifacts_dir=getattr(args, "artifacts_dir", None),
         )
         print(render_memory_context_review(review))
         return 0

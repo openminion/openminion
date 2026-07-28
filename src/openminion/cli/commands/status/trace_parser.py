@@ -43,5 +43,13 @@ def register_status_context_trace_subcommand(status_subcommands, *, handler) -> 
         default="",
         help="Optional context-budget-calibration.v1 artifact path",
     )
+    parser.add_argument(
+        "--artifacts-dir",
+        default="",
+        help=(
+            "Directory to search for the latest canary/calibration JSON artifacts "
+            "when explicit paths are not supplied"
+        ),
+    )
     add_json_output_flag(parser)
     parser.set_defaults(handler=handler, needs_app=False)

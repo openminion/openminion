@@ -51,6 +51,16 @@ def test_all_four_subcommands_exist(parser) -> None:
         assert args.blocks_command == argv[2]
 
 
+def test_memory_help_points_to_full_memctl_surface(parser, capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["memory", "--help"])
+
+    assert exc_info.value.code == 0
+    output = capsys.readouterr().out
+    assert "memctl --help" in output
+    assert "status context-trace --review" in output
+
+
 def test_pin_identity_creates_read_only_block(store, parser, capsys) -> None:
     args = parser.parse_args(
         [

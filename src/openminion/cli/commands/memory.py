@@ -268,10 +268,17 @@ def _add_namespace_flags(parser: argparse.ArgumentParser) -> None:
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     memory = subparsers.add_parser(
         "memory",
-        help="Memory operator surfaces (v1: blocks)",
+        help="Memory blocks plus a pointer to the full memctl surface",
         description=(
             "OpenMinion memory operator surfaces backed by the sophiagraph package "
-            "via direct library import."
+            "via direct library import. The full record, candidate, review, trace, "
+            "GC, provenance, import/export, and diagnostic surface remains available "
+            "through the memctl command."
+        ),
+        epilog=(
+            "Use `memctl --help` for full memory controls beyond v1 blocks. "
+            "Use `openminion status context-trace --review` to inspect what memory "
+            "and context evidence reached a session."
         ),
     )
     memory_subparsers = memory.add_subparsers(dest="memory_command", required=True)
