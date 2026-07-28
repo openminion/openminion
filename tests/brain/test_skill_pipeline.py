@@ -258,6 +258,13 @@ def test_resolve_skill_pipeline_dense_catalog_uses_llm_selection() -> None:
     assert result.selection_reason == skill_pipeline._SKILL_SELECTION_REASON_LLM
     assert [ref.skill_id for ref in result.selected_refs] == ["news_digest"]
     assert len(runner.llm_api.calls) == 1
+    assert result.selector_latency_ms >= 0
+    assert result.selector_token_count > 0
+    prerouting = [
+        event for event in logger.events if event["type"] == "skill.prerouting"
+    ][-1]
+    assert prerouting["payload"]["latency_ms"] == result.selector_latency_ms
+    assert prerouting["payload"]["token_count"] == result.selector_token_count
     selected = next(
         event for event in logger.events if event["type"] == "skill.selected"
     )

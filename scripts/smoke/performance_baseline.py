@@ -6,6 +6,7 @@ import argparse
 import cProfile
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+import hashlib
 import io
 import json
 import math
@@ -29,6 +30,7 @@ from openminion.modules.context.budget import (
 )
 
 ARTIFACT_SCHEMA_VERSION = "pomv2.performance.v2"
+TCPL_ARTIFACT_SCHEMA_VERSION = "tcpl.performance.v1"
 STARTUP_FIXTURE_REVISION = "focus-help-v2"
 SUT_BOUNDARY_SUBPROCESS = "sut_subprocess_only"
 SUT_BOUNDARY_IN_PROCESS = "sut_in_process_fixture"
@@ -62,6 +64,38 @@ DEFAULT_THRESHOLD_MODE = "warn"
 PROFILE_TOP_LIMIT = 20
 IMPORTTIME_TOP_LIMIT = 20
 TRACEMALLOC_TOP_LIMIT = 10
+TCPL_SKILL_ENTRY_TOKEN_BUDGET = 1200
+TCPL_SKILL_ENTRY_CANDIDATE_BUDGET = 6
+TCPL_COMPACTION_DEFER_MS_THRESHOLD = 10
+TCPL_REQUIRED_COVERAGE: dict[str, tuple[tuple[str, ...], ...]] = {
+    "selector": (("selector_latency_ms",), ("selector_token_count",)),
+    "compaction": (("session_compaction_ms",), ("session_compaction_policy",)),
+    "memory_followup": (
+        ("memory_followup_flush_ms",),
+        ("memory_followup_pending_count",),
+    ),
+    "persistence": (
+        ("transcript_persistence_ms", "response_persistence_ms"),
+        ("base_memory_persistence_ms", "memory_write_ms"),
+    ),
+    "run_record": (("run_record_finish_ms",),),
+    "delivery": (
+        ("terminal_delivery_ms", "final_delivery_ms", "response_delivery_ms"),
+    ),
+    "delivered_event": (("delivered_event_emit_ms", "response_delivered_event_ms"),),
+    "terminal_event": (("terminal_event_emit_ms", "terminal_event_ms"),),
+}
+TCPL_QUALITY_INVARIANTS = (
+    "skill_selection_quality",
+    "tool_order_quality",
+    "context_quality",
+    "transcript_quality",
+    "memory_quality",
+    "replay_quality",
+    "policy_quality",
+    "approval_quality",
+    "final_delivery_quality",
+)
 
 
 @dataclass(frozen=True)
@@ -138,6 +172,72 @@ def _dirty_worktree_summary(workspace_root: Path) -> dict[str, Any]:
         "change_count": len(lines),
         "sample": lines[:20],
     }
+
+
+def _stable_json_hash(payload: Any) -> str:
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _dirty_worktree_fingerprint(workspace_root: Path) -> str:
+    repo_root = workspace_root / "openminion"
+    summary = _dirty_worktree_summary(workspace_root)
+    if not summary.get("available"):
+        return "unavailable"
+    digest = hashlib.sha256()
+    for args in (
+        ["git", "-C", str(repo_root), "status", "--porcelain=v1", "-z"],
+        ["git", "-C", str(repo_root), "diff", "--binary"],
+        ["git", "-C", str(repo_root), "diff", "--cached", "--binary"],
+    ):
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                check=False,
+                timeout=20,
+            )
+        except Exception:
+            return _stable_json_hash(summary)
+        digest.update(b"\0".join(part.encode("utf-8") for part in args))
+        digest.update(b"\0")
+        digest.update(result.stdout)
+        digest.update(result.stderr)
+    status_bytes = subprocess.run(
+        ["git", "-C", str(repo_root), "status", "--porcelain=v1", "-z"],
+        capture_output=True,
+        check=False,
+        timeout=20,
+    ).stdout
+    for entry in status_bytes.decode("utf-8", errors="replace").split("\0"):
+        if not entry.startswith("?? "):
+            continue
+        path = repo_root / entry[3:]
+        if path.is_file():
+            digest.update(entry.encode("utf-8"))
+            digest.update(_file_sha256(path).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except Exception:
+        return "unavailable"
+
+
+def _fixture_hash(identity: dict[str, Any], *, command: Any) -> str:
+    return _stable_json_hash(
+        {
+            "command": command,
+            "identity": identity,
+            "runner_source_sha256": _file_sha256(Path(__file__)),
+        }
+    )
 
 
 def _elapsed_ms(started: float) -> int:
@@ -1004,7 +1104,7 @@ def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
     def action(metrics: dict[str, Any]) -> list[str]:
         iteration_metrics: list[dict[str, int]] = []
         start_rss = _current_rss_bytes()
-        for index in range(max(1, options.runs)):
+        for index in range(1):
             iteration_started_ns = time.perf_counter_ns()
             payload = {
                 "index": index,
@@ -1026,25 +1126,25 @@ def _measure_repeated_local_turns(options: RunOptions) -> ScenarioRun:
                 }
             )
         end_rss = _current_rss_bytes()
-        metrics["phase_timings_ms"] = {"iterations": max(1, options.runs)}
-        metrics["tool_call_count"] = max(1, options.runs)
+        metrics["phase_timings_ms"] = {"iterations": 1}
+        metrics["tool_call_count"] = 1
         metrics["iterations"] = iteration_metrics
         metrics["rss_growth_bytes"] = end_rss - start_rss
-        metrics["rss_growth_per_iteration_bytes"] = int(
-            (end_rss - start_rss) / max(1, options.runs)
-        )
+        metrics["rss_growth_per_iteration_bytes"] = end_rss - start_rss
         if iteration_metrics:
             first_peak = iteration_metrics[0]["tracemalloc_peak_bytes"]
             last_peak = iteration_metrics[-1]["tracemalloc_peak_bytes"]
             metrics["tracemalloc_peak_growth_bytes"] = last_peak - first_peak
-            metrics["tracemalloc_peak_growth_per_iteration_bytes"] = int(
-                (last_peak - first_peak) / max(1, options.runs)
+            metrics["tracemalloc_peak_growth_per_iteration_bytes"] = (
+                last_peak - first_peak
             )
-        return ["Leak-growth report is informational and warn-only in PBHG."]
+        return [
+            "Each raw sample records one local iteration; summarize repeated-turn growth across samples."
+        ]
 
     return _run_with_metrics(
         scenario_id="repeated_local_turns",
-        command=f"repeated_local_fixture:runs={options.runs}",
+        command="repeated_local_fixture:single_iteration_sample",
         provider_variance_class=LOCAL_VARIANCE,
         action=action,
     )
@@ -2083,6 +2183,448 @@ def _git_head(workspace_root: Path) -> str:
         return "unknown"
 
 
+def _provider_call_purposes(metrics: dict[str, Any]) -> list[str]:
+    raw = metrics.get("provider_call_purposes")
+    if isinstance(raw, list | tuple):
+        return [str(item) for item in raw]
+    call_count = int(metrics.get("model_call_count", 0) or 0)
+    if call_count > 0:
+        return ["unavailable" for _ in range(call_count)]
+    return []
+
+
+def _provider_call_latencies(metrics: dict[str, Any]) -> list[int]:
+    raw = metrics.get("provider_call_latency_ms")
+    if isinstance(raw, list | tuple):
+        return [int(item) for item in raw if isinstance(item, int)]
+    round_trip = metrics.get("provider_round_trip_ms")
+    if isinstance(round_trip, int):
+        purposes = _provider_call_purposes(metrics)
+        return [max(0, round_trip)] if len(purposes) == 1 else []
+    return []
+
+
+def _cold_warm_classification(scenario_id: str) -> str:
+    if scenario_id.startswith("cold_"):
+        return "cold"
+    if scenario_id.startswith("warm_") or scenario_id == "repeated_local_turns":
+        return "warm"
+    return "not_applicable"
+
+
+def _validate_tcpl_sample(sample: dict[str, Any]) -> None:
+    identity = sample.get("comparable_identity")
+    if not isinstance(identity, dict):
+        raise ValueError("TCPL sample missing comparable_identity")
+    for key in (
+        "git_revision",
+        "dirty_tree_fingerprint",
+        "scenario_id",
+        "fixture_hash",
+        "provider",
+        "model",
+        "config_hash",
+        "candidate_posture",
+        "rollback_posture",
+        "cold_warm",
+        "host_runtime_hash",
+    ):
+        if not str(identity.get(key, "")).strip():
+            raise ValueError(f"TCPL sample missing comparable identity: {key}")
+    for field in ("wall_time_ms", "wall_time_ns"):
+        value = sample.get(field)
+        if isinstance(value, int) and value < 0:
+            raise ValueError(f"TCPL sample {field} must be >= 0")
+    phase_timings = sample.get("phase_timings_ms")
+    if isinstance(phase_timings, dict):
+        for phase, value in phase_timings.items():
+            if isinstance(value, int) and value < 0:
+                raise ValueError(f"TCPL phase {phase} must be >= 0")
+    purposes = sample.get("provider_call_purposes")
+    latencies = sample.get("provider_call_latency_ms")
+    if isinstance(purposes, list) and isinstance(latencies, list) and latencies:
+        if len(purposes) != len(latencies):
+            raise ValueError(
+                "TCPL provider_call_latency_ms must align with provider_call_purposes"
+            )
+        if any(isinstance(value, int) and value < 0 for value in latencies):
+            raise ValueError("TCPL provider call latencies must be >= 0")
+
+
+def _tcpl_shadow_decisions(metrics: dict[str, Any]) -> dict[str, Any]:
+    selector_tokens = metrics.get("selector_token_count")
+    selector_candidates = metrics.get("selector_candidate_count")
+    selector_route = metrics.get("skill_selection_route")
+    selector_current = metrics.get("skill_selection_strategy")
+    compaction_ms = metrics.get("session_compaction_ms")
+    compaction_policy = metrics.get("session_compaction_policy")
+    skill_has_inputs = isinstance(selector_tokens, int) and isinstance(
+        selector_candidates, int
+    )
+    compaction_has_inputs = isinstance(compaction_ms, int) and isinstance(
+        compaction_policy, str
+    )
+    skill_candidate_decision = "insufficient_structural_input"
+    skill_reason = "selector token/count inputs unavailable in this scenario"
+    if skill_has_inputs:
+        if selector_candidates <= 0:
+            skill_candidate_decision = "direct_no_catalog"
+            skill_reason = "no catalog candidates require no selector call"
+        elif (
+            selector_tokens <= TCPL_SKILL_ENTRY_TOKEN_BUDGET
+            and selector_candidates <= TCPL_SKILL_ENTRY_CANDIDATE_BUDGET
+        ):
+            skill_candidate_decision = "entry_candidate_eligible"
+            skill_reason = "candidate content fits approved entry budgets"
+        else:
+            skill_candidate_decision = "separate_selector_required"
+            skill_reason = "candidate content exceeds approved entry budgets"
+    compaction_candidate_decision = "insufficient_structural_input"
+    compaction_reason = "compaction timing/policy unavailable in this scenario"
+    if compaction_has_inputs:
+        if compaction_policy == "hard_limit":
+            compaction_candidate_decision = "keep_synchronous"
+            compaction_reason = "hard-limit compaction remains delivery-critical"
+        elif compaction_ms >= TCPL_COMPACTION_DEFER_MS_THRESHOLD:
+            compaction_candidate_decision = "derived_projection_candidate"
+            compaction_reason = "ordinary compaction exceeds approved defer threshold"
+        else:
+            compaction_candidate_decision = "hold_current"
+            compaction_reason = "ordinary compaction is below defer threshold"
+    return {
+        "mode": "observation_only",
+        "side_effects_allowed": False,
+        "provider_calls_allowed": False,
+        "storage_mutations_allowed": False,
+        "derived_jobs_allowed": False,
+        "delivery_changes_allowed": False,
+        "skill_entry": {
+            "current_decision": str(selector_current or "unavailable"),
+            "selector_route": str(selector_route or "unavailable"),
+            "candidate_decision": skill_candidate_decision,
+            "selector_token_count": selector_tokens
+            if isinstance(selector_tokens, int)
+            else "unavailable",
+            "selector_candidate_count": selector_candidates
+            if isinstance(selector_candidates, int)
+            else "unavailable",
+            "projected_avoided_provider_calls": 0,
+            "reason": skill_reason,
+        },
+        "session_compaction": {
+            "current_decision": str(compaction_policy or "unavailable"),
+            "candidate_decision": compaction_candidate_decision,
+            "compaction_ms": compaction_ms
+            if isinstance(compaction_ms, int)
+            else "unavailable",
+            "projected_avoided_provider_calls": 0,
+            "reason": compaction_reason,
+        },
+    }
+
+
+def _tcpl_has_field(samples: list[dict[str, Any]], field: str) -> bool:
+    for sample in samples:
+        phase_timings = sample.get("phase_timings_ms")
+        sample_value = sample.get(field)
+        phase_value = (
+            phase_timings.get(field) if isinstance(phase_timings, dict) else None
+        )
+        if sample_value not in (None, "unavailable") or phase_value not in (
+            None,
+            "unavailable",
+        ):
+            return True
+    return False
+
+
+def _tcpl_missing_coverage(samples: list[dict[str, Any]]) -> dict[str, list[str]]:
+    missing: dict[str, list[str]] = {}
+    for coverage_name, required_groups in TCPL_REQUIRED_COVERAGE.items():
+        missing_groups: list[str] = []
+        for aliases in required_groups:
+            if any(_tcpl_has_field(samples, field) for field in aliases):
+                continue
+            missing_groups.append("|".join(aliases))
+        if missing_groups:
+            missing[coverage_name] = missing_groups
+    return missing
+
+
+def _tcpl_sample_from_artifact(
+    artifact: dict[str, Any],
+    *,
+    options: RunOptions,
+) -> dict[str, Any]:
+    metrics = dict(artifact.get("metrics") or {})
+    identity = dict(artifact.get("measurement_identity") or {})
+    for key in (
+        "scenario_id",
+        "command",
+        "fixture_revision",
+        "measured_boundary",
+        "runtime_config",
+    ):
+        if key not in identity:
+            raise ValueError(f"TCPL artifact missing measurement identity: {key}")
+    provider = str(artifact.get("provider_profile") or "none")
+    scenario_id = str(artifact.get("scenario_id") or "")
+    runtime_config = identity.get("runtime_config")
+    comparable_identity = {
+        "git_revision": str(
+            artifact.get("git_head") or _git_head(options.workspace_root)
+        ),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
+        "scenario_id": scenario_id,
+        "fixture_hash": _fixture_hash(identity, command=artifact.get("command")),
+        "provider": provider,
+        "model": "unavailable",
+        "endpoint_class": str(identity.get("measured_boundary") or "unavailable"),
+        "provider_request_identity": "unavailable",
+        "config_hash": _stable_json_hash(runtime_config or {}),
+        "agent_profile": "unavailable",
+        "skill_catalog_hash": "unavailable",
+        "session_seed": "unavailable",
+        "context_budget": "unavailable",
+        "memory_posture": "current",
+        "session_posture": "current",
+        "cache_posture": "unavailable",
+        "process_mode": "benchmark",
+        "cold_warm": _cold_warm_classification(scenario_id),
+        "attempt_index": int(artifact.get("sample_index", 0) or 0),
+        "host_runtime_hash": _stable_json_hash(
+            {
+                "python_version": platform.python_version(),
+                "platform": platform.platform(),
+                "python": str(options.python),
+            }
+        ),
+        "candidate_posture": "baseline_current",
+        "rollback_posture": "baseline_current",
+    }
+    sample = {
+        "artifact_schema_version": TCPL_ARTIFACT_SCHEMA_VERSION,
+        "source_artifact_schema_version": artifact.get("artifact_schema_version"),
+        "run_id": artifact.get("run_id"),
+        "timestamp_utc": artifact.get("timestamp_utc"),
+        "scenario_id": scenario_id,
+        "sample_index": int(artifact.get("sample_index", 0) or 0),
+        "command": artifact.get("command"),
+        "ok": bool(artifact.get("ok")),
+        "error": artifact.get("error"),
+        "comparable_identity": comparable_identity,
+        "wall_time_ms": metrics.get("wall_time_ms"),
+        "wall_time_ns": metrics.get("wall_time_ns"),
+        "provider_ttft_ms": metrics.get("provider_ttft_ms", "unavailable"),
+        "visible_ttft_ms": metrics.get("time_to_first_visible_text_ms"),
+        "phase_timings_ms": metrics.get("phase_timings_ms", {}),
+        "phase_timings_ns": metrics.get("phase_timings_ns", {}),
+        "provider_call_purposes": _provider_call_purposes(metrics),
+        "provider_call_latency_ms": _provider_call_latencies(metrics),
+        "provider_call_count": int(metrics.get("model_call_count", 0) or 0),
+        "tool_call_count": int(metrics.get("tool_call_count", 0) or 0),
+        "input_tokens": metrics.get("provider_input_tokens"),
+        "output_tokens": metrics.get("provider_output_tokens"),
+        "total_tokens": metrics.get("provider_total_tokens"),
+        "cache_read_tokens": metrics.get("provider_cache_read_tokens"),
+        "cache_write_tokens": metrics.get("provider_cache_write_tokens"),
+        "selector_latency_ms": metrics.get("selector_latency_ms", "unavailable"),
+        "selector_token_count": metrics.get("selector_token_count", "unavailable"),
+        "selector_candidate_count": metrics.get(
+            "selector_candidate_count", "unavailable"
+        ),
+        "skill_selection_route": metrics.get("skill_selection_route", "unavailable"),
+        "skill_selection_strategy": metrics.get(
+            "skill_selection_strategy", "unavailable"
+        ),
+        "session_compaction_ms": metrics.get("session_compaction_ms", "unavailable"),
+        "session_compaction_policy": metrics.get(
+            "session_compaction_policy", "unavailable"
+        ),
+        "memory_followup_flush_ms": metrics.get(
+            "memory_followup_flush_ms", "unavailable"
+        ),
+        "memory_followup_pending_count": metrics.get(
+            "memory_followup_pending_count", "unavailable"
+        ),
+        "quality_assertions": {
+            "fixture_ok": bool(artifact.get("ok")),
+            "no_provider_call_for_local_fixture": provider in {"none", "stub"},
+        },
+        "shadow_decisions": _tcpl_shadow_decisions(metrics),
+        "source_run_artifact": artifact.get("artifact_path"),
+    }
+    _validate_tcpl_sample(sample)
+    return sample
+
+
+def _tcpl_quality(
+    summary: dict[str, Any],
+    *,
+    samples: list[dict[str, Any]],
+) -> dict[str, Any]:
+    scenarios = {}
+    for scenario_id, payload in (summary.get("scenarios") or {}).items():
+        if not isinstance(payload, dict):
+            continue
+        count = int(payload.get("count", 0) or 0)
+        ok_count = int(payload.get("ok_count", 0) or 0)
+        scenario_samples = [
+            sample for sample in samples if sample.get("scenario_id") == scenario_id
+        ]
+        unavailable_invariants = [
+            invariant
+            for invariant in TCPL_QUALITY_INVARIANTS
+            if not any(
+                invariant in (sample.get("quality_assertions") or {})
+                for sample in scenario_samples
+            )
+        ]
+        scenarios[str(scenario_id)] = {
+            "status": "pass" if count and ok_count == count else "fail",
+            "sample_count": count,
+            "ok_count": ok_count,
+            "quality_floor": "fixture_ok_only",
+            "differences": [],
+            "not_applicable": unavailable_invariants,
+        }
+    missing_coverage = _tcpl_missing_coverage(samples)
+    return {
+        "artifact_schema_version": TCPL_ARTIFACT_SCHEMA_VERSION,
+        "generated_at_utc": _utc_timestamp(),
+        "quality_scope": "local_fixture",
+        "tcpl_coverage_status": "incomplete" if missing_coverage else "complete",
+        "missing_measurement_coverage": missing_coverage,
+        "fixture_failure_count": sum(
+            1 for payload in scenarios.values() if payload["status"] != "pass"
+        ),
+        "coverage_gap_count": len(missing_coverage),
+        "scenarios": scenarios,
+    }
+
+
+def _write_tcpl_decision(
+    summary: dict[str, Any],
+    *,
+    output_root: Path,
+    live_provider_available: bool,
+    quality: dict[str, Any],
+) -> None:
+    coverage_status = str(quality.get("tcpl_coverage_status") or "unknown")
+    lines = [
+        "# TCPL Measurement Decision",
+        "",
+        f"Generated: `{summary['generated_at_utc']}`",
+        "",
+        "## Disposition",
+        "",
+        "| Candidate | Decision | Reason |",
+        "| --- | --- | --- |",
+        f"| TCPL-00 local fixture baseline | `hold` | Measurement artifacts are schema-valid, but TCPL coverage is `{coverage_status}` and does not complete TCPL-00 or enable an optimization. |",
+    ]
+    if live_provider_available:
+        lines.append(
+            "| TCPL-00 live provider baseline | `hold` | Live-provider credentials were visible to the runner environment; paired candidate evidence is still required before enablement. |"
+        )
+    else:
+        lines.append(
+            "| TCPL-00 live provider baseline | `blocked_external` | No provider credential was visible to this local runner, so no live-provider latency claim is made. |"
+        )
+    missing = quality.get("missing_measurement_coverage")
+    if isinstance(missing, dict) and missing:
+        lines.extend(["", "## Missing TCPL-00 Coverage", ""])
+        for name, fields in sorted(missing.items()):
+            formatted = ", ".join(f"`{field}`" for field in fields)
+            lines.append(f"- `{name}`: {formatted}")
+    lines.extend(
+        [
+            "",
+            "## Materiality Thresholds",
+            "",
+            "These are the approved TCPL starting thresholds until a later human checkpoint changes them:",
+            "",
+            "1. Local targeted phase: at least 10% and at least 10 ms improvement.",
+            "2. Advisory live provider: at least 8% and at least 250 ms improvement.",
+            "3. Full-turn median regression: no worse than the larger of 3% or 10 ms.",
+            "4. Local P95 regression: no worse than the larger of 5% or 20 ms.",
+            "5. Live paired win rate: at least 70% of comparable pairs.",
+            "6. Instrumentation overhead: below the larger of 1 ms median or 1% of local full-turn median.",
+            "",
+            "## Rollback",
+            "",
+            "No runtime optimization was enabled by this artifact. The rollback posture is the current default behavior.",
+        ]
+    )
+    (output_root / "decision.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_tcpl_artifacts(
+    *,
+    artifacts: list[dict[str, Any]],
+    summary: dict[str, Any],
+    options: RunOptions,
+    scenarios: list[str],
+) -> None:
+    live_provider_available = any(
+        os.environ.get(name)
+        for name in (
+            "MINIMAX_API_KEY",
+            "DASHSCOPE_API_KEY",
+            "OPENROUTER_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+        )
+    )
+    samples = [
+        _tcpl_sample_from_artifact(artifact, options=options) for artifact in artifacts
+    ]
+    manifest = {
+        "artifact_schema_version": TCPL_ARTIFACT_SCHEMA_VERSION,
+        "generated_at_utc": summary["generated_at_utc"],
+        "lane": "TCPL",
+        "git_revision": _git_head(options.workspace_root),
+        "dirty_tree_summary": _dirty_worktree_summary(options.workspace_root),
+        "dirty_tree_fingerprint": _dirty_worktree_fingerprint(options.workspace_root),
+        "scenario_ids": scenarios,
+        "runs": int(options.runs),
+        "warmup_runs": int(options.warmup_runs),
+        "threshold_mode": options.threshold_mode,
+        "workspace_root": str(options.workspace_root),
+        "output_root": str(options.output_root),
+        "python": str(options.python),
+        "live_provider_credentials_visible": live_provider_available,
+        "command_lines": {
+            "runner": "scripts/smoke/performance_baseline.py",
+            "scenarios": ",".join(scenarios),
+        },
+        "artifact_files": {
+            "manifest": "manifest.json",
+            "samples": "samples.jsonl",
+            "summary": "summary.json",
+            "quality": "quality.json",
+            "decision": "decision.md",
+        },
+    }
+    (options.output_root / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    with (options.output_root / "samples.jsonl").open("w", encoding="utf-8") as handle:
+        for sample in samples:
+            handle.write(json.dumps(sample, sort_keys=True) + "\n")
+    quality = _tcpl_quality(summary, samples=samples)
+    (options.output_root / "quality.json").write_text(
+        json.dumps(quality, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    _write_tcpl_decision(
+        summary,
+        output_root=options.output_root,
+        live_provider_available=live_provider_available,
+        quality=quality,
+    )
+
+
 def _write_run_artifact(artifact: dict[str, Any], output_root: Path) -> Path:
     runs_dir = output_root / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -2196,10 +2738,9 @@ def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
                 f"[performance-baseline] {scenario_id} warmup {warmup_index + 1}/{options.warmup_runs}"
             )
             run_scenario(scenario_id, options)
-        per_scenario_runs = 1 if scenario_id == "repeated_local_turns" else options.runs
-        for run_index in range(per_scenario_runs):
+        for run_index in range(options.runs):
             print(
-                f"[performance-baseline] {scenario_id} run {run_index + 1}/{per_scenario_runs}"
+                f"[performance-baseline] {scenario_id} run {run_index + 1}/{options.runs}"
             )
             run, profile_artifact, profile_pstats_artifact = (
                 _run_scenario_with_optional_profile(
@@ -2231,6 +2772,12 @@ def run_baseline(options: RunOptions, scenarios: list[str]) -> dict[str, Any]:
     (options.output_root / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True),
         encoding="utf-8",
+    )
+    _write_tcpl_artifacts(
+        artifacts=artifacts,
+        summary=summary,
+        options=options,
+        scenarios=scenarios,
     )
     _write_summary_markdown(summary, options.output_root)
     return summary

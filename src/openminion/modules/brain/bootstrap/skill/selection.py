@@ -69,12 +69,20 @@ class SkillPipelineResult:
     fail_closed_reason: str | None = None
     routed_intent: str = ""
     shortlisted_ids: list[str] | None = None
+    selector_latency_ms: int = 0
+    selector_token_count: int = 0
     # Raw LLM/retrieval picks for post-hoc selection telemetry.
     llm_pick_details: dict[str, Any] | None = None
 
     @property
     def primary_ref(self) -> SkillRef | None:
         return self.selected_refs[0] if self.selected_refs else None
+
+
+def _selection_reason_for(strategy: str) -> str:
+    if strategy == "retrieval":
+        return _SKILL_SELECTION_REASON_RETRIEVAL
+    return _SKILL_SELECTION_REASON_LLM
 
 
 def _select_skills_with_retrieval(
@@ -177,9 +185,7 @@ def _select_skills_with_llm(
             context_budget=_CONTEXT_BUDGET_TIER_MEDIUM,
             capacity=capacity,
             effective_count=len(catalog),
-            selection_reason=_SKILL_SELECTION_REASON_RETRIEVAL
-            if strategy == "retrieval"
-            else _SKILL_SELECTION_REASON_LLM,
+            selection_reason=_selection_reason_for(strategy),
             fail_closed_reason=_SKILL_SELECTION_MODEL_UNAVAILABLE,
             routed_intent=intent,
             shortlisted_ids=[],
@@ -205,12 +211,13 @@ def _select_skills_with_llm(
             schema=SkillSubsetSelection,
         )
     except Exception as exc:
+        latency_ms = _elapsed_ms_since(started)
         _emit_skill_prerouting_failure(
             logger=logger,
             state=state,
             model=model,
             token_count=token_count,
-            latency_ms=_elapsed_ms_since(started),
+            latency_ms=latency_ms,
             fail_closed_reason=_classify_failure_reason(exc),
         )
         return SkillPipelineResult(
@@ -219,12 +226,12 @@ def _select_skills_with_llm(
             context_budget=_CONTEXT_BUDGET_TIER_MEDIUM,
             capacity=capacity,
             effective_count=len(catalog),
-            selection_reason=_SKILL_SELECTION_REASON_RETRIEVAL
-            if strategy == "retrieval"
-            else _SKILL_SELECTION_REASON_LLM,
+            selection_reason=_selection_reason_for(strategy),
             fail_closed_reason=_classify_failure_reason(exc),
             routed_intent=intent,
             shortlisted_ids=[],
+            selector_latency_ms=latency_ms,
+            selector_token_count=token_count,
         )
 
     latency_ms = _elapsed_ms_since(started)
@@ -244,11 +251,11 @@ def _select_skills_with_llm(
             context_budget=_CONTEXT_BUDGET_TIER_MEDIUM,
             capacity=capacity,
             effective_count=len(catalog),
-            selection_reason=_SKILL_SELECTION_REASON_RETRIEVAL
-            if strategy == "retrieval"
-            else _SKILL_SELECTION_REASON_LLM,
+            selection_reason=_selection_reason_for(strategy),
             routed_intent=str(raw.get("intent", "") or "").strip() or intent,
             shortlisted_ids=[],
+            selector_latency_ms=latency_ms,
+            selector_token_count=token_count,
         )
 
     catalog_by_id = _catalog_by_id(catalog)
@@ -294,12 +301,12 @@ def _select_skills_with_llm(
         context_budget=_CONTEXT_BUDGET_TIER_MEDIUM,
         capacity=capacity,
         effective_count=len(catalog),
-        selection_reason=_SKILL_SELECTION_REASON_RETRIEVAL
-        if strategy == "retrieval"
-        else _SKILL_SELECTION_REASON_LLM,
+        selection_reason=_selection_reason_for(strategy),
         fail_closed_reason=fail_reason,
         routed_intent=str(raw.get("intent", "") or "").strip() or intent,
         shortlisted_ids=[ref.skill_id for ref in refs],
+        selector_latency_ms=latency_ms,
+        selector_token_count=token_count,
         llm_pick_details=llm_pick_details,
     )
 
@@ -602,6 +609,8 @@ def _emit_skill_selection_event(
     fail_closed_reason: str | None,
     context_budget: str,
     shortlisted_ids: list[str],
+    selector_latency_ms: int = 0,
+    selector_token_count: int = 0,
     llm_pick_details: dict[str, Any] | None = None,
 ) -> None:
     primary = selected_refs[0] if selected_refs else None
@@ -614,8 +623,8 @@ def _emit_skill_selection_event(
         "selected_skill_count": len(selected_refs),
         "intent": routed_intent,
         "model": model,
-        "latency_ms": 0,
-        "token_count": 0,
+        "latency_ms": max(0, int(selector_latency_ms)),
+        "token_count": max(0, int(selector_token_count)),
         "fail_closed_reason": fail_closed_reason,
         "context_budget": context_budget,
         "effective_skill_count": effective_count,

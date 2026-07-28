@@ -520,3 +520,207 @@ def test_run_baseline_writes_artifacts(tmp_path: Path) -> None:
     )
     assert isinstance(payload["wall_ns"], int)
     assert payload["phase_timings_ns"]["local_status_collect_ns"] >= 0
+    for artifact_name in (
+        "manifest.json",
+        "samples.jsonl",
+        "summary.json",
+        "quality.json",
+        "decision.md",
+    ):
+        assert (tmp_path / artifact_name).is_file()
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["artifact_schema_version"] == module.TCPL_ARTIFACT_SCHEMA_VERSION
+    assert manifest["lane"] == "TCPL"
+    samples = [
+        json.loads(line)
+        for line in (tmp_path / "samples.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert len(samples) == 1
+    assert samples[0]["scenario_id"] == "local_status_tool_turn"
+    assert samples[0]["comparable_identity"]["candidate_posture"] == "baseline_current"
+    assert samples[0]["shadow_decisions"]["side_effects_allowed"] is False
+    assert samples[0]["shadow_decisions"]["provider_calls_allowed"] is False
+    assert samples[0]["shadow_decisions"]["storage_mutations_allowed"] is False
+    quality = json.loads((tmp_path / "quality.json").read_text(encoding="utf-8"))
+    assert quality["scenarios"]["local_status_tool_turn"]["status"] == "pass"
+    assert quality["tcpl_coverage_status"] == "incomplete"
+    assert quality["coverage_gap_count"] > 0
+    assert "`hold`" in (tmp_path / "decision.md").read_text(encoding="utf-8")
+    assert "Missing TCPL-00 Coverage" in (tmp_path / "decision.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_tcpl_sample_validation_rejects_missing_identity(tmp_path: Path) -> None:
+    module = _load_module()
+    options = module.RunOptions(
+        workspace_root=Path(__file__).resolve().parents[3],
+        output_root=tmp_path,
+        python=Path(sys.executable),
+        runs=1,
+        timeout_seconds=5,
+        include_importtime=False,
+        profile=False,
+    )
+
+    try:
+        module._tcpl_sample_from_artifact(
+            {
+                "scenario_id": "local_status_tool_turn",
+                "metrics": {"wall_time_ms": 1, "wall_time_ns": 1},
+                "ok": True,
+            },
+            options=options,
+        )
+    except ValueError as exc:
+        assert "measurement identity" in str(exc)
+    else:
+        raise AssertionError("missing measurement identity should fail")
+
+
+def test_tcpl_sample_validation_rejects_negative_timing() -> None:
+    module = _load_module()
+    sample = {
+        "comparable_identity": {
+            "git_revision": "rev",
+            "dirty_tree_fingerprint": "fingerprint",
+            "scenario_id": "scenario",
+            "fixture_hash": "fixture",
+            "provider": "none",
+            "model": "unavailable",
+            "config_hash": "config",
+            "candidate_posture": "baseline_current",
+            "rollback_posture": "baseline_current",
+            "cold_warm": "not_applicable",
+            "host_runtime_hash": "host",
+        },
+        "wall_time_ms": -1,
+        "wall_time_ns": 1,
+    }
+
+    try:
+        module._validate_tcpl_sample(sample)
+    except ValueError as exc:
+        assert "wall_time_ms" in str(exc)
+    else:
+        raise AssertionError("negative timing should fail")
+
+
+def test_tcpl_sample_validation_rejects_provider_latency_misalignment() -> None:
+    module = _load_module()
+    sample = {
+        "comparable_identity": {
+            "git_revision": "rev",
+            "dirty_tree_fingerprint": "fingerprint",
+            "scenario_id": "scenario",
+            "fixture_hash": "fixture",
+            "provider": "stub",
+            "model": "unavailable",
+            "config_hash": "config",
+            "candidate_posture": "baseline_current",
+            "rollback_posture": "baseline_current",
+            "cold_warm": "not_applicable",
+            "host_runtime_hash": "host",
+        },
+        "wall_time_ms": 1,
+        "wall_time_ns": 1,
+        "provider_call_purposes": ["entry", "finalize"],
+        "provider_call_latency_ms": [7],
+    }
+
+    try:
+        module._validate_tcpl_sample(sample)
+    except ValueError as exc:
+        assert "align" in str(exc)
+    else:
+        raise AssertionError("purpose/latency drift should fail")
+
+
+def test_tcpl_provider_purpose_remains_unavailable_when_not_reported() -> None:
+    module = _load_module()
+
+    metrics = {
+        "model_call_count": 1,
+        "phase_timings_ms": {"provider_stub_round_trip_ms": 7},
+        "provider_round_trip_ms": 7,
+    }
+
+    assert module._provider_call_purposes(metrics) == ["unavailable"]
+    assert module._provider_call_latencies(metrics) == [7]
+
+
+def test_tcpl_missing_coverage_reports_required_measurements() -> None:
+    module = _load_module()
+
+    missing = module._tcpl_missing_coverage(
+        [
+            {
+                "selector_latency_ms": 1,
+                "selector_token_count": 10,
+                "transcript_persistence_ms": 2,
+                "phase_timings_ms": {"terminal_delivery_ms": 1},
+            }
+        ]
+    )
+
+    assert "selector" not in missing
+    assert "delivery" not in missing
+    assert "compaction" in missing
+    assert "memory_followup" in missing
+    assert missing["persistence"] == ["base_memory_persistence_ms|memory_write_ms"]
+
+
+def test_tcpl_missing_coverage_accepts_current_phase_owner_aliases() -> None:
+    module = _load_module()
+
+    missing = module._tcpl_missing_coverage(
+        [
+            {
+                "selector_latency_ms": 1,
+                "selector_token_count": 10,
+                "session_compaction_ms": 0,
+                "session_compaction_policy": "noop",
+                "memory_followup_flush_ms": 0,
+                "memory_followup_pending_count": 0,
+                "phase_timings_ms": {
+                    "response_persistence_ms": 2,
+                    "memory_write_ms": 3,
+                    "run_record_finish_ms": 1,
+                    "response_delivery_ms": 1,
+                    "response_delivered_event_ms": 1,
+                    "terminal_event_ms": 1,
+                },
+            }
+        ]
+    )
+
+    assert missing == {}
+
+
+def test_tcpl_shadow_decisions_are_observation_only() -> None:
+    module = _load_module()
+
+    decisions = module._tcpl_shadow_decisions(
+        {
+            "selector_token_count": 50,
+            "selector_candidate_count": 2,
+            "skill_selection_strategy": "llm",
+            "skill_selection_route": "retrieval",
+            "session_compaction_ms": 17,
+            "session_compaction_policy": "ordinary",
+        }
+    )
+
+    assert decisions["mode"] == "observation_only"
+    assert decisions["side_effects_allowed"] is False
+    assert decisions["provider_calls_allowed"] is False
+    assert decisions["storage_mutations_allowed"] is False
+    assert decisions["derived_jobs_allowed"] is False
+    assert decisions["delivery_changes_allowed"] is False
+    assert decisions["skill_entry"]["current_decision"] == "llm"
+    assert decisions["skill_entry"]["candidate_decision"] == "entry_candidate_eligible"
+    assert decisions["session_compaction"]["candidate_decision"] == (
+        "derived_projection_candidate"
+    )

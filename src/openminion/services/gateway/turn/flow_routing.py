@@ -8,6 +8,7 @@ from openminion.modules.task.run import (
     resolve_thread_lifecycle,
     resolve_thread_routing_decision,
 )
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
 from openminion.services.gateway.routing import (
     find_pending_outbound,
@@ -63,24 +64,26 @@ class GatewayTurnRoutingMixin:
             id=pending.id,
         )
         if deliver:
-            self._channels.get(channel).send(replay)
+            with active_chat_phase("response_delivery"):
+                self._channels.get(channel).send(replay)
         if deliver or caller_handles_delivery:
-            self._lifecycle_ops.emit_turn_event(
-                session_id=routing.session.id,
-                event_type="response.delivered",
-                conversation_id=routing.conversation_id or None,
-                thread_id=routing.thread_id or None,
-                attach_id=routing.attach_id or None,
-                payload={
-                    "run_id": routing.lifecycle.latest_run_id,
-                    "response_id": pending.id,
-                    "delivery_mode": "channel" if deliver else "return",
-                    "channel": channel,
-                    "target": target,
-                    "thread_decision_action": routing_action,
-                    "thread_decision_reason": routing_reason,
-                },
-            )
+            with active_chat_phase("response_delivered_event"):
+                self._lifecycle_ops.emit_turn_event(
+                    session_id=routing.session.id,
+                    event_type="response.delivered",
+                    conversation_id=routing.conversation_id or None,
+                    thread_id=routing.thread_id or None,
+                    attach_id=routing.attach_id or None,
+                    payload={
+                        "run_id": routing.lifecycle.latest_run_id,
+                        "response_id": pending.id,
+                        "delivery_mode": "channel" if deliver else "return",
+                        "channel": channel,
+                        "target": target,
+                        "thread_decision_action": routing_action,
+                        "thread_decision_reason": routing_reason,
+                    },
+                )
         return _RoutingResult(early_return=replay)
 
     def _resolve_routing(

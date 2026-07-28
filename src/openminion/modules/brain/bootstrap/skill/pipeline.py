@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -240,17 +240,12 @@ def resolve_skill_pipeline(
             logger=logger,
         )
         if retrieval_result is not None:
-            retrieval_result = SkillPipelineResult(
-                selected_refs=retrieval_result.selected_refs,
-                selection_mode=retrieval_result.selection_mode,
+            retrieval_result = replace(
+                retrieval_result,
                 context_budget=context_budget,
                 capacity=capacity,
                 effective_count=len(effective_catalog),
-                selection_reason=retrieval_result.selection_reason,
-                fail_closed_reason=retrieval_result.fail_closed_reason,
                 routed_intent=retrieval_result.routed_intent or normalized_intent,
-                shortlisted_ids=retrieval_result.shortlisted_ids,
-                llm_pick_details=retrieval_result.llm_pick_details,
             )
             if retrieval_result.selected_refs:
                 _emit_skill_selection_event(
@@ -265,6 +260,8 @@ def resolve_skill_pipeline(
                     fail_closed_reason=retrieval_result.fail_closed_reason,
                     context_budget=context_budget,
                     shortlisted_ids=retrieval_result.shortlisted_ids or [],
+                    selector_latency_ms=retrieval_result.selector_latency_ms,
+                    selector_token_count=retrieval_result.selector_token_count,
                     llm_pick_details=retrieval_result.llm_pick_details,
                 )
                 return retrieval_result
@@ -278,17 +275,12 @@ def resolve_skill_pipeline(
         logger=logger,
         strategy="llm",
     )
-    llm_result = SkillPipelineResult(
-        selected_refs=llm_result.selected_refs,
-        selection_mode=llm_result.selection_mode,
+    llm_result = replace(
+        llm_result,
         context_budget=context_budget,
         capacity=capacity,
         effective_count=len(effective_catalog),
-        selection_reason=llm_result.selection_reason,
-        fail_closed_reason=llm_result.fail_closed_reason,
         routed_intent=llm_result.routed_intent or normalized_intent,
-        shortlisted_ids=llm_result.shortlisted_ids,
-        llm_pick_details=llm_result.llm_pick_details,
     )
     _emit_skill_selection_event(
         logger=logger,
@@ -302,6 +294,8 @@ def resolve_skill_pipeline(
         fail_closed_reason=llm_result.fail_closed_reason,
         context_budget=context_budget,
         shortlisted_ids=llm_result.shortlisted_ids or [],
+        selector_latency_ms=llm_result.selector_latency_ms,
+        selector_token_count=llm_result.selector_token_count,
         llm_pick_details=llm_result.llm_pick_details,
     )
     return llm_result
