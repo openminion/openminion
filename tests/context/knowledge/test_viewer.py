@@ -272,11 +272,73 @@ def test_second_brain_dry_run_builds_graph_from_memory_db(
 
     assert result.layer == LAYER_SECOND_BRAIN
     assert result.provider == "openminion-memory"
-    assert result.diagnostics == {
-        "node_count": 2,
-        "edge_count": 1,
-        "screen": "explore",
-    }
+    assert result.diagnostics["node_count"] == 2
+    assert result.diagnostics["edge_count"] == 1
+    assert result.diagnostics["screen"] == "explore"
+    assert result.diagnostics["stats"]["records"] == 2
+    assert result.diagnostics["stats"]["relations"] == 1
+
+
+def test_second_brain_current_shortcut_filters_agent_and_session_scopes(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    session_record = MemoryRecord(
+        id="memory:session",
+        scope="session:s1",
+        type="fact",
+        key="session-memory",
+        title="Session Memory",
+        content="Only the selected session should appear.",
+        created_at=now,
+        updated_at=now,
+    )
+    agent_record = MemoryRecord(
+        id="memory:agent",
+        scope="agent:a1",
+        type="fact",
+        key="agent-memory",
+        title="Agent Memory",
+        content="Only the selected agent should appear.",
+        created_at=now,
+        updated_at=now,
+    )
+    other_record = MemoryRecord(
+        id="memory:other",
+        scope="agent:other",
+        type="fact",
+        key="other-memory",
+        title="Other Memory",
+        content="This should be filtered out.",
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(session_record)
+    store.put(agent_record)
+    store.put(other_record)
+
+    result = launch_graph_viewer(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(
+            current=True,
+            agent_id="a1",
+            session_id="s1",
+            dry_run=True,
+            memory_db=str(db_path),
+        ),
+    )
+
+    assert result.diagnostics["node_count"] == 2
+    assert result.diagnostics["filters"] == {"scope": "session:s1,agent:a1"}
+    assert result.diagnostics["stats"]["scope_filter"] == [
+        "session:s1",
+        "agent:a1",
+    ]
 
 
 def test_second_brain_provider_adds_openminion_visual_metadata(
@@ -380,11 +442,39 @@ def test_viewer_status_reports_readiness_and_next_commands(
     assert payload["second_brain"]["visual_ready"] is True
     assert payload["third_brain"][0]["visual_ready"] is True
     assert payload["third_brain"][0]["tags"] == ["code_graph"]
-    assert "openminion graph view --brain second" in payload["next_commands"]
+    assert "openminion graph view --current" in payload["next_commands"]
     assert (
         "openminion graph view --brain third --provider repo_graph"
         in payload["next_commands"]
     )
+
+
+def test_viewer_status_reports_missing_envelope_as_not_visual_ready(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_graphfakos(monkeypatch)
+    missing_path = tmp_path / "missing-viewer.json"
+    config = OpenMinionConfig()
+    config.module_configs["knowledge_graphs"] = {
+        "provider": {
+            "active": ["repo_graph"],
+            "providers": {
+                "repo_graph": {
+                    "provider": "graphify",
+                    "options": {"viewer_envelope_path": str(missing_path)},
+                }
+            },
+        }
+    }
+
+    report = inspect_graph_viewer_status(config=config, roots=_roots(tmp_path))
+    third = report.to_dict()["third_brain"][0]
+
+    assert third["visual_ready"] is False
+    assert third["reason"] == "Viewer envelope path is configured but not found yet."
+    assert third["details"]["diagnostic_code"] == "viewer_envelope_missing"
+    assert third["details"]["viewer_envelope_exists"] is False
 
 
 def test_multiple_active_third_brain_providers_suggest_provider_flags(
@@ -452,11 +542,23 @@ def test_openminion_graph_view_parser_registration() -> None:
     from openminion.cli.parser.base import build_parser
 
     args = build_parser().parse_args(
-        ["graph", "view", "--brain", "second", "--dry-run", "--json"]
+        [
+            "graph",
+            "view",
+            "--current",
+            "--agent",
+            "a1",
+            "--session",
+            "s1",
+            "--dry-run",
+            "--json",
+        ]
     )
 
     assert args.graph_command == "view"
-    assert args.brain == "second"
+    assert args.current is True
+    assert args.agent_id == "a1"
+    assert args.session_id == "s1"
     assert args.dry_run is True
 
 

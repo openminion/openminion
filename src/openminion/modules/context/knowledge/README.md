@@ -97,10 +97,12 @@ decisions, or summaries.
 visual inspection surface for this state. `status` checks whether GraphFakos is
 installed, whether the second-brain memory SQLite store is available, which
 third-brain providers are active, and which exact view command should be run
-next. `view` launches the shared GraphFakos viewer over either the second-brain
-memory SQLite store or configured third-brain graph providers. The viewer is
-optional package surface (`openminion[viewer]`) and must stay a lens: it may
-inspect current graph state, but it must not replace `runtime.memory_provider`,
+next. `view --current` is the user-facing shortcut for the current second-brain
+memory graph, with `--agent` and `--session` scope filters for narrower
+inspection. `view` also launches configured third-brain graph providers when a
+provider is selected explicitly. The viewer is optional package surface
+(`openminion[viewer]`) and must stay a lens: it may inspect current graph
+state, but it must not replace `runtime.memory_provider`,
 `memory.backend.provider`, or provider-owned graph indexers.
 
 The second-brain viewer maps memory records into GraphFakos nodes with

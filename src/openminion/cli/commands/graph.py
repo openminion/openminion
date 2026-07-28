@@ -42,6 +42,9 @@ def _run_graph_view(args: argparse.Namespace) -> int:
         request=GraphViewerRequest(
             brain=args.brain,
             provider=args.provider or "",
+            current=bool(args.current),
+            agent_id=args.agent_id or "",
+            session_id=args.session_id or "",
             screen=args.screen,
             query=args.query or "",
             focus_node_id=args.focus_node_id or "",
@@ -168,6 +171,9 @@ def _print_provider_status(
     reason = str(payload.get("reason") or "")
     if reason:
         print(f"    {reason}")
+    next_command = str(payload.get("next_command") or "")
+    if next_command:
+        print(f"    Next: {next_command}")
 
 
 def _dict_payload(value: object) -> dict[str, object]:
@@ -208,9 +214,26 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Graph layer to inspect. second=memory, third=provider graph context.",
     )
     view.add_argument(
+        "--current",
+        action="store_true",
+        help="Shortcut for the current second-brain memory graph.",
+    )
+    view.add_argument(
         "--provider",
         default="",
         help="Third-brain provider name when more than one provider is active.",
+    )
+    view.add_argument(
+        "--agent",
+        dest="agent_id",
+        default="",
+        help="Limit the second-brain viewer to agent:<id> memory scope.",
+    )
+    view.add_argument(
+        "--session",
+        dest="session_id",
+        default="",
+        help="Limit the second-brain viewer to session:<id> memory scope.",
     )
     view.add_argument("--screen", default="explore")
     view.add_argument("--query", default="")

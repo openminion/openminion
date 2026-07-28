@@ -28,22 +28,31 @@ It reports:
 4. which providers are visually ready,
 5. exact next commands.
 
-## Open Memory
+## Open Current Memory
 
 ```bash
-openminion graph view --brain second
+openminion graph view --current
+```
+
+`--current` is the user-facing shortcut for the current second-brain memory
+graph. Use scope flags when you want a narrower view:
+
+```bash
+openminion graph view --current --agent openminion
+openminion graph view --current --session my-session
+openminion graph view --current --session my-session --agent openminion
 ```
 
 For a no-browser check:
 
 ```bash
-openminion graph view --brain second --dry-run --json
+openminion graph view --current --dry-run --json
 ```
 
 For a static page:
 
 ```bash
-openminion graph view --brain second --html-out viewer.html
+openminion graph view --current --html-out viewer.html
 ```
 
 Second-brain nodes include memory type, tier, scope, confidence, namespace,
@@ -62,6 +71,10 @@ openminion graph view --brain third --provider repo_graph
 If more than one third-brain provider is active, pass `--provider`. The error
 message and `graph status` output both show the exact provider-specific
 commands.
+
+`graph status --json` includes diagnostic codes for common visual-readiness
+states such as missing GraphFakos, no memory database yet, a missing
+third-brain viewer envelope, or an unconfigured provider envelope path.
 
 ## Try The Checked-In Example
 
