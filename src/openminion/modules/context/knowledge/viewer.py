@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from openminion.base.config import OpenMinionConfig
 from openminion.cli.config import CLIRoots
@@ -701,15 +701,16 @@ def _serve_viewer(
     from graphfakos.ui import render_provider_path, render_provider_path_fragment
 
     preview_provider = LocalPreviewProviderSession(provider)
+    preview_graph_provider = cast(Any, preview_provider)
     return graphfakos.serve_local_viewer(
         render_path=lambda path, query: render_provider_path(
-            preview_provider,
+            preview_graph_provider,
             graph_request,
             path,
             query,
         ),
         render_fragment_path=lambda path, query: render_provider_path_fragment(
-            preview_provider,
+            preview_graph_provider,
             graph_request,
             path,
             query,

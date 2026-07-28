@@ -74,13 +74,17 @@ class OpenMinionMemoryGraphFakosProvider:
             )
         )
         record_ids = {record.id for record in records}
-        relations = tuple(
-            relation
-            for record in records
-            for relation in store.list_relations(record.id)
-            if relation.source_record_id in record_ids
-            and relation.target_record_id in record_ids
-        )
+        relations: list[Any] = []
+        for record in records:
+            record_relations: tuple[Any, ...] = tuple(
+                store.list_relations(record.id) or ()
+            )
+            for relation in record_relations:
+                if (
+                    relation.source_record_id in record_ids
+                    and relation.target_record_id in record_ids
+                ):
+                    relations.append(relation)
         unique_relations = {relation.relation_id: relation for relation in relations}
         return self._graphfakos.GraphFakosGraph(
             graph_id=f"openminion-memory:{self._db_path.name}",
