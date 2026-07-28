@@ -98,7 +98,8 @@ def test_turn_status_ticker_refreshes_footer_elapsed_counter() -> None:
 
     assert line.elapsed_seconds >= 1.0
     assert invalidations >= 2
-    assert "1s" in line.live_turn_footer()
+    assert "1s" not in line.live_turn_footer()
+    assert "brain:" not in line.live_turn_footer()
     assert "1s" in line.bottom_toolbar()
 
 
@@ -180,11 +181,11 @@ def test_live_turn_footer_omits_active_timer_and_hint() -> None:
     )
     text = line.live_turn_footer()
     rows = text.splitlines()
-    assert len(rows) == 2
-    assert "brain: Analyzing request..." in rows[0]
-    assert "5s" in rows[0]
-    assert "brain:" not in rows[1]
-    assert "status:" not in rows[1]
+    assert len(rows) == 1
+    assert "brain:" not in text
+    assert "Analyzing request..." not in text
+    assert "5s" not in text
+    assert "status:" not in text
     assert "responding" not in text
     assert "Esc cancel" not in text
     assert "5.0s" not in text

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from openminion.cli.presentation.styles import StyleToken, style_token
@@ -74,23 +75,45 @@ class TerminalStatusLine:
         self.turn_status_label: str = ""
         self.tokens_severity: str = "normal"
         self.queued_count: int = 0
+        self._refresh_callback: Callable[[], None] | None = None
+
+    def set_refresh_callback(self, callback: Callable[[], None] | None) -> None:
+        self._refresh_callback = callback
+
+    def _request_refresh(self) -> None:
+        callback = self._refresh_callback
+        if callback is None:
+            return
+        callback()
 
     def set_state(self, **segments: Any) -> None:
+        changed = False
         for key, value in segments.items():
             if value is None:
                 continue
             if key == "elapsed_seconds":
-                self.elapsed_seconds = float(value)
+                next_value = float(value)
+                if self.elapsed_seconds != next_value:
+                    self.elapsed_seconds = next_value
+                    changed = True
                 continue
             if key == "queued_count":
                 try:
-                    self.queued_count = max(0, int(value))
+                    next_value = max(0, int(value))
                 except (TypeError, ValueError):
-                    self.queued_count = 0
+                    next_value = 0
+                if self.queued_count != next_value:
+                    self.queued_count = next_value
+                    changed = True
                 continue
             attr_name = _SEGMENT_ATTRS.get(key, key)
             if hasattr(self, attr_name):
-                setattr(self, attr_name, str(value).strip() if value else "")
+                next_value = str(value).strip() if value else ""
+                if getattr(self, attr_name) != next_value:
+                    setattr(self, attr_name, next_value)
+                    changed = True
+        if changed:
+            self._request_refresh()
 
     def _stable_segments(self) -> list[str]:
         segments: list[str] = []
@@ -161,6 +184,8 @@ class TerminalStatusLine:
         return _join_rows(active_row, stable_row)
 
     def live_turn_footer(self) -> str:
+        return self.stable_footer()
+
+    def stable_footer(self) -> str:
         sep = _wrap(StyleToken.MUTED, _SEGMENT_SEP)
-        stable_row = sep.join(segment for segment in self._stable_segments() if segment)
-        return _join_rows(self._active_status_row(), stable_row)
+        return sep.join(segment for segment in self._stable_segments() if segment)

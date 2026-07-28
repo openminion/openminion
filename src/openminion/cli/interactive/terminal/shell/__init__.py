@@ -715,6 +715,8 @@ async def _run_terminal_focus_async(
         on_escape=lambda: None,
         working_dir=working_dir,
     )
+    if callable(invalidate := getattr(composer, "invalidate", None)):
+        status_line.set_refresh_callback(invalidate)
     transcript.set_terminal_writer(
         build_prompt_safe_terminal_writer(
             console=console,
