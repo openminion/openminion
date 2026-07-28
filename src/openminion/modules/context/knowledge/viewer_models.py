@@ -13,6 +13,12 @@ class GraphViewerRequest:
     current: bool = False
     agent_id: str = ""
     session_id: str = ""
+    node_kind: str = ""
+    edge_kind: str = ""
+    tag: str = ""
+    source: str = ""
+    min_score: str = ""
+    evidence_filter: str = ""
     screen: str = "explore"
     query: str = ""
     focus_node_id: str = ""

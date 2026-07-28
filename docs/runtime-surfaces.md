@@ -111,7 +111,10 @@ Notes:
 6. `openminion graph view --current --agent <id>` and
    `openminion graph view --current --session <id>` narrow the second-brain
    view to one memory scope,
-7. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
+7. `openminion graph view --current --node-kind fact`, `--edge-kind`, `--tag`,
+   `--source`, `--min-score`, and `--evidence-filter` expose GraphFakos viewer
+   filters from the OpenMinion CLI,
+8. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
    third-brain provider envelope.
 
 ## Example surfaces

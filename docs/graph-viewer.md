@@ -49,6 +49,16 @@ For a no-browser check:
 openminion graph view --current --dry-run --json
 ```
 
+The same command accepts viewer filters that map directly to GraphFakos'
+toolbar controls:
+
+```bash
+openminion graph view --current --node-kind decision
+openminion graph view --current --tag scope:agent:openminion
+openminion graph view --current --source operator --min-score 0.8
+openminion graph view --current --evidence-filter with_provenance
+```
+
 For a static page:
 
 ```bash
@@ -56,7 +66,8 @@ openminion graph view --current --html-out viewer.html
 ```
 
 Second-brain nodes include memory type, tier, scope, confidence, namespace,
-timestamps, provenance, citations, and relation labels.
+timestamps, provenance, citations, relation labels, and filter facets for node
+kind, edge kind, tag, and source.
 
 ## Open A Third-Brain Provider
 
@@ -74,7 +85,9 @@ commands.
 
 `graph status --json` includes diagnostic codes for common visual-readiness
 states such as missing GraphFakos, no memory database yet, a missing
-third-brain viewer envelope, or an unconfigured provider envelope path.
+third-brain viewer envelope, or an unconfigured provider envelope path. The
+human-readable status output also prints the diagnostic code, ready/missing
+reason, sample memory count, and exact next command.
 
 ## Try The Checked-In Example
 

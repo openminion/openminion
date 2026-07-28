@@ -45,6 +45,12 @@ def _run_graph_view(args: argparse.Namespace) -> int:
             current=bool(args.current),
             agent_id=args.agent_id or "",
             session_id=args.session_id or "",
+            node_kind=args.node_kind or "",
+            edge_kind=args.edge_kind or "",
+            tag=args.tag or "",
+            source=args.source or "",
+            min_score=args.min_score or "",
+            evidence_filter=args.evidence_filter or "",
             screen=args.screen,
             query=args.query or "",
             focus_node_id=args.focus_node_id or "",
@@ -127,12 +133,25 @@ def _print_view_result(payload: dict[str, object]) -> None:
     if mode == "static_html":
         print(f"Graph viewer HTML: {payload.get('html_path')}")
         return
+    diagnostics = _dict_payload(payload.get("diagnostics"))
+    print("Graph viewer dry run")
+    print(f"  Provider: {payload.get('provider')}")
+    print(f"  Layer: {payload.get('layer')}")
+    print(f"  Role: {payload.get('graph_role')}")
     print(
-        "Graph viewer dry run: "
-        f"provider={payload.get('provider')} "
-        f"role={payload.get('graph_role')} "
-        f"diagnostics={payload.get('diagnostics')}"
+        f"  Graph: {diagnostics.get('node_count', 0)} nodes, "
+        f"{diagnostics.get('edge_count', 0)} edges"
     )
+    filters = _dict_payload(diagnostics.get("filters"))
+    if filters:
+        print(f"  Filters: {_format_kv(filters)}")
+    evidence_filter = str(diagnostics.get("evidence_filter") or "")
+    if evidence_filter:
+        print(f"  Evidence: {evidence_filter}")
+    warnings = diagnostics.get("warnings")
+    if isinstance(warnings, list):
+        for warning in warnings:
+            print(f"  Warning: {warning}")
 
 
 def _print_status_result(payload: dict[str, object]) -> None:
@@ -171,6 +190,15 @@ def _print_provider_status(
     reason = str(payload.get("reason") or "")
     if reason:
         print(f"    {reason}")
+    details = _dict_payload(payload.get("details"))
+    diagnostic_code = str(details.get("diagnostic_code") or "")
+    diagnostic_label = str(details.get("diagnostic_label") or "")
+    if diagnostic_code:
+        suffix = f" — {diagnostic_label}" if diagnostic_label else ""
+        print(f"    Status: {diagnostic_code}{suffix}")
+    sample_records = details.get("sample_records")
+    if isinstance(sample_records, int):
+        print(f"    Sample records: {sample_records}")
     next_command = str(payload.get("next_command") or "")
     if next_command:
         print(f"    Next: {next_command}")
@@ -180,10 +208,23 @@ def _dict_payload(value: object) -> dict[str, object]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _format_kv(payload: dict[str, object]) -> str:
+    return ", ".join(
+        f"{key}={value}" for key, value in sorted(payload.items()) if str(value)
+    )
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     graph = subparsers.add_parser("graph", help="Visual graph inspection")
     graph_subcommands = graph.add_subparsers(dest="graph_command", required=True)
-    status = graph_subcommands.add_parser(
+    _register_status_command(graph_subcommands)
+    _register_view_command(graph_subcommands)
+
+
+def _register_status_command(
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    status = subcommands.add_parser(
         "status",
         help="Check graph viewer readiness",
     )
@@ -203,7 +244,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     add_json_output_flag(status)
     status.set_defaults(handler=run_graph, needs_app=False)
 
-    view = graph_subcommands.add_parser(
+
+def _register_view_command(
+    subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    view = subcommands.add_parser(
         "view",
         help="Open the current second- or third-brain graph in GraphFakos",
     )
@@ -223,47 +268,90 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default="",
         help="Third-brain provider name when more than one provider is active.",
     )
-    view.add_argument(
+    _add_view_filter_flags(view)
+    _add_view_navigation_flags(view)
+    add_json_output_flag(view)
+    view.set_defaults(handler=run_graph, needs_app=False)
+
+
+def _add_view_filter_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
         "--agent",
         dest="agent_id",
         default="",
         help="Limit the second-brain viewer to agent:<id> memory scope.",
     )
-    view.add_argument(
+    parser.add_argument(
         "--session",
         dest="session_id",
         default="",
         help="Limit the second-brain viewer to session:<id> memory scope.",
     )
-    view.add_argument("--screen", default="explore")
-    view.add_argument("--query", default="")
-    view.add_argument("--focus-node-id", default="")
-    view.add_argument("--source-node-id", default="")
-    view.add_argument("--target-node-id", default="")
-    view.add_argument("--max-depth", type=int, default=1)
-    view.add_argument("--limit", type=int, default=100)
-    view.add_argument("--render-limit", type=int, default=240)
-    view.add_argument("--render-engine", default="svg")
-    view.add_argument("--theme", default="default")
-    view.add_argument("--layout", default="force")
-    view.add_argument("--host", default="127.0.0.1")
-    view.add_argument("--port", type=int, default=8767)
-    view.add_argument(
+    parser.add_argument(
+        "--node-kind",
+        default="",
+        help="Filter viewer nodes by kind, such as fact, decision, or document.",
+    )
+    parser.add_argument(
+        "--edge-kind",
+        default="",
+        help="Filter viewer edges by relation kind.",
+    )
+    parser.add_argument(
+        "--tag",
+        default="",
+        help="Filter viewer nodes by tag.",
+    )
+    parser.add_argument(
+        "--source",
+        default="",
+        help="Filter viewer nodes by source label.",
+    )
+    parser.add_argument(
+        "--min-score",
+        default="",
+        help="Filter viewer nodes by minimum score or confidence.",
+    )
+    parser.add_argument(
+        "--evidence-filter",
+        default="",
+        help=(
+            "Filter by evidence state, such as with_provenance, with_citation, "
+            "missing_provenance, missing_citation, or warnings."
+        ),
+    )
+
+
+def _add_view_navigation_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--screen", default="explore")
+    parser.add_argument("--query", default="")
+    parser.add_argument("--focus-node-id", default="")
+    parser.add_argument("--source-node-id", default="")
+    parser.add_argument("--target-node-id", default="")
+    parser.add_argument("--max-depth", type=int, default=1)
+    parser.add_argument("--limit", type=int, default=100)
+    parser.add_argument("--render-limit", type=int, default=240)
+    parser.add_argument("--render-engine", default="svg")
+    parser.add_argument("--theme", default="default")
+    parser.add_argument("--layout", default="force")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8767)
+    parser.add_argument(
         "--no-open",
         action="store_true",
         help="Serve without opening a browser.",
     )
-    view.add_argument(
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Build the graph and print counts without starting the viewer.",
     )
-    view.add_argument(
+    parser.add_argument(
         "--html-out",
         default="",
         help="Write a static viewer HTML file instead of starting the local server.",
     )
-    view.add_argument(
+    parser.add_argument(
         "--memory-db",
         default="",
         help=(
@@ -271,8 +359,6 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
             "data_root/memory/memory.db."
         ),
     )
-    add_json_output_flag(view)
-    view.set_defaults(handler=run_graph, needs_app=False)
 
 
 __all__ = ["register", "run_graph"]

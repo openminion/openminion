@@ -99,17 +99,22 @@ installed, whether the second-brain memory SQLite store is available, which
 third-brain providers are active, and which exact view command should be run
 next. `view --current` is the user-facing shortcut for the current second-brain
 memory graph, with `--agent` and `--session` scope filters for narrower
-inspection. `view` also launches configured third-brain graph providers when a
-provider is selected explicitly. The viewer is optional package surface
-(`openminion[viewer]`) and must stay a lens: it may inspect current graph
-state, but it must not replace `runtime.memory_provider`,
-`memory.backend.provider`, or provider-owned graph indexers.
+inspection. `view` also exposes provider-neutral viewer filters (`--node-kind`,
+`--edge-kind`, `--tag`, `--source`, `--min-score`, and `--evidence-filter`) so
+operators can search and narrow the graph without knowing GraphFakos query
+parameters. Third-brain graph providers launch when a provider is selected
+explicitly. The viewer is optional package surface (`openminion[viewer]`) and
+must stay a lens: it may inspect current graph state, but it must not replace
+`runtime.memory_provider`, `memory.backend.provider`, or provider-owned graph
+indexers.
 
 The second-brain viewer maps memory records into GraphFakos nodes with
 OpenMinion-specific visual metadata: memory type, tier, scope, confidence,
 namespace, timestamps, provenance, citations, and relation labels. Third-brain
 providers open visually when they expose `options.viewer_envelope_path`; the
 PragmaGraph adapter can also build a viewer envelope from `options.snapshot_path`.
+Readiness details include diagnostic codes, human labels, status/view commands,
+sample memory counts, and missing artifact hints for provider setup.
 
 Provider failures are typed and degrade locally. If every active third-brain
 provider fails, the turn continues without graph context and emits

@@ -41,6 +41,7 @@ class _FakeGraphFakosRequest:
     theme: str = "default"
     layout: str = "force"
     filters: dict[str, str] = field(default_factory=dict)
+    evidence_filter: str = ""
 
 
 @dataclass(frozen=True)
@@ -341,6 +342,56 @@ def test_second_brain_current_shortcut_filters_agent_and_session_scopes(
     ]
 
 
+def test_viewer_request_exposes_graphfakos_navigation_filters(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    store.put(
+        MemoryRecord(
+            id="memory:filter",
+            scope="agent:openminion",
+            type="decision",
+            key="filter",
+            title="Filterable Memory",
+            content="Expose the viewer controls from OpenMinion.",
+            source="validated",
+            confidence=0.9,
+            tags=("reviewed",),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    result = launch_graph_viewer(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(
+            current=True,
+            node_kind="decision",
+            edge_kind="supports",
+            tag="reviewed",
+            source="validated",
+            min_score="0.8",
+            evidence_filter="with_provenance",
+            dry_run=True,
+            memory_db=str(db_path),
+        ),
+    )
+
+    assert result.diagnostics["filters"] == {
+        "edge_kind": "supports",
+        "min_score": "0.8",
+        "node_kind": "decision",
+        "source": "validated",
+        "tag": "reviewed",
+    }
+    assert result.diagnostics["evidence_filter"] == "with_provenance"
+
+
 def test_second_brain_provider_adds_openminion_visual_metadata(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -375,6 +426,9 @@ def test_second_brain_provider_adds_openminion_visual_metadata(
     assert "type:decision" in node.tags
     assert node.provider_payload["memory_type"] == "decision"
     assert isinstance(node.provider_payload["namespace"], dict)
+    assert "tag" in graph.available_facets
+    assert "type:decision" in graph.available_facets["tag"]
+    assert graph.available_facets["node_kind"] == ("decision",)
 
 
 def test_third_brain_uses_configured_viewer_envelope(
@@ -550,6 +604,14 @@ def test_openminion_graph_view_parser_registration() -> None:
             "a1",
             "--session",
             "s1",
+            "--node-kind",
+            "fact",
+            "--tag",
+            "scope:session:s1",
+            "--min-score",
+            "0.7",
+            "--evidence-filter",
+            "with_provenance",
             "--dry-run",
             "--json",
         ]
@@ -559,6 +621,10 @@ def test_openminion_graph_view_parser_registration() -> None:
     assert args.current is True
     assert args.agent_id == "a1"
     assert args.session_id == "s1"
+    assert args.node_kind == "fact"
+    assert args.tag == "scope:session:s1"
+    assert args.min_score == "0.7"
+    assert args.evidence_filter == "with_provenance"
     assert args.dry_run is True
 
 
@@ -764,6 +830,9 @@ def test_static_html_renders_in_playwright_when_chromium_available(tmp_path) -> 
     )
     assert "GraphFakos" in page_text
     assert "Browser Viewer Smoke" in page_text
+    assert "Graph filters" in page_text
+    assert "Node kind" in page_text
+    assert "Evidence" in page_text
 
 
 def _playwright_page_text(*, playwright_sync: Any, page_uri: str) -> str:
