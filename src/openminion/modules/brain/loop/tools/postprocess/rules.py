@@ -63,6 +63,15 @@ _PSEUDO_TOOL_TAG_RE = re.compile(
     r"(?is)<\s*/?\s*(?:create_file|write_file|read_file|execute_command|"
     r"file\.write|file_write|exec\.run|code\.patch)\b",
 )
+_PLAINTEXT_TOOL_CALLS_ARRAY_RE = re.compile(
+    r"(?is)\btool_calls?\b\s*[:=]?\s*\[.*\b"
+    r"(?:file|exec|web|search|fetch|host|process|task|plan|code)"
+    r"\.[A-Za-z0-9_]+\b.*\b(?:arguments|args|parameters|input)\b",
+)
+_PLAINTEXT_TOOL_RESULT_ARRAY_RE = re.compile(
+    r"(?is)\btool_calls?\b\s*[:=]?\s*\[.*\b"
+    r"(?:bytes_written|content|ok|path|returned_length|status|summary)\b",
+)
 _TOOL_ARGUMENT_KEYS = (
     '"arguments"',
     '"args"',
@@ -164,6 +173,8 @@ def _looks_like_unexecutable_tool_payload_text(text: str) -> bool:
         or _PLAINTEXT_FILE_WRITE_TOOL_RE.search(token) is not None
         or _PLAINTEXT_EXEC_RUN_TOOL_RE.search(token) is not None
         or _PLAINTEXT_TOOL_FUNCTION_CALL_RE.search(token) is not None
+        or _PLAINTEXT_TOOL_CALLS_ARRAY_RE.search(token) is not None
+        or _PLAINTEXT_TOOL_RESULT_ARRAY_RE.search(token) is not None
         or _PSEUDO_TOOL_TAG_RE.search(token) is not None
         or (
             token.startswith("```")

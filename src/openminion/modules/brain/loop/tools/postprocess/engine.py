@@ -569,7 +569,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             compact_closeout = self._force_compact_answer_only_closeout()
             if compact_closeout is not None:
                 return False, compact_closeout
-            if mutating_file_closeout_active:
+            if mutating_file_closeout_active or final_answer_reserve_active:
                 fallback_outcome = _mutating_file_fallback_outcome(self)
                 if fallback_outcome is not None:
                     return False, fallback_outcome
@@ -588,6 +588,9 @@ class AdaptiveLoopRunnerPostprocessMixin(
             error_message = (
                 "Model returned tool calls after tool_choice=none was enforced."
             )
+        fallback_outcome = _mutating_file_fallback_outcome(self)
+        if fallback_outcome is not None:
+            return False, fallback_outcome
         self.loop_state.termination_reason = termination_reason
         emit_adaptive_status(
             self.loop_ctx,

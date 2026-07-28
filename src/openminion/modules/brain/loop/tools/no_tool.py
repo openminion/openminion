@@ -33,6 +33,7 @@ from .postprocess.evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
     missing_requested_closeout_markers,
     mutating_file_evidence_fallback_text,
+    requested_closeout_markers,
     tool_evidence_closeout_text,
 )
 from .iteration.helpers import (
@@ -137,7 +138,59 @@ def _fallback_missing_requested_markers_after_retry(
         runner.loop_state.scratchpad[
             "missing_requested_closeout_markers_used_evidence_fallback"
         ] = True
+        return fallback
+    fallback = _tool_attempt_evidence_closeout_text(
+        runner.loop_state,
+        reason=(
+            "the model omitted requested final-output labels after tool attempts, "
+            "so available tool evidence is returned truthfully."
+        ),
+    )
+    if fallback:
+        runner.loop_state.scratchpad[
+            "missing_requested_closeout_markers_used_attempt_fallback"
+        ] = True
     return fallback
+
+
+def _tool_attempt_evidence_closeout_text(loop_state: Any, *, reason: str) -> str:
+    if _count_substantive_non_control_tool_results(loop_state) <= 0:
+        return ""
+    requested = requested_closeout_markers(loop_state)
+    lines: list[str] = []
+    for marker in requested:
+        if marker in {"follow-ups", "next steps"}:
+            lines.append(
+                f"{marker}: retry with a narrower query or alternate evidence "
+                "source if stronger proof is still needed."
+            )
+        elif marker in {"validation", "validation result"}:
+            lines.append(
+                f"{marker}: no successful validation evidence was captured before "
+                "closeout; available tool attempts are listed below."
+            )
+        elif marker in {"files", "files changed"}:
+            lines.append(
+                f"{marker}: no successful file artifact evidence was captured "
+                "before closeout."
+            )
+        else:
+            lines.append(
+                f"{marker}: not captured before closeout; available tool attempt "
+                "evidence is reported below."
+            )
+    if not lines:
+        lines.append(f"result: {reason}")
+    lines.append("tool evidence:")
+    for item in _loop_tool_result_payloads(loop_state)[-5:]:
+        tool_name = str(item.get("tool_name") or "tool").strip() or "tool"
+        status = "success" if bool(item.get("ok")) else "failed"
+        summary = str(item.get("content") or item.get("error") or "").strip()
+        data = item.get("data")
+        if not summary and isinstance(data, dict):
+            summary = str(data.get("summary") or data.get("error") or "").strip()
+        lines.append(f"- {tool_name}: {status}; {summary or 'no summary captured'}")
+    return "\n".join(lines)
 
 
 def _retry_empty_final_after_tool_results(
@@ -478,6 +531,21 @@ class AdaptiveLoopRunnerNoToolMixin:
             and _looks_like_unexecutable_tool_payload_text(normalized_final_text)
         ):
             return None
+        fallback_text = tool_evidence_closeout_text(
+            self.loop_state,
+            reason=(
+                "the model emitted raw tool markup after successful tool "
+                "results, so preserved evidence is returned."
+            ),
+        )
+        if fallback_text and missing_requested_closeout_markers(
+            self.loop_state,
+            normalized_final_text,
+        ):
+            self.loop_state.scratchpad["raw_tool_payload_used_evidence_fallback"] = (
+                True
+            )
+            return fallback_text
         if _raw_tool_payload_retry_allowed(
             self.loop_state,
             text=normalized_final_text,
@@ -495,13 +563,6 @@ class AdaptiveLoopRunnerNoToolMixin:
                     "mutating_file_closeout_used_evidence_fallback"
                 ] = True
                 return fallback_text
-        fallback_text = tool_evidence_closeout_text(
-            self.loop_state,
-            reason=(
-                "the model emitted raw tool markup after successful tool "
-                "results, so preserved evidence is returned."
-            ),
-        )
         if not fallback_text:
             return None
         self.loop_state.scratchpad["raw_tool_payload_used_evidence_fallback"] = True

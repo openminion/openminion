@@ -89,6 +89,7 @@ from openminion.modules.brain.loop.tools.postprocess.rules import (
     _looks_like_unexecutable_tool_payload_text,
 )
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
+from openminion.modules.brain.loop.tools.no_tool import AdaptiveLoopRunnerNoToolMixin
 from openminion.modules.brain.loop.tools.iteration.termination import (
     finalize_iteration_cap_exit,
 )
@@ -117,6 +118,10 @@ from openminion.modules.llm.schemas import (
     ToolSpec,
     UsageInfo,
 )
+
+
+class _NoToolRepairHarness(AdaptiveLoopRunnerNoToolMixin):
+    pass
 
 
 # Shared fixtures — mirror tests/brain/tool_loops/test_engine.py style
@@ -1415,6 +1420,24 @@ class TestLooksLikeUnexecutableToolPayloadText:
         )
         assert _looks_like_unexecutable_tool_payload_text(text) is True
 
+    def test_detects_plaintext_tool_calls_array(self) -> None:
+        text = (
+            "tool_calls [ { "
+            '"name": "file.write", '
+            '"arguments": { "path": "cli_tool.py", "content": "print(1)" } '
+            "} ]"
+        )
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_detects_plaintext_tool_result_array(self) -> None:
+        text = (
+            "tool_calls [ { "
+            '"ok": true, "content": "Written: section_summary.py (1362 bytes)", '
+            '"path": "section_summary.py", "bytes_written": 1362 '
+            "} ]"
+        )
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
     def test_allows_prose_that_mentions_exec_run_without_invocation_shape(self) -> None:
         text = "A future agent can use exec.run after selecting a safe command."
         assert _looks_like_unexecutable_tool_payload_text(text) is False
@@ -2273,6 +2296,74 @@ def test_loop_tool_failure_then_recovery() -> None:
         tool_specs=_tool_specs("file.read"),
     )
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+
+
+def test_loop_missing_markers_after_failed_tool_retry_uses_attempt_fallback() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="web.search",
+                        arguments={"query": "CLI agent transcript testing"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="I found partial evidence but could not finish cleanly.",
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="Still incomplete after the failed search.",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(llm_calls_max=4),
+        outcomes=[
+            _failed_outcome(
+                "web.search",
+                code="SEARCH_FAILED",
+            )
+        ],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"web.search"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(
+                role="user",
+                content="Research robust CLI agent test harnesses. End with prioritized next steps.",
+            )
+        ],
+        tool_specs=_tool_specs("web.search"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    final_text = str(outcome.final_text or "").lower()
+    assert "next steps:" in final_text
+    assert "tool evidence:" in final_text
+    assert "web.search: failed" in final_text
+    assert bool(
+        outcome.state.scratchpad.get(
+            "missing_requested_closeout_markers_used_attempt_fallback"
+        )
+    )
 
 
 def test_loop_seed_response_skips_first_llm_call() -> None:
@@ -3413,6 +3504,143 @@ def test_tool_choice_none_second_retry_degrades_answer_only_closeout_to_budget_e
     assert outcome.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
     assert (
         outcome.error_message == "Answer-only finalization kept returning tool calls."
+    )
+
+
+def test_tool_choice_none_second_retry_salvages_mutating_file_evidence() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-1", name="file.write", arguments={"path": "a.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-2", name="file.write", arguments={"path": "b.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(), outcomes=[])
+    prof = AdaptiveToolLoopProfile(
+        profile_name="t",
+        mode_name="act_adaptive",
+        allowed_tools=frozenset(),
+        max_iterations=2,
+        allow_plan_tool=False,
+        tool_choice="none",
+    )
+    initial_state = AdaptiveToolLoopState(
+        scratchpad={
+            "adaptive.requested_closeout_markers": ["result"],
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote a.py",
+                    "data": {"path": "a.py"},
+                }
+            ],
+        }
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=prof,
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(role="user", content="Use the exact label `result:`.")
+        ],
+        initial_state=initial_state,
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text is not None
+    assert outcome.final_text.startswith("result:")
+    assert "file mutations" in outcome.final_text
+
+
+def test_final_answer_reserve_tool_choice_none_retry_salvages_mutating_file_evidence() -> (
+    None
+):
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-1", name="file.write", arguments={"path": "a.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-2", name="file.write", arguments={"path": "b.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(), outcomes=[])
+    prof = AdaptiveToolLoopProfile(
+        profile_name="t",
+        mode_name="act_adaptive",
+        allowed_tools=frozenset(),
+        max_iterations=2,
+        allow_plan_tool=False,
+        tool_choice="none",
+    )
+    initial_state = AdaptiveToolLoopState(
+        scratchpad={
+            "coding.final_answer_reserve_used": True,
+            "adaptive.requested_closeout_markers": ["result"],
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote a.py",
+                    "data": {"path": "a.py"},
+                }
+            ],
+        }
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=prof,
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(role="user", content="Use the exact label `result:`.")
+        ],
+        initial_state=initial_state,
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text is not None
+    assert outcome.final_text.startswith("result:")
+    assert "file mutations" in outcome.final_text
+    assert (
+        outcome.state.scratchpad["mutating_file_closeout_used_evidence_fallback"]
+        is True
     )
 
 
@@ -6902,6 +7130,52 @@ def test_unexecutable_tool_payload_detects_embedded_json_after_prose() -> None:
         "the files and run the tests.\n"
         '{"tool_name": "file.read", "tool_input": {"path": "/tmp/pyproject.toml"}}\n'
         '{"tool_name": "exec.run", "tool_input": {"command": "python -m pytest -q tests"}}'
+    )
+
+
+def test_raw_tool_result_array_with_missing_labels_uses_evidence_closeout() -> None:
+    runner = _NoToolRepairHarness()
+    runner.loop_state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Implement a tiny package with file.write. Finish with "
+                    "`design:`, `files:`, `validation:`, and `follow-ups:`."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "Written: section_summary.py (12 bytes)",
+                    "data": {"path": "section_summary.py", "bytes_written": 12},
+                }
+            ],
+        },
+    )
+    raw_payload_text = (
+        "tool_calls [ { "
+        '"ok": true, '
+        '"content": "Written: section_summary.py (12 bytes)", '
+        '"path": "section_summary.py", '
+        '"bytes_written": 12 '
+        "} ]"
+    )
+
+    repaired_text = runner._repair_raw_tool_payload_final_text(raw_payload_text)
+
+    assert isinstance(repaired_text, str)
+    final_text = repaired_text.lower()
+    assert "design:" in final_text
+    assert "files:" in final_text
+    assert "validation:" in final_text
+    assert "follow-ups:" in final_text
+    assert "section_summary.py" in final_text
+    assert bool(
+        runner.loop_state.scratchpad.get("raw_tool_payload_used_evidence_fallback")
     )
 
 
