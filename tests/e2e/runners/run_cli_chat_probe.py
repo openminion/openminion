@@ -979,9 +979,7 @@ def _run_probe_session(
                 wait_predicate = (
                     _ready_prompt_detected
                     if message.startswith("/")
-                    else _turn_response_or_confirmation_prompt_detected(
-                        previous_output
-                    )
+                    else _turn_response_or_confirmation_prompt_detected(previous_output)
                 )
                 current_output = _read_until(
                     master_fd=master_fd,
@@ -993,7 +991,9 @@ def _run_probe_session(
                     ),
                     phase="turn_timeout",
                     durable_completion_predicate=(
-                        None if message.startswith("/") else durable_completion_predicate
+                        None
+                        if message.startswith("/")
+                        else durable_completion_predicate
                     ),
                 )
             except _ProbeReadTimeout as exc:

@@ -109,9 +109,7 @@ class TestTaskCategoryPreferenceTable:
 
     def test_task_cancel_category_lists_model_task_cancel(self) -> None:
         assert "task.cancel" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
-        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.cancel"] == [
-            MODEL_TASK_CANCEL
-        ]
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.cancel"] == [MODEL_TASK_CANCEL]
 
     def test_task_watch_category_lists_model_task_watch(self) -> None:
         assert "task.watch" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
@@ -123,9 +121,7 @@ class TestTaskCategoryPreferenceTable:
 
     def test_task_resume_category_lists_model_task_resume(self) -> None:
         assert "task.resume" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY
-        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.resume"] == [
-            MODEL_TASK_RESUME
-        ]
+        assert _PREFERRED_MODEL_TOOLS_BY_CATEGORY["task.resume"] == [MODEL_TASK_RESUME]
 
     def test_task_show_category_lists_model_task_show(self) -> None:
         assert "task.show" in _PREFERRED_MODEL_TOOLS_BY_CATEGORY

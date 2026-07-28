@@ -49,10 +49,7 @@ def test_resolve_identity_root_from_env_defaults_from_home_and_data_root() -> No
         },
         process_env={},
     )
-    assert (
-        resolved
-        == (Path(_HOME).resolve() / _DATA_ROOT / "identity").resolve()
-    )
+    assert resolved == (Path(_HOME).resolve() / _DATA_ROOT / "identity").resolve()
 
 
 def test_resolve_identity_root_from_env_prefers_identity_root_override() -> None:
