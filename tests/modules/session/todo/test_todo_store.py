@@ -3,11 +3,15 @@ from __future__ import annotations
 import pytest
 
 from openminion.modules.session.todo import (
+    FileTodoStore,
     InMemoryTodoStore,
     InvalidTodoIndexError,
     InvalidTodoStatusError,
     Todo,
     TodoEmptyError,
+    get_default_todo_store,
+    resolve_default_todo_store_path,
+    reset_default_todo_store_for_tests,
 )
 from openminion.modules.session.todo.constants import (
     DEFAULT_MAX_ITEMS_PER_PLAN,
@@ -226,3 +230,57 @@ class TestEvictionLifecycle:
         store = InMemoryTodoStore()
         store.evict("sess-never-existed")
         assert store.session_count() == 0
+
+
+class TestFileTodoStore:
+    def test_reopens_plan_from_disk(self, tmp_path) -> None:
+        path = tmp_path / "session" / "todo.json"
+        store = FileTodoStore(path)
+        store.set_plan("sess-a", ["map gap", "ship fix"])
+        store.update_item_status("sess-a", 0, STATUS_DONE)
+
+        reopened = FileTodoStore(path)
+        plan = reopened.get_plan("sess-a")
+
+        assert plan is not None
+        assert [item.text for item in plan.items] == ["map gap", "ship fix"]
+        assert [item.status for item in plan.items] == [STATUS_DONE, STATUS_TODO]
+        assert plan.summary() == "1/2 done, 0 in progress"
+
+    def test_clear_persists_to_disk(self, tmp_path) -> None:
+        path = tmp_path / "todo.json"
+        store = FileTodoStore(path)
+        store.set_plan("sess-a", ["remove me"])
+
+        store.clear_plan("sess-a")
+
+        assert FileTodoStore(path).get_plan("sess-a") is None
+
+    def test_loaded_invalid_status_defaults_to_todo(self, tmp_path) -> None:
+        path = tmp_path / "todo.json"
+        path.write_text(
+            '{"version":1,"sessions":{"sess-a":{"items":[{"text":"x","status":"bad"}]}}}',
+            encoding="utf-8",
+        )
+
+        plan = FileTodoStore(path).get_plan("sess-a")
+
+        assert plan is not None
+        assert plan.items[0].status == STATUS_TODO
+
+    def test_default_path_uses_data_root(self, tmp_path) -> None:
+        path = resolve_default_todo_store_path(
+            home_root=tmp_path / "home",
+            data_root=tmp_path / "data",
+            env={},
+        )
+
+        assert path == tmp_path / "data" / "session" / "todo.json"
+
+    def test_reset_default_store_for_tests_uses_fresh_memory_store(self) -> None:
+        reset_default_todo_store_for_tests()
+
+        store = get_default_todo_store()
+
+        assert isinstance(store, InMemoryTodoStore)
+        assert not isinstance(store, FileTodoStore)

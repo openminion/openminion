@@ -1,24 +1,26 @@
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from openminion.modules.session.todo import (
-    InMemoryTodoStore,
     Todo,
     TodoError,
     TodoItem,
+    TodoStore,
     get_default_todo_store,
     reset_default_todo_store_for_tests,
 )
 from openminion.modules.session.todo.constants import VALID_STATUSES
+from openminion.modules.session.todo.schemas import TodoItemStatus
+from openminion.modules.tool.contracts.schemas import ErrorCode
 from openminion.modules.tool.errors import ToolRuntimeError
 from openminion.modules.tool.runtime import RuntimeContext
 
 
-_plan_store: InMemoryTodoStore | None = None
+_plan_store: TodoStore | None = None
 
 
-def _get_plan_store() -> InMemoryTodoStore:
+def _get_plan_store() -> TodoStore:
     return _plan_store if _plan_store is not None else get_default_todo_store()
 
 
@@ -136,7 +138,7 @@ def _ok_payload(
 
 def _raise_as_tool_error(exc: TodoError, *, session_id: str) -> None:
     raise ToolRuntimeError(
-        exc.code,
+        cast(ErrorCode, exc.code),
         str(exc),
         {"session_id": session_id},
     ) from exc
@@ -144,7 +146,7 @@ def _raise_as_tool_error(exc: TodoError, *, session_id: str) -> None:
 
 def _mutate_and_get_plan(
     session_id: str,
-    mutate: Callable[[InMemoryTodoStore], None],
+    mutate: Callable[[TodoStore], object],
 ) -> Todo:
     try:
         mutate(store := _get_plan_store())
@@ -153,7 +155,7 @@ def _mutate_and_get_plan(
     except TodoError as exc:
         _raise_as_tool_error(exc, session_id=session_id)
     raise ToolRuntimeError(
-        "PLAN_EMPTY",
+        cast(ErrorCode, "PLAN_EMPTY"),
         "No plan set for this session.",
         {"session_id": session_id},
     )
@@ -194,7 +196,11 @@ def _h_update(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     status = str(args.get("status") or "")
     todo = _mutate_and_get_plan(
         session_id,
-        lambda store: store.update_item_status(session_id, index, status),  # type: ignore[arg-type]
+        lambda store: store.update_item_status(
+            session_id,
+            index,
+            cast(TodoItemStatus, status),
+        ),
     )
     return _ok_payload(
         todo,
@@ -250,7 +256,7 @@ def _h_todo_write(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         for item in raw_todos
     ]
 
-    def _write_items(store: InMemoryTodoStore) -> None:
+    def _write_items(store: TodoStore) -> None:
         store.set_plan(
             session_id,
             [str(item.get("text", "") or "").strip() for item in items],
@@ -258,7 +264,11 @@ def _h_todo_write(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         for index, item in enumerate(items):
             status = str(item.get("status", "todo") or "todo")
             if status != "todo":
-                store.update_item_status(session_id, index, status)  # type: ignore[arg-type]
+                store.update_item_status(
+                    session_id,
+                    index,
+                    cast(TodoItemStatus, status),
+                )
 
     todo = _mutate_and_get_plan(session_id, _write_items)
     return _ok_payload(

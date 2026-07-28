@@ -1,9 +1,14 @@
-STATUS_TODO = "todo"
-STATUS_IN_PROGRESS = "in_progress"
-STATUS_DONE = "done"
-STATUS_BLOCKED = "blocked"
+from pathlib import Path
+from typing import Literal
 
-VALID_STATUSES: tuple[str, ...] = (
+TodoStatusValue = Literal["todo", "in_progress", "done", "blocked"]
+
+STATUS_TODO: TodoStatusValue = "todo"
+STATUS_IN_PROGRESS: TodoStatusValue = "in_progress"
+STATUS_DONE: TodoStatusValue = "done"
+STATUS_BLOCKED: TodoStatusValue = "blocked"
+
+VALID_STATUSES: tuple[TodoStatusValue, ...] = (
     STATUS_TODO,
     STATUS_IN_PROGRESS,
     STATUS_DONE,
@@ -12,3 +17,4 @@ VALID_STATUSES: tuple[str, ...] = (
 
 DEFAULT_MAX_SESSIONS = 100
 DEFAULT_MAX_ITEMS_PER_PLAN = 100
+DEFAULT_TODO_STORE_SUBPATH = Path("session") / "todo.json"
