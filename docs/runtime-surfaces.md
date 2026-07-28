@@ -85,7 +85,7 @@ Best for:
 Use:
 
 1. `openminion graph status`
-2. `openminion graph view --brain second`
+2. `openminion graph view --current`
 3. `openminion graph view --brain third --provider <name>`
 
 Best for:
@@ -103,12 +103,18 @@ Notes:
    or graph indexer,
 3. `openminion graph status --json` reports GraphFakos availability, the
    second-brain memory database path, active third-brain providers, visual
-   readiness, and suggested next commands,
+   readiness, diagnostic codes, and suggested next commands,
 4. `openminion graph view --dry-run --json` builds the selected graph and
    returns counts without starting the local browser viewer,
 5. `openminion graph view --html-out viewer.html` writes a static visual page
    for inspection or sharing,
-6. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
+6. `openminion graph view --current --agent <id>` and
+   `openminion graph view --current --session <id>` narrow the second-brain
+   view to one memory scope,
+7. `openminion graph view --current --node-kind fact`, `--edge-kind`, `--tag`,
+   `--source`, `--min-score`, and `--evidence-filter` expose GraphFakos viewer
+   filters from the OpenMinion CLI,
+8. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
    third-brain provider envelope.
 
 ## Example surfaces

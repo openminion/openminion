@@ -42,6 +42,10 @@ def test_chat_phases_closed_set_matches_contract():
         "response_normalization",
         "response_persistence",
         "memory_write",
+        "run_record_finish",
+        "response_delivery",
+        "response_delivered_event",
+        "terminal_event",
         "cli_render_delivery",
     }
 
@@ -80,6 +84,17 @@ def test_payload_rejects_negative_phase_ms():
             total_turn_ms=10,
             time_to_first_text_ms=None,
             provider_round_trip_ms=-1,
+        )
+
+
+def test_payload_rejects_misaligned_provider_call_latency() -> None:
+    with pytest.raises(ValueError):
+        ChatPhaseTimingPayload(
+            cold_start=False,
+            total_turn_ms=10,
+            time_to_first_text_ms=None,
+            provider_call_purposes=("entry",),
+            provider_call_latency_ms=(10, 20),
         )
 
 
@@ -280,6 +295,7 @@ def test_active_timer_aggregates_provider_call_costs():
                 provider="fixture",
                 model="fixture-model",
                 output_text="first",
+                latency_ms=18,
                 usage=UsageInfo(input_tokens=10, output_tokens=2),
             ),
         )
@@ -292,6 +308,7 @@ def test_active_timer_aggregates_provider_call_costs():
                 provider="fixture",
                 model="fixture-model",
                 output_text="second",
+                latency_ms=27,
                 usage=UsageInfo(input_tokens=4, output_tokens=3),
             ),
         )
@@ -299,6 +316,8 @@ def test_active_timer_aggregates_provider_call_costs():
     payload = timer.build_payload()
     assert payload.provider_calls_total == 2
     assert payload.provider_call_purposes == ("entry", "adaptive")
+    assert payload.provider_call_latency_ms == (18, 27)
+    assert payload.as_dict()["provider_call_latency_ms"] == [18, 27]
     assert payload.provider_input_tokens == 14
     assert payload.provider_output_tokens == 5
     assert payload.provider_request_bytes > 0

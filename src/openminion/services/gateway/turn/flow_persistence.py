@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from collections.abc import Callable
 
 from openminion.base.types import Message
@@ -8,6 +8,7 @@ from openminion.modules.brain.constants import (
 )
 from openminion.modules.policy import RISK_LOW
 from openminion.modules.task.run import RUN_STATE_COMPLETED
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.services.gateway.constants import CALLER_HANDLES_DELIVERY_METADATA_KEY
 from openminion.services.gateway.memory import record_memory_turn
 from openminion.services.gateway.response import build_outbound_message
@@ -15,8 +16,31 @@ from openminion.services.gateway.routing import parse_metadata_bool
 
 from .flow_models import _RoutingResult
 
+if TYPE_CHECKING:
+    from openminion.modules.storage.runtime.session_store import SessionStore
+
 
 class GatewayTurnPersistenceDeliveryMixin:
+    _sessions: "SessionStore"
+
+    def _finish_run_record(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ) -> None:
+        if not hasattr(self._sessions, "finish_run_record"):
+            return
+        kwargs: dict[str, Any] = {"status": status}
+        if input_tokens is not None:
+            kwargs["input_tokens"] = input_tokens
+        if output_tokens is not None:
+            kwargs["output_tokens"] = output_tokens
+        with active_chat_phase("run_record_finish"):
+            self._sessions.finish_run_record(run_id, **kwargs)
+
     def _suppressed_outbound_for_response(
         self,
         *,
@@ -225,41 +249,44 @@ class GatewayTurnPersistenceDeliveryMixin:
         )
 
         if deliver:
-            self._channels.get(response.channel).send(outbound)
+            with active_chat_phase("response_delivery"):
+                self._channels.get(response.channel).send(outbound)
         if deliver or caller_handles_delivery:
-            self._lifecycle_ops.emit_turn_event(
+            with active_chat_phase("response_delivered_event"):
+                self._lifecycle_ops.emit_turn_event(
+                    session_id=session_id,
+                    event_type="response.delivered",
+                    conversation_id=conversation_id or None,
+                    thread_id=thread_id or None,
+                    attach_id=attach_id or None,
+                    payload={
+                        "run_id": run_id,
+                        "response_id": outbound_record.id,
+                        "delivery_mode": "channel" if deliver else "return",
+                        "channel": response.channel,
+                        "target": response.target,
+                    },
+                )
+        with active_chat_phase("terminal_event"):
+            self._lifecycle_ops.emit_terminal_run_state(
                 session_id=session_id,
-                event_type="response.delivered",
+                run_id=run_id,
+                legacy_state=RUN_STATE_COMPLETED,
+                current_step="turn.completed",
+                payload=self._lifecycle_ops.corr_payload(
+                    normalized_request_id=normalized_request_id,
+                    lifecycle_payload=lifecycle_payload,
+                    extra={
+                        "response_chars": str(len(outbound.body)),
+                        "provider": response.metadata.get("provider", ""),
+                        "model": response.metadata.get("model", ""),
+                    },
+                ),
                 conversation_id=conversation_id or None,
                 thread_id=thread_id or None,
                 attach_id=attach_id or None,
-                payload={
-                    "run_id": run_id,
-                    "response_id": outbound_record.id,
-                    "delivery_mode": "channel" if deliver else "return",
-                    "channel": response.channel,
-                    "target": response.target,
-                },
+                typed_terminal_resolver=typed_terminal_resolver,
             )
-        self._lifecycle_ops.emit_terminal_run_state(
-            session_id=session_id,
-            run_id=run_id,
-            legacy_state=RUN_STATE_COMPLETED,
-            current_step="turn.completed",
-            payload=self._lifecycle_ops.corr_payload(
-                normalized_request_id=normalized_request_id,
-                lifecycle_payload=lifecycle_payload,
-                extra={
-                    "response_chars": str(len(outbound.body)),
-                    "provider": response.metadata.get("provider", ""),
-                    "model": response.metadata.get("model", ""),
-                },
-            ),
-            conversation_id=conversation_id or None,
-            thread_id=thread_id or None,
-            attach_id=attach_id or None,
-            typed_terminal_resolver=typed_terminal_resolver,
-        )
         self._logger.info(
             "gateway turn complete channel=%s target=%s session_id=%s run_id=%s request_id=%s",
             channel,

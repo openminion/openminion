@@ -30,6 +30,10 @@ ChatPhase = Literal[
     "response_normalization",
     "response_persistence",
     "memory_write",
+    "run_record_finish",
+    "response_delivery",
+    "response_delivered_event",
+    "terminal_event",
     "cli_render_delivery",
 ]
 
@@ -56,6 +60,10 @@ CHAT_PHASES: tuple[str, ...] = (
     "response_normalization",
     "response_persistence",
     "memory_write",
+    "run_record_finish",
+    "response_delivery",
+    "response_delivered_event",
+    "terminal_event",
     "cli_render_delivery",
 )
 
@@ -95,6 +103,10 @@ class ChatPhaseTimingPayload:
     response_normalization_ms: int = 0
     response_persistence_ms: int = 0
     memory_write_ms: int = 0
+    run_record_finish_ms: int = 0
+    response_delivery_ms: int = 0
+    response_delivered_event_ms: int = 0
+    terminal_event_ms: int = 0
     cli_render_delivery_ms: int = 0
 
     phases_instrumented: tuple[str, ...] = field(default_factory=tuple)
@@ -105,6 +117,7 @@ class ChatPhaseTimingPayload:
     transport: str = ""
     provider_calls_total: int = 0
     provider_call_purposes: tuple[str, ...] = field(default_factory=tuple)
+    provider_call_latency_ms: tuple[int, ...] = field(default_factory=tuple)
     provider_request_bytes: int | None = None
     provider_response_bytes: int | None = None
     provider_input_tokens: int | None = None
@@ -123,6 +136,14 @@ class ChatPhaseTimingPayload:
             value = getattr(self, f"{phase}_ms")
             if value < 0:
                 raise ValueError(f"{phase}_ms must be >= 0; got {value!r}")
+        if any(value < 0 for value in self.provider_call_latency_ms):
+            raise ValueError("provider_call_latency_ms values must be >= 0")
+        if self.provider_call_latency_ms and (
+            len(self.provider_call_latency_ms) != len(self.provider_call_purposes)
+        ):
+            raise ValueError(
+                "provider_call_latency_ms must align with provider_call_purposes"
+            )
 
     def as_dict(self) -> dict[str, object]:
         """Render as a JSON-friendly dict for `emit_canonical_event`."""
@@ -144,6 +165,7 @@ class ChatPhaseTimingPayload:
             "transport": str(self.transport),
             "provider_calls_total": int(self.provider_calls_total),
             "provider_call_purposes": list(self.provider_call_purposes),
+            "provider_call_latency_ms": list(self.provider_call_latency_ms),
             "provider_request_bytes": self.provider_request_bytes,
             "provider_response_bytes": self.provider_response_bytes,
             "provider_input_tokens": self.provider_input_tokens,
@@ -167,6 +189,7 @@ class ChatPhaseTimer:
     _first_text_ns: int | None = None
     _first_provider_token_ns: int | None = None
     _provider_call_purposes: list[str] = field(default_factory=list)
+    _provider_call_latency_ms: list[int] = field(default_factory=list)
     _provider_request_bytes: int = 0
     _provider_response_bytes: int = 0
     _provider_input_tokens: int = 0
@@ -221,6 +244,9 @@ class ChatPhaseTimer:
     ) -> None:
         normalized_purpose = str(purpose or "unknown").strip() or "unknown"
         self._provider_call_purposes.append(normalized_purpose)
+        self._provider_call_latency_ms.append(
+            max(0, int(getattr(response, "latency_ms", 0) or 0))
+        )
         message_payload = [_jsonable(item) for item in messages]
         tool_payload = [_jsonable(item) for item in tools]
         self._provider_request_bytes += _json_bytes(
@@ -295,6 +321,7 @@ class ChatPhaseTimer:
             transport=transport,
             provider_calls_total=len(self._provider_call_purposes),
             provider_call_purposes=tuple(self._provider_call_purposes),
+            provider_call_latency_ms=tuple(self._provider_call_latency_ms),
             provider_request_bytes=(
                 self._provider_request_bytes
                 if self._has_provider_request_bytes
@@ -420,7 +447,7 @@ def record_chat_phase_timing_payload(
 
 def _jsonable(value: object) -> object:
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")  # type: ignore[attr-defined]
+        return value.model_dump(mode="json")
     return value
 
 

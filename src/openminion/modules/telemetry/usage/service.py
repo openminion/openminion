@@ -93,6 +93,12 @@ def _event_run_id(event: dict[str, Any]) -> str:
     return ""
 
 
+def _session_id_from_row(row: Any) -> str:
+    if isinstance(row, dict):
+        return str(row.get("session_id") or row.get("id") or "").strip()
+    return str(getattr(row, "session_id", None) or getattr(row, "id", "") or "").strip()
+
+
 def _event_trace_id(event: dict[str, Any]) -> str:
     return str(event.get("trace_id", "") or "").strip()
 
@@ -313,6 +319,27 @@ class StatsService:
             ],
             read=read,
         )
+
+    def get_recent_session_token_usage(
+        self,
+        *,
+        limit: int,
+        event_limit: int | None = None,
+    ) -> tuple[TokenUsageSummary, ...]:
+        if not hasattr(self._store, "list_sessions"):
+            return ()
+        normalized_limit = max(1, int(limit))
+        summaries: list[TokenUsageSummary] = []
+        for row in self._store.list_sessions(limit=normalized_limit):
+            session_id = _session_id_from_row(row)
+            if session_id:
+                summaries.append(
+                    self.get_session_token_usage(
+                        session_id,
+                        event_limit=event_limit,
+                    )
+                )
+        return tuple(summaries)
 
     def get_run_stats(self, run_id: str) -> RunStatsSummary | None:
         if not hasattr(self._store, "get_run_record"):

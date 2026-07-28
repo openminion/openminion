@@ -7,6 +7,10 @@ from openminion.modules.llm.providers.base import (
     ProviderRequest,
     ProviderResponse,
 )
+from openminion.modules.telemetry.trace.phase_timing import (
+    ChatPhaseTimer,
+    use_chat_phase_timer,
+)
 from openminion.services.context.session import SessionContextService
 
 from tests.services.gateway._gateway_service_support import (
@@ -48,6 +52,30 @@ class _LongArtifactProvider(LLMProvider):
 
 
 class GatewayServiceCoreTests(GatewayServiceTestCase):
+    def test_gateway_records_delivery_subphase_timing(self) -> None:
+        timer = ChatPhaseTimer()
+        self.sessions.finish_run_record = lambda *_args, **_kwargs: None
+
+        with use_chat_phase_timer(timer):
+            asyncio.run(
+                self.gateway.run_once(
+                    channel="console",
+                    target="local-user",
+                    message="hello",
+                )
+            )
+
+        payload = timer.build_payload()
+        assert {
+            "response_persistence",
+            "memory_write",
+            "run_record_finish",
+            "response_delivery",
+            "response_delivered_event",
+            "terminal_event",
+            "cli_render_delivery",
+        }.issubset(payload.phases_instrumented)
+
     def test_gateway_threads_knowledge_graph_service_to_turn_runner(self) -> None:
         marker = object()
         gateway, _sink = self._build_gateway(
@@ -755,7 +783,23 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         self.assertEqual(len(sink.sent), 1)
 
     def test_gateway_rejects_distinct_concurrent_explicit_session_turns(self) -> None:
-        provider = _SlowCaptureProvider()
+        class _BlockingProvider(LLMProvider):
+            name = "blocking-session-turn"
+
+            def __init__(self) -> None:
+                self.requests: list[ProviderRequest] = []
+                self.entered = asyncio.Event()
+                self.release = asyncio.Event()
+
+            async def generate(self, request: ProviderRequest) -> ProviderResponse:
+                self.requests.append(request)
+                self.entered.set()
+                await self.release.wait()
+                return ProviderResponse(
+                    text=f"blocked::{request.user_message}", model=self.name
+                )
+
+        provider = _BlockingProvider()
         gateway, sink = self._build_gateway(
             provider=provider,
             logger_name="openminion.tests.gateway.session_turn_lease",
@@ -764,21 +808,30 @@ class GatewayServiceCoreTests(GatewayServiceTestCase):
         session_id = "session-turn-lease"
 
         async def _run_concurrent():
-            return await asyncio.gather(
+            first_task = asyncio.create_task(
                 gateway.handle_message(
                     channel="console",
                     target="local-user",
                     body="slow first",
                     session_id=session_id,
                     request_id="req-one",
-                ),
+                )
+            )
+            await provider.entered.wait()
+            second_task = asyncio.create_task(
                 gateway.handle_message(
                     channel="console",
                     target="local-user",
                     body="slow second",
                     session_id=session_id,
                     request_id="req-two",
-                ),
+                )
+            )
+            await asyncio.sleep(0)
+            provider.release.set()
+            return await asyncio.gather(
+                first_task,
+                second_task,
                 return_exceptions=True,
             )
 

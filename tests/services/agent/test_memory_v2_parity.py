@@ -171,9 +171,7 @@ class TestGatewayDuckTypingParity:
             "record_turn",
         ]
         for method in required_methods:
-            assert callable(getattr(adapter, method, None)), (
-                f"adapter missing {method}"
-            )
+            assert callable(getattr(adapter, method, None)), f"adapter missing {method}"
 
     def test_enabled_property_exists(self) -> None:
         adapter = _v2_adapter()

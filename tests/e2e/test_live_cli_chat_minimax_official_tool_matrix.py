@@ -86,6 +86,7 @@ _SCENARIOS: tuple[_Scenario, ...] = (
     ),
     _Scenario(
         id="file_write",
+        expected_tools=("file.write",),
         expected_outcome="non_success_without_execution",
         require_artifact_path=True,
     ),
@@ -142,15 +143,24 @@ def _is_truthful_no_execution_outcome(
     body_preview: str,
     assistant_messages: list[str],
     tool_results: list[dict[str, object]],
+    requested_tools: tuple[str, ...],
 ) -> bool:
-    denied_results = [
+    requested_results = [
         item
         for item in tool_results
+        if _matches_expected_tool(
+            executed_tool_names={str(item.get("tool_name", "") or "").strip()},
+            expected_tools=requested_tools,
+        )
+    ]
+    denied_results = [
+        item
+        for item in requested_results
         if str(item.get("error_code", "") or "").strip() == "POLICY_DENIED"
         or str(item.get("content", "") or "").strip().lower()
         == "tool execution denied by operator"
     ]
-    if tool_results and len(denied_results) != len(tool_results):
+    if requested_results and len(denied_results) != len(requested_results):
         return False
     accepted_needles = (
         "denied by policy: operation requires explicit confirmation",
@@ -193,6 +203,7 @@ def test_truthful_no_execution_helper_requires_no_tool_results() -> None:
             "Denied by policy: operation requires explicit confirmation"
         ],
         tool_results=[],
+        requested_tools=("file.write",),
     )
     assert _is_truthful_no_execution_outcome(
         transcript="Policy confirmation required.",
@@ -201,6 +212,7 @@ def test_truthful_no_execution_helper_requires_no_tool_results() -> None:
             "Policy confirmation required.\nReply exactly yes to confirm or exactly no to cancel."
         ],
         tool_results=[],
+        requested_tools=("file.write",),
     )
     assert _is_truthful_no_execution_outcome(
         transcript="The requested tool was not executed, so I cannot truthfully claim it succeeded.",
@@ -209,6 +221,7 @@ def test_truthful_no_execution_helper_requires_no_tool_results() -> None:
             "The requested tool was not executed, so I cannot truthfully claim it succeeded."
         ],
         tool_results=[],
+        requested_tools=("file.write",),
     )
     assert not _is_truthful_no_execution_outcome(
         transcript="Denied by policy: operation requires explicit confirmation",
@@ -217,6 +230,7 @@ def test_truthful_no_execution_helper_requires_no_tool_results() -> None:
             "Denied by policy: operation requires explicit confirmation"
         ],
         tool_results=[{"tool_name": "file.write"}],
+        requested_tools=("file.write",),
     )
     assert _is_truthful_no_execution_outcome(
         transcript="Tool execution denied by operator",
@@ -235,6 +249,23 @@ def test_truthful_no_execution_helper_requires_no_tool_results() -> None:
                 "error_code": "POLICY_DENIED",
             }
         ],
+        requested_tools=("file.write",),
+    )
+    assert _is_truthful_no_execution_outcome(
+        transcript="Tool execution denied by operator",
+        body_preview=(
+            "[act:coding] repeated identical tool calls detected without reaching "
+            "a final answer."
+        ),
+        assistant_messages=[
+            "[act:coding] repeated identical tool calls detected without reaching "
+            "a final answer."
+        ],
+        tool_results=[
+            {"tool_name": "file.write", "ok": False, "error_code": "POLICY_DENIED"},
+            {"tool_name": "exec.run", "ok": True},
+        ],
+        requested_tools=("file.write",),
     )
 
 
@@ -312,17 +343,25 @@ def test_live_cli_chat_minimax_official_tool_matrix(
             body_preview=str(last_turn.get("body_preview", "") or ""),
             assistant_messages=assistant_messages,
             tool_results=tool_results,
+            requested_tools=scenario.expected_tools,
         ), (
             f"expected truthful no-execution outcome for target={target.target_id} "
             f"scenario={scenario.id}\n"
             f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
             f"transcript={transcript_path}"
         )
-        successful_tool_results = [
-            item for item in tool_results if bool(item.get("ok", False))
+        successful_requested_tool_results = [
+            item
+            for item in tool_results
+            if bool(item.get("ok", False))
+            and _matches_expected_tool(
+                executed_tool_names={str(item.get("tool_name", "") or "").strip()},
+                expected_tools=scenario.expected_tools,
+            )
         ]
-        assert not successful_tool_results, (
-            f"no-execution scenario should not report successful tool execution for "
+        assert not successful_requested_tool_results, (
+            f"no-execution scenario should not report successful requested tool "
+            f"execution for "
             f"target={target.target_id} scenario={scenario.id}\n"
             f"metadata={json.dumps(metadata, indent=2, sort_keys=True)}\n"
             f"transcript={transcript_path}"

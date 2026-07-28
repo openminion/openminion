@@ -71,13 +71,12 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
         typed_terminal_resolver: Callable[..., Any] | None,
         session_turn_fence_token: int | None,
     ) -> Message:
-        if hasattr(self._sessions, "finish_run_record"):
-            self._sessions.finish_run_record(
-                run_id,
-                status="completed",
-                input_tokens=0,
-                output_tokens=0,
-            )
+        self._finish_run_record(
+            run_id,
+            status="completed",
+            input_tokens=0,
+            output_tokens=0,
+        )
         outbound = self._suppressed_outbound_for_response(
             routing=routing,
             run_id=run_id,
@@ -95,25 +94,26 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
             },
             session_turn_fence_token=session_turn_fence_token,
         )
-        self._lifecycle_ops.emit_terminal_run_state(
-            session_id=routing.session.id,
-            run_id=run_id,
-            legacy_state=RUN_STATE_COMPLETED,
-            current_step="turn.completed",
-            payload=self._lifecycle_ops.corr_payload(
-                normalized_request_id=routing.normalized_request_id,
-                lifecycle_payload=lifecycle_payload,
-                extra={
-                    "response_chars": 0,
-                    "suppressed": "pae_idle_tick_noop",
-                },
-            ),
-            conversation_id=routing.conversation_id or None,
-            thread_id=routing.thread_id or None,
-            attach_id=routing.attach_id or None,
-            typed_terminal_resolver=typed_terminal_resolver,
-            session_turn_fence_token=session_turn_fence_token,
-        )
+        with active_chat_phase("terminal_event"):
+            self._lifecycle_ops.emit_terminal_run_state(
+                session_id=routing.session.id,
+                run_id=run_id,
+                legacy_state=RUN_STATE_COMPLETED,
+                current_step="turn.completed",
+                payload=self._lifecycle_ops.corr_payload(
+                    normalized_request_id=routing.normalized_request_id,
+                    lifecycle_payload=lifecycle_payload,
+                    extra={
+                        "response_chars": 0,
+                        "suppressed": "pae_idle_tick_noop",
+                    },
+                ),
+                conversation_id=routing.conversation_id or None,
+                thread_id=routing.thread_id or None,
+                attach_id=routing.attach_id or None,
+                typed_terminal_resolver=typed_terminal_resolver,
+                session_turn_fence_token=session_turn_fence_token,
+            )
         return outbound
 
     async def run(
@@ -248,13 +248,12 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
                 )
 
             input_tokens, output_tokens = self._usage_totals_from_response(response)
-            if hasattr(self._sessions, "finish_run_record"):
-                self._sessions.finish_run_record(
-                    run_id,
-                    status="completed",
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
+            self._finish_run_record(
+                run_id,
+                status="completed",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
 
             with active_chat_phase("cli_render_delivery"):
                 self._deliver_and_complete(
@@ -272,24 +271,24 @@ class GatewayTurnRunner(GatewayTurnRunnerFlowMixin):
             return outbound
 
         except Exception as exc:
-            if hasattr(self._sessions, "finish_run_record"):
-                self._sessions.finish_run_record(run_id, status="failed")
-            self._lifecycle_ops.emit_terminal_run_state(
-                session_id=routing.session.id,
-                run_id=run_id,
-                legacy_state=RUN_STATE_FAILED,
-                current_step="turn.failed",
-                payload=self._lifecycle_ops.corr_payload(
-                    normalized_request_id=routing.normalized_request_id,
-                    lifecycle_payload=lifecycle_payload,
-                    extra={"error": str(exc)},
-                ),
-                conversation_id=routing.conversation_id or None,
-                thread_id=routing.thread_id or None,
-                attach_id=routing.attach_id or None,
-                typed_terminal_resolver=typed_terminal_resolver,
-                session_turn_fence_token=session_turn_fence_token,
-            )
+            self._finish_run_record(run_id, status="failed")
+            with active_chat_phase("terminal_event"):
+                self._lifecycle_ops.emit_terminal_run_state(
+                    session_id=routing.session.id,
+                    run_id=run_id,
+                    legacy_state=RUN_STATE_FAILED,
+                    current_step="turn.failed",
+                    payload=self._lifecycle_ops.corr_payload(
+                        normalized_request_id=routing.normalized_request_id,
+                        lifecycle_payload=lifecycle_payload,
+                        extra={"error": str(exc)},
+                    ),
+                    conversation_id=routing.conversation_id or None,
+                    thread_id=routing.thread_id or None,
+                    attach_id=routing.attach_id or None,
+                    typed_terminal_resolver=typed_terminal_resolver,
+                    session_turn_fence_token=session_turn_fence_token,
+                )
             self._logger.warning(
                 "gateway turn failed channel=%s target=%s session_id=%s run_id=%s request_id=%s error=%s",
                 channel,

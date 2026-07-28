@@ -57,6 +57,14 @@ def _session_events(state_db: Path, *, event_types: tuple[str, ...]) -> list[dic
     return [dict(row) for row in rows]
 
 
+def _event_payload(event: dict) -> dict:
+    try:
+        payload = json.loads(str(event.get("payload_json") or "{}"))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 @pytest.mark.e2e
 @pytest.mark.parametrize("agent_id", _AGENT_IDS)
 def test_live_minimax_official_ctgp_three_step_autonomous_plan(agent_id: str) -> None:
@@ -94,6 +102,14 @@ def test_live_minimax_official_ctgp_three_step_autonomous_plan(agent_id: str) ->
 
     autonomous_fires = by_type.get("autonomous_turn.fired", [])
     plan_declared = by_type.get("task_plan.declared", [])
+    step_completed = by_type.get("task_plan.step_completed", [])
+    plan_completed = by_type.get("task_plan.completed", [])
+    plan_abandoned = by_type.get("task_plan.abandoned", [])
+    completed_step_ids = {
+        str(_event_payload(event).get("step_id", "") or "").strip()
+        for event in step_completed
+        if str(_event_payload(event).get("step_id", "") or "").strip()
+    }
 
     failure_diag = (
         f"transcript={result.transcript_path}\n"
@@ -105,13 +121,16 @@ def test_live_minimax_official_ctgp_three_step_autonomous_plan(agent_id: str) ->
     assert plan_declared, (
         "model did not declare a plan via the plan tool\n" + failure_diag
     )
+    assert not plan_abandoned, "plan should not be abandoned\n" + failure_diag
 
-    # CTGP-06 exit criterion: at least 2 autonomous-turn fires (the
-    # user turn plus those autonomous turns totals the ">=3 turns
-    # the per-plan cap is 10 (CTGP-04 default).
-    assert len(autonomous_fires) >= 2, (
-        "expected at least 2 autonomous_turn.fired events (3-step plan "
-        "with continue_plan_autonomously=true should drive 2 follow-up "
-        "autonomous turns after the user-driven declare)\n"
+    completed_all_steps = bool(plan_completed) and len(completed_step_ids) >= 3
+    # Deterministic CTGP tests own the exact scheduler turn count. The live
+    # MiniMax smoke accepts a compressed-but-durable outcome when the plan
+    # completes all three steps and at least one autonomous follow-up fired.
+    assert len(autonomous_fires) >= 2 or (
+        len(autonomous_fires) >= 1 and completed_all_steps
+    ), (
+        "expected either 2 autonomous_turn.fired events or a completed 3-step "
+        "plan with at least 1 autonomous follow-up\n"
         f"observed={len(autonomous_fires)}\n" + failure_diag
     )

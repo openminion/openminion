@@ -11,10 +11,22 @@ _PHASE_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("approval", ("approval_wait",)),
     (
         "finalization",
-        ("response_normalization", "response_persistence", "memory_write"),
+        (
+            "response_normalization",
+            "response_persistence",
+            "memory_write",
+            "run_record_finish",
+        ),
     ),
-    ("delivery", ("cli_render_delivery",)),
+    (
+        "delivery",
+        ("response_delivery", "response_delivered_event", "terminal_event"),
+    ),
 )
+
+_LEGACY_PHASE_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "delivery": ("cli_render_delivery",),
+}
 
 
 def format_chat_phase_timing_report(payload: Mapping[str, Any] | None) -> str:
@@ -44,15 +56,30 @@ def _phase_rows(payload: Mapping[str, Any]) -> list[str]:
     }
     rows: list[str] = []
     for label, phase_names in _PHASE_GROUPS:
-        values = [
-            _optional_int(payload.get(f"{name}_ms"))
-            for name in phase_names
-            if name in instrumented or _optional_int(payload.get(f"{name}_ms"))
-        ]
+        values = _phase_values(payload, instrumented=instrumented, names=phase_names)
+        if not values and label in _LEGACY_PHASE_FALLBACKS:
+            values = _phase_values(
+                payload,
+                instrumented=instrumented,
+                names=_LEGACY_PHASE_FALLBACKS[label],
+            )
         if not values:
             continue
         rows.append(f"{label} {_format_ms(sum(value or 0 for value in values))}")
     return rows
+
+
+def _phase_values(
+    payload: Mapping[str, Any],
+    *,
+    instrumented: set[str],
+    names: tuple[str, ...],
+) -> list[int | None]:
+    return [
+        _optional_int(payload.get(f"{name}_ms"))
+        for name in names
+        if name in instrumented or _optional_int(payload.get(f"{name}_ms"))
+    ]
 
 
 def _optional_int(value: Any) -> int | None:

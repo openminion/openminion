@@ -89,6 +89,8 @@ openminion status tokens
 openminion status tokens --session-id <session-id>
 openminion status tokens --run-id <run-id>
 openminion status tokens --session-id <session-id> --run-id <run-id>
+openminion status tokens --recent 10
+openminion status tokens --recent 10 --json
 openminion status tokens --session-id <session-id> --json
 ```
 
@@ -96,8 +98,12 @@ Without `--session-id`, `status tokens` inspects the newest session in the
 configured data root. With `--run-id` and no session id, it resolves the owning
 session from the run record. Text output is the human insight view: provider
 and derived totals, cache dimensions, context estimates, context buckets,
-coverage/correlation warnings, and next-step hints. `--json` emits the raw
-`openminion.token_usage.v1` envelope for scripts and future package consumers.
+coverage/correlation warnings, outcome signals for run-scoped reports, advisory
+recommendations, and next-step hints. Use `--recent <count>` for a read-only
+rollup across the newest sessions before drilling into one session or run.
+`--json` emits the raw `openminion.token_usage.v1` envelope for one session or
+run, and a rollup envelope containing those raw session envelopes when
+`--recent` is used.
 
 ## Privacy-safe usage evidence
 

@@ -15,19 +15,21 @@ home for `TaskPlan` or any of the brain planning substrates.
 In scope:
 
 1. Typed data model: `TodoItem`, `Todo`, `TodoItemStatus`.
-2. `TodoStore` protocol + `InMemoryTodoStore` implementation.
+2. `TodoStore` protocol with `InMemoryTodoStore` and `FileTodoStore`
+   implementations.
 3. Session isolation — todo state keyed by `session_id`.
-4. Storage caps — bounded in-memory state with LRU eviction.
+4. Storage caps — bounded state with LRU eviction.
 5. Deterministic exception classes whose `code` attributes preserve the
    existing v2 envelope contract strings (`PLAN_EMPTY`,
    `INVALID_PLAN_INDEX`, `INVALID_PLAN_STATUS`).
+6. Resumed-session continuity through the default data-root-backed
+   `FileTodoStore`.
 
 Out of scope:
 
 1. `TaskPlan` / autonomous decomposition state.
-2. Cross-session persistence.
-3. Multi-agent sharing.
-4. Tool wiring details (owned by `openminion.tools.todo`).
+2. Multi-agent sharing.
+3. Tool wiring details (owned by `openminion.tools.todo`).
 
 ## Related
 

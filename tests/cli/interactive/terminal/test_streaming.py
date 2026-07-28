@@ -204,3 +204,13 @@ def test_prompt_safe_status_keeps_queue_hint_out_of_status_output() -> None:
         assert "esc interrupts · type to queue" not in output
     finally:
         handle.complete(final_text="ready")
+
+
+def test_terminal_mode_does_not_enable_raw_inline_status_renderer() -> None:
+    console, _ = _make_console()
+    handle = TerminalTurnHandle(console).start()
+    try:
+        assert handle._inline_status_mode is False
+        handle.set_status_label("Working...")
+    finally:
+        handle.complete(final_text="ready")

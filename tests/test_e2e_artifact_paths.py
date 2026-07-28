@@ -209,9 +209,7 @@ def test_live_cli_chat_helper_probe_timeout_leaves_pytest_margin(
 
 
 def test_live_cli_chat_helper_counts_probe_input_turns() -> None:
-    assert (
-        live_cli_chat_alibaba._probe_input_turn_count("hello\n/debug\n/exit\n") == 1
-    )
+    assert live_cli_chat_alibaba._probe_input_turn_count("hello\n/debug\n/exit\n") == 1
     assert (
         live_cli_chat_alibaba._probe_input_turn_count(
             "tool time {}\n/debug\ntool location {}\n/debug\n/exit\n"
@@ -272,7 +270,12 @@ def test_live_cli_chat_helper_rejects_incomplete_durable_outbound_turn(
         )
         conn.execute(
             "insert into messages values (?, ?, ?, ?)",
-            ("outbound", "agent: still thinking", json.dumps({"run_state": "running"}), 1),
+            (
+                "outbound",
+                "agent: still thinking",
+                json.dumps({"run_state": "running"}),
+                1,
+            ),
         )
         conn.commit()
     finally:

@@ -192,6 +192,7 @@ class SlashCommandMixin:
             payload,
             canary_path=options["canary"],
             calibration_path=options["calibration"],
+            artifacts_dir=options["artifacts_dir"],
         )
         body = render_memory_context_review(review)
         self.query_one(FocusTranscript).push_message(
@@ -206,6 +207,7 @@ class SlashCommandMixin:
             "session_id": str(getattr(self._runtime, "session_id", "") or ""),
             "canary": "",
             "calibration": "",
+            "artifacts_dir": "",
         }
         try:
             parts = shlex.split(str(args or ""))
@@ -219,6 +221,8 @@ class SlashCommandMixin:
                 options["session_id"] = value
             elif key in {"canary", "calibration"}:
                 options[key] = value
+            elif key in {"artifacts", "artifacts_dir"}:
+                options["artifacts_dir"] = value
         return options
 
     def _slash_theme(self, args: str) -> None:

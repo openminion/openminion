@@ -73,7 +73,7 @@ def test_active_turn_footer_is_plain_when_color_disabled() -> None:
     assert "2.0s" not in text
 
 
-def test_active_turn_brain_row_uses_warning_color_in_live_footer() -> None:
+def test_live_turn_footer_omits_active_warning_row() -> None:
     line = TerminalStatusLine()
     line.set_state(
         state="responding",
@@ -89,12 +89,12 @@ def test_active_turn_brain_row_uses_warning_color_in_live_footer() -> None:
         text = line.live_turn_footer()
         warn_open, _ = style_token(StyleToken.WARNING)
     rows = text.splitlines()
-    assert len(rows) == 2
-    assert "brain:" in rows[0]
-    assert "Analyzing request..." in rows[0]
-    assert warn_open in rows[0]
-    assert "queue:" not in rows[1]
-    assert warn_open not in rows[1]
+    assert len(rows) == 1
+    assert "brain:" not in text
+    assert "Analyzing request..." not in text
+    assert "2s" not in text
+    assert warn_open not in text
+    assert "alpha" in text
 
 
 def test_active_turn_brain_row_uses_warning_color_in_bottom_toolbar() -> None:

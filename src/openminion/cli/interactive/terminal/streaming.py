@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 import time
-from threading import Event, Thread
 from collections.abc import Callable
+from threading import Event, Thread
 from typing import Any
 
 from rich.console import Console, Group
@@ -176,12 +176,12 @@ class TerminalTurnHandle:
         self._spinner = Spinner(self._started_at, plain=self._plain)
         self._refresh_stop.clear()
         self._prompt_safe_mode = self._terminal_writer is not None
-        self._inline_status_mode = (
-            bool(getattr(self._console, "is_terminal", False))
-            and not self._prompt_safe_mode
-        )
+        self._inline_status_mode = False
         self._inline_status_visible = False
-        if not self._inline_status_mode and not self._prompt_safe_mode:
+        # Focus mode owns live status through the prompt toolbar. Other terminal
+        # flows use Rich Live; avoid the old raw-ANSI inline writer because it
+        # leaks escape bytes into prompt/PTY buffers.
+        if not self._prompt_safe_mode:
             self._live = Live(
                 self._render(),
                 console=self._console,

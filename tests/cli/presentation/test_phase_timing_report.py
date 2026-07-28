@@ -15,12 +15,20 @@ def test_phase_timing_report_formats_total_and_major_phases() -> None:
                 "tool_calls",
                 "approval_wait",
                 "response_persistence",
+                "run_record_finish",
+                "response_delivery",
+                "response_delivered_event",
+                "terminal_event",
             ],
             "context_pack_build_ms": 100,
             "provider_round_trip_ms": 1100,
             "tool_calls_ms": 200,
             "approval_wait_ms": 0,
             "response_persistence_ms": 20,
+            "run_record_finish_ms": 5,
+            "response_delivery_ms": 4,
+            "response_delivered_event_ms": 3,
+            "terminal_event_ms": 2,
         }
     )
 
@@ -30,7 +38,20 @@ def test_phase_timing_report_formats_total_and_major_phases() -> None:
     assert "provider 1.1s" in report
     assert "tools 200ms" in report
     assert "approval 0ms" in report
-    assert "finalization 20ms" in report
+    assert "finalization 25ms" in report
+    assert "delivery 9ms" in report
+
+
+def test_phase_timing_report_uses_legacy_delivery_aggregate_as_fallback() -> None:
+    report = format_chat_phase_timing_report(
+        {
+            "total_turn_ms": 20,
+            "phases_instrumented": ["cli_render_delivery"],
+            "cli_render_delivery_ms": 7,
+        }
+    )
+
+    assert "delivery 7ms" in report
 
 
 def test_phase_timing_report_omits_missing_phase_groups() -> None:

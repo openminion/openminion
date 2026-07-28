@@ -302,7 +302,9 @@ def test_probe_confirmation_wait_ignores_stale_approval_prompt() -> None:
     predicate = probe_runner._turn_response_or_confirmation_prompt_detected(previous)
 
     assert not predicate(f"{previous}yes\n")
-    assert predicate(f"{previous}yes\n[probe|agent] agent: confirmed\n[probe|agent] you> ")
+    assert predicate(
+        f"{previous}yes\n[probe|agent] agent: confirmed\n[probe|agent] you> "
+    )
 
 
 def test_probe_confirmation_wait_can_return_on_durable_completion(tmp_path) -> None:
