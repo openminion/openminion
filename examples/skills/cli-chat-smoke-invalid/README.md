@@ -34,5 +34,5 @@ Expected: Error message (not crash) indicating validation failure.
 
 Run the negative-path tests:
 ```bash
-PYTHONPATH=src .venv/bin/python3.11 -m pytest tests/test_skill_fixtures_negative.py -v
+PYTHONPATH=src .venv/bin/python3.11 -m pytest tests/test_skill_fixtures.py -v
 ```

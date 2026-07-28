@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from openminion.providers.base import LLMProvider, ProviderRequest, ProviderResponse
+from openminion.modules.llm.providers.base import (
+    LLMProvider,
+    ProviderRequest,
+    ProviderResponse,
+)
 
 
 class HelloProvider(LLMProvider):
