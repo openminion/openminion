@@ -181,7 +181,9 @@ def test_live_minimax_m2_7_complex_task_integrity() -> None:
             session_id=result.session_id,
         ) or extract_all_debug_payloads(transcript)
         debug_payload = (
-            debug_payloads[-1] if debug_payloads else extract_last_debug_payload(transcript)
+            debug_payloads[-1]
+            if debug_payloads
+            else extract_last_debug_payload(transcript)
         )
         last_turn = debug_payload.get("last_turn")
         assert isinstance(last_turn, dict), (
@@ -212,7 +214,9 @@ def test_live_minimax_m2_7_complex_task_integrity() -> None:
             payload_metadata = payload_turn.get("metadata")
             if not isinstance(payload_metadata, dict):
                 continue
-            tool_results.extend(parse_tool_results(payload_metadata.get("tool_results")))
+            tool_results.extend(
+                parse_tool_results(payload_metadata.get("tool_results"))
+            )
             tool_execution_count += int(
                 str(payload_metadata.get("tool_execution_count", "0")).strip() or "0"
             )

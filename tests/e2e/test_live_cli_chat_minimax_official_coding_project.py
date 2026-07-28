@@ -38,7 +38,7 @@ _MISSING_FILE_REPAIR_INSTRUCTIONS = {
     "pyproject.toml": (
         "Create a minimal Python project file using setuptools as the build "
         "backend, project name `task-summary-scratch`, Python >=3.11, and pytest "
-        "configured with `testpaths = [\"tests\"]`."
+        'configured with `testpaths = ["tests"]`.'
     ),
     "README.md": (
         "Create a short README named `Task Summary Scratch` that explains the "
@@ -514,7 +514,10 @@ def _research_answer_has_required_sections(assistant_body: str) -> bool:
 
 def _research_update_needs_retry(*, transcript: str, assistant_body: str) -> bool:
     normalized_body = assistant_body.lower()
-    if "blocked" in normalized_body or "requested tool was not executed" in normalized_body:
+    if (
+        "blocked" in normalized_body
+        or "requested tool was not executed" in normalized_body
+    ):
         return True
     payload = extract_debug_payloads(transcript, which="last")
     if not isinstance(payload, dict):

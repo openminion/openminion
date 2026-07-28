@@ -625,6 +625,7 @@ def run_cli_session(
     resolved_agent_id = agent_id or default_agent_id()
     durable_completion_predicate = None
     if _probe_input_turn_count(user_input) <= 1:
+
         def _current_session_completed() -> bool:
             return _durable_outbound_turn_completed(
                 data_root=data_root,
@@ -668,9 +669,9 @@ def run_cli_session(
         exit_code == _TIMEOUT_EXIT_CODE
         and durable_completion_predicate is not None
         and _durable_outbound_turn_completed(
-        data_root=data_root,
-        agent_id=resolved_agent_id,
-        session_id=session_id,
+            data_root=data_root,
+            agent_id=resolved_agent_id,
+            session_id=session_id,
         )
     ):
         exit_code = 0

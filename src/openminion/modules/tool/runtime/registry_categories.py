@@ -19,7 +19,9 @@ from openminion.modules.tool.contracts.model_ids import (
     MODEL_WEB_FETCH,
     MODEL_WEB_SEARCH,
 )
-from openminion.modules.tool.contracts.normalization import normalize_raw_model_tool_name
+from openminion.modules.tool.contracts.normalization import (
+    normalize_raw_model_tool_name,
+)
 
 # Canonical category mapping keyed by model-facing tool IDs and a minimal set of
 # non-model runtime tool names that remain intentionally exposed.

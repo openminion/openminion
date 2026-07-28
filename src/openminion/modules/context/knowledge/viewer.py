@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import importlib
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 from openminion.base.config import OpenMinionConfig
 from openminion.cli.config import CLIRoots
@@ -24,131 +23,20 @@ from openminion.modules.context.knowledge.errors import (
     GraphViewerUnavailableError,
     UnknownProviderError,
 )
+from openminion.modules.context.knowledge.viewer_models import (
+    GraphViewerLaunchResult,
+    GraphViewerProviderStatus,
+    GraphViewerRequest,
+    GraphViewerStatusReport,
+)
+from openminion.modules.context.knowledge.viewer_memory import (
+    OPENMINION_MEMORY_PROVIDER_ID,
+    OpenMinionMemoryGraphFakosProvider,
+    memory_db_sample_count,
+)
 from openminion.modules.memory.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
 
 _VIEWER_ENVELOPE_PATH_OPTION = "viewer_envelope_path"
-_OPENMINION_MEMORY_PROVIDER_ID = "openminion-memory"
-
-_MEMORY_TYPE_VISUALS = {
-    "decision": {"color": "#2563eb", "icon": "check-circle", "shape": "hexagon"},
-    "fact": {"color": "#059669", "icon": "file-text", "shape": "circle"},
-    "preference": {"color": "#d97706", "icon": "sliders", "shape": "diamond"},
-    "procedure": {"color": "#7c3aed", "icon": "list-checks", "shape": "square"},
-    "episode": {"color": "#0891b2", "icon": "clock", "shape": "circle"},
-}
-_DEFAULT_MEMORY_VISUAL = {
-    "color": "#475569",
-    "icon": "brain",
-    "shape": "circle",
-}
-
-
-@dataclass(frozen=True)
-class GraphViewerRequest:
-    brain: str = "third"
-    provider: str = ""
-    screen: str = "explore"
-    query: str = ""
-    focus_node_id: str = ""
-    source_node_id: str = ""
-    target_node_id: str = ""
-    max_depth: int = 1
-    limit: int = 100
-    render_limit: int = 240
-    render_engine: str = "svg"
-    theme: str = "default"
-    layout: str = "force"
-    host: str = "127.0.0.1"
-    port: int = 8767
-    open_browser: bool = True
-    dry_run: bool = False
-    html_out: str = ""
-    memory_db: str = ""
-
-
-@dataclass(frozen=True)
-class GraphViewerLaunchResult:
-    provider: str
-    layer: str
-    graph_role: str
-    mode: str
-    url: str = ""
-    html_path: str = ""
-    opened: bool = False
-    diagnostics: Mapping[str, object] | None = None
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "provider": self.provider,
-            "layer": self.layer,
-            "graph_role": self.graph_role,
-            "mode": self.mode,
-            "url": self.url,
-            "html_path": self.html_path,
-            "opened": self.opened,
-            "diagnostics": dict(self.diagnostics or {}),
-        }
-
-
-@dataclass(frozen=True)
-class GraphViewerProviderStatus:
-    provider: str
-    layer: str
-    adapter: str
-    active: bool
-    enabled: bool
-    visual_ready: bool
-    reason: str = ""
-    next_command: str = ""
-    tags: tuple[str, ...] = ()
-    capabilities: tuple[str, ...] = ()
-    details: Mapping[str, object] | None = None
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "provider": self.provider,
-            "layer": self.layer,
-            "adapter": self.adapter,
-            "active": self.active,
-            "enabled": self.enabled,
-            "visual_ready": self.visual_ready,
-            "reason": self.reason,
-            "next_command": self.next_command,
-            "tags": list(self.tags),
-            "capabilities": list(self.capabilities),
-            "details": dict(self.details or {}),
-        }
-
-
-@dataclass(frozen=True)
-class GraphViewerStatusReport:
-    graphfakos_installed: bool
-    graphfakos_version: str
-    second_brain: GraphViewerProviderStatus
-    third_brain: tuple[GraphViewerProviderStatus, ...] = ()
-    next_commands: tuple[str, ...] = ()
-
-    @property
-    def ok(self) -> bool:
-        return bool(
-            self.graphfakos_installed
-            and (
-                self.second_brain.visual_ready
-                or any(provider.visual_ready for provider in self.third_brain)
-            )
-        )
-
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "ok": self.ok,
-            "graphfakos": {
-                "installed": self.graphfakos_installed,
-                "version": self.graphfakos_version,
-            },
-            "second_brain": self.second_brain.to_dict(),
-            "third_brain": [provider.to_dict() for provider in self.third_brain],
-            "next_commands": list(self.next_commands),
-        }
 
 
 def inspect_graph_viewer_status(
@@ -198,7 +86,7 @@ def launch_graph_viewer(
         roots=roots,
         request=request,
     )
-    layer = _layer_from_brain(request.brain)
+    layer = _request_layer(request)
     if request.dry_run:
         graph = provider.load_graph(graph_request)
         return GraphViewerLaunchResult(
@@ -206,11 +94,7 @@ def launch_graph_viewer(
             layer=layer,
             graph_role=provider.graph_role,
             mode="dry_run",
-            diagnostics={
-                "node_count": len(graph.nodes),
-                "edge_count": len(graph.edges),
-                "screen": graph_request.screen,
-            },
+            diagnostics=_graph_diagnostics(graph, graph_request),
         )
     if request.html_out:
         html_path = _write_static_html(
@@ -281,7 +165,46 @@ def _graphfakos_request(graphfakos: Any, request: GraphViewerRequest) -> Any:
         render_engine=request.render_engine,
         theme=request.theme,
         layout=request.layout,
+        filters=_request_filters(request),
+        evidence_filter=request.evidence_filter,
     )
+
+
+def _graph_diagnostics(graph: Any, request: Any) -> dict[str, object]:
+    diagnostics: dict[str, object] = {
+        "node_count": len(graph.nodes),
+        "edge_count": len(graph.edges),
+        "screen": request.screen,
+    }
+    filters = dict(getattr(request, "filters", {}) or {})
+    warnings = tuple(str(item) for item in getattr(graph, "warnings", ()) or ())
+    stats = dict(getattr(graph, "stats", {}) or {})
+    evidence_filter = str(getattr(request, "evidence_filter", "") or "").strip()
+    if filters:
+        diagnostics["filters"] = filters
+    if evidence_filter:
+        diagnostics["evidence_filter"] = evidence_filter
+    if warnings:
+        diagnostics["warnings"] = list(warnings)
+    if stats:
+        diagnostics["stats"] = stats
+    return diagnostics
+
+
+def _request_filters(request: GraphViewerRequest) -> dict[str, str]:
+    filters = {
+        "node_kind": request.node_kind,
+        "edge_kind": request.edge_kind,
+        "tag": request.tag,
+        "source": request.source,
+        "min_score": request.min_score,
+    }
+    scopes = _scope_values(request)
+    if scopes:
+        filters["scope"] = ",".join(scopes)
+    return {
+        key: str(value).strip() for key, value in filters.items() if str(value).strip()
+    }
 
 
 def _viewer_provider(
@@ -291,7 +214,7 @@ def _viewer_provider(
     roots: CLIRoots,
     request: GraphViewerRequest,
 ) -> Any:
-    if _layer_from_brain(request.brain) == LAYER_SECOND_BRAIN:
+    if _request_layer(request) == LAYER_SECOND_BRAIN:
         return OpenMinionMemoryGraphFakosProvider(
             graphfakos=graphfakos,
             db_path=_memory_db_path(request, roots=roots),
@@ -318,6 +241,12 @@ def _layer_from_brain(brain: str) -> str:
     )
 
 
+def _request_layer(request: GraphViewerRequest) -> str:
+    if request.current:
+        return LAYER_SECOND_BRAIN
+    return _layer_from_brain(request.brain)
+
+
 def _memory_db_path(request: GraphViewerRequest, *, roots: CLIRoots) -> Path:
     if request.memory_db:
         return Path(request.memory_db).expanduser().resolve(strict=False)
@@ -335,10 +264,11 @@ def _second_brain_status(
         roots=roots,
     )
     db_exists = db_path.exists()
-    sample_records = _memory_db_sample_count(db_path) if db_exists else 0
+    sample_records = memory_db_sample_count(db_path) if db_exists else 0
+    current_command = "openminion graph view --current"
     if not graphfakos_installed:
         return GraphViewerProviderStatus(
-            provider=_OPENMINION_MEMORY_PROVIDER_ID,
+            provider=OPENMINION_MEMORY_PROVIDER_ID,
             layer=LAYER_SECOND_BRAIN,
             adapter="sophiagraph-sqlite",
             active=True,
@@ -348,264 +278,53 @@ def _second_brain_status(
             next_command="python -m pip install 'openminion[viewer]'",
             capabilities=("durable_memory", "local_preview", "static_export"),
             details={
+                "diagnostic_code": "graphfakos_missing",
+                "diagnostic_label": _diagnostic_label("graphfakos_missing"),
                 "memory_db": str(db_path),
                 "memory_db_exists": db_exists,
                 "sample_records": sample_records,
+                "status_command": "openminion graph status",
             },
         )
     return GraphViewerProviderStatus(
-        provider=_OPENMINION_MEMORY_PROVIDER_ID,
+        provider=OPENMINION_MEMORY_PROVIDER_ID,
         layer=LAYER_SECOND_BRAIN,
         adapter="sophiagraph-sqlite",
         active=True,
         enabled=True,
         visual_ready=True,
         reason="" if db_exists else "Memory database will be created on first use.",
-        next_command="openminion graph view --brain second",
+        next_command=current_command,
         capabilities=("durable_memory", "local_preview", "static_export"),
         details={
+            "diagnostic_code": "ready" if db_exists else "memory_db_missing",
+            "diagnostic_label": _diagnostic_label(
+                "ready" if db_exists else "memory_db_missing"
+            ),
             "memory_db": str(db_path),
             "memory_db_exists": db_exists,
             "sample_records": sample_records,
+            "status_command": "openminion graph status",
+            "current_command": current_command,
+            "scoped_commands": [
+                f"{current_command} --agent <agent-id>",
+                f"{current_command} --session <session-id>",
+                f"{current_command} --node-kind fact",
+                f"{current_command} --tag scope:<scope>",
+            ],
         },
     )
 
 
-def _memory_db_sample_count(db_path: Path) -> int:
-    try:
-        from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
-        from sophiagraph.query import ListQueryOptions
-    except ModuleNotFoundError:
-        return 0
-    try:
-        store = SQLiteMemoryStore(db_path)
-        return len(tuple(store.list(ListQueryOptions(limit=20))))
-    except (OSError, RuntimeError, ValueError):
-        return 0
-
-
-class OpenMinionMemoryGraphFakosProvider:
-    provider_id = _OPENMINION_MEMORY_PROVIDER_ID
-    provider_label = "OpenMinion Memory"
-    graph_role = "second_brain_memory"
-    capabilities = (
-        "search",
-        "neighborhood",
-        "path",
-        "provenance",
-        "timeline",
-        "provider_status",
-        "context_preview",
-        "durable_memory",
-        "static_export",
-        "local_preview",
-    )
-
-    def __init__(self, *, graphfakos: Any, db_path: Path, limit: int) -> None:
-        self._graphfakos = graphfakos
-        self._db_path = db_path
-        self._limit = limit
-
-    def load_graph(self, request: Any) -> Any:
-        from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
-        from sophiagraph.query import ListQueryOptions
-
-        store = SQLiteMemoryStore(self._db_path)
-        scopes = _scope_filters(request)
-        records = tuple(
-            store.list(
-                ListQueryOptions(
-                    scopes=scopes,
-                    include_invalidated=True,
-                    limit=max(1, int(request.limit or self._limit)),
-                )
-            )
-        )
-        record_ids = {record.id for record in records}
-        relations = tuple(
-            relation
-            for record in records
-            for relation in store.list_relations(record.id)
-            if relation.source_record_id in record_ids
-            and relation.target_record_id in record_ids
-        )
-        unique_relations = {relation.relation_id: relation for relation in relations}
-        return self._graphfakos.GraphFakosGraph(
-            graph_id=f"openminion-memory:{self._db_path.name}",
-            label="OpenMinion Second-Brain Memory",
-            provider_id=self.provider_id,
-            provider_label=self.provider_label,
-            graph_role=self.graph_role,
-            capabilities=self.capabilities,
-            nodes=tuple(
-                _memory_record_node(self._graphfakos, record) for record in records
-            ),
-            edges=tuple(
-                _memory_relation_edge(self._graphfakos, relation)
-                for relation in unique_relations.values()
-            ),
-            provenance=tuple(
-                _memory_record_provenance(self._graphfakos, record)
-                for record in records
-            ),
-            citations=tuple(
-                citation
-                for record in records
-                for citation in _memory_record_citations(self._graphfakos, record)
-            ),
-            warnings=()
-            if records
-            else (f"No memory records found in {self._db_path}.",),
-            stats={
-                "db_path": str(self._db_path),
-                "records": len(records),
-                "relations": len(unique_relations),
-                "scope_filter": list(scopes),
-            },
-            provider_details={
-                "layer": LAYER_SECOND_BRAIN,
-                "storage": "openminion memory SQLite",
-            },
-            available_facets={
-                "node_kind": tuple(sorted({str(record.type) for record in records})),
-                "edge_kind": tuple(
-                    sorted(
-                        {
-                            str(relation.relation_type)
-                            for relation in unique_relations.values()
-                        }
-                    )
-                ),
-            },
-        )
-
-
-def _scope_filters(request: Any) -> list[str]:
-    raw_scope = str(getattr(request, "filters", {}).get("scope", "") or "").strip()
-    if raw_scope:
-        return [raw_scope]
-    return []
-
-
-def _memory_record_node(graphfakos: Any, record: Any) -> Any:
-    provenance_id = f"provenance:{record.id}"
-    record_type = str(getattr(record, "type", "") or "memory")
-    visual = _memory_record_visual(graphfakos, record_type, record)
-    citation_ids = tuple(
-        f"citation:{record.id}:{index}"
-        for index, _ref in enumerate(getattr(record, "evidence_refs", ()) or ())
-    )
-    return graphfakos.GraphFakosNode(
-        id=record.id,
-        label=str(record.title or record.key or record.id),
-        kind=record_type,
-        summary=_content_summary(record.content),
-        tags=_memory_record_tags(record, record_type),
-        score=float(getattr(record, "confidence", 0.0) or 0.0),
-        confidence=float(getattr(record, "confidence", 0.0) or 0.0),
-        source=str(getattr(record, "source", "") or ""),
-        timestamps={
-            "created_at": str(getattr(record, "created_at", "") or ""),
-            "updated_at": str(getattr(record, "updated_at", "") or ""),
-        },
-        visual=visual,
-        provenance_ids=(provenance_id,),
-        citation_ids=citation_ids,
-        provider_payload={
-            "scope": str(getattr(record, "scope", "") or ""),
-            "tier": str(getattr(record, "tier", "") or ""),
-            "entities": list(getattr(record, "entities", ()) or ()),
-            "namespace": record.effective_namespace.as_dict(),
-            "memory_type": record_type,
-            "confidence": float(getattr(record, "confidence", 0.0) or 0.0),
-            "created_at": str(getattr(record, "created_at", "") or ""),
-            "updated_at": str(getattr(record, "updated_at", "") or ""),
-        },
-    )
-
-
-def _memory_record_visual(graphfakos: Any, record_type: str, record: Any) -> Any:
-    template = _MEMORY_TYPE_VISUALS.get(record_type, _DEFAULT_MEMORY_VISUAL)
-    confidence = float(getattr(record, "confidence", 0.0) or 0.0)
-    return graphfakos.GraphFakosVisual(
-        color=template["color"],
-        icon=template["icon"],
-        shape=template["shape"],
-        size=max(1, min(5, int(round(confidence * 4)) + 1)),
-        group=record_type,
-        emphasis="high_confidence" if confidence >= 0.8 else "",
-    )
-
-
-def _memory_record_tags(record: Any, record_type: str) -> tuple[str, ...]:
-    raw_tags = [str(tag) for tag in getattr(record, "tags", ()) or () if str(tag)]
-    typed_tags = [
-        f"type:{record_type}",
-        f"tier:{getattr(record, 'tier', '')}",
-        f"scope:{getattr(record, 'scope', '')}",
-    ]
-    return tuple(dict.fromkeys(tag for tag in (*typed_tags, *raw_tags) if tag))
-
-
-def _memory_relation_edge(graphfakos: Any, relation: Any) -> Any:
-    return graphfakos.GraphFakosEdge(
-        id=relation.relation_id,
-        source_id=relation.source_record_id,
-        target_id=relation.target_record_id,
-        kind=str(relation.relation_type),
-        label=str(relation.relation_type).replace("_", " "),
-        provider_payload={
-            "created_at": relation.created_at,
-            "meta": dict(relation.meta),
-        },
-    )
-
-
-def _memory_record_provenance(graphfakos: Any, record: Any) -> Any:
-    return graphfakos.GraphFakosProvenance(
-        id=f"provenance:{record.id}",
-        provider_id="openminion-memory",
-        source_type=str(getattr(record, "source", "") or "memory"),
-        source_label=str(record.title or record.key or record.id),
-        excerpt=_content_summary(record.content),
-        created_at=str(getattr(record, "created_at", "") or ""),
-        updated_at=str(getattr(record, "updated_at", "") or ""),
-        confidence=float(getattr(record, "confidence", 0.0) or 0.0),
-    )
-
-
-def _memory_record_citations(graphfakos: Any, record: Any) -> tuple[Any, ...]:
-    citations = []
-    for index, ref in enumerate(getattr(record, "evidence_refs", ()) or ()):
-        citations.append(
-            graphfakos.GraphFakosCitation(
-                id=f"citation:{record.id}:{index}",
-                label=str(
-                    getattr(ref, "label", "")
-                    or getattr(ref, "source_id", "")
-                    or record.id
-                ),
-                uri=str(getattr(ref, "uri", "") or ""),
-                path=str(getattr(ref, "path", "") or ""),
-                excerpt=str(getattr(ref, "quote", "") or ""),
-                provider_payload={
-                    "record_id": record.id,
-                    "source_id": str(getattr(ref, "source_id", "") or ""),
-                },
-            )
-        )
-    return tuple(citations)
-
-
-def _content_summary(content: object) -> str:
-    if isinstance(content, str):
-        return content[:500]
-    if isinstance(content, Mapping):
-        for key in ("text", "summary", "body", "value"):
-            value = content.get(key)
-            if value:
-                return str(value)[:500]
-    return str(content)[:500]
+def _scope_values(request: GraphViewerRequest) -> tuple[str, ...]:
+    scopes = []
+    session_id = str(request.session_id or "").strip()
+    agent_id = str(request.agent_id or "").strip()
+    if session_id:
+        scopes.append(f"session:{session_id}")
+    if agent_id:
+        scopes.append(f"agent:{agent_id}")
+    return tuple(dict.fromkeys(scopes))
 
 
 def _third_brain_provider_config(
@@ -741,16 +460,16 @@ def _third_brain_provider_status(
             )
         )
     )
+    envelope_ready = bool(envelope_path and envelope_path.exists())
+    snapshot_ready = bool(
+        provider_config.provider == PROVIDER_PRAGMAGRAPH
+        and snapshot_path
+        and snapshot_path.exists()
+    )
     ready = bool(
         graphfakos_installed
         and provider_config.enabled
-        and (
-            envelope_path is not None
-            or (
-                provider_config.provider == PROVIDER_PRAGMAGRAPH
-                and snapshot_path is not None
-            )
-        )
+        and (envelope_ready or snapshot_ready)
     )
     reason = _third_brain_status_reason(
         provider_config=provider_config,
@@ -762,6 +481,12 @@ def _third_brain_provider_status(
         f"openminion graph view --brain third --provider {provider_config.name}"
         if ready
         else "openminion graph status"
+    )
+    diagnostic_code = _third_brain_diagnostic_code(
+        provider_config=provider_config,
+        graphfakos_installed=graphfakos_installed,
+        envelope_path=envelope_path,
+        snapshot_path=snapshot_path,
     )
     return GraphViewerProviderStatus(
         provider=provider_config.name,
@@ -775,13 +500,41 @@ def _third_brain_provider_status(
         tags=provider_config.tags,
         capabilities=capabilities,
         details={
+            "diagnostic_code": diagnostic_code,
+            "diagnostic_label": _diagnostic_label(diagnostic_code),
             "viewer_envelope_path": str(envelope_path) if envelope_path else "",
             "viewer_envelope_exists": bool(envelope_path and envelope_path.exists()),
             "snapshot_path": str(snapshot_path) if snapshot_path else "",
             "snapshot_exists": bool(snapshot_path and snapshot_path.exists()),
             "refresh_mode": provider_config.refresh.mode,
+            "status_command": f"openminion graph status --provider {provider_config.name}",
+            "view_command": (
+                f"openminion graph view --brain third --provider {provider_config.name}"
+            ),
+            "suggested_config": (
+                f"knowledge_graphs.provider.providers.{provider_config.name}."
+                f"options.{_VIEWER_ENVELOPE_PATH_OPTION}"
+            ),
         },
     )
+
+
+def _third_brain_diagnostic_code(
+    *,
+    provider_config: KnowledgeGraphProviderConfig,
+    graphfakos_installed: bool,
+    envelope_path: Path | None,
+    snapshot_path: Path | None,
+) -> str:
+    if not graphfakos_installed:
+        return "graphfakos_missing"
+    if not provider_config.enabled:
+        return "provider_disabled"
+    if envelope_path is not None:
+        return "ready" if envelope_path.exists() else "viewer_envelope_missing"
+    if provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None:
+        return "ready" if snapshot_path.exists() else "snapshot_missing"
+    return "viewer_envelope_unconfigured"
 
 
 def _third_brain_status_reason(
@@ -812,6 +565,18 @@ def _third_brain_status_reason(
     return (
         f"Provider needs options.{_VIEWER_ENVELOPE_PATH_OPTION} for visual inspection."
     )
+
+
+def _diagnostic_label(code: str) -> str:
+    return {
+        "graphfakos_missing": "Install the viewer extra before opening graphs.",
+        "memory_db_missing": "Memory graph is ready; the database appears after first use.",
+        "provider_disabled": "Enable the provider before opening it.",
+        "ready": "Ready to open visually.",
+        "snapshot_missing": "Configured PragmaGraph snapshot was not found.",
+        "viewer_envelope_missing": "Configured viewer envelope was not found.",
+        "viewer_envelope_unconfigured": "Configure a viewer envelope or supported snapshot.",
+    }.get(code, "Check graph status for details.")
 
 
 def _status_next_commands(
@@ -936,15 +701,16 @@ def _serve_viewer(
     from graphfakos.ui import render_provider_path, render_provider_path_fragment
 
     preview_provider = LocalPreviewProviderSession(provider)
+    preview_graph_provider = cast(Any, preview_provider)
     return graphfakos.serve_local_viewer(
         render_path=lambda path, query: render_provider_path(
-            preview_provider,
+            preview_graph_provider,
             graph_request,
             path,
             query,
         ),
         render_fragment_path=lambda path, query: render_provider_path_fragment(
-            preview_provider,
+            preview_graph_provider,
             graph_request,
             path,
             query,

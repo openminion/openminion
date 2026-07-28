@@ -230,7 +230,10 @@ def _resolve_summary_path(
             payload = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if isinstance(payload, Mapping) and payload.get("report_version") == expected_version:
+        if (
+            isinstance(payload, Mapping)
+            and payload.get("report_version") == expected_version
+        ):
             matches.append(candidate)
     if not matches:
         return None, f"{expected_version}:artifact_not_found"
