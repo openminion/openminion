@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from openminion.cli.parser.flags import add_json_output_flag, add_runtime_source_flag
 from openminion.cli.presentation.json_output import print_json_payload
@@ -9,8 +9,13 @@ from openminion.cli.commands.status.trace_parser import (
     register_status_context_trace_subcommand,
 )
 
+if TYPE_CHECKING:
+    StatusSubcommands: TypeAlias = argparse._SubParsersAction[Any]
+else:
+    StatusSubcommands = argparse._SubParsersAction
 
-def run_status(args) -> int:
+
+def run_status(args: Any) -> int:
     if args.status_command == "onboarding":
         from .runtime import run_onboarding_status
 
@@ -129,7 +134,7 @@ def _load_status_config(args: Any) -> Any:
     return load_cli_config_from_args(args)
 
 
-def _build_session_payload(session) -> dict[str, object]:
+def _build_session_payload(session: Any) -> dict[str, object]:
     return {
         "id": session.id,
         "channel": session.channel,
@@ -139,7 +144,7 @@ def _build_session_payload(session) -> dict[str, object]:
     }
 
 
-def _print_status_runs(*, payload: dict, as_json: bool) -> None:
+def _print_status_runs(*, payload: dict[str, Any], as_json: bool) -> None:
     if as_json:
         print_json_payload(payload)
         return
@@ -158,7 +163,7 @@ def _print_status_runs(*, payload: dict, as_json: bool) -> None:
         print(line)
 
 
-def _print_run_events(*, payload: dict, as_json: bool) -> None:
+def _print_run_events(*, payload: dict[str, Any], as_json: bool) -> None:
     if as_json:
         print_json_payload(payload)
         return
@@ -200,7 +205,7 @@ def _print_run_events(*, payload: dict, as_json: bool) -> None:
         print(line)
 
 
-def _print_owner_status(*, payload: dict, as_json: bool) -> None:
+def _print_owner_status(*, payload: dict[str, Any], as_json: bool) -> None:
     if as_json:
         print_json_payload(payload)
         return
@@ -228,13 +233,16 @@ def _print_owner_status(*, payload: dict, as_json: bool) -> None:
 
 
 def _register_simple_status_subcommand(
-    status_subcommands,
+    status_subcommands: StatusSubcommands,
     name: str,
     help_text: str,
     *,
     runtime_source: bool = False,
 ) -> argparse.ArgumentParser:
-    parser = status_subcommands.add_parser(name, help=help_text)
+    parser: argparse.ArgumentParser = status_subcommands.add_parser(
+        name,
+        help=help_text,
+    )
     if runtime_source:
         add_runtime_source_flag(parser)
     add_json_output_flag(parser)
@@ -242,7 +250,7 @@ def _register_simple_status_subcommand(
     return parser
 
 
-def _register_status_runs_subcommand(status_subcommands) -> None:
+def _register_status_runs_subcommand(status_subcommands: StatusSubcommands) -> None:
     parser = status_subcommands.add_parser(
         "runs", help="List run summaries for a session"
     )
@@ -254,7 +262,9 @@ def _register_status_runs_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_run_events_subcommand(status_subcommands) -> None:
+def _register_status_run_events_subcommand(
+    status_subcommands: StatusSubcommands,
+) -> None:
     parser = status_subcommands.add_parser(
         "run-events",
         help="List lifecycle events for one run in a session",
@@ -271,7 +281,7 @@ def _register_status_run_events_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_tokens_subcommand(status_subcommands) -> None:
+def _register_status_tokens_subcommand(status_subcommands: StatusSubcommands) -> None:
     parser = status_subcommands.add_parser(
         "tokens",
         help="Inspect token usage for a session or run",
@@ -282,6 +292,7 @@ def _register_status_tokens_subcommand(status_subcommands) -> None:
         help="Session identifier (default: newest session, or run owner with --run-id)",
     )
     parser.add_argument("--run-id", default="", help="Optional run identifier")
+    parser.add_argument("--recent", type=int, default=None, help="Newest N sessions")
     parser.add_argument(
         "--event-limit",
         type=int,
@@ -292,7 +303,7 @@ def _register_status_tokens_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_notes_subcommand(status_subcommands) -> None:
+def _register_status_notes_subcommand(status_subcommands: StatusSubcommands) -> None:
     parser = status_subcommands.add_parser(
         "notes",
         help="List self-improvement notes for an agent",
@@ -306,7 +317,7 @@ def _register_status_notes_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_identity_subcommand(status_subcommands) -> None:
+def _register_status_identity_subcommand(status_subcommands: StatusSubcommands) -> None:
     parser = status_subcommands.add_parser(
         "identity",
         help="Inspect IdentityCtl profile/render state for an agent",
@@ -338,7 +349,9 @@ def _register_status_identity_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_onboarding_subcommand(status_subcommands) -> None:
+def _register_status_onboarding_subcommand(
+    status_subcommands: StatusSubcommands,
+) -> None:
     parser = status_subcommands.add_parser(
         "onboarding",
         help="Inspect onboarding readiness and configured-vs-available capabilities",
@@ -353,7 +366,7 @@ def _register_status_onboarding_subcommand(status_subcommands) -> None:
 
 
 def _register_status_readiness_subcommand(
-    status_subcommands: argparse._SubParsersAction[argparse.ArgumentParser],
+    status_subcommands: StatusSubcommands,
 ) -> None:
     parser = status_subcommands.add_parser(
         "readiness",
@@ -368,7 +381,7 @@ def _register_status_readiness_subcommand(
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_owner_subcommand(status_subcommands) -> None:
+def _register_status_owner_subcommand(status_subcommands: StatusSubcommands) -> None:
     parser = status_subcommands.add_parser(
         "owner",
         help="Show owner-oriented routine status (heartbeat + digest summary)",
@@ -395,7 +408,9 @@ def _register_status_owner_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_action_policy_subcommand(status_subcommands) -> None:
+def _register_status_action_policy_subcommand(
+    status_subcommands: StatusSubcommands,
+) -> None:
     parser = status_subcommands.add_parser(
         "action-policy",
         help="Inspect effective action policy mode/rules and active grants",
@@ -414,7 +429,9 @@ def _register_status_action_policy_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def _register_status_note_activate_subcommand(status_subcommands) -> None:
+def _register_status_note_activate_subcommand(
+    status_subcommands: StatusSubcommands,
+) -> None:
     parser = status_subcommands.add_parser(
         "note-activate",
         help="Manually activate a self-improvement note (review-first workflow)",
@@ -433,7 +450,7 @@ def _register_status_note_activate_subcommand(status_subcommands) -> None:
     parser.set_defaults(handler=run_status, needs_app=False)
 
 
-def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+def register(subparsers: StatusSubcommands) -> None:
     status = subparsers.add_parser("status", help="Inspect run/task lifecycle status")
     status_subcommands = status.add_subparsers(dest="status_command")
 

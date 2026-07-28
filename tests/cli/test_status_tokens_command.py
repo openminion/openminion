@@ -18,6 +18,7 @@ def _args(
     *,
     session_id: str,
     run_id: str = "",
+    recent: int | None = None,
     event_limit: int | None = None,
     as_json: bool = False,
 ) -> Namespace:
@@ -25,6 +26,7 @@ def _args(
         config="",
         session_id=session_id,
         run_id=run_id,
+        recent=recent,
         event_limit=event_limit,
         json=as_json,
     )
@@ -38,6 +40,13 @@ def test_status_tokens_parser_registration() -> None:
     assert args.status_command == "tokens"
     assert args.session_id == "session-1"
     assert args.event_limit == 3
+
+
+def test_status_tokens_parser_accepts_recent_rollup() -> None:
+    args = build_parser().parse_args(["status", "tokens", "--recent", "5"])
+
+    assert args.status_command == "tokens"
+    assert args.recent == 5
 
 
 def test_status_tokens_parser_defaults_to_latest_session() -> None:
@@ -303,6 +312,155 @@ def test_status_tokens_text_shows_insights_and_navigation(
     assert "next: add `--run-id <run-id>`" in output
 
 
+def test_status_tokens_recent_rollup_shows_cross_session_insights(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-recent.db")
+    first_session = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1", session_id="session-a"
+    )
+    second_session = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1", session_id="session-b"
+    )
+    store.append_event(
+        first_session,
+        event_type="llm.call.completed",
+        payload={
+            "provider": "openai",
+            "model": "gpt-a",
+            "usage": {"input_tokens": 4, "output_tokens": 2, "total_tokens": 6},
+        },
+    )
+    store.append_event(
+        second_session,
+        event_type="context.manifest.created",
+        payload={"used_tokens": 20, "buckets": {"retrieval": {"used_tokens": 20}}},
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id="", recent=2),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "recent_sessions=2" in output
+    assert "with_usage=2" in output
+    assert "context_estimated=20" in output
+    assert "top sessions:" in output
+    assert "context packing dominates recent usage" in output
+
+
+def test_status_tokens_recent_json_wraps_raw_session_envelopes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-recent-json.db")
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1", session_id="session-json"
+    )
+    store.append_event(
+        session_id,
+        event_type="llm.call.completed",
+        payload={
+            "provider": "openai",
+            "model": "gpt-json",
+            "usage": {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5},
+        },
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id="", recent=1, as_json=True),
+        config=OpenMinionConfig(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["schema_version"] == "openminion.token_usage_rollup.v1"
+    assert payload["session_count"] == 1
+    assert payload["summaries"][0]["schema_version"] == "openminion.token_usage.v1"
+    assert payload["summaries"][0]["totals"]["provider_tokens"] == 5
+    assert "ok" not in payload
+
+
+def test_status_tokens_run_output_shows_outcome_and_friction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = SQLiteSessionStore(tmp_path / "tokens-outcome.db")
+    session_id = store.create_session(
+        initial_agent_id="agent.main", profile_version="v1", session_id="session-run"
+    )
+    run_id = store.create_run_record(
+        session_id,
+        run_type="llm",
+        run_id="run-1",
+        meta={"request_id": "turn-1"},
+    )
+    store.finish_run_record(run_id, status="completed")
+    store.append_event(
+        session_id,
+        event_type="llm.call.completed",
+        trace_id="turn-1",
+        payload={
+            "run_id": run_id,
+            "llm_call_id": "call-1",
+            "provider": "openai",
+            "model": "gpt-test",
+            "purpose": "answer",
+            "usage": {"input_tokens": 5, "output_tokens": 3, "total_tokens": 8},
+        },
+    )
+    store.append_event(
+        session_id,
+        event_type="llm.call.retry",
+        trace_id="turn-1",
+        payload={"run_id": run_id},
+    )
+    store.append_event(
+        session_id,
+        event_type="tool.request",
+        trace_id="turn-1",
+        payload={"run_id": run_id, "tool_name": "search"},
+    )
+    store.append_event(
+        session_id,
+        event_type="turn.completed",
+        trace_id="turn-1",
+        payload={"run_id": run_id, "task_success": False},
+    )
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.tokens.build_status_session_store",
+        lambda _args, _config: store,
+    )
+
+    code = run_tokens_status(
+        _args(session_id=session_id, run_id=run_id),
+        config=OpenMinionConfig(),
+    )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "outcome: provider_calls=1" in output
+    assert "retries=1" in output
+    assert "tools=1" in output
+    assert "success=no" in output
+    assert "provider retries increased token friction" in output
+    assert "token spend ended with a negative outcome signal" in output
+
+
 def test_status_tokens_rejects_cross_session_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -332,6 +490,22 @@ def test_status_tokens_rejects_non_positive_event_limit() -> None:
     with pytest.raises(RuntimeError, match="greater than zero"):
         run_tokens_status(
             _args(session_id="session-1", event_limit=0),
+            config=OpenMinionConfig(),
+        )
+
+
+def test_status_tokens_rejects_recent_with_run_id() -> None:
+    with pytest.raises(RuntimeError, match="cannot be combined"):
+        run_tokens_status(
+            _args(session_id="", run_id="run-1", recent=3),
+            config=OpenMinionConfig(),
+        )
+
+
+def test_status_tokens_rejects_recent_with_session_id() -> None:
+    with pytest.raises(RuntimeError, match="cannot be combined"):
+        run_tokens_status(
+            _args(session_id="session-1", recent=3),
             config=OpenMinionConfig(),
         )
 
