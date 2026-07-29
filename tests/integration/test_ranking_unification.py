@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from openminion.base.config import OpenMinionConfig
@@ -53,6 +54,9 @@ def _retrieve_config(tmp_path: Path) -> dict:
 def test_capsule_order_changes_when_ranking_weights_change(tmp_path: Path) -> None:
     store = SQLiteMemoryStore(tmp_path / "memory.db")
     service = MemoryService(store=store)
+    now = datetime.now(timezone.utc)
+    older_at = (now - timedelta(days=365)).isoformat()
+    fresh_at = (now - timedelta(days=1)).isoformat()
     store.put(
         MemoryRecord(
             id="older-trusted",
@@ -61,8 +65,8 @@ def test_capsule_order_changes_when_ranking_weights_change(tmp_path: Path) -> No
             title="Older trusted deploy note",
             content="Deploy checklist uses trusted rollback verification.",
             tags=["deploy"],
-            created_at="2025-01-01T00:00:00+00:00",
-            updated_at="2025-01-01T00:00:00+00:00",
+            created_at=older_at,
+            updated_at=older_at,
             confidence=0.95,
         )
     )
@@ -74,8 +78,8 @@ def test_capsule_order_changes_when_ranking_weights_change(tmp_path: Path) -> No
             title="Fresh deploy note",
             content="Deploy checklist uses trusted rollback verification.",
             tags=["deploy"],
-            created_at="2026-03-27T00:00:00+00:00",
-            updated_at="2026-03-27T00:00:00+00:00",
+            created_at=fresh_at,
+            updated_at=fresh_at,
             confidence=0.85,
         )
     )
