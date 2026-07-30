@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from openminion.cli.commands.agent_delegation import (
     AgentDelegateRequest,
     run_agent_delegate_request,
 )
-from openminion.cli.commands.agents import agent_delegate, agent_ls, agent_status
+from openminion.cli.commands.agents import (
+    agent_delegate,
+    agent_ls,
+    agent_status,
+    run_agent_operator,
+)
+from openminion.cli.parser.base import build_parser
 from openminion.modules.tool.runtime.delegation import A2ADelegateResult
 
 
@@ -23,6 +30,8 @@ class _DelegateSeam:
         timeout_seconds,
         mode="sync",
         permission_mode="ask",
+        workspace_root="",
+        cwd="",
     ) -> A2ADelegateResult:
         self.calls.append(
             (
@@ -33,6 +42,8 @@ class _DelegateSeam:
                     "timeout_seconds": timeout_seconds,
                     "mode": mode,
                     "permission_mode": permission_mode,
+                    "workspace_root": workspace_root,
+                    "cwd": cwd,
                 },
             )
         )
@@ -171,6 +182,7 @@ def test_agent_status_json_output(capsys) -> None:
 
 def test_agent_delegate_sync_json_uses_delegate_seam(capsys) -> None:
     seam = _DelegateSeam()
+    expected_workspace = str(Path(".").resolve())
 
     code = agent_delegate(
         config=SimpleNamespace(),
@@ -201,6 +213,8 @@ def test_agent_delegate_sync_json_uses_delegate_seam(capsys) -> None:
                 "timeout_seconds": 42,
                 "mode": "sync",
                 "permission_mode": "ask",
+                "workspace_root": expected_workspace,
+                "cwd": expected_workspace,
             },
         )
     ]
@@ -259,6 +273,99 @@ def test_agent_delegate_lifecycle_modes_use_task_id(capsys) -> None:
     ]
 
 
+def test_visible_agent_delegate_command_uses_operator_seam(capsys, monkeypatch) -> None:
+    import openminion.cli.commands.agents as agents_mod
+
+    seen: dict[str, object] = {}
+    config = SimpleNamespace(
+        storage=SimpleNamespace(path="/tmp/openminion-test-storage"),
+        runtime=SimpleNamespace(env={}),
+    )
+
+    def _fake_delegate_request(**kwargs):
+        seen.update(kwargs)
+        request = kwargs["request"]
+        return {
+            "ok": True,
+            "mode": request.mode,
+            "status": "success",
+            "agent_id": request.target_agent_id,
+            "content": "delegated from visible agent command",
+            "trace_id": "trace-visible",
+        }
+
+    monkeypatch.setattr(agents_mod, "load_cli_config", lambda _path: config)
+    monkeypatch.setattr(
+        agents_mod,
+        "resolve_cli_roots",
+        lambda: SimpleNamespace(home_root="/tmp/openminion-home"),
+    )
+    monkeypatch.setattr(
+        agents_mod,
+        "AgentRegistryStore",
+        lambda _path: SimpleNamespace(),
+    )
+    monkeypatch.setattr(agents_mod, "_default_agent_id", lambda _config: "parent")
+    monkeypatch.setattr(
+        agents_mod, "run_agent_delegate_request", _fake_delegate_request
+    )
+
+    args = build_parser().parse_args(
+        [
+            "agent",
+            "delegate",
+            "--target-agent-id",
+            "worker",
+            "--instruction",
+            "do work",
+            "--json",
+        ]
+    )
+    code = args.handler(args)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload["ok"] is True
+    assert payload["agent_id"] == "worker"
+    assert payload["content"] == "delegated from visible agent command"
+    request = seen["request"]
+    assert request.target_agent_id == "worker"
+    assert request.instruction == "do work"
+    assert seen["parent_agent_id"] == "parent"
+    assert seen["home_root"] == "/tmp/openminion-home"
+
+
+def test_agent_list_alias_dispatches_to_agent_ls(capsys, monkeypatch) -> None:
+    import openminion.cli.commands.agents as agents_mod
+
+    registry = SimpleNamespace(
+        list_agents=lambda: [SimpleNamespace(agent_id="agent-1", display_name="Agent")],
+        list_heartbeats=lambda: [],
+        is_agent_stale=lambda _agent_id: False,
+    )
+    monkeypatch.setattr(
+        agents_mod,
+        "load_cli_config",
+        lambda _path: SimpleNamespace(
+            storage=SimpleNamespace(path="/tmp/openminion-test-storage"),
+            runtime=SimpleNamespace(env={}),
+        ),
+    )
+    monkeypatch.setattr(
+        agents_mod,
+        "resolve_cli_roots",
+        lambda: SimpleNamespace(home_root="/tmp/openminion-home"),
+    )
+    monkeypatch.setattr(agents_mod, "AgentRegistryStore", lambda _path: registry)
+
+    args = build_parser().parse_args(["agent", "list", "--json"])
+    code = run_agent_operator(args)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert payload[0]["agent_id"] == "agent-1"
+
+
 def test_agent_delegate_unavailable_seam_returns_failure(capsys, monkeypatch) -> None:
     import openminion.cli.commands.agent_delegation as delegation_mod
 
@@ -289,6 +396,7 @@ def test_delegate_request_threads_runtime_resolver_to_a2a_builder(monkeypatch) -
     seam = _DelegateSeam()
     seen: dict[str, object] = {}
     runtime = object()
+    approval_callback = object()
 
     def _fake_builder(**kwargs):
         seen.update(kwargs)
@@ -306,7 +414,9 @@ def test_delegate_request_threads_runtime_resolver_to_a2a_builder(monkeypatch) -
             instruction="do work",
         ),
         runtime_resolver=lambda: runtime,
+        approval_callback=approval_callback,
     )
 
     assert payload["ok"] is True
     assert seen["runtime_resolver"]() is runtime
+    assert seen["approval_callback"] is approval_callback

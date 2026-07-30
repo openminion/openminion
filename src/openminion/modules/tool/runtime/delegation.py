@@ -35,6 +35,8 @@ class A2ADelegateApi(Protocol):
         timeout_seconds: int,
         mode: str = "sync",
         permission_mode: str = "ask",
+        workspace_root: str = "",
+        cwd: str = "",
     ) -> A2ADelegateResult: ...
 
     def status(self, *, task_id: str) -> A2ADelegateResult: ...
@@ -183,9 +185,18 @@ class A2aRuntimeDelegateAdapter:
         self._a2a_call = a2a_call
         self._parent_agent_id = str(parent_agent_id or "").strip()
 
-    def _idempotency_key(self, *, target: str, instruction: str) -> str:
+    def _idempotency_key(
+        self,
+        *,
+        target: str,
+        instruction: str,
+        workspace_root: str,
+        cwd: str,
+    ) -> str:
         digest = hashlib.sha256(
-            f"{self._parent_agent_id}|{target}|{instruction}".encode("utf-8")
+            (
+                f"{self._parent_agent_id}|{target}|{instruction}|{workspace_root}|{cwd}"
+            ).encode("utf-8")
         ).hexdigest()[:32]
         return f"task-delegate:{digest}"
 
@@ -197,6 +208,8 @@ class A2aRuntimeDelegateAdapter:
         timeout_seconds: int,
         mode: str = "sync",
         permission_mode: str = "ask",
+        workspace_root: str = "",
+        cwd: str = "",
     ) -> A2ADelegateResult:
         target = str(agent_id or "").strip()
         text = str(instruction or "").strip()
@@ -216,7 +229,14 @@ class A2aRuntimeDelegateAdapter:
                 target_agent_id=target,
             )
 
-        idem = self._idempotency_key(target=target, instruction=text)
+        normalized_workspace_root = str(workspace_root or "").strip()
+        normalized_cwd = str(cwd or workspace_root or "").strip()
+        idem = self._idempotency_key(
+            target=target,
+            instruction=text,
+            workspace_root=normalized_workspace_root,
+            cwd=normalized_cwd,
+        )
         trace_id = idem
         try:
             raw = self._a2a_call(
@@ -232,6 +252,8 @@ class A2aRuntimeDelegateAdapter:
                         "mode": normalized_mode,
                         "permission_mode": str(permission_mode or "ask").strip().lower()
                         or "ask",
+                        "workspace_root": normalized_workspace_root,
+                        "cwd": normalized_cwd,
                     },
                     "timeout_ms": timeout * 1000,
                     "idempotency_key": idem,

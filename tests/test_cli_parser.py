@@ -1152,6 +1152,21 @@ print(json.dumps(results, sort_keys=True))
         self.assertTrue(args.json)
         self.assertTrue(callable(args.handler))
 
+    def test_agent_list_aliases_parse_through_visible_and_compat_surfaces(self) -> None:
+        parser = build_parser()
+
+        visible = parser.parse_args(["agent", "list", "--json"])
+        compat = parser.parse_args(["agent-ctl", "list", "--json"])
+
+        self.assertEqual(visible.command, "agent")
+        self.assertEqual(visible.agent_command, "list")
+        self.assertTrue(visible.json)
+        self.assertTrue(callable(visible.handler))
+        self.assertEqual(compat.command, "agent-ctl")
+        self.assertEqual(compat.agent_command, "list")
+        self.assertTrue(compat.json)
+        self.assertTrue(callable(compat.handler))
+
     def test_sessions_list_json_parse_preserves_output_json_dest(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["sessions", "list", "--limit", "5", "--json"])

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import shlex
 from types import SimpleNamespace
 from typing import Any
@@ -42,11 +43,13 @@ def normalize_delegate_mode(mode: str) -> str:
 def agent_delegate_usage() -> str:
     return (
         "Usage:\n"
-        "  openminion agent-ctl delegate --target-agent-id <agent> --instruction <text>\n"
-        "  openminion agent-ctl delegate --mode async --target-agent-id <agent> --instruction <text>\n"
-        "  openminion agent-ctl delegate-status --task-id <task>\n"
-        "  openminion agent-ctl delegate-result --task-id <task>\n"
-        "  openminion agent-ctl delegate-cancel --task-id <task>"
+        "  openminion agent delegate --target-agent-id <agent> --instruction <text>\n"
+        "  openminion agent delegate --mode async --target-agent-id <agent> --instruction <text>\n"
+        "  openminion agent delegate-status --task-id <task>\n"
+        "  openminion agent delegate-result --task-id <task>\n"
+        "  openminion agent delegate-cancel --task-id <task>\n"
+        "\nCompatibility:\n"
+        "  openminion agent-ctl delegate ... remains supported."
     )
 
 
@@ -58,6 +61,9 @@ def run_agent_delegate_request(
     request: AgentDelegateRequest,
     delegate_api: Any | None = None,
     runtime_resolver: Any | None = None,
+    approval_callback: Any | None = None,
+    workspace_root: str | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     seam = delegate_api
     if seam is None:
@@ -68,6 +74,7 @@ def run_agent_delegate_request(
             agent_id=parent_agent_id,
             env=dict(runtime_env or {}) if runtime_env else None,
             runtime_resolver=runtime_resolver,
+            approval_callback=approval_callback,
         )
     if seam is None:
         return {
@@ -83,7 +90,12 @@ def run_agent_delegate_request(
         return dict(
             _h_task_delegate(
                 request.tool_args(),
-                SimpleNamespace(a2a_delegate_api=seam),
+                SimpleNamespace(
+                    a2a_delegate_api=seam,
+                    workspace=Path(str(cwd or workspace_root or "").strip() or ".")
+                    .expanduser()
+                    .resolve(strict=False),
+                ),
             )
         )
     except ToolRuntimeError as exc:

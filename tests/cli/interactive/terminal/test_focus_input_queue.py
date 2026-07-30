@@ -8,6 +8,9 @@ from rich.console import Console
 
 from openminion.cli.presentation.models import MessageKind
 from openminion.cli.interactive.terminal import shell as terminal_shell
+from openminion.cli.interactive.terminal.shell.approval import (
+    build_terminal_approval_callback,
+)
 from openminion.cli.interactive.terminal.transcript import (
     TerminalTranscript as _BaseTranscript,
 )
@@ -695,7 +698,7 @@ async def test_terminal_approval_callback_pauses_prompt_and_resumes_afterward() 
     def _resume_prompt() -> None:
         events.append("resume")
 
-    callback = terminal_shell._build_terminal_approval_callback(
+    callback = build_terminal_approval_callback(
         overlay=_Overlay(),
         session_grants=set(),
         pause_prompt=_pause_prompt,
@@ -725,7 +728,7 @@ async def test_terminal_approval_callback_serializes_bursty_session_grants() -> 
             await release_first_prompt.wait()
             return "always"
 
-    callback = terminal_shell._build_terminal_approval_callback(
+    callback = build_terminal_approval_callback(
         overlay=_Overlay(),
         session_grants=set(),
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import time
 import json
+import inspect
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,7 @@ class A2actlAdapter:
         agent_id: str | None = None,
         env: EnvironmentConfig | None = None,
         runtime_resolver: Callable[[], Any | None] | None = None,
+        approval_callback: Any | None = None,
     ) -> None:
         self._home_root = (
             Path(home_root).expanduser().resolve(strict=False)
@@ -76,6 +78,7 @@ class A2actlAdapter:
         self._agent_id = str(agent_id).strip() if agent_id else ""
         self._env = env or self._build_env(config)
         self._runtime_resolver = runtime_resolver
+        self._approval_callback = approval_callback
         self._runtime = None
         self._builtins_registered = False
         self._configured_agents_registered: set[str] = set()
@@ -459,10 +462,15 @@ class A2actlAdapter:
             target_capability = str(params.get("target_capability", "") or "").strip()
             if target_capability:
                 payload["capability_category"] = target_capability
-            result = runtime_handle.run_turn(
-                payload=payload,
-                request_id=str(getattr(envelope, "msg_id", "") or "").strip() or None,
-            )
+            run_turn = runtime_handle.run_turn
+            run_turn_kwargs = {
+                "payload": payload,
+                "request_id": str(getattr(envelope, "msg_id", "") or "").strip()
+                or None,
+            }
+            if self._run_turn_accepts_approval_callback(run_turn):
+                run_turn_kwargs["approval_callback"] = self._approval_callback
+            result = run_turn(**run_turn_kwargs)
             metadata = result.get("metadata")
             normalized_metadata = dict(metadata) if isinstance(metadata, dict) else {}
             body = str(result.get("body", "") or "").strip()
@@ -488,6 +496,17 @@ class A2actlAdapter:
             return response_payload
 
         return _handler
+
+    @staticmethod
+    def _run_turn_accepts_approval_callback(run_turn: Any) -> bool:
+        try:
+            parameters = inspect.signature(run_turn).parameters
+        except (TypeError, ValueError):
+            return False
+        return "approval_callback" in parameters or any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
 
     def close(self) -> None:
         runtime = self._runtime
@@ -610,6 +629,8 @@ def _delegated_inbound_metadata(
         "a2a_delegate_target": str(target_agent_id or "").strip(),
         "a2a_delegated_child": "true",
         "permission_mode": str(params.get("permission_mode", "") or "").strip(),
+        "workspace_root": str(params.get("workspace_root", "") or "").strip(),
+        "cwd": str(params.get("cwd") or params.get("workspace_root") or "").strip(),
     }
     parent_context = _delegation_context_from_payload(params)
     if parent_context is not None:

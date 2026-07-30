@@ -156,15 +156,17 @@ async def test_slash_delegate_routes_to_runtime_delegate_task() -> None:
 
             body = _last_system_body(screen.query_one(FocusTranscript))
 
-    assert runtime.delegate_calls == [
-        {
-            "mode": "async",
-            "target_agent_id": "researcher",
-            "instruction": "find release notes",
-            "task_id": "",
-            "timeout_seconds": 120,
-        }
-    ]
+    assert len(runtime.delegate_calls) == 1
+    delegate_call = runtime.delegate_calls[0]
+    approval_callback = delegate_call.pop("approval_callback", None)
+    assert callable(approval_callback)
+    assert delegate_call == {
+        "mode": "async",
+        "target_agent_id": "researcher",
+        "instruction": "find release notes",
+        "task_id": "",
+        "timeout_seconds": 120,
+    }
     assert "Delegation:" in body
     assert "status    success" in body
     assert "delegated from focus" in body
@@ -200,6 +202,8 @@ async def test_slash_delegate_result_alias_uses_task_id() -> None:
 
             body = _last_system_body(screen.query_one(FocusTranscript))
 
+    delegate_call = runtime.delegate_calls[0]
+    assert callable(delegate_call.pop("approval_callback"))
     assert runtime.delegate_calls == [
         {
             "mode": "result",
@@ -211,6 +215,63 @@ async def test_slash_delegate_result_alias_uses_task_id() -> None:
     ]
     assert "task      task-42" in body
     assert "task result" in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "expected_status"),
+    (
+        ("status", "running"),
+        ("resume", "success"),
+        ("cancel", "canceled"),
+    ),
+)
+async def test_slash_delegate_lifecycle_actions_use_task_id(
+    action: str,
+    expected_status: str,
+) -> None:
+    class _DelegateRuntime(_DemoFocusRuntime):
+        def __init__(self, *, working_dir: str) -> None:
+            super().__init__(working_dir=working_dir)
+            self.delegate_calls: list[dict[str, object]] = []
+
+        def delegate_task(self, **kwargs: object) -> dict[str, object]:
+            self.delegate_calls.append(dict(kwargs))
+            return {
+                "ok": True,
+                "mode": kwargs.get("mode"),
+                "status": expected_status,
+                "task_id": kwargs.get("task_id"),
+                "content": f"{action} result",
+            }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime = _DelegateRuntime(working_dir=tmp)
+        app = FocusApp(runtime=runtime, working_dir=tmp)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, FocusScreen)
+
+            screen._handle_command(f"/delegate {action} task-42")
+            await pilot.pause()
+
+            body = _last_system_body(screen.query_one(FocusTranscript))
+
+    delegate_call = runtime.delegate_calls[0]
+    assert callable(delegate_call.pop("approval_callback"))
+    assert runtime.delegate_calls == [
+        {
+            "mode": action,
+            "target_agent_id": "",
+            "instruction": "",
+            "task_id": "task-42",
+            "timeout_seconds": 120,
+        }
+    ]
+    assert f"status    {expected_status}" in body
+    assert "task      task-42" in body
+    assert f"{action} result" in body
 
 
 @pytest.mark.asyncio
