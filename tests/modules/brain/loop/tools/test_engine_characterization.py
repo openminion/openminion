@@ -3799,7 +3799,9 @@ def test_tool_choice_none_compact_closeout_accepts_visible_text_with_tool_calls(
     assert outcome.final_text == "result: files changed a.py, b.py"
 
 
-def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation() -> None:
+def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation() -> (
+    None
+):
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -3826,9 +3828,7 @@ def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation()
                 ok=True,
                 provider="fake",
                 model="m",
-                output_text=(
-                    "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q"
-                ),
+                output_text=("PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q"),
                 tool_calls=[
                     ToolCall(
                         id="call-3",
@@ -3885,9 +3885,10 @@ def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation()
     assert "result:" in outcome.final_text
     assert "validation: deterministic validation was not captured" in outcome.final_text
     assert "files changed: a.py" in outcome.final_text
-    assert outcome.state.scratchpad[
-        "requested_validation_blocked_answer_only_closeout"
-    ] is True
+    assert (
+        outcome.state.scratchpad["requested_validation_blocked_answer_only_closeout"]
+        is True
+    )
 
 
 def test_tool_choice_none_second_retry_salvages_generic_successful_tool_evidence() -> (
@@ -7270,7 +7271,9 @@ def test_raw_tool_result_array_with_missing_labels_uses_evidence_closeout() -> N
     )
 
 
-def test_raw_tool_payload_with_required_validation_retries_instead_of_closeout() -> None:
+def test_raw_tool_payload_with_required_validation_retries_instead_of_closeout() -> (
+    None
+):
     runner = _NoToolRepairHarness()
     runner.loop_state = AdaptiveToolLoopState(
         messages=[
@@ -7304,7 +7307,9 @@ def test_raw_tool_payload_with_required_validation_retries_instead_of_closeout()
     assert result == (True, None)
     assert runner.loop_state.messages[-1].role == "system"
     assert "raw tool markup" in runner.loop_state.messages[-1].content
-    assert not runner.loop_state.scratchpad.get("raw_tool_payload_used_evidence_fallback")
+    assert not runner.loop_state.scratchpad.get(
+        "raw_tool_payload_used_evidence_fallback"
+    )
 
 
 def test_final_answer_references_unbacked_source_urls_detects_missing_fetch() -> None:

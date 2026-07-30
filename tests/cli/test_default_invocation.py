@@ -151,9 +151,10 @@ def test_cli_data_root_flag_overrides_inherited_runtime_root_env(
     assert os.environ[OPENMINION_GENERATED_ROOT_ENV] == str(
         (explicit_data / "runtime").resolve()
     )
-    assert resolve_generated_root(home_root=inherited_home) == (
-        explicit_data / "runtime"
-    ).resolve()
+    assert (
+        resolve_generated_root(home_root=inherited_home)
+        == (explicit_data / "runtime").resolve()
+    )
 
 
 def test_no_subcommand_demo_requests_demo_onboarding(monkeypatch) -> None:

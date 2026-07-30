@@ -3,7 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from openminion.modules.brain.loop.tools import AdaptiveToolLoopState
-from openminion.modules.brain.loop.tools.no_tool import _tool_attempt_evidence_closeout_text
+from openminion.modules.brain.loop.tools.no_tool import (
+    _tool_attempt_evidence_closeout_text,
+)
 from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
     mutating_file_evidence_fallback_text,
     requested_validation_without_exec_run,
@@ -80,7 +82,7 @@ def test_mutating_file_fallback_preserves_requested_result_marker() -> None:
                     "ok": True,
                     "content": "1 passed",
                     "data": {"stdout": "1 passed"},
-                }
+                },
             ]
         },
     )

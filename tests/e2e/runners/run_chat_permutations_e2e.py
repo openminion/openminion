@@ -684,12 +684,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         action="store_true",
         help="Include chaos tool calling template",
     )
-    parser.add_argument(
-        "--log-root", default="", help="Log output root"
-    )
-    parser.add_argument(
-        "--config-root", default="", help="Config output root"
-    )
+    parser.add_argument("--log-root", default="", help="Log output root")
+    parser.add_argument("--config-root", default="", help="Config output root")
     parser.add_argument(
         "--work-root",
         default="",
@@ -725,7 +721,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     providers = _resolve_providers()
     results: list[RunResult] = []
     log_root = Path(args.log_root or _default_log_root()).expanduser().resolve()
-    config_root = Path(args.config_root or _default_config_root()).expanduser().resolve()
+    config_root = (
+        Path(args.config_root or _default_config_root()).expanduser().resolve()
+    )
     work_root = Path(args.work_root or _default_work_root()).expanduser().resolve()
     data_root_parent = _scenario_data_root_parent(log_root).expanduser().resolve()
     data_root_parent.mkdir(parents=True, exist_ok=True)
