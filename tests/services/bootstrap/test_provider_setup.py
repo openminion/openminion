@@ -221,6 +221,90 @@ def test_shared_adapter_setup_uses_selected_agent_overrides(tmp_path: Path) -> N
     assert overrides["api_key"] == ""
 
 
+@pytest.mark.parametrize(
+    ("preset_id", "model", "credential_env", "base_url"),
+    [
+        ("minimax", "MiniMax-M3", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
+        ("kimi", "kimi-k3", "MOONSHOT_API_KEY", "https://api.moonshot.cn/v1"),
+        ("zai", "glm-5.2", "ZAI_API_KEY", "https://api.z.ai/api/paas/v4/"),
+        (
+            "zai-coding",
+            "glm-5.2",
+            "ZAI_API_KEY",
+            "https://api.z.ai/api/coding/paas/v4",
+        ),
+        (
+            "deepseek",
+            "deepseek-v4-flash",
+            "DEEPSEEK_API_KEY",
+            "https://api.deepseek.com",
+        ),
+        (
+            "qwen-dashscope",
+            "qwen-plus",
+            "DASHSCOPE_API_KEY",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        (
+            "gemini",
+            "gemini-3.6-flash",
+            "GEMINI_API_KEY",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        ),
+        ("xai", "grok-4.5", "XAI_API_KEY", "https://api.x.ai/v1"),
+        (
+            "mistral",
+            "mistral-large-latest",
+            "MISTRAL_API_KEY",
+            "https://api.mistral.ai/v1",
+        ),
+        (
+            "together",
+            "MiniMaxAI/MiniMax-M3",
+            "TOGETHER_API_KEY",
+            "https://api.together.ai/v1",
+        ),
+    ],
+)
+def test_frontier_shared_adapter_presets_use_selected_agent_overrides(
+    tmp_path: Path,
+    preset_id: str,
+    model: str,
+    credential_env: str,
+    base_url: str,
+) -> None:
+    existing = OpenMinionConfig()
+    existing.agents = {
+        "openai-main": AgentProfileConfig(name="openai-main", provider="openai")
+    }
+    existing.default_agent = "openai-main"
+    existing.providers.openai.model = "gpt-4.1-mini"
+    existing.providers.openai.base_url = "https://api.openai.com/v1"
+    existing.providers.openai.api_key_env = "OPENAI_API_KEY"
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id=preset_id,
+            agent_id=f"{preset_id}-agent",
+            model=model,
+            config_path=str(tmp_path / ".openminion" / "agents.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={credential_env: "sk-provider"},
+        ),
+        existing_config=existing,
+    )
+
+    payload = result.config.to_dict()
+    assert payload["providers"]["openai"]["api_key_env"] == "OPENAI_API_KEY"
+    assert payload["providers"]["openai"]["base_url"] == "https://api.openai.com/v1"
+    overrides = payload["agents"][f"{preset_id}-agent"]["provider_config_overrides"]
+    assert overrides["api_key_env"] == credential_env
+    assert overrides["base_url"] == base_url
+    assert overrides["model"] == model
+    assert overrides["api_key"] == ""
+
+
 def test_shared_adapter_setup_replaces_stale_selected_agent_overrides(
     tmp_path: Path,
 ) -> None:

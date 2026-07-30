@@ -355,10 +355,31 @@ def _read_env_value(key: str, *, env: Mapping[str, Any] | None = None) -> str:
 
 def _resolve_openai_service_vendor(base_url: str) -> str:
     endpoint = str(base_url or "").strip().lower()
-    if "dashscope.aliyuncs.com" in endpoint:
+    if (
+        "dashscope.aliyuncs.com" in endpoint
+        or "dashscope-us.aliyuncs.com" in endpoint
+        or "dashscope-intl.aliyuncs.com" in endpoint
+        or ".maas.aliyuncs.com" in endpoint
+    ):
         return "dashscope"
     if "api.minimax.io" in endpoint:
         return "minimax"
+    if "api.moonshot." in endpoint:
+        return "kimi"
+    if "api.z.ai/api/coding/paas/v4" in endpoint:
+        return "zai-coding"
+    if "api.z.ai" in endpoint:
+        return "zai"
+    if "api.deepseek.com" in endpoint:
+        return "deepseek"
+    if "generativelanguage.googleapis.com" in endpoint:
+        return "gemini"
+    if "api.x.ai" in endpoint:
+        return "xai"
+    if "api.mistral.ai" in endpoint:
+        return "mistral"
+    if "api.together.ai" in endpoint:
+        return "together"
     return "openai"
 
 
@@ -372,6 +393,14 @@ def _resolve_model_family(model: str) -> str:
         return "glm"
     if "kimi" in lowered:
         return "kimi"
+    if "deepseek" in lowered:
+        return "deepseek"
+    if "gemini" in lowered or lowered.startswith("google/"):
+        return "gemini"
+    if "grok" in lowered:
+        return "grok"
+    if "mistral" in lowered or "mixtral" in lowered:
+        return "mistral"
     if "claude" in lowered:
         return "claude"
     if lowered.startswith(("gpt", "o1", "o3", "o4")):

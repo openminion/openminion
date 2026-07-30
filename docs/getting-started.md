@@ -55,11 +55,12 @@ explicit `openminion --demo` development/test path.
 Setup distinguishes:
 
 1. service preset, such as OpenAI, Anthropic, OpenRouter, Ollama, MiniMax,
+   Kimi, Z.ai, DeepSeek, Qwen/DashScope, Gemini, xAI, Mistral, Together,
    Cerebras, Groq, Cortensor, or a custom endpoint;
 2. runtime adapter, such as `openai`, `anthropic`, `openrouter`, `ollama`, or
    `cortensor`;
 3. API format, such as OpenAI-compatible or Anthropic-compatible; and
-4. model id, such as `gpt-4.1-mini` or `MiniMax-M2.7`.
+4. model id, such as `gpt-4.1-mini` or `MiniMax-M3`.
 
 Environment credentials are preferred. For example, OpenAI setup reads
 `OPENAI_API_KEY`; MiniMax setup reads `MINIMAX_API_KEY` while using the existing
@@ -67,6 +68,29 @@ OpenAI-compatible adapter. Interactive setup may store a pasted key locally only
 after a hidden prompt, warning, and confirmation. On POSIX systems, setup-owned
 config directories are tightened to owner-only `0700`, and setup-created config
 files are owner-only `0600`.
+
+Built-in hosted presets currently include:
+
+| Preset | Environment variable | Default base URL | Recommended model source |
+| --- | --- | --- | --- |
+| `openai` | `OPENAI_API_KEY` | `https://api.openai.com/v1` | live-optional, otherwise recommended |
+| `anthropic` | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | recommended |
+| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | live-optional, otherwise recommended |
+| `minimax` | `MINIMAX_API_KEY` | `https://api.minimax.io/v1` | live-optional, otherwise recommended |
+| `kimi` | `MOONSHOT_API_KEY` | `https://api.moonshot.cn/v1` | recommended |
+| `zai` | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4/` | recommended |
+| `zai-coding` | `ZAI_API_KEY` | `https://api.z.ai/api/coding/paas/v4` | recommended |
+| `deepseek` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` | recommended |
+| `qwen-dashscope` | `DASHSCOPE_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | recommended |
+| `gemini` | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` | live-optional, otherwise recommended |
+| `xai` | `XAI_API_KEY` | `https://api.x.ai/v1` | recommended |
+| `mistral` | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` | recommended |
+| `together` | `TOGETHER_API_KEY` | `https://api.together.ai/v1` | recommended |
+
+Unless a setup run says `live`, a checked-in model is only a recommended
+fallback. Fixture-backed provider support means OpenMinion has local request and
+configuration coverage; it is not a live account, billing, quota, or model
+availability guarantee.
 
 To move an existing setup, export it without embedded secrets and import it on
 the new machine:
@@ -94,8 +118,8 @@ Automation can use the same setup path without prompts:
 ```bash
 openminion setup \
   --provider minimax \
-  --model MiniMax-M2.7 \
-  --agent minimax-m2-7 \
+  --model MiniMax-M3 \
+  --agent minimax-m3 \
   --no-focus
 ```
 
