@@ -26,6 +26,10 @@ if str(OPENMINION_SRC) not in sys.path:
     sys.path.insert(0, str(OPENMINION_SRC))
 
 from openminion.base.generated_paths import resolve_generated_root  # noqa: E402
+from openminion.base.constants import (  # noqa: E402
+    OPENMINION_DATA_ROOT_ENV,
+    OPENMINION_GENERATED_ROOT_ENV,
+)
 
 AUTO_CONFIRM_LIMIT_ENV = "OPENMINION_LIVE_CLI_CHAT_AUTO_CONFIRM_LIMIT"
 AUTO_CONFIRM_LIMIT_DEFAULT = 32
@@ -123,7 +127,8 @@ _INLINE_APPROVAL_RE = re.compile(
 _TURN_DONE_RE = re.compile(r"(?:^|\n)Done in (?:\d+m)?\d+s\s*(?:\n|$)")
 _KNOWN_FAILURE_RE = re.compile(
     r"General act work ended without the required typed "
-    r"finalization_status contract|Adaptive loop stopped unexpectedly\.",
+    r"finalization_status contract|Adaptive loop stopped unexpectedly\.|"
+    r"Denied by policy:|path escapes workspace root:",
     re.IGNORECASE,
 )
 
@@ -393,12 +398,12 @@ def _is_provider_available(provider: str) -> tuple[bool, str]:
 
 
 def _build_conversation(
-    template_path: Path, workdir: Path, *, skip_network: bool
+    template_path: Path, _workdir: Path, *, skip_network: bool
 ) -> str:
     text = template_path.read_text(encoding="utf-8")
     lines = []
     for raw_line in text.splitlines():
-        line = raw_line.replace("{{WORKDIR}}", str(workdir))
+        line = raw_line.replace("{{WORKDIR}}", ".")
         if skip_network:
             lowered = line.lower()
             if "fetch http" in lowered or "https://" in lowered:
@@ -425,6 +430,18 @@ def _conversation_workdir(
     *, work_root: Path, provider: str, model: str, scenario: str
 ) -> Path:
     return work_root / _slug(provider) / _slug(model) / _slug(scenario)
+
+
+def _scenario_data_root_parent(log_root: Path) -> Path:
+    return log_root.parent / "data-roots"
+
+
+def _chat_subprocess_env(*, data_root: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(OPENMINION_DIR / "src")
+    env[OPENMINION_DATA_ROOT_ENV] = str(data_root)
+    env[OPENMINION_GENERATED_ROOT_ENV] = str(data_root / "runtime")
+    return env
 
 
 def _resolve_conversations(
@@ -475,16 +492,14 @@ def _write_config(
         providers_payload = config.setdefault("providers", {})
         if isinstance(providers_payload, dict):
             provider_payload: dict[str, object] = {"model": model}
-            api_key_env = (
-                os.getenv(_provider_override_env_name(provider), "").strip()
-                or API_KEY_ENVS.get(provider, "")
-            )
+            api_key_env = os.getenv(
+                _provider_override_env_name(provider), ""
+            ).strip() or API_KEY_ENVS.get(provider, "")
             if api_key_env:
                 provider_payload["api_key_env"] = api_key_env
-            base_url = (
-                os.getenv(_provider_override_base_url_name(provider), "").strip()
-                or PROVIDER_BASE_URLS.get(provider, "")
-            )
+            base_url = os.getenv(
+                _provider_override_base_url_name(provider), ""
+            ).strip() or PROVIDER_BASE_URLS.get(provider, "")
             if base_url:
                 provider_payload["base_url"] = base_url
             providers_payload[config_key] = provider_payload
@@ -499,14 +514,14 @@ def _run_chat(
     python_bin: Path,
     config_path: Path,
     data_root: Path,
+    workdir: Path,
     agent_id: str,
     session_id: str,
     conversation: str,
     log_path: Path,
     timeout_seconds: int,
 ) -> tuple[bool, str]:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(OPENMINION_DIR / "src")
+    env = _chat_subprocess_env(data_root=data_root)
 
     cmd = [
         str(python_bin),
@@ -522,6 +537,8 @@ def _run_chat(
         agent_id,
         "--session",
         session_id,
+        "--dir",
+        str(workdir),
         "--verbosity",
         "quiet",
         "--progress",
@@ -610,6 +627,10 @@ def _run_chat(
                 proc.wait(timeout=5)
         return_code = int(proc.returncode or 0)
     finally:
+        combined = "".join(transcript)
+        if combined:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(combined, encoding="utf-8")
         try:
             os.close(master_fd)
         except OSError:
@@ -618,7 +639,6 @@ def _run_chat(
             proc.kill()
             proc.wait(timeout=5)
 
-    combined = "".join(transcript)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(combined, encoding="utf-8")
 
@@ -665,14 +685,14 @@ def main(argv: Iterable[str] | None = None) -> int:
         help="Include chaos tool calling template",
     )
     parser.add_argument(
-        "--log-root", default=str(_default_log_root()), help="Log output root"
+        "--log-root", default="", help="Log output root"
     )
     parser.add_argument(
-        "--config-root", default=str(_default_config_root()), help="Config output root"
+        "--config-root", default="", help="Config output root"
     )
     parser.add_argument(
         "--work-root",
-        default=str(_default_work_root()),
+        default="",
         help="Scenario work directory root for in-chat file/tool operations.",
     )
     parser.add_argument(
@@ -704,9 +724,11 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     providers = _resolve_providers()
     results: list[RunResult] = []
-    log_root = Path(args.log_root)
-    config_root = Path(args.config_root)
-    work_root = Path(args.work_root).expanduser().resolve()
+    log_root = Path(args.log_root or _default_log_root()).expanduser().resolve()
+    config_root = Path(args.config_root or _default_config_root()).expanduser().resolve()
+    work_root = Path(args.work_root or _default_work_root()).expanduser().resolve()
+    data_root_parent = _scenario_data_root_parent(log_root).expanduser().resolve()
+    data_root_parent.mkdir(parents=True, exist_ok=True)
 
     for provider in providers:
         available, reason = _is_provider_available(provider)
@@ -727,7 +749,12 @@ def main(argv: Iterable[str] | None = None) -> int:
         models = _resolve_models(provider)
         for model in models:
             for conversation_path in conversation_paths:
-                data_root = Path(tempfile.mkdtemp(prefix=f"openminion-e2e-{provider}-"))
+                data_root = Path(
+                    tempfile.mkdtemp(
+                        prefix=f"openminion-e2e-{provider}-",
+                        dir=data_root_parent,
+                    )
+                )
                 workdir = _conversation_workdir(
                     work_root=work_root,
                     provider=provider,
@@ -768,6 +795,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                     python_bin=Path(args.python_bin),
                     config_path=config_path,
                     data_root=data_root,
+                    workdir=workdir,
                     agent_id=agent_id,
                     session_id=session_id,
                     conversation=conversation,
