@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/openminion/openminion">GitHub</a>
+  <a href="https://github.com/OpenMinion/openminion">GitHub</a>
   · <a href="https://pypi.org/project/openminion/">PyPI</a>
   · <a href="https://www.openminion.com">Website</a>
   · <a href="https://www.openminion.com/docs/">Docs</a>
@@ -23,10 +23,10 @@
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-6B7280">
 </p>
 
-The current OpenMinion release is an early public alpha for running inspectable
-agents on your own machine. It brings CLI, Python, HTTP, daemon-backed
-workflows, tools, sessions, and local integrations into one runtime instead of
-splitting them across unrelated wrappers.
+OpenMinion `v0.0.1` is the public preview of a runtime for running inspectable
+agents on your own machine. One shared runtime spans CLI, Python API, HTTP API,
+and daemon-backed workflows, with durable sessions, structured tools, and
+inspectable run state built in.
 
 ## Read This First
 
@@ -40,7 +40,7 @@ splitting them across unrelated wrappers.
 
 ## Trust and Brand Safety
 
-- Official GitHub: <https://github.com/openminion/openminion>
+- Official GitHub: <https://github.com/OpenMinion/openminion>
 - Official website and docs: <https://www.openminion.com>
 - Official X account: <https://x.com/OpenMinion>
 
@@ -53,7 +53,7 @@ and should be treated as a scam.
 | | |
 | --- | --- |
 | Package | `openminion` |
-| Current line | Public alpha; see the PyPI version badge above |
+| Current line | `v0.0.1` public preview; `v0.1.0` is reserved for a later broadly usable milestone |
 | Python | 3.11+ |
 | Best fit | Bounded local workflows, tool use, integrations, and operator-driven agents |
 | Main surfaces | CLI, Python API, local HTTP API, and daemon-backed execution |
@@ -94,7 +94,7 @@ python3.11 -m pip install openminion
 For a source checkout:
 
 ```bash
-git clone https://github.com/openminion/openminion.git
+git clone https://github.com/OpenMinion/openminion.git
 cd openminion
 python3.11 -m venv .venv
 source .venv/bin/activate
