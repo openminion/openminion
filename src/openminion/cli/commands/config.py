@@ -145,7 +145,12 @@ def _portable_export_document(payload: dict[str, object]) -> str:
 
 
 def _load_portable_payload(input_path: Path) -> dict[str, Any]:
-    parsed = yaml.safe_load(input_path.read_text(encoding="utf-8")) or {}
+    try:
+        parsed = yaml.safe_load(input_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise RuntimeError(
+            f"Could not parse config import file at {input_path}."
+        ) from exc
     if not isinstance(parsed, dict):
         raise RuntimeError(
             f"Config import file at {input_path} must be a YAML or JSON mapping."
@@ -165,6 +170,38 @@ def _deep_merge_dicts(
         else:
             merged[key] = value
     return merged
+
+
+def resolve_config_import_path(input_value: str, *, home_root: Path) -> Path:
+    value = str(input_value or "").strip()
+    if not value:
+        raise RuntimeError("Config import requires a file path.")
+    input_path = Path(value).expanduser()
+    if not input_path.is_absolute():
+        input_path = home_root / input_path
+    input_path = input_path.resolve(strict=False)
+    if not input_path.is_file():
+        raise RuntimeError(f"Import file not found at {input_path}.")
+    return input_path
+
+
+def load_config_import(
+    input_path: Path,
+    *,
+    target_path: Path,
+    home_root: Path,
+    data_root: Path,
+    merge_existing: bool,
+) -> OpenMinionConfig:
+    payload = _load_portable_payload(input_path)
+    existing_payload: dict[str, Any] = {}
+    if merge_existing and target_path.exists():
+        existing_payload = load_cli_config(
+            str(target_path),
+            home_root=home_root,
+            data_root=data_root,
+        ).to_dict()
+    return OpenMinionConfig.from_dict(_deep_merge_dicts(existing_payload, payload))
 
 
 def config_export(args) -> int:
@@ -217,32 +254,25 @@ def config_import(args) -> int:
     input_value = str(
         getattr(args, "input", "") or getattr(args, "input_flag", "") or ""
     ).strip()
-    if not input_value:
-        raise RuntimeError("Config import requires a file path.")
-    input_path = Path(input_value).expanduser()
-    if not input_path.is_absolute():
-        input_path = (roots.home_root / input_path).resolve(strict=False)
-    if not input_path.exists():
-        raise RuntimeError(f"Import file not found at {input_path}.")
+    input_path = resolve_config_import_path(input_value, home_root=roots.home_root)
 
     target_path = resolve_config_path(
         getattr(args, "config", None),
         home_root=roots.home_root,
     )
 
-    payload = _load_portable_payload(input_path)
-    existing_payload: dict[str, Any] = {}
-    if target_path.exists():
-        existing_payload = load_cli_config(
-            str(target_path),
-            home_root=roots.home_root,
-            data_root=roots.data_root,
-        ).to_dict()
-    merged_payload = _deep_merge_dicts(existing_payload, payload)
-    config = OpenMinionConfig.from_dict(merged_payload)
+    config = load_config_import(
+        input_path,
+        target_path=target_path,
+        home_root=roots.home_root,
+        data_root=roots.data_root,
+        merge_existing=not bool(getattr(args, "force", False)),
+    )
     save_config(config, str(target_path), home_root=roots.home_root)
+    import_mode = "replaced" if bool(getattr(args, "force", False)) else "merged"
     print(
-        f"Imported config from {input_path} to {target_path}. Provider env vars still override stored values."
+        f"Imported config from {input_path} to {target_path} ({import_mode}). "
+        "Provider env vars still override stored values."
     )
     return 0
 

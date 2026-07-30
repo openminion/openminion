@@ -7,7 +7,10 @@ scope	max_python_files	max_loc
 # shared runtime composition and channel supervision.
 # PTB (2026-07-24) intentionally wires PinchTab managed-binary status/start
 # through the shared sidecar manager while keeping resolver logic in tools.
-services	204	37924
+# PMFO (2026-07-30) intentionally adds services/bootstrap/provider_setup.py as
+# the single setup/config mutation owner for provider/model first-run onboarding;
+# post-review correctness fixes lock stale-override and atomic-permission guards.
+services	205	38330
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

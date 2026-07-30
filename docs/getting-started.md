@@ -1,7 +1,7 @@
 # OpenMinion Getting Started
 
 Status: active
-Last updated: 2026-06-20
+Last updated: 2026-07-30
 
 Purpose: give contributors and automation authors a package-local bootstrap and
 execution summary for work inside the `openminion` repo.
@@ -21,6 +21,99 @@ If you are running the CLI locally, also set:
 ```bash
 export OPENMINION_HOME=.
 export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
+```
+
+## First run
+
+Start with the bare command:
+
+```bash
+openminion
+```
+
+When the normal default config already exists, this opens the Focus terminal
+directly. When the default config is missing and a terminal is available,
+OpenMinion launches setup, guides you through hosted, local, or import setup,
+writes the canonical config at
+`<OPENMINION_HOME>/.openminion/agents.json`, runs `doctor`, and then enters
+Focus. A useful first task is:
+
+```text
+what is my operating system, and what command should I run to inspect memory?
+```
+
+The first screen stays intentionally small:
+
+1. **Hosted provider** for OpenAI, Anthropic, OpenRouter, and the additional
+   provider presets;
+2. **Local provider** for Ollama; or
+3. **Import an existing OpenMinion config** from YAML or JSON.
+
+Demo mode is not part of normal onboarding. It remains available through the
+explicit `openminion --demo` development/test path.
+
+Setup distinguishes:
+
+1. service preset, such as OpenAI, Anthropic, OpenRouter, Ollama, MiniMax,
+   Cerebras, Groq, Cortensor, or a custom endpoint;
+2. runtime adapter, such as `openai`, `anthropic`, `openrouter`, `ollama`, or
+   `cortensor`;
+3. API format, such as OpenAI-compatible or Anthropic-compatible; and
+4. model id, such as `gpt-4.1-mini` or `MiniMax-M2.7`.
+
+Environment credentials are preferred. For example, OpenAI setup reads
+`OPENAI_API_KEY`; MiniMax setup reads `MINIMAX_API_KEY` while using the existing
+OpenAI-compatible adapter. Interactive setup may store a pasted key locally only
+after a hidden prompt, warning, and confirmation. On POSIX systems, setup-owned
+config directories are tightened to owner-only `0700`, and setup-created config
+files are owner-only `0600`.
+
+To move an existing setup, export it without embedded secrets and import it on
+the new machine:
+
+```bash
+openminion config export --out openminion-config.yaml
+openminion setup
+```
+
+Choose **Import an existing OpenMinion config**, enter the exported path, and
+confirm the redacted source/target summary. Imported values replace matching
+fields while unrelated settings in an existing target config are preserved.
+The standalone equivalent is:
+
+```bash
+openminion config import openminion-config.yaml
+```
+
+Add `--force` only when the imported file should replace, rather than merge
+with, an existing config. Credentials are not included in a normal export, so
+set the referenced provider environment variables on the destination machine.
+
+Automation can use the same setup path without prompts:
+
+```bash
+openminion setup \
+  --provider minimax \
+  --model MiniMax-M2.7 \
+  --agent minimax-m2-7 \
+  --no-focus
+```
+
+Non-interactive setup reads credentials from the provider's environment
+variable and does not send a remote provider request by default. Add
+`--check-provider` only when the run is allowed to make one bounded provider
+request that may consume quota.
+
+Custom endpoints are explicit:
+
+```bash
+openminion setup \
+  --provider custom-openai-compatible \
+  --api-format openai-compatible \
+  --base-url https://example.test/v1 \
+  --model provider-model-id \
+  --agent custom-openai \
+  --no-focus
 ```
 
 ## Read first

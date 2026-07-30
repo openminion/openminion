@@ -65,6 +65,8 @@ def test_focus_runner_exposes_tracker_suite_names() -> None:
         "tools",
         "approval",
         "matrix",
+        "onboarding",
+        "onboarding-live",
         "research",
         "coding",
         "long-running",

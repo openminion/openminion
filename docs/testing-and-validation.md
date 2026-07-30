@@ -106,6 +106,26 @@ PYTHONDONTWRITEBYTECODE=1 \
 .venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py local
 ```
 
+Run the first-run onboarding PTY slice without a provider request:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py onboarding
+```
+
+The onboarding slice uses temporary config/data roots and covers the bare
+command, existing-config import, hosted and local choices, safe cancellation,
+owner-only persistence, and handoff into Focus.
+
+Run the live provider check only with explicit quota authorization:
+
+```bash
+OPENMINION_ONBOARDING_E2E_PROVIDER=minimax \
+MINIMAX_API_KEY=... \
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py onboarding-live
+```
+
 Before release, run the deterministic Tier A coding-harness journey gate:
 
 ```bash

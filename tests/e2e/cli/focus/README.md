@@ -10,6 +10,30 @@ Run the deterministic local smoke:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python3.11 -m pytest -q tests/e2e/cli/focus/test_local.py -ra
 ```
 
+Run the credential-safe first-run onboarding journeys:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py onboarding
+```
+
+This uses isolated temporary roots and a real POSIX PTY. It proves bare-command
+config import reaches Focus, hosted setup uses an environment credential without
+persisting it, Ollama setup is keyless and cancellable, missing credentials write
+nothing, and every deterministic path skips the provider request.
+
+Run the separately authorized live onboarding provider check:
+
+```bash
+OPENMINION_ONBOARDING_E2E_PROVIDER=minimax \
+MINIMAX_API_KEY=... \
+PYTHONDONTWRITEBYTECODE=1 \
+.venv/bin/python3.11 tests/e2e/runners/run_cli_focus_e2e.py onboarding-live
+```
+
+`onboarding-live` sends one bounded provider request. Do not run it with a
+production credential unless that request is explicitly authorized.
+
 List reusable suites:
 
 ```bash
@@ -101,6 +125,8 @@ PYTHONDONTWRITEBYTECODE=1 \
 Suite names:
 
 - `local`: deterministic PTY launch, slash-command smoke, and fake-runtime default-focus queue/progress/interrupt proof.
+- `onboarding`: deterministic bare-command, hosted, local, import, cancellation, and no-network first-run proof.
+- `onboarding-live`: one explicitly authorized provider-backed setup check.
 - `matrix`: deep-smoke matrix contract covering every required break surface and writing `deep-smoke-matrix.json`.
 - `adversarial-local`: bounded local breakage suite for routing, PTY resize, permissions, approvals, terminal rendering, exec sandbox, sessions, and config/env preflight.
 - `core`: live MiniMax basic answer.
