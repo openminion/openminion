@@ -188,6 +188,9 @@ def _graph_diagnostics(graph: Any, request: Any) -> dict[str, object]:
         diagnostics["warnings"] = list(warnings)
     if stats:
         diagnostics["stats"] = stats
+    empty_state = _empty_state(graph, stats)
+    if empty_state:
+        diagnostics["empty_state"] = empty_state
     return diagnostics
 
 
@@ -204,6 +207,29 @@ def _request_filters(request: GraphViewerRequest) -> dict[str, str]:
         filters["scope"] = ",".join(scopes)
     return {
         key: str(value).strip() for key, value in filters.items() if str(value).strip()
+    }
+
+
+def _empty_state(graph: Any, stats: Mapping[str, object]) -> dict[str, object]:
+    if len(graph.nodes) != 0:
+        return {}
+    if getattr(graph, "graph_role", "") == "second_brain_memory":
+        scope_filter = stats.get("scope_filter", [])
+        return {
+            "code": "current_memory_empty",
+            "message": (
+                "No second-brain memory records matched this view. "
+                "No sample data was written."
+            ),
+            "next_commands": [
+                "openminion graph status",
+                "openminion graph view --current --dry-run --json",
+            ],
+            "scope_filter": scope_filter if isinstance(scope_filter, list) else [],
+        }
+    return {
+        "code": "graph_empty",
+        "message": "The selected graph source returned no visible nodes.",
     }
 
 
@@ -727,7 +753,6 @@ __all__ = [
     "GraphViewerProviderStatus",
     "GraphViewerRequest",
     "GraphViewerStatusReport",
-    "OpenMinionMemoryGraphFakosProvider",
     "inspect_graph_viewer_status",
     "launch_graph_viewer",
 ]

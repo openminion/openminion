@@ -78,7 +78,6 @@ PUBLIC_EXPORTS = [
     "LAYER_THIRD_BRAIN",
     "MissingRequiredCapabilityError",
     "MultiActiveSecondBrainError",
-    "OpenMinionMemoryGraphFakosProvider",
     "ResolvedKnowledgeGraphProvider",
     "PROVIDER_GRAPHIFY",
     "PROVIDER_PRAGMAGRAPH",
@@ -182,10 +181,6 @@ LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "LAYER_THIRD_BRAIN": (".constants", "LAYER_THIRD_BRAIN"),
     "MissingRequiredCapabilityError": (".errors", "MissingRequiredCapabilityError"),
     "MultiActiveSecondBrainError": (".errors", "MultiActiveSecondBrainError"),
-    "OpenMinionMemoryGraphFakosProvider": (
-        ".viewer",
-        "OpenMinionMemoryGraphFakosProvider",
-    ),
     "ResolvedKnowledgeGraphProvider": (".registry", "ResolvedKnowledgeGraphProvider"),
     "PROVIDER_GRAPHIFY": (".constants", "PROVIDER_GRAPHIFY"),
     "PROVIDER_PRAGMAGRAPH": (".constants", "PROVIDER_PRAGMAGRAPH"),
