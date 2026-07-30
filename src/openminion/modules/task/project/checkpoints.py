@@ -7,7 +7,7 @@ from openminion.modules.task.runtime.lifecycle import (
     TaskManager,
 )
 
-from .project_models import (
+from .models import (
     ProjectCheckpoint,
     ProjectCycleDecision,
     ProjectCycleRecord,

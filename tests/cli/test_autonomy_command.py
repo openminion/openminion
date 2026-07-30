@@ -162,7 +162,9 @@ def test_autonomy_project_operator_controls_use_task_lifecycle_db(
     report_code, report_output = _run_project_cli(tmp_path, db_path, "report")
 
     paused = json.loads(pause_output)["project"]
+    paused_payload = json.loads(pause_output)
     budget = json.loads(budget_output)["project"]
+    budget_payload = json.loads(budget_output)
     report = json.loads(report_output)["project_report"]
 
     assert pause_code == 0
@@ -172,7 +174,12 @@ def test_autonomy_project_operator_controls_use_task_lifecycle_db(
     assert budget_code == 0
     assert report_code == 0
     assert paused["state"] == "paused"
+    assert paused_payload["operator_inbox"]["state"] == "waiting"
+    assert paused_payload["operator_inbox"]["resume_action"] == "continue"
+    assert paused_payload["operator_inbox"]["last_checkpoint_id"].endswith(":cycle-1")
     assert budget["state"] == "active"
+    assert budget_payload["operator_inbox"]["state"] == "running"
+    assert budget_payload["operator_inbox"]["resume_action"] == "continue"
     assert budget["priority"] == "high"
     assert budget["operator_answer_count"] == 1
     assert budget["budget_extensions"]["extra_iterations"] == 2

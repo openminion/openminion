@@ -3,7 +3,7 @@ from __future__ import annotations
 from openminion.modules.task.autonomy import now_ms
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
-from .project_models import (
+from .models import (
     ProjectBudgetPolicy,
     ProjectPermissionCheckResult,
     ProjectPermissionDecision,

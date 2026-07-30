@@ -19,6 +19,8 @@ def test_task_surface_lists_digest_tasks_and_pending_actions() -> None:
     assert payload["ok"] is True
     assert payload["source"] == "task_ctl"
     assert payload["tasks"][0]["id"] == "t1"
+    assert payload["tasks"][0]["operator_state"] == "waiting"
+    assert payload["tasks"][0]["resume_action"] == "approve"
     assert payload["tasks"][0]["pending_actions"][0]["decision_id"] == "pr1"
     assert payload["pending_actions"][0]["reason"] == "approval needed"
 
@@ -51,9 +53,16 @@ def test_task_surface_lists_and_controls_lifecycle_tasks() -> None:
     )
     surface = build_task_surface(manager)
 
-    assert surface.show_task("lt1")["title"] == "finish long task"  # type: ignore[index]
+    shown = surface.show_task("lt1")
+    assert shown is not None
+    assert shown["title"] == "finish long task"
+    assert shown["operator_state"] == "running"
+    assert shown["resume_action"] == "continue"
     paused = surface.apply_action(task_id="lt1", action="pause")
     assert paused["task"]["status"] == "WAITING"
+    paused_task = build_task_surface(manager).show_task("lt1")
+    assert paused_task is not None
+    assert paused_task["operator_state"] == "waiting"
     resumed = surface.apply_action(task_id="lt1", action="resume")
     assert resumed["task"]["status"] == "ACTIVE"
     cancelled = surface.apply_action(task_id="lt1", action="cancel")

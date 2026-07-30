@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
-from .project_models import (
+from .models import (
     ProjectBudgetCheckResult,
     ProjectBudgetPolicy,
     ProjectPermissionDecision,
 )
-from .project_policy import load_project_policy_state
+from .policy import load_project_policy_state
 
 
 def evaluate_project_budget(

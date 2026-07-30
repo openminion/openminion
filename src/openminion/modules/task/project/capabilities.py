@@ -278,7 +278,7 @@ def _capability_owner_ref(area: ProjectCapabilityArea) -> str:
         return GAP_ASSESSMENT_REF
     if area in _DOMAIN_WORKFLOW_AREAS:
         return DOMAIN_WORKFLOW_REF
-    return "openminion.modules.task.project_capabilities"
+    return "openminion.modules.task.project.capabilities"
 
 
 def _capability_evidence_refs(area: ProjectCapabilityArea) -> tuple[str, ...]:

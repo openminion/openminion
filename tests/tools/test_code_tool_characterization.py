@@ -266,6 +266,24 @@ def test_repo_index_returns_structured_python_relationships(tmp_path: Path) -> N
     assert any(item["module"] == "beta" for item in result["repo_index"]["imports"])
 
 
+def test_repo_index_skips_hidden_and_generated_paths(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    (ctx.workspace / "alpha.py").write_text("def alpha():\n    return 1\n")
+    (ctx.workspace / ".DS_Store").write_text("noise")
+    (ctx.workspace / ".venv").mkdir()
+    (ctx.workspace / ".venv" / "ignored.py").write_text("def ignored():\n    pass\n")
+    (ctx.workspace / "demo.egg-info").mkdir()
+    (ctx.workspace / "demo.egg-info" / "PKG-INFO").write_text("metadata")
+
+    result = _h_repo_index({"path": "."}, ctx)
+
+    indexed_paths = {
+        Path(item["path"]).relative_to(ctx.workspace).as_posix()
+        for item in result["repo_index"]["files"]
+    }
+    assert indexed_paths == {"alpha.py"}
+
+
 def test_symbol_find_returns_definition_lines(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     target = ctx.workspace / "alpha.py"

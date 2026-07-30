@@ -15,3 +15,4 @@ from .proof_ingestion import *  # noqa: F403
 from .readout import *  # noqa: F403
 from .replay import *  # noqa: F403
 from .rubric import *  # noqa: F403
+from .staged_policy import *  # noqa: F403

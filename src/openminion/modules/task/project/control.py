@@ -6,8 +6,8 @@ from openminion.modules.task.runtime.lifecycle import (
     TaskManager,
 )
 
-from .project_checkpoints import replay_project_cycles
-from .project_models import ProjectControlAction, ProjectControlResult
+from .checkpoints import replay_project_cycles
+from .models import ProjectControlAction, ProjectControlResult
 
 
 def apply_project_control(

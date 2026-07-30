@@ -3568,7 +3568,7 @@ def test_tool_choice_none_second_retry_salvages_mutating_file_evidence() -> None
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text is not None
-    assert outcome.final_text.startswith("result:")
+    assert "result:" in outcome.final_text
     assert "file mutations" in outcome.final_text
 
 
@@ -3797,6 +3797,97 @@ def test_tool_choice_none_compact_closeout_accepts_visible_text_with_tool_calls(
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: files changed a.py, b.py"
+
+
+def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-1", name="file.write", arguments={"path": "a.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-2", name="file.write", arguments={"path": "b.py"})
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text=(
+                    "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q"
+                ),
+                tool_calls=[
+                    ToolCall(
+                        id="call-3",
+                        name="file.write",
+                        arguments={"path": "ignored.py"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state(), outcomes=[])
+    prof = AdaptiveToolLoopProfile(
+        profile_name="t",
+        mode_name="act_adaptive",
+        allowed_tools=frozenset(),
+        max_iterations=2,
+        allow_plan_tool=False,
+        tool_choice="none",
+    )
+    initial_state = AdaptiveToolLoopState(
+        scratchpad={
+            "coding.final_answer_reserve_used": True,
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote a.py",
+                    "data": {"path": "a.py"},
+                }
+            ],
+        }
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=prof,
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(
+                role="user",
+                content=(
+                    "Use file.write for files, use exec.run for validation, "
+                    "and finish with validation result."
+                ),
+            )
+        ],
+        initial_state=initial_state,
+        tool_specs=[],
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text is not None
+    assert "result:" in outcome.final_text
+    assert "validation: deterministic validation was not captured" in outcome.final_text
+    assert "files changed: a.py" in outcome.final_text
+    assert outcome.state.scratchpad[
+        "requested_validation_blocked_answer_only_closeout"
+    ] is True
 
 
 def test_tool_choice_none_second_retry_salvages_generic_successful_tool_evidence() -> (
@@ -7177,6 +7268,43 @@ def test_raw_tool_result_array_with_missing_labels_uses_evidence_closeout() -> N
     assert bool(
         runner.loop_state.scratchpad.get("raw_tool_payload_used_evidence_fallback")
     )
+
+
+def test_raw_tool_payload_with_required_validation_retries_instead_of_closeout() -> None:
+    runner = _NoToolRepairHarness()
+    runner.loop_state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Use file.write for files, run exactly pytest with exec.run, "
+                    "and finish with exact label result: plus validation result."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "Written: scratch/explore.py",
+                    "data": {"path": "scratch/explore.py", "bytes_written": 12},
+                }
+            ],
+        },
+    )
+    raw_payload_text = (
+        "I need to read files.\n"
+        '{"tool_name": "file.read", "path": "todo_report.py"}\n'
+        '{"tool_name": "exec.run", "command": "pytest -q"}'
+    )
+
+    result = runner._repair_raw_tool_payload_final_text(raw_payload_text)
+
+    assert result == (True, None)
+    assert runner.loop_state.messages[-1].role == "system"
+    assert "raw tool markup" in runner.loop_state.messages[-1].content
+    assert not runner.loop_state.scratchpad.get("raw_tool_payload_used_evidence_fallback")
 
 
 def test_final_answer_references_unbacked_source_urls_detects_missing_fetch() -> None:

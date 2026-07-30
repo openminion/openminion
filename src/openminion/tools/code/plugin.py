@@ -45,6 +45,16 @@ _REPO_MAP_SKIP_DIRS = frozenset(
         "node_modules",
     }
 )
+_REPO_INDEX_SKIP_SUFFIXES = (".egg-info",)
+
+
+def _should_skip_repo_index_path(relative: Path) -> bool:
+    return any(
+        part in _REPO_MAP_SKIP_DIRS
+        or part.startswith(".")
+        or part.endswith(_REPO_INDEX_SKIP_SUFFIXES)
+        for part in relative.parts
+    )
 
 
 def _collapse_alias_group(
@@ -557,7 +567,7 @@ def _h_repo_index(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
         if not path.is_file():
             continue
         relative = path.relative_to(resolved)
-        if any(part in _REPO_MAP_SKIP_DIRS for part in relative.parts):
+        if _should_skip_repo_index_path(relative):
             continue
         top_level_symbols = _collect_python_symbols(path)
         file_imports: list[str] = []

@@ -109,6 +109,8 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
             f"id: {task.get('id')}",
             f"title: {task.get('title')}",
             f"status: {task.get('status')}",
+            f"operator_state: {task.get('operator_state', '-')}",
+            f"resume_action: {task.get('resume_action', '-')}",
         ]
         if task.get("due_at"):
             lines.append(f"due: {task.get('due_at')}")
@@ -121,7 +123,10 @@ def render_tasks_report(runtime: Any, task_id: str = "") -> str:
         lines.append("No tasks found.")
     for task in tasks[:20]:
         lines.append(
-            f"[{task.get('status', 'PENDING')}] {task.get('id')}: {task.get('title')}"
+            f"[{task.get('status', 'PENDING')}] {task.get('id')}: "
+            f"{task.get('title')} "
+            f"(operator={task.get('operator_state', '-')}, "
+            f"resume={task.get('resume_action', '-')})"
         )
     pending = list(payload.get("pending_actions", []))
     if pending:

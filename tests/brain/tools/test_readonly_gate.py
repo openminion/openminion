@@ -11,10 +11,12 @@ from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_SUCCESS,
     BRAIN_COMMAND_KIND_AGENT,
     BRAIN_COMMAND_KIND_TOOL,
+    BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE,
 )
 from openminion.modules.brain.schemas import (
     ActionResult,
     AgentCommand,
+    ArtifactRef,
     BudgetCounters,
     RequestReadiness,
     ToolCommand,
@@ -446,6 +448,90 @@ def test_subagent_stop_lifecycle_event_fires_after_a2a_completion() -> None:
     assert events[0].subagent_id == "researcher"
     assert events[0].tool_ok is True
     reset_default_lifecycle_registry()
+
+
+def test_a2a_completion_events_include_typed_parent_child_lineage() -> None:
+    state = _make_state(permission_mode="default")
+    state.trace_id = "trace-lineage"
+    state.active_mode_name = BRAIN_INTERNAL_MODE_ACT_ORCHESTRATE
+    state.active_workflow_name = "repo-review"
+    state.active_workflow_kind = "orchestrate"
+    command = AgentCommand(
+        kind=BRAIN_COMMAND_KIND_AGENT,
+        command_id="agent-lineage-1",
+        title="Delegate to reviewer",
+        target_agent_id="reviewer",
+        method="delegate",
+        params={"instruction": "review docs"},
+        idempotency_key="idem-agent-lineage-1",
+    )
+    emitted: list[tuple[str, dict[str, object], dict[str, object]]] = []
+    operations: list[dict[str, object]] = []
+    runner = _make_runner()
+    runner.a2a_api = SimpleNamespace(
+        call=lambda **kwargs: {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": "review complete",
+        }
+    )
+    runner._emit_brain_operation = lambda **kwargs: operations.append(kwargs) or True
+    runner._normalize_execution_result = lambda **kwargs: (
+        ActionResult(
+            command_id=kwargs["command_id"],
+            status=BRAIN_ACTION_STATUS_SUCCESS,
+            summary=kwargs["raw"]["summary"],
+            artifact_refs=[ArtifactRef(ref="artifact://delegate/review")],
+            memory_refs=["memory://delegate/review"],
+        ),
+        None,
+    )
+    logger = SimpleNamespace(
+        emit=lambda event, payload, **kwargs: emitted.append(
+            (event, dict(payload), dict(kwargs))
+        )
+    )
+
+    result, job = execute_action_dispatch(
+        runner,
+        state=state,
+        command=command,
+        logger=logger,
+        sanitize_tool_command_args=lambda runner, command: ({}, []),
+        execute_action_fn=None,
+    )
+
+    assert job is None
+    assert result.status == BRAIN_ACTION_STATUS_SUCCESS
+    request_payload = next(
+        payload for event, payload, _kwargs in emitted if event == "a2a.request"
+    )
+    completed_payload, completed_kwargs = next(
+        (payload, kwargs)
+        for event, payload, kwargs in emitted
+        if event == "a2a.completed"
+    )
+    assert request_payload["target_agent_id"] == "reviewer"
+    assert request_payload["method"] == "delegate"
+    assert request_payload["command_id"] == "agent-lineage-1"
+    assert request_payload["command_kind"] == BRAIN_COMMAND_KIND_AGENT
+    assert request_payload["mode_name"] == "act"
+    assert request_payload["decision_mode"] == "act"
+    assert request_payload["act_profile"] == "orchestrate"
+    assert request_payload["workflow_name"] == "repo-review"
+    assert request_payload["workflow_kind"] == "orchestrate"
+    assert completed_payload["summary"] == "review complete"
+    assert completed_payload["command_id"] == request_payload["command_id"]
+    assert completed_kwargs["trace_id"] == "trace-lineage"
+    assert completed_kwargs["artifact_refs"] == ["artifact://delegate/review"]
+    assert completed_kwargs["memory_refs"] == ["memory://delegate/review"]
+    assert operations == [
+        {
+            "session_id": state.session_id,
+            "turn_id": "trace-lineage",
+            "operation": "tool_loop",
+            "extra": {"provider": "a2a", "target_agent_id": "reviewer"},
+        }
+    ]
 
 
 def test_subagent_stop_lifecycle_event_fires_for_unavailable_a2a() -> None:

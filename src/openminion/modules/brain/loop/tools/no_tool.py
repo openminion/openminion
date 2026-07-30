@@ -33,6 +33,7 @@ from .postprocess.evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
     missing_requested_closeout_markers,
     mutating_file_evidence_fallback_text,
+    requested_validation_without_exec_run,
     requested_closeout_markers,
     tool_evidence_closeout_text,
 )
@@ -531,6 +532,21 @@ class AdaptiveLoopRunnerNoToolMixin:
             and _looks_like_unexecutable_tool_payload_text(normalized_final_text)
         ):
             return None
+        if requested_validation_without_exec_run(self.loop_state) and (
+            _raw_tool_payload_retry_allowed(
+                self.loop_state,
+                text=normalized_final_text,
+            )
+        ):
+            return self._retry_with_system_message(
+                "Your previous reply emitted raw tool markup, a raw tool-result "
+                "JSON envelope, or an unexecutable tool envelope, but the user "
+                "requested validation and no successful exec.run result has been "
+                "captured yet. Call exec.run with the requested validation command "
+                "now, then return the final plain-text answer from the actual "
+                "tool result.",
+                discard_assistant_text=normalized_final_text,
+            )
         fallback_text = tool_evidence_closeout_text(
             self.loop_state,
             reason=(
@@ -542,9 +558,7 @@ class AdaptiveLoopRunnerNoToolMixin:
             self.loop_state,
             normalized_final_text,
         ):
-            self.loop_state.scratchpad["raw_tool_payload_used_evidence_fallback"] = (
-                True
-            )
+            self.loop_state.scratchpad["raw_tool_payload_used_evidence_fallback"] = True
             return fallback_text
         if _raw_tool_payload_retry_allowed(
             self.loop_state,
@@ -603,6 +617,25 @@ class AdaptiveLoopRunnerNoToolMixin:
         )
         if snippet_only_retry is not None:
             return snippet_only_retry
+        if (
+            normalized_final_text
+            and requested_validation_without_exec_run(self.loop_state)
+            and not bool(
+                self.loop_state.scratchpad.get(
+                    "requested_validation_missing_exec_run_retry_used", False
+                )
+            )
+        ):
+            self.loop_state.scratchpad[
+                "requested_validation_missing_exec_run_retry_used"
+            ] = True
+            return self._retry_with_system_message(
+                "The user requested validation, but this turn has no successful "
+                "exec.run validation result yet. Do not claim validation passed. "
+                "Call exec.run with the requested validation command now, then "
+                "return the final answer from the actual tool result.",
+                discard_assistant_text=normalized_final_text,
+            )
         if (
             normalized_final_text
             and _looks_like_structured_status_payload(normalized_final_text)
