@@ -51,16 +51,32 @@ def _prepare_runtime_roots(
     effective_home_root = home_root or env_config.openminion_home.strip()
     effective_data_root = data_root or env_config.openminion_data_root.strip()
     if effective_home_root:
-        bootstrap_env(
-            home_root=effective_home_root,
-            data_root=effective_data_root or None,
-            generated_root=generated_root or None,
-        )
-    if home_root and effective_data_root:
+        if data_root or generated_root:
+            strict_generated_root = generated_root or (
+                _default_generated_root_for_data(
+                    effective_home_root=effective_home_root,
+                    effective_data_root=effective_data_root,
+                )
+                if data_root and effective_data_root
+                else None
+            )
+            bootstrap_env_strict(
+                home_root=effective_home_root,
+                data_root=effective_data_root
+                or str((Path(effective_home_root) / ".openminion").resolve()),
+                generated_root=strict_generated_root,
+            )
+        else:
+            bootstrap_env(
+                home_root=effective_home_root,
+                data_root=effective_data_root or None,
+                generated_root=None,
+            )
+    if home_root and effective_data_root and not (data_root or generated_root):
         bootstrap_env_strict(
             home_root=home_root,
             data_root=effective_data_root,
-            generated_root=generated_root or None,
+            generated_root=None,
         )
     return (
         home_root,
@@ -101,6 +117,15 @@ def _default_route_data_root(
     if effective_data_root:
         return Path(effective_data_root).expanduser().resolve()
     return (_default_route_home_root(effective_home_root) / ".openminion").resolve()
+
+
+def _default_generated_root_for_data(
+    *, effective_home_root: str, effective_data_root: str
+) -> str:
+    data_path = Path(effective_data_root)
+    if not data_path.is_absolute():
+        data_path = _default_route_home_root(effective_home_root) / data_path
+    return str((data_path / "runtime").resolve())
 
 
 def _run_default_interactive(
