@@ -2,47 +2,48 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import logging
 from dataclasses import dataclass
+from getpass import getpass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from openminion.base.config import AgentProfileConfig, OpenMinionConfig, save_config
+from openminion.base.config import OpenMinionConfig, resolve_config_path
+from openminion.base.config.env import resolve_environment_config
 from openminion.cli.config import resolve_cli_roots
-
-
-def _install_default_agent(
-    config: OpenMinionConfig,
-    *,
-    agent_id: str,
-    provider: str,
-) -> None:
-    config.agents = {
-        agent_id: AgentProfileConfig(name=agent_id, provider=provider),
-    }
-
-
-_CLOUD_PROVIDER_DEFAULTS: dict[str, tuple[str, str]] = {
-    "openai": ("OPENAI_API_KEY", "gpt-4.1-mini"),
-    "anthropic": ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-latest"),
-    "openrouter": ("OPENROUTER_API_KEY", "openai/gpt-4.1-mini"),
-}
+from openminion.cli.commands.config import (
+    load_config_import,
+    resolve_config_import_path,
+)
+from openminion.modules.llm.setup_catalog import (
+    ProviderSetupPreset,
+    SetupCatalogError,
+    first_screen_presets,
+    get_setup_preset,
+    more_screen_presets,
+)
+from openminion.services.bootstrap.provider_setup import (
+    ProviderSetupError,
+    ProviderSetupRequest,
+    ProviderSetupResult,
+    atomic_save_setup_config,
+    build_provider_setup,
+    save_provider_setup,
+)
 
 
 @dataclass(frozen=True)
 class SetupSelection:
-    track: str
-    provider: str
+    label: str
+    value: str
 
 
 def _prompt_choice(prompt: str, options: dict[str, SetupSelection]) -> SetupSelection:
     while True:
         print(prompt)
         for key, selection in options.items():
-            label = selection.track.replace("_", " ").title()
-            if selection.track == "cloud":
-                label = f"{label} ({selection.provider})"
-            print(f"  {key}. {label}")
+            print(f"  {key}. {selection.label}")
         answer = str(input("> ") or "").strip()
         selection = options.get(answer)
         if selection is not None:
@@ -56,56 +57,37 @@ def _prompt_choice(prompt: str, options: dict[str, SetupSelection]) -> SetupSele
 
 def _prompt_text(prompt: str, *, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
-    value = str(input(f"{prompt}{suffix}: ") or "").strip()
+    try:
+        value = str(input(f"{prompt}{suffix}: ") or "").strip()
+    except EOFError:
+        value = ""
     return value or default
 
 
-def _default_storage_path(data_root: Path) -> str:
-    return str((data_root / "state" / "openminion.db").resolve(strict=False))
+def _prompt_required_text(prompt: str) -> str:
+    while True:
+        value = _prompt_text(prompt)
+        if value:
+            return value
+        print("A value is required.")
 
 
-def _build_cloud_config(
-    *,
-    provider: str,
-    api_key: str,
-    agent_name: str,
-    data_root: Path,
-) -> OpenMinionConfig:
-    config = OpenMinionConfig()
-    _install_default_agent(config, agent_id=agent_name, provider=provider)
-    config.runtime.demo_mode = False
-    config.storage.path = _default_storage_path(data_root)
-    env_name, model = _CLOUD_PROVIDER_DEFAULTS[provider]
-    provider_cfg = getattr(config.providers, provider)
-    provider_cfg.api_key_env = env_name
-    provider_cfg.model = model
-    provider_cfg.api_key = api_key
-    return config
+def _prompt_secret(prompt: str) -> str:
+    try:
+        return str(getpass(f"{prompt}: ") or "").strip()
+    except EOFError:
+        return ""
 
 
-def _build_ollama_config(
-    *,
-    agent_name: str,
-    data_root: Path,
-) -> OpenMinionConfig:
-    config = OpenMinionConfig()
-    _install_default_agent(config, agent_id=agent_name, provider="ollama")
-    config.runtime.demo_mode = False
-    config.storage.path = _default_storage_path(data_root)
-    config.providers.ollama.model = _prompt_text("Ollama model", default="llama3.1")
-    config.providers.ollama.base_url = _prompt_text(
-        "Ollama base URL",
-        default="http://127.0.0.1:11434",
-    )
-    return config
-
-
-def _build_demo_config(*, agent_name: str, data_root: Path) -> OpenMinionConfig:
-    config = OpenMinionConfig()
-    _install_default_agent(config, agent_id=agent_name, provider="echo")
-    config.runtime.demo_mode = True
-    config.storage.path = _default_storage_path(data_root)
-    return config
+def _prompt_confirm(prompt: str, *, default: bool = False) -> bool:
+    suffix = " [Y/n]" if default else " [y/N]"
+    try:
+        value = str(input(f"{prompt}{suffix}: ") or "").strip().lower()
+    except EOFError:
+        value = ""
+    if not value:
+        return default
+    return value in {"y", "yes"}
 
 
 def _run_wizard(args) -> tuple[OpenMinionConfig, Path]:
@@ -115,69 +97,287 @@ def _run_wizard(args) -> tuple[OpenMinionConfig, Path]:
         data_root=getattr(args, "data_root", None),
     )
     agent_name = str(getattr(args, "agent", "") or "").strip() or "openminion"
+    provider_arg = str(getattr(args, "provider", "") or "").strip()
+    if provider_arg:
+        result = _build_non_interactive_setup(args, roots=roots, agent_name=agent_name)
+        saved_path = save_provider_setup(result)
+        return result.config, saved_path
 
     selection = _prompt_choice(
         "Choose your setup path:",
         {
-            "1": SetupSelection(track="cloud", provider="openai"),
-            "2": SetupSelection(track="local setup with ollama", provider="ollama"),
-            "3": SetupSelection(track="demo mode", provider="echo"),
+            "1": SetupSelection(
+                label="Hosted provider (OpenAI, Anthropic, OpenRouter, and more)",
+                value="hosted",
+            ),
+            "2": SetupSelection(label="Local provider (Ollama)", value="ollama"),
+            "3": SetupSelection(
+                label="Import an existing OpenMinion config",
+                value="import",
+            ),
         },
     )
 
-    if selection.provider == "echo":
-        config = _build_demo_config(agent_name=agent_name, data_root=roots.data_root)
-    elif selection.provider == "ollama":
-        config = _build_ollama_config(agent_name=agent_name, data_root=roots.data_root)
-    else:
-        provider = _prompt_choice(
-            "Choose your cloud provider:",
-            {
-                "1": SetupSelection(track="cloud", provider="openai"),
-                "2": SetupSelection(track="cloud", provider="anthropic"),
-                "3": SetupSelection(track="cloud", provider="openrouter"),
-            },
-        ).provider
-        env_name, _ = _CLOUD_PROVIDER_DEFAULTS[provider]
-        print(
-            f"Stored as a convenience in the config file. You can override any time by setting {env_name}."
+    if selection.value == "import":
+        return _run_import_wizard(args, roots=roots)
+    if selection.value == "ollama":
+        preset = get_setup_preset("ollama")
+        model = _prompt_model(preset)
+        base_url = _prompt_text(
+            "Ollama base URL",
+            default=preset.default_base_url,
         )
-        print(f"If {env_name} is set, it always wins over the config file value.")
-        api_key = _prompt_text(
-            f"{provider} API key (optional convenience; leave blank to use {env_name} from env later)"
-        )
-        config = _build_cloud_config(
-            provider=provider,
-            api_key=api_key,
+        result = _build_interactive_setup(
+            args,
+            roots=roots,
             agent_name=agent_name,
-            data_root=roots.data_root,
+            preset=preset,
+            model=model,
+            base_url=base_url,
+        )
+    else:
+        preset = _prompt_provider_preset()
+        model = _prompt_model(preset)
+        base_url = _prompt_required_text("Base URL") if preset.requires_base_url else ""
+        result = _build_interactive_setup(
+            args,
+            roots=roots,
+            agent_name=agent_name,
+            preset=preset,
+            model=model,
+            base_url=base_url,
         )
 
-    saved_path = save_config(
-        config,
+    _print_preview(result)
+    if not _prompt_confirm("Create or repair this config?", default=True):
+        raise ProviderSetupError("Setup cancelled before writing config.")
+    setattr(
+        args,
+        "_provider_check_authorized",
+        _prompt_provider_check(result.preset),
+    )
+    saved_path = save_provider_setup(result)
+    return result.config, saved_path
+
+
+def _prompt_provider_preset() -> ProviderSetupPreset:
+    presets = first_screen_presets()
+    options = {
+        str(index): SetupSelection(
+            label=preset.display_label,
+            value=preset.preset_id,
+        )
+        for index, preset in enumerate(presets, start=1)
+    }
+    options[str(len(options) + 1)] = SetupSelection(
+        label="More providers or a custom endpoint",
+        value="more",
+    )
+    selection = _prompt_choice("Choose your model service:", options)
+    if selection.value != "more":
+        return get_setup_preset(selection.value)
+
+    more = more_screen_presets()
+    more_options = {
+        str(index): SetupSelection(
+            label=preset.display_label,
+            value=preset.preset_id,
+        )
+        for index, preset in enumerate(more, start=1)
+    }
+    return get_setup_preset(
+        _prompt_choice(
+            "Choose another service or custom endpoint:",
+            more_options,
+        ).value
+    )
+
+
+def _prompt_model(preset: ProviderSetupPreset) -> str:
+    if preset.discovery_posture == "manual":
+        return _prompt_required_text("Model id")
+    recommended = preset.recommended_models[0]
+    return _prompt_text(
+        f"Model (press Enter for the existing or recommended default: {recommended})"
+    )
+
+
+def _run_import_wizard(args, *, roots) -> tuple[OpenMinionConfig, Path]:
+    target_path = resolve_config_path(
         getattr(args, "config", None),
         home_root=roots.home_root,
     )
-    return config, saved_path
+    try:
+        input_path = resolve_config_import_path(
+            _prompt_required_text("OpenMinion config file"),
+            home_root=roots.home_root,
+        )
+        config = load_config_import(
+            input_path,
+            target_path=target_path,
+            home_root=roots.home_root,
+            data_root=roots.data_root,
+            merge_existing=True,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ProviderSetupError(str(exc)) from exc
+    print("Import preview:")
+    print(f"  source: {input_path}")
+    print(f"  target: {target_path}")
+    print(f"  agents: {len(config.agents)}")
+    print(f"  default agent: {config.default_agent}")
+    print("  existing config: unrelated settings are preserved")
+    if not _prompt_confirm("Import this config?", default=True):
+        raise ProviderSetupError("Setup cancelled before importing config.")
+    setattr(args, "_provider_check_authorized", False)
+    return config, atomic_save_setup_config(config, target_path)
+
+
+def _build_interactive_setup(
+    args,
+    *,
+    roots,
+    agent_name: str,
+    preset: ProviderSetupPreset,
+    model: str,
+    base_url: str,
+) -> ProviderSetupResult:
+    env_snapshot = resolve_environment_config().snapshot()
+    stored_api_key = ""
+    allow_local = False
+    env_has_key = bool(
+        preset.credential_env and env_snapshot.get(preset.credential_env)
+    )
+    if preset.requires_credential and not env_has_key:
+        print(
+            f"No {preset.credential_env} environment variable was found. "
+            "Paste a key to store it in this local config, or press Enter to cancel."
+        )
+        stored_api_key = _prompt_secret(f"{preset.display_label} API key")
+        if not stored_api_key:
+            raise ProviderSetupError(
+                f"No credential was provided. Export {preset.credential_env} "
+                "and rerun setup."
+            )
+        print(
+            "This key will be stored only in the owner-readable OpenMinion config. "
+            "Environment variables remain preferable on shared machines."
+        )
+        allow_local = _prompt_confirm(
+            "Store this key locally?",
+            default=False,
+        )
+        if not allow_local:
+            raise ProviderSetupError(
+                f"Local key storage was not approved. Export {preset.credential_env} "
+                "and rerun setup."
+            )
+    return build_provider_setup(
+        ProviderSetupRequest(
+            preset_id=preset.preset_id,
+            agent_id=agent_name,
+            model=model,
+            base_url=base_url,
+            stored_api_key=stored_api_key,
+            allow_local_api_key=allow_local,
+            config_path=getattr(args, "config", None),
+            home_root=roots.home_root,
+            data_root=roots.data_root,
+            env=env_snapshot,
+        )
+    )
+
+
+def _build_non_interactive_setup(
+    args, *, roots, agent_name: str
+) -> ProviderSetupResult:
+    preset_id = str(getattr(args, "provider", "") or "").strip()
+    api_format = str(getattr(args, "api_format", "") or "").strip()
+    custom_preset_by_format = {
+        "openai-compatible": "custom-openai-compatible",
+        "anthropic-compatible": "custom-anthropic-compatible",
+    }
+    if api_format:
+        expected_preset = custom_preset_by_format.get(api_format)
+        if expected_preset is None:
+            raise ProviderSetupError(f"Unsupported API format {api_format!r}.")
+        if preset_id != expected_preset:
+            raise ProviderSetupError(
+                f"--api-format {api_format!r} requires --provider {expected_preset!r}."
+            )
+    try:
+        return build_provider_setup(
+            ProviderSetupRequest(
+                preset_id=preset_id,
+                agent_id=agent_name,
+                model=str(getattr(args, "model", "") or "").strip(),
+                base_url=str(getattr(args, "base_url", "") or "").strip(),
+                config_path=getattr(args, "config", None),
+                home_root=roots.home_root,
+                data_root=roots.data_root,
+                env=resolve_environment_config().snapshot(),
+            )
+        )
+    except SetupCatalogError as exc:
+        raise ProviderSetupError(str(exc)) from exc
+
+
+def _print_preview(result: ProviderSetupResult) -> None:
+    print("Setup preview:")
+    for line in result.preview.lines():
+        print(f"  {line}")
+
+
+def _prompt_provider_check(preset: ProviderSetupPreset) -> bool:
+    if preset.is_local:
+        return False
+    print("Optional provider check: sends one low-token request and may consume quota.")
+    return _prompt_confirm("Run provider check after doctor?", default=False)
 
 
 def _run_setup_doctor(*, config_path: Path) -> int:
     from openminion.cli.commands.doctor import run_doctor
 
-    return int(
-        run_doctor(
-            SimpleNamespace(
-                config=str(config_path),
-                check_turn=False,
-                message="onboarding doctor",
-                target="onboarding-setup",
-                channel=None,
-                json=False,
-                skip_supervision=True,
-            )
-        )
-        or 0
+    return _run_doctor_quietly(
+        run_doctor,
+        SimpleNamespace(
+            config=str(config_path),
+            check_turn=False,
+            message="onboarding doctor",
+            target="onboarding-setup",
+            channel=None,
+            json=False,
+            skip_supervision=True,
+            summary_only=True,
+        ),
     )
+
+
+def _run_setup_provider_check(*, config_path: Path) -> int:
+    from openminion.cli.commands.doctor import run_doctor
+
+    return _run_doctor_quietly(
+        run_doctor,
+        SimpleNamespace(
+            config=str(config_path),
+            check_turn=True,
+            message="Reply with exactly: openminion provider check ok",
+            target="onboarding-provider-check",
+            channel=None,
+            json=False,
+            skip_supervision=True,
+            summary_only=True,
+        ),
+    )
+
+
+def _run_doctor_quietly(run_doctor, args) -> int:
+    previous_disable_level = logging.root.manager.disable
+    logging.disable(logging.INFO)
+    try:
+        return int(run_doctor(args) or 0)
+    finally:
+        logging.disable(previous_disable_level)
 
 
 def _launch_post_setup_interactive(args, *, config_path: Path) -> int:
@@ -207,78 +407,14 @@ def _resolve_runtime_helper(name: str) -> Any:
     return getattr(module, name)
 
 
-def _print_post_setup_tips() -> None:
-    paragraphs = (
-        "Tip: run `openminion` to start the interactive terminal. "
-        "Scroll up to re-read past turns, or pipe a prompt via "
-        "`cat prompt.md | openminion` for one-shot mode.",
-        "Each turn renders with a `⏺` marker, a verb-rotating "
-        "thinking spinner, colored `●` tool-call markers, and "
-        "syntax-highlighted code blocks. Use `--progress minimal` "
-        "or `--progress off` for reduced motion; `--plain-spinner` "
-        "and `NO_COLOR=1` also select reduced motion. "
-        "Tool blocks longer than 6 lines are truncated; type "
-        "`/expand` to re-print the most recent one in full "
-        "(`/expand 2` for the second-most-recent, `/expand 0` for a "
-        "list).",
-        "Activity animation defaults to `openminion:braille`. Install "
-        "`openminion[animations]` to enable `unicode-animatio`, then "
-        "launch with `--animation-provider unicode --animation helix` "
-        "or switch live with `/animation use unicode:helix`.",
-        "Tool-block verbosity is configurable: `--verbosity quiet` "
-        "hides tool blocks (an end-of-turn summary still shows "
-        "what ran); `--verbosity normal` is the default; "
-        "`--verbosity verbose` shows full tool bodies up to a "
-        "200-line cap. Same effect via "
-        "`OPENMINION_VERBOSITY=quiet|normal|verbose`. "
-        "Toggle live with `/quiet`, `/verbose`, `/normal` slash "
-        "commands. Failed tool calls show `✗ (exit N)` in red.",
-        "Edit and Write tool calls render with inline unified-diff "
-        "coloring (`+` lines green, `-` lines red, `@@` hunk "
-        "headers cyan). The same verbosity ladder applies — "
-        "`/expand` shows the full diff, `--verbosity verbose` "
-        "shows up to 200 lines inline.",
-        "Persistent preferences: create "
-        "`<DATA_ROOT>/focus_prefs.toml` with flat keys "
-        '`verbosity = "quiet"`, `progress = "off"`, '
-        '`animation_provider = "unicode"`, and/or `animation = "helix"` to '
-        "set per-user defaults. Slash overrides + CLI flag + env "
-        "vars still win when set.",
-        "Tool calls narrate live: a yellow `●` marker prints "
-        "`Running Bash(...)` when a tool starts; the final block "
-        "(with output + exit code + diff coloring for Edit/Write) "
-        "prints on completion. Quiet mode hides both but still "
-        "shows the end-of-turn hidden-count summary.",
-        "Project context: drop `OPENMINION.md` (or `AGENTS.md` / "
-        "`CLAUDE.md`) at your project root; the terminal loads "
-        "it at startup so the agent has project-specific context "
-        "every session. Bootstrap one with `/init`.",
-        "Switch models mid-session with `/model <provider>` (e.g. "
-        "`/model anthropic` or `/model openai/gpt-4o`); compact "
-        "long conversations with `/compact`; list MCP servers + "
-        "health with `/mcp`; toggle read-only mode with "
-        "`/readonly`. All session-scoped — restart reverts.",
-        "Custom slash commands: drop Markdown files in "
-        "`.openminion/commands/*.md` (project) or "
-        "`<DATA_ROOT>/commands/*.md` (user-global). Frontmatter "
-        "supports `description`, `model`, `agent`; body supports "
-        "`$ARGUMENTS`, `$1..$N`, `@file`, `!`cmd`` interpolation.",
-        "The `--verbosity` and `--progress` flags work uniformly "
-        "across `openminion`, `gateway run`, `openminion run`, "
-        "and `openminion agent` (CUC). Same env vars: "
-        "`OPENMINION_VERBOSITY` and `OPENMINION_PROGRESS`. "
-        "Piped contexts auto-detect to `--progress off`.",
-        "Use bare `openminion` for interactive work and `openminion run` "
-        "for scripted one-shot execution.",
-    )
-    for paragraph in paragraphs:
-        print(paragraph)
-
-
 def run_setup(args) -> int:
     from openminion.base.config.core import resolve_default_agent_id
 
-    config, saved_path = _resolve_runtime_helper("_run_wizard")(args)
+    try:
+        config, saved_path = _resolve_runtime_helper("_run_wizard")(args)
+    except ProviderSetupError as exc:
+        print(f"Setup failed: {exc}")
+        return 2
     if config.runtime.demo_mode:
         mode = "demo"
     else:
@@ -293,12 +429,27 @@ def run_setup(args) -> int:
         )
         return doctor_code
 
+    provider_check_requested = bool(
+        getattr(args, "check_provider", False)
+        or getattr(args, "_provider_check_authorized", False)
+    )
+    if provider_check_requested:
+        check_code = _resolve_runtime_helper("_run_setup_provider_check")(
+            config_path=saved_path
+        )
+        if check_code != 0:
+            print(
+                "Provider check failed; config was written but readiness is not claimed."
+            )
+            return check_code
+    else:
+        print("Provider check skipped; no remote provider request was made.")
+
     if getattr(args, "no_chat", False):
         print(
             "Setup complete. Interactive launch skipped because "
             "--no-chat/--no-focus was requested."
         )
-        _print_post_setup_tips()
         return 0
 
     print("Setup validation passed. Entering OpenMinion...")
@@ -323,5 +474,31 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--agent",
         default=None,
         help="Agent id to configure for the first interactive session",
+    )
+    setup.add_argument(
+        "--provider",
+        default=None,
+        help="Non-interactive provider preset id, for example openai or minimax",
+    )
+    setup.add_argument(
+        "--model",
+        default=None,
+        help="Non-interactive model id or interactive default model override",
+    )
+    setup.add_argument(
+        "--base-url",
+        default=None,
+        help="Base URL for custom provider presets that require one",
+    )
+    setup.add_argument(
+        "--api-format",
+        choices=("openai-compatible", "anthropic-compatible"),
+        default=None,
+        help="Validate the API format of a matching custom provider preset",
+    )
+    setup.add_argument(
+        "--check-provider",
+        action="store_true",
+        help="Authorize one bounded provider validation request after setup",
     )
     setup.set_defaults(handler=run_setup, needs_app=False)

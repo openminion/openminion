@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import shlex
 import subprocess
+from collections.abc import Callable
 from typing import Any
 
 from rich.console import Console
@@ -518,6 +519,7 @@ def _handle_visible_parity_slash(
     console: Console,
     status_line: TerminalStatusLine,
     working_dir: str,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> None:
     arg = text.split(maxsplit=1)[1] if len(text.split(maxsplit=1)) > 1 else ""
     if cmd == "/context":
@@ -559,7 +561,12 @@ def _handle_visible_parity_slash(
             status_line=status_line,
         )
     elif cmd == "/delegate":
-        handle_slash_delegate(text, runtime=runtime, console=console)
+        handle_slash_delegate(
+            text,
+            runtime=runtime,
+            console=console,
+            approval_callback=approval_callback,
+        )
 
 
 def _handle_slash_goal(
@@ -642,6 +649,7 @@ async def _handle_slash(
     overlay: TerminalOverlayPresenter,
     status_line: TerminalStatusLine,
     working_dir: str,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> bool:
     """Dispatch a slash command and return whether the shell should exit."""
 
@@ -681,6 +689,7 @@ async def _handle_slash(
             console=console,
             status_line=status_line,
             working_dir=working_dir,
+            approval_callback=approval_callback if cmd == "/delegate" else None,
         )
         return False
     if cmd == "/tools":

@@ -31,10 +31,14 @@ from openminion.modules.task.autonomy import (
 )
 from openminion.modules.task.project import (
     ProjectControlAction,
+    ProjectOperatorInboxItem,
     apply_project_control,
+    build_project_operator_inbox_item,
+    load_latest_project_checkpoint,
     render_project_control_result,
+    render_project_operator_inbox_item,
 )
-from openminion.modules.task.project_reports import (
+from openminion.modules.task.project.reports import (
     build_project_report_from_task,
     render_project_report,
 )
@@ -692,11 +696,40 @@ def _project(args: argparse.Namespace) -> int:
         extra_wall_clock_ms=int(getattr(args, "extra_wall_clock_ms", 0) or 0),
         extra_tool_calls=int(getattr(args, "extra_tool_calls", 0) or 0),
     )
+    inbox_item = _project_operator_inbox(manager, task_id=task_id)
     if bool(getattr(args, "json", False)):
-        print_json_payload({"ok": True, "project": result.model_dump(mode="json")})
+        payload: dict[str, Any] = {
+            "ok": True,
+            "project": result.model_dump(mode="json"),
+        }
+        if inbox_item is not None:
+            payload["operator_inbox"] = inbox_item.model_dump(mode="json")
+        print_json_payload(payload)
         return 0
     print(render_project_control_result(result))
+    if inbox_item is not None:
+        print("")
+        print(render_project_operator_inbox_item(inbox_item))
     return 0
+
+
+def _project_operator_inbox(
+    manager: TaskManager,
+    *,
+    task_id: str,
+) -> ProjectOperatorInboxItem | None:
+    checkpoint = load_latest_project_checkpoint(manager, task_id=task_id)
+    if checkpoint is None:
+        return None
+    record = manager.get_task(task_id)
+    current_step_ref = None
+    if record is not None:
+        current_step_ref = str(record.metadata.get("current_step_ref") or "") or None
+    return build_project_operator_inbox_item(
+        checkpoint.project_run,
+        task_record=record,
+        current_step_ref=current_step_ref,
+    )
 
 
 def _command_evidence(

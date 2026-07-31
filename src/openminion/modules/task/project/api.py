@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .project_checkpoints import (
+from .checkpoints import (
     build_project_run_projection,
     find_open_project_worker,
     link_project_run_to_task,
@@ -10,9 +10,16 @@ from .project_checkpoints import (
     resume_project_run_from_latest_checkpoint,
     save_project_run_checkpoint,
 )
-from .project_budget import evaluate_project_budget
-from .project_control import apply_project_control, build_project_control_result
-from .project_models import (
+from .budget import evaluate_project_budget
+from .control import apply_project_control, build_project_control_result
+from .effects import (
+    ProjectEffectRecord,
+    ProjectEffectReplayDecision,
+    ProjectEffectReplayResult,
+    ProjectEffectStatus,
+    evaluate_project_effect_replay,
+)
+from .models import (
     ProjectBudgetCheckResult,
     ProjectBudgetPolicy,
     ProjectCheckpoint,
@@ -29,7 +36,13 @@ from .project_models import (
     ProjectRun,
     ProjectVerificationState,
 )
-from .project_policy import (
+from .operator import (
+    ProjectOperatorInboxItem,
+    ProjectOperatorResumeAction,
+    ProjectOperatorWorkState,
+    build_project_operator_inbox_item,
+)
+from .policy import (
     build_project_policy_state,
     consume_project_permission_grant,
     evaluate_project_permission,
@@ -37,9 +50,28 @@ from .project_policy import (
     load_project_policy_state,
     save_project_policy_state,
 )
-from .project_render import render_project_control_result, render_project_run_summary
+from .progress import (
+    AutonomyLoopConditionKind,
+    AutonomyLoopJudgment,
+    classify_autonomy_loop_condition,
+)
+from .render import (
+    render_project_control_result,
+    render_project_operator_inbox_item,
+    render_project_run_summary,
+)
+from .verification import (
+    ProjectDomainVerificationContract,
+    ProjectDomainVerificationEvidence,
+    ProjectDomainVerificationStatus,
+    ProjectVerificationClosure,
+    ProjectVerificationDomain,
+    evaluate_project_verification_closure,
+)
 
 __all__ = [
+    "AutonomyLoopConditionKind",
+    "AutonomyLoopJudgment",
     "ProjectControlAction",
     "ProjectControlResult",
     "ProjectBudgetCheckResult",
@@ -47,21 +79,37 @@ __all__ = [
     "ProjectCheckpoint",
     "ProjectCycleDecision",
     "ProjectCycleRecord",
+    "ProjectEffectRecord",
+    "ProjectEffectReplayDecision",
+    "ProjectEffectReplayResult",
+    "ProjectEffectStatus",
     "ProjectObjectiveContract",
     "ProjectObjectiveLedger",
     "ProjectPermissionCheckResult",
     "ProjectPermissionDecision",
     "ProjectPermissionGrant",
     "ProjectPolicyState",
+    "ProjectDomainVerificationContract",
+    "ProjectDomainVerificationEvidence",
+    "ProjectDomainVerificationStatus",
+    "ProjectOperatorInboxItem",
+    "ProjectOperatorResumeAction",
+    "ProjectOperatorWorkState",
     "ProjectRun",
+    "ProjectVerificationClosure",
+    "ProjectVerificationDomain",
     "ProjectVerificationState",
     "apply_project_control",
     "build_project_control_result",
+    "build_project_operator_inbox_item",
     "build_project_policy_state",
     "build_project_run_projection",
+    "classify_autonomy_loop_condition",
     "consume_project_permission_grant",
     "evaluate_project_budget",
+    "evaluate_project_effect_replay",
     "evaluate_project_permission",
+    "evaluate_project_verification_closure",
     "find_open_project_worker",
     "issue_project_permission_grant",
     "link_project_run_to_task",
@@ -69,6 +117,7 @@ __all__ = [
     "load_project_policy_state",
     "record_project_cycle",
     "render_project_control_result",
+    "render_project_operator_inbox_item",
     "render_project_run_summary",
     "replay_project_cycles",
     "resume_project_run_from_latest_checkpoint",

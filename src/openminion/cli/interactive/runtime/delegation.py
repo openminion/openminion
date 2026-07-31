@@ -14,6 +14,7 @@ class RuntimeDelegationMixin:
         instruction: str = "",
         task_id: str = "",
         timeout_seconds: int = 120,
+        approval_callback: Any | None = None,
     ) -> dict[str, Any]:
         from openminion.cli.commands.agent_delegation import (
             AgentDelegateRequest,
@@ -25,6 +26,9 @@ class RuntimeDelegationMixin:
             home_root=self._rt.home_root,
             parent_agent_id=self.agent_id,
             runtime_resolver=lambda: self._rt,
+            approval_callback=approval_callback,
+            workspace_root=self.working_dir,
+            cwd=self.working_dir,
             request=AgentDelegateRequest(
                 mode=mode,
                 target_agent_id=target_agent_id,

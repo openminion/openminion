@@ -30,8 +30,7 @@ _COMPACT_INLINE_APPROVAL_RE = re.compile(
 )
 _DONE_RE = re.compile(r"\bDone in \d+(?:m\d{2}s|s)\b")
 _APPROVAL_PROMPT_PATTERN = (
-    r"Policy confirmation required|Reply exactly yes to (?:allow once|confirm)|"
-    r"session to allow this tool"
+    r"Policy confirmation required|Reply exactly yes to (?:allow once|confirm)"
 )
 _SIDECAR_CONSENT_RE = re.compile(
     r"(?:Allow auto-start for PinchTab|Allow [a-z_ -]+ for sidecar '[^']+')\? "
@@ -43,7 +42,7 @@ _APPROVAL_PROMPT_RE = re.compile(_APPROVAL_PROMPT_PATTERN)
 _APPROVAL_RE = re.compile(_APPROVAL_PATTERN)
 _TURN_EVENT_RE = re.compile(rf"{_APPROVAL_PATTERN}|\bDone in \d+(?:m\d{{2}}s|s)\b")
 _APPROVAL_RESOLVED_RE = re.compile(
-    r"(?:^|\n)\s*(?:[❯>]\s*)?(?:yes|session|no)\s*(?:\n|$)|"
+    r"(?:^|\n)\s*(?:[❯>]\s*)?(?:yes|session|a|always|no)\s*(?:\n|$)|"
     r"(?:Approved\.|Approval denied\.)"
 )
 _ACTIVE_TURN_STATUS_RE = re.compile(
@@ -209,6 +208,7 @@ def _interactive_surface_follows(screen_text: str, *, offset: int) -> bool:
     return bool(
         _CONTENT_COMPOSER_RE.search(trailing)
         or _DONE_RE.search(trailing)
+        or re.search(r"(?:^|\n)Delegation:", trailing)
         or _COMPACT_INLINE_APPROVAL_RE.search(trailing)
         or _LEGACY_INLINE_APPROVAL_RE.search(trailing)
         or re.search(r"(?:^|\n)\s*(?:❯\s*)?●\s", trailing)
@@ -219,7 +219,7 @@ def inline_approval_key(screen_text: str, reply: str) -> str:
     menu = inline_approval_menu(screen_text)
     decision = str(reply or "").strip().lower()
     keys = {
-        "compact": {"yes": "yes", "session": "always", "no": "no"},
+        "compact": {"yes": "yes", "session": "a", "no": "no"},
         "legacy": {"yes": "a", "session": "s", "no": "d"},
     }
     key = keys.get(menu or "", {}).get(decision)
@@ -380,6 +380,79 @@ class FocusProbe:
         assert_no_terminal_crash(transcript)
         return transcript
 
+    def run_slash_turn(
+        self,
+        session: PtySession,
+        command: str,
+        *,
+        marker: str | None,
+        timeout: int = 240,
+        requires_approval: bool = False,
+        max_auto_approvals: int = 5,
+        approval_reply: str = "yes",
+    ) -> str:
+        """Run a slash command through the same approval loop as a prompt turn."""
+        turn_offset = len(session.visible_transcript)
+        session.send(command)
+        time.sleep(0.1)
+        session.send("\r")
+        event_offset = len(session.visible_transcript)
+        approvals = 0
+        marker_re = re.compile(marker) if marker is not None else None
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            transcript = session.visible_transcript
+            screen_text = session.screen_text
+            approval_needs_reply = approval_prompt_needs_reply(
+                transcript,
+                offset=event_offset,
+            )
+            approval_visible = active_approval_visible(screen_text)
+            inline_approval_visible = inline_approval_menu(screen_text) is not None
+            sidecar_consent_visible = sidecar_consent_prompt_visible(screen_text)
+            if sidecar_consent_visible:
+                assert requires_approval, transcript[-2000:]
+                approvals += 1
+                assert approvals <= max_auto_approvals, transcript[-2000:]
+                self._submit_sidecar_consent(session, approval_reply)
+                event_offset = len(session.visible_transcript)
+                continue
+            if inline_approval_visible:
+                assert requires_approval, transcript[-2000:]
+                approvals += 1
+                assert approvals <= max_auto_approvals, transcript[-2000:]
+                self._submit_inline_approval(session, approval_reply)
+                event_offset = len(session.visible_transcript)
+                continue
+            if approval_needs_reply or approval_visible:
+                assert requires_approval, transcript[-2000:]
+                approvals += 1
+                assert approvals <= max_auto_approvals, transcript[-2000:]
+                self._submit_composer_line(session, approval_reply)
+                event_offset = len(session.visible_transcript)
+                continue
+            marker_seen = marker_re is None or marker_re.search(
+                transcript[turn_offset:]
+            )
+            approval_satisfied = not requires_approval or approvals > 0
+            if (
+                marker_seen
+                and approval_satisfied
+                and _COMPOSER_READY_RE.search(screen_text)
+                and not active_turn_busy(screen_text)
+            ):
+                break
+        else:
+            marker_label = "<composer-ready>" if marker is None else repr(marker)
+            raise AssertionError(
+                f"timed out waiting for slash command marker {marker_label}\n"
+                f"{session.screen_text[-2000:]}"
+            )
+        transcript = session.visible_transcript[turn_offset:]
+        assert_no_terminal_crash(transcript)
+        return transcript
+
     @staticmethod
     def _wait_for_composer(session: PtySession, *, timeout: float = 15.0) -> None:
         deadline = time.monotonic() + timeout
@@ -396,7 +469,10 @@ class FocusProbe:
     def _submit_composer_line(cls, session: PtySession, text: str) -> str:
         """Submit through the composer only after Textual exposes an input state."""
         cls._wait_for_composer(session)
-        session.send(text)
+        if "\n" in text or "\r" in text:
+            session.send_bracketed_paste(text)
+        else:
+            session.send(text)
         echo_probe = composer_echo_probe(text)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
@@ -455,13 +531,32 @@ class FocusProbe:
             menu = inline_approval_menu(approval_screen)
         key = inline_approval_key(approval_screen, reply)
         if menu == "compact":
-            session.send(f"{key}\r")
+            session.send(key)
+            time.sleep(0.05)
+            session.send("\n")
         else:
             session.send(key)
         deadline = time.monotonic() + 5.0
         clear_polls = 0
         while time.monotonic() < deadline:
             screen_text = session.screen_text
+            visible_transcript = session.visible_transcript
+            if menu == "compact":
+                compact_matches = list(
+                    _COMPACT_INLINE_APPROVAL_RE.finditer(visible_transcript)
+                )
+                if (
+                    compact_matches
+                    and _compact_approval_submitted(
+                        visible_transcript,
+                        match=compact_matches[-1],
+                    )
+                    and _interactive_surface_follows(
+                        visible_transcript,
+                        offset=compact_matches[-1].end(),
+                    )
+                ):
+                    return
             current_fingerprint = inline_approval_fingerprint(screen_text)
             if current_fingerprint is None:
                 if menu == "compact":

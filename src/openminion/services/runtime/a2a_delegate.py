@@ -18,6 +18,7 @@ def build_a2a_delegate_api(
     env: Any = None,
     mode: str = "auto",
     runtime_resolver: Any = None,
+    approval_callback: Any | None = None,
 ) -> A2ADelegateApi | None:
     """Build a2a delegate api helper."""
     try:
@@ -33,6 +34,7 @@ def build_a2a_delegate_api(
             agent_id=str(agent_id or "").strip() or None,
             env=env,
             runtime_resolver=runtime_resolver,
+            approval_callback=approval_callback,
         )
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("A2A delegate adapter construction failed: %s", exc)

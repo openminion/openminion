@@ -19,10 +19,7 @@ except ImportError:  # pragma: no cover - POSIX-only terminal interrupt support.
 from rich.console import Console
 from rich.text import Text
 from openminion.base.config.env import resolve_environment_config
-from openminion.cli.presentation.models import (
-    ChatMessage,
-    MessageKind,
-)
+from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.queue import (
     is_queue_command,
     queue_preserved_after_interrupt_notice,
@@ -32,16 +29,13 @@ from openminion.cli.presentation.queue import (
 )
 from openminion.modules.runtime.sync import run_async_compat
 from openminion.modules.telemetry.trace.phase_timing import mark_active_chat_first_text
-
 from ..composer import TerminalComposer
 from ..overlays import TerminalOverlayPresenter
 from ..prompt_output import build_prompt_safe_terminal_writer
 from ..status_line import TerminalStatusLine
 from ..transcript import TerminalTranscript
 from .labels import _runtime_label
-from .approval import (
-    build_terminal_approval_callback as _build_terminal_approval_callback,
-)
+from .approval import build_terminal_approval_callback as _build_approval_callback
 from . import progress as _progress
 from .queue_control import apply_queue_command
 from .startup import (
@@ -78,7 +72,6 @@ __all__ = [
     "_render_status_block",
     "_render_tools_list",
 ]
-
 _LOGGER = logging.getLogger(__name__)
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -270,6 +263,7 @@ async def _handle_slash_input(
     working_dir: str,
     custom_commands: dict,
     approval_grants: set[str] | None = None,
+    approval_callback: Callable[[str, dict[str, Any], Any], Any] | None = None,
 ) -> bool:
     """Dispatch a slash command and return whether the shell should exit."""
 
@@ -286,6 +280,7 @@ async def _handle_slash_input(
             overlay=overlay,
             status_line=status_line,
             working_dir=working_dir,
+            approval_callback=approval_callback,
         )
     if cmd_name in custom_commands:
         from openminion.cli.presentation.custom_commands import render_command
@@ -304,11 +299,9 @@ async def _handle_slash_input(
             runtime=runtime,
             transcript=transcript,
             status_line=status_line,
-            approval_callback=_build_terminal_approval_callback(
+            approval_callback=_build_approval_callback(
                 overlay=overlay,
-                session_grants=approval_grants
-                if approval_grants is not None
-                else set(),
+                session_grants=approval_grants or set(),
             ),
         )
         return False
@@ -320,6 +313,7 @@ async def _handle_slash_input(
         overlay=overlay,
         status_line=status_line,
         working_dir=working_dir,
+        approval_callback=approval_callback,
     )
 
 
@@ -455,7 +449,7 @@ class _TerminalFocusLoop:
                 runtime=self.runtime,
                 transcript=self.transcript,
                 status_line=self.status_line,
-                approval_callback=_build_terminal_approval_callback(
+                approval_callback=_build_approval_callback(
                     overlay=self.overlay,
                     session_grants=self.approval_grants,
                     pause_prompt=self.cancel_read_task,
@@ -566,6 +560,12 @@ class _TerminalFocusLoop:
                     working_dir=self.working_dir,
                     custom_commands=self.custom_commands,
                     approval_grants=self.approval_grants,
+                    approval_callback=_build_approval_callback(
+                        overlay=self.overlay,
+                        session_grants=self.approval_grants,
+                        pause_prompt=self.cancel_read_task,
+                        resume_prompt=self.start_read_task,
+                    ),
                 )
                 if should_exit:
                     return 0

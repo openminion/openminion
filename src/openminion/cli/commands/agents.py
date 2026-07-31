@@ -38,7 +38,7 @@ def run_agent_operator(args) -> int:
     storage_path = str(config.storage.path)
     registry = AgentRegistryStore(storage_path)
 
-    if action == "ls":
+    if action in {"ls", "list"}:
         return agent_ls(registry, as_json=getattr(args, "json", False))
     if action == "status":
         agent_id = getattr(args, "agent_id", None) or _default_agent_id(config)
@@ -536,7 +536,11 @@ def agent_inspect(registry: AgentRegistryStore, agent_id: str, *, as_json: bool)
 def add_agent_operator_subcommands(agent_parser: argparse.ArgumentParser) -> None:
     agent_subcommands = agent_parser.add_subparsers(dest="agent_command")
 
-    agent_ls = agent_subcommands.add_parser("ls", help="List registered agents")
+    agent_ls = agent_subcommands.add_parser(
+        "ls",
+        aliases=("list",),
+        help="List registered agents",
+    )
     add_json_output_flag(agent_ls)
     agent_ls.set_defaults(handler=run_agent_operator, needs_app=False)
 
@@ -622,7 +626,7 @@ def add_agent_operator_subcommands(agent_parser: argparse.ArgumentParser) -> Non
         delegate_lifecycle.add_argument(
             "--task-id",
             required=True,
-            help="Task id returned by `agent-ctl delegate --mode async`",
+            help="Task id returned by `openminion agent delegate --mode async`",
         )
         add_json_output_flag(delegate_lifecycle)
         delegate_lifecycle.set_defaults(handler=run_agent_operator, needs_app=False)

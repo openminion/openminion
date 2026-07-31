@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
 
+from .project.operator import ProjectOperatorResumeAction, ProjectOperatorWorkState
 from .runtime.lifecycle import TaskLifecycleState
 
 
@@ -214,6 +215,7 @@ def _tasks_from_digest_source(
             "steps": steps,
             "pending_actions": list(pending_by_task.get(task_id, [])),
         }
+        payload.update(_operator_projection(status, payload["pending_actions"]))
         project = _project_payload(_value(digest_task, "metadata", {}))
         if project:
             payload["project"] = project
@@ -228,6 +230,7 @@ def _tasks_from_digest_source(
                 "status": "WAITING",
                 "steps": [],
                 "pending_actions": list(pending_actions),
+                **_operator_projection("WAITING", pending_actions),
             },
         )
     return list(tasks_by_id.values())
@@ -317,6 +320,7 @@ def _lifecycle_record_payload(source: Any | None, record: Any) -> dict[str, Any]
         "created_at": _value(record, "created_at"),
         "updated_at": _value(record, "updated_at"),
     }
+    payload.update(_operator_projection(str(payload["status"]), ()))
     if job is not None:
         payload["schedule"] = job.get("schedule") or job.get("schedule_json")
         payload["enabled"] = bool(job.get("enabled", True))
@@ -353,6 +357,47 @@ def _safe_get_job(source: Any | None, job_id: str) -> dict[str, Any] | None:
     except (AttributeError, TypeError, ValueError, RuntimeError):
         return None
     return dict(job) if isinstance(job, Mapping) else None
+
+
+def _operator_projection(
+    status: str,
+    pending_actions: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> dict[str, str]:
+    normalized = str(status or "").strip().upper()
+    if pending_actions:
+        return {
+            "operator_state": ProjectOperatorWorkState.WAITING.value,
+            "resume_action": ProjectOperatorResumeAction.APPROVE.value,
+        }
+    if normalized in {"ACTIVE", "PENDING"}:
+        return {
+            "operator_state": ProjectOperatorWorkState.RUNNING.value,
+            "resume_action": ProjectOperatorResumeAction.CONTINUE.value,
+        }
+    if normalized == "WAITING":
+        return {
+            "operator_state": ProjectOperatorWorkState.WAITING.value,
+            "resume_action": ProjectOperatorResumeAction.CONTINUE.value,
+        }
+    if normalized == "DONE":
+        return {
+            "operator_state": ProjectOperatorWorkState.COMPLETED.value,
+            "resume_action": ProjectOperatorResumeAction.NONE.value,
+        }
+    if normalized == "CANCELED":
+        return {
+            "operator_state": ProjectOperatorWorkState.CANCELLED.value,
+            "resume_action": ProjectOperatorResumeAction.NONE.value,
+        }
+    if normalized == "FAILED":
+        return {
+            "operator_state": ProjectOperatorWorkState.FAILED.value,
+            "resume_action": ProjectOperatorResumeAction.NONE.value,
+        }
+    return {
+        "operator_state": ProjectOperatorWorkState.BLOCKED.value,
+        "resume_action": ProjectOperatorResumeAction.INSPECT_BLOCKER.value,
+    }
 
 
 def _pending_actions_index(

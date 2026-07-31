@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from .project_models import ProjectControlResult, ProjectRun
+from .models import ProjectControlResult, ProjectRun
+from .operator import ProjectOperatorInboxItem
 
 
 def render_project_run_summary(project_run: ProjectRun) -> str:
@@ -41,7 +42,28 @@ def render_project_control_result(result: ProjectControlResult) -> str:
     return "\n".join(lines)
 
 
+def render_project_operator_inbox_item(item: ProjectOperatorInboxItem) -> str:
+    lines = [
+        f"task_id: {item.task_id}",
+        f"state: {item.state.value}",
+        f"resume_action: {item.resume_action.value}",
+        f"project_run_id: {item.project_run_id or '-'}",
+        f"goal_id: {item.goal_id or '-'}",
+        f"checkpoint: {item.last_checkpoint_id or '-'}",
+    ]
+    if item.current_step_ref:
+        lines.append(f"current_step: {item.current_step_ref}")
+    if item.blocker:
+        lines.append(f"blocker: {item.blocker}")
+    if item.resume_hint:
+        lines.append(f"resume_hint: {item.resume_hint}")
+    if item.artifact_refs:
+        lines.append(f"artifacts: {', '.join(item.artifact_refs)}")
+    return "\n".join(lines)
+
+
 __all__ = [
     "render_project_control_result",
+    "render_project_operator_inbox_item",
     "render_project_run_summary",
 ]

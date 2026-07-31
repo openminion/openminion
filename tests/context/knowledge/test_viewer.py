@@ -19,9 +19,11 @@ from openminion.modules.context.knowledge import (
 )
 from openminion.modules.context.knowledge.viewer import (
     GraphViewerRequest,
-    OpenMinionMemoryGraphFakosProvider,
     inspect_graph_viewer_status,
     launch_graph_viewer,
+)
+from openminion.modules.context.knowledge.viewer_memory import (
+    OpenMinionMemoryGraphFakosProvider,
 )
 from openminion.modules.memory.models import MemoryRecord, MemoryRelation
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
@@ -342,6 +344,34 @@ def test_second_brain_current_shortcut_filters_agent_and_session_scopes(
     ]
 
 
+def test_current_memory_empty_state_does_not_seed_sample_data(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_graphfakos(monkeypatch)
+
+    result = launch_graph_viewer(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(current=True, dry_run=True),
+    )
+
+    assert result.diagnostics["node_count"] == 0
+    assert result.diagnostics["empty_state"] == {
+        "code": "current_memory_empty",
+        "message": (
+            "No second-brain memory records matched this view. "
+            "No sample data was written."
+        ),
+        "next_commands": [
+            "openminion graph status",
+            "openminion graph view --current --dry-run --json",
+        ],
+        "scope_filter": [],
+    }
+    assert "did not write sample data" in result.diagnostics["warnings"][0]
+
+
 def test_viewer_request_exposes_graphfakos_navigation_filters(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -590,6 +620,12 @@ def test_missing_graphfakos_reports_viewer_extra(
         "extra": "viewer",
         "suggested_command": "python -m pip install 'openminion[viewer]'",
     }
+
+
+def test_memory_viewer_provider_is_not_top_level_public_export() -> None:
+    import openminion.modules.context.knowledge as knowledge
+
+    assert "OpenMinionMemoryGraphFakosProvider" not in knowledge.__all__
 
 
 def test_openminion_graph_view_parser_registration() -> None:

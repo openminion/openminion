@@ -111,7 +111,10 @@ class OpenMinionMemoryGraphFakosProvider:
             ),
             warnings=()
             if records
-            else (f"No memory records found in {self._db_path}.",),
+            else (
+                "No second-brain memory records matched this view. "
+                "The viewer did not write sample data.",
+            ),
             stats={
                 "db_path": str(self._db_path),
                 "records": len(records),

@@ -26,9 +26,14 @@ if str(OPENMINION_SRC) not in sys.path:
     sys.path.insert(0, str(OPENMINION_SRC))
 
 from openminion.base.generated_paths import resolve_generated_root  # noqa: E402
+from openminion.base.constants import (  # noqa: E402
+    OPENMINION_DATA_ROOT_ENV,
+    OPENMINION_GENERATED_ROOT_ENV,
+)
 
 AUTO_CONFIRM_LIMIT_ENV = "OPENMINION_LIVE_CLI_CHAT_AUTO_CONFIRM_LIMIT"
 AUTO_CONFIRM_LIMIT_DEFAULT = 32
+RUNNER_OWNED_COMMANDS = {"/debug", "/exit"}
 
 
 def _open_probe_pty() -> tuple[int, int]:
@@ -85,6 +90,7 @@ CHAOS_CONVERSATION = (
 )
 DEFAULT_MODELS = {
     "echo": ["echo"],
+    "minimax": ["MiniMax-M2.7"],
     "openai": ["gpt-4.1-mini"],
     "anthropic": ["claude-3-5-sonnet-latest"],
     "openrouter": ["openai/gpt-4.1-mini"],
@@ -95,6 +101,7 @@ DEFAULT_MODELS = {
 }
 
 API_KEY_ENVS = {
+    "minimax": "MINIMAX_API_KEY",
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
@@ -105,19 +112,23 @@ API_KEY_ENVS = {
 
 PROVIDER_CONFIG_KEY = {
     "claude": "anthropic",
+    "minimax": "openai",
+}
+PROVIDER_BASE_URLS = {
+    "minimax": "https://api.minimax.io/v1",
 }
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _READY_PROMPT_RE = re.compile(r"(?:^|\n)(?:\[[^\]\n]+\]\s+you>|\u276f)\s*$")
 _CONFIRMATION_REQUIRED_RE = re.compile(r"Policy confirmation required\.", re.IGNORECASE)
-_KNOWN_FAILURE_RE = re.compile(
-    r"General act work ended without the required typed "
-    r"finalization_status contract|Adaptive loop stopped unexpectedly\.",
+_INLINE_APPROVAL_RE = re.compile(
+    r"(?:Approval required:[^\n]*\n)?\[y\]es / \[N\]o / \[a\]lways:\s*",
     re.IGNORECASE,
 )
-_CONFIRMING_MESSAGE_RE = re.compile(
-    r"\b(write_file|tool write_file|write to file|create file|save to file|"
-    r"write file|run_command|tool run_command|run command|execute command|"
-    r"\bshell\b|^pwd$|^ls\b|^dir\b)\b",
+_TURN_DONE_RE = re.compile(r"(?:^|\n)Done in (?:\d+m)?\d+s\s*(?:\n|$)")
+_KNOWN_FAILURE_RE = re.compile(
+    r"General act work ended without the required typed "
+    r"finalization_status contract|Adaptive loop stopped unexpectedly\.|"
+    r"Denied by policy:|path escapes workspace root:",
     re.IGNORECASE,
 )
 
@@ -132,6 +143,10 @@ def _default_log_root() -> Path:
 
 def _default_config_root() -> Path:
     return _default_artifacts_root() / "chat-configs"
+
+
+def _default_work_root() -> Path:
+    return _default_artifacts_root() / "chat-workdirs"
 
 
 @dataclass
@@ -185,6 +200,65 @@ def _ready_prompt_detected(text: str) -> bool:
     return bool(_READY_PROMPT_RE.search(_normalize_text(text)))
 
 
+def _prompt_return_after_response_detected(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not _ready_prompt_detected(normalized):
+        return False
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    if not lines:
+        return False
+    response_lines = [
+        line
+        for line in lines[:-1]
+        if not re.match(r"^(?:\[[^\]\n]+\]\s+you>|\u276f)(?:\s+.*)?$", line)
+    ]
+    return bool(response_lines)
+
+
+def _inline_approval_detected(text: str) -> bool:
+    return bool(_INLINE_APPROVAL_RE.search(_normalize_text(text)))
+
+
+def _text_delta(previous: str, current: str) -> str:
+    normalized_current = _normalize_text(current)
+    normalized_previous = _normalize_text(previous)
+    if normalized_current.startswith(normalized_previous):
+        return normalized_current[len(normalized_previous) :]
+    return normalized_current
+
+
+def _turn_response_boundary_detected_since(
+    previous: str, current: str, *, require_turn_done: bool
+) -> bool:
+    delta = _text_delta(previous, current)
+    if not delta:
+        return False
+    if "Queued messages" in delta:
+        return False
+    if _inline_approval_detected(delta):
+        return True
+    if _CONFIRMATION_REQUIRED_RE.search(delta) and _ready_prompt_detected(delta):
+        return True
+    if require_turn_done:
+        return bool(_TURN_DONE_RE.search(delta))
+    if _ready_prompt_detected(delta):
+        return True
+    return bool(_TURN_DONE_RE.search(delta)) or _prompt_return_after_response_detected(
+        delta
+    )
+
+
+def _turn_response_or_confirmation_prompt_detected(
+    previous: str, *, require_turn_done: bool
+):
+    def predicate(current: str) -> bool:
+        return _turn_response_boundary_detected_since(
+            previous, current, require_turn_done=require_turn_done
+        ) or _latest_prompt_requires_confirmation(previous, current)
+
+    return predicate
+
+
 def _transcript_has_known_failure(text: str) -> bool:
     normalized = _normalize_text(text)
     if "[chat] turn failed" in normalized.lower():
@@ -193,21 +267,21 @@ def _transcript_has_known_failure(text: str) -> bool:
 
 
 def _latest_prompt_requires_confirmation(previous: str, current: str) -> bool:
-    delta = current[len(previous) :] if current.startswith(previous) else current
-    normalized_delta = _normalize_text(delta)
-    if not normalized_delta:
+    delta = _text_delta(previous, current)
+    if not delta:
         return False
     return bool(
-        _CONFIRMATION_REQUIRED_RE.search(normalized_delta)
-        and _ready_prompt_detected(normalized_delta)
+        (_CONFIRMATION_REQUIRED_RE.search(delta) and _ready_prompt_detected(delta))
+        or _inline_approval_detected(delta)
     )
 
 
-def _read_until_prompt(
+def _read_until(
     *,
     master_fd: int,
     transcript: list[str],
     timeout_seconds: int,
+    predicate,
 ) -> str:
     deadline = time.monotonic() + max(1.0, float(timeout_seconds))
     combined = "".join(transcript)
@@ -227,9 +301,23 @@ def _read_until_prompt(
         text = chunk.decode("utf-8", errors="replace")
         transcript.append(text)
         combined += text
-        if _ready_prompt_detected(combined):
+        if predicate(combined):
             return combined
-    raise TimeoutError("prompt boundary not reached before timeout")
+    raise TimeoutError("expected terminal boundary not reached before timeout")
+
+
+def _read_until_prompt(
+    *,
+    master_fd: int,
+    transcript: list[str],
+    timeout_seconds: int,
+) -> str:
+    return _read_until(
+        master_fd=master_fd,
+        transcript=transcript,
+        timeout_seconds=timeout_seconds,
+        predicate=_ready_prompt_detected,
+    )
 
 
 def _resolve_providers() -> list[str]:
@@ -310,12 +398,12 @@ def _is_provider_available(provider: str) -> tuple[bool, str]:
 
 
 def _build_conversation(
-    template_path: Path, workdir: Path, *, skip_network: bool
+    template_path: Path, _workdir: Path, *, skip_network: bool
 ) -> str:
     text = template_path.read_text(encoding="utf-8")
     lines = []
     for raw_line in text.splitlines():
-        line = raw_line.replace("{{WORKDIR}}", str(workdir))
+        line = raw_line.replace("{{WORKDIR}}", ".")
         if skip_network:
             lowered = line.lower()
             if "fetch http" in lowered or "https://" in lowered:
@@ -332,10 +420,28 @@ def _conversation_messages(conversation: str) -> list[str]:
         line = raw_line.strip()
         if not line:
             continue
+        if line.lower() in RUNNER_OWNED_COMMANDS:
+            continue
         messages.append(line)
-        if _CONFIRMING_MESSAGE_RE.search(line):
-            messages.append("yes")
     return messages
+
+
+def _conversation_workdir(
+    *, work_root: Path, provider: str, model: str, scenario: str
+) -> Path:
+    return work_root / _slug(provider) / _slug(model) / _slug(scenario)
+
+
+def _scenario_data_root_parent(log_root: Path) -> Path:
+    return log_root.parent / "data-roots"
+
+
+def _chat_subprocess_env(*, data_root: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(OPENMINION_DIR / "src")
+    env[OPENMINION_DATA_ROOT_ENV] = str(data_root)
+    env[OPENMINION_GENERATED_ROOT_ENV] = str(data_root / "runtime")
+    return env
 
 
 def _resolve_conversations(
@@ -362,13 +468,22 @@ def _resolve_conversations(
     return resolved
 
 
-def _write_config(provider: str, model: str, config_path: Path) -> None:
+def _write_config(
+    provider: str, model: str, config_path: Path, *, agent_id: str
+) -> None:
     config: dict[str, object] = {
-        "agent": {
-            "name": f"e2e-{provider}",
-            "provider": provider,
+        "agents": {
+            agent_id: {
+                "default_channel": "console",
+                "name": agent_id,
+                "provider": PROVIDER_CONFIG_KEY.get(provider, provider),
+                "system_prompt": "You are OpenMinion, a pragmatic assistant.",
+            },
         },
+        "default_agent": agent_id,
+        "enabled_channels": ["console"],
         "runtime": {
+            "demo_mode": provider == "echo",
             "process_mode": "single-process",
         },
     }
@@ -377,10 +492,14 @@ def _write_config(provider: str, model: str, config_path: Path) -> None:
         providers_payload = config.setdefault("providers", {})
         if isinstance(providers_payload, dict):
             provider_payload: dict[str, object] = {"model": model}
-            api_key_env = os.getenv(_provider_override_env_name(provider), "").strip()
+            api_key_env = os.getenv(
+                _provider_override_env_name(provider), ""
+            ).strip() or API_KEY_ENVS.get(provider, "")
             if api_key_env:
                 provider_payload["api_key_env"] = api_key_env
-            base_url = os.getenv(_provider_override_base_url_name(provider), "").strip()
+            base_url = os.getenv(
+                _provider_override_base_url_name(provider), ""
+            ).strip() or PROVIDER_BASE_URLS.get(provider, "")
             if base_url:
                 provider_payload["base_url"] = base_url
             providers_payload[config_key] = provider_payload
@@ -395,14 +514,14 @@ def _run_chat(
     python_bin: Path,
     config_path: Path,
     data_root: Path,
+    workdir: Path,
     agent_id: str,
     session_id: str,
     conversation: str,
     log_path: Path,
     timeout_seconds: int,
 ) -> tuple[bool, str]:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(OPENMINION_DIR / "src")
+    env = _chat_subprocess_env(data_root=data_root)
 
     cmd = [
         str(python_bin),
@@ -418,6 +537,8 @@ def _run_chat(
         agent_id,
         "--session",
         session_id,
+        "--dir",
+        str(workdir),
         "--verbosity",
         "quiet",
         "--progress",
@@ -438,6 +559,7 @@ def _run_chat(
     transcript: list[str] = []
     timeout_reason = ""
     return_code = 0
+    has_ready = False
     try:
         try:
             _read_until_prompt(
@@ -445,17 +567,23 @@ def _run_chat(
                 transcript=transcript,
                 timeout_seconds=timeout_seconds,
             )
+            has_ready = True
         except TimeoutError:
             timeout_reason = f"startup_timeout={timeout_seconds}"
         if not timeout_reason:
             for raw_message in _conversation_messages(conversation):
                 previous_combined = "".join(transcript)
                 os.write(master_fd, (raw_message + "\n").encode("utf-8"))
+                require_turn_done = not raw_message.lstrip().startswith("/")
                 try:
-                    combined = _read_until_prompt(
+                    combined = _read_until(
                         master_fd=master_fd,
                         transcript=transcript,
                         timeout_seconds=timeout_seconds,
+                        predicate=_turn_response_or_confirmation_prompt_detected(
+                            previous_combined,
+                            require_turn_done=require_turn_done,
+                        ),
                     )
                 except TimeoutError:
                     timeout_reason = f"turn_timeout={timeout_seconds}"
@@ -470,10 +598,14 @@ def _run_chat(
                     previous_combined = combined
                     os.write(master_fd, b"yes\n")
                     try:
-                        combined = _read_until_prompt(
+                        combined = _read_until(
                             master_fd=master_fd,
                             transcript=transcript,
                             timeout_seconds=timeout_seconds,
+                            predicate=_turn_response_or_confirmation_prompt_detected(
+                                previous_combined,
+                                require_turn_done=require_turn_done,
+                            ),
                         )
                     except TimeoutError:
                         timeout_reason = f"confirmation_timeout={timeout_seconds}"
@@ -495,6 +627,10 @@ def _run_chat(
                 proc.wait(timeout=5)
         return_code = int(proc.returncode or 0)
     finally:
+        combined = "".join(transcript)
+        if combined:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(combined, encoding="utf-8")
         try:
             os.close(master_fd)
         except OSError:
@@ -503,11 +639,9 @@ def _run_chat(
             proc.kill()
             proc.wait(timeout=5)
 
-    combined = "".join(transcript)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(combined, encoding="utf-8")
 
-    has_ready = "chat ready" in combined
     known_failure = _transcript_has_known_failure(combined)
     ok = return_code == 0 and has_ready and not timeout_reason and not known_failure
     reason_parts = [
@@ -550,11 +684,12 @@ def main(argv: Iterable[str] | None = None) -> int:
         action="store_true",
         help="Include chaos tool calling template",
     )
+    parser.add_argument("--log-root", default="", help="Log output root")
+    parser.add_argument("--config-root", default="", help="Config output root")
     parser.add_argument(
-        "--log-root", default=str(_default_log_root()), help="Log output root"
-    )
-    parser.add_argument(
-        "--config-root", default=str(_default_config_root()), help="Config output root"
+        "--work-root",
+        default="",
+        help="Scenario work directory root for in-chat file/tool operations.",
     )
     parser.add_argument(
         "--session-prefix", default="e2e-chat", help="Session id prefix"
@@ -585,8 +720,13 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     providers = _resolve_providers()
     results: list[RunResult] = []
-    log_root = Path(args.log_root)
-    config_root = Path(args.config_root)
+    log_root = Path(args.log_root or _default_log_root()).expanduser().resolve()
+    config_root = (
+        Path(args.config_root or _default_config_root()).expanduser().resolve()
+    )
+    work_root = Path(args.work_root or _default_work_root()).expanduser().resolve()
+    data_root_parent = _scenario_data_root_parent(log_root).expanduser().resolve()
+    data_root_parent.mkdir(parents=True, exist_ok=True)
 
     for provider in providers:
         available, reason = _is_provider_available(provider)
@@ -607,13 +747,17 @@ def main(argv: Iterable[str] | None = None) -> int:
         models = _resolve_models(provider)
         for model in models:
             for conversation_path in conversation_paths:
-                data_root = Path(tempfile.mkdtemp(prefix=f"openminion-e2e-{provider}-"))
-                workdir = (
-                    OPENMINION_DIR
-                    / ".e2e-work"
-                    / _slug(provider)
-                    / _slug(model)
-                    / _slug(conversation_path.stem)
+                data_root = Path(
+                    tempfile.mkdtemp(
+                        prefix=f"openminion-e2e-{provider}-",
+                        dir=data_root_parent,
+                    )
+                )
+                workdir = _conversation_workdir(
+                    work_root=work_root,
+                    provider=provider,
+                    model=model,
+                    scenario=conversation_path.stem,
                 )
                 workdir.mkdir(parents=True, exist_ok=True)
                 conversation = _build_conversation(
@@ -626,19 +770,19 @@ def main(argv: Iterable[str] | None = None) -> int:
                 override_config = os.getenv(
                     _provider_override_config_name(provider), ""
                 ).strip()
+                agent_id = (
+                    os.getenv(_provider_override_agent_name(provider), "").strip()
+                    or f"{args.agent_prefix}-{_slug(provider)}"
+                )
                 if override_config:
                     config_path = Path(override_config).expanduser().resolve()
                 else:
                     config_path = (
                         config_root / f"{_slug(provider)}--{_slug(model)}.json"
                     )
-                    _write_config(provider, model, config_path)
+                    _write_config(provider, model, config_path, agent_id=agent_id)
 
                 scenario = conversation_path.stem
-                agent_id = (
-                    os.getenv(_provider_override_agent_name(provider), "").strip()
-                    or f"{args.agent_prefix}-{_slug(provider)}"
-                )
                 session_id = f"{args.session_prefix}-{_slug(provider)}-{_slug(model)}-{_slug(scenario)}"
                 log_path = (
                     log_root
@@ -649,6 +793,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                     python_bin=Path(args.python_bin),
                     config_path=config_path,
                     data_root=data_root,
+                    workdir=workdir,
                     agent_id=agent_id,
                     session_id=session_id,
                     conversation=conversation,
@@ -692,3 +837,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print(json.dumps(summary, indent=2))
     return 0 if summary["failed"] == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

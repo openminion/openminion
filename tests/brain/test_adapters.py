@@ -647,7 +647,14 @@ class ToolAdapterTests(unittest.TestCase):
 
         class _DelegateSeam:
             def delegate(
-                self, *, agent_id, instruction, timeout_seconds, permission_mode="ask"
+                self,
+                *,
+                agent_id,
+                instruction,
+                timeout_seconds,
+                permission_mode="ask",
+                workspace_root="",
+                cwd="",
             ):
                 calls.append(
                     {
@@ -655,6 +662,8 @@ class ToolAdapterTests(unittest.TestCase):
                         "instruction": instruction,
                         "timeout_seconds": timeout_seconds,
                         "permission_mode": permission_mode,
+                        "workspace_root": workspace_root,
+                        "cwd": cwd,
                     }
                 )
                 return A2ADelegateResult(
@@ -699,6 +708,8 @@ class ToolAdapterTests(unittest.TestCase):
                     "instruction": "inspect",
                     "timeout_seconds": 45,
                     "permission_mode": "bypass",
+                    "workspace_root": tmp,
+                    "cwd": tmp,
                 }
             ],
         )

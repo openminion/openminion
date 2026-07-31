@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from openminion.base.types import AgentResponse, Message
-from openminion.extensions.base import Plugin, PluginContext
+from openminion.services.runtime.plugins import Plugin, PluginContext
 
 
 class HelloPlugin(Plugin):

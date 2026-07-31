@@ -25,6 +25,15 @@ class Suite:
 
 SUITES: dict[str, Suite] = {
     "local": Suite(("tests/e2e/cli/focus/test_local.py",)),
+    "onboarding": Suite(
+        ("tests/e2e/cli/focus/test_onboarding.py",),
+        ("-k", "not live_provider"),
+    ),
+    "onboarding-live": Suite(
+        ("tests/e2e/cli/focus/test_onboarding.py",),
+        ("-k", "live_provider"),
+        live=True,
+    ),
     "matrix": Suite(("tests/e2e/cli/focus/test_deep_smoke_matrix.py",)),
     "adversarial-local": Suite(
         (

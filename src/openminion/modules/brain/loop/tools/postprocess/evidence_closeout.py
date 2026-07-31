@@ -28,6 +28,14 @@ _MUTATING_FILE_REQUEST_PATTERNS = (
     "run a focused check",
     "use file tools for files",
 )
+_VALIDATION_REQUEST_PATTERNS = (
+    "direct exec.run commands for checks",
+    "focused check",
+    "focused validation",
+    "run exactly",
+    "run validation",
+    "validation result",
+)
 
 
 def requested_closeout_markers(loop_state: Any) -> tuple[str, ...]:
@@ -56,6 +64,14 @@ def requested_closeout_markers(loop_state: Any) -> tuple[str, ...]:
     )
     for match in re.finditer(r"exact label\s+`([^`]+)`", combined, re.IGNORECASE):
         token = match.group(1).strip().rstrip(":").lower()
+        if token:
+            markers.append(token)
+    for match in re.finditer(
+        r"exact label\s+([A-Za-z][A-Za-z0-9 _-]*):",
+        combined,
+        re.IGNORECASE,
+    ):
+        token = match.group(1).strip().lower()
         if token:
             markers.append(token)
     if "validation result" in lowered:
@@ -116,6 +132,29 @@ def _user_requested_file_mutation(loop_state: Any) -> bool:
         if str(getattr(message, "role", "") or "").strip().lower() == "user"
     ).lower()
     return any(pattern in user_text for pattern in _MUTATING_FILE_REQUEST_PATTERNS)
+
+
+def _user_requested_validation(loop_state: Any) -> bool:
+    user_text = "\n".join(
+        str(getattr(message, "content", "") or "")
+        for message in list(getattr(loop_state, "messages", []) or [])
+        if str(getattr(message, "role", "") or "").strip().lower() == "user"
+    ).lower()
+    return any(pattern in user_text for pattern in _VALIDATION_REQUEST_PATTERNS)
+
+
+def _has_successful_exec_run(tool_results: list[dict[str, Any]]) -> bool:
+    return any(
+        bool(item.get("ok"))
+        and str(item.get("tool_name") or "").strip().lower() == "exec.run"
+        for item in tool_results
+    )
+
+
+def requested_validation_without_exec_run(loop_state: Any) -> bool:
+    return _user_requested_validation(loop_state) and not _has_successful_exec_run(
+        _successful_substantive_tool_results(loop_state)
+    )
 
 
 def _tool_evidence_lines(tool_results: list[dict[str, Any]]) -> list[str]:

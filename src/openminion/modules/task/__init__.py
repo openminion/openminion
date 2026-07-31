@@ -58,7 +58,7 @@ from .project import (
     save_project_policy_state,
     save_project_run_checkpoint,
 )
-from .project_capabilities import (
+from .project.capabilities import (
     DOMAIN_WORKFLOW_REF,
     GAP_ASSESSMENT_REF,
     ProjectCapabilityArea,
@@ -70,7 +70,7 @@ from .project_capabilities import (
     capability_rows_requiring_resolution,
     render_project_capability_matrix,
 )
-from .project_reports import (
+from .project.reports import (
     ProjectMetricComparison,
     ProjectMetricSnapshot,
     ProjectOutcomeClassification,

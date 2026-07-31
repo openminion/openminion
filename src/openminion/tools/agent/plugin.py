@@ -347,6 +347,8 @@ def _h_task_delegate(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any
             "instruction": validated.instruction,
             "timeout_seconds": int(validated.timeout_seconds),
             "permission_mode": str(getattr(ctx, "permission_mode", "ask") or "ask"),
+            "workspace_root": str(getattr(ctx, "workspace", "") or "").strip(),
+            "cwd": str(getattr(ctx, "workspace", "") or "").strip(),
         }
         if validated.mode != "sync":
             delegate_kwargs["mode"] = validated.mode

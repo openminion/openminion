@@ -10,7 +10,7 @@ from openminion.modules.task.project import (
     ProjectVerificationState,
     load_latest_project_checkpoint,
 )
-from openminion.modules.task.project_capabilities import ProjectCapabilityMatrix
+from openminion.modules.task.project.capabilities import ProjectCapabilityMatrix
 from openminion.modules.task.runtime.lifecycle import TaskManager
 
 

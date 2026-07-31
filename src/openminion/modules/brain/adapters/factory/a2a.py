@@ -13,6 +13,7 @@ def create_a2a_adapter(
     agent_id: str | None = None,
     env: Any = None,
     runtime_resolver: Any = None,
+    approval_callback: Any | None = None,
 ) -> Any:
     from openminion.modules.brain.adapters.a2a import LocalA2AAdapter
 
@@ -28,6 +29,7 @@ def create_a2a_adapter(
             agent_id=agent_id,
             env=env,
             runtime_resolver=runtime_resolver,
+            approval_callback=approval_callback,
         )
     except ImportError:
         raise_if_strict(mode)

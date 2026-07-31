@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from openminion.cli.main import main as cli_main
+from openminion.base.config.env import EnvironmentConfig
+from openminion.base.constants import (
+    OPENMINION_DATA_ROOT_ENV,
+    OPENMINION_GENERATED_ROOT_ENV,
+    OPENMINION_HOME_ENV,
+)
+from openminion.base.generated_paths import resolve_generated_root
+from openminion.cli.main import _prepare_runtime_roots, main as cli_main
 
 
 # ── No-subcommand: configured + TTY → focus ─────────────────────────
@@ -117,6 +125,36 @@ def test_no_subcommand_forwards_canonical_interactive_options(monkeypatch) -> No
     assert interactive_args.no_context is True
     assert interactive_args.no_update_check is True
     assert interactive_args.verbosity == "quiet"
+
+
+def test_cli_data_root_flag_overrides_inherited_runtime_root_env(
+    monkeypatch, tmp_path: Path
+) -> None:
+    inherited_home = tmp_path / "inherited-home"
+    inherited_data = tmp_path / "inherited-data"
+    stale_generated = tmp_path / "stale-generated"
+    explicit_data = tmp_path / "scenario-data"
+    monkeypatch.setenv(OPENMINION_HOME_ENV, str(inherited_home))
+    monkeypatch.setenv(OPENMINION_DATA_ROOT_ENV, str(inherited_data))
+    monkeypatch.setenv(OPENMINION_GENERATED_ROOT_ENV, str(stale_generated))
+
+    env_config = EnvironmentConfig.from_sources()
+    args = SimpleNamespace(
+        home_root=None,
+        data_root=str(explicit_data),
+        generated_root=None,
+    )
+
+    _prepare_runtime_roots(args, env_config)
+
+    assert os.environ[OPENMINION_DATA_ROOT_ENV] == str(explicit_data)
+    assert os.environ[OPENMINION_GENERATED_ROOT_ENV] == str(
+        (explicit_data / "runtime").resolve()
+    )
+    assert (
+        resolve_generated_root(home_root=inherited_home)
+        == (explicit_data / "runtime").resolve()
+    )
 
 
 def test_no_subcommand_demo_requests_demo_onboarding(monkeypatch) -> None:

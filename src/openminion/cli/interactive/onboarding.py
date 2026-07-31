@@ -131,7 +131,13 @@ class OnboardingWizardScreen(Screen):
         from openminion.base.config import (
             AgentProfileConfig,
             OpenMinionConfig,
-            save_config,
+        )
+        from openminion.services.bootstrap.provider_setup import (
+            ProviderSetupError,
+            ProviderSetupRequest,
+            atomic_save_setup_config,
+            build_provider_setup,
+            save_provider_setup,
         )
 
         config_path = Path(
@@ -149,19 +155,31 @@ class OnboardingWizardScreen(Screen):
             or self._agent_id
         )
 
+        if provider != "echo":
+            try:
+                result = build_provider_setup(
+                    ProviderSetupRequest(
+                        preset_id=provider,
+                        agent_id=agent_id,
+                        model=model,
+                        config_path=str(config_path),
+                        home_root=self._home_root,
+                        data_root=self._data_root,
+                    )
+                )
+                saved_path = save_provider_setup(result)
+            except ProviderSetupError as exc:
+                self.app.exit(result=f"setup failed: {exc}")
+                return
+            self.app.exit(result=str(saved_path))
+            return
+
         config = OpenMinionConfig()
-        config.runtime.demo_mode = provider == "echo"
+        config.runtime.demo_mode = True
         config.storage.path = str(
             (self._data_root / "state" / "openminion.db").resolve(strict=False)
         )
-        if provider == "openai":
-            config.providers.openai.model = model
-        elif provider == "anthropic":
-            config.providers.anthropic.model = model
-        elif provider == "openrouter":
-            config.providers.openrouter.model = model
-        elif provider == "ollama":
-            config.providers.ollama.model = model
         config.agents = {agent_id: AgentProfileConfig(name=agent_id, provider=provider)}
-        saved_path = save_config(config, str(config_path), home_root=self._home_root)
+        config.default_agent = agent_id
+        saved_path = atomic_save_setup_config(config, config_path)
         self.app.exit(result=str(saved_path))

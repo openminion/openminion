@@ -51,6 +51,8 @@ def test_command_shape_carries_model_named_target_and_instruction() -> None:
         instruction="find X",
         timeout_seconds=30,
         permission_mode="bypass",
+        workspace_root="/repo",
+        cwd="/repo/subdir",
     )
 
     assert call.command is not None
@@ -61,6 +63,8 @@ def test_command_shape_carries_model_named_target_and_instruction() -> None:
     assert call.command["params"]["instruction"] == "find X"
     assert call.command["params"]["timeout_seconds"] == 30
     assert call.command["params"]["permission_mode"] == "bypass"
+    assert call.command["params"]["workspace_root"] == "/repo"
+    assert call.command["params"]["cwd"] == "/repo/subdir"
     assert call.command["timeout_ms"] == 30_000
     # Deterministic idempotency key (replay-safe across identical retries).
     assert call.command["idempotency_key"].startswith("task-delegate:")

@@ -17,6 +17,10 @@ from typing import Callable
 import pyte
 
 
+def bracketed_paste_payload(text: str) -> str:
+    return f"\x1b[200~{text}\x1b[201~"
+
+
 @dataclass(slots=True)
 class _ForkProcess:
     pid: int
@@ -114,6 +118,9 @@ class PtySession:
             if written <= 0:
                 raise RuntimeError("PTY write failed")
             data = data[written:]
+
+    def send_bracketed_paste(self, text: str) -> None:
+        self.send(bracketed_paste_payload(text))
 
     def type_line(self, text: str) -> None:
         self.send(text)

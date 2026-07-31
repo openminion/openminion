@@ -3,8 +3,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from openminion.modules.brain.loop.tools import AdaptiveToolLoopState
+from openminion.modules.brain.loop.tools.no_tool import (
+    _tool_attempt_evidence_closeout_text,
+)
 from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
     mutating_file_evidence_fallback_text,
+    requested_validation_without_exec_run,
     tool_evidence_closeout_text,
 )
 from openminion.modules.brain.loop.tools.postprocess.loop import (
@@ -72,6 +76,39 @@ def test_mutating_file_fallback_preserves_requested_result_marker() -> None:
                     "ok": True,
                     "content": "wrote module.py",
                     "data": {"path": "module.py"},
+                },
+                {
+                    "tool_name": "exec.run",
+                    "ok": True,
+                    "content": "1 passed",
+                    "data": {"stdout": "1 passed"},
+                },
+            ]
+        },
+    )
+
+    text = mutating_file_evidence_fallback_text(state)
+
+    assert "result:" in text
+    assert "files changed: module.py" in text
+    assert "validation:" in text
+
+
+def test_exact_label_without_backticks_is_preserved() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content="Finish with exact label result: and list changed files.",
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote module.py",
+                    "data": {"path": "module.py"},
                 }
             ]
         },
@@ -81,6 +118,81 @@ def test_mutating_file_fallback_preserves_requested_result_marker() -> None:
 
     assert "result:" in text
     assert "files changed: module.py" in text
+
+
+def test_validation_request_returns_truthful_file_write_fallback() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Use file.write for files, run exactly pytest with exec.run, "
+                    "and finish with exact label result: plus validation result."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote module.py",
+                    "data": {"path": "module.py"},
+                }
+            ]
+        },
+    )
+
+    assert requested_validation_without_exec_run(state) is True
+    mutating_text = mutating_file_evidence_fallback_text(state)
+    tool_text = tool_evidence_closeout_text(state, reason="tool budget exhausted.")
+    attempt_text = _tool_attempt_evidence_closeout_text(
+        state,
+        reason="tool budget exhausted.",
+    )
+
+    assert "result:" in mutating_text
+    assert "files changed: module.py" in mutating_text
+    assert "validation: deterministic validation was not captured" in mutating_text
+    assert "result:" in tool_text
+    assert "validation: deterministic validation was not captured" in tool_text
+    assert "result:" in attempt_text
+    assert "validation: no successful validation evidence was captured" in attempt_text
+
+
+def test_validation_request_allows_fallback_with_exec_run_evidence() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Use file.write for files, run exactly pytest with exec.run, "
+                    "and finish with exact label result: plus validation result."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote module.py",
+                    "data": {"path": "module.py"},
+                },
+                {
+                    "tool_name": "exec.run",
+                    "ok": True,
+                    "content": "1 passed",
+                    "data": {"stdout": "1 passed"},
+                },
+            ]
+        },
+    )
+
+    text = mutating_file_evidence_fallback_text(state)
+
+    assert requested_validation_without_exec_run(state) is False
+    assert "result:" in text
     assert "validation:" in text
 
 

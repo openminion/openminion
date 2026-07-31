@@ -8,8 +8,10 @@ from openminion.cli.presentation.visible_parity import (
     render_context_report,
     render_memory_report,
     render_skills_report,
+    render_tasks_report,
     statusline_label,
 )
+from openminion.modules.task.runtime.lifecycle import TaskManager
 
 
 class _Runtime:
@@ -73,6 +75,28 @@ def test_render_skills_report_uses_runtime_rows() -> None:
     assert "reviewer" in body
     assert "config" in body
     assert "120 tokens" in body
+
+
+def test_render_tasks_report_includes_operator_state_and_resume_action(
+    tmp_path,
+) -> None:
+    manager = TaskManager.for_lifecycle_db(db_path=tmp_path / "tasks.db")
+    manager.create_task(
+        session_id="session-1",
+        mode_name="project",
+        goal="ship durable work",
+        agent_id="agent-1",
+        task_id="task-1",
+    )
+
+    runtime = type("Runtime", (), {"task_manager": manager})()
+    inventory_body = render_tasks_report(runtime)
+    detail_body = render_tasks_report(runtime, "task-1")
+
+    assert "operator=running" in inventory_body
+    assert "resume=continue" in inventory_body
+    assert "operator_state: running" in detail_body
+    assert "resume_action: continue" in detail_body
 
 
 def test_effort_and_statusline_handlers_delegate_to_runtime() -> None:

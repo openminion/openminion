@@ -20,7 +20,7 @@ This file tracks package-facing release notes for `openminion`.
 
 ## 0.0.1 - 2026-06-23
 
-### Initial public alpha release
+### Initial public preview release
 
 - Added package-local public docs and release-readiness references.
 - Hardened first-run CLI behavior for `verify smoke` and default config output.
@@ -32,5 +32,5 @@ This file tracks package-facing release notes for `openminion`.
 
 ### Notes
 
-- The project is still in alpha.
+- The project is still in public preview and under active development.
 - This entry establishes the initial public `0.0.1` package line.

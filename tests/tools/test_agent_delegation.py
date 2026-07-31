@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -338,7 +339,10 @@ def test_task_delegate_seam_unavailable_returns_typed_error() -> None:
 
 def _ctx_with_seam(seam: Any) -> SimpleNamespace:
     return SimpleNamespace(
-        policy=SimpleNamespace(raw={}), env={}, a2a_delegate_api=seam
+        policy=SimpleNamespace(raw={}),
+        env={},
+        a2a_delegate_api=seam,
+        workspace=Path("/workspace"),
     )
 
 
@@ -349,13 +353,22 @@ def test_task_delegate_happy_path_maps_seam_result() -> None:
 
     class _Seam:
         def delegate(
-            self, *, agent_id, instruction, timeout_seconds, permission_mode="ask"
+            self,
+            *,
+            agent_id,
+            instruction,
+            timeout_seconds,
+            permission_mode="ask",
+            workspace_root="",
+            cwd="",
         ):
             calls.update(
                 agent_id=agent_id,
                 instruction=instruction,
                 timeout_seconds=timeout_seconds,
                 permission_mode=permission_mode,
+                workspace_root=workspace_root,
+                cwd=cwd,
             )
             return A2ADelegateResult(
                 ok=True,
@@ -383,6 +396,8 @@ def test_task_delegate_happy_path_maps_seam_result() -> None:
         "instruction": "ship it",
         "timeout_seconds": 45,
         "permission_mode": "ask",
+        "workspace_root": "/workspace",
+        "cwd": "/workspace",
     }
 
 
@@ -400,6 +415,8 @@ def test_task_delegate_async_mode_returns_task_handle() -> None:
             timeout_seconds,
             mode="sync",
             permission_mode="ask",
+            workspace_root="",
+            cwd="",
         ):
             calls.update(
                 agent_id=agent_id,
@@ -407,6 +424,8 @@ def test_task_delegate_async_mode_returns_task_handle() -> None:
                 timeout_seconds=timeout_seconds,
                 mode=mode,
                 permission_mode=permission_mode,
+                workspace_root=workspace_root,
+                cwd=cwd,
             )
             return A2ADelegateResult(
                 ok=True,
@@ -436,6 +455,8 @@ def test_task_delegate_async_mode_returns_task_handle() -> None:
         "timeout_seconds": 45,
         "mode": "async",
         "permission_mode": "ask",
+        "workspace_root": "/workspace",
+        "cwd": "/workspace",
     }
 
 
@@ -540,7 +561,14 @@ def test_task_delegate_unknown_target_maps_not_found() -> None:
 
     class _Seam:
         def delegate(
-            self, *, agent_id, instruction, timeout_seconds, permission_mode="ask"
+            self,
+            *,
+            agent_id,
+            instruction,
+            timeout_seconds,
+            permission_mode="ask",
+            workspace_root="",
+            cwd="",
         ):
             return A2ADelegateResult(
                 ok=False,
@@ -567,7 +595,14 @@ def test_task_delegate_failure_maps_upstream_error() -> None:
 
     class _Seam:
         def delegate(
-            self, *, agent_id, instruction, timeout_seconds, permission_mode="ask"
+            self,
+            *,
+            agent_id,
+            instruction,
+            timeout_seconds,
+            permission_mode="ask",
+            workspace_root="",
+            cwd="",
         ):
             return A2ADelegateResult(
                 ok=False,

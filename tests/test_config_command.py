@@ -13,6 +13,7 @@ from pathlib import Path
 import io
 import yaml
 
+from openminion.base.config import AgentProfileConfig, OpenMinionConfig, save_config
 from openminion.cli.commands import data as data_module
 from openminion.cli.commands.config import (
     config_export,
@@ -21,6 +22,7 @@ from openminion.cli.commands.config import (
     config_show,
 )
 from openminion.cli.commands.setup import run_setup
+from openminion.cli.parser.base import build_parser
 
 
 class ConfigCommandTests(unittest.TestCase):
@@ -147,9 +149,22 @@ class ConfigCommandTests(unittest.TestCase):
                 agent="ops-agent",
             )
 
-            with mock.patch(
-                "builtins.input",
-                side_effect=["1", "2", "anthropic-test-key"],
+            with (
+                mock.patch(
+                    "builtins.input",
+                    side_effect=[
+                        "1",
+                        "2",
+                        "claude-3-5-sonnet-latest",
+                        "y",
+                        "y",
+                        "n",
+                    ],
+                ),
+                mock.patch(
+                    "openminion.cli.commands.setup.getpass",
+                    return_value="anthropic-test-key",
+                ),
             ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
@@ -164,8 +179,9 @@ class ConfigCommandTests(unittest.TestCase):
                 payload["providers"]["anthropic"]["api_key"], "anthropic-test-key"
             )
             self.assertIn("Initialized onboarding config", buf.getvalue())
-            self.assertIn("Stored as a convenience in the config file.", buf.getvalue())
-            self.assertIn("it always wins over the config file value", buf.getvalue())
+            self.assertIn("Setup preview:", buf.getvalue())
+            self.assertIn("local config <redacted>", buf.getvalue())
+            self.assertNotIn("anthropic-test-key", buf.getvalue())
 
     def test_config_export_strips_secrets_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -342,6 +358,49 @@ class ConfigCommandTests(unittest.TestCase):
             )
             self.assertIn("openrouter", imported["providers"])
 
+    def test_config_import_force_replaces_instead_of_merging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            input_path = tmp_path / "portable.yaml"
+            target_path = tmp_path / "cfg" / "config.json"
+            existing = OpenMinionConfig()
+            existing.agents = {
+                "legacy": AgentProfileConfig(name="legacy", provider="openai")
+            }
+            existing.default_agent = "legacy"
+            existing.runtime.debug_enabled = True
+            save_config(existing, str(target_path), home_root=tmp_path)
+            input_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "agents": {
+                            "imported": {
+                                "name": "imported",
+                                "provider": "ollama",
+                            }
+                        },
+                        "default_agent": "imported",
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+
+            code = config_import(
+                Namespace(
+                    config=str(target_path),
+                    input=str(input_path),
+                    input_flag="",
+                    force=True,
+                    home_root=str(tmp_path),
+                    data_root=str(tmp_path / ".openminion"),
+                )
+            )
+
+            self.assertEqual(code, 0)
+            imported = json.loads(target_path.read_text(encoding="utf-8"))
+            self.assertEqual(set(imported["agents"]), {"imported"})
+
     def test_setup_wizard_writes_ollama_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -356,7 +415,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             with mock.patch(
                 "builtins.input",
-                side_effect=["2", "qwen2.5:14b", "http://localhost:11434"],
+                side_effect=["2", "qwen2.5:14b", "http://localhost:11434", "y"],
             ):
                 code = run_setup(args)
 
@@ -369,10 +428,33 @@ class ConfigCommandTests(unittest.TestCase):
                 payload["providers"]["ollama"]["base_url"], "http://localhost:11434"
             )
 
-    def test_setup_wizard_writes_demo_config(self) -> None:
+    def test_setup_wizard_imports_existing_openminion_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             config_path = tmp_path / "cfg" / "config.json"
+            import_path = tmp_path / "portable.yaml"
+            import_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "agents": {
+                            "imported-agent": {
+                                "name": "imported-agent",
+                                "provider": "ollama",
+                            }
+                        },
+                        "default_agent": "imported-agent",
+                        "providers": {
+                            "ollama": {
+                                "model": "qwen2.5:14b",
+                                "base_url": "http://127.0.0.1:11434",
+                            }
+                        },
+                        "runtime": {"demo_mode": False},
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
             args = Namespace(
                 config=str(config_path),
                 home_root=str(tmp_path),
@@ -381,13 +463,28 @@ class ConfigCommandTests(unittest.TestCase):
                 agent="ops-agent",
             )
 
-            with mock.patch("builtins.input", side_effect=["3"]):
-                code = run_setup(args)
+            with (
+                mock.patch(
+                    "builtins.input",
+                    side_effect=["3", str(import_path), "y"],
+                ),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_doctor",
+                    return_value=0,
+                ),
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
 
             self.assertEqual(code, 0)
             payload = json.loads(config_path.read_text(encoding="utf-8"))
-            self.assertEqual(payload["agents"]["ops-agent"]["provider"], "echo")
-            self.assertTrue(payload["runtime"]["demo_mode"])
+            self.assertEqual(payload["default_agent"], "imported-agent")
+            self.assertEqual(payload["agents"]["imported-agent"]["provider"], "ollama")
+            self.assertFalse(payload["runtime"]["demo_mode"])
+            self.assertIn("Import an existing OpenMinion config", buf.getvalue())
+            self.assertNotIn("Demo Mode", buf.getvalue())
+            self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
 
     def test_setup_wizard_reprompts_after_invalid_top_level_selection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -401,7 +498,10 @@ class ConfigCommandTests(unittest.TestCase):
                 agent="ops-agent",
             )
 
-            with mock.patch("builtins.input", side_effect=["9", "3"]):
+            with mock.patch(
+                "builtins.input",
+                side_effect=["9", "2", "", "", "y"],
+            ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
                     code = run_setup(args)
@@ -409,7 +509,278 @@ class ConfigCommandTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn("Invalid selection. Choose one of: 1, 2, 3.", buf.getvalue())
             payload = json.loads(config_path.read_text(encoding="utf-8"))
-            self.assertTrue(payload["runtime"]["demo_mode"])
+            self.assertEqual(payload["agents"]["ops-agent"]["provider"], "ollama")
+            self.assertEqual(payload["providers"]["ollama"]["model"], "llama3.1")
+            self.assertFalse(payload["runtime"]["demo_mode"])
+
+    def test_setup_wizard_cancels_when_remote_credential_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False),
+                mock.patch("builtins.input", side_effect=["1", "1", ""]),
+                mock.patch(
+                    "openminion.cli.commands.setup.getpass",
+                    return_value="",
+                ),
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
+
+            self.assertEqual(code, 2)
+            self.assertFalse(config_path.exists())
+            self.assertIn(
+                "Export OPENAI_API_KEY and rerun setup",
+                buf.getvalue(),
+            )
+
+    def test_setup_wizard_reports_missing_import_without_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            missing_path = tmp_path / "missing.yaml"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+            )
+
+            with mock.patch(
+                "builtins.input",
+                side_effect=["3", str(missing_path)],
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
+
+            self.assertEqual(code, 2)
+            self.assertFalse(config_path.exists())
+            self.assertIn("Setup failed: Import file not found at", buf.getvalue())
+            self.assertIn(missing_path.name, buf.getvalue())
+
+    def test_setup_wizard_labels_default_model_as_recommended(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-env"}),
+                mock.patch("builtins.input", side_effect=["1", "1", "", "y", "n"]),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_doctor",
+                    return_value=0,
+                ),
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
+
+            self.assertEqual(code, 0)
+            self.assertIn("model: gpt-4.1-mini [recommended]", buf.getvalue())
+            self.assertNotIn("Cloud (openai)", buf.getvalue())
+            self.assertNotIn("Demo Mode", buf.getvalue())
+
+    def test_noninteractive_custom_api_format_must_match_preset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+                provider="custom-anthropic-compatible",
+                model="claude-custom",
+                base_url="https://example.invalid/v1",
+                api_format="openai-compatible",
+                check_provider=False,
+            )
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = run_setup(args)
+
+            self.assertEqual(code, 2)
+            self.assertFalse(config_path.exists())
+            self.assertIn(
+                "requires --provider 'custom-openai-compatible'",
+                buf.getvalue(),
+            )
+
+    def test_noninteractive_setup_reports_unsupported_provider_cleanly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+                provider="not-a-provider",
+                model="model",
+                base_url=None,
+                api_format=None,
+                check_provider=False,
+            )
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = run_setup(args)
+
+            self.assertEqual(code, 2)
+            self.assertFalse(config_path.exists())
+            self.assertIn("Setup failed: Unsupported provider preset", buf.getvalue())
+
+    def test_setup_parser_does_not_accept_raw_api_key_flag(self) -> None:
+        parser = build_parser(selected_command="setup")
+
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["setup", "--api-key", "secret"])
+
+    def test_noninteractive_setup_skips_provider_check_without_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+                provider="openai",
+                model="gpt-4.1-mini",
+                base_url=None,
+                api_format=None,
+                check_provider=False,
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-env"}),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_doctor",
+                    return_value=0,
+                ),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_provider_check",
+                    return_value=0,
+                ) as provider_check,
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
+
+            self.assertEqual(code, 0)
+            provider_check.assert_not_called()
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["providers"]["openai"]["api_key"], "")
+            self.assertEqual(
+                payload["providers"]["openai"]["api_key_env"],
+                "OPENAI_API_KEY",
+            )
+            self.assertIn("Provider check skipped", buf.getvalue())
+
+    def test_noninteractive_setup_runs_provider_check_only_with_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+                provider="openai",
+                model="gpt-4.1-mini",
+                base_url=None,
+                api_format=None,
+                check_provider=True,
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-env"}),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_doctor",
+                    return_value=0,
+                ),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_provider_check",
+                    return_value=0,
+                ) as provider_check,
+            ):
+                code = run_setup(args)
+
+            self.assertEqual(code, 0)
+            provider_check.assert_called_once_with(config_path=config_path.resolve())
+
+    def test_minimax_setup_preserves_existing_openai_shared_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            existing = OpenMinionConfig()
+            existing.agents = {
+                "openai-main": AgentProfileConfig(
+                    name="openai-main",
+                    provider="openai",
+                )
+            }
+            existing.default_agent = "openai-main"
+            existing.providers.openai.api_key_env = "OPENAI_API_KEY"
+            existing.providers.openai.model = "gpt-4.1-mini"
+            existing.providers.openai.base_url = "https://api.openai.com/v1"
+            save_config(existing, str(config_path), home_root=tmp_path)
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="minimax-m2-7",
+                provider="minimax",
+                model="MiniMax-M2.7",
+                base_url=None,
+                api_format=None,
+                check_provider=False,
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"MINIMAX_API_KEY": "sk-mini"}),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_doctor",
+                    return_value=0,
+                ),
+            ):
+                code = run_setup(args)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["providers"]["openai"]["api_key_env"],
+                "OPENAI_API_KEY",
+            )
+            overrides = payload["agents"]["minimax-m2-7"]["provider_config_overrides"]
+            self.assertEqual(overrides["api_key_env"], "MINIMAX_API_KEY")
+            self.assertEqual(overrides["model"], "MiniMax-M2.7")
+            self.assertEqual(overrides["base_url"], "https://api.minimax.io/v1")
 
 
 class _Report:

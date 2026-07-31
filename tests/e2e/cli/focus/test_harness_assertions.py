@@ -26,7 +26,7 @@ from tests.e2e.cli.focus.harness.probe import (
     screen_after_submission,
     sidecar_consent_prompt_visible,
 )
-from tests.e2e.cli.focus.harness.pty import PtySession
+from tests.e2e.cli.focus.harness.pty import PtySession, bracketed_paste_payload
 
 pytestmark = pytest.mark.e2e
 
@@ -383,7 +383,7 @@ def test_inline_approval_menu_uses_latest_overlapping_prompt() -> None:
         ("[A] Allow once [S] Session allow [D] Deny", "session", "s"),
         ("[A] Allow once [S] Session allow [D] Deny", "no", "d"),
         ("[y]es / [N]o / [a]lways:", "yes", "yes"),
-        ("[y]es / [N]o / [a]lways:", "session", "always"),
+        ("[y]es / [N]o / [a]lways:", "session", "a"),
         ("[y]es / [N]o / [a]lways:", "no", "no"),
     ),
 )
@@ -400,6 +400,12 @@ def test_inline_approval_fingerprint_distinguishes_consecutive_targets() -> None
     module = "Approval required: file.write(module.py)\n[y]es / [N]o / [a]lways:"
 
     assert inline_approval_fingerprint(readme) != inline_approval_fingerprint(module)
+
+
+def test_bracketed_paste_payload_wraps_multiline_prompt() -> None:
+    assert bracketed_paste_payload("line one\nline two") == (
+        "\x1b[200~line one\nline two\x1b[201~"
+    )
 
 
 def test_compact_approval_submission_handles_consecutive_prompts(
@@ -432,9 +438,9 @@ asyncio.run(main())
         FocusProbe._submit_inline_approval(session, "session")
         session.wait_for_after(r"file\.write\(module\.py\)", offset=0, timeout=5)
         FocusProbe._submit_inline_approval(session, "session")
-        transcript = session.wait_for_after(r"SECOND:always", offset=0, timeout=5)
+        transcript = session.wait_for_after(r"SECOND:a", offset=0, timeout=5)
 
-    assert "FIRST:always" in transcript
+    assert "FIRST:a" in transcript
     assert "FIRST:alwaysalways" not in transcript
 
 

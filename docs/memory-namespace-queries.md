@@ -5,8 +5,9 @@ Last updated: 2026-07-10
 
 OpenMinion exposes typed memory-record filters through `memctl` and the local
 HTTP API. The canonical model remains `sophiagraph.models.MemoryNamespace`.
-OpenMinion requires `sophiagraph>=0.0.1`; that release contains all namespace
-dimensions and the list/search filter contracts used here.
+OpenMinion currently requires `sophiagraph>=0.0.4`; use a current compatible
+`sophiagraph` patch release when following the current docs. That package line
+contains the namespace dimensions and list/search filter contracts used here.
 
 ## Namespace fields
 

@@ -55,7 +55,7 @@ toolbar controls:
 ```bash
 openminion graph view --current --node-kind decision
 openminion graph view --current --tag scope:agent:openminion
-openminion graph view --current --source operator --min-score 0.8
+openminion graph view --current --source validated --min-score 0.8
 openminion graph view --current --evidence-filter with_provenance
 ```
 
@@ -68,6 +68,9 @@ openminion graph view --current --html-out viewer.html
 Second-brain nodes include memory type, tier, scope, confidence, namespace,
 timestamps, provenance, citations, relation labels, and filter facets for node
 kind, edge kind, tag, and source.
+
+If the current memory graph is empty, the viewer reports an empty current-state
+result. It does not seed demo data or write sample memories.
 
 ## Open A Third-Brain Provider
 

@@ -11,6 +11,7 @@ from typing import Any
 
 from openminion.api.runtime import APIRuntime
 from openminion.base.config import (
+    build_runtime_config,
     resolve_runtime_profile,
     run_profile_overrides_from_mapping,
 )
@@ -321,11 +322,38 @@ def _render_doctor_output(
         f"doctor: {summary['status'].upper()} "
         f"(ok={ok_count} warn={warn_count} fail={fail_count})"
     )
+    summary_only = bool(getattr(args, "summary_only", False))
     for check in checks:
+        if summary_only and check.status == "ok":
+            continue
         tag = check.status.upper()
         print(f"[{tag}] {check.id}: {check.message}")
         if check.remediation:
             print(f"  remediation: {check.remediation}")
+
+
+def _resolve_doctor_runtime_context(args, manager):
+    run_profile_overrides = run_profile_overrides_from_mapping(vars(args))
+    agent_id = getattr(args, "agent_id", None)
+    effective_config = build_runtime_config(
+        manager.base_config,
+        agent_id=agent_id,
+        overrides=run_profile_overrides,
+    )
+    selected_agent = resolve_runtime_profile(
+        effective_config,
+        agent_id=agent_id,
+        overrides=run_profile_overrides,
+    )
+    storage_path = resolve_database_path(effective_config.storage.path)
+    provider_name = (selected_agent.provider or "echo").strip().lower() or "echo"
+    return (
+        run_profile_overrides,
+        effective_config,
+        selected_agent,
+        storage_path,
+        provider_name,
+    )
 
 
 def run_doctor(args) -> int:
@@ -334,20 +362,18 @@ def run_doctor(args) -> int:
         home_root=getattr(args, "home_root", None),
         data_root=getattr(args, "data_root", None),
     )
-    config = manager.base_config
     config_path = manager.config_path
-    run_profile_overrides = run_profile_overrides_from_mapping(vars(args))
-    selected_agent = resolve_runtime_profile(
-        config,
-        agent_id=getattr(args, "agent_id", None),
-        overrides=run_profile_overrides,
-    )
-    storage_path = resolve_database_path(config.storage.path)
-    provider_name = (selected_agent.provider or "echo").strip().lower() or "echo"
+    (
+        run_profile_overrides,
+        effective_config,
+        selected_agent,
+        storage_path,
+        provider_name,
+    ) = _resolve_doctor_runtime_context(args, manager)
 
     checks = _collect_pre_runtime_checks(
         args=args,
-        config=config,
+        config=effective_config,
         config_path=config_path,
         manager=manager,
         selected_agent=selected_agent,
@@ -388,7 +414,7 @@ def run_doctor(args) -> int:
 
     _append_security_validate_checks(
         checks=checks,
-        config=config,
+        config=effective_config,
         config_path=config_path,
         storage_path=storage_path,
         app=app,

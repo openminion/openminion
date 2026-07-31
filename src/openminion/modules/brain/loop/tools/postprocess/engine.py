@@ -53,6 +53,7 @@ from .rules import (
 from .evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
     mutating_file_evidence_fallback_text,
+    requested_validation_without_exec_run,
 )
 from ..response_payloads import _pending_finalization_salvage_text
 from ..runtime import _extract_visible_response_text
@@ -137,6 +138,23 @@ class AdaptiveLoopRunnerPostprocessMixin(
     def _force_compact_answer_only_closeout(self) -> AdaptiveToolLoopOutcome | None:
         tool_results = _successful_substantive_tool_results(self.loop_state)
         if not tool_results:
+            return None
+        if requested_validation_without_exec_run(self.loop_state):
+            self.loop_state.messages.append(
+                Message(
+                    role="system",
+                    content=(
+                        "The user requested validation, but this turn has no "
+                        "successful exec.run validation result yet. Do not return "
+                        "an answer-only closeout. Call exec.run with the requested "
+                        "validation command now, then return the final answer from "
+                        "the actual tool result."
+                    ),
+                )
+            )
+            self.loop_state.scratchpad[
+                "requested_validation_blocked_answer_only_closeout"
+            ] = True
             return None
         self.loop_state.scratchpad[
             "tool_choice_none_compact_answer_only_retry_used"
