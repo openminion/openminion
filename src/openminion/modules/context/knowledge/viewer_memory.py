@@ -115,46 +115,10 @@ class OpenMinionMemoryGraphFakosProvider:
                 "No second-brain memory records matched this view. "
                 "The viewer did not write sample data.",
             ),
-            stats={
-                "db_path": str(self._db_path),
-                "records": len(records),
-                "relations": len(unique_relations),
-                "scope_filter": list(scopes),
-                "memory_types": _sorted_unique(str(record.type) for record in records),
-                "tiers": _sorted_unique(
-                    str(getattr(record, "tier", "") or "") for record in records
-                ),
-            },
-            provider_details={
-                "layer": LAYER_SECOND_BRAIN,
-                "storage": "openminion memory SQLite",
-                "filterable_fields": ",".join(
-                    (
-                        "query",
-                        "node_kind",
-                        "edge_kind",
-                        "tag",
-                        "source",
-                        "min_score",
-                        "evidence_filter",
-                    )
-                ),
-            },
-            available_facets={
-                "node_kind": _sorted_unique(str(record.type) for record in records),
-                "edge_kind": _sorted_unique(
-                    str(relation.relation_type)
-                    for relation in unique_relations.values()
-                ),
-                "source": _sorted_unique(
-                    str(getattr(record, "source", "") or "") for record in records
-                ),
-                "tag": _sorted_unique(
-                    tag
-                    for record in records
-                    for tag in _memory_record_tags(record, str(record.type))
-                ),
-            },
+            stats=_memory_graph_stats(self._db_path, records, unique_relations, scopes),
+            provider_details=_memory_provider_details(),
+            provider_payload=_memory_provider_payload(records),
+            available_facets=_memory_available_facets(records, unique_relations),
         )
 
 
@@ -173,6 +137,91 @@ def _split_scope_filter(raw_scope: str) -> tuple[str, ...]:
 
 def _sorted_unique(values: Any) -> tuple[str, ...]:
     return tuple(sorted({str(value) for value in values if str(value)}))
+
+
+def _memory_graph_stats(
+    db_path: Path,
+    records: tuple[Any, ...],
+    relations: Mapping[str, Any],
+    scopes: list[str],
+) -> dict[str, object]:
+    return {
+        "db_path": str(db_path),
+        "records": len(records),
+        "relations": len(relations),
+        "scope_filter": list(scopes),
+        "empty_code": "current_memory_empty" if not records else "",
+        "memory_types": _sorted_unique(str(record.type) for record in records),
+        "tiers": _sorted_unique(
+            str(getattr(record, "tier", "") or "") for record in records
+        ),
+    }
+
+
+def _memory_provider_details() -> dict[str, str]:
+    return {
+        "layer": LAYER_SECOND_BRAIN,
+        "owner": "OpenMinion memory",
+        "storage": "openminion memory SQLite",
+        "filterable_fields": ",".join(
+            (
+                "query",
+                "node_kind",
+                "edge_kind",
+                "tag",
+                "source",
+                "min_score",
+                "evidence_filter",
+            )
+        ),
+    }
+
+
+def _memory_provider_payload(records: tuple[Any, ...]) -> dict[str, object]:
+    return {
+        "empty_state": _memory_empty_state() if not records else {},
+        "viewer_actions": (
+            "search",
+            "filter",
+            "inspect_node",
+            "focus_neighborhood",
+            "highlight_path",
+            "show_provenance",
+            "copy_citation",
+            "export_visible_graph",
+            "open_provider_status",
+        ),
+    }
+
+
+def _memory_empty_state() -> dict[str, str]:
+    return {
+        "code": "current_memory_empty",
+        "message": (
+            "No second-brain memory records matched this view. "
+            "No sample data was written."
+        ),
+    }
+
+
+def _memory_available_facets(
+    records: tuple[Any, ...],
+    relations: Mapping[str, Any],
+) -> dict[str, tuple[str, ...]]:
+    return {
+        "node_kind": _sorted_unique(str(record.type) for record in records),
+        "edge_kind": _sorted_unique(
+            str(relation.relation_type) for relation in relations.values()
+        ),
+        "source": _sorted_unique(
+            str(getattr(record, "source", "") or "") for record in records
+        ),
+        "tag": _sorted_unique(
+            tag
+            for record in records
+            for tag in _memory_record_tags(record, str(record.type))
+        ),
+    }
 
 
 def _memory_record_node(graphfakos: Any, record: Any) -> Any:

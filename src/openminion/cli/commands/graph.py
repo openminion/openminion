@@ -129,6 +129,11 @@ def _print_view_result(payload: dict[str, object]) -> None:
     mode = payload.get("mode")
     if mode == "server":
         print(f"Graph viewer: {payload.get('url')}")
+        print(f"  Browser opened: {'yes' if payload.get('opened') else 'no'}")
+        diagnostics = _dict_payload(payload.get("diagnostics"))
+        if diagnostics:
+            print(f"  Screen: {diagnostics.get('screen', 'explore')}")
+            print(f"  Local only: {'yes' if diagnostics.get('local_only') else 'no'}")
         return
     if mode == "static_html":
         print(f"Graph viewer HTML: {payload.get('html_path')}")
@@ -148,6 +153,18 @@ def _print_view_result(payload: dict[str, object]) -> None:
     evidence_filter = str(diagnostics.get("evidence_filter") or "")
     if evidence_filter:
         print(f"  Evidence: {evidence_filter}")
+    viewer_manifest = _dict_payload(diagnostics.get("viewer_manifest"))
+    viewer_actions = viewer_manifest.get("viewer_actions")
+    if isinstance(viewer_actions, list) and viewer_actions:
+        print(f"  Viewer actions: {', '.join(str(item) for item in viewer_actions)}")
+    empty_state = _dict_payload(diagnostics.get("empty_state"))
+    if empty_state:
+        print(f"  Empty: {empty_state.get('message')}")
+        next_commands = empty_state.get("next_commands")
+        if isinstance(next_commands, list):
+            for command in next_commands:
+                if str(command).strip():
+                    print(f"  Next: {command}")
     warnings = diagnostics.get("warnings")
     if isinstance(warnings, list):
         for warning in warnings:

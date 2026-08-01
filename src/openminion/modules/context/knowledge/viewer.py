@@ -94,7 +94,7 @@ def launch_graph_viewer(
             layer=layer,
             graph_role=provider.graph_role,
             mode="dry_run",
-            diagnostics=_graph_diagnostics(graph, graph_request),
+            diagnostics=_graph_diagnostics(graphfakos, graph, graph_request),
         )
     if request.html_out:
         html_path = _write_static_html(
@@ -124,7 +124,14 @@ def launch_graph_viewer(
         mode="server",
         url=str(getattr(server_result, "url", "")),
         opened=bool(getattr(server_result, "opened", False)),
-        diagnostics=dict(getattr(server_result, "diagnostics", {}) or {}),
+        diagnostics={
+            "screen": graph_request.screen,
+            "default_path": f"/{graph_request.screen}",
+            "host": request.host,
+            "port": request.port,
+            "open_requested": request.open_browser,
+            "local_only": request.host in {"127.0.0.1", "localhost", "::1"},
+        },
     )
 
 
@@ -170,7 +177,7 @@ def _graphfakos_request(graphfakos: Any, request: GraphViewerRequest) -> Any:
     )
 
 
-def _graph_diagnostics(graph: Any, request: Any) -> dict[str, object]:
+def _graph_diagnostics(graphfakos: Any, graph: Any, request: Any) -> dict[str, object]:
     diagnostics: dict[str, object] = {
         "node_count": len(graph.nodes),
         "edge_count": len(graph.edges),
@@ -188,10 +195,47 @@ def _graph_diagnostics(graph: Any, request: Any) -> dict[str, object]:
         diagnostics["warnings"] = list(warnings)
     if stats:
         diagnostics["stats"] = stats
+    capabilities = tuple(str(item) for item in getattr(graph, "capabilities", ()) or ())
+    provider_details = dict(getattr(graph, "provider_details", {}) or {})
+    available_facets = dict(getattr(graph, "available_facets", {}) or {})
+    if capabilities:
+        diagnostics["capabilities"] = list(capabilities)
+    if provider_details:
+        diagnostics["provider_details"] = provider_details
+    if available_facets:
+        diagnostics["available_facets"] = {
+            key: list(value) if isinstance(value, tuple) else value
+            for key, value in available_facets.items()
+        }
     empty_state = _empty_state(graph, stats)
     if empty_state:
         diagnostics["empty_state"] = empty_state
+    manifest = _workspace_manifest_diagnostics(graphfakos, graph, request)
+    if manifest:
+        diagnostics["viewer_manifest"] = manifest
     return diagnostics
+
+
+def _workspace_manifest_diagnostics(
+    graphfakos: Any,
+    graph: Any,
+    request: Any,
+) -> dict[str, object]:
+    manifest_builder = getattr(graphfakos, "workspace_manifest_for_graph", None)
+    if not callable(manifest_builder):
+        return {}
+    payload = manifest_builder(graph, request).to_dict()
+    return {
+        "schema_version": payload.get("schema_version", ""),
+        "viewer_actions": list(payload.get("viewer_actions", []) or []),
+        "supported_actions": list(payload.get("supported_actions", []) or []),
+        "supported_captures": list(payload.get("supported_captures", []) or []),
+        "default_expansion_requests": list(
+            payload.get("default_expansion_requests", []) or []
+        ),
+        "performance_budget": dict(payload.get("performance_budget") or {}),
+        "empty_state": dict(payload.get("empty_state") or {}),
+    }
 
 
 def _request_filters(request: GraphViewerRequest) -> dict[str, str]:

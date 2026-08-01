@@ -49,6 +49,13 @@ For a no-browser check:
 openminion graph view --current --dry-run --json
 ```
 
+The JSON dry run is also the integration probe for wrappers. It includes graph
+counts, active filters, facets, provider details, capabilities, empty-state
+metadata, and a `viewer_manifest` summary with viewer-local actions such as
+search, filtering, node inspection, neighborhood focus, path highlighting,
+static export, provenance review, and citation copying when those details are
+present.
+
 The same command accepts viewer filters that map directly to GraphFakos'
 toolbar controls:
 
@@ -116,3 +123,17 @@ GraphFakos is the viewer and provider-neutral graph lens. Sophiagraph remains
 the durable second-brain owner. Graphify, PragmaGraph, and future document/code
 providers remain third-brain sources unless they explicitly satisfy a durable
 memory backend contract.
+
+## Validation
+
+The OpenMinion package keeps a focused graph-viewer regression suite covering
+status, current-memory dry runs, static HTML, third-brain envelopes, provider
+conformance, and a real-browser smoke when Chromium is available:
+
+```bash
+PYTHONPATH=src:../graphfakos/src python -m pytest -q tests/context/knowledge/test_viewer.py
+```
+
+Use GraphFakos' browser suite for shared viewer behavior such as search,
+filters, inspector panels, saved workspaces, keyboard navigation, and dense
+graph rendering.
