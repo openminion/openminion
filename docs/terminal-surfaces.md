@@ -90,6 +90,7 @@ openminion status tokens --session-id <session-id>
 openminion status tokens --run-id <run-id>
 openminion status tokens --session-id <session-id> --run-id <run-id>
 openminion status tokens --recent 10
+openminion status tokens --recent 10 --only-warnings
 openminion status tokens --recent 10 --json
 openminion status tokens --session-id <session-id> --json
 ```
@@ -101,9 +102,57 @@ and derived totals, cache dimensions, context estimates, context buckets,
 coverage/correlation warnings, outcome signals for run-scoped reports, advisory
 recommendations, and next-step hints. Use `--recent <count>` for a read-only
 rollup across the newest sessions before drilling into one session or run.
+Use `--recent <count> --only-warnings` when you only want sessions with token
+telemetry gaps or optimization signals. Text recommendations include stable
+advisory codes such as `[missing_provider_identity]`,
+`[missing_call_correlation]`, `[derived_total_tokens]`,
+`[context_dominates]`, and `[cache_write_without_read]` so follow-up tooling can
+key off the same facts without parsing prose.
 `--json` emits the raw `openminion.token_usage.v1` envelope for one session or
 run, and a rollup envelope containing those raw session envelopes when
 `--recent` is used.
+
+Example recent rollup:
+
+```text
+status tokens: recent_sessions=10 with_usage=8 complete=yes
+totals: provider=12,840 derived=920 context_estimated=6,400 cache_read=1,200 cache_write=2,100
+top sessions: session-a=6,300, session-b=4,220
+coverage health: llm_calls=18 provider=18/18 model=18/18 usage_events=22 run_id=21/22 trace_id=22/22 llm_call_id=19/22
+recommendations: [missing_call_correlation] some usage events lack llm_call_id correlation; [context_dominates] context packing dominates recent usage; inspect bucket totals
+drilldown: `openminion status tokens --session-id session-a` | `openminion status tokens --session-id session-b`
+```
+
+Example rollup JSON includes machine-readable insight fields next to the raw
+session envelopes:
+
+```json
+{
+  "schema_version": "openminion.token_usage_rollup.v1",
+  "session_count": 1,
+  "input_session_count": 10,
+  "only_warnings": true,
+  "totals": {
+    "provider_tokens": 0,
+    "derived_tokens": 920,
+    "context_estimated_tokens": 6400,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 2100
+  },
+  "advisories": [
+    {
+      "code": "context_dominates",
+      "message": "context packing dominates recent usage; inspect bucket totals"
+    }
+  ],
+  "summaries": [
+    {
+      "schema_version": "openminion.token_usage.v1",
+      "session_id": "session-a"
+    }
+  ]
+}
+```
 
 ## Privacy-safe usage evidence
 

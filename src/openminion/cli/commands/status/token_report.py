@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from openminion.modules.telemetry.trace.turn_cost import TurnCostEnvelope
@@ -17,6 +18,15 @@ from openminion.modules.telemetry.usage.token_usage import (
 )
 
 _ROLLUP_SCHEMA_VERSION = "openminion.token_usage_rollup.v1"
+
+
+@dataclass(frozen=True)
+class Advisory:
+    code: str
+    message: str
+
+    def as_payload(self) -> dict[str, str]:
+        return {"code": self.code, "message": self.message}
 
 
 def _record_tokens(record: TokenUsageRecord) -> int:
@@ -77,9 +87,9 @@ def _format_ranked_totals(label: str, totals: Mapping[str, int]) -> str:
     return f"{label}: " + (", ".join(parts) if parts else "-")
 
 
-def _add_unique(lines: list[str], text: str) -> None:
-    if text and text not in lines:
-        lines.append(text)
+def _add_advisory(advisories: list[Advisory], code: str, message: str) -> None:
+    if not any(advisory.code == code for advisory in advisories):
+        advisories.append(Advisory(code=code, message=message))
 
 
 def _format_turn_cost(cost: TurnCostEnvelope | None) -> list[str]:
@@ -101,91 +111,369 @@ def _format_turn_cost(cost: TurnCostEnvelope | None) -> list[str]:
     return ["outcome: " + " ".join(parts)]
 
 
-def _format_recommendations(
+def _summary_advisories(
     summary: TokenUsageSummary,
     *,
     cost: TurnCostEnvelope | None = None,
-) -> list[str]:
+) -> list[Advisory]:
     if not summary.records:
         return []
-    recommendations: list[str] = []
+    advisories: list[Advisory] = []
     coverage = summary.coverage
     llm_calls = coverage.llm_call_events
     if not summary.complete:
-        _add_unique(
-            recommendations,
+        _add_advisory(
+            advisories,
+            "event_window_limited",
             "read a larger event window; this report is limited by --event-limit",
         )
     if llm_calls:
         if coverage.provider_identified_llm_call_events < llm_calls:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "missing_provider_identity",
                 "fill provider identity on llm.call.completed events",
             )
         if coverage.model_identified_llm_call_events < llm_calls:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "missing_model_identity",
                 "fill model identity on llm.call.completed events",
             )
         if coverage.total_tokens.missing or coverage.total_tokens.invalid:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "derived_total_tokens",
                 "prefer provider total_tokens; derived totals are less authoritative",
             )
         if coverage.input_tokens.missing or coverage.output_tokens.missing:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "missing_token_splits",
                 "emit both input and output token fields for split analysis",
             )
     if summary.source_event_count:
         if coverage.run_id_present_events < summary.source_event_count:
-            _add_unique(recommendations, "attach run_id to usage-producing events")
+            _add_advisory(
+                advisories,
+                "missing_run_correlation",
+                "attach run_id to usage-producing events",
+            )
         if coverage.llm_call_id_present_events < summary.source_event_count:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "missing_call_correlation",
                 "attach llm_call_id so context/cache facts correlate to calls",
             )
     context_tokens = summary.totals_by_surface.get(SURFACE_CONTEXT_PACK, 0)
     llm_tokens = summary.total_provider_tokens + summary.total_derived_tokens
     if context_tokens and context_tokens >= max(1, llm_tokens):
-        _add_unique(
-            recommendations,
+        _add_advisory(
+            advisories,
+            "context_dominates",
             "context packing is a major token driver; inspect context buckets first",
         )
     if summary.total_cache_write_tokens and not summary.total_cache_read_tokens:
-        _add_unique(
-            recommendations,
+        _add_advisory(
+            advisories,
+            "cache_write_without_read",
             "cache writes are present without cache reads; check cache reuse",
         )
     if cost is not None:
         if cost.provider_retries:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "provider_retry_friction",
                 "provider retries increased token friction for this run",
             )
         if cost.provider_calls_post_delivery:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "post_delivery_calls",
                 "post-delivery calls exist; verify they are intentional auxiliary work",
             )
         if cost.duplicate_tool_calls:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "duplicate_tool_calls",
                 "duplicate tool calls detected; inspect tool-loop planning",
             )
         if cost.policy_denials:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "policy_denial_friction",
                 "policy denials consumed turn work; inspect approval/tool policy inputs",
             )
         if cost.task_success is False or cost.final_truthful is False:
-            _add_unique(
-                recommendations,
+            _add_advisory(
+                advisories,
+                "negative_outcome_tokens",
                 "token spend ended with a negative outcome signal; review this run",
             )
-    if not recommendations:
+    return advisories
+
+
+def _format_recommendations(
+    summary: TokenUsageSummary,
+    *,
+    cost: TurnCostEnvelope | None = None,
+) -> list[str]:
+    advisories = _summary_advisories(summary, cost=cost)
+    if not advisories:
         return ["recommendations: no immediate token telemetry gaps detected"]
-    return ["recommendations: " + "; ".join(recommendations)]
+    return [
+        "recommendations: "
+        + "; ".join(f"[{advisory.code}] {advisory.message}" for advisory in advisories)
+    ]
+
+
+def _format_coverage_health(summary: TokenUsageSummary) -> list[str]:
+    coverage = summary.coverage
+    if not summary.source_event_count and not coverage.llm_call_events:
+        return []
+    parts = []
+    if coverage.llm_call_events:
+        llm_calls = coverage.llm_call_events
+        parts.extend(
+            [
+                f"llm_calls={llm_calls}",
+                f"provider={coverage.provider_identified_llm_call_events}/{llm_calls}",
+                f"model={coverage.model_identified_llm_call_events}/{llm_calls}",
+            ]
+        )
+    if summary.source_event_count:
+        parts.extend(
+            [
+                f"usage_events={summary.source_event_count}",
+                f"run_id={coverage.run_id_present_events}/{summary.source_event_count}",
+                f"trace_id={coverage.trace_id_present_events}/{summary.source_event_count}",
+                "llm_call_id="
+                f"{coverage.llm_call_id_present_events}/{summary.source_event_count}",
+            ]
+        )
+    return ["coverage health: " + " ".join(parts)]
+
+
+def _summary_has_warning(summary: TokenUsageSummary) -> bool:
+    return not summary.records or bool(_summary_advisories(summary))
+
+
+def _filter_warning_summaries(
+    summaries: tuple[TokenUsageSummary, ...],
+) -> tuple[TokenUsageSummary, ...]:
+    return tuple(summary for summary in summaries if _summary_has_warning(summary))
+
+
+def _format_warning_sessions(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
+    warning_parts = []
+    for summary in summaries:
+        codes = [advisory.code for advisory in _summary_advisories(summary)]
+        if not summary.records:
+            codes.append("no_usage_events")
+        if codes:
+            warning_parts.append(f"{summary.session_id}=" + ",".join(codes))
+    if not warning_parts:
+        return []
+    return ["warning sessions: " + "; ".join(warning_parts[:5])]
+
+
+def _format_drilldowns(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
+    top_sessions = sorted(
+        (
+            (summary.session_id, _summary_visible_tokens(summary))
+            for summary in summaries
+            if summary.records
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )[:3]
+    if not top_sessions:
+        return []
+    commands = [
+        f"`openminion status tokens --session-id {session_id}`"
+        for session_id, _tokens in top_sessions
+    ]
+    return ["drilldown: " + " | ".join(commands)]
+
+
+def _rollup_coverage_health(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
+    source_events = sum(summary.source_event_count for summary in summaries)
+    llm_calls = sum(summary.coverage.llm_call_events for summary in summaries)
+    if not source_events and not llm_calls:
+        return []
+    provider_ids = sum(
+        summary.coverage.provider_identified_llm_call_events for summary in summaries
+    )
+    model_ids = sum(
+        summary.coverage.model_identified_llm_call_events for summary in summaries
+    )
+    run_ids = sum(summary.coverage.run_id_present_events for summary in summaries)
+    trace_ids = sum(summary.coverage.trace_id_present_events for summary in summaries)
+    call_ids = sum(summary.coverage.llm_call_id_present_events for summary in summaries)
+    parts = []
+    if llm_calls:
+        parts.extend(
+            [
+                f"llm_calls={llm_calls}",
+                f"provider={provider_ids}/{llm_calls}",
+                f"model={model_ids}/{llm_calls}",
+            ]
+        )
+    if source_events:
+        parts.extend(
+            [
+                f"usage_events={source_events}",
+                f"run_id={run_ids}/{source_events}",
+                f"trace_id={trace_ids}/{source_events}",
+                f"llm_call_id={call_ids}/{source_events}",
+            ]
+        )
+    return ["coverage health: " + " ".join(parts)]
+
+
+def _rollup_advisories(summaries: tuple[TokenUsageSummary, ...]) -> list[Advisory]:
+    advisories: list[Advisory] = []
+    empty = sum(1 for summary in summaries if not summary.records)
+    incomplete = sum(1 for summary in summaries if not summary.complete)
+    derived = sum(summary.total_derived_tokens for summary in summaries)
+    context = sum(
+        summary.totals_by_surface.get(SURFACE_CONTEXT_PACK, 0) for summary in summaries
+    )
+    llm = sum(
+        summary.total_provider_tokens + summary.total_derived_tokens
+        for summary in summaries
+    )
+    cache_read = sum(summary.total_cache_read_tokens for summary in summaries)
+    cache_write = sum(summary.total_cache_write_tokens for summary in summaries)
+    missing_provider = sum(
+        summary.coverage.llm_call_events
+        - summary.coverage.provider_identified_llm_call_events
+        for summary in summaries
+    )
+    missing_model = sum(
+        summary.coverage.llm_call_events
+        - summary.coverage.model_identified_llm_call_events
+        for summary in summaries
+    )
+    source_events = sum(summary.source_event_count for summary in summaries)
+    run_ids = sum(summary.coverage.run_id_present_events for summary in summaries)
+    call_ids = sum(summary.coverage.llm_call_id_present_events for summary in summaries)
+    if empty:
+        _add_advisory(
+            advisories,
+            "no_usage_events",
+            f"{empty} recent session(s) have no usage events",
+        )
+    if incomplete:
+        _add_advisory(
+            advisories,
+            "event_window_limited",
+            f"{incomplete} recent session(s) were limited by --event-limit",
+        )
+    if derived:
+        _add_advisory(
+            advisories,
+            "derived_total_tokens",
+            "derived totals exist; improve provider usage emitters",
+        )
+    if missing_provider or missing_model:
+        _add_advisory(
+            advisories,
+            "missing_provider_or_model_identity",
+            "some llm calls lack provider/model identity",
+        )
+    if source_events and run_ids < source_events:
+        _add_advisory(
+            advisories,
+            "missing_run_correlation",
+            "some usage events lack run_id correlation",
+        )
+    if source_events and call_ids < source_events:
+        _add_advisory(
+            advisories,
+            "missing_call_correlation",
+            "some usage events lack llm_call_id correlation",
+        )
+    if context and context >= max(1, llm):
+        _add_advisory(
+            advisories,
+            "context_dominates",
+            "context packing dominates recent usage; inspect bucket totals",
+        )
+    if cache_write and not cache_read:
+        _add_advisory(
+            advisories,
+            "cache_write_without_read",
+            "cache writes appear without reads across recent sessions",
+        )
+    return advisories
+
+
+def _format_advisories(advisories: list[Advisory]) -> list[str]:
+    if not advisories:
+        return ["recommendations: no immediate token telemetry gaps detected"]
+    return [
+        "recommendations: "
+        + "; ".join(f"[{advisory.code}] {advisory.message}" for advisory in advisories)
+    ]
+
+
+def _advisory_payload(advisories: list[Advisory]) -> list[dict[str, str]]:
+    return [advisory.as_payload() for advisory in advisories]
+
+
+def _rollup_totals_payload(summaries: tuple[TokenUsageSummary, ...]) -> dict[str, int]:
+    return {
+        "provider_tokens": sum(summary.total_provider_tokens for summary in summaries),
+        "derived_tokens": sum(summary.total_derived_tokens for summary in summaries),
+        "context_estimated_tokens": sum(
+            summary.totals_by_surface.get(SURFACE_CONTEXT_PACK, 0)
+            for summary in summaries
+        ),
+        "cache_read_tokens": sum(
+            summary.total_cache_read_tokens for summary in summaries
+        ),
+        "cache_write_tokens": sum(
+            summary.total_cache_write_tokens for summary in summaries
+        ),
+    }
+
+
+def _rollup_coverage_payload(
+    summaries: tuple[TokenUsageSummary, ...],
+) -> dict[str, int]:
+    return {
+        "source_event_count": sum(summary.source_event_count for summary in summaries),
+        "llm_call_events": sum(
+            summary.coverage.llm_call_events for summary in summaries
+        ),
+        "provider_identified_llm_call_events": sum(
+            summary.coverage.provider_identified_llm_call_events
+            for summary in summaries
+        ),
+        "model_identified_llm_call_events": sum(
+            summary.coverage.model_identified_llm_call_events for summary in summaries
+        ),
+        "run_id_present_events": sum(
+            summary.coverage.run_id_present_events for summary in summaries
+        ),
+        "trace_id_present_events": sum(
+            summary.coverage.trace_id_present_events for summary in summaries
+        ),
+        "llm_call_id_present_events": sum(
+            summary.coverage.llm_call_id_present_events for summary in summaries
+        ),
+    }
+
+
+def prepare_token_rollup(
+    summaries: tuple[TokenUsageSummary, ...],
+    *,
+    only_warnings: bool = False,
+) -> tuple[TokenUsageSummary, ...]:
+    if not only_warnings:
+        return summaries
+    return _filter_warning_summaries(summaries)
 
 
 def _format_insights(summary: TokenUsageSummary) -> list[str]:
@@ -216,8 +504,19 @@ def _format_insights(summary: TokenUsageSummary) -> list[str]:
     return lines
 
 
-def format_token_rollup(summaries: tuple[TokenUsageSummary, ...]) -> str:
+def format_token_rollup(
+    summaries: tuple[TokenUsageSummary, ...],
+    *,
+    input_session_count: int | None = None,
+    only_warnings: bool = False,
+) -> str:
     if not summaries:
+        if only_warnings and input_session_count is not None:
+            return (
+                "status tokens: "
+                f"recent_sessions={input_session_count} with_warnings=0\n"
+                "recommendations: no immediate token telemetry gaps detected"
+            )
         return "no sessions found"
     token_summaries = [summary for summary in summaries if summary.records]
     total_provider = sum(summary.total_provider_tokens for summary in token_summaries)
@@ -233,10 +532,17 @@ def format_token_rollup(summaries: tuple[TokenUsageSummary, ...]) -> str:
         summary.total_cache_write_tokens for summary in token_summaries
     )
     lines = [
-        "status tokens: "
-        f"recent_sessions={len(summaries)} "
-        f"with_usage={len(token_summaries)} "
-        f"complete={'yes' if all(summary.complete for summary in summaries) else 'no'}",
+        (
+            "status tokens: "
+            f"recent_sessions={len(summaries)} "
+            f"with_usage={len(token_summaries)} "
+            + (
+                f"filtered=warnings input_sessions={input_session_count} "
+                if only_warnings and input_session_count is not None
+                else ""
+            )
+            + f"complete={'yes' if all(summary.complete for summary in summaries) else 'no'}"
+        ),
         "totals: "
         f"provider={_format_token_count(total_provider)} "
         f"derived={_format_token_count(total_derived)} "
@@ -278,7 +584,10 @@ def format_token_rollup(summaries: tuple[TokenUsageSummary, ...]) -> str:
                 for session_id, tokens in top_sessions
             )
         )
-    lines.extend(_format_rollup_recommendations(summaries))
+    lines.extend(_rollup_coverage_health(summaries))
+    lines.extend(_format_warning_sessions(summaries))
+    lines.extend(_format_advisories(_rollup_advisories(summaries)))
+    lines.extend(_format_drilldowns(tuple(token_summaries)))
     lines.append(
         "next: use `--session-id <session-id>` or `--run-id <run-id>` to drill in, "
         "or `--json` for raw session envelopes."
@@ -286,68 +595,24 @@ def format_token_rollup(summaries: tuple[TokenUsageSummary, ...]) -> str:
     return "\n".join(lines)
 
 
-def _format_rollup_recommendations(
-    summaries: tuple[TokenUsageSummary, ...],
-) -> list[str]:
-    recommendations: list[str] = []
-    empty = sum(1 for summary in summaries if not summary.records)
-    incomplete = sum(1 for summary in summaries if not summary.complete)
-    derived = sum(summary.total_derived_tokens for summary in summaries)
-    context = sum(
-        summary.totals_by_surface.get(SURFACE_CONTEXT_PACK, 0) for summary in summaries
-    )
-    llm = sum(
-        summary.total_provider_tokens + summary.total_derived_tokens
-        for summary in summaries
-    )
-    cache_read = sum(summary.total_cache_read_tokens for summary in summaries)
-    cache_write = sum(summary.total_cache_write_tokens for summary in summaries)
-    missing_provider = sum(
-        summary.coverage.llm_call_events
-        - summary.coverage.provider_identified_llm_call_events
-        for summary in summaries
-    )
-    missing_model = sum(
-        summary.coverage.llm_call_events
-        - summary.coverage.model_identified_llm_call_events
-        for summary in summaries
-    )
-    if empty:
-        _add_unique(recommendations, f"{empty} recent session(s) have no usage events")
-    if incomplete:
-        _add_unique(
-            recommendations,
-            f"{incomplete} recent session(s) were limited by --event-limit",
-        )
-    if derived:
-        _add_unique(
-            recommendations,
-            "derived totals exist; improve provider usage emitters",
-        )
-    if missing_provider or missing_model:
-        _add_unique(recommendations, "some llm calls lack provider/model identity")
-    if context and context >= max(1, llm):
-        _add_unique(
-            recommendations,
-            "context packing dominates recent usage; inspect bucket totals",
-        )
-    if cache_write and not cache_read:
-        _add_unique(
-            recommendations,
-            "cache writes appear without reads across recent sessions",
-        )
-    if not recommendations:
-        return ["recommendations: no immediate token telemetry gaps detected"]
-    return ["recommendations: " + "; ".join(recommendations)]
-
-
 def token_rollup_json_payload(
     summaries: tuple[TokenUsageSummary, ...],
+    *,
+    input_session_count: int | None = None,
+    only_warnings: bool = False,
 ) -> dict[str, Any]:
+    advisories = _rollup_advisories(summaries)
     return {
         "schema_version": _ROLLUP_SCHEMA_VERSION,
         "session_count": len(summaries),
+        "input_session_count": (
+            input_session_count if input_session_count is not None else len(summaries)
+        ),
+        "only_warnings": only_warnings,
         "complete": all(summary.complete for summary in summaries),
+        "totals": _rollup_totals_payload(summaries),
+        "coverage": _rollup_coverage_payload(summaries),
+        "advisories": _advisory_payload(advisories),
         "summaries": [summary_to_json_payload(summary) for summary in summaries],
     }
 
@@ -439,6 +704,7 @@ def format_token_summary(
             "llm_call_id="
             f"{coverage.llm_call_id_present_events}/{summary.source_event_count}"
         )
+    lines.extend(_format_coverage_health(summary))
     if not summary.complete:
         lines.append(
             "incomplete: "
@@ -455,5 +721,6 @@ def format_token_summary(
 __all__ = [
     "format_token_rollup",
     "format_token_summary",
+    "prepare_token_rollup",
     "token_rollup_json_payload",
 ]

@@ -294,6 +294,11 @@ def _register_status_tokens_subcommand(status_subcommands: StatusSubcommands) ->
     parser.add_argument("--run-id", default="", help="Optional run identifier")
     parser.add_argument("--recent", type=int, default=None, help="Newest N sessions")
     parser.add_argument(
+        "--only-warnings",
+        action="store_true",
+        help="Only show recent sessions with token telemetry warnings",
+    )
+    parser.add_argument(
         "--event-limit",
         type=int,
         default=None,
