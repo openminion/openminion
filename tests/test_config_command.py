@@ -627,6 +627,69 @@ class ConfigCommandTests(unittest.TestCase):
                 buf.getvalue(),
             )
 
+    def test_noninteractive_builtin_api_format_must_match_preset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+                provider="minimax",
+                model="MiniMax-M3",
+                base_url=None,
+                api_format="anthropic-compatible",
+                check_provider=False,
+            )
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = run_setup(args)
+
+            self.assertEqual(code, 2)
+            self.assertFalse(config_path.exists())
+            self.assertIn("does not have an approved", buf.getvalue())
+
+    def test_noninteractive_builtin_api_format_match_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            workspace_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="qwen-agent",
+                provider="qwen-dashscope",
+                model="qwen-plus",
+                base_url=workspace_url,
+                api_format="openai-compatible",
+                check_provider=False,
+            )
+
+            with (
+                mock.patch.dict(os.environ, {"DASHSCOPE_API_KEY": "sk-qwen"}),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_doctor",
+                    return_value=0,
+                ),
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["agents"]["qwen-agent"]["provider"], "openai")
+            self.assertEqual(payload["providers"]["openai"]["base_url"], workspace_url)
+            self.assertEqual(
+                payload["providers"]["openai"]["provider_identity"]["service_vendor"],
+                "dashscope",
+            )
+
     def test_noninteractive_setup_reports_unsupported_provider_cleanly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -651,6 +714,24 @@ class ConfigCommandTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertFalse(config_path.exists())
             self.assertIn("Setup failed: Unsupported provider preset", buf.getvalue())
+
+    def test_setup_list_providers_is_static_and_discoverable(self) -> None:
+        args = Namespace(list_providers=True)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = run_setup(args)
+
+        output = buf.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("Supported setup providers:", output)
+        self.assertIn("minimax: MiniMax | api=openai-compatible", output)
+        self.assertIn("kimi: Kimi / Moonshot AI | api=openai-compatible", output)
+        self.assertIn("https://api.moonshot.ai/v1", output)
+        self.assertIn("qwen-dashscope: Qwen via DashScope", output)
+        self.assertIn("custom-openai-compatible", output)
+        self.assertIn("custom-anthropic-compatible", output)
+        self.assertNotIn("fixture_verified", output)
 
     def test_setup_parser_does_not_accept_raw_api_key_flag(self) -> None:
         parser = build_parser(selected_command="setup")

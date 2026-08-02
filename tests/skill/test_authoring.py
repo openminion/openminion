@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import io
 from dataclasses import dataclass
 from pathlib import Path
+from contextlib import redirect_stdout
 from typing import Any, Sequence
 
 
@@ -407,6 +409,67 @@ def test_harness_end_to_end_exercises_all_three_builders(tmp_path: Path) -> None
     assert debug_view.debug_payload_ref == "debug:openminion-skill:ok"
     assert debug_view.validation_ref.startswith("validation:examples.demo:")
     assert debug_view.test_ref.startswith("test:examples.demo:")
+
+
+def test_umbrella_skill_validate_uses_single_harness_result(monkeypatch) -> None:
+    from openminion.cli.commands import skill as skill_cmd
+
+    package = _StubPackage(skill_id="skill.demo", version_hash="abc123")
+
+    class _StubSkill:
+        def __init__(self, config: str | None = None) -> None:
+            self.config = config
+
+        def get_skill(self, skill_id: str, version: str | None = None):
+            assert skill_id == "skill.demo"
+            assert version is None
+            return package
+
+        def lint(self, skill_id: str, version: str | None = None):
+            assert skill_id == "skill.demo"
+            assert version is None
+            return {"warnings": [], "errors": []}
+
+        def close(self) -> None:
+            return None
+
+    harness_result = _StubHarnessResult(
+        skill_root="/skills/fixture-root",
+        ok=False,
+        warnings=("missing purpose/goal section",),
+        errors=("missing fixtures/input.json",),
+    )
+    harness_report = _StubHarnessReport(
+        ok=False,
+        total_skills=1,
+        passed_skills=0,
+        warning_count=1,
+        error_count=1,
+        results=(harness_result,),
+    )
+
+    monkeypatch.setattr(skill_cmd, "Skill", _StubSkill)
+    monkeypatch.setattr(skill_cmd, "_check_skill_available", lambda: True)
+    monkeypatch.setattr(
+        "openminion.modules.skill.diagnostics.harness.run_skill_harness",
+        lambda project_root: harness_report,
+    )
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        code = skill_cmd._run_skill_validate(
+            argparse.Namespace(
+                skill_id="skill.demo",
+                version=None,
+                project_root="/skills/fixture-root",
+                config=None,
+            )
+        )
+
+    assert code == 0
+    assert '"harness_summary"' in buf.getvalue()
+    assert '"errors": 1' in buf.getvalue()
+    assert "missing fixtures/input.json" in buf.getvalue()
 
 
 _ = (Sequence,)

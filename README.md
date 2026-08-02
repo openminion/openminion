@@ -68,6 +68,7 @@ improving.
 
 ```bash
 openminion config init
+openminion setup --list-providers
 openminion run "hello"
 openminion
 openminion tools list

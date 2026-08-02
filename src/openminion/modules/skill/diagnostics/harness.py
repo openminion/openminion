@@ -78,6 +78,9 @@ def run_skill_harness(root: str | Path = ".") -> SkillHarnessReport:
 
 
 def discover_skill_roots(root: Path) -> tuple[Path, ...]:
+    if (root / "SKILL.md").is_file():
+        return (root.resolve(),)
+
     candidates = (root / "examples", root / "agents", root / "skills")
     found: dict[str, Path] = {}
     for base in candidates:

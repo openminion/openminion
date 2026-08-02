@@ -28,12 +28,12 @@ config/parser/identity.py	74	3	35	1
 config/parser/mapping.py	8	1	3	2
 config/parser/payload.py	174	3	87	2
 config/parser/profiles.py	137	4	75	2
-config/parser/providers.py	195	4	17	3
+config/parser/providers.py	207	4	20	3
 config/parser/runtime.py	342	8	56	1
 config/parser/security.py	166	5	80	6
 config/parser/storage.py	117	3	50	9
 config/paths.py	255	9	47	5
-config/providers.py	132	0	0	0
+config/providers.py	133	0	0	0
 config/runtime/__init__.py	314	4	32	4
 config/runtime/capability.py	388	11	45	4
 config/runtime/capability_resolution.py	261	8	64	5

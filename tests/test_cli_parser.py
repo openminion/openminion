@@ -360,6 +360,14 @@ print(json.dumps(results, sort_keys=True))
         self.assertIn("Initialized onboarding config", output)
         self.assertIn("Interactive launch skipped", output)
 
+    def test_setup_list_providers_parse(self) -> None:
+        parser = build_parser()
+
+        args = parser.parse_args(["setup", "--list-providers"])
+
+        self.assertEqual(args.command, "setup")
+        self.assertTrue(args.list_providers)
+
     def test_setup_parse_stale_handler_still_uses_canonical_patched_helpers(
         self,
     ) -> None:

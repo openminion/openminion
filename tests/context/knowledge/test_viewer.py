@@ -124,6 +124,7 @@ class _FakeGraph:
     warnings: tuple[str, ...] = ()
     stats: Mapping[str, object] | None = None
     provider_details: Mapping[str, str] | None = None
+    provider_payload: Mapping[str, object] | None = None
     available_facets: Mapping[str, tuple[str, ...]] | None = None
 
 
@@ -161,9 +162,53 @@ def _install_fake_graphfakos(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     module.ProviderEnvelopeGraphProvider = _FakeEnvelopeProvider
     module.render_static_html = lambda provider, request: "<html>GraphFakos</html>"
     module.graph_from_provider_envelope = _graph_from_provider_envelope
+    module.workspace_manifest_for_graph = _workspace_manifest_for_graph
     module.__version__ = "test"
     monkeypatch.setitem(sys.modules, "graphfakos", module)
     return module
+
+
+@dataclass(frozen=True)
+class _FakeWorkspaceManifest:
+    graph: _FakeGraph
+    request: _FakeGraphFakosRequest
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": "graphfakos.workspace.v1",
+            "viewer_actions": [
+                "search",
+                "filter",
+                "inspect_node",
+                "focus_neighborhood",
+                "highlight_path",
+                "export_visible_graph",
+            ],
+            "supported_actions": [],
+            "supported_captures": [],
+            "default_expansion_requests": [
+                {"source_id": self.graph.nodes[0].id, "depth": self.request.max_depth}
+            ]
+            if self.graph.nodes
+            else [],
+            "performance_budget": {
+                "rendered_node_count": len(self.graph.nodes),
+                "rendered_edge_count": len(self.graph.edges),
+                "raw_node_count": len(self.graph.nodes),
+                "raw_edge_count": len(self.graph.edges),
+                "level_of_detail": "visible",
+            },
+            "empty_state": dict(
+                (self.graph.provider_payload or {}).get("empty_state", {})
+            ),
+        }
+
+
+def _workspace_manifest_for_graph(
+    graph: _FakeGraph,
+    request: _FakeGraphFakosRequest,
+) -> _FakeWorkspaceManifest:
+    return _FakeWorkspaceManifest(graph=graph, request=request)
 
 
 def _graph_from_provider_envelope(
@@ -280,6 +325,12 @@ def test_second_brain_dry_run_builds_graph_from_memory_db(
     assert result.diagnostics["screen"] == "explore"
     assert result.diagnostics["stats"]["records"] == 2
     assert result.diagnostics["stats"]["relations"] == 1
+    assert result.diagnostics["capabilities"]
+    assert result.diagnostics["provider_details"]["owner"] == "OpenMinion memory"
+    assert result.diagnostics["viewer_manifest"]["schema_version"] == (
+        "graphfakos.workspace.v1"
+    )
+    assert "inspect_node" in result.diagnostics["viewer_manifest"]["viewer_actions"]
 
 
 def test_second_brain_current_shortcut_filters_agent_and_session_scopes(
@@ -369,6 +420,13 @@ def test_current_memory_empty_state_does_not_seed_sample_data(
         ],
         "scope_filter": [],
     }
+    assert result.diagnostics["viewer_manifest"]["empty_state"] == {
+        "code": "current_memory_empty",
+        "message": (
+            "No second-brain memory records matched this view. "
+            "No sample data was written."
+        ),
+    }
     assert "did not write sample data" in result.diagnostics["warnings"][0]
 
 
@@ -456,6 +514,7 @@ def test_second_brain_provider_adds_openminion_visual_metadata(
     assert "type:decision" in node.tags
     assert node.provider_payload["memory_type"] == "decision"
     assert isinstance(node.provider_payload["namespace"], dict)
+    assert graph.provider_payload["viewer_actions"]
     assert "tag" in graph.available_facets
     assert "type:decision" in graph.available_facets["tag"]
     assert graph.available_facets["node_kind"] == ("decision",)
@@ -860,18 +919,23 @@ def test_static_html_renders_in_playwright_when_chromium_available(tmp_path) -> 
         ),
     )
 
-    page_text = _playwright_page_text(
+    page_probe = _playwright_page_probe(
         playwright_sync=playwright_sync,
         page_uri=html_path.as_uri(),
     )
+    page_text = str(page_probe["text"])
     assert "GraphFakos" in page_text
     assert "Browser Viewer Smoke" in page_text
     assert "Graph filters" in page_text
     assert "Node kind" in page_text
     assert "Evidence" in page_text
+    assert page_probe["canvas_visible"] is True
+    assert page_probe["node_count"] >= 1
+    assert page_probe["graph_json_node_count"] == 1
+    assert page_probe["inspect_overlay"] is True
 
 
-def _playwright_page_text(*, playwright_sync: Any, page_uri: str) -> str:
+def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, object]:
     box: dict[str, object] = {}
 
     def _runner() -> None:
@@ -889,7 +953,21 @@ def _playwright_page_text(*, playwright_sync: Any, page_uri: str) -> str:
             try:
                 page = browser.new_page()
                 page.goto(page_uri)
-                box["text"] = page.locator("body").inner_text(timeout=10_000)
+                box["probe"] = {
+                    "text": page.locator("body").inner_text(timeout=10_000),
+                    "canvas_visible": page.locator(
+                        "[aria-label='GraphFakos graph canvas']"
+                    ).is_visible(timeout=10_000),
+                    "node_count": page.locator("[data-gf-graph-item='node']").count(),
+                    "inspect_overlay": page.locator(
+                        "[data-gf-inspect-overlay='true']"
+                    ).count()
+                    == 1,
+                    "graph_json_node_count": page.locator("graphfakos-viewer").evaluate(
+                        "(viewer) => JSON.parse(viewer.querySelector("
+                        "\"script[data-graph-json='true']\").textContent).nodes.length"
+                    ),
+                }
             finally:
                 browser.close()
         finally:
@@ -902,4 +980,5 @@ def _playwright_page_text(*, playwright_sync: Any, page_uri: str) -> str:
         pytest.skip("chromium browser smoke timed out")
     if "skip" in box:
         pytest.skip(str(box["skip"]))
-    return str(box.get("text", ""))
+    probe = box.get("probe", {})
+    return dict(probe) if isinstance(probe, dict) else {}

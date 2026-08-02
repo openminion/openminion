@@ -23,6 +23,7 @@ class ProviderSetupPreset:
     display_label: str
     runtime_adapter: str
     api_format_label: str
+    api_format_id: str
     default_base_url: str
     credential_env: str
     recommended_models: tuple[str, ...]
@@ -56,6 +57,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="OpenAI",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.openai.com/v1",
         credential_env="OPENAI_API_KEY",
         recommended_models=("gpt-4.1-mini",),
@@ -67,6 +69,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Anthropic",
         runtime_adapter="anthropic",
         api_format_label="Anthropic Messages",
+        api_format_id="anthropic-messages",
         default_base_url="https://api.anthropic.com/v1",
         credential_env="ANTHROPIC_API_KEY",
         recommended_models=("claude-3-5-sonnet-latest",),
@@ -78,6 +81,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="OpenRouter",
         runtime_adapter="openrouter",
         api_format_label="OpenAI-compatible via OpenRouter",
+        api_format_id="openai-compatible",
         default_base_url="https://openrouter.ai/api/v1",
         credential_env="OPENROUTER_API_KEY",
         recommended_models=("openai/gpt-4.1-mini",),
@@ -89,6 +93,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Ollama",
         runtime_adapter="ollama",
         api_format_label="Ollama local chat",
+        api_format_id="ollama-local-chat",
         default_base_url="http://127.0.0.1:11434",
         credential_env="",
         recommended_models=("llama3.1",),
@@ -100,6 +105,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Cerebras",
         runtime_adapter="cerebras",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.cerebras.ai/v1",
         credential_env="CEREBRAS_API_KEY",
         recommended_models=("gpt-oss-120b",),
@@ -111,6 +117,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Groq",
         runtime_adapter="groq",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.groq.com/openai/v1",
         credential_env="GROQ_API_KEY",
         recommended_models=("llama-3.3-70b-versatile",),
@@ -122,6 +129,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Cortensor",
         runtime_adapter="cortensor",
         api_format_label="Cortensor completions",
+        api_format_id="cortensor-completions",
         default_base_url="http://127.0.0.1:8080/api/v2/completions",
         credential_env="CORTENSOR_API_KEY",
         recommended_models=("gpt-oss-20b",),
@@ -132,6 +140,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="MiniMax",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.minimax.io/v1",
         credential_env="MINIMAX_API_KEY",
         recommended_models=("MiniMax-M3", "MiniMax-M2.7-highspeed", "MiniMax-M2.7"),
@@ -143,17 +152,19 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Kimi / Moonshot AI",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
-        default_base_url="https://api.moonshot.cn/v1",
+        api_format_id="openai-compatible",
+        default_base_url="https://api.moonshot.ai/v1",
         credential_env="MOONSHOT_API_KEY",
         recommended_models=("kimi-k3",),
         discovery_posture="recommended_only",
-        setup_help_url="https://platform.kimi.com/docs/overview",
+        setup_help_url="https://platform.kimi.ai/docs/overview",
     ),
     ProviderSetupPreset(
         preset_id="zai",
         display_label="Z.ai",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.z.ai/api/paas/v4/",
         credential_env="ZAI_API_KEY",
         recommended_models=("glm-5.2",),
@@ -165,6 +176,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Z.ai Coding",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible coding endpoint",
+        api_format_id="openai-compatible",
         default_base_url="https://api.z.ai/api/coding/paas/v4",
         credential_env="ZAI_API_KEY",
         recommended_models=("glm-5.2",),
@@ -176,6 +188,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="DeepSeek",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.deepseek.com",
         credential_env="DEEPSEEK_API_KEY",
         recommended_models=("deepseek-v4-flash", "deepseek-v4-pro"),
@@ -187,6 +200,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Qwen via DashScope",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible via DashScope",
+        api_format_id="openai-compatible",
         default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         credential_env="DASHSCOPE_API_KEY",
         recommended_models=("qwen-plus",),
@@ -201,6 +215,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Gemini",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         credential_env="GEMINI_API_KEY",
         recommended_models=("gemini-3.6-flash",),
@@ -212,6 +227,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="xAI",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.x.ai/v1",
         credential_env="XAI_API_KEY",
         recommended_models=("grok-4.5",),
@@ -223,6 +239,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Mistral AI",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.mistral.ai/v1",
         credential_env="MISTRAL_API_KEY",
         recommended_models=("mistral-large-latest",),
@@ -234,6 +251,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Together AI",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="https://api.together.ai/v1",
         credential_env="TOGETHER_API_KEY",
         recommended_models=("MiniMaxAI/MiniMax-M3",),
@@ -245,6 +263,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Custom OpenAI-compatible endpoint",
         runtime_adapter="openai",
         api_format_label="OpenAI-compatible",
+        api_format_id="openai-compatible",
         default_base_url="",
         credential_env="OPENAI_COMPATIBLE_API_KEY",
         recommended_models=("model-id",),
@@ -256,6 +275,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         display_label="Custom Anthropic-compatible endpoint",
         runtime_adapter="anthropic",
         api_format_label="Anthropic-compatible",
+        api_format_id="anthropic-compatible",
         default_base_url="",
         credential_env="ANTHROPIC_COMPATIBLE_API_KEY",
         recommended_models=("model-id",),
@@ -372,6 +392,10 @@ def _validate_catalog() -> None:
         if not preset.runtime_adapter:
             raise SetupCatalogError(
                 f"Provider setup preset {preset.preset_id!r} is missing runtime_adapter."
+            )
+        if not preset.api_format_id:
+            raise SetupCatalogError(
+                f"Provider setup preset {preset.preset_id!r} is missing api_format_id."
             )
         if preset.requires_base_url and preset.default_base_url:
             raise SetupCatalogError(

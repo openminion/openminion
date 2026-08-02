@@ -10,7 +10,9 @@ scope	max_python_files	max_loc
 # PMFO (2026-07-30) intentionally adds services/bootstrap/provider_setup.py as
 # the single setup/config mutation owner for provider/model first-run onboarding;
 # post-review correctness fixes lock stale-override and atomic-permission guards.
-services	205	38330
+# PAFMO (2026-08-01) intentionally extends provider setup with resolver-backed
+# provider identity persistence for OpenAI-compatible setup presets.
+services	205	38343
 services/security	6	187
 services/stats	1	25
 services/tool	3	50

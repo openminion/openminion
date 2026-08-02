@@ -640,7 +640,10 @@ def _run_skill_validate(args, app: Any | None = None) -> int:
             lint_report = ctl.lint(args.skill_id, args.version)
             harness_report = run_skill_harness(args.project_root)
             harness_result = None
-            for item in harness_report.results:
+            harness_results = tuple(harness_report.results)
+            if len(harness_results) == 1:
+                harness_result = harness_results[0]
+            for item in harness_results:
                 if args.skill_id and args.skill_id in str(item.skill_root):
                     harness_result = item
                     break

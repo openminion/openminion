@@ -105,7 +105,8 @@ Notes:
    second-brain memory database path, active third-brain providers, visual
    readiness, diagnostic codes, and suggested next commands,
 4. `openminion graph view --dry-run --json` builds the selected graph and
-   returns counts without starting the local browser viewer,
+   returns counts, filters, facets, provider details, empty-state metadata, and
+   a viewer-manifest summary without starting the local browser viewer,
 5. `openminion graph view --html-out viewer.html` writes a static visual page
    for inspection or sharing,
 6. `openminion graph view --current --agent <id>` and

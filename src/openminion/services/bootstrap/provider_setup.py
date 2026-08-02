@@ -21,6 +21,7 @@ from openminion.modules.llm.setup_catalog import (
     get_setup_preset,
     resolve_model_choice,
 )
+from openminion.modules.llm.config import resolve_provider_identity_translation
 
 
 _MANAGED_PROVIDER_OVERRIDE_KEYS = frozenset(
@@ -29,6 +30,7 @@ _MANAGED_PROVIDER_OVERRIDE_KEYS = frozenset(
         "api_key_env",
         "base_url",
         "model",
+        "provider_identity",
     }
 )
 _PROVIDER_ALIASES = {
@@ -172,6 +174,11 @@ def build_provider_setup(
     if not model:
         raise ProviderSetupError(f"No model selected for {preset.display_label}.")
     base_url = _resolve_base_url(preset=preset, base_url=request.base_url)
+    provider_identity = resolve_provider_identity_translation(
+        preset.runtime_adapter,
+        model=model,
+        base_url=base_url,
+    )
 
     config, shared_isolated, changed_sections = _apply_setup_selection(
         base_config,
@@ -180,6 +187,7 @@ def build_provider_setup(
         model=model,
         base_url=base_url,
         credential=credential,
+        provider_identity=provider_identity,
         data_root=data_root,
         config_exists=config_exists,
     )
@@ -328,6 +336,7 @@ def _apply_setup_selection(
     model: str,
     base_url: str,
     credential: CredentialResolution,
+    provider_identity: Mapping[str, str],
     data_root: Path,
     config_exists: bool,
 ) -> tuple[OpenMinionConfig, bool, list[str]]:
@@ -347,6 +356,7 @@ def _apply_setup_selection(
         model=model,
         base_url=base_url,
         credential=credential,
+        provider_identity=provider_identity,
     )
     profile = config.agents.get(agent_id) or AgentProfileConfig(name=agent_id)
     profile.name = profile.name or agent_id
@@ -380,10 +390,13 @@ def _provider_patch(
     model: str,
     base_url: str,
     credential: CredentialResolution,
+    provider_identity: Mapping[str, str],
 ) -> dict[str, Any]:
     patch: dict[str, Any] = {"model": model}
     if base_url:
         patch["base_url"] = base_url
+    if provider_identity:
+        patch["provider_identity"] = dict(provider_identity)
     if credential.env_var:
         patch["api_key_env"] = credential.env_var
         patch["api_key"] = ""

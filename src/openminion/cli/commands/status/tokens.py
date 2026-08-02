@@ -8,6 +8,7 @@ from openminion.cli.commands.status.session_store import build_status_session_st
 from openminion.cli.commands.status.token_report import (
     format_token_rollup,
     format_token_summary,
+    prepare_token_rollup,
     token_rollup_json_payload,
 )
 from openminion.cli.presentation.json_output import print_json_payload
@@ -42,11 +43,14 @@ def _resolve_session_id(args: Any, store: Any) -> str:
     return latest_session_id
 
 
-def _validate_token_status_args(args: Any) -> tuple[str, str, int | None, int | None]:
+def _validate_token_status_args(
+    args: Any,
+) -> tuple[str, str, int | None, int | None, bool]:
     run_id = str(args.run_id or "").strip()
     requested_session_id = str(getattr(args, "session_id", "") or "").strip()
     recent_limit = getattr(args, "recent", None)
     event_limit = args.event_limit
+    only_warnings = bool(getattr(args, "only_warnings", False))
     if event_limit is not None and int(event_limit) <= 0:
         raise RuntimeError("--event-limit must be greater than zero")
     normalized_recent_limit = None if recent_limit is None else int(recent_limit)
@@ -54,11 +58,19 @@ def _validate_token_status_args(args: Any) -> tuple[str, str, int | None, int | 
         raise RuntimeError("--recent must be greater than zero")
     if normalized_recent_limit is not None and (requested_session_id or run_id):
         raise RuntimeError("--recent cannot be combined with --session-id or --run-id")
-    return run_id, requested_session_id, normalized_recent_limit, event_limit
+    if only_warnings and normalized_recent_limit is None:
+        raise RuntimeError("--only-warnings requires --recent")
+    return (
+        run_id,
+        requested_session_id,
+        normalized_recent_limit,
+        event_limit,
+        only_warnings,
+    )
 
 
 def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
-    run_id, requested_session_id, recent_limit, event_limit = (
+    run_id, requested_session_id, recent_limit, event_limit, only_warnings = (
         _validate_token_status_args(args)
     )
 
@@ -70,10 +82,26 @@ def run_tokens_status(args: Any, *, config: OpenMinionConfig) -> int:
                 limit=recent_limit,
                 event_limit=event_limit,
             )
+            visible_summaries = prepare_token_rollup(
+                summaries,
+                only_warnings=only_warnings,
+            )
             if bool(args.json):
-                print_json_payload(token_rollup_json_payload(summaries))
+                print_json_payload(
+                    token_rollup_json_payload(
+                        visible_summaries,
+                        input_session_count=len(summaries),
+                        only_warnings=only_warnings,
+                    )
+                )
             else:
-                print(format_token_rollup(summaries))
+                print(
+                    format_token_rollup(
+                        visible_summaries,
+                        input_session_count=len(summaries),
+                        only_warnings=only_warnings,
+                    )
+                )
             return 0
         if run_id and not requested_session_id:
             summary = service.get_run_token_usage(run_id, event_limit=event_limit)
