@@ -21,6 +21,7 @@ from openminion.modules.llm.setup_catalog import (
     SetupCatalogError,
     first_screen_presets,
     get_setup_preset,
+    list_setup_presets,
     more_screen_presets,
 )
 from openminion.services.bootstrap.provider_setup import (
@@ -164,7 +165,7 @@ def _prompt_provider_preset() -> ProviderSetupPreset:
     presets = first_screen_presets()
     options = {
         str(index): SetupSelection(
-            label=preset.display_label,
+            label=f"{preset.display_label} ({preset.api_format_label})",
             value=preset.preset_id,
         )
         for index, preset in enumerate(presets, start=1)
@@ -180,7 +181,7 @@ def _prompt_provider_preset() -> ProviderSetupPreset:
     more = more_screen_presets()
     more_options = {
         str(index): SetupSelection(
-            label=preset.display_label,
+            label=f"{preset.display_label} ({preset.api_format_label})",
             value=preset.preset_id,
         )
         for index, preset in enumerate(more, start=1)
@@ -301,9 +302,23 @@ def _build_non_interactive_setup(
         expected_preset = custom_preset_by_format.get(api_format)
         if expected_preset is None:
             raise ProviderSetupError(f"Unsupported API format {api_format!r}.")
-        if preset_id != expected_preset:
+        try:
+            preset = get_setup_preset(preset_id)
+        except SetupCatalogError as exc:
+            raise ProviderSetupError(str(exc)) from exc
+        if preset.preset_id in custom_preset_by_format.values():
+            if preset.preset_id != expected_preset:
+                raise ProviderSetupError(
+                    f"--api-format {api_format!r} requires "
+                    f"--provider {expected_preset!r}."
+                )
+        elif preset.api_format_id != api_format:
             raise ProviderSetupError(
-                f"--api-format {api_format!r} requires --provider {expected_preset!r}."
+                f"{preset.display_label} does not have an approved "
+                f"{api_format!r} setup path in simple v1. Use "
+                f"--provider {preset.preset_id!r} without --api-format for "
+                f"{preset.api_format_id!r}, or use --provider "
+                f"{expected_preset!r} with an explicit --base-url."
             )
     try:
         return build_provider_setup(
@@ -326,6 +341,25 @@ def _print_preview(result: ProviderSetupResult) -> None:
     print("Setup preview:")
     for line in result.preview.lines():
         print(f"  {line}")
+
+
+def _print_provider_listing() -> None:
+    print("Supported setup providers:")
+    for preset in list_setup_presets():
+        base_url = preset.default_base_url or "custom --base-url required"
+        credential = preset.credential_env or "not required"
+        models = ", ".join(preset.recommended_models)
+        print(
+            f"  {preset.preset_id}: {preset.display_label} | "
+            f"api={preset.api_format_id} ({preset.api_format_label}) | "
+            f"adapter={preset.runtime_adapter} | env={credential} | "
+            f"base={base_url} | models={models} [recommended] | "
+            f"discovery={preset.discovery_posture}"
+        )
+    print(
+        "Custom endpoint guidance: use --provider custom-openai-compatible "
+        "or custom-anthropic-compatible with --api-format, --base-url, and --model."
+    )
 
 
 def _prompt_provider_check(preset: ProviderSetupPreset) -> bool:
@@ -410,6 +444,10 @@ def _resolve_runtime_helper(name: str) -> Any:
 def run_setup(args) -> int:
     from openminion.base.config.core import resolve_default_agent_id
 
+    if getattr(args, "list_providers", False):
+        _resolve_runtime_helper("_print_provider_listing")()
+        return 0
+
     try:
         config, saved_path = _resolve_runtime_helper("_run_wizard")(args)
     except ProviderSetupError as exc:
@@ -479,6 +517,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--provider",
         default=None,
         help="Non-interactive provider preset id, for example openai or minimax",
+    )
+    setup.add_argument(
+        "--list-providers",
+        action="store_true",
+        help="List setup provider presets and API formats without making network requests",
     )
     setup.add_argument(
         "--model",

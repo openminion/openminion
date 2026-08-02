@@ -219,13 +219,19 @@ def test_shared_adapter_setup_uses_selected_agent_overrides(tmp_path: Path) -> N
     assert overrides["base_url"] == "https://api.minimax.io/v1"
     assert overrides["model"] == "MiniMax-M2.7"
     assert overrides["api_key"] == ""
+    assert overrides["provider_identity"] == {
+        "transport_adapter": "openai_chat",
+        "wire_protocol_family": "openai_chat_completions",
+        "service_vendor": "minimax",
+        "model_family": "minimax",
+    }
 
 
 @pytest.mark.parametrize(
     ("preset_id", "model", "credential_env", "base_url"),
     [
         ("minimax", "MiniMax-M3", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
-        ("kimi", "kimi-k3", "MOONSHOT_API_KEY", "https://api.moonshot.cn/v1"),
+        ("kimi", "kimi-k3", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
         ("zai", "glm-5.2", "ZAI_API_KEY", "https://api.z.ai/api/paas/v4/"),
         (
             "zai-coding",
@@ -303,6 +309,11 @@ def test_frontier_shared_adapter_presets_use_selected_agent_overrides(
     assert overrides["base_url"] == base_url
     assert overrides["model"] == model
     assert overrides["api_key"] == ""
+    assert overrides["provider_identity"]["transport_adapter"] == "openai_chat"
+    assert overrides["provider_identity"]["wire_protocol_family"] == (
+        "openai_chat_completions"
+    )
+    assert overrides["provider_identity"]["service_vendor"] != "openai"
 
 
 def test_shared_adapter_setup_replaces_stale_selected_agent_overrides(
@@ -346,6 +357,12 @@ def test_shared_adapter_setup_replaces_stale_selected_agent_overrides(
         "api_key_env": "MINIMAX_API_KEY",
         "base_url": "https://api.minimax.io/v1",
         "model": "MiniMax-M2.7",
+        "provider_identity": {
+            "transport_adapter": "openai_chat",
+            "wire_protocol_family": "openai_chat_completions",
+            "service_vendor": "minimax",
+            "model_family": "minimax",
+        },
         "temperature": 0.1,
     }
 

@@ -20,6 +20,7 @@ _KIND_STR = "str"
 _KIND_INT = "int"
 _KIND_FLOAT = "float"
 _KIND_BOOL = "bool"
+_KIND_DICT_STR = "dict_str"
 _KIND_INT_LIST = "int_list"
 
 _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
@@ -30,6 +31,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
             "api_key": (_KIND_STR, ""),
             "api_key_env": (_KIND_STR, "OPENAI_API_KEY"),
             "base_url": (_KIND_STR, "https://api.openai.com/v1"),
+            "provider_identity": (_KIND_DICT_STR, {}),
             "timeout_seconds": (_KIND_INT, 60),
             "temperature": (_KIND_FLOAT, 0.2),
             "tool_call_strategy": (_KIND_STR, "hybrid"),
@@ -147,6 +149,14 @@ def _coerce_value(raw_value: Any, kind: str, default: Any) -> Any:
         return _as_float(raw_value, default)
     if kind == _KIND_BOOL:
         return _as_bool(raw_value, default)
+    if kind == _KIND_DICT_STR:
+        if not isinstance(raw_value, dict):
+            return dict(default)
+        return {
+            str(key): str(value)
+            for key, value in raw_value.items()
+            if str(key).strip() and value is not None
+        }
     if kind == _KIND_INT_LIST:
         return _as_int_list(raw_value)
     raise ValueError(f"unknown provider field kind: {kind}")
@@ -189,6 +199,8 @@ def _providers_config_to_payload(config: ProvidersConfig) -> dict[str, Any]:
                 provider_payload[field_name] = bool(value)
             elif kind == _KIND_FLOAT:
                 provider_payload[field_name] = float(value)
+            elif kind == _KIND_DICT_STR:
+                provider_payload[field_name] = dict(value)
             else:
                 provider_payload[field_name] = value
         payload[name] = provider_payload

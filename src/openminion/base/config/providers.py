@@ -11,6 +11,7 @@ class OpenAIProviderConfig:
     api_key: str = ""
     api_key_env: str = "OPENAI_API_KEY"
     base_url: str = "https://api.openai.com/v1"
+    provider_identity: dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 60
     temperature: float = 0.2
     tool_call_strategy: str = "hybrid"

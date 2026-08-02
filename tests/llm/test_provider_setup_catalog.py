@@ -37,9 +37,14 @@ def test_setup_catalog_covers_required_provider_matrix() -> None:
         "custom-anthropic-compatible",
     }.issubset(preset_by_id)
     assert preset_by_id["minimax"].runtime_adapter == "openai"
+    assert preset_by_id["minimax"].api_format_id == "openai-compatible"
     assert preset_by_id["minimax"].credential_env == "MINIMAX_API_KEY"
     assert preset_by_id["minimax"].recommended_models[0] == "MiniMax-M3"
-    assert preset_by_id["kimi"].default_base_url == "https://api.moonshot.cn/v1"
+    assert preset_by_id["kimi"].default_base_url == "https://api.moonshot.ai/v1"
+    assert preset_by_id["anthropic"].api_format_id == "anthropic-messages"
+    assert preset_by_id["custom-anthropic-compatible"].api_format_id == (
+        "anthropic-compatible"
+    )
     assert preset_by_id["zai"].default_base_url == "https://api.z.ai/api/paas/v4/"
     assert (
         preset_by_id["zai-coding"].default_base_url
@@ -55,6 +60,9 @@ def test_setup_catalog_covers_required_provider_matrix() -> None:
     assert preset_by_id["mistral"].credential_env == "MISTRAL_API_KEY"
     assert preset_by_id["together"].default_base_url == "https://api.together.ai/v1"
     assert preset_by_id["custom-openai-compatible"].requires_base_url is True
+    assert preset_by_id["custom-openai-compatible"].api_format_id == (
+        "openai-compatible"
+    )
     assert preset_by_id["ollama"].is_local is True
 
 

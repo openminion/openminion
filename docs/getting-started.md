@@ -71,26 +71,32 @@ files are owner-only `0600`.
 
 Built-in hosted presets currently include:
 
-| Preset | Environment variable | Default base URL | Recommended model source |
-| --- | --- | --- | --- |
-| `openai` | `OPENAI_API_KEY` | `https://api.openai.com/v1` | live-optional, otherwise recommended |
-| `anthropic` | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | recommended |
-| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | live-optional, otherwise recommended |
-| `minimax` | `MINIMAX_API_KEY` | `https://api.minimax.io/v1` | live-optional, otherwise recommended |
-| `kimi` | `MOONSHOT_API_KEY` | `https://api.moonshot.cn/v1` | recommended |
-| `zai` | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4/` | recommended |
-| `zai-coding` | `ZAI_API_KEY` | `https://api.z.ai/api/coding/paas/v4` | recommended |
-| `deepseek` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` | recommended |
-| `qwen-dashscope` | `DASHSCOPE_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | recommended |
-| `gemini` | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` | live-optional, otherwise recommended |
-| `xai` | `XAI_API_KEY` | `https://api.x.ai/v1` | recommended |
-| `mistral` | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` | recommended |
-| `together` | `TOGETHER_API_KEY` | `https://api.together.ai/v1` | recommended |
+| Preset | API format | Environment variable | Default base URL | Recommended model source |
+| --- | --- | --- | --- | --- |
+| `openai` | OpenAI-compatible | `OPENAI_API_KEY` | `https://api.openai.com/v1` | live-optional, otherwise recommended |
+| `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` | `https://api.anthropic.com/v1` | recommended |
+| `openrouter` | OpenAI-compatible | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | live-optional, otherwise recommended |
+| `minimax` | OpenAI-compatible | `MINIMAX_API_KEY` | `https://api.minimax.io/v1` | live-optional, otherwise recommended |
+| `kimi` | OpenAI-compatible | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | recommended |
+| `zai` | OpenAI-compatible | `ZAI_API_KEY` | `https://api.z.ai/api/paas/v4/` | recommended |
+| `zai-coding` | OpenAI-compatible | `ZAI_API_KEY` | `https://api.z.ai/api/coding/paas/v4` | recommended |
+| `deepseek` | OpenAI-compatible | `DEEPSEEK_API_KEY` | `https://api.deepseek.com` | recommended |
+| `qwen-dashscope` | OpenAI-compatible | `DASHSCOPE_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | recommended |
+| `gemini` | OpenAI-compatible | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai/` | live-optional, otherwise recommended |
+| `xai` | OpenAI-compatible | `XAI_API_KEY` | `https://api.x.ai/v1` | recommended |
+| `mistral` | OpenAI-compatible | `MISTRAL_API_KEY` | `https://api.mistral.ai/v1` | recommended |
+| `together` | OpenAI-compatible | `TOGETHER_API_KEY` | `https://api.together.ai/v1` | recommended |
 
 Unless a setup run says `live`, a checked-in model is only a recommended
 fallback. Fixture-backed provider support means OpenMinion has local request and
 configuration coverage; it is not a live account, billing, quota, or model
 availability guarantee.
+
+List the static setup catalog without making a provider request:
+
+```bash
+openminion setup --list-providers
+```
 
 To move an existing setup, export it without embedded secrets and import it on
 the new machine:
@@ -122,6 +128,20 @@ openminion setup \
   --agent minimax-m3 \
   --no-focus
 ```
+
+For another OpenAI-compatible service, choose the service preset and model:
+
+```bash
+openminion setup \
+  --provider qwen-dashscope \
+  --api-format openai-compatible \
+  --model qwen-plus \
+  --agent qwen-plus \
+  --no-focus
+```
+
+The same pattern works for `kimi`, `zai`, `zai-coding`, and `deepseek` with
+their own environment variables and model ids.
 
 Non-interactive setup reads credentials from the provider's environment
 variable and does not send a remote provider request by default. Add

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import stat
+from typing import Any
 
 import pytest
 
@@ -74,6 +75,56 @@ def _reply(session: PtySession, prompt: str, answer: str = "") -> None:
 def _assert_owner_only(path: Path) -> None:
     if os.name == "posix":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def _run_noninteractive_setup_case(
+    *,
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+    name: str,
+    preset_id: str,
+    base_url: str,
+    model: str,
+    credential_env: str,
+    credential: str,
+) -> tuple[dict[str, Any], str]:
+    home_root = tmp_path / f"{name}-home"
+    data_root = tmp_path / f"{name}-data"
+    config_path = home_root / ".openminion" / "config.json"
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+            extra_setup_args=(
+                "--provider",
+                preset_id,
+                "--api-format",
+                "openai-compatible",
+                "--base-url",
+                base_url,
+                "--model",
+                model,
+            ),
+        ),
+        cwd=openminion_root,
+        env=_environment(
+            home_root=home_root,
+            data_root=data_root,
+            **{credential_env: credential},
+        ),
+    ) as session:
+        transcript = session.wait_for_after(
+            "Setup complete. Interactive launch skipped",
+            offset=0,
+            timeout=120,
+        )
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    _assert_owner_only(config_path)
+    return payload, transcript
 
 
 def _write_import_source(path: Path) -> None:
@@ -255,6 +306,67 @@ def test_missing_hosted_credential_cancels_without_writing(
 
     assert not config_path.exists()
     write_transcript(artifact_root(tmp_path), "onboarding-missing-key", transcript)
+
+
+def test_noninteractive_openai_compatible_setups_preserve_api_format(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    dashscope_url = "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
+    dashscope_payload, dashscope_transcript = _run_noninteractive_setup_case(
+        tmp_path=tmp_path,
+        python_bin=python_bin,
+        openminion_root=openminion_root,
+        name="dashscope",
+        preset_id="qwen-dashscope",
+        base_url=dashscope_url,
+        model="qwen-plus",
+        credential_env="DASHSCOPE_API_KEY",
+        credential="fixture-dashscope-key-not-for-network-use",
+    )
+    assert dashscope_payload["agents"]["openminion"]["provider"] == "openai"
+    assert dashscope_payload["providers"]["openai"]["base_url"] == dashscope_url
+    assert dashscope_payload["providers"]["openai"]["provider_identity"] == {
+        "transport_adapter": "openai_chat",
+        "wire_protocol_family": "openai_chat_completions",
+        "service_vendor": "dashscope",
+        "model_family": "qwen",
+    }
+    assert "Provider check skipped; no remote provider request was made." in (
+        dashscope_transcript
+    )
+    assert "fixture-dashscope-key" not in dashscope_transcript
+
+    custom_url = "https://models.example.invalid/v1"
+    custom_payload, custom_transcript = _run_noninteractive_setup_case(
+        tmp_path=tmp_path,
+        python_bin=python_bin,
+        openminion_root=openminion_root,
+        name="custom",
+        preset_id="custom-openai-compatible",
+        base_url=custom_url,
+        model="vendor-model",
+        credential_env="OPENAI_COMPATIBLE_API_KEY",
+        credential="fixture-custom-key-not-for-network-use",
+    )
+    assert custom_payload["agents"]["openminion"]["provider"] == "openai"
+    assert custom_payload["providers"]["openai"]["base_url"] == custom_url
+    assert custom_payload["providers"]["openai"]["provider_identity"] == {
+        "transport_adapter": "openai_chat",
+        "wire_protocol_family": "openai_chat_completions",
+        "service_vendor": "openai",
+        "model_family": "openai",
+    }
+    assert "Provider check skipped; no remote provider request was made." in (
+        custom_transcript
+    )
+    assert "fixture-custom-key" not in custom_transcript
+    write_transcript(
+        artifact_root(tmp_path),
+        "onboarding-openai-compatible-api-format",
+        dashscope_transcript + "\n--- custom ---\n" + custom_transcript,
+    )
 
 
 def test_live_provider_setup_check(
