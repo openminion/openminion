@@ -23,7 +23,7 @@
   <img alt="Status" src="https://img.shields.io/badge/status-alpha-6B7280">
 </p>
 
-OpenMinion `v0.0.1` is the public preview of a runtime for running inspectable
+OpenMinion is the public preview of a runtime for running inspectable
 agents on your own machine. One shared runtime spans CLI, Python API, HTTP API,
 and daemon-backed workflows, with durable sessions, structured tools, and
 inspectable run state built in.
@@ -53,7 +53,7 @@ and should be treated as a scam.
 | | |
 | --- | --- |
 | Package | `openminion` |
-| Current line | `v0.0.1` public preview; `v0.1.0` is reserved for a later broadly usable milestone |
+| Current line | Public preview; `v0.1.0` is reserved for a later broadly usable milestone |
 | Python | 3.11+ |
 | Best fit | Bounded local workflows, tool use, integrations, and operator-driven agents |
 | Main surfaces | CLI, Python API, local HTTP API, and daemon-backed execution |

@@ -53,7 +53,7 @@ important for contributors, but they are not the supported import API.
 
 ## Public Package Stance
 
-The `v0.0.1` public preview contract is a local-first agent runtime with:
+The current public preview contract is a local-first agent runtime with:
 
 1. the canonical interactive CLI and one-shot `run` path,
 2. a Python API rooted at `openminion` and `openminion.api`,
