@@ -70,6 +70,27 @@ def test_skill_harness_warns_when_no_fixtures() -> None:
     assert any("fixtures" in warning for warning in report.results[0].warnings)
 
 
+def test_skill_harness_accepts_direct_skill_root() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        skill_root = root / "hello"
+        fixtures_root = skill_root / "fixtures"
+        fixtures_root.mkdir(parents=True)
+        skill_root.joinpath("SKILL.md").write_text(SKILL_BODY, encoding="utf-8")
+        fixtures_root.joinpath("input.json").write_text(
+            '{"name":"world"}\n', encoding="utf-8"
+        )
+        fixtures_root.joinpath("expected.txt").write_text(
+            "hello world\n", encoding="utf-8"
+        )
+
+        report = run_skill_harness(skill_root)
+
+    assert report.ok
+    assert report.total_skills == 1
+    assert report.results[0].skill_root == str(skill_root.resolve())
+
+
 def test_skill_harness_fails_when_no_skills_discovered() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         report = run_skill_harness(Path(tmp))
