@@ -52,6 +52,11 @@ Documentation = "https://www.openminion.com/docs"
 Changelog = "https://github.com/OpenMinion/openminion/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
+acp = [
+  # Local Agent Client Protocol v1 stdio interoperability. Kept optional so
+  # ordinary CLI/API installs do not carry a client-integration dependency.
+  "agent-client-protocol>=0.12,<0.13",
+]
 animations = [
   "unicode-animatio>=0.0.2",
 ]
@@ -59,6 +64,8 @@ remote = [
   "asyncssh>=2.14,<3",
 ]
 dev = [
+  # Exercise the optional ACP adapter in the standard development/CI suite.
+  "agent-client-protocol>=0.12,<0.13",
   # Package-integration tests exercise optional sibling package surfaces while
   # remaining skippable in a minimal runtime installation.
   "graphfakos>=0.0.1",

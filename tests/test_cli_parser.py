@@ -1045,6 +1045,7 @@ print(json.dumps(results, sort_keys=True))
             [
                 "config",
                 "api",
+                "acp",
                 "autonomy",
                 "browser",
                 "data",
@@ -1108,6 +1109,7 @@ print(json.dumps(results, sort_keys=True))
             [
                 "config",
                 "api",
+                "acp",
                 "autonomy",
                 "browser",
                 "data",

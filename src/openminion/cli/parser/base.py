@@ -19,6 +19,7 @@ class CommandSpec:
 COMMAND_SPECS = (
     CommandSpec("config", "openminion.cli.commands.config", "Config operations"),
     CommandSpec("api", "openminion.cli.commands.api", "HTTP API controls"),
+    CommandSpec("acp", "openminion.cli.commands.acp", "Run the local ACP agent"),
     CommandSpec("autonomy", "openminion.cli.commands.autonomy", "Autonomy runs"),
     CommandSpec("browser", "openminion.cli.commands.browser", "Browser controls"),
     CommandSpec("data", "openminion.cli.commands.data", "Data root operations"),

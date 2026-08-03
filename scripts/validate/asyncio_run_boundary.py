@@ -23,6 +23,7 @@ from scripts.common.asyncio_calls import is_asyncio_run_call, load_python_module
 _ALLOWLISTED_FILES: frozenset[str] = frozenset(
     {
         # CLI/process boundary (keep indefinitely)
+        "openminion/cli/commands/acp.py",
         "openminion/cli/commands/agent.py",
         "openminion/cli/commands/agent_check.py",
         "openminion/cli/commands/doctor.py",

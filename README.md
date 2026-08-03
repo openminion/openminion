@@ -73,6 +73,8 @@ openminion run "hello"
 openminion
 openminion tools list
 openminion doctor --check-turn --json
+# Optional: install "openminion[acp]" before using a local ACP client.
+openminion acp
 ```
 
 Useful operator surfaces:

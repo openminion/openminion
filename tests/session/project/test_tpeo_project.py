@@ -9,7 +9,11 @@ from openminion.modules.session.project import (
     Project,
     SQLiteProjectStore,
 )
-from openminion.modules.session.project.binding import resolve_inheritance
+from openminion.modules.session.project.binding import (
+    ProjectSessionInheritance,
+    resolve_inheritance,
+    resolve_installed_project_skills,
+)
 from openminion.modules.session.project.cli import dispatch_project_command
 from openminion.modules.session.project.cron_binding import (
     resolve_cron_project_binding,
@@ -153,6 +157,52 @@ def test_resolve_inheritance_returns_none_for_unbound_session():
         assert resolve_inheritance(store, session_id="unbound") is None
     finally:
         tmp.cleanup()
+
+
+def test_project_skill_set_accepts_installed_ids_and_bounds_child_requests():
+    inheritance = ProjectSessionInheritance(
+        project_id="p1",
+        master_instruction="",
+        skill_set=("coding", "research"),
+        scope_key="project:p1",
+    )
+
+    assert resolve_installed_project_skills(
+        inheritance,
+        installed_skill_ids={"coding", "research", "unrelated"},
+    ) == ("coding", "research")
+    assert resolve_installed_project_skills(
+        inheritance,
+        installed_skill_ids={"coding", "research"},
+        requested_skill_ids=["research"],
+    ) == ("research",)
+
+
+def test_project_skill_set_rejects_uninstalled_and_out_of_scope_ids():
+    inheritance = ProjectSessionInheritance(
+        project_id="p1",
+        master_instruction="",
+        skill_set=("coding", "missing"),
+        scope_key="project:p1",
+    )
+    with pytest.raises(ValueError, match="uninstalled skills: missing"):
+        resolve_installed_project_skills(
+            inheritance,
+            installed_skill_ids={"coding"},
+        )
+
+    bounded = ProjectSessionInheritance(
+        project_id="p1",
+        master_instruction="",
+        skill_set=("coding",),
+        scope_key="project:p1",
+    )
+    with pytest.raises(ValueError, match="exceed project scope: research"):
+        resolve_installed_project_skills(
+            bounded,
+            installed_skill_ids={"coding", "research"},
+            requested_skill_ids=["research"],
+        )
 
 
 def test_bind_session_is_upsert_on_session_id():
