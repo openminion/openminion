@@ -88,6 +88,13 @@ def test_agent_tools_param_propagates_to_payload() -> None:
     assert runtime.last_payload["allowed_tools"] == ["search", "fetch"]
 
 
+def test_agent_forced_tools_param_propagates_to_runtime_owner() -> None:
+    runtime = _FakeRuntime()
+    agent = Agent(forced_tools=["search"], runtime=runtime)
+    agent.run("hello")
+    assert runtime.last_payload["forced_tools"] == ["search"]
+
+
 def test_agent_run_stream_invokes_on_delta_callback() -> None:
     runtime = _FakeRuntime("streamed")
     captured: list[Any] = []

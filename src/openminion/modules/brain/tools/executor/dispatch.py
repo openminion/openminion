@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from ...diagnostics.events import CanonicalEventLogger
-from ...constants import BRAIN_COMMAND_KIND_TOOL
+from ...constants import BRAIN_COMMAND_KIND_TOOL, STATE_KEY_MODULE_STATE
 from ...execution.public_taxonomy import public_surface_payload_for_state
 from ...schemas import (
     ActionResult,
@@ -56,6 +56,39 @@ def _command_lineage_payload(
     return {key: value for key, value in payload.items() if value is not None}
 
 
+def _inject_runtime_tool_metadata(
+    payload: dict[str, Any],
+    *,
+    state: WorkingState,
+    lineage: dict[str, Any],
+) -> None:
+    """Carry runtime-owned child isolation context across worker threads."""
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        payload["meta"] = meta
+    meta["orchestration"] = dict(lineage)
+    module_state = getattr(state, STATE_KEY_MODULE_STATE, None)
+    worktree_state = (
+        module_state.get("worktree_children")
+        if isinstance(module_state, dict)
+        else None
+    )
+    child_state = (
+        worktree_state.get("worktree_child")
+        if isinstance(worktree_state, dict)
+        else None
+    )
+    workspace_root = (
+        str(child_state.get("workspace") or "").strip()
+        if isinstance(child_state, dict)
+        else ""
+    )
+    if not workspace_root:
+        return
+    meta["runtime_execution"] = {"workspace_root": workspace_root}
+
+
 def execute_action(
     runner: "BrainRunner",
     *,
@@ -87,5 +120,6 @@ def execute_action(
 
 __all__ = [
     "_command_lineage_payload",
+    "_inject_runtime_tool_metadata",
     "execute_action",
 ]

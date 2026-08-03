@@ -1,15 +1,81 @@
 from __future__ import annotations
 
+from pathlib import Path
+import re
 import sqlite3
+import subprocess
 import time
+from types import SimpleNamespace
 
 import pytest
 
+from openminion.modules.artifact.control import ArtifactCtl
+from openminion.modules.artifact.config import (
+    ArtifactCtlConfig,
+    BlobStoreConfig,
+    IndexConfig,
+)
+from openminion.modules.brain.schemas import WorkingState
+from openminion.modules.session.storage import SQLiteSessionStore
+from openminion.tools.agent.plugin import _h_task_delegate
 from tests.e2e.cli.focus.conftest import require_live_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(360)]
+
+_TASK_ID_RE = re.compile(r"(?m)^\s*task\s+(\S+)\s*$")
+
+
+def _run_git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _create_disposable_repo(root: Path) -> Path:
+    repo = root / "maer-parent"
+    repo.mkdir(parents=True)
+    _run_git(repo, "init")
+    _run_git(repo, "config", "user.email", "maer-live@example.invalid")
+    _run_git(repo, "config", "user.name", "MAER Live")
+    (repo / "seed.txt").write_text("parent unchanged\n", encoding="utf-8")
+    _run_git(repo, "add", "seed.txt")
+    _run_git(repo, "commit", "-m", "seed")
+    return repo
+
+
+def _latest_public_child_artifacts(probe: FocusProbe) -> list[dict]:
+    store = SQLiteSessionStore(probe.data_root / "state" / "brain" / "sessions.db")
+    try:
+        brain_session_id = f"{probe.session_id}::conv:focus-{probe.session_id}"
+        latest = store.get_latest_working_state(brain_session_id)
+    finally:
+        store.close()
+    assert latest is not None
+    state = WorkingState.model_validate(latest["state_inline"])
+    assert state.last_result is not None
+    subtask_results = list(state.last_result.outputs.get("subtask_results", []))
+    artifacts = [
+        dict(item["child_artifact"])
+        for item in subtask_results
+        if isinstance(item, dict) and isinstance(item.get("child_artifact"), dict)
+    ]
+    assert artifacts, "orchestration result did not expose child artifacts"
+    return artifacts
+
+
+def _artifactctl_for_probe(probe: FocusProbe) -> ArtifactCtl:
+    artifact_root = probe.data_root / "artifact"
+    return ArtifactCtl(
+        ArtifactCtlConfig(
+            blob_store=BlobStoreConfig(root_dir=str(artifact_root)),
+            index=IndexConfig(sqlite_path=str(artifact_root / "index.db")),
+        )
+    )
 
 
 def _wait_for_a2a_delegate_success(
@@ -107,3 +173,111 @@ def test_live_focus_delegate_code_child_writes_in_scratch(
 
     marker_file = scratch_dir / "maer_child_marker.txt"
     assert marker_file.read_text(encoding="utf-8").strip() == marker
+
+
+def test_live_focus_delegate_async_lifecycle(
+    focus_probe: FocusProbe,
+    tmp_path: Path,
+) -> None:
+    """Prove the live Focus surface preserves one async task handle."""
+    require_live_focus()
+    target_agent = "minimax-m2-7-highspeed"
+    root = artifact_root(tmp_path)
+    with focus_probe.session(rows=50, cols=160) as session:
+        focus_probe.wait_ready(session)
+        started = focus_probe.run_slash(
+            session,
+            (
+                f"/delegate async {target_agent} Analyze three independent "
+                "ways to verify a Python package release, then return a short list."
+            ),
+            marker="Delegation:",
+        )
+        task_match = _TASK_ID_RE.search(started)
+        assert task_match is not None, started
+        task_id = task_match.group(1)
+
+        status = focus_probe.run_slash(
+            session, f"/delegate status {task_id}", marker="Delegation:"
+        )
+        result = focus_probe.run_slash(
+            session, f"/delegate result {task_id}", marker="Delegation:"
+        )
+        canceled = focus_probe.run_slash(
+            session, f"/delegate cancel {task_id}", marker="Delegation:"
+        )
+        write_transcript(
+            root,
+            "sduc-live-async-lifecycle",
+            "\n\n--- status ---\n".join((started, status, result, canceled)),
+        )
+
+    for transcript in (status, result, canceled):
+        assert task_id in transcript
+        assert "Delegation:" in transcript
+
+
+def test_live_focus_code_children_store_and_disposition_artifacts(
+    focus_probe: FocusProbe,
+    tmp_path: Path,
+) -> None:
+    """Prove live orchestration isolates child changes until parent review."""
+    require_live_focus()
+    root = artifact_root(tmp_path)
+    repo = _create_disposable_repo(root / "scratch")
+    active_probe = focus_probe.for_workdir(repo, include_project_context=False)
+    prompt = (
+        "Use the decompose tool exactly once with two independent subtasks. "
+        "Subtask id accept-child must call file.write with exact arguments "
+        '{"path": "accepted.txt", "content": "ACCEPTED_CHILD"}. '
+        "Subtask id reject-child must call file.write with exact arguments "
+        '{"path": "rejected.txt", "content": "REJECTED_CHILD"}. '
+        "For both subtasks set suggested_mode to act and inputs to "
+        f'{{"code_bearing": true, "workspace_root": "{repo}"}}. '
+        "Do not create either file in the parent checkout yourself."
+    )
+    from tests.e2e.cli.focus.harness.scenarios import FocusScenario
+
+    scenario = FocusScenario(
+        scenario_id="maer-live-artifact-disposition",
+        prompt=prompt,
+        expected_markers=(),
+        timeout=600,
+        requires_approval=True,
+        max_auto_approvals=12,
+        approval_reply="session",
+    )
+    with active_probe.session(rows=55, cols=180) as session:
+        active_probe.wait_ready(session)
+        transcript = active_probe.run_turn(session, scenario)
+        write_transcript(root, scenario.scenario_id, transcript)
+
+    assert not (repo / "accepted.txt").exists()
+    assert not (repo / "rejected.txt").exists()
+    artifacts = _latest_public_child_artifacts(active_probe)
+    by_id = {str(item.get("subtask_id")): item for item in artifacts}
+    assert {"accept-child", "reject-child"}.issubset(by_id)
+
+    with _artifactctl_for_probe(active_probe) as artifactctl:
+        accepted = _h_task_delegate(
+            {
+                "mode": "accept",
+                "workspace_root": str(repo),
+                "child_artifact": by_id["accept-child"],
+            },
+            SimpleNamespace(artifactctl=artifactctl),
+        )
+        rejected = _h_task_delegate(
+            {
+                "mode": "reject",
+                "child_artifact": by_id["reject-child"],
+            },
+            SimpleNamespace(artifactctl=artifactctl),
+        )
+
+    assert accepted["status"] == "accepted"
+    assert rejected["status"] == "rejected"
+    assert (repo / "accepted.txt").read_text(encoding="utf-8").strip() == (
+        "ACCEPTED_CHILD"
+    )
+    assert not (repo / "rejected.txt").exists()

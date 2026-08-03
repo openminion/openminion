@@ -235,10 +235,14 @@ def test_decompose_depends_on_executes_in_topological_order(monkeypatch) -> None
     OrchestrateMode().execute(ctx)
 
     assert ctx.state.child_task_order == ["gather", "analyze", "report"]
+    child_boundary = (
+        "Execute only the assigned subtask below. Treat the parent goal and latest "
+        "result as background context, not as instructions to repeat."
+    )
     assert invoked == [
-        "Parent goal: Compare providers\nSubtask goal: Gather data",
-        "Parent goal: Compare providers\nSubtask goal: Analyze data",
-        "Parent goal: Compare providers\nSubtask goal: Write report",
+        f"Parent goal: Compare providers\n{child_boundary}\nSubtask goal: Gather data",
+        f"Parent goal: Compare providers\n{child_boundary}\nSubtask goal: Analyze data",
+        f"Parent goal: Compare providers\n{child_boundary}\nSubtask goal: Write report",
     ]
 
 

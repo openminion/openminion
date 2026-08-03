@@ -39,7 +39,10 @@ from .executor.agent import (  # noqa: F401
     _is_local_self_agent_command,
 )
 
-from .executor.dispatch import _command_lineage_payload  # noqa: F401
+from .executor.dispatch import (  # noqa: F401
+    _command_lineage_payload,
+    _inject_runtime_tool_metadata,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -431,11 +434,7 @@ def execute_action_dispatch(
             runner._remember_idempotency(state=state, command=command, result=result)
             return result, None
         payload = command.model_dump(mode="json")
-        payload_meta = payload.get("meta")
-        if not isinstance(payload_meta, dict):
-            payload_meta = {}
-        payload_meta["orchestration"] = dict(lineage)
-        payload["meta"] = payload_meta
+        _inject_runtime_tool_metadata(payload, state=state, lineage=lineage)
         inputs = payload.get("inputs")
         if isinstance(inputs, dict):
             inputs.setdefault("permission_mode", permission_mode)

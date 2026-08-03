@@ -47,6 +47,37 @@ def _with_direct_tool_requested_allowed_tools(
     return frozenset({*tool_names, *requested})
 
 
+def _with_entry_selected_allowed_tools(
+    tool_names: frozenset[str],
+    *,
+    decision_reason_code: str,
+    entry_response: Any | None,
+) -> frozenset[str]:
+    if str(decision_reason_code or "").strip() != "entry_tool_call":
+        return tool_names
+    selected = {
+        str(getattr(call, "name", "") or "").strip()
+        for call in list(getattr(entry_response, "tool_calls", []) or [])
+        if str(getattr(call, "name", "") or "").strip()
+    }
+    return frozenset({*tool_names, *selected})
+
+
+def _with_requested_allowed_tools(
+    tool_names: frozenset[str],
+    *,
+    direct_tool_turn: DirectToolTurnContext | None,
+    decision_reason_code: str,
+    entry_response: Any | None,
+) -> frozenset[str]:
+    tool_names = _with_direct_tool_requested_allowed_tools(tool_names, direct_tool_turn)
+    return _with_entry_selected_allowed_tools(
+        tool_names,
+        decision_reason_code=decision_reason_code,
+        entry_response=entry_response,
+    )
+
+
 def _without_control_tool_names(tool_names: frozenset[str]) -> frozenset[str]:
     return frozenset(
         tool

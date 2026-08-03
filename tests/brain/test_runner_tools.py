@@ -323,6 +323,37 @@ def test_prepare_tool_dispatch_marks_authorized_watch_action_inputs() -> None:
         )
 
 
+def test_prepare_tool_dispatch_carries_runtime_owned_child_workspace() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(Path(tmp), policy_api=LocalPolicyAdapter())
+        state = runner._load_or_init_state("s-child-workspace")
+        child_workspace = Path(tmp) / "child-worktree"
+        state.module_state = {
+            "worktree_children": {"worktree_child": {"workspace": str(child_workspace)}}
+        }
+        logger = CanonicalEventLogger(
+            session_api=session,
+            session_id="s-child-workspace",
+            agent_id=runner.profile.agent_id,
+        )
+        executor = RunnerCommandExecutor(runner)
+
+        prepared = executor.prepare_tool_dispatch(
+            state=state,
+            command=ToolCommand(
+                title="Tool call: echo",
+                tool_name="echo",
+                args={"msg": "hi"},
+            ),
+            logger=logger,
+        )
+
+        assert isinstance(prepared, PreparedToolDispatch)
+        assert prepared.payload["meta"]["runtime_execution"] == {
+            "workspace_root": str(child_workspace)
+        }
+
+
 def test_prepared_tool_dispatch_round_trip_emits_tool_events_once() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         registry = ToolRegistry([])

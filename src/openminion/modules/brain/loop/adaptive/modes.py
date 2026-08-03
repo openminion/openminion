@@ -84,7 +84,7 @@ from .tool_scope import (
     _explicit_tool_opt_out_tokens,
     _public_act_label,
     _public_act_tag,
-    _with_direct_tool_requested_allowed_tools,
+    _with_requested_allowed_tools,
     _without_control_tool_names,
     _without_explicit_tool_opt_outs,
 )
@@ -366,15 +366,16 @@ class ActLoopMode(ActLoopSeededMixin, ActLoopFinalizationMixin):
             ctx=ctx,
             seed_response=seed_response,
         )
-        effective_allowed_tools = _with_direct_tool_requested_allowed_tools(
+        effective_allowed_tools = _with_requested_allowed_tools(
             frozenset(effective_allowed_tools),
-            direct_tool_turn,
+            direct_tool_turn=direct_tool_turn,
+            decision_reason_code=decision_reason_code,
+            entry_response=seed_response,
         )
         full_tool_specs = build_runtime_tool_specs(
             runner,
             allowed_tools=effective_allowed_tools,
         )
-
         # compute the per-turn soft cap from typed Decision fields
         _aib_config = getattr(ctx.options, "adaptive_budget_config", None)
         if _aib_config is None:

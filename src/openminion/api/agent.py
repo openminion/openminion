@@ -53,6 +53,7 @@ class Agent(Generic[InputT, OutputT]):
         runtime: APIRuntime | None = None,
         model: str | None = None,
         tools: list[str] | None = None,
+        forced_tools: list[str] | None = None,
         handoffs: list["Handoff"] | None = None,
         name: str | None = None,
         subagent_context: "SubagentRunContext | None" = None,
@@ -61,6 +62,7 @@ class Agent(Generic[InputT, OutputT]):
         self.output_type = output_type
         self.model = model
         self.tools = list(tools) if tools else []
+        self.forced_tools = list(forced_tools) if forced_tools else []
         self.handoffs: list["Handoff"] = list(handoffs) if handoffs else []
         self.name = name or "agent"
         self.subagent_context = subagent_context
@@ -103,6 +105,8 @@ class Agent(Generic[InputT, OutputT]):
             payload["override_model"] = self.model
         if self.tools:
             payload["allowed_tools"] = list(self.tools)
+        if self.forced_tools:
+            payload["forced_tools"] = list(self.forced_tools)
         if self.subagent_context is not None:
             payload["subagent_context"] = self.subagent_context.as_payload()
             payload["inbound_metadata"] = self.subagent_context.as_inbound_metadata()
@@ -128,6 +132,7 @@ class Agent(Generic[InputT, OutputT]):
         registered: list[str] = []
         try:
             for spec in derive_tool_specs(family):
+                spec.prompt_visible_runtime_name = True
                 add_tool(spec)
                 registered.append(spec.name)
         except (ToolRuntimeError, TypeError, ValueError, AttributeError):

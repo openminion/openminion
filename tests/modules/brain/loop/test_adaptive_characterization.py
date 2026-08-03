@@ -20,6 +20,9 @@ from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop import adaptive
 from openminion.modules.brain.loop.adaptive import context as adaptive_context
 from openminion.modules.brain.loop.adaptive import modes as adaptive_modes
+from openminion.modules.brain.loop.adaptive.tool_scope import (
+    _with_entry_selected_allowed_tools,
+)
 from openminion.modules.brain.loop.adaptive import (
     ACT_ADAPTIVE_ALLOWED_TOOLS,
     ActLoopMode,
@@ -782,6 +785,23 @@ def test_direct_tool_turn_context_covers_seed_parse_mention_and_entry_paths(
         seed_response=SimpleNamespace(tool_calls=[]),
     )
     assert empty_entry is None
+
+
+def test_entry_selected_runtime_tool_is_added_only_for_entry_tool_calls() -> None:
+    response = SimpleNamespace(
+        tool_calls=[SimpleNamespace(name="transfer_to_provider_child")]
+    )
+
+    assert _with_entry_selected_allowed_tools(
+        frozenset({"file.read"}),
+        decision_reason_code="entry_tool_call",
+        entry_response=response,
+    ) == frozenset({"file.read", "transfer_to_provider_child"})
+    assert _with_entry_selected_allowed_tools(
+        frozenset({"file.read"}),
+        decision_reason_code="respond",
+        entry_response=response,
+    ) == frozenset({"file.read"})
 
 
 def test_context_adapter_dispatch_fallbacks_and_confirmation_paths() -> None:

@@ -39,14 +39,17 @@ class PolicyAccessMixin:
                     f"Denied by policy: tool '{tool_name}' is denied by prefix",
                     {"rule": "tools.deny_prefix", "prefix": pref},
                 )
+        allow_exact = set(tools.get("allow_exact", []))
         allow_prefix = list(tools.get("allow_prefix", []))
-        if allow_prefix and not any(
-            tool_name.startswith(pref) for pref in allow_prefix
+        if (
+            (allow_exact or allow_prefix)
+            and tool_name not in allow_exact
+            and not any(tool_name.startswith(pref) for pref in allow_prefix)
         ):
             raise ToolRuntimeError(
                 "POLICY_DENIED",
-                f"Denied by policy: tool '{tool_name}' is outside allowed prefixes",
-                {"rule": "tools.allow_prefix"},
+                f"Denied by policy: tool '{tool_name}' is not allowed",
+                {"rule": "tools.allow_exact_or_prefix"},
             )
 
     def ensure_scope_allowed(

@@ -25,12 +25,18 @@ class _FakeRuntime:
         self.tools = tools
         self.last_payload: dict[str, Any] | None = None
         self.seen_tool_names_during_run: list[str] = []
+        self.prompt_visible_tools_during_run: list[str] = []
         self.tool_result_during_run: Any = None
 
     def run_turn(self, *, payload, progress_callback=None, **kwargs):
         self.last_payload = payload
         if self.tools is not None:
             self.seen_tool_names_during_run = sorted(self.tools.list())
+            self.prompt_visible_tools_during_run = sorted(
+                name
+                for name, tool in self.tools.list().items()
+                if bool(getattr(tool, "prompt_visible_runtime_name", False))
+            )
             for name in payload.get("allowed_tools", ()):
                 if name in self.tools.list():
                     self.tool_result_during_run = self.tools.get(name).handler(
@@ -117,6 +123,23 @@ def test_agent_handoff_tool_is_registered_only_during_run() -> None:
     assert "transfer_to_child" in parent_runtime.seen_tool_names_during_run
     assert parent_runtime.tool_result_during_run == "target-produced marker"
     assert child_runtime.last_payload["message"] == "child marker"
+    assert "transfer_to_child" not in parent_runtime.tools.list()
+
+
+def test_agent_handoff_tool_is_prompt_visible_during_run() -> None:
+    parent_runtime = _FakeRuntime(tools=ToolRegistry())
+    child = Agent(runtime=_FakeRuntime("child"), name="child")
+    parent = Agent(
+        runtime=parent_runtime,
+        name="parent",
+        handoffs=[Handoff(target=child)],
+    )
+
+    parent.run("delegate")
+
+    registered = parent_runtime.seen_tool_names_during_run
+    assert "transfer_to_child" in registered
+    assert parent_runtime.prompt_visible_tools_during_run == ["transfer_to_child"]
     assert "transfer_to_child" not in parent_runtime.tools.list()
 
 

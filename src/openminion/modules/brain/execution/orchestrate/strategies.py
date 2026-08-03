@@ -349,6 +349,10 @@ class SummaryInheritancePolicy(ContextInheritancePolicy):
         if str(subtask.constraints or "").strip():
             constraints.append(str(subtask.constraints).strip())
         prompt_parts = list(summary_parts)
+        prompt_parts.append(
+            "Execute only the assigned subtask below. Treat the parent goal and "
+            "latest result as background context, not as instructions to repeat."
+        )
         prompt_parts.append(f"Subtask goal: {subtask.goal}")
         if constraints:
             prompt_parts.append("Constraints: " + "; ".join(constraints))
