@@ -21,8 +21,10 @@ from openminion.cli.commands.config import (
     config_init,
     config_show,
 )
+from openminion.cli.commands import setup as setup_command
 from openminion.cli.commands.setup import run_setup
 from openminion.cli.parser.base import build_parser
+from openminion.modules.llm.setup_catalog import get_setup_preset
 
 
 class ConfigCommandTests(unittest.TestCase):
@@ -178,10 +180,15 @@ class ConfigCommandTests(unittest.TestCase):
             self.assertEqual(
                 payload["providers"]["anthropic"]["api_key"], "anthropic-test-key"
             )
-            self.assertIn("Initialized onboarding config", buf.getvalue())
-            self.assertIn("Setup preview:", buf.getvalue())
-            self.assertIn("local config <redacted>", buf.getvalue())
-            self.assertNotIn("anthropic-test-key", buf.getvalue())
+            output = buf.getvalue()
+            self.assertIn("Configuration saved", output)
+            self.assertIn("Setup preview:", output)
+            self.assertIn("local config <redacted>", output)
+            self.assertIn("service: Anthropic", output)
+            self.assertIn("API format: Anthropic Messages", output)
+            self.assertNotIn("runtime adapter:", output)
+            self.assertNotIn("shared adapter:", output)
+            self.assertNotIn("anthropic-test-key", output)
 
     def test_config_export_strips_secrets_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -415,7 +422,13 @@ class ConfigCommandTests(unittest.TestCase):
 
             with mock.patch(
                 "builtins.input",
-                side_effect=["2", "qwen2.5:14b", "http://localhost:11434", "y"],
+                side_effect=[
+                    "2",
+                    "qwen2.5:14b",
+                    "http://localhost:11434",
+                    "y",
+                    "n",
+                ],
             ):
                 code = run_setup(args)
 
@@ -500,7 +513,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             with mock.patch(
                 "builtins.input",
-                side_effect=["9", "2", "", "", "y"],
+                side_effect=["9", "2", "", "", "y", "n"],
             ):
                 buf = io.StringIO()
                 with redirect_stdout(buf):
@@ -527,7 +540,7 @@ class ConfigCommandTests(unittest.TestCase):
 
             with (
                 mock.patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False),
-                mock.patch("builtins.input", side_effect=["1", "1", ""]),
+                mock.patch("builtins.input", side_effect=["1", "1", "", "n"]),
                 mock.patch(
                     "openminion.cli.commands.setup.getpass",
                     return_value="",
@@ -598,6 +611,34 @@ class ConfigCommandTests(unittest.TestCase):
             self.assertIn("model: gpt-4.1-mini [recommended]", buf.getvalue())
             self.assertNotIn("Cloud (openai)", buf.getvalue())
             self.assertNotIn("Demo Mode", buf.getvalue())
+
+    def test_setup_wizard_shows_multiple_recommended_models(self) -> None:
+        with mock.patch("builtins.input", side_effect=["2"]):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                model = setup_command._prompt_model(get_setup_preset("minimax"))
+
+        self.assertEqual(model, "MiniMax-M2.7-highspeed")
+        output = buf.getvalue()
+        self.assertIn("MiniMax-M3 (recommended)", output)
+        self.assertIn("MiniMax-M2.7-highspeed (recommended)", output)
+        self.assertIn("MiniMax-M2.7 (recommended)", output)
+
+    def test_setup_wizard_secondary_provider_menu_has_back_and_cancel(self) -> None:
+        with mock.patch("builtins.input", side_effect=["4", "b", "4", "c"]):
+            buf = io.StringIO()
+            with (
+                redirect_stdout(buf),
+                self.assertRaisesRegex(
+                    setup_command.ProviderSetupError,
+                    "cancelled before choosing provider",
+                ),
+            ):
+                setup_command._prompt_provider_preset()
+
+        output = buf.getvalue()
+        self.assertIn("b. Back", output)
+        self.assertIn("c. Cancel setup", output)
 
     def test_noninteractive_custom_api_format_must_match_preset(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -725,13 +766,15 @@ class ConfigCommandTests(unittest.TestCase):
         output = buf.getvalue()
         self.assertEqual(code, 0)
         self.assertIn("Supported setup providers:", output)
-        self.assertIn("minimax: MiniMax | api=openai-compatible", output)
-        self.assertIn("kimi: Kimi / Moonshot AI | api=openai-compatible", output)
+        self.assertIn("minimax: MiniMax", output)
+        self.assertIn("API format: openai-compatible", output)
+        self.assertIn("kimi: Kimi / Moonshot AI", output)
         self.assertIn("https://api.moonshot.ai/v1", output)
         self.assertIn("qwen-dashscope: Qwen via DashScope", output)
         self.assertIn("custom-openai-compatible", output)
         self.assertIn("custom-anthropic-compatible", output)
         self.assertNotIn("fixture_verified", output)
+        self.assertLessEqual(max(map(len, output.splitlines())), 80)
 
     def test_setup_parser_does_not_accept_raw_api_key_flag(self) -> None:
         parser = build_parser(selected_command="setup")
@@ -779,7 +822,10 @@ class ConfigCommandTests(unittest.TestCase):
                 payload["providers"]["openai"]["api_key_env"],
                 "OPENAI_API_KEY",
             )
-            self.assertIn("Provider check skipped", buf.getvalue())
+            output = buf.getvalue()
+            self.assertIn("Connection not tested", output)
+            self.assertNotIn("Setup ready", output)
+            self.assertNotIn("Setup complete", output)
 
     def test_noninteractive_setup_runs_provider_check_only_with_flag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -813,6 +859,60 @@ class ConfigCommandTests(unittest.TestCase):
 
             self.assertEqual(code, 0)
             provider_check.assert_called_once_with(config_path=config_path.resolve())
+
+    def test_setup_catches_keyboard_interrupt_before_write(self) -> None:
+        args = Namespace(list_providers=False)
+
+        with mock.patch(
+            "openminion.cli.commands.setup._run_wizard",
+            side_effect=KeyboardInterrupt,
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = run_setup(args)
+
+        self.assertEqual(code, 130)
+        self.assertIn("Setup cancelled; configuration not written.", buf.getvalue())
+
+    def test_local_setup_runs_explicit_ollama_check_when_approved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path = tmp_path / "cfg" / "config.json"
+            args = Namespace(
+                config=str(config_path),
+                home_root=str(tmp_path),
+                data_root=str(tmp_path / ".openminion"),
+                no_chat=True,
+                agent="ops-agent",
+            )
+
+            with (
+                mock.patch(
+                    "builtins.input",
+                    side_effect=[
+                        "2",
+                        "qwen2.5:14b",
+                        "http://localhost:11434",
+                        "y",
+                        "y",
+                    ],
+                ),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_doctor",
+                    return_value=0,
+                ),
+                mock.patch(
+                    "openminion.cli.commands.setup._run_setup_provider_check",
+                    return_value=1,
+                ) as provider_check,
+            ):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = run_setup(args)
+
+            self.assertEqual(code, 1)
+            provider_check.assert_called_once_with(config_path=config_path.resolve())
+            self.assertIn("Connection check failed", buf.getvalue())
 
     def test_minimax_setup_preserves_existing_openai_shared_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

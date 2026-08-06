@@ -124,6 +124,44 @@ def test_empty_model_uses_recommended_provenance(tmp_path: Path) -> None:
     assert result.preview.model_source == "recommended"
 
 
+def test_setup_makes_selected_agent_runnable_without_overwriting_channel(
+    tmp_path: Path,
+) -> None:
+    existing = OpenMinionConfig()
+    existing.agents = {
+        "new": AgentProfileConfig(name="new", provider="echo"),
+        "custom": AgentProfileConfig(
+            name="custom",
+            provider="echo",
+            default_channel="webhook",
+        ),
+    }
+
+    new_result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="ollama",
+            agent_id="new",
+            config_path=str(tmp_path / "agents.json"),
+            data_root=tmp_path,
+            env={},
+        ),
+        existing_config=existing,
+    )
+    custom_result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="ollama",
+            agent_id="custom",
+            config_path=str(tmp_path / "agents.json"),
+            data_root=tmp_path,
+            env={},
+        ),
+        existing_config=existing,
+    )
+
+    assert new_result.config.agents["new"].default_channel == "console"
+    assert custom_result.config.agents["custom"].default_channel == "webhook"
+
+
 def test_explicit_existing_config_preserves_configured_model_provenance(
     tmp_path: Path,
 ) -> None:

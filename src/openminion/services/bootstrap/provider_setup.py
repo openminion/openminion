@@ -81,20 +81,6 @@ class ProviderSetupPreview:
     credential: str
     shared_adapter_isolated: bool
 
-    def lines(self) -> tuple[str, ...]:
-        return (
-            f"config: {self.config_path}",
-            f"service: {self.display_label} ({self.api_format_label})",
-            f"runtime adapter: {self.runtime_adapter}",
-            f"agent: {self.agent_id}",
-            f"model: {self.model} [{self.model_source}]",
-            f"base URL: {self.base_url or 'provider default'}",
-            f"credential: {self.credential}",
-            "shared adapter: selected-agent overrides"
-            if self.shared_adapter_isolated
-            else "shared adapter: not required",
-        )
-
 
 @dataclass(frozen=True)
 class ProviderSetupResult:
@@ -179,7 +165,6 @@ def build_provider_setup(
         model=model,
         base_url=base_url,
     )
-
     config, shared_isolated, changed_sections = _apply_setup_selection(
         base_config,
         preset=preset,
@@ -361,6 +346,7 @@ def _apply_setup_selection(
     profile = config.agents.get(agent_id) or AgentProfileConfig(name=agent_id)
     profile.name = profile.name or agent_id
     profile.provider = adapter
+    profile.default_channel = profile.default_channel or "console"
     unmanaged_overrides = _unmanaged_provider_overrides(
         profile.provider_config_overrides
     )

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
 import re
 import stat
-from typing import Any
+import threading
+from typing import Any, Iterator
 
 import pytest
 
@@ -77,6 +80,50 @@ def _assert_owner_only(path: Path) -> None:
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+class _OllamaFixtureHandler(BaseHTTPRequestHandler):
+    def log_message(self, format: str, *args: object) -> None:
+        del format, args
+
+    def do_POST(self) -> None:
+        if self.path != "/api/chat":
+            self.send_error(404)
+            return
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length:
+            self.rfile.read(content_length)
+        payload = json.dumps(
+            {
+                "model": "qwen2.5:14b",
+                "message": {
+                    "role": "assistant",
+                    "content": "openminion provider check ok",
+                },
+                "done": True,
+                "done_reason": "stop",
+                "prompt_eval_count": 1,
+                "eval_count": 1,
+            }
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+@contextmanager
+def _ollama_fixture_server() -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _OllamaFixtureHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def _run_noninteractive_setup_case(
     *,
     tmp_path: Path,
@@ -118,7 +165,7 @@ def _run_noninteractive_setup_case(
         ),
     ) as session:
         transcript = session.wait_for_after(
-            "Setup complete. Interactive launch skipped",
+            "Interactive launch skipped",
             offset=0,
             timeout=120,
         )
@@ -172,7 +219,7 @@ def test_bare_command_imports_config_and_reaches_focus(
         _reply(session, "OpenMinion config file:", str(import_path))
         _reply(session, r"Import this config\? \[Y/n\]:")
         session.wait_for_after(
-            "Setup validation passed. Entering OpenMinion",
+            "Entering OpenMinion",
             offset=0,
             timeout=120,
         )
@@ -182,7 +229,7 @@ def test_bare_command_imports_config_and_reaches_focus(
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["default_agent"] == "imported"
     assert payload["agents"]["imported"]["provider"] == "echo"
-    assert "Provider check skipped; no remote provider request was made." in transcript
+    assert "Provider connection not applicable for this setup path." in transcript
     _assert_owner_only(config_path)
     write_transcript(artifact_root(tmp_path), "onboarding-import", transcript)
 
@@ -218,7 +265,7 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
         _reply(session, r"Create or repair this config\? \[Y/n\]:")
         _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
         transcript = session.wait_for_after(
-            "Setup complete. Interactive launch skipped",
+            "Interactive launch skipped",
             offset=0,
             timeout=120,
         )
@@ -228,7 +275,7 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
     assert payload["providers"]["openai"]["model"] == "gpt-4.1-mini"
     assert payload["providers"]["openai"]["api_key"] == ""
     assert "[recommended]" in transcript
-    assert "Provider check skipped; no remote provider request was made." in transcript
+    assert "Connection not tested; no provider request was made." in transcript
     assert fixture_key not in transcript
     assert fixture_key not in config_path.read_text(encoding="utf-8")
     _assert_owner_only(config_path)
@@ -297,7 +344,11 @@ def test_missing_hosted_credential_cancels_without_writing(
         _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "1")
         _reply(session, "Model \\(press Enter for the existing or recommended default:")
-        _reply(session, "OpenAI API key:")
+        _reply(
+            session,
+            "Store a key in the owner-readable local OpenMinion config",
+            "n",
+        )
         transcript = session.wait_for_after(
             "Export OPENAI_API_KEY and rerun setup.",
             offset=0,
@@ -306,6 +357,435 @@ def test_missing_hosted_credential_cancels_without_writing(
 
     assert not config_path.exists()
     write_transcript(artifact_root(tmp_path), "onboarding-missing-key", transcript)
+
+
+def test_hosted_more_menu_back_and_cancel_stays_readable_at_80_columns(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+        ),
+        cwd=openminion_root,
+        env=_environment(home_root=home_root, data_root=data_root),
+        cols=80,
+    ) as session:
+        _reply(session, "Choose your setup path:", "1")
+        _reply(session, "Choose your model service:", "4")
+        _reply(session, "Choose another service or custom endpoint:", "b")
+        _reply(session, "Choose your model service:", "4")
+        _reply(session, "Choose another service or custom endpoint:", "c")
+        transcript = session.wait_for_after(
+            "Setup failed: Setup cancelled before choosing provider.",
+            offset=0,
+            timeout=90,
+        )
+
+    assert "b. Back" in transcript
+    assert "c. Cancel setup" in transcript
+    assert "Traceback" not in transcript
+    assert not config_path.exists()
+    write_transcript(artifact_root(tmp_path), "onboarding-more-back-cancel", transcript)
+
+
+def test_hosted_minimax_setup_lists_all_recommended_models(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+    fixture_key = "fixture-minimax-key-not-for-network-use"
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+        ),
+        cwd=openminion_root,
+        env=_environment(
+            home_root=home_root,
+            data_root=data_root,
+            MINIMAX_API_KEY=fixture_key,
+        ),
+    ) as session:
+        _reply(session, "Choose your setup path:", "1")
+        _reply(session, "Choose your model service:", "4")
+        _reply(session, "Choose another service or custom endpoint:", "4")
+        _reply(session, "Choose a recommended model", "2")
+        _reply(session, r"Create or repair this config\? \[Y/n\]:")
+        _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
+        transcript = session.wait_for_after(
+            "Interactive launch skipped",
+            offset=0,
+            timeout=120,
+        )
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["agents"]["openminion"]["provider"] == "openai"
+    assert payload["providers"]["openai"]["model"] == "MiniMax-M2.7-highspeed"
+    assert "MiniMax-M3 (recommended)" in transcript
+    assert "MiniMax-M2.7-highspeed (recommended)" in transcript
+    assert "MiniMax-M2.7 (recommended)" in transcript
+    assert fixture_key not in transcript
+    assert fixture_key not in config_path.read_text(encoding="utf-8")
+    _assert_owner_only(config_path)
+    write_transcript(artifact_root(tmp_path), "onboarding-minimax-models", transcript)
+
+
+def test_local_ollama_check_failure_does_not_claim_readiness(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+        ),
+        cwd=openminion_root,
+        env=_environment(home_root=home_root, data_root=data_root),
+    ) as session:
+        _reply(session, "Choose your setup path:", "2")
+        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Ollama base URL", "http://127.0.0.1:1")
+        _reply(session, r"Create or repair this config\? \[Y/n\]:")
+        _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "y")
+        transcript = session.wait_for_after(
+            "Connection check failed",
+            offset=0,
+            timeout=120,
+        )
+
+    assert config_path.exists()
+    assert "Connection verified." not in transcript
+    assert "Interactive launch skipped" not in transcript
+    _assert_owner_only(config_path)
+    write_transcript(
+        artifact_root(tmp_path),
+        "onboarding-ollama-check-fails",
+        transcript,
+    )
+
+
+def test_local_ollama_check_can_be_declined_after_config_is_saved(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+        ),
+        cwd=openminion_root,
+        env=_environment(home_root=home_root, data_root=data_root),
+    ) as session:
+        _reply(session, "Choose your setup path:", "2")
+        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Ollama base URL")
+        _reply(session, r"Create or repair this config\? \[Y/n\]:")
+        _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "n")
+        transcript = session.wait_for_after(
+            "Interactive launch skipped",
+            offset=0,
+            timeout=120,
+        )
+
+    assert config_path.exists()
+    assert "Connection not tested; no provider request was made." in transcript
+    assert "Setup ready" not in transcript
+    assert "Setup complete" not in transcript
+    _assert_owner_only(config_path)
+    write_transcript(
+        artifact_root(tmp_path),
+        "onboarding-ollama-check-declined",
+        transcript,
+    )
+
+
+def test_local_ollama_check_can_verify_against_fixture_server(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+
+    with _ollama_fixture_server() as base_url:
+        with PtySession(
+            argv=_command(
+                python_bin=python_bin,
+                config_path=config_path,
+                home_root=home_root,
+                data_root=data_root,
+                setup_only=True,
+            ),
+            cwd=openminion_root,
+            env=_environment(home_root=home_root, data_root=data_root),
+        ) as session:
+            _reply(session, "Choose your setup path:", "2")
+            _reply(
+                session,
+                "Model \\(press Enter for the existing or recommended default:",
+                "qwen2.5:14b",
+            )
+            _reply(session, "Ollama base URL", base_url)
+            _reply(session, r"Create or repair this config\? \[Y/n\]:")
+            _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "y")
+            transcript = session.wait_for_after(
+                "Interactive launch skipped",
+                offset=0,
+                timeout=120,
+            )
+
+    assert "Connection verified." in transcript
+    assert "Connection not tested" not in transcript
+    assert "Connection check failed" not in transcript
+    _assert_owner_only(config_path)
+    write_transcript(
+        artifact_root(tmp_path),
+        "onboarding-ollama-check-verified",
+        transcript,
+    )
+
+
+@pytest.mark.parametrize(
+    ("control", "case_name"),
+    (("\x03", "ctrl-c"), ("\x04", "eof")),
+)
+def test_setup_cancellation_before_write_is_clean(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+    control: str,
+    case_name: str,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+        ),
+        cwd=openminion_root,
+        env=_environment(home_root=home_root, data_root=data_root),
+    ) as session:
+        session.wait_for_after("Choose your setup path:", offset=0, timeout=90)
+        session.send(control)
+        transcript = session.wait_for_after(
+            "Setup cancelled; configuration not written.",
+            offset=0,
+            timeout=90,
+        )
+
+    assert "Traceback" not in transcript
+    assert not config_path.exists()
+    write_transcript(
+        artifact_root(tmp_path),
+        f"onboarding-{case_name}-before-write",
+        transcript,
+    )
+
+
+@pytest.mark.parametrize(
+    ("control", "case_name"),
+    (("\x03", "ctrl-c"), ("\x04", "eof")),
+)
+def test_setup_cancellation_after_write_preserves_saved_truth(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+    control: str,
+    case_name: str,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+        ),
+        cwd=openminion_root,
+        env=_environment(home_root=home_root, data_root=data_root),
+    ) as session:
+        _reply(session, "Choose your setup path:", "2")
+        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Ollama base URL")
+        _reply(session, r"Create or repair this config\? \[Y/n\]:")
+        session.wait_for_after(
+            r"Run local Ollama check after doctor\? \[Y/n\]:",
+            offset=0,
+            timeout=120,
+        )
+        session.send(control)
+        transcript = session.wait_for_after(
+            "Setup cancelled after configuration was saved",
+            offset=0,
+            timeout=90,
+        )
+
+    assert config_path.exists()
+    assert "connection not tested" in transcript
+    assert "Traceback" not in transcript
+    _assert_owner_only(config_path)
+    write_transcript(
+        artifact_root(tmp_path),
+        f"onboarding-{case_name}-after-write",
+        transcript,
+    )
+
+
+def test_setup_repairs_shared_adapter_without_changing_existing_agent(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+) -> None:
+    home_root = tmp_path / "home"
+    data_root = tmp_path / "data"
+    config_path = home_root / ".openminion" / "config.json"
+    config_path.parent.mkdir(parents=True)
+    config = OpenMinionConfig()
+    config.agents = {
+        "existing-openai": AgentProfileConfig(
+            name="existing-openai",
+            provider="openai",
+            default_channel="console",
+        )
+    }
+    config.default_agent = "existing-openai"
+    config.providers.openai.model = "gpt-4.1-mini"
+    config.providers.openai.base_url = "https://api.openai.com/v1"
+    config.runtime.demo_mode = False
+    config_path.write_text(
+        json.dumps(config.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+    fixture_key = "fixture-minimax-key-not-for-network-use"
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=config_path,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+            extra_setup_args=("--agent", "minimax-agent"),
+        ),
+        cwd=openminion_root,
+        env=_environment(
+            home_root=home_root,
+            data_root=data_root,
+            MINIMAX_API_KEY=fixture_key,
+        ),
+    ) as session:
+        _reply(session, "Choose your setup path:", "1")
+        _reply(session, "Choose your model service:", "4")
+        _reply(session, "Choose another service or custom endpoint:", "4")
+        _reply(session, "Choose a recommended model", "1")
+        _reply(session, r"Create or repair this config\? \[Y/n\]:")
+        _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
+        transcript = session.wait_for_after(
+            "Interactive launch skipped",
+            offset=0,
+            timeout=120,
+        )
+
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    assert payload["agents"]["existing-openai"]["provider"] == "openai"
+    assert payload["providers"]["openai"]["model"] == "gpt-4.1-mini"
+    assert (
+        payload["agents"]["minimax-agent"]["provider_config_overrides"]["model"]
+        == "MiniMax-M3"
+    )
+    assert "repair: existing agents remain unchanged" in transcript
+    assert fixture_key not in transcript
+    assert fixture_key not in config_path.read_text(encoding="utf-8")
+    _assert_owner_only(config_path)
+    write_transcript(artifact_root(tmp_path), "onboarding-repair", transcript)
+
+
+@pytest.mark.parametrize("cols", (80, 120))
+def test_provider_listing_is_width_safe(
+    tmp_path: Path,
+    python_bin: Path,
+    openminion_root: Path,
+    cols: int,
+) -> None:
+    home_root = tmp_path / f"home-{cols}"
+    data_root = tmp_path / f"data-{cols}"
+
+    with PtySession(
+        argv=_command(
+            python_bin=python_bin,
+            config_path=None,
+            home_root=home_root,
+            data_root=data_root,
+            setup_only=True,
+            extra_setup_args=("--list-providers",),
+        ),
+        cwd=openminion_root,
+        env=_environment(home_root=home_root, data_root=data_root),
+        cols=cols,
+    ) as session:
+        transcript = session.wait_for_after(
+            "Custom endpoints:",
+            offset=0,
+            timeout=90,
+        )
+
+    lines = [line.rstrip("\r") for line in transcript.splitlines()]
+    assert max(len(line) for line in lines) <= 80
+    assert "minimax: MiniMax" in transcript
+    assert "API format: openai-compatible" in transcript
+    assert "Credential: MINIMAX_API_KEY" in transcript
+    assert "Endpoint: https://api.minimax.io/v1" in transcript
+    assert "Recommended models: MiniMax-M3" in transcript
+    write_transcript(
+        artifact_root(tmp_path),
+        f"onboarding-provider-list-{cols}",
+        transcript,
+    )
 
 
 def test_noninteractive_openai_compatible_setups_preserve_api_format(
@@ -333,7 +813,7 @@ def test_noninteractive_openai_compatible_setups_preserve_api_format(
         "service_vendor": "dashscope",
         "model_family": "qwen",
     }
-    assert "Provider check skipped; no remote provider request was made." in (
+    assert "Connection not tested; no provider request was made." in (
         dashscope_transcript
     )
     assert "fixture-dashscope-key" not in dashscope_transcript
@@ -358,9 +838,7 @@ def test_noninteractive_openai_compatible_setups_preserve_api_format(
         "service_vendor": "openai",
         "model_family": "openai",
     }
-    assert "Provider check skipped; no remote provider request was made." in (
-        custom_transcript
-    )
+    assert "Connection not tested; no provider request was made." in (custom_transcript)
     assert "fixture-custom-key" not in custom_transcript
     write_transcript(
         artifact_root(tmp_path),
@@ -407,13 +885,13 @@ def test_live_provider_setup_check(
         ),
     ) as session:
         transcript = session.wait_for_after(
-            "Setup complete. Interactive launch skipped",
+            "Interactive launch skipped",
             offset=0,
             timeout=240,
         )
 
-    assert "Provider check skipped" not in transcript
-    assert "Provider check failed" not in transcript
+    assert "Connection not tested" not in transcript
+    assert "Connection check failed" not in transcript
     assert credential not in transcript
     assert credential not in config_path.read_text(encoding="utf-8")
     _assert_owner_only(config_path)
