@@ -95,6 +95,8 @@ Best for:
 3. opening configured third-brain provider graphs when they expose a viewer
    envelope or a PragmaGraph snapshot,
 4. inspecting nodes, relationships, provenance, citations, and provider status.
+5. embedding a provider-neutral graph lens in a host app without importing
+   OpenMinion internals.
 
 Notes:
 
@@ -115,7 +117,12 @@ Notes:
 7. `openminion graph view --current --node-kind fact`, `--edge-kind`, `--tag`,
    `--source`, `--min-score`, and `--evidence-filter` expose GraphFakos viewer
    filters from the OpenMinion CLI,
-8. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
+8. served local viewers route workbench forms through GraphFakos'
+   provider-neutral action handler, while the current Sophiagraph second-brain
+   lens returns explicit unsupported/provider-owned statuses for durable writes,
+9. second-brain refresh is currently refresh-by-requery: rerun the same viewer
+   command or JSON probe to inspect newly written memory,
+10. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
    third-brain provider envelope.
 
 ## Example surfaces

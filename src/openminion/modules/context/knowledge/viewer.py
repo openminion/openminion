@@ -274,6 +274,7 @@ def _empty_state(graph: Any, stats: Mapping[str, object]) -> dict[str, object]:
             "next_commands": [
                 "openminion graph status",
                 "openminion graph view --current --dry-run --json",
+                "openminion agent --message \"remember a useful project fact\"",
             ],
             "scope_filter": scope_filter if isinstance(scope_filter, list) else [],
         }
@@ -773,6 +774,7 @@ def _serve_viewer(
     graph_request: Any,
     request: GraphViewerRequest,
 ) -> Any:
+    from graphfakos.cli import handle_provider_action
     from graphfakos.preview import LocalPreviewProviderSession
     from graphfakos.ui import render_provider_path, render_provider_path_fragment
 
@@ -790,6 +792,11 @@ def _serve_viewer(
             graph_request,
             path,
             query,
+        ),
+        handle_action=lambda path, payload: handle_provider_action(
+            preview_graph_provider,
+            path,
+            payload,
         ),
         default_path=f"/{graph_request.screen}",
         host=request.host,

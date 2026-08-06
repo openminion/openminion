@@ -56,6 +56,20 @@ search, filtering, node inspection, neighborhood focus, path highlighting,
 static export, provenance review, and citation copying when those details are
 present.
 
+For application wrappers, treat the dry-run payload as the stable readiness
+probe:
+
+```bash
+openminion graph view --current --dry-run --json
+```
+
+Use the returned `viewer_manifest.viewer_state`,
+`viewer_manifest.performance_budget`, `provider_details`, and
+`provider_payload` fields to decide whether to show a launch button, refresh
+button, filter controls, or empty-state guidance. The second-brain viewer is
+refresh-by-requery: rerun the same graph request to show newly written
+Sophiagraph memory. It does not stream live patches yet.
+
 The same command accepts viewer filters that map directly to GraphFakos'
 toolbar controls:
 
@@ -77,7 +91,22 @@ timestamps, provenance, citations, relation labels, and filter facets for node
 kind, edge kind, tag, and source.
 
 If the current memory graph is empty, the viewer reports an empty current-state
-result. It does not seed demo data or write sample memories.
+result. It does not seed demo data or write sample memories. The empty-state
+payload includes next commands for checking status again, running a JSON
+dry-run, and creating ordinary memory through an OpenMinion agent turn.
+
+## Local Workbench Actions
+
+When OpenMinion serves the local viewer, GraphFakos workbench forms are routed
+through GraphFakos' provider-neutral action handler. This keeps the UI
+consistent across OpenMinion, Sophiagraph, PragmaGraph, and future providers.
+
+For the current Sophiagraph-backed second-brain viewer, durable writes remain
+read-only from the visual surface. Graph edit actions and knowledge captures
+return an explicit unsupported/provider-owned status unless a future provider
+or OpenMinion review workflow implements that action. Users can still search,
+filter, inspect, copy citations, export visible graph state, and rerun the
+viewer request to refresh the latest memory.
 
 ## Open A Third-Brain Provider
 
@@ -116,6 +145,20 @@ python -m openminion \
 ```
 
 Open `examples/graph-viewer/README.md` for the full example.
+
+## Embed In Another App
+
+A wrapper does not need to depend on OpenMinion internals. Use these levels:
+
+1. readiness/status: `openminion graph status --json`,
+2. data probe: `openminion graph view --current --dry-run --json`,
+3. static share/export: `openminion graph view --current --html-out viewer.html`,
+4. interactive local lens: `openminion graph view --current --no-open`,
+5. provider graph lens:
+   `openminion graph view --brain third --provider <name> --no-open`.
+
+The wrapper should present GraphFakos as a visual lens over current graph state.
+It should not call it a memory backend, source indexer, or durable write owner.
 
 ## Boundary
 

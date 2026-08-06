@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, Mapping
 import sys
 
@@ -542,6 +542,7 @@ def test_current_memory_empty_state_does_not_seed_sample_data(
         "next_commands": [
             "openminion graph status",
             "openminion graph view --current --dry-run --json",
+            'openminion agent --message "remember a useful project fact"',
         ],
         "scope_filter": [],
     }
@@ -740,6 +741,17 @@ def test_second_brain_provider_adds_openminion_visual_metadata(
     assert "type:decision" in node.tags
     assert node.provider_payload["memory_type"] == "decision"
     assert isinstance(node.provider_payload["namespace"], dict)
+    assert graph.provider_details["refresh_strategy"] == "rerun_viewer_request"
+    assert graph.provider_details["mutation_policy"] == "read_only_viewer"
+    assert graph.provider_payload["refresh"] == {
+        "strategy": "rerun_viewer_request",
+        "writes_memory": False,
+        "live_patch_stream": False,
+    }
+    assert graph.provider_payload["mutation_policy"][
+        "durable_memory_writes"
+    ] == "unsupported_from_viewer"
+    assert graph.provider_payload["local_endpoints"]["graph_action"] == "/api/action"
     assert graph.provider_payload["viewer_actions"]
     assert "tag" in graph.available_facets
     assert "type:decision" in graph.available_facets["tag"]
@@ -1078,6 +1090,79 @@ def test_second_brain_dry_run_exposes_real_graphfakos_manifest(tmp_path) -> None
     assert "durable_memory" in provider_status["capabilities"]
     assert "inspect_node" in manifest["viewer_actions"]
     assert manifest["provider_payload"]["graph_role"] == "second_brain_memory"
+
+
+def test_second_brain_local_server_routes_workbench_actions_safely(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    captured: dict[str, object] = {}
+
+    def _serve_local_viewer(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        render_path = kwargs["render_path"]
+        assert callable(render_path)
+        html = render_path("/explore", {})
+        assert "OpenMinion Second-Brain Memory" in html
+        return SimpleNamespace(
+            url="http://127.0.0.1:8767/explore",
+            opened=False,
+        )
+
+    monkeypatch.setattr(graphfakos, "serve_local_viewer", _serve_local_viewer)
+    db_path = tmp_path / "memory.db"
+    now = "2026-07-21T00:00:00+00:00"
+    SQLiteMemoryStore(db_path).put(
+        MemoryRecord(
+            id="memory:readonly",
+            scope="agent:openminion",
+            type="fact",
+            key="readonly",
+            title="Read Only Viewer",
+            content="Viewer actions must not silently write durable memory.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    result = launch_graph_viewer(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(
+            current=True,
+            memory_db=str(db_path),
+            open_browser=False,
+        ),
+    )
+
+    handle_action = captured["handle_action"]
+    assert callable(handle_action)
+    action_result = handle_action(
+        "/api/action",
+        {
+            "action_id": "draft:memory",
+            "action_type": "draft_node",
+            "target_id": "memory:readonly",
+            "label": "Draft memory edit",
+            "body": "This must remain provider-owned.",
+        },
+    )
+    capture_result = handle_action(
+        "/api/knowledge",
+        {
+            "text": "Capture from the visual workbench.",
+            "link_node_id": "memory:readonly",
+        },
+    )
+
+    assert result.mode == "server"
+    assert captured["handle_action"] is not None
+    assert action_result["ok"] is False
+    assert action_result["status"]["status"] == "unsupported"
+    assert "does not support graph edit actions" in action_result["status"]["message"]
+    assert capture_result["ok"] is False
+    assert "does not support workbench knowledge capture" in capture_result["error"]
 
 
 def test_second_brain_provider_matches_graphfakos_conformance(tmp_path) -> None:

@@ -28,6 +28,17 @@ python -m openminion \
   graph view --brain third --provider repo_graph --html-out viewer.html
 ```
 
+For host-app integration, start with the JSON probe:
+
+```bash
+python -m openminion \
+  --home-root examples/graph-viewer \
+  --config examples/graph-viewer/agents.json \
+  graph view --brain third --provider repo_graph --dry-run --json
+```
+
 The viewer is a lens only. Sophiagraph remains the durable second-brain memory
 owner; third-brain providers expose cited repository, document, or artifact
-graph state for inspection and context assembly.
+graph state for inspection and context assembly. Local workbench actions are
+provider-owned: unsupported providers return explicit unsupported statuses
+instead of silently writing memory or source graph state.

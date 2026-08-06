@@ -239,6 +239,8 @@ def _memory_provider_details() -> dict[str, str]:
         "layer": LAYER_SECOND_BRAIN,
         "owner": "OpenMinion memory",
         "storage": "openminion memory SQLite",
+        "refresh_strategy": "rerun_viewer_request",
+        "mutation_policy": "read_only_viewer",
         "filterable_fields": ",".join(
             (
                 "query",
@@ -256,6 +258,22 @@ def _memory_provider_details() -> dict[str, str]:
 def _memory_provider_payload(records: tuple[Any, ...]) -> dict[str, object]:
     return {
         "empty_state": _memory_empty_state() if not records else {},
+        "refresh": {
+            "strategy": "rerun_viewer_request",
+            "writes_memory": False,
+            "live_patch_stream": False,
+        },
+        "mutation_policy": {
+            "durable_memory_writes": "unsupported_from_viewer",
+            "knowledge_capture": "provider_owned_when_supported",
+            "graph_actions": "provider_owned_when_supported",
+        },
+        "local_endpoints": {
+            "graph_action": "/api/action",
+            "knowledge_capture": "/api/knowledge",
+            "import_graph": "/api/import",
+            "reset_preview": "/api/reset",
+        },
         "viewer_actions": (
             "search",
             "filter",
