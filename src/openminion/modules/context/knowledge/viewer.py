@@ -227,6 +227,9 @@ def _workspace_manifest_diagnostics(
     payload = manifest_builder(graph, request).to_dict()
     return {
         "schema_version": payload.get("schema_version", ""),
+        "graph_id": payload.get("graph_id", ""),
+        "provider_id": payload.get("provider_id", ""),
+        "viewer_state": dict(payload.get("viewer_state") or {}),
         "viewer_actions": list(payload.get("viewer_actions", []) or []),
         "supported_actions": list(payload.get("supported_actions", []) or []),
         "supported_captures": list(payload.get("supported_captures", []) or []),
@@ -234,7 +237,10 @@ def _workspace_manifest_diagnostics(
             payload.get("default_expansion_requests", []) or []
         ),
         "performance_budget": dict(payload.get("performance_budget") or {}),
+        "provider_status": dict(payload.get("provider_status") or {}),
         "empty_state": dict(payload.get("empty_state") or {}),
+        "desktop_backend_path": payload.get("desktop_backend_path", ""),
+        "provider_payload": dict(payload.get("provider_payload") or {}),
     }
 
 

@@ -31,7 +31,7 @@ def memory_db_sample_count(db_path: Path) -> int:
         return 0
     try:
         store = SQLiteMemoryStore(db_path)
-        return len(tuple(store.list(ListQueryOptions(limit=20))))
+        return len(tuple(store.list(ListQueryOptions(scopes=[], limit=20))))
     except (OSError, RuntimeError, ValueError):
         return 0
 
@@ -64,16 +64,21 @@ class OpenMinionMemoryGraphFakosProvider:
 
         store = SQLiteMemoryStore(self._db_path)
         scopes = _scope_filters(request)
+        limit = max(1, int(request.limit or self._limit))
+        query_limit = None if _has_post_query_filters(request) else limit
         records = tuple(
-            store.list(
+            record
+            for record in store.list(
                 ListQueryOptions(
                     scopes=scopes,
                     include_invalidated=True,
-                    limit=max(1, int(request.limit or self._limit)),
+                    limit=query_limit,
                 )
             )
-        )
+            if _record_matches_filters(record, request)
+        )[:limit]
         record_ids = {record.id for record in records}
+        edge_kind = _filter_value(request, "edge_kind")
         relations: list[Any] = []
         for record in records:
             record_relations: tuple[Any, ...] = tuple(
@@ -83,6 +88,7 @@ class OpenMinionMemoryGraphFakosProvider:
                 if (
                     relation.source_record_id in record_ids
                     and relation.target_record_id in record_ids
+                    and _relation_matches_edge_kind(relation, edge_kind)
                 ):
                     relations.append(relation)
         unique_relations = {relation.relation_id: relation for relation in relations}
@@ -127,6 +133,76 @@ def _scope_filters(request: Any) -> list[str]:
     if raw_scope:
         return [scope for scope in _split_scope_filter(raw_scope) if scope]
     return []
+
+
+def _record_matches_filters(record: Any, request: Any) -> bool:
+    record_type = str(getattr(record, "type", "") or "")
+    query = str(getattr(request, "query", "") or "").strip()
+    if query and not _record_matches_query(record, query):
+        return False
+    node_kind = _filter_value(request, "node_kind")
+    if node_kind and record_type != node_kind:
+        return False
+    tag = _filter_value(request, "tag")
+    if tag and tag not in _memory_record_tags(record, record_type):
+        return False
+    source = _filter_value(request, "source")
+    if source and str(getattr(record, "source", "") or "") != source:
+        return False
+    min_score = _min_score_filter(request)
+    confidence = float(getattr(record, "confidence", 0.0) or 0.0)
+    return min_score is None or confidence >= min_score
+
+
+def _relation_matches_edge_kind(relation: Any, edge_kind: str) -> bool:
+    return (
+        not edge_kind
+        or str(getattr(relation, "relation_type", "") or "") == edge_kind
+    )
+
+
+def _has_post_query_filters(request: Any) -> bool:
+    return bool(
+        str(getattr(request, "query", "") or "").strip()
+        or _filter_value(request, "node_kind")
+        or _filter_value(request, "tag")
+        or _filter_value(request, "source")
+        or _filter_value(request, "min_score")
+    )
+
+
+def _record_matches_query(record: Any, query: str) -> bool:
+    needle = query.casefold()
+    return any(needle in value.casefold() for value in _record_search_values(record))
+
+
+def _record_search_values(record: Any) -> tuple[str, ...]:
+    content = getattr(record, "content", "")
+    if isinstance(content, Mapping):
+        content_values = tuple(str(value) for value in content.values() if value)
+    else:
+        content_values = (str(content),)
+    return (
+        str(getattr(record, "id", "") or ""),
+        str(getattr(record, "key", "") or ""),
+        str(getattr(record, "title", "") or ""),
+        *content_values,
+    )
+
+
+def _filter_value(request: Any, key: str) -> str:
+    filters = getattr(request, "filters", {}) or {}
+    return str(filters.get(key, "") or "").strip()
+
+
+def _min_score_filter(request: Any) -> float | None:
+    raw = _filter_value(request, "min_score")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
 
 
 def _split_scope_filter(raw_scope: str) -> tuple[str, ...]:

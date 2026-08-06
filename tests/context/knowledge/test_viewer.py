@@ -176,6 +176,12 @@ class _FakeWorkspaceManifest:
     def to_dict(self) -> dict[str, object]:
         return {
             "schema_version": "graphfakos.workspace.v1",
+            "graph_id": self.graph.graph_id,
+            "provider_id": self.graph.provider_id,
+            "viewer_state": {
+                "screen": self.request.screen,
+                "query": self.request.query,
+            },
             "viewer_actions": [
                 "search",
                 "filter",
@@ -198,9 +204,20 @@ class _FakeWorkspaceManifest:
                 "raw_edge_count": len(self.graph.edges),
                 "level_of_detail": "visible",
             },
+            "provider_status": {
+                "provider_id": self.graph.provider_id,
+                "provider_label": self.graph.provider_label,
+                "graph_role": self.graph.graph_role,
+                "capabilities": list(self.graph.capabilities),
+            },
             "empty_state": dict(
                 (self.graph.provider_payload or {}).get("empty_state", {})
             ),
+            "desktop_backend_path": f"/{self.request.screen}",
+            "provider_payload": {
+                "provider_label": self.graph.provider_label,
+                "graph_role": self.graph.graph_role,
+            },
         }
 
 
@@ -244,6 +261,110 @@ def _roots(tmp_path):
 
 def _package_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _seed_permutation_memory_graph(db_path: Path) -> None:
+    store = SQLiteMemoryStore(db_path)
+    records = (
+        MemoryRecord(
+            id="memory:launch",
+            scope="agent:alpha",
+            type="decision",
+            key="launch",
+            title="Launch Viewer",
+            content="Inspect memory graph launch readiness.",
+            source="validated",
+            confidence=0.9,
+            tags=("reviewed",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:02:00+00:00",
+        ),
+        MemoryRecord(
+            id="memory:viewer-fact",
+            scope="agent:alpha",
+            type="fact",
+            key="viewer-fact",
+            title="Viewer Fact",
+            content="GraphFakos can inspect the OpenMinion memory graph.",
+            source="validated",
+            confidence=0.7,
+            tags=("reviewed",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:04:00+00:00",
+        ),
+        MemoryRecord(
+            id="memory:archived",
+            scope="agent:beta",
+            type="decision",
+            key="archived",
+            title="Archived Decision",
+            content="Older decision from another agent.",
+            source="imported",
+            confidence=0.95,
+            tags=("draft",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:01:00+00:00",
+        ),
+        MemoryRecord(
+            id="memory:workflow",
+            scope="session:alpha",
+            type="procedure",
+            key="workflow",
+            title="Operator Workflow",
+            content="Run status before visual graph workflow inspection.",
+            source="validated",
+            confidence=0.85,
+            tags=("workflow",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:03:00+00:00",
+        ),
+        MemoryRecord(
+            id="memory:late-match",
+            scope="agent:alpha",
+            type="decision",
+            key="late-match",
+            title="Late Match",
+            content="This matching record protects post-filter limiting.",
+            source="validated",
+            confidence=0.93,
+            tags=("late",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:05:00+00:00",
+        ),
+    )
+    for record in records:
+        store.put(record)
+    for relation in (
+        MemoryRelation(
+            relation_id="relation:launch-viewer",
+            source_record_id="memory:launch",
+            target_record_id="memory:viewer-fact",
+            relation_type="supports",
+            created_at="2026-07-21T00:01:00+00:00",
+        ),
+        MemoryRelation(
+            relation_id="relation:archived-launch",
+            source_record_id="memory:archived",
+            target_record_id="memory:launch",
+            relation_type="corrects",
+            created_at="2026-07-21T00:02:00+00:00",
+        ),
+        MemoryRelation(
+            relation_id="relation:launch-workflow",
+            source_record_id="memory:launch",
+            target_record_id="memory:workflow",
+            relation_type="depends_on",
+            created_at="2026-07-21T00:03:00+00:00",
+        ),
+        MemoryRelation(
+            relation_id="relation:late-launch",
+            source_record_id="memory:late-match",
+            target_record_id="memory:launch",
+            relation_type="related_to",
+            created_at="2026-07-21T00:04:00+00:00",
+        ),
+    ):
+        store.put_relation(relation)
 
 
 def _example_envelope_path() -> Path:
@@ -330,6 +451,10 @@ def test_second_brain_dry_run_builds_graph_from_memory_db(
     assert result.diagnostics["viewer_manifest"]["schema_version"] == (
         "graphfakos.workspace.v1"
     )
+    assert result.diagnostics["viewer_manifest"]["provider_id"] == "openminion-memory"
+    assert result.diagnostics["viewer_manifest"]["provider_status"][
+        "provider_label"
+    ] == "OpenMinion Memory"
     assert "inspect_node" in result.diagnostics["viewer_manifest"]["viewer_actions"]
 
 
@@ -453,6 +578,36 @@ def test_viewer_request_exposes_graphfakos_navigation_filters(
             updated_at=now,
         )
     )
+    store.put(
+        MemoryRecord(
+            id="memory:not-decision",
+            scope="agent:openminion",
+            type="fact",
+            key="filtered-type",
+            title="Filtered By Type",
+            content="This record should not pass the node-kind filter.",
+            source="validated",
+            confidence=0.95,
+            tags=("reviewed",),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    store.put(
+        MemoryRecord(
+            id="memory:low-score",
+            scope="agent:openminion",
+            type="decision",
+            key="filtered-score",
+            title="Filtered By Score",
+            content="This record should not pass the score filter.",
+            source="validated",
+            confidence=0.5,
+            tags=("reviewed",),
+            created_at=now,
+            updated_at=now,
+        )
+    )
 
     result = launch_graph_viewer(
         config=OpenMinionConfig(),
@@ -478,6 +633,77 @@ def test_viewer_request_exposes_graphfakos_navigation_filters(
         "tag": "reviewed",
     }
     assert result.diagnostics["evidence_filter"] == "with_provenance"
+    assert result.diagnostics["node_count"] == 1
+    assert result.diagnostics["stats"]["records"] == 1
+
+
+@pytest.mark.parametrize(
+    ("graph_request", "expected_nodes", "expected_edges"),
+    [
+        (
+            _FakeGraphFakosRequest(filters={"node_kind": "decision"}),
+            ("memory:late-match", "memory:launch", "memory:archived"),
+            ("relation:late-launch", "relation:archived-launch"),
+        ),
+        (
+            _FakeGraphFakosRequest(
+                filters={"source": "validated", "min_score": "0.8"}
+            ),
+            ("memory:late-match", "memory:workflow", "memory:launch"),
+            ("relation:late-launch", "relation:launch-workflow"),
+        ),
+        (
+            _FakeGraphFakosRequest(
+                filters={"tag": "reviewed", "edge_kind": "supports"}
+            ),
+            ("memory:viewer-fact", "memory:launch"),
+            ("relation:launch-viewer",),
+        ),
+        (
+            _FakeGraphFakosRequest(
+                filters={"scope": "agent:alpha"},
+            ),
+            ("memory:late-match", "memory:viewer-fact", "memory:launch"),
+            ("relation:launch-viewer", "relation:late-launch"),
+        ),
+        (
+            _FakeGraphFakosRequest(query="workflow"),
+            ("memory:workflow",),
+            (),
+        ),
+        (
+            _FakeGraphFakosRequest(filters={"tag": "late"}, limit=1),
+            ("memory:late-match",),
+            (),
+        ),
+    ],
+)
+def test_second_brain_provider_applies_filter_permutations(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    graph_request: _FakeGraphFakosRequest,
+    expected_nodes: tuple[str, ...],
+    expected_edges: tuple[str, ...],
+) -> None:
+    graphfakos = _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    _seed_permutation_memory_graph(db_path)
+
+    graph = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    ).load_graph(graph_request)
+
+    node_ids = tuple(node.id for node in graph.nodes)
+    edge_ids = tuple(edge.id for edge in graph.edges)
+    if graph_request.limit == 1:
+        assert node_ids == expected_nodes
+    else:
+        assert set(node_ids) == set(expected_nodes)
+    assert set(edge_ids) == set(expected_edges)
+    assert graph.stats["records"] == len(expected_nodes)
+    assert graph.stats["relations"] == len(expected_edges)
 
 
 def test_second_brain_provider_adds_openminion_visual_metadata(
@@ -557,6 +783,20 @@ def test_viewer_status_reports_readiness_and_next_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    now = "2026-07-21T00:00:00+00:00"
+    SQLiteMemoryStore(db_path).put(
+        MemoryRecord(
+            id="memory:status",
+            scope="agent:openminion",
+            type="fact",
+            key="status",
+            title="Status Memory",
+            content="Graph status should count real memory records.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
     envelope_path = tmp_path / "viewer.json"
     envelope_path.write_text("{}", encoding="utf-8")
     config = OpenMinionConfig()
@@ -577,12 +817,14 @@ def test_viewer_status_reports_readiness_and_next_commands(
     report = inspect_graph_viewer_status(
         config=config,
         roots=_roots(tmp_path),
+        memory_db=str(db_path),
     )
     payload = report.to_dict()
 
     assert payload["ok"] is True
     assert payload["graphfakos"] == {"installed": True, "version": "test"}
     assert payload["second_brain"]["visual_ready"] is True
+    assert payload["second_brain"]["details"]["sample_records"] == 1
     assert payload["third_brain"][0]["visual_ready"] is True
     assert payload["third_brain"][0]["tags"] == ["code_graph"]
     assert "openminion graph view --current" in payload["next_commands"]
@@ -769,6 +1011,73 @@ def test_second_brain_static_html_uses_real_graphfakos_shell(tmp_path) -> None:
     assert result.html_path == str(html_path)
     assert "GraphFakos" in html
     assert "HTML Viewer" in html
+
+
+def test_second_brain_dry_run_exposes_real_graphfakos_manifest(tmp_path) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    if not hasattr(graphfakos, "workspace_manifest_for_graph"):
+        pytest.skip("graphfakos workspace manifest helper is unavailable")
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    first = MemoryRecord(
+        id="memory:real-runtime",
+        scope="agent:openminion",
+        type="decision",
+        key="real-runtime-db",
+        title="Real Runtime DB",
+        content="Use the OpenMinion SQLite memory DB as the second brain.",
+        created_at=now,
+        updated_at=now,
+    )
+    second = MemoryRecord(
+        id="memory:real-viewer",
+        scope="agent:openminion",
+        type="fact",
+        key="real-viewer",
+        title="Real Viewer",
+        content="Render and inspect the second-brain graph through GraphFakos.",
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(first)
+    store.put(second)
+    store.put_relation(
+        MemoryRelation(
+            relation_id="relation:real-runtime-viewer",
+            source_record_id=first.id,
+            target_record_id=second.id,
+            relation_type="supports",
+            created_at=now,
+        )
+    )
+
+    result = launch_graph_viewer(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(
+            brain="second",
+            dry_run=True,
+            memory_db=str(db_path),
+            screen="provider_status",
+        ),
+    )
+
+    manifest = result.diagnostics["viewer_manifest"]
+    provider_status = manifest["provider_status"]
+    assert result.provider == "openminion-memory"
+    assert result.layer == LAYER_SECOND_BRAIN
+    assert result.diagnostics["node_count"] == 2
+    assert result.diagnostics["edge_count"] == 1
+    assert manifest["schema_version"] == "graphfakos.workspace.v1"
+    assert manifest["graph_id"] == f"openminion-memory:{db_path.name}"
+    assert manifest["provider_id"] == "openminion-memory"
+    assert manifest["desktop_backend_path"] == "/provider_status"
+    assert manifest["performance_budget"]["rendered_node_count"] == 2
+    assert provider_status["provider_label"] == "OpenMinion Memory"
+    assert "durable_memory" in provider_status["capabilities"]
+    assert "inspect_node" in manifest["viewer_actions"]
+    assert manifest["provider_payload"]["graph_role"] == "second_brain_memory"
 
 
 def test_second_brain_provider_matches_graphfakos_conformance(tmp_path) -> None:
