@@ -10,7 +10,10 @@ import pytest
 from tests.e2e.cli.focus.conftest import require_complex_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
-from tests.e2e.cli.focus.harness.scenarios import SOAK_LIVE_SCENARIOS
+from tests.e2e.cli.focus.harness.scenarios import (
+    SOAK_LIVE_SCENARIOS,
+    assert_scenario_contract,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(3600)]
 
@@ -69,5 +72,9 @@ def test_live_focus_soak_scenarios(
             write_transcript(root, scenario.scenario_id, session.transcript)
             raise
         write_transcript(root, scenario.scenario_id, transcript)
-    generated_files = [path for path in scratch_dir.rglob("*") if path.is_file()]
-    assert generated_files, "soak coding scenario completed without generated files"
+    assert_scenario_contract(
+        scenario,
+        scratch_dir=scratch_dir,
+        transcript=transcript,
+        python_bin=focus_probe.python_bin,
+    )

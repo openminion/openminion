@@ -7,7 +7,10 @@ import pytest
 from tests.e2e.cli.focus.conftest import require_complex_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
-from tests.e2e.cli.focus.harness.scenarios import COMPLEX_LIVE_SCENARIOS
+from tests.e2e.cli.focus.harness.scenarios import (
+    COMPLEX_LIVE_SCENARIOS,
+    assert_scenario_contract,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(1200)]
 
@@ -47,7 +50,9 @@ def test_live_focus_complex_scenarios(
             raise
         write_transcript(root, scenario.scenario_id, transcript)
     if scenario.use_scratch_workspace:
-        generated_files = [path for path in scratch_dir.rglob("*") if path.is_file()]
-        assert generated_files, (
-            f"{scenario.scenario_id} did not create files under {scratch_dir}"
+        assert_scenario_contract(
+            scenario,
+            scratch_dir=scratch_dir,
+            transcript=transcript,
+            python_bin=focus_probe.python_bin,
         )

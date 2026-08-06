@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
+import subprocess
 
 
 @dataclass(frozen=True)
@@ -14,6 +17,10 @@ class FocusScenario:
     approval_reply: str = "yes"
     use_scratch_workspace: bool = False
     include_project_context: bool = True
+    min_generated_files: int = 0
+    expected_file_patterns: tuple[str, ...] = ()
+    forbidden_transcript_markers: tuple[str, ...] = ()
+    validation_commands: tuple[tuple[str, ...], ...] = ()
 
 
 SCRATCH_RELATIVE_PATH_RULE = (
@@ -120,6 +127,8 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
+        min_generated_files=1,
+        expected_file_patterns=("*.py",),
     ),
     FocusScenario(
         scenario_id="coding_complex_debug_loop",
@@ -138,6 +147,8 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
+        min_generated_files=2,
+        expected_file_patterns=("test*.py",),
     ),
     FocusScenario(
         scenario_id="coding_long_project_slice",
@@ -157,6 +168,8 @@ CODING_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
+        min_generated_files=4,
+        expected_file_patterns=("README*", "test*.py"),
     ),
 )
 
@@ -181,6 +194,10 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
+        min_generated_files=1,
+        expected_file_patterns=("loopcalc.py",),
+        forbidden_transcript_markers=("code.repo_index(", "Running exec.run("),
+        validation_commands=(("{python}", "loopcalc.py", "sum", "5"),),
     ),
     FocusScenario(
         scenario_id="goal_research_then_code_loop",
@@ -202,6 +219,21 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
+        min_generated_files=1,
+        expected_file_patterns=("word_count_cli.py",),
+        forbidden_transcript_markers=("code.repo_index(", "Running exec.run("),
+        validation_commands=(
+            (
+                "{python}",
+                "-c",
+                (
+                    "from pathlib import Path; "
+                    "Path('sample.txt').write_text('one two\\n', encoding='utf-8'); "
+                    "import word_count_cli; "
+                    "assert word_count_cli.count_words('sample.txt') == 2"
+                ),
+            ),
+        ),
     ),
     FocusScenario(
         scenario_id="goal_deep_research_analysis_code_loop",
@@ -224,6 +256,19 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         approval_reply="session",
         use_scratch_workspace=True,
         include_project_context=False,
+        min_generated_files=4,
+        expected_file_patterns=("section_summary.py", "README*", "test*.py"),
+        forbidden_transcript_markers=("code.repo_index(", "Running exec.run("),
+        validation_commands=(
+            (
+                "{python}",
+                "-c",
+                (
+                    "import section_summary; "
+                    "assert section_summary.parse_sections('# A\\ntext')"
+                ),
+            ),
+        ),
     ),
 )
 
@@ -232,3 +277,64 @@ COMPLEX_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
     *RESEARCH_LIVE_SCENARIOS,
     *CODING_LIVE_SCENARIOS,
 )
+
+
+def assert_scenario_contract(
+    scenario: FocusScenario,
+    *,
+    scratch_dir: Path,
+    transcript: str,
+    python_bin: str = "python3",
+) -> None:
+    generated_files = _generated_scenario_files(scratch_dir)
+    if len(generated_files) < scenario.min_generated_files:
+        relative_files = sorted(
+            str(path.relative_to(scratch_dir)) for path in generated_files
+        )
+        raise AssertionError(
+            f"{scenario.scenario_id} generated {len(generated_files)} file(s), "
+            f"expected at least {scenario.min_generated_files}: {relative_files}"
+        )
+    for pattern in scenario.expected_file_patterns:
+        if not any(scratch_dir.glob(pattern)):
+            relative_files = sorted(
+                str(path.relative_to(scratch_dir)) for path in generated_files
+            )
+            raise AssertionError(
+                f"{scenario.scenario_id} did not create a file matching "
+                f"{pattern!r}; generated files: {relative_files}"
+            )
+    for marker in scenario.forbidden_transcript_markers:
+        if marker in transcript:
+            raise AssertionError(
+                f"{scenario.scenario_id} transcript included forbidden marker "
+                f"{marker!r}"
+            )
+    for command in scenario.validation_commands:
+        rendered = tuple(python_bin if item == "{python}" else item for item in command)
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        completed = subprocess.run(
+            rendered,
+            cwd=scratch_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        if completed.returncode != 0:
+            raise AssertionError(
+                f"{scenario.scenario_id} validation command failed "
+                f"with exit {completed.returncode}: {rendered!r}\n"
+                f"stdout:\n{completed.stdout}\n"
+                f"stderr:\n{completed.stderr}"
+            )
+
+
+def _generated_scenario_files(scratch_dir: Path) -> list[Path]:
+    return [
+        path
+        for path in scratch_dir.rglob("*")
+        if path.is_file()
+        and path.suffix != ".pyc"
+        and "__pycache__" not in path.parts
+    ]
