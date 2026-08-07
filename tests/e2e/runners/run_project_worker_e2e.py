@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 from pathlib import Path
 import subprocess
@@ -15,6 +16,8 @@ from tests.e2e.project_worker.harness import (  # noqa: E402
     scenario_ids,
     scenarios_for_suite,
     soak_pilot_specs,
+    validate_certification_manifest,
+    write_certification_report,
     write_project_pilot_artifacts,
 )
 from tests.e2e.project_worker.harness.registry import PROJECT_WORKER_SCENARIOS  # noqa: E402
@@ -74,6 +77,36 @@ def _run(name: str) -> int:
     return subprocess.call(command, cwd=_ROOT, env=env)
 
 
+def _run_certify(args: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="run_project_worker_e2e.py certify")
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--validate-only", action="store_true")
+    parsed = parser.parse_args(args)
+
+    manifest_path = Path(parsed.manifest)
+    try:
+        manifest = validate_certification_manifest(manifest_path)
+        json_path, markdown_path = write_certification_report(
+            manifest,
+            manifest_path=manifest_path,
+            root=_ROOT,
+            validation_only=parsed.validate_only,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"certification manifest rejected: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"{manifest.run_id}: {json_path}")
+    print(f"{manifest.run_id}: {markdown_path}")
+    if not parsed.validate_only:
+        print(
+            "live sustained-autonomy execution remains owned by SAC-01/SAC-02",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     mode = args[0] if args else "local"
@@ -83,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             "soak-artifacts",
             *suite_names(),
             *scenario_ids(),
+            "certify",
         ):
             print(name)
         return 0
@@ -98,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
         for artifact in artifacts:
             print(f"{artifact.pilot_id}: {artifact.json_path}")
         return 0
+    if mode == "certify":
+        return _run_certify(args[1:])
     return _run(mode)
 
 
