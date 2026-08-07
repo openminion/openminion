@@ -3,6 +3,7 @@ from unittest import mock
 
 from tests._csc_fixtures import _csc_install_default_agent
 
+from openminion.api.core.deps import build_degraded_recovery_hint
 from openminion.api.server import build_api_server, dispatch_request
 from openminion.base.config import OpenMinionConfig, save_config
 
@@ -28,6 +29,18 @@ def test_health_reports_degraded_when_startup_bootstrap_failed(tmp_path) -> None
     assert recovery.get("configured_provider") == "openai"
     assert "recommended_actions" in recovery
     assert "OPENAI_API_KEY" in "\n".join(recovery.get("recommended_actions", []))
+
+
+def test_degraded_recovery_uses_canonical_default_config_path() -> None:
+    recovery = build_degraded_recovery_hint(
+        config_path=None,
+        health_payload={"provider": "openai"},
+        bootstrap_error="OpenAI provider selected but API key is missing.",
+    )
+
+    actions = "\n".join(recovery["recommended_actions"])
+    assert "~/.openminion/agents.json" in actions
+    assert "~/.openminion/config.json" not in actions
 
 
 def test_turns_returns_service_unavailable_in_degraded_mode(tmp_path) -> None:

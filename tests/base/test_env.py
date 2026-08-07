@@ -6,6 +6,7 @@ from openminion.base.config import (
     validate_for_provider,
     validate_runtime_core,
 )
+from openminion.base.config.env.registry import ENV_VAR_SPECS
 from tests._csc_fixtures import _csc_install_default_agent
 
 
@@ -122,3 +123,10 @@ def test_validate_runtime_core_emits_deprecation_warnings() -> None:
         "OPENMINION_DATA_ROOT_ENFORCEMENT should be one of" in warning
         for warning in result.warnings
     )
+
+
+def test_deprecated_config_root_description_names_canonical_config() -> None:
+    spec = next(item for item in ENV_VAR_SPECS if item.name == "OPENMINION_CONFIG_ROOT")
+
+    assert "agents.json" in spec.description
+    assert "config.json" not in spec.description
