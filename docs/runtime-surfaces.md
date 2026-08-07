@@ -100,7 +100,8 @@ Best for:
 
 Notes:
 
-1. install `openminion[viewer]` to include GraphFakos,
+1. install `openminion[viewer]` to include GraphFakos and PragmaGraph snapshot
+   support,
 2. the visual surface is a lens over current graph state, not a memory backend
    or graph indexer,
 3. `openminion graph status --json` reports GraphFakos availability, the

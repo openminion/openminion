@@ -112,7 +112,8 @@ viewer request to refresh the latest memory.
 
 Third-brain providers open visually when their `knowledge_graphs.provider`
 configuration includes `options.viewer_envelope_path`. PragmaGraph providers
-may also use `options.snapshot_path`.
+may also use `options.snapshot_path`; that snapshot path is ready only when the
+snapshot exists and the `openminion[viewer]` extra has installed PragmaGraph.
 
 ```bash
 openminion graph view --brain third --provider repo_graph
@@ -124,9 +125,10 @@ commands.
 
 `graph status --json` includes diagnostic codes for common visual-readiness
 states such as missing GraphFakos, no memory database yet, a missing
-third-brain viewer envelope, or an unconfigured provider envelope path. The
-human-readable status output also prints the diagnostic code, ready/missing
-reason, sample memory count, and exact next command.
+third-brain viewer envelope, a missing PragmaGraph runtime, or an unconfigured
+provider envelope path. The human-readable status output also prints the
+diagnostic code, ready/missing reason, sample memory count, and exact next
+command.
 
 ## Try The Checked-In Example
 
@@ -171,12 +173,21 @@ memory backend contract.
 
 The OpenMinion package keeps a focused graph-viewer regression suite covering
 status, current-memory dry runs, static HTML, third-brain envelopes, provider
-conformance, and a real-browser smoke when Chromium is available:
+conformance, and a real-browser smoke when the dev Playwright dependency and
+Chromium browser are available:
 
 ```bash
-PYTHONPATH=src:../graphfakos/src python -m pytest -q tests/context/knowledge/test_viewer.py
+PYTHONPATH=src:../graphfakos/src:../pragmagraph/src:../sophiagraph/src \
+  python -m pytest -q -rs tests/context/knowledge/test_viewer.py
 ```
 
 Use GraphFakos' browser suite for shared viewer behavior such as search,
 filters, inspector panels, saved workspaces, keyboard navigation, and dense
 graph rendering.
+
+When validating a coordinated local package workspace, run the GraphFakos-owned
+matrix from `../graphfakos`:
+
+```bash
+make integration-check
+```

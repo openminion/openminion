@@ -1,6 +1,7 @@
 """Public exports for memory-span observability."""
 
 from .emitter import SpanEmitter, SpanReadContext, record_span_read
+from .delegated_access import DelegatedMemoryTelemetryBridge
 from .outcome import apply_outcome_tag, backref_outcome_to_spans
 from .span import (
     MemorySpanRecord,
@@ -12,6 +13,7 @@ from .span import (
 
 __all__ = [
     "MemorySpanRecord",
+    "DelegatedMemoryTelemetryBridge",
     "SpanEmitter",
     "SpanReadContext",
     "StaleReadSignal",

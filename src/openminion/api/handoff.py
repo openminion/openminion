@@ -28,6 +28,8 @@ class SubagentRunContext:
     repository_baseline: str = "shared"
     task_context: str = "isolated_child"
     memory_posture: str = "none"
+    memory_grant_id: str | None = None
+    memory_evidence_refs: tuple[str, ...] = ()
     deadline_iso: str = ""
     timeout_seconds: int | None = None
     cancel_policy: str = "cascade_from_parent"
@@ -35,6 +37,13 @@ class SubagentRunContext:
     parent_transcript_inherited: bool = False
     hidden_reasoning_inherited: bool = False
     implicit_memory_write: bool = False
+    cancelled: bool = False
+
+    def __post_init__(self) -> None:
+        if self.memory_posture not in {"none", "read_only_bounded"}:
+            raise ValueError(f"unsupported memory_posture: {self.memory_posture!r}")
+        if self.implicit_memory_write:
+            raise ValueError("delegated memory writes are not supported in v1")
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -49,6 +58,8 @@ class SubagentRunContext:
             "repository_baseline": self.repository_baseline,
             "task_context": self.task_context,
             "memory_posture": self.memory_posture,
+            "memory_grant_id": self.memory_grant_id,
+            "memory_evidence_refs": list(self.memory_evidence_refs),
             "deadline_iso": self.deadline_iso,
             "timeout_seconds": self.timeout_seconds,
             "cancel_policy": self.cancel_policy,
@@ -56,6 +67,7 @@ class SubagentRunContext:
             "parent_transcript_inherited": self.parent_transcript_inherited,
             "hidden_reasoning_inherited": self.hidden_reasoning_inherited,
             "implicit_memory_write": self.implicit_memory_write,
+            "cancelled": self.cancelled,
         }
 
     def as_inbound_metadata(self) -> dict[str, str]:
@@ -71,6 +83,8 @@ class SubagentRunContext:
             "subagent_repository_baseline": self.repository_baseline,
             "subagent_task_context": self.task_context,
             "subagent_memory_posture": self.memory_posture,
+            "subagent_memory_grant_id": self.memory_grant_id or "",
+            "subagent_memory_evidence_refs": ",".join(self.memory_evidence_refs),
             "subagent_deadline_iso": self.deadline_iso,
             "subagent_timeout_seconds": (
                 "" if self.timeout_seconds is None else str(self.timeout_seconds)
@@ -84,6 +98,7 @@ class SubagentRunContext:
                 self.hidden_reasoning_inherited
             ).lower(),
             "subagent_implicit_memory_write": str(self.implicit_memory_write).lower(),
+            "subagent_cancelled": str(self.cancelled).lower(),
         }
 
 
@@ -166,6 +181,7 @@ def subagent(
     timeout_seconds: int | None = None,
     deadline_iso: str = "",
     memory_posture: str = "none",
+    memory_grant_id: str | None = None,
     cancel_policy: str = "cascade_from_parent",
 ) -> "Agent[Any, Any]":
     """Construct a child agent with an explicit bounded run context.
@@ -181,6 +197,13 @@ def subagent(
     from openminion.api.agent import Agent
 
     runtime = parent._ensure_runtime()  # noqa: SLF001 — same-package helper
+    parent_context = parent.subagent_context
+    if (
+        parent_context is not None
+        and parent_context.memory_posture == "read_only_bounded"
+        and memory_posture != "none"
+    ):
+        raise ValueError("delegated memory grants cannot be re-shared in v1")
     parent_id = str(getattr(parent, "name", "") or "parent").strip() or "parent"
     child_id = str(name or "subagent").strip() or "subagent"
     context_id = f"subagent-{uuid4().hex[:12]}"
@@ -195,6 +218,7 @@ def subagent(
         deadline_iso=str(deadline_iso or ""),
         timeout_seconds=timeout_seconds,
         memory_posture=str(memory_posture or "none"),
+        memory_grant_id=memory_grant_id,
         cancel_policy=str(cancel_policy or "cascade_from_parent"),
     )
     return Agent(

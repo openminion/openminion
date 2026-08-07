@@ -6,8 +6,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openminion.base.types import Message
+from openminion.modules.context.knowledge.constants import LAYER_THIRD_BRAIN
+from openminion.modules.context.knowledge.models import (
+    GraphContextItem,
+    GraphQueryResult,
+)
 from openminion.services.gateway.context import (
     _maybe_apply_contextctl_call_site,
+    build_turn_context,
 )
 from openminion.services.gateway.types import TurnContext
 
@@ -202,3 +208,75 @@ def test_guard_on_with_adapter_exception_falls_back_deterministically(mock_env):
         )
 
     assert turn_ctx.history == original_history
+
+
+def test_memory_failure_still_allows_independent_graph_context(mock_env):
+    class _FailingMemory:
+        def build_context_with_metadata(self, **kwargs):
+            del kwargs
+            raise RuntimeError("synthetic memory failure")
+
+    class _Source:
+        name = "fixture-graph"
+
+    class _KnowledgeGraphs:
+        def list_sources(self, **kwargs):
+            del kwargs
+            return (_Source(),)
+
+        def query(self, request, **kwargs):
+            del request, kwargs
+            return (
+                GraphQueryResult(
+                    provider="fixture-graph",
+                    layer=LAYER_THIRD_BRAIN,
+                    items=(
+                        GraphContextItem(
+                            provider="fixture-graph",
+                            source_graph_id="graph",
+                            node_or_edge_id="node-1",
+                            snippet="graph context survived memory failure",
+                        ),
+                    ),
+                ),
+            )
+
+    events: list[tuple[str, dict[str, str]]] = []
+
+    turn_context = build_turn_context(
+        history=[],
+        agent_id="agent",
+        agent_memory=_FailingMemory(),
+        logger=_logger(),
+        emit_memory_event=lambda **kwargs: events.append(
+            (kwargs["event_type"], kwargs["payload"])
+        ),
+        session_id="session",
+        run_id="run",
+        request_id="request",
+        channel="console",
+        target="target",
+        user_message="hello",
+        conversation_id="conversation",
+        thread_id="thread",
+        attach_id="attach",
+        memory_capsule_strategy="always",
+        memory_capsule_cache={},
+        memory_dynamic_retrieval_enabled=False,
+        knowledge_graphs=_KnowledgeGraphs(),
+    )
+
+    assert turn_context.memory_context_meta["memory_context_reason_code"]
+    assert (
+        "graph context survived memory failure" in turn_context.knowledge_graph_context
+    )
+    assert any(
+        "graph context survived memory failure" in message.body
+        for message in turn_context.history
+    )
+    assert [event_type for event_type, _payload in events] == [
+        "memory.context.failed",
+        "knowledge_graph.source.resolved",
+        "knowledge_graph.query.started",
+        "knowledge_graph.query.completed",
+    ]

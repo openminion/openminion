@@ -4,6 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from openminion.modules.context.schemas import SessionSlice
@@ -164,6 +165,82 @@ class BuildContextCtlMessagesTests(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertTrue(any("mapped summary" in item.content for item in result))
+
+    def test_closes_runtime_identity_controller_after_ctxctl_build(self) -> None:
+        closed: list[bool] = []
+
+        class _FakeIdentityCtl:
+            def __init__(self, *, store) -> None:
+                self.store = store
+
+            def close(self) -> None:
+                closed.append(True)
+
+        class _FakeContextCtlService:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+            def build_pack(self, request):
+                del request
+                return SimpleNamespace(
+                    messages=[SimpleNamespace(role="system", content="identity")]
+                )
+
+        with (
+            patch(
+                "openminion.modules.identity.storage.store.SQLiteIdentityStore",
+                return_value=object(),
+            ),
+            patch(
+                "openminion.modules.identity.runtime.service.IdentityCtl",
+                _FakeIdentityCtl,
+            ),
+            patch(
+                "openminion.services.identity.bootstrap.ensure_default_profile",
+                return_value=None,
+            ),
+            patch(
+                "openminion.modules.context.service.ContextCtlService",
+                _FakeContextCtlService,
+            ),
+        ):
+            result = _adapter().build_ctxctl_messages(
+                session_id="s1", agent_id="a1", query="hello"
+            )
+
+        self.assertEqual([item.content for item in result or []], ["identity"])
+        self.assertEqual(closed, [True])
+
+    def test_closes_runtime_identity_controller_after_profile_failure(self) -> None:
+        closed: list[bool] = []
+
+        class _FakeIdentityCtl:
+            def __init__(self, *, store) -> None:
+                self.store = store
+
+            def close(self) -> None:
+                closed.append(True)
+
+        with (
+            patch(
+                "openminion.modules.identity.storage.store.SQLiteIdentityStore",
+                return_value=object(),
+            ),
+            patch(
+                "openminion.modules.identity.runtime.service.IdentityCtl",
+                _FakeIdentityCtl,
+            ),
+            patch(
+                "openminion.services.identity.bootstrap.ensure_default_profile",
+                side_effect=RuntimeError("profile setup failed"),
+            ),
+        ):
+            result = _adapter().build_ctxctl_messages(
+                session_id="s1", agent_id="a1", query="hello"
+            )
+
+        self.assertIsNone(result)
+        self.assertEqual(closed, [True])
 
 
 class RuntimeMappedSessionClientTests(unittest.TestCase):

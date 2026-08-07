@@ -11,6 +11,8 @@ from openminion.modules.llm.reasoning import ThinkingCtl
 from openminion.modules.llm.reasoning import __version__ as reasoning_version
 
 VERSION_LITERAL_ALLOWLIST = {
+    Path("API_COMPATIBILITY.md"),
+    Path("docs/memory-namespace-queries.md"),
     Path("pyproject.toml"),
     Path("src/openminion/base/version.py"),
 }
@@ -83,6 +85,16 @@ def test_package_metadata_declares_canonical_public_urls() -> None:
         "Documentation": "https://www.openminion.com/docs",
         "Changelog": "https://github.com/OpenMinion/openminion/blob/main/CHANGELOG.md",
     }
+
+
+def test_dev_extra_keeps_browser_viewer_smoke_dependencies() -> None:
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    )
+    dev_extra = pyproject["project"]["optional-dependencies"]["dev"]
+
+    assert "graphfakos>=0.0.8" in dev_extra
+    assert "playwright>=1.45,<2" in dev_extra
 
 
 def test_default_terminal_renderer_dependencies_are_core() -> None:

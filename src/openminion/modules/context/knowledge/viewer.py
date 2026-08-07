@@ -159,6 +159,16 @@ def _graphfakos_install_status() -> tuple[bool, str]:
     return True, str(getattr(graphfakos, "__version__", "") or "")
 
 
+def _pragmagraph_install_status() -> tuple[bool, str]:
+    try:
+        pragmagraph = importlib.import_module("pragmagraph")
+        importlib.import_module("pragmagraph.storage")
+        importlib.import_module("pragmagraph.viewer")
+    except ModuleNotFoundError:
+        return False, ""
+    return True, str(getattr(pragmagraph, "__version__", "") or "")
+
+
 def _graphfakos_request(graphfakos: Any, request: GraphViewerRequest) -> Any:
     return graphfakos.GraphFakosRequest(
         screen=request.screen,
@@ -274,7 +284,7 @@ def _empty_state(graph: Any, stats: Mapping[str, object]) -> dict[str, object]:
             "next_commands": [
                 "openminion graph status",
                 "openminion graph view --current --dry-run --json",
-                "openminion agent --message \"remember a useful project fact\"",
+                'openminion agent --message "remember a useful project fact"',
             ],
             "scope_filter": scope_filter if isinstance(scope_filter, list) else [],
         }
@@ -529,6 +539,12 @@ def _third_brain_provider_status(
     options = dict(provider_config.options or {})
     envelope_path = _option_path(options.get(_VIEWER_ENVELOPE_PATH_OPTION), roots=roots)
     snapshot_path = _option_path(options.get("snapshot_path"), roots=roots)
+    pragmagraph_required = bool(
+        provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None
+    )
+    pragmagraph_installed, pragmagraph_version = (
+        _pragmagraph_install_status() if pragmagraph_required else (True, "")
+    )
     capabilities = tuple(
         dict.fromkeys(
             (
@@ -542,29 +558,35 @@ def _third_brain_provider_status(
         provider_config.provider == PROVIDER_PRAGMAGRAPH
         and snapshot_path
         and snapshot_path.exists()
+        and pragmagraph_installed
     )
     ready = bool(
         graphfakos_installed
         and provider_config.enabled
         and (envelope_ready or snapshot_ready)
     )
-    reason = _third_brain_status_reason(
-        provider_config=provider_config,
-        graphfakos_installed=graphfakos_installed,
-        envelope_path=envelope_path,
-        snapshot_path=snapshot_path,
-    )
-    command = (
-        f"openminion graph view --brain third --provider {provider_config.name}"
-        if ready
-        else "openminion graph status"
-    )
     diagnostic_code = _third_brain_diagnostic_code(
         provider_config=provider_config,
         graphfakos_installed=graphfakos_installed,
+        pragmagraph_installed=pragmagraph_installed,
         envelope_path=envelope_path,
         snapshot_path=snapshot_path,
     )
+    reason = _third_brain_status_reason(
+        provider_config=provider_config,
+        graphfakos_installed=graphfakos_installed,
+        pragmagraph_installed=pragmagraph_installed,
+        envelope_path=envelope_path,
+        snapshot_path=snapshot_path,
+    )
+    if ready:
+        command = (
+            f"openminion graph view --brain third --provider {provider_config.name}"
+        )
+    elif diagnostic_code == "pragmagraph_missing":
+        command = "python -m pip install 'openminion[viewer]'"
+    else:
+        command = "openminion graph status"
     return GraphViewerProviderStatus(
         provider=provider_config.name,
         layer=LAYER_THIRD_BRAIN,
@@ -583,6 +605,9 @@ def _third_brain_provider_status(
             "viewer_envelope_exists": bool(envelope_path and envelope_path.exists()),
             "snapshot_path": str(snapshot_path) if snapshot_path else "",
             "snapshot_exists": bool(snapshot_path and snapshot_path.exists()),
+            "pragmagraph_required": pragmagraph_required,
+            "pragmagraph_installed": pragmagraph_installed,
+            "pragmagraph_version": pragmagraph_version,
             "refresh_mode": provider_config.refresh.mode,
             "status_command": f"openminion graph status --provider {provider_config.name}",
             "view_command": (
@@ -600,6 +625,7 @@ def _third_brain_diagnostic_code(
     *,
     provider_config: KnowledgeGraphProviderConfig,
     graphfakos_installed: bool,
+    pragmagraph_installed: bool,
     envelope_path: Path | None,
     snapshot_path: Path | None,
 ) -> str:
@@ -610,7 +636,9 @@ def _third_brain_diagnostic_code(
     if envelope_path is not None:
         return "ready" if envelope_path.exists() else "viewer_envelope_missing"
     if provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None:
-        return "ready" if snapshot_path.exists() else "snapshot_missing"
+        if not snapshot_path.exists():
+            return "snapshot_missing"
+        return "ready" if pragmagraph_installed else "pragmagraph_missing"
     return "viewer_envelope_unconfigured"
 
 
@@ -618,6 +646,7 @@ def _third_brain_status_reason(
     *,
     provider_config: KnowledgeGraphProviderConfig,
     graphfakos_installed: bool,
+    pragmagraph_installed: bool,
     envelope_path: Path | None,
     snapshot_path: Path | None,
 ) -> str:
@@ -632,6 +661,8 @@ def _third_brain_status_reason(
             else "Viewer envelope path is configured but not found yet."
         )
     if provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None:
+        if snapshot_path.exists() and not pragmagraph_installed:
+            return "PragmaGraph snapshot viewing requires the pragmagraph package."
         return (
             ""
             if snapshot_path.exists()
@@ -649,6 +680,9 @@ def _diagnostic_label(code: str) -> str:
         "graphfakos_missing": "Install the viewer extra before opening graphs.",
         "memory_db_missing": "Memory graph is ready; the database appears after first use.",
         "provider_disabled": "Enable the provider before opening it.",
+        "pragmagraph_missing": (
+            "Install the viewer extra before opening PragmaGraph snapshots."
+        ),
         "ready": "Ready to open visually.",
         "snapshot_missing": "Configured PragmaGraph snapshot was not found.",
         "viewer_envelope_missing": "Configured viewer envelope was not found.",
@@ -663,8 +697,13 @@ def _status_next_commands(
     third_brain: tuple[GraphViewerProviderStatus, ...],
 ) -> tuple[str, ...]:
     commands = []
-    if not graphfakos_installed:
-        commands.append("python -m pip install 'openminion[viewer]'")
+    install_viewer_extra = "python -m pip install 'openminion[viewer]'"
+    pragmagraph_missing = any(
+        provider.details.get("diagnostic_code") == "pragmagraph_missing"
+        for provider in third_brain
+    )
+    if not graphfakos_installed or pragmagraph_missing:
+        commands.append(install_viewer_extra)
     if second_brain.visual_ready:
         commands.append(second_brain.next_command)
     commands.extend(

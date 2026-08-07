@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+import json
 from pathlib import Path
 import re
 import sqlite3
@@ -9,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from openminion.api.handoff import SubagentRunContext
 from openminion.modules.artifact.control import ArtifactCtl
 from openminion.modules.artifact.config import (
     ArtifactCtlConfig,
@@ -16,8 +19,20 @@ from openminion.modules.artifact.config import (
     IndexConfig,
 )
 from openminion.modules.brain.schemas import WorkingState
+from openminion.modules.memory.adapters import OpenMinionDelegationMemoryGrantResolver
+from openminion.modules.policy.models import PolicyConfig, PolicyGrantInput
+from openminion.modules.policy.runtime.service import PolicyCtl
 from openminion.modules.session.storage import SQLiteSessionStore
 from openminion.tools.agent.plugin import _h_task_delegate
+from sophiagraph import MemoryRecord
+from sophiagraph.access import (
+    AccessConstraint,
+    AuthorizedSophiaGraphGateway,
+    MemoryAccessContext,
+    MemoryAccessRequest,
+)
+from sophiagraph.models import MemoryNamespace
+from sophiagraph.storage import SophiaGraphSqliteStore
 from tests.e2e.cli.focus.conftest import require_live_focus
 from tests.e2e.cli.focus.harness import FocusProbe
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
@@ -25,6 +40,129 @@ from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcrip
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(360)]
 
 _TASK_ID_RE = re.compile(r"(?m)^\s*task\s+(\S+)\s*$")
+
+
+def _sgdm_target(namespace: MemoryNamespace) -> dict:
+    return {
+        "resource": "sophiagraph",
+        "delegated_memory": {
+            "version": 1,
+            "audience": "sophiagraph",
+            "delegator_agent_id": "parent",
+            "subject_agent_id": "child",
+            "parent_run_id": "parent-run",
+            "child_run_id": "child-run",
+            "trace_parent_id": "trace-live",
+            "namespaces": [namespace.as_dict()],
+            "workspace_ids": ["workspace-live"],
+            "operations": ["read"],
+            "record_types": ["fact"],
+            "max_results": 1,
+            "max_context_tokens": 64,
+            "max_depth": 1,
+            "can_reshare": False,
+        },
+    }
+
+
+def _resolve_live_delegated_record(root: Path) -> tuple[MemoryRecord, dict]:
+    allowed_namespace = MemoryNamespace(
+        agent_id="child", project_id="sgdm-live", graph_id="main"
+    )
+    sibling_namespace = MemoryNamespace(
+        agent_id="sibling", project_id="sgdm-live", graph_id="main"
+    )
+    store = SophiaGraphSqliteStore(root / "sophiagraph.sqlite3")
+    for record_id, namespace, text in (
+        ("sgdm-allowed", allowed_namespace, "Project Atlas uses cobalt blue."),
+        ("sgdm-hidden", sibling_namespace, "Sibling secret must stay private."),
+    ):
+        store.put_record(
+            MemoryRecord(
+                id=record_id,
+                scope=f"agent:{namespace.agent_id}",
+                type="fact",
+                content={"text": text},
+                created_at="2026-08-06T00:00:00+00:00",
+                updated_at="2026-08-06T00:00:00+00:00",
+                namespace=namespace,
+            )
+        )
+    policy = PolicyCtl.with_sqlite(
+        root / "policy.sqlite3", config=PolicyConfig(mode="enforce")
+    )
+    try:
+        grant_id = policy.create_grant(
+            PolicyGrantInput(
+                effect="allow",
+                subject_id="child",
+                tool="memory",
+                method="delegated_read",
+                target_json=_sgdm_target(allowed_namespace),
+                duration_type="until",
+                expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+            )
+        )
+        run_context = SubagentRunContext(
+            context_id="context-live",
+            parent_agent_id="parent",
+            child_agent_id="child",
+            parent_run_id="parent-run",
+            child_run_id="child-run",
+            trace_parent_id="trace-live",
+            memory_posture="read_only_bounded",
+            memory_grant_id=grant_id,
+        )
+        resolver = OpenMinionDelegationMemoryGrantResolver(
+            policy,
+            run_context,
+            memory_scope_namespaces=(allowed_namespace,),
+        )
+        audit_events = []
+        gateway = AuthorizedSophiaGraphGateway(
+            store, resolver=resolver, audit_recorder=audit_events.append
+        )
+        context = MemoryAccessContext(
+            principal_id="child-principal",
+            audience="sophiagraph",
+            subject_agent_id="child",
+            parent_run_id="parent-run",
+            child_run_id="child-run",
+            trace_parent_id="trace-live",
+            delegated=True,
+            constraints=(
+                AccessConstraint(
+                    mode="allowlist",
+                    namespaces=(allowed_namespace,),
+                    workspace_ids=("workspace-live",),
+                    operations=("read",),
+                    record_types=("fact",),
+                    max_results=1,
+                    max_context_tokens=64,
+                ),
+            ),
+        )
+        request = MemoryAccessRequest(
+            operation="read",
+            grant_id=grant_id,
+            namespaces=(allowed_namespace,),
+            workspace_ids=("workspace-live",),
+            record_types=("fact",),
+            max_results=1,
+            max_context_tokens=64,
+        )
+        allowed = gateway.get_record("sgdm-allowed", context=context, request=request)
+        hidden = gateway.get_record("sgdm-hidden", context=context, request=request)
+        assert allowed is not None
+        assert hidden is None
+        return allowed, {
+            "grant_bound": True,
+            "allowed_record_id": allowed.id,
+            "sibling_denied": True,
+            "denial_reason": audit_events[-1].details["reason"],
+        }
+    finally:
+        policy.close()
 
 
 def _run_git(repo: Path, *args: str) -> None:
@@ -110,6 +248,22 @@ def _wait_for_a2a_delegate_success(
     )
 
 
+def _latest_delegated_child_answer(probe: FocusProbe) -> str:
+    database = probe.data_root / "state" / "brain" / "sessions.db"
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            """
+            SELECT content
+            FROM turns
+            WHERE role = 'assistant' AND session_id LIKE 'task-delegate::%'
+            ORDER BY ts DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    assert row is not None, "delegated child result was not persisted"
+    return str(row[0])
+
+
 def test_live_focus_delegate_exact_target(
     focus_probe: FocusProbe,
     tmp_path,
@@ -132,6 +286,52 @@ def test_live_focus_delegate_exact_target(
         )
     assert "Delegation:" in transcript
     assert target_agent in transcript
+
+
+def test_live_focus_delegate_uses_bounded_sophiagraph_context(
+    focus_probe: FocusProbe,
+    tmp_path: Path,
+) -> None:
+    """Prove a live child receives only the authorized SQLite memory excerpt."""
+
+    require_live_focus()
+    root = artifact_root(tmp_path)
+    record, evidence = _resolve_live_delegated_record(root)
+    marker = "SGDM_LIVE_ALLOWED [record:sgdm-allowed]"
+    prompt = (
+        "/delegate minimax-m2-7-highspeed Use only this delegated memory: "
+        f"{record.content['text']} Citation: [record:{record.id}]. "
+        f"Reply exactly: {marker}"
+    )
+    with focus_probe.session(rows=50, cols=160) as session:
+        focus_probe.wait_ready(session)
+        transcript = focus_probe.run_slash(session, prompt, marker="Delegation:")
+        _wait_for_a2a_delegate_success(
+            root,
+            "test_live_focus_delegate_uses_bounded_sophiagraph_context",
+            timeout=120,
+        )
+        child_answer = _latest_delegated_child_answer(focus_probe)
+        transcript_path = write_transcript(
+            root,
+            "sgdm-live-bounded-project-recall",
+            f"{transcript}\n\n--- durable child result ---\n{child_answer}\n",
+        )
+
+    assert marker in child_answer
+    assert "sgdm-hidden" not in child_answer
+    evidence.update(
+        {
+            "provider_tier": "live",
+            "transport": "openminion-focus-delegate",
+            "backend": "sophiagraph-sqlite",
+            "transcript": transcript_path.name,
+        }
+    )
+    (root / "sgdm-live-bounded-project-recall.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_live_focus_delegate_code_child_writes_in_scratch(

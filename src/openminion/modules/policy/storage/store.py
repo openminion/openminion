@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional
-from collections.abc import Mapping
 from uuid import uuid4
 
 from openminion.modules.storage.runtime.module_store import (
@@ -28,6 +28,19 @@ def _parse_json(raw: str | None, fallback: Any) -> Any:
         return json.loads(str(raw))
     except json.JSONDecodeError:
         return fallback
+
+
+def _mapping_contains(value: Mapping[str, Any], required: Mapping[str, Any]) -> bool:
+    for key, expected in required.items():
+        actual = value.get(key)
+        if isinstance(expected, Mapping):
+            if not isinstance(actual, Mapping) or not _mapping_contains(
+                actual, expected
+            ):
+                return False
+        elif actual != expected:
+            return False
+    return True
 
 
 def _create_policy_schema(record_store: RecordStore) -> None:
@@ -241,6 +254,64 @@ class _PolicyStoreMixin(PolicyStore):
             (new_uses, now, revoke_at, grant_id),
         )
         return self.get_grant(grant_id)
+
+    def resolve_active_grant_for_use(
+        self,
+        grant_id: str,
+        *,
+        subject_id: str,
+        tool: str,
+        method: str,
+        required_target: Mapping[str, Any] | None = None,
+    ) -> Optional[PolicyGrant]:
+        """Resolve and consume one exact active grant under the policy lock."""
+
+        now = utc_now_iso()
+        with self._lock:
+            rows = self._record_store.query_dicts(
+                """
+                SELECT * FROM policy_grants
+                WHERE grant_id = ?
+                  AND subject_id = ?
+                  AND effect = 'allow'
+                  AND tool = ?
+                  AND method = ?
+                  AND revoked_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                  AND (max_uses IS NULL OR uses_count < max_uses)
+                """,
+                (grant_id, subject_id, tool, method, now),
+            )
+            if not rows:
+                return None
+            grant = self._row_to_grant(rows[0])
+            if required_target is not None and not _mapping_contains(
+                grant.target_json, required_target
+            ):
+                return None
+            revoke_at = (
+                now
+                if grant.duration_type == POLICY_DURATION_ONCE
+                or (
+                    grant.max_uses is not None
+                    and grant.uses_count + 1 >= grant.max_uses
+                )
+                else None
+            )
+            updated = self._record_store.execute_count(
+                """
+                UPDATE policy_grants
+                SET uses_count = uses_count + 1,
+                    updated_at = ?,
+                    revoked_at = COALESCE(?, revoked_at)
+                WHERE grant_id = ?
+                  AND revoked_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > ?)
+                  AND (max_uses IS NULL OR uses_count < max_uses)
+                """,
+                (now, revoke_at, grant_id, now),
+            )
+            return grant if updated == 1 else None
 
     def cleanup_expired(self) -> int:
         now = utc_now_iso()

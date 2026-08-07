@@ -80,6 +80,25 @@ The local HTTP API also exposes `POST /memory/records/list` and
 `POST /memory/records/search`. These are operator query surfaces, not a
 multi-tenant authentication or RBAC promise.
 
+Delegated Sophiagraph access is an additive internal integration surface.
+`SubagentRunContext.memory_posture` accepts the closed values `none` and
+`read_only_bounded`; serialized string compatibility is retained. The
+OpenMinion policy store remains authoritative for issue, use, expiry, and
+revocation. Untrusted delegated callers never receive a raw Sophiagraph store.
+This surface requires `sophiagraph>=0.0.7`, the first compatible package line
+that contains the public `sophiagraph.access` import root.
+
+Memory portability and model compatibility should consume public Sophiagraph
+facades such as `sophiagraph.portability` and `sophiagraph.models`. The
+Sophiagraph 0.x transition window keeps `_SCOPE_PATTERN` as a compatibility
+alias, but new OpenMinion code should prefer `SCOPE_PATTERN`.
+
+MCP server publication uses
+`openminion.tools.mcp.server.build_runtime_published_tools()` for supported
+runtime-backed catalogs. `build_contract_fixture_published_tools()` is only for
+wire-shape tests, and `build_default_published_tools()` is a deprecated
+compatibility alias for that fixture catalog.
+
 ## Non-promises
 
 These import areas are real package owners, but they are not blanket public

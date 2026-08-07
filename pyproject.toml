@@ -30,7 +30,7 @@ dependencies = [
   "platformdirs",
   # The public ``openminion`` package imports memory contracts and agent
   # runtime surfaces that depend on the released SophiaGraph package.
-  "sophiagraph>=0.0.4",
+  "sophiagraph>=0.0.7",
   "psutil>=5",
   "pydantic>=2",
   "pyfiglet>=1.0,<2",
@@ -70,6 +70,7 @@ dev = [
   # remaining skippable in a minimal runtime installation.
   "graphfakos>=0.0.8",
   "pre-commit>=4,<5",
+  "playwright>=1.45,<2",
   # FTF-11: pyte is a pure-Python terminal emulator used by
   # FTF-13's PTY scrollback test to capture the post-exit
   # buffer. Test/dev only — never imported from runtime code.
@@ -95,6 +96,7 @@ dev = [
 ]
 viewer = [
   "graphfakos>=0.0.8",
+  "pragmagraph>=0.0.8",
 ]
 postgres = [
   "sqlalchemy>=2.0,<3",

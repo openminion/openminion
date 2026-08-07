@@ -174,65 +174,73 @@ class ContextCtlGatewayAdapter:
         from openminion.modules.context.contracts import IdentityClient
         from openminion.modules.context.service import ContextCtlService
 
+        identity_ctl_to_close: Any | None = None
+        identity_store_to_close: Any | None = None
         try:
-            from openminion.modules.identity.storage.store import SQLiteIdentityStore
-            from openminion.modules.identity.runtime.service import IdentityCtl
-            from openminion.services.identity.bootstrap import ensure_default_profile
-
-            db_path = resolve_services_env().get(OPENMINION_IDENTITY_DB_ENV, "").strip()
-
-            if not db_path:
-                db_path = str(
-                    resolve_services_path(
-                        Path(SERVICES_IDENTITY_SUBDIR) / SERVICES_IDENTITY_DB_FILENAME
-                    )
+            try:
+                from openminion.modules.identity.storage.store import (
+                    SQLiteIdentityStore,
+                )
+                from openminion.modules.identity.runtime.service import IdentityCtl
+                from openminion.services.identity.bootstrap import (
+                    ensure_default_profile,
                 )
 
-            _store = SQLiteIdentityStore(sqlite_path=db_path)
-            identity_ctl: Any = IdentityCtl(store=_store)
+                db_path = (
+                    resolve_services_env().get(OPENMINION_IDENTITY_DB_ENV, "").strip()
+                )
+                if not db_path:
+                    db_path = str(
+                        resolve_services_path(
+                            Path(SERVICES_IDENTITY_SUBDIR)
+                            / SERVICES_IDENTITY_DB_FILENAME
+                        )
+                    )
 
-            # Ensure default profile exists
-            ensure_default_profile(identity_ctl, agent_id, "")
+                identity_store_to_close = SQLiteIdentityStore(sqlite_path=db_path)
+                identity_ctl: Any = IdentityCtl(store=identity_store_to_close)
+                identity_ctl_to_close = identity_ctl
+                identity_store_to_close = None
+                ensure_default_profile(identity_ctl, agent_id, "")
+            except ImportError:
+                identity_ctl = _EchoIdentityClient(agent_id=agent_id)
 
-        except ImportError:
-            # Fall back to _EchoIdentityClient if openminion_identity not installed
-            identity_ctl = _EchoIdentityClient(agent_id=agent_id)
-        identity_client = cast(IdentityClient, identity_ctl)
-        session_client = self._session_client or _RuntimeMappedSessionClient(
-            sqlite_path=_resolve_runtime_sqlite_path()
-        )
-        # prefer an injected memory_client over the NullMemoryClient
-        memory_stub = self._memory_client or _NullMemoryClient()
-        artifact_stub = _NullArtifactClient()
-
-        service = ContextCtlService(
-            identityctl=identity_client,
-            sessctl=session_client,
-            memctl=memory_stub,
-            artifactctl=artifact_stub,
-        )
-        budgets_override = default_budgets_for(cast(Purpose, purpose))
-        budgets_override.total_max_tokens = resolve_context_total_token_budget(
-            purpose=purpose,
-            runtime_token_budget=self._runtime_token_budget,
-            requested_token_budget=None,
-        )
-
-        pack = service.build_pack(
-            BuildPackRequest(
-                session_id=session_id,
-                agent_id=agent_id,
-                purpose=cast(Purpose, purpose),
-                query=query,
-                budgets_override=budgets_override,
+            identity_client = cast(IdentityClient, identity_ctl)
+            session_client = self._session_client or _RuntimeMappedSessionClient(
+                sqlite_path=_resolve_runtime_sqlite_path()
             )
-        )
-
-        return [
-            ContextCtlMessage(role=m.role, content=m.content)
-            for m in pack.messages
-            if m.content.strip()
-        ]
+            memory_stub = self._memory_client or _NullMemoryClient()
+            service = ContextCtlService(
+                identityctl=identity_client,
+                sessctl=session_client,
+                memctl=memory_stub,
+                artifactctl=_NullArtifactClient(),
+            )
+            budgets_override = default_budgets_for(cast(Purpose, purpose))
+            budgets_override.total_max_tokens = resolve_context_total_token_budget(
+                purpose=purpose,
+                runtime_token_budget=self._runtime_token_budget,
+                requested_token_budget=None,
+            )
+            pack = service.build_pack(
+                BuildPackRequest(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    purpose=cast(Purpose, purpose),
+                    query=query,
+                    budgets_override=budgets_override,
+                )
+            )
+            return [
+                ContextCtlMessage(role=m.role, content=m.content)
+                for m in pack.messages
+                if m.content.strip()
+            ]
+        finally:
+            if identity_ctl_to_close is not None:
+                identity_ctl_to_close.close()
+            elif identity_store_to_close is not None:
+                identity_store_to_close.close()
 
     def _contextctl_to_history(self, messages: list[ContextCtlMessage]) -> list[object]:
         from openminion.base.types import Message

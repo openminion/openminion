@@ -10,6 +10,7 @@ from openminion.modules.tool.registry import ToolRegistry, ToolSpec
 from openminion.tools.mcp.server import (
     MCPServerError,
     PublishedTool,
+    build_contract_fixture_published_tools,
     build_default_published_tools,
     build_runtime_published_tools,
     handle_published_mcp_request,
@@ -19,7 +20,7 @@ from openminion.tools.mcp.server import (
 
 
 def test_default_catalog_has_expected_minimum_four_families() -> None:
-    tools = build_default_published_tools()
+    tools = build_contract_fixture_published_tools()
     names = {t.name for t in tools}
     assert "openminion.memory.export" in names
     assert "openminion.plan.show" in names
@@ -30,7 +31,7 @@ def test_default_catalog_has_expected_minimum_four_families() -> None:
 
 
 def test_render_tools_list_payload_matches_mcp_shape() -> None:
-    tools = build_default_published_tools()
+    tools = build_contract_fixture_published_tools()
     payload = render_tools_list_payload(tools)
     assert set(payload.keys()) == {"tools"}
     entry0 = payload["tools"][0]
@@ -64,7 +65,7 @@ def test_invoke_dispatches_to_matching_tool() -> None:
 
 
 def test_invoke_unknown_tool_raises_mcp_server_error() -> None:
-    tools = build_default_published_tools()
+    tools = build_contract_fixture_published_tools()
     with pytest.raises(MCPServerError, match="unknown MCP tool"):
         invoke_published_tool(tools, name="nope", arguments={})
 
@@ -96,7 +97,7 @@ def test_invoke_returns_plain_text_for_string_result() -> None:
 
 def test_default_tools_have_valid_json_schema_for_args() -> None:
 
-    for tool in build_default_published_tools():
+    for tool in build_contract_fixture_published_tools():
         assert tool.input_schema.get("type") == "object"
         # Tools that require an argument must declare it in `required`.
         if tool.name in (
@@ -106,6 +107,15 @@ def test_default_tools_have_valid_json_schema_for_args() -> None:
         ):
             assert "required" in tool.input_schema
             assert len(tool.input_schema["required"]) >= 1
+
+
+def test_default_catalog_is_deprecated_fixture_alias() -> None:
+    with pytest.warns(DeprecationWarning, match="contract-fixture"):
+        tools = build_default_published_tools()
+
+    assert [tool.name for tool in tools] == [
+        tool.name for tool in build_contract_fixture_published_tools()
+    ]
 
 
 class _EchoArgs(BaseModel):
@@ -170,6 +180,7 @@ def test_runtime_publish_invokes_real_tool_registry() -> None:
     )
     payload = json.loads(result["content"][0]["text"])
     assert payload["tool"] == "utility.echo"
+    assert payload.get("status") != "stub"
     assert payload["content"] == "x=7"
     assert payload["verified"] is True
     assert payload["data"]["value"] == 7

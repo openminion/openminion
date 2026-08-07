@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
+import tomllib
 from types import ModuleType, SimpleNamespace
 from typing import Any, Mapping
 import sys
@@ -389,6 +391,28 @@ def _third_brain_example_config(envelope_path: Path) -> OpenMinionConfig:
     return config
 
 
+def _third_brain_pragmagraph_config(snapshot_path: Path) -> OpenMinionConfig:
+    config = OpenMinionConfig()
+    config.module_configs["knowledge_graphs"] = {
+        "provider": {
+            "active": ["repo_graph"],
+            "providers": {
+                "repo_graph": {
+                    "provider": "pragmagraph",
+                    "options": {"snapshot_path": str(snapshot_path)},
+                }
+            },
+        }
+    }
+    return config
+
+
+def _remove_pragmagraph_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in tuple(sys.modules):
+        if name == "pragmagraph" or name.startswith("pragmagraph."):
+            monkeypatch.delitem(sys.modules, name, raising=False)
+
+
 def test_second_brain_dry_run_builds_graph_from_memory_db(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -452,9 +476,10 @@ def test_second_brain_dry_run_builds_graph_from_memory_db(
         "graphfakos.workspace.v1"
     )
     assert result.diagnostics["viewer_manifest"]["provider_id"] == "openminion-memory"
-    assert result.diagnostics["viewer_manifest"]["provider_status"][
-        "provider_label"
-    ] == "OpenMinion Memory"
+    assert (
+        result.diagnostics["viewer_manifest"]["provider_status"]["provider_label"]
+        == "OpenMinion Memory"
+    )
     assert "inspect_node" in result.diagnostics["viewer_manifest"]["viewer_actions"]
 
 
@@ -647,9 +672,7 @@ def test_viewer_request_exposes_graphfakos_navigation_filters(
             ("relation:late-launch", "relation:archived-launch"),
         ),
         (
-            _FakeGraphFakosRequest(
-                filters={"source": "validated", "min_score": "0.8"}
-            ),
+            _FakeGraphFakosRequest(filters={"source": "validated", "min_score": "0.8"}),
             ("memory:late-match", "memory:workflow", "memory:launch"),
             ("relation:late-launch", "relation:launch-workflow"),
         ),
@@ -748,9 +771,10 @@ def test_second_brain_provider_adds_openminion_visual_metadata(
         "writes_memory": False,
         "live_patch_stream": False,
     }
-    assert graph.provider_payload["mutation_policy"][
-        "durable_memory_writes"
-    ] == "unsupported_from_viewer"
+    assert (
+        graph.provider_payload["mutation_policy"]["durable_memory_writes"]
+        == "unsupported_from_viewer"
+    )
     assert graph.provider_payload["local_endpoints"]["graph_action"] == "/api/action"
     assert graph.provider_payload["viewer_actions"]
     assert "tag" in graph.available_facets
@@ -872,6 +896,50 @@ def test_viewer_status_reports_missing_envelope_as_not_visual_ready(
     assert third["reason"] == "Viewer envelope path is configured but not found yet."
     assert third["details"]["diagnostic_code"] == "viewer_envelope_missing"
     assert third["details"]["viewer_envelope_exists"] is False
+
+
+def test_viewer_status_requires_pragmagraph_for_snapshot(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_graphfakos(monkeypatch)
+    _remove_pragmagraph_modules(monkeypatch)
+    original_import_module = importlib.import_module
+
+    def _blocked_import_module(name: str, package: str | None = None) -> object:
+        if name == "pragmagraph":
+            raise ModuleNotFoundError(name)
+        return original_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", _blocked_import_module)
+    snapshot_path = tmp_path / "graph.snapshot.json"
+    snapshot_path.write_text("{}", encoding="utf-8")
+
+    report = inspect_graph_viewer_status(
+        config=_third_brain_pragmagraph_config(snapshot_path),
+        roots=_roots(tmp_path),
+    )
+    payload = report.to_dict()
+    third = payload["third_brain"][0]
+
+    assert third["visual_ready"] is False
+    assert third["reason"] == (
+        "PragmaGraph snapshot viewing requires the pragmagraph package."
+    )
+    assert third["next_command"] == "python -m pip install 'openminion[viewer]'"
+    assert third["details"]["diagnostic_code"] == "pragmagraph_missing"
+    assert third["details"]["pragmagraph_required"] is True
+    assert third["details"]["pragmagraph_installed"] is False
+    assert third["details"]["snapshot_exists"] is True
+    assert "python -m pip install 'openminion[viewer]'" in payload["next_commands"]
+
+
+def test_viewer_extra_installs_pragmagraph_runtime() -> None:
+    pyproject = tomllib.loads((_package_root() / "pyproject.toml").read_text())
+    viewer_extra = pyproject["project"]["optional-dependencies"]["viewer"]
+
+    assert "graphfakos>=0.0.8" in viewer_extra
+    assert "pragmagraph>=0.0.8" in viewer_extra
 
 
 def test_multiple_active_third_brain_providers_suggest_provider_flags(
@@ -1320,10 +1388,11 @@ def test_static_html_renders_in_playwright_when_chromium_available(tmp_path) -> 
     page_text = str(page_probe["text"])
     assert "GraphFakos" in page_text
     assert "Browser Viewer Smoke" in page_text
-    assert "Graph filters" in page_text
-    assert "Node kind" in page_text
+    assert "Active Query" in page_text
+    assert "Tools" in page_text
     assert "Evidence" in page_text
     assert page_probe["canvas_visible"] is True
+    assert page_probe["toolbar_present"] is True
     assert page_probe["node_count"] >= 1
     assert page_probe["graph_json_node_count"] == 1
     assert page_probe["inspect_overlay"] is True
@@ -1347,21 +1416,29 @@ def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, 
             try:
                 page = browser.new_page()
                 page.goto(page_uri)
+                viewer = page.locator("graphfakos-viewer")
                 box["probe"] = {
                     "text": page.locator("body").inner_text(timeout=10_000),
                     "canvas_visible": page.locator(
                         "[aria-label='GraphFakos graph canvas']"
                     ).is_visible(timeout=10_000),
+                    "toolbar_present": page.locator(
+                        "[aria-label='Graph filters']"
+                    ).count()
+                    == 1,
                     "node_count": page.locator("[data-gf-graph-item='node']").count(),
                     "inspect_overlay": page.locator(
                         "[data-gf-inspect-overlay='true']"
                     ).count()
                     == 1,
-                    "graph_json_node_count": page.locator("graphfakos-viewer").evaluate(
-                        "(viewer) => JSON.parse(viewer.querySelector("
-                        "\"script[data-graph-json='true']\").textContent).nodes.length"
+                    "graph_json_node_count": viewer.evaluate(
+                        "(element) => JSON.parse("
+                        "element.getAttribute('data-graph-json') || '{}'"
+                        ").nodes.length"
                     ),
                 }
+            except Exception as exc:  # noqa: BLE001
+                box["error"] = f"playwright page probe failed: {exc}"
             finally:
                 browser.close()
         finally:
@@ -1374,5 +1451,7 @@ def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, 
         pytest.skip("chromium browser smoke timed out")
     if "skip" in box:
         pytest.skip(str(box["skip"]))
+    if "error" in box:
+        pytest.fail(str(box["error"]))
     probe = box.get("probe", {})
     return dict(probe) if isinstance(probe, dict) else {}

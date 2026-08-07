@@ -25,6 +25,21 @@ Current KCE boundary rules:
 - `openminion.modules.memory` remains the orchestrator; the extraction moves
   reusable primitives first and leaves runtime/gateway policy here.
 
+### Delegated memory
+
+OpenMinion remains the grant issuer and revocation authority for delegated
+memory. `PolicyCtl` resolves one exact active grant per operation, then the
+memory adapter projects it into Sophiagraph's package-neutral access contract.
+Project permission and memory scope may narrow that projection; they never
+widen it.
+
+The v1 child posture is either `none` or `read_only_bounded`. Context assembly
+enforces the smallest host, grant, and request token budget before model
+delivery. Child-authored durable knowledge returns as a typed proposal; only
+the parent submits it to the canonical candidate review and promotion flow.
+Cancellation and revocation block subsequent operations but cannot retract
+context already delivered to a running model.
+
 Standalone package release docs:
 
 - package README
