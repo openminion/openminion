@@ -19,7 +19,6 @@ _ALLOW_MODEL_EXPOSURE_PROVIDER_FALLBACK_ENV = (
 
 
 def provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
-    """Build the canonical ProviderToolSpec list from registered tools."""
     result: list[ProviderToolSpec] = []
     for tool in registry._tools.values():
         if isinstance(tool, ToolSpec):
@@ -51,7 +50,6 @@ def provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
 
 
 def model_provider_specs(registry: "ToolRegistry") -> list[ProviderToolSpec]:
-    """Return canonical model-facing ProviderToolSpec list with safe fallback."""
     manager = registry._binding_manager()
     specs = manager.model_provider_specs(set(registry._tools.keys()))
     if not specs and registry._tools:
@@ -94,7 +92,6 @@ def model_runtime_dispatch_map(
 
 
 def registration_debug_snapshot(registry: "ToolRegistry") -> dict[str, Any]:
-    """Build a debug snapshot of registration state for telemetry/diagnostics."""
     runtime_tools = sorted(registry._tools.keys())
     manager = registry._binding_manager()
     binding_map = manager.model_to_runtime_binding_map()
@@ -149,7 +146,6 @@ def registration_debug_snapshot(registry: "ToolRegistry") -> dict[str, Any]:
 def provider_spec_for_name(
     registry: "ToolRegistry", name: str
 ) -> ProviderToolSpec | None:
-    """Resolve a ProviderToolSpec by tool name (runtime or model-facing)."""
     token = str(name or "").strip()
     if not token:
         return None
@@ -169,7 +165,6 @@ def provider_spec_for_name(
 def provider_spec_for_runtime_name(
     registry: "ToolRegistry", tool_name: str
 ) -> ProviderToolSpec | None:
-    """Resolve a ProviderToolSpec for a registered runtime tool name."""
     tool = registry._tools.get(str(tool_name or "").strip())
     if tool is None:
         return None

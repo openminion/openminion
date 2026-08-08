@@ -7,6 +7,7 @@ from openminion.modules.brain.loop.tools.no_tool import (
     _tool_attempt_evidence_closeout_text,
 )
 from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
+    mutating_file_evidence_can_closeout,
     mutating_file_evidence_fallback_text,
     requested_validation_without_exec_run,
     tool_evidence_closeout_text,
@@ -14,6 +15,7 @@ from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
 from openminion.modules.brain.loop.tools.postprocess.loop import (
     _mutating_file_closeout_message,
     _record_mutating_file_repetition,
+    _track_successful_mutating_file_progress,
 )
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.llm.schemas import Message
@@ -47,6 +49,124 @@ def test_repeated_successful_file_mutation_requests_answer_only_closeout() -> No
     message = _mutating_file_closeout_message(state)
     assert message.role == "system"
     assert "Stop calling file mutation tools" in message.content
+
+
+def test_repeated_file_mutation_with_missing_test_redirects_to_artifact_write() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Create a tiny Python module and test. Use file.write for files."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "module.py"},
+                }
+            ]
+        },
+    )
+    batch = [(_tool_call("file.write", "module.py"), _success("module.py"))]
+    iteration_tool_sequences: list[tuple[str, ...]] = []
+
+    _track_successful_mutating_file_progress(
+        state,
+        batch,
+        iteration_tool_sequences=iteration_tool_sequences,
+    )
+    _track_successful_mutating_file_progress(
+        state,
+        batch,
+        iteration_tool_sequences=iteration_tool_sequences,
+    )
+    _track_successful_mutating_file_progress(
+        state,
+        batch,
+        iteration_tool_sequences=iteration_tool_sequences,
+    )
+
+    assert "mutating_file_answer_only_closure_pending" not in state.scratchpad
+    assert state.scratchpad["mutating_file_repetition_missing_artifacts"] == [
+        "test file"
+    ]
+    assert "Stop rewriting the same file" in state.messages[-1].content
+
+
+def test_missing_requested_file_artifacts_include_cli_entry() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Build a tiny Python CLI project with a module, CLI entry, "
+                    "tests, and README. Use file.write for files."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "greet.py"},
+                }
+            ]
+        },
+    )
+
+    from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
+        missing_requested_file_artifact_labels,
+    )
+
+    assert missing_requested_file_artifact_labels(state) == (
+        "README",
+        "CLI entry",
+        "test file",
+    )
+
+
+def test_missing_requested_file_artifacts_include_named_module() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Implement module code in `section_summary.py`, plus CLI "
+                    "entry, tests, and README."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "README.md"},
+                },
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "cli.py"},
+                },
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "test_module.py"},
+                },
+            ]
+        },
+    )
+
+    from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
+        missing_requested_file_artifact_labels,
+    )
+
+    assert missing_requested_file_artifact_labels(state) == ("section_summary.py",)
 
 
 def test_mutating_file_repetition_ignores_non_mutating_tools() -> None:
@@ -194,6 +314,33 @@ def test_validation_request_allows_fallback_with_exec_run_evidence() -> None:
     assert requested_validation_without_exec_run(state) is False
     assert "result:" in text
     assert "validation:" in text
+
+
+def test_validation_request_without_exec_run_blocks_mutating_file_closeout() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Use file.write for files, run a focused check with exec.run, "
+                    "and finish with the exact label `result:`."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "content": "wrote module.py",
+                    "data": {"path": "module.py"},
+                }
+            ]
+        },
+    )
+
+    assert requested_validation_without_exec_run(state) is True
+    assert mutating_file_evidence_can_closeout(state) is False
 
 
 def test_tool_evidence_closeout_preserves_research_labels() -> None:

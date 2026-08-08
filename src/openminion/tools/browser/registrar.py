@@ -17,13 +17,11 @@ class BrowserRegistrar:
     is_provider_only = False
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        """Register tool."""
         from .tool import register as tool_register
 
         tool_register(registry)
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
-        """Return ToolBindingManifest for browser module."""
         from openminion.modules.tool.contracts import (
             ModelToolDef,
             RuntimeBindingDef,

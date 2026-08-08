@@ -35,13 +35,11 @@ class ExecRegistrar:
     is_provider_only = False
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        """Register exec tools with runtime registry."""
         from .plugin import register as tool_register
 
         tool_register(registry)
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
-        """Return ToolBindingManifest for exec module."""
         del ctx
         from openminion.modules.tool.contracts import ToolBindingManifest
 

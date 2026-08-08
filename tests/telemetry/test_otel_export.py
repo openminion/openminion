@@ -544,6 +544,7 @@ def test_otel_04_every_catalog_event_resolves_to_a_valid_class() -> None:
         "llm.cache.metrics",
         "module.stats",
         "tui.render",
+        "telemetry.queue.stats",
     }
 
 

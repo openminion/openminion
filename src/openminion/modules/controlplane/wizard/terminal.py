@@ -36,22 +36,18 @@ class TerminalInteractionChannel(InteractionChannel):
             self.stdout.flush()
 
     def _is_cancel_token(self, text: str) -> bool:
-        """Check if input text is a cancellation signal."""
         return text.strip().lower() in self._cancel_tokens
 
     def is_cancel_requested(self) -> bool:
-        """Check if user requested cancellation."""
         return self._cancel_requested
 
     async def cancel_wizard(self, message: str | None = None) -> bool:
-        """Cancel the current wizard with optional message."""
         self._cancel_requested = True
         if message:
             self._write(f"{message}\n")
         return True
 
     def start_input_capture(self):
-        """Begin monitoring terminal for cancellation signals or interruption."""
         import signal
 
         def cancel_handler(_signum, _frame):
@@ -67,7 +63,6 @@ class TerminalInteractionChannel(InteractionChannel):
         default_value: str | None = None,
         hint: str | None = None,
     ) -> PromptResponse:
-        """Prompt for text input in terminal."""
         if self._cancel_requested:
             return PromptResponse(value="", cancelled=True)
 
@@ -173,7 +168,6 @@ class TerminalInteractionChannel(InteractionChannel):
         default_index: int | None = None,
         allow_multiple: bool = False,
     ) -> ChoiceResponse:
-        """Prompt for selection from options in terminal."""
         if self._cancel_requested:
             return ChoiceResponse(value="", index=None, cancelled=True)
 
@@ -227,7 +221,6 @@ class TerminalInteractionChannel(InteractionChannel):
     async def confirm(
         self, message: str, default: bool = True, danger: bool = False
     ) -> ConfirmResponse:
-        """Prompt for yes/no confirmation in terminal."""
         if self._cancel_requested:
             return ConfirmResponse(confirmed=False, cancelled=True)
 
@@ -264,7 +257,6 @@ class TerminalInteractionChannel(InteractionChannel):
     async def message(
         self, content: str, title: str | None = None, style: str | None = None
     ) -> MessageResponse:
-        """Send non-interactive message to terminal."""
         try:
             if title:
                 self._write(f"== {title} ==\n", flush=False)
@@ -279,7 +271,6 @@ class TerminalInteractionChannel(InteractionChannel):
     async def diff(
         self, original: str, modified: str, title: str | None = None
     ) -> MessageResponse:
-        """Show differences in terminal (simple text comparison)."""
         try:
             if title:
                 self._write(f"== {title} (DIFF) ==\n", flush=False)
@@ -312,7 +303,6 @@ class TerminalInteractionChannel(InteractionChannel):
     async def progress(
         self, description: str, percent: float, details: str | None = None
     ) -> MessageResponse:
-        """Render progress bar in terminal."""
         try:
             filled_length = int(50 * percent)
             bar = "█" * filled_length + "░" * (50 - filled_length)
@@ -332,15 +322,12 @@ class TerminalInteractionChannel(InteractionChannel):
             return MessageResponse(delivered=False, error=str(e))
 
     def get_interaction_mode(self) -> InteractionMode:
-        """Get terminal interaction mode."""
         return resolve_interaction_mode("terminal")
 
     def supports_advanced_ui(self) -> bool:
-        """Check if advanced UI features are supported."""
         return False
 
     async def start_wizard_context(self, wizard_session_id: str) -> bool:
-        """Start context for wizard interaction session in terminal."""
         try:
             self._write(f"[WIZARD.START] Session: {wizard_session_id}\n")
             self.start_input_capture()
@@ -349,7 +336,6 @@ class TerminalInteractionChannel(InteractionChannel):
             return False
 
     async def end_wizard_context(self, wizard_session_id: str) -> bool:
-        """End context for wizard interaction session in terminal."""
         try:
             self._write(f"[WIZARD.END] Session: {wizard_session_id}\n")
             return True

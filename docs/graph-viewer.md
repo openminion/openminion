@@ -34,6 +34,20 @@ It reports:
 openminion graph view --current
 ```
 
+If you are not sure whether there is memory yet, run:
+
+```bash
+openminion graph status
+openminion graph view --current --dry-run --json
+```
+
+If the graph is empty, create memory through the ordinary OpenMinion path, then
+rerun `openminion graph view --current`. The viewer does not seed demo memory
+or bypass the configured memory backend. `openminion graph status --json`
+distinguishes a missing memory database from an existing database with no
+visible records and includes the copyable command for creating memory through
+OpenMinion.
+
 `--current` is the user-facing shortcut for the current second-brain memory
 graph. Use scope flags when you want a narrower view:
 
@@ -56,6 +70,25 @@ search, filtering, node inspection, neighborhood focus, path highlighting,
 static export, provenance review, and citation copying when those details are
 present.
 
+For application wrappers, treat the dry-run payload as the stable readiness
+probe:
+
+```bash
+openminion graph view --current --dry-run --json
+```
+
+Use the returned `viewer_manifest.viewer_state`,
+`viewer_manifest.performance_budget`, `provider_details`, and
+`provider_payload` fields to decide whether to show a launch button, refresh
+button, filter controls, or empty-state guidance. A served second-brain viewer
+can stream GraphFakos live `snapshot_reset` patches when Sophiagraph memory
+changes. Static HTML and dry-run integrations should refresh by rerunning the
+same graph request.
+
+Served mode exposes GraphFakos' local `/api/live` event stream. OpenMinion keeps
+that stream read-only: it refreshes the visual graph from the configured memory
+backend and does not write, seed, or promote memory from the viewer.
+
 The same command accepts viewer filters that map directly to GraphFakos'
 toolbar controls:
 
@@ -77,13 +110,30 @@ timestamps, provenance, citations, relation labels, and filter facets for node
 kind, edge kind, tag, and source.
 
 If the current memory graph is empty, the viewer reports an empty current-state
-result. It does not seed demo data or write sample memories.
+result. It does not seed demo data or write sample memories. The empty-state
+payload includes next commands for checking status again, running a JSON
+dry-run, and creating ordinary memory through an OpenMinion agent turn.
+
+## Local Workbench Actions
+
+When OpenMinion serves the local viewer, GraphFakos workbench forms are routed
+through GraphFakos' provider-neutral action handler. This keeps the UI
+consistent across OpenMinion, Sophiagraph, PragmaGraph, and future providers.
+
+For the current Sophiagraph-backed second-brain viewer, durable writes remain
+read-only from the visual surface. Graph edit actions and knowledge captures
+return an explicit unsupported/provider-owned status unless a future provider
+or OpenMinion review workflow implements that action. Users can still search,
+filter, inspect, copy citations, export visible graph state, receive live
+snapshot refreshes in the served viewer, and rerun the viewer request to refresh
+static or wrapper views.
 
 ## Open A Third-Brain Provider
 
 Third-brain providers open visually when their `knowledge_graphs.provider`
 configuration includes `options.viewer_envelope_path`. PragmaGraph providers
-may also use `options.snapshot_path`.
+may also use `options.snapshot_path`; that snapshot path is ready only when the
+snapshot exists and the `openminion[viewer]` extra has installed PragmaGraph.
 
 ```bash
 openminion graph view --brain third --provider repo_graph
@@ -95,9 +145,10 @@ commands.
 
 `graph status --json` includes diagnostic codes for common visual-readiness
 states such as missing GraphFakos, no memory database yet, a missing
-third-brain viewer envelope, or an unconfigured provider envelope path. The
-human-readable status output also prints the diagnostic code, ready/missing
-reason, sample memory count, and exact next command.
+third-brain viewer envelope, a missing PragmaGraph runtime, or an unconfigured
+provider envelope path. The human-readable status output also prints the
+diagnostic code, ready/missing reason, sample memory count, and exact next
+command.
 
 ## Try The Checked-In Example
 
@@ -117,6 +168,20 @@ python -m openminion \
 
 Open `examples/graph-viewer/README.md` for the full example.
 
+## Embed In Another App
+
+A wrapper does not need to depend on OpenMinion internals. Use these levels:
+
+1. readiness/status: `openminion graph status --json`,
+2. data probe: `openminion graph view --current --dry-run --json`,
+3. static share/export: `openminion graph view --current --html-out viewer.html`,
+4. interactive local lens: `openminion graph view --current --no-open`,
+5. provider graph lens:
+   `openminion graph view --brain third --provider <name> --no-open`.
+
+The wrapper should present GraphFakos as a visual lens over current graph state.
+It should not call it a memory backend, source indexer, or durable write owner.
+
 ## Boundary
 
 GraphFakos is the viewer and provider-neutral graph lens. Sophiagraph remains
@@ -127,13 +192,23 @@ memory backend contract.
 ## Validation
 
 The OpenMinion package keeps a focused graph-viewer regression suite covering
-status, current-memory dry runs, static HTML, third-brain envelopes, provider
-conformance, and a real-browser smoke when Chromium is available:
+status, current-memory dry runs, served live-refresh patches, browser-observed
+live state updates, static HTML, third-brain envelopes, provider conformance,
+and real-browser smoke when the dev Playwright dependency and Chromium browser
+are available:
 
 ```bash
-PYTHONPATH=src:../graphfakos/src python -m pytest -q tests/context/knowledge/test_viewer.py
+PYTHONPATH=src:../graphfakos/src:../pragmagraph/src:../sophiagraph/src \
+  python -m pytest -q -rs tests/context/knowledge/test_viewer.py
 ```
 
 Use GraphFakos' browser suite for shared viewer behavior such as search,
 filters, inspector panels, saved workspaces, keyboard navigation, and dense
 graph rendering.
+
+When validating a coordinated local package workspace, run the GraphFakos-owned
+matrix from `../graphfakos`:
+
+```bash
+make integration-check
+```

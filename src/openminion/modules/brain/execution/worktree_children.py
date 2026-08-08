@@ -280,6 +280,12 @@ def bind_runner_tool_workspace(
         yield
         return
 
+    workspace_override = getattr(tool_api, "workspace_override", None)
+    if callable(workspace_override):
+        with workspace_override(lease.worktree):
+            yield
+        return
+
     previous_workspace_root = getattr(tool_api, "workspace_root", _MISSING)
     policy = getattr(tool_api, "policy", None)
     policy_raw = getattr(policy, "raw", None)
@@ -319,9 +325,9 @@ def finalize_child_worktree(
     lease: ChildWorktreeLease | None,
     status: str,
     validation: dict[str, Any] | None = None,
-) -> None:
+) -> dict[str, Any] | None:
     if lease is None:
-        return
+        return None
     touched_paths = _status_paths(lease.worktree)
     validation_payload = dict(validation or {})
     artifact_record = (
@@ -351,6 +357,7 @@ def finalize_child_worktree(
     bucket = _module_bucket(ctx.state)
     bucket["children"].append(child_record)
     _record_conflicts(bucket)
+    return child_record
 
 
 def accept_child_worktree_artifact(

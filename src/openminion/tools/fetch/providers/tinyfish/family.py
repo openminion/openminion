@@ -7,8 +7,6 @@ from .provider import provider
 
 
 def _register_tinyfish_fetch() -> None:
-    """Register the TinyFish provider with the parent fetch facade."""
-
     register_provider(provider)
 
 

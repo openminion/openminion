@@ -4,6 +4,8 @@ from typing import Any, Protocol, runtime_checkable
 from openminion.base.config.env import resolve_environment_config
 
 from .errors import LLMCtlError
+from .providers import ProviderHistoryMessage, ProviderRequest, ProviderResponse
+from .runtime import run_async_compat
 
 LLM_RESPONSE_INTERFACE_VERSION = "v1"
 PROVIDER_INTERFACE_VERSION = "v1"
@@ -54,3 +56,17 @@ def ensure_llm_response_compatibility(
 
     warnings.warn(message, RuntimeWarning, stacklevel=2)
     return False
+
+
+__all__ = [
+    "LLMResponseCompatible",
+    "LLM_RESPONSE_INTERFACE_VERSION",
+    "PROVIDER_INTERFACE_VERSION",
+    "ProviderHistoryMessage",
+    "ProviderRequest",
+    "ProviderResponse",
+    "STRICT_LLM_RESPONSE_CONTRACTS_ENV",
+    "ensure_llm_response_compatibility",
+    "llm_response_contracts_strict",
+    "run_async_compat",
+]

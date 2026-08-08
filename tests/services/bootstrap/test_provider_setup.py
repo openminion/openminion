@@ -9,6 +9,7 @@ import pytest
 
 from openminion.base.config import AgentProfileConfig, OpenMinionConfig
 from openminion.base.config.runtime.profile import build_runtime_config
+from openminion.modules.llm.setup_catalog import get_setup_preset, list_setup_presets
 from openminion.services.bootstrap.provider_setup import (
     ProviderSetupError,
     ProviderSetupRequest,
@@ -16,8 +17,8 @@ from openminion.services.bootstrap.provider_setup import (
     build_provider_setup,
     redacted_config_payload,
     resolve_setup_credential,
+    save_provider_setup,
 )
-from openminion.modules.llm.setup_catalog import get_setup_preset
 
 
 def test_env_first_credentials_store_reference_not_secret(tmp_path: Path) -> None:
@@ -124,6 +125,44 @@ def test_empty_model_uses_recommended_provenance(tmp_path: Path) -> None:
     assert result.preview.model_source == "recommended"
 
 
+def test_setup_makes_selected_agent_runnable_without_overwriting_channel(
+    tmp_path: Path,
+) -> None:
+    existing = OpenMinionConfig()
+    existing.agents = {
+        "new": AgentProfileConfig(name="new", provider="echo"),
+        "custom": AgentProfileConfig(
+            name="custom",
+            provider="echo",
+            default_channel="webhook",
+        ),
+    }
+
+    new_result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="ollama",
+            agent_id="new",
+            config_path=str(tmp_path / "agents.json"),
+            data_root=tmp_path,
+            env={},
+        ),
+        existing_config=existing,
+    )
+    custom_result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="ollama",
+            agent_id="custom",
+            config_path=str(tmp_path / "agents.json"),
+            data_root=tmp_path,
+            env={},
+        ),
+        existing_config=existing,
+    )
+
+    assert new_result.config.agents["new"].default_channel == "console"
+    assert custom_result.config.agents["custom"].default_channel == "webhook"
+
+
 def test_explicit_existing_config_preserves_configured_model_provenance(
     tmp_path: Path,
 ) -> None:
@@ -146,6 +185,100 @@ def test_explicit_existing_config_preserves_configured_model_provenance(
     assert result.model_choice.selected_model == "configured-model"
     assert result.model_choice.source == "configured"
     assert result.config.storage.path == str(tmp_path / "existing.db")
+
+
+def test_different_openai_compatible_service_does_not_reuse_global_model(
+    tmp_path: Path,
+) -> None:
+    existing = OpenMinionConfig()
+    existing.providers.openai.model = "gpt-4.1-mini"
+    existing.providers.openai.base_url = "https://api.openai.com/v1"
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="minimax-agent",
+            config_path=str(tmp_path / ".openminion" / "agents.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"MINIMAX_API_KEY": "sk-mini"},
+        ),
+        existing_config=existing,
+    )
+
+    assert result.model_choice.selected_model == "MiniMax-M2.7"
+    assert result.model_choice.source == "recommended"
+
+
+def test_existing_agent_reuses_model_for_same_service(tmp_path: Path) -> None:
+    existing = OpenMinionConfig()
+    existing.agents = {
+        "minimax-agent": AgentProfileConfig(
+            name="minimax-agent",
+            provider="openai",
+            provider_config_overrides={
+                "model": "MiniMax-M2.7",
+                "base_url": "https://api.minimax.io/v1",
+                "provider_identity": {
+                    "transport_adapter": "openai_chat",
+                    "wire_protocol_family": "openai_chat_completions",
+                    "service_vendor": "minimax",
+                    "model_family": "minimax",
+                },
+            },
+        )
+    }
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="minimax-agent",
+            config_path=str(tmp_path / ".openminion" / "agents.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"MINIMAX_API_KEY": "sk-mini"},
+        ),
+        existing_config=existing,
+    )
+
+    assert result.model_choice.selected_model == "MiniMax-M2.7"
+    assert result.model_choice.source == "configured"
+
+
+def test_dedicated_adapter_reuses_model_with_custom_endpoint(tmp_path: Path) -> None:
+    existing = OpenMinionConfig()
+    existing.providers.ollama.model = "local-custom-model"
+    existing.providers.ollama.base_url = "http://model-host.internal:11434"
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="ollama",
+            agent_id="local-agent",
+            config_path=str(tmp_path / ".openminion" / "agents.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={},
+        ),
+        existing_config=existing,
+    )
+
+    assert result.model_choice.selected_model == "local-custom-model"
+    assert result.model_choice.source == "configured"
+
+
+def test_custom_endpoint_requires_explicit_model(tmp_path: Path) -> None:
+    with pytest.raises(ProviderSetupError, match="requires an explicit model id"):
+        build_provider_setup(
+            ProviderSetupRequest(
+                preset_id="custom-openai-compatible",
+                agent_id="custom-agent",
+                base_url="https://models.example.invalid/v1",
+                config_path=str(tmp_path / ".openminion" / "agents.json"),
+                home_root=tmp_path,
+                data_root=tmp_path / ".openminion",
+                env={"OPENAI_COMPATIBLE_API_KEY": "sk-custom"},
+            )
+        )
 
 
 def test_local_credential_requires_explicit_storage_consent() -> None:
@@ -173,7 +306,7 @@ def test_redacted_payload_hides_local_credentials(tmp_path: Path) -> None:
         ProviderSetupRequest(
             preset_id="anthropic",
             agent_id="ops",
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-5",
             stored_api_key="anthropic-local",
             allow_local_api_key=True,
             config_path=str(tmp_path / ".openminion" / "agents.json"),
@@ -230,8 +363,8 @@ def test_shared_adapter_setup_uses_selected_agent_overrides(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("preset_id", "model", "credential_env", "base_url"),
     [
-        ("minimax", "MiniMax-M3", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
-        ("kimi", "kimi-k3", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
+        ("minimax", "MiniMax-M2.7", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
+        ("kimi", "kimi-k2.6", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
         ("zai", "glm-5.2", "ZAI_API_KEY", "https://api.z.ai/api/paas/v4/"),
         (
             "zai-coding",
@@ -247,7 +380,7 @@ def test_shared_adapter_setup_uses_selected_agent_overrides(tmp_path: Path) -> N
         ),
         (
             "qwen-dashscope",
-            "qwen-plus",
+            "qwen3.7-plus",
             "DASHSCOPE_API_KEY",
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         ),
@@ -266,7 +399,7 @@ def test_shared_adapter_setup_uses_selected_agent_overrides(tmp_path: Path) -> N
         ),
         (
             "together",
-            "MiniMaxAI/MiniMax-M3",
+            "MiniMaxAI/MiniMax-M2.7",
             "TOGETHER_API_KEY",
             "https://api.together.ai/v1",
         ),
@@ -314,6 +447,57 @@ def test_frontier_shared_adapter_presets_use_selected_agent_overrides(
         "openai_chat_completions"
     )
     assert overrides["provider_identity"]["service_vendor"] != "openai"
+
+
+def test_all_setup_presets_coexist_and_round_trip_runtime_profiles(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / ".openminion" / "agents.json"
+    config: OpenMinionConfig | None = None
+    latest_result = None
+    expected: dict[str, tuple[str, str, str, str]] = {}
+
+    for preset in list_setup_presets():
+        base_url = preset.default_base_url
+        if preset.requires_base_url:
+            base_url = f"https://{preset.preset_id}.example.invalid/v1"
+        env = {preset.credential_env: "fixture-key"} if preset.credential_env else {}
+        latest_result = build_provider_setup(
+            ProviderSetupRequest(
+                preset_id=preset.preset_id,
+                agent_id=preset.preset_id,
+                model=preset.recommended_models[0],
+                base_url=base_url,
+                config_path=str(config_path),
+                home_root=tmp_path,
+                data_root=tmp_path / ".openminion",
+                env=env,
+            ),
+            existing_config=config,
+        )
+        config = latest_result.config
+        expected[preset.preset_id] = (
+            preset.runtime_adapter,
+            preset.recommended_models[0],
+            base_url,
+            preset.credential_env,
+        )
+
+    assert latest_result is not None
+    saved_path = save_provider_setup(latest_result)
+    saved_text = saved_path.read_text(encoding="utf-8")
+    assert "fixture-key" not in saved_text
+    reloaded = OpenMinionConfig.from_dict(json.loads(saved_text))
+
+    for agent_id, (adapter, model, base_url, credential_env) in expected.items():
+        effective = build_runtime_config(reloaded, agent_id=agent_id)
+        profile = effective.agents[agent_id]
+        provider = getattr(effective.providers, profile.provider)
+        assert profile.provider == adapter, agent_id
+        assert provider.model == model, agent_id
+        assert provider.base_url == base_url, agent_id
+        if credential_env:
+            assert provider.api_key_env == credential_env, agent_id
 
 
 def test_shared_adapter_setup_replaces_stale_selected_agent_overrides(
@@ -367,6 +551,42 @@ def test_shared_adapter_setup_replaces_stale_selected_agent_overrides(
     }
 
 
+def test_minimax_and_openrouter_keep_separate_credential_references(
+    tmp_path: Path,
+) -> None:
+    shared_fixture_value = "same-fixture-value-not-for-network-use"
+    config_path = str(tmp_path / ".openminion" / "agents.json")
+    openrouter = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="openrouter",
+            agent_id="openrouter-agent",
+            model="openai/gpt-4.1-mini",
+            config_path=config_path,
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"OPENROUTER_API_KEY": shared_fixture_value},
+        )
+    )
+    minimax = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="minimax-agent",
+            model="MiniMax-M2.7",
+            config_path=config_path,
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"MINIMAX_API_KEY": shared_fixture_value},
+        ),
+        existing_config=openrouter.config,
+    )
+
+    payload = minimax.config.to_dict()
+    assert payload["providers"]["openrouter"]["api_key_env"] == ("OPENROUTER_API_KEY")
+    assert payload["providers"]["openai"]["api_key_env"] == "MINIMAX_API_KEY"
+    assert payload["providers"]["openai"]["base_url"] == ("https://api.minimax.io/v1")
+    assert shared_fixture_value not in json.dumps(payload)
+
+
 def test_claude_alias_counts_as_shared_anthropic_adapter(tmp_path: Path) -> None:
     existing = OpenMinionConfig()
     existing.agents = {
@@ -379,7 +599,7 @@ def test_claude_alias_counts_as_shared_anthropic_adapter(tmp_path: Path) -> None
         ProviderSetupRequest(
             preset_id="anthropic",
             agent_id="anthropic-new",
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-5",
             config_path=str(tmp_path / ".openminion" / "agents.json"),
             home_root=tmp_path,
             data_root=tmp_path / ".openminion",
@@ -393,7 +613,7 @@ def test_claude_alias_counts_as_shared_anthropic_adapter(tmp_path: Path) -> None
     assert payload["providers"]["anthropic"]["model"] == "legacy-claude-model"
     assert (
         payload["agents"]["anthropic-new"]["provider_config_overrides"]["model"]
-        == "claude-3-5-sonnet-latest"
+        == "claude-sonnet-5"
     )
 
 

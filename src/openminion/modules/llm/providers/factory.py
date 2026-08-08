@@ -267,7 +267,7 @@ def _provider_settings_for_llmctl_bridge(
                 "Anthropic provider selected but API key is missing. "
                 f"Set providers.anthropic.api_key or export {env_name}."
             )
-        return (key, str(payload.get("model", "claude-3-5-sonnet-latest")), payload)
+        return (key, str(payload.get("model", "claude-sonnet-5")), payload)
 
     if key == "openrouter":
         payload = asdict(config.providers.openrouter)

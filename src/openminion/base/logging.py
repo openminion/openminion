@@ -46,13 +46,14 @@ def _record_is_periodic(record: logging.LogRecord) -> bool:
         message = record.getMessage()
     except Exception:
         message = str(getattr(record, "msg", "") or "")
-    if "event=component.heartbeat" in message:
-        return True
-    if "event=cron.scheduler.heartbeat" in message:
-        return True
-    if "source=cron.scheduler.heartbeat" in message:
-        return True
-    return False
+    return any(
+        token in message
+        for token in (
+            "event=component.heartbeat",
+            "event=cron.scheduler.heartbeat",
+            "source=cron.scheduler.heartbeat",
+        )
+    )
 
 
 def _extract_event_type(record: logging.LogRecord) -> str:
@@ -72,11 +73,9 @@ def _extract_event_type(record: logging.LogRecord) -> str:
 
 
 def _is_console_handler(handler: logging.Handler) -> bool:
-    if not isinstance(handler, logging.StreamHandler):
-        return False
-    if isinstance(handler, logging.FileHandler):
-        return False
-    return True
+    return isinstance(handler, logging.StreamHandler) and not isinstance(
+        handler, logging.FileHandler
+    )
 
 
 def _ensure_console_periodic_filter(handler: logging.Handler) -> None:

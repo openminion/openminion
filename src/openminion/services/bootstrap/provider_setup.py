@@ -81,20 +81,6 @@ class ProviderSetupPreview:
     credential: str
     shared_adapter_isolated: bool
 
-    def lines(self) -> tuple[str, ...]:
-        return (
-            f"config: {self.config_path}",
-            f"service: {self.display_label} ({self.api_format_label})",
-            f"runtime adapter: {self.runtime_adapter}",
-            f"agent: {self.agent_id}",
-            f"model: {self.model} [{self.model_source}]",
-            f"base URL: {self.base_url or 'provider default'}",
-            f"credential: {self.credential}",
-            "shared adapter: selected-agent overrides"
-            if self.shared_adapter_isolated
-            else "shared adapter: not required",
-        )
-
 
 @dataclass(frozen=True)
 class ProviderSetupResult:
@@ -164,7 +150,15 @@ def build_provider_setup(
         stored_api_key=request.stored_api_key,
         allow_local_api_key=request.allow_local_api_key,
     )
-    configured_model = _configured_model(base_config, preset.runtime_adapter)
+    if preset.discovery_posture == "manual" and not str(request.model or "").strip():
+        raise ProviderSetupError(
+            f"{preset.display_label} requires an explicit model id."
+        )
+    configured_model = _configured_model(
+        base_config,
+        preset=preset,
+        agent_id=agent_id,
+    )
     model_choice = resolve_model_choice(
         preset=preset,
         configured_model=configured_model if config_exists else "",
@@ -179,7 +173,6 @@ def build_provider_setup(
         model=model,
         base_url=base_url,
     )
-
     config, shared_isolated, changed_sections = _apply_setup_selection(
         base_config,
         preset=preset,
@@ -318,9 +311,60 @@ def _resolve_base_url(*, preset: ProviderSetupPreset, base_url: str) -> str:
     return value
 
 
-def _configured_model(config: OpenMinionConfig, adapter: str) -> str:
-    provider_cfg = getattr(config.providers, adapter, None)
-    return str(getattr(provider_cfg, "model", "") or "").strip()
+def _configured_model(
+    config: OpenMinionConfig,
+    *,
+    preset: ProviderSetupPreset,
+    agent_id: str,
+) -> str:
+    provider_cfg = getattr(config.providers, preset.runtime_adapter, None)
+    if provider_cfg is None:
+        return ""
+
+    model = str(getattr(provider_cfg, "model", "") or "").strip()
+    base_url = str(getattr(provider_cfg, "base_url", "") or "").strip()
+    provider_identity = dict(getattr(provider_cfg, "provider_identity", {}) or {})
+    profile = config.agents.get(agent_id)
+    if profile is not None:
+        if _canonical_provider_name(profile.provider) != _canonical_provider_name(
+            preset.runtime_adapter
+        ):
+            return ""
+        overrides = dict(profile.provider_config_overrides or {})
+        model = str(overrides.get("model", model) or "").strip()
+        base_url = str(overrides.get("base_url", base_url) or "").strip()
+        provider_identity = dict(
+            overrides.get("provider_identity", provider_identity) or {}
+        )
+
+    if not model or preset.requires_base_url:
+        return ""
+    if preset.runtime_adapter != "openai":
+        return model
+
+    configured_identity = provider_identity or resolve_provider_identity_translation(
+        "openai",
+        model=model,
+        base_url=base_url,
+    )
+    expected_identity = resolve_provider_identity_translation(
+        "openai",
+        model=preset.recommended_models[0],
+        base_url=preset.default_base_url,
+    )
+    configured_vendor = configured_identity.get("service_vendor", "")
+    expected_vendor = expected_identity.get("service_vendor", "")
+    if configured_vendor != expected_vendor:
+        return ""
+    if expected_vendor == "openai" and not _same_endpoint(
+        base_url, preset.default_base_url
+    ):
+        return ""
+    return model
+
+
+def _same_endpoint(left: str, right: str) -> bool:
+    return str(left or "").rstrip("/").lower() == str(right or "").rstrip("/").lower()
 
 
 def _canonical_provider_name(provider_name: str) -> str:
@@ -361,6 +405,7 @@ def _apply_setup_selection(
     profile = config.agents.get(agent_id) or AgentProfileConfig(name=agent_id)
     profile.name = profile.name or agent_id
     profile.provider = adapter
+    profile.default_channel = profile.default_channel or "console"
     unmanaged_overrides = _unmanaged_provider_overrides(
         profile.provider_config_overrides
     )

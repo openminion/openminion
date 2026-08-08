@@ -33,6 +33,8 @@ package source and release surface.
 - [`long-horizon-project-worker.md`](long-horizon-project-worker.md):
   checkpointed, operator-visible project-worker primitives and claim
   boundaries.
+- [`skill-maintenance.md`](skill-maintenance.md): maintainer note for the
+  current skill-side lifecycle and polish queue.
 
 ## Contributor And Quality Topics
 

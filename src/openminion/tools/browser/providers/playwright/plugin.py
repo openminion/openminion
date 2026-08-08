@@ -23,7 +23,6 @@ def register_browser_provider(
     *,
     env: EnvironmentConfig | Mapping[str, Any] | None = None,
 ) -> None:
-    """Register Playwright provider with browser provider registry (entry point)."""
     registry.register(provider_from_config(cfg, env=env))
 
 
@@ -32,7 +31,6 @@ def register(
     *,
     env: EnvironmentConfig | Mapping[str, Any] | None = None,
 ) -> None:
-    """Register Playwright provider for the provider-neutral browser tool."""
     if isinstance(_registry, BrowserProviderRegistry):
         register_browser_provider(_registry, env=env)
         return

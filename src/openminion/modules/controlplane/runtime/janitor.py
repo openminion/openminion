@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -39,12 +41,16 @@ class ControlPlaneJanitor:
     policy: ControlPlaneRetentionPolicy = field(
         default_factory=ControlPlaneRetentionPolicy
     )
+    wizard_store: Any | None = None
     audit_logger: object | None = None
     dry_run: bool = False
 
     def run_once(self) -> ControlPlaneJanitorResult:
         plans = _delete_plans(self.policy)
         deleted: dict[str, int] = {}
+        expired = self._expire_overdue_wizards()
+        if expired:
+            deleted["cp_wizard_sessions_expired"] = expired
         for table, sql, params in plans:
             deleted[table] = self._count_or_delete(sql, params=params)
         result = ControlPlaneJanitorResult(deleted=deleted, dry_run=self.dry_run)
@@ -60,6 +66,20 @@ class ControlPlaneJanitor:
         if self.dry_run:
             return _execute_count_query(self.store, _count_sql_for_delete(sql), params)
         return _execute_delete(self.store, sql, params)
+
+    def _expire_overdue_wizards(self) -> int:
+        if self.dry_run or self.wizard_store is None:
+            return 0
+        expire = getattr(self.wizard_store, "expire_overdue", None)
+        if not callable(expire):
+            return 0
+        try:
+            result = expire()
+            if inspect.isawaitable(result):
+                result = _run_awaitable_sync(result)
+            return int(result or 0)
+        except (AttributeError, RuntimeError, TypeError, ValueError, sqlite3.Error):
+            return 0
 
 
 class ControlPlaneJanitorSidecar:
@@ -194,6 +214,44 @@ def _execute_count_query(store: Any, sql: str, params: tuple[Any, ...]) -> int:
         except (sqlite3.DatabaseError, RuntimeError, AttributeError):
             return 0
     return 0
+
+
+def _run_awaitable_sync(awaitable: Any) -> Any:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(awaitable)
+        finally:
+            try:
+                loop.close()
+            finally:
+                asyncio.set_event_loop(None)
+
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _runner() -> None:
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            result["value"] = loop.run_until_complete(awaitable)
+        except BaseException as exc:  # noqa: BLE001
+            error["error"] = exc
+        finally:
+            try:
+                loop.close()
+            finally:
+                asyncio.set_event_loop(None)
+
+    thread = threading.Thread(target=_runner, name="controlplane-janitor-await")
+    thread.start()
+    thread.join()
+    if error:
+        raise RuntimeError(str(error["error"])) from error["error"]
+    return result.get("value")
 
 
 def _count_sql_for_delete(delete_sql: str) -> str:

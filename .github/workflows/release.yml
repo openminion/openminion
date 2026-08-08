@@ -101,6 +101,34 @@ jobs:
           .venv-wheel/bin/python -m openminion --config "$config" verify smoke
           .venv-wheel/bin/python -m openminion --config "$config" doctor --json
           .venv-wheel/bin/python -m openminion --config "$config" agent --message "hello"
+          first_run="$(.venv-wheel/bin/python -m openminion --config "$config" run --session release-smoke "hello" 2>&1)"
+          second_run="$(.venv-wheel/bin/python -m openminion --config "$config" run --session release-smoke --resume "hello again" 2>&1)"
+          case "$first_run$second_run" in
+            *" INFO "*) echo "public run output exposed internal INFO logs" >&2; exit 1 ;;
+          esac
+          readiness="$(.venv-wheel/bin/python -m openminion --config "$config" status readiness --json)"
+          READINESS="$readiness" .venv-wheel/bin/python - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["READINESS"])
+          checks = {item["id"]: item for item in payload["checks"]}
+          assert payload["overall"] == "demo", payload
+          assert checks["provider"]["status"] == "demo", payload
+          PY
+          blocked_config="$tmpdir/blocked-provider.json"
+          .venv-wheel/bin/python -m openminion --config "$blocked_config" config init --provider openai --force
+          blocked="$(.venv-wheel/bin/python -m openminion --config "$blocked_config" status readiness --json)"
+          BLOCKED="$blocked" .venv-wheel/bin/python - <<'PY'
+          import json
+          import os
+
+          payload = json.loads(os.environ["BLOCKED"])
+          checks = {item["id"]: item for item in payload["checks"]}
+          assert payload["overall"] == "blocked", payload
+          assert checks["provider"]["status"] == "blocked", payload
+          assert checks["provider"]["safe_next_action"] == "openminion setup", payload
+          PY
       - name: Verify sdist install and bootstrap smoke
         shell: bash
         run: |

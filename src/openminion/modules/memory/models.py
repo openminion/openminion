@@ -18,7 +18,9 @@ from sophiagraph.models import (
     _as_memory_type_list as _as_memory_type_list,
     _coerce_temporal_dt as _coerce_temporal_dt,
 )
-from sophiagraph.models.core import _SCOPE_PATTERN as _SCOPE_PATTERN
+
+SCOPE_PATTERN = _sg_models.SCOPE_PATTERN
+_SCOPE_PATTERN = SCOPE_PATTERN
 
 
 @dataclass(frozen=True)

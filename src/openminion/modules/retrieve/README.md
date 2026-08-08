@@ -8,9 +8,11 @@ Runtime peer: standalone (no `services/` peer)
 
 Persistent retrieval substrate distinct from in-memory recall. Owns
 typed document units, the RAPTOR-tree builder, ingestion paths,
-candidate generation/selection (lexical + semantic), expansion
-strategies (node/group/window/document), and recency-aware scoring.
-Returns ranked `RetrievedItem`s that the context pack can render.
+candidate generation/selection (lexical + optional semantic vector
+reranking), expansion strategies (node/group/window/document), and
+recency-aware scoring. Returns ranked `RetrievedItem`s that the context pack
+can render, plus query diagnostics for stage counts, resolved strategy, and
+deterministic no-result/degraded-mode reasons.
 
 ## Scope
 
@@ -22,6 +24,7 @@ Returns ranked `RetrievedItem`s that the context pack can render.
   `retrieval`, `storage`, `time`, `unitization`
 - Persistent storage backends (`storage/`)
 - Diagnostics / telemetry events (`diagnostics/events.py`)
+- CLI query diagnostics via `retrievectl diagnose`
 
 ## Non-goals
 

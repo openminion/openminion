@@ -126,7 +126,7 @@ class DoctorCommandTests(unittest.TestCase):
             with (
                 mock.patch(
                     "openminion.cli.commands.setup._run_wizard",
-                    return_value=(config, config_path),
+                    return_value=(config, config_path, None),
                 ),
                 mock.patch(
                     "openminion.cli.commands.setup._run_setup_doctor",
@@ -144,10 +144,10 @@ class DoctorCommandTests(unittest.TestCase):
             self.assertEqual(code, 0)
             doctor_mock.assert_called_once_with(config_path=config_path)
             chat_mock.assert_called_once_with(args, config_path=config_path)
-            self.assertIn(
-                "Setup validation passed. Entering OpenMinion...",
-                buf.getvalue(),
-            )
+            output = buf.getvalue()
+            self.assertIn("Provider connection not applicable", output)
+            self.assertIn("Entering OpenMinion...", output)
+            self.assertNotIn("Setup ready", output)
 
     def test_setup_stops_when_doctor_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -164,7 +164,7 @@ class DoctorCommandTests(unittest.TestCase):
             with (
                 mock.patch(
                     "openminion.cli.commands.setup._run_wizard",
-                    return_value=(config, config_path),
+                    return_value=(config, config_path, None),
                 ),
                 mock.patch(
                     "openminion.cli.commands.setup._run_setup_doctor",
@@ -667,6 +667,36 @@ class DoctorCommandTests(unittest.TestCase):
             payload = json.loads(buf.getvalue())
             check_ids = {check["id"] for check in payload["checks"]}
             self.assertIn("agent.turn_smoke", check_ids)
+
+    def test_doctor_provider_check_uses_direct_llm_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "config.json"
+            config = OpenMinionConfig()
+            _csc_install_default_agent(
+                config, provider="echo", default_channel="console"
+            )
+            config.runtime.log_level = "ERROR"
+            config.storage.path = str(Path(tmp) / "state" / "doctor.db")
+            save_config(config, str(config_path))
+
+            args = Namespace(
+                config=str(config_path),
+                check_turn=True,
+                provider_check=True,
+                message="provider ping",
+                target="doctor",
+                channel=None,
+                json=True,
+            )
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = run_doctor(args)
+
+            self.assertEqual(code, 0)
+            payload = json.loads(buf.getvalue())
+            check_ids = {check["id"] for check in payload["checks"]}
+            self.assertIn("provider.connection_smoke", check_ids)
+            self.assertNotIn("agent.turn_smoke", check_ids)
 
     def test_doctor_openrouter_without_key_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

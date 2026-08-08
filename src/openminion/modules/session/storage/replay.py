@@ -79,6 +79,10 @@ _KNOWN_CANONICAL_EVENT_TYPES = {
     "session.continuation.applied",
     "session.continuation.rejected",
     "session.continuation.expired",
+    "memory.delegation.grant_resolved",
+    "memory.delegation.access_denied",
+    "memory.delegation.candidate_handed_back",
+    "memory.delegation.grant_revoked",
 }
 
 
@@ -206,11 +210,11 @@ class SessionReplayHelper:
         latest_seed = self._get_latest_seed_bundle(session_id)
         latest_seq = self._latest_event_seq(session_id)
         latest_state = self._get_latest_working_state(session_id)
-        state_inline = (
-            latest_state.get("state_inline")
-            if isinstance(latest_state, dict)
-            and isinstance(latest_state.get("state_inline"), dict)
-            else {}
+        raw_state_inline = (
+            latest_state.get("state_inline") if isinstance(latest_state, dict) else None
+        )
+        state_inline: dict[str, Any] = (
+            raw_state_inline if isinstance(raw_state_inline, dict) else {}
         )
         unresolved = state_inline.get("unresolved_clarify_items", [])
         clarify_responses = state_inline.get("clarify_responses", {})

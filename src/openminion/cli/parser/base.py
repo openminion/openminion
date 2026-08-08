@@ -19,6 +19,7 @@ class CommandSpec:
 COMMAND_SPECS = (
     CommandSpec("config", "openminion.cli.commands.config", "Config operations"),
     CommandSpec("api", "openminion.cli.commands.api", "HTTP API controls"),
+    CommandSpec("acp", "openminion.cli.commands.acp", "Run the local ACP agent"),
     CommandSpec("autonomy", "openminion.cli.commands.autonomy", "Autonomy runs"),
     CommandSpec("browser", "openminion.cli.commands.browser", "Browser controls"),
     CommandSpec("data", "openminion.cli.commands.data", "Data root operations"),
@@ -62,9 +63,11 @@ COMMAND_SPECS = (
         "Run an agent turn or manage agent runtimes",
     ),
     CommandSpec(
-        "agent-check", "openminion.cli.commands.agent_check", "Run an agent check"
+        "agent-check", "openminion.cli.commands.agent.check", "Run an agent check"
     ),
-    CommandSpec("agent-ctl", "openminion.cli.commands.agents", argparse.SUPPRESS),
+    CommandSpec(
+        "agent-ctl", "openminion.cli.commands.agent.control", argparse.SUPPRESS
+    ),
     CommandSpec("message", "openminion.cli.commands.message", "Message operations"),
     CommandSpec("plugins", "openminion.cli.commands.plugins", "Plugin operations"),
     CommandSpec("doctor", "openminion.cli.commands.doctor", "Run diagnostics"),

@@ -6,7 +6,7 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
-from openminion.cli.commands.agent_delegation import (
+from openminion.cli.commands.agent.delegation import (
     render_agent_delegate_result,
     request_from_slash_args,
 )

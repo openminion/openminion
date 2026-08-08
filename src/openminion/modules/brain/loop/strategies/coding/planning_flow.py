@@ -11,7 +11,7 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.tools import build_loop_thinking_metadata
 from openminion.modules.brain.schemas import ToolCommand
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import LLMResponse, Message
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_CODE_REPO_INDEX,
     MODEL_CODE_REPO_MAP,
@@ -20,6 +20,13 @@ from openminion.modules.tool.contracts.model_ids import (
 from .llm import DefaultCodingLLMRuntime
 from .prompts import build_coding_plan_system_prompt
 from .plan import CodingPlan, coding_plan_from_payload
+
+_NO_INITIAL_REPO_INSPECTION_PHRASES = (
+    "do not inspect the repo first",
+    "don't inspect the repo first",
+    "do not inspect the repository first",
+    "don't inspect the repository first",
+)
 
 
 class CodingPlanningMixin:
@@ -50,7 +57,7 @@ class CodingPlanningMixin:
         *,
         runtime: DefaultCodingLLMRuntime,
         model: str,
-    ) -> tuple[CodingPlan, Any | None]:
+    ) -> tuple[CodingPlan, LLMResponse | None]:
         goal = (
             str(
                 ctx.user_input
@@ -79,26 +86,28 @@ class CodingPlanningMixin:
             return plan, None
         fallback_plan = CodingPlan.fallback(goal)
         self._apply_plan_to_scratchpad(fallback_plan)
-        seed_response = (
-            response
-            if (
-                not bool(getattr(response, "ok", False))
-                or list(getattr(response, "tool_calls", []) or [])
-            )
-            else None
-        )
+        seed_response = response if not response.ok or response.tool_calls else None
         return fallback_plan, seed_response
 
     def _build_plan_system_prompt(
         self: Any,
         ctx: ExecutionContext,
     ) -> str:
+        if self._user_requested_no_initial_repo_inspection(ctx):
+            return build_coding_plan_system_prompt()
         repo_index = self._load_repo_index_context(ctx)
         repo_map = "" if repo_index else self._load_repo_map_context(ctx)
         return build_coding_plan_system_prompt(
             repo_index=repo_index,
             repo_map=repo_map,
         )
+
+    def _user_requested_no_initial_repo_inspection(
+        self: Any,
+        ctx: ExecutionContext,
+    ) -> bool:
+        text = str(ctx.user_input or ctx.state.goal or "").lower()
+        return any(phrase in text for phrase in _NO_INITIAL_REPO_INSPECTION_PHRASES)
 
     def _load_repo_index_context(self: Any, ctx: ExecutionContext) -> str:
         action_result = self._load_context_action_result(

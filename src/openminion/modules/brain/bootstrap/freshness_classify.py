@@ -33,7 +33,7 @@ _FRESHNESS_CLASSIFIER_PROMPT = (
 )
 
 _DIRECT_TOOL_VERB_RE = re.compile(
-    r"^\s*(?:please\s+)?(?:use|run|call|invoke)\s+([a-z][a-z0-9_.-]*)\b",
+    r"^\s*(?:please\s+)?(?:use|run|call|invoke)\s+(?:the\s+)?([a-z][a-z0-9_.-]*)\b(?:\s+tool\b)?",
     re.IGNORECASE,
 )
 

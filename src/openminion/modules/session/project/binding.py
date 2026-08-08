@@ -1,5 +1,6 @@
 """Resolve project context inherited by sessions and cron deliveries."""
 
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 
 from openminion.modules.session.project.schemas import Project
@@ -39,6 +40,28 @@ def resolve_inheritance_for_project(
     return _project_to_inheritance(project)
 
 
+def resolve_installed_project_skills(
+    inheritance: ProjectSessionInheritance,
+    *,
+    installed_skill_ids: Collection[str],
+    requested_skill_ids: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """Validate installed project skills and keep child requests in scope."""
+
+    installed = {str(item).strip() for item in installed_skill_ids if str(item).strip()}
+    missing = [item for item in inheritance.skill_set if item not in installed]
+    if missing:
+        raise ValueError(f"project references uninstalled skills: {', '.join(missing)}")
+    allowed = tuple(inheritance.skill_set)
+    requested = tuple(dict.fromkeys(str(item).strip() for item in requested_skill_ids))
+    outside_project = [item for item in requested if item and item not in allowed]
+    if outside_project:
+        raise ValueError(
+            f"requested skills exceed project scope: {', '.join(outside_project)}"
+        )
+    return requested or allowed
+
+
 def _project_to_inheritance(project: Project) -> ProjectSessionInheritance:
     return ProjectSessionInheritance(
         project_id=project.project_id,
@@ -53,4 +76,5 @@ __all__ = [
     "ProjectSessionInheritance",
     "resolve_inheritance",
     "resolve_inheritance_for_project",
+    "resolve_installed_project_skills",
 ]

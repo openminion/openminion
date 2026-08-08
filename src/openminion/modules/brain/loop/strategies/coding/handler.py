@@ -64,6 +64,9 @@ from .runtime import (
     _runner_and_profile_from_context,
 )
 from . import subtasks as _subtasks_module
+from .artifact_gates import (
+    user_explicitly_requested_file_artifact as _results_user_requested_file_artifact,
+)
 from .results import (
     _exit_autonomous_blocked as _results_exit_autonomous_blocked,
     _exit_budget_exhausted as _results_exit_budget_exhausted,
@@ -71,7 +74,6 @@ from .results import (
     _exit_final_text as _results_exit_final_text,
     _maybe_continue_after_tool_failure as _results_maybe_continue_after_tool_failure,
     _result_from_outcome as _results_from_outcome,
-    _user_explicitly_requested_file_artifact as _results_user_requested_file_artifact,
 )
 from .subtasks import _dispatch_subtasks_if_needed as _subtasks_dispatch_if_needed
 from .verification_flow import CodingVerificationMixin
@@ -447,6 +449,7 @@ class CodingProfileRunner(
                 )
                 self._coding_plan = CodingPlan.fallback(goal)
                 self._apply_plan_to_scratchpad(self._coding_plan)
+                seed_response = None
             else:
                 self._coding_plan, seed_response = self._initialize_plan(
                     ctx,
@@ -473,6 +476,15 @@ class CodingProfileRunner(
         self._sync_loop_state(outcome.state)
         if self._has_successful_mutating_file_result():
             self._loop_state.scratchpad.pop("coding.required_write_direct_tool", None)
+            if bool(
+                getattr(
+                    self._loop_state,
+                    "direct_tool_requested_batch_satisfied",
+                    False,
+                )
+            ):
+                self._loop_state.direct_tool_turn = None
+                self._loop_state.direct_tool_requested_batch_satisfied = False
         if self._last_verifier_candidate_payload is not None:
             self._loop_state.scratchpad["coding.last_verifier_candidate"] = dict(
                 self._last_verifier_candidate_payload
@@ -582,6 +594,7 @@ class CodingProfileRunner(
         return reason in {
             "missing_implementation_write",
             "readonly_dead_end_missing_write",
+            "missing_requested_file_artifacts",
         }
 
     def _stage_initial_write_if_required(self) -> None:
@@ -606,6 +619,9 @@ class CodingProfileRunner(
             "tool_calls_made": list(self._loop_state.tool_calls_made),
             "total_tool_calls": self._loop_state.total_tool_calls,
             "termination_reason": self._loop_state.termination_reason,
+            "direct_tool_requested_batch_satisfied": bool(
+                self._loop_state.direct_tool_requested_batch_satisfied
+            ),
             "scratchpad": dict(self._loop_state.scratchpad),
             "seen_signatures": list(self._loop_state.seen_signatures),
             "coding_plan": self._coding_plan.to_payload()
@@ -627,6 +643,9 @@ class CodingProfileRunner(
             tool_calls_made=list(state.get("tool_calls_made", []) or []),
             total_tool_calls=int(state.get("total_tool_calls", 0) or 0),
             termination_reason=str(state.get("termination_reason", "") or ""),
+            direct_tool_requested_batch_satisfied=bool(
+                state.get("direct_tool_requested_batch_satisfied", False)
+            ),
             scratchpad=dict(state.get("scratchpad", {}) or {}),
             seen_signatures=list(state.get("seen_signatures", []) or []),
         )
@@ -669,6 +688,9 @@ class CodingProfileRunner(
             total_tool_calls=int(loop_state.total_tool_calls or 0),
             termination_reason=str(loop_state.termination_reason or ""),
             direct_tool_turn=loop_state.direct_tool_turn,
+            direct_tool_requested_batch_satisfied=bool(
+                loop_state.direct_tool_requested_batch_satisfied
+            ),
             scratchpad=dict(loop_state.scratchpad),
             seen_signatures=list(loop_state.seen_signatures),
         )
@@ -692,6 +714,9 @@ class CodingProfileRunner(
             total_tool_calls=int(adaptive_state.total_tool_calls or 0),
             termination_reason=str(adaptive_state.termination_reason or ""),
             direct_tool_turn=adaptive_state.direct_tool_turn,
+            direct_tool_requested_batch_satisfied=bool(
+                getattr(adaptive_state, "direct_tool_requested_batch_satisfied", False)
+            ),
             scratchpad=scratchpad,
             seen_signatures=list(adaptive_state.seen_signatures),
         )

@@ -30,8 +30,11 @@ from openminion.modules.context.knowledge.viewer_models import (
     GraphViewerStatusReport,
 )
 from openminion.modules.context.knowledge.viewer_memory import (
+    LIVE_REFRESH_CAPABILITY,
+    LIVE_REFRESH_STRATEGY,
     OPENMINION_MEMORY_PROVIDER_ID,
     OpenMinionMemoryGraphFakosProvider,
+    OpenMinionMemoryGraphFakosLiveProvider,
     memory_db_sample_count,
 )
 from openminion.modules.memory.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
@@ -159,6 +162,16 @@ def _graphfakos_install_status() -> tuple[bool, str]:
     return True, str(getattr(graphfakos, "__version__", "") or "")
 
 
+def _pragmagraph_install_status() -> tuple[bool, str]:
+    try:
+        pragmagraph = importlib.import_module("pragmagraph")
+        importlib.import_module("pragmagraph.storage")
+        importlib.import_module("pragmagraph.viewer")
+    except ModuleNotFoundError:
+        return False, ""
+    return True, str(getattr(pragmagraph, "__version__", "") or "")
+
+
 def _graphfakos_request(graphfakos: Any, request: GraphViewerRequest) -> Any:
     return graphfakos.GraphFakosRequest(
         screen=request.screen,
@@ -227,6 +240,9 @@ def _workspace_manifest_diagnostics(
     payload = manifest_builder(graph, request).to_dict()
     return {
         "schema_version": payload.get("schema_version", ""),
+        "graph_id": payload.get("graph_id", ""),
+        "provider_id": payload.get("provider_id", ""),
+        "viewer_state": dict(payload.get("viewer_state") or {}),
         "viewer_actions": list(payload.get("viewer_actions", []) or []),
         "supported_actions": list(payload.get("supported_actions", []) or []),
         "supported_captures": list(payload.get("supported_captures", []) or []),
@@ -234,7 +250,10 @@ def _workspace_manifest_diagnostics(
             payload.get("default_expansion_requests", []) or []
         ),
         "performance_budget": dict(payload.get("performance_budget") or {}),
+        "provider_status": dict(payload.get("provider_status") or {}),
         "empty_state": dict(payload.get("empty_state") or {}),
+        "desktop_backend_path": payload.get("desktop_backend_path", ""),
+        "provider_payload": dict(payload.get("provider_payload") or {}),
     }
 
 
@@ -250,7 +269,9 @@ def _request_filters(request: GraphViewerRequest) -> dict[str, str]:
     if scopes:
         filters["scope"] = ",".join(scopes)
     return {
-        key: str(value).strip() for key, value in filters.items() if str(value).strip()
+        key: str(value).strip()
+        for key, value in filters.items()
+        if value is not None and str(value).strip()
     }
 
 
@@ -268,7 +289,13 @@ def _empty_state(graph: Any, stats: Mapping[str, object]) -> dict[str, object]:
             "next_commands": [
                 "openminion graph status",
                 "openminion graph view --current --dry-run --json",
+                'openminion agent --message "remember a useful project fact"',
             ],
+            "status_command": "openminion graph status",
+            "refresh_command": "openminion graph view --current",
+            "create_memory_command": (
+                'openminion agent --message "remember a useful project fact"'
+            ),
             "scope_filter": scope_filter if isinstance(scope_filter, list) else [],
         }
     return {
@@ -336,6 +363,14 @@ def _second_brain_status(
     db_exists = db_path.exists()
     sample_records = memory_db_sample_count(db_path) if db_exists else 0
     current_command = "openminion graph view --current"
+    diagnostic_code = _second_brain_diagnostic_code(
+        db_exists=db_exists,
+        sample_records=sample_records,
+    )
+    current_reason = _second_brain_status_reason(
+        db_exists=db_exists,
+        sample_records=sample_records,
+    )
     if not graphfakos_installed:
         return GraphViewerProviderStatus(
             provider=OPENMINION_MEMORY_PROVIDER_ID,
@@ -346,7 +381,12 @@ def _second_brain_status(
             visual_ready=False,
             reason="GraphFakos is not installed.",
             next_command="python -m pip install 'openminion[viewer]'",
-            capabilities=("durable_memory", "local_preview", "static_export"),
+            capabilities=(
+                "durable_memory",
+                "local_preview",
+                "static_export",
+                LIVE_REFRESH_CAPABILITY,
+            ),
             details={
                 "diagnostic_code": "graphfakos_missing",
                 "diagnostic_label": _diagnostic_label("graphfakos_missing"),
@@ -363,19 +403,26 @@ def _second_brain_status(
         active=True,
         enabled=True,
         visual_ready=True,
-        reason="" if db_exists else "Memory database will be created on first use.",
+        reason=current_reason,
         next_command=current_command,
-        capabilities=("durable_memory", "local_preview", "static_export"),
+        capabilities=(
+            "durable_memory",
+            "local_preview",
+            "static_export",
+            LIVE_REFRESH_CAPABILITY,
+        ),
         details={
-            "diagnostic_code": "ready" if db_exists else "memory_db_missing",
-            "diagnostic_label": _diagnostic_label(
-                "ready" if db_exists else "memory_db_missing"
-            ),
+            "diagnostic_code": diagnostic_code,
+            "diagnostic_label": _diagnostic_label(diagnostic_code),
             "memory_db": str(db_path),
             "memory_db_exists": db_exists,
             "sample_records": sample_records,
+            "refresh_strategy": LIVE_REFRESH_STRATEGY,
             "status_command": "openminion graph status",
             "current_command": current_command,
+            "create_memory_command": (
+                'openminion agent --message "remember a useful project fact"'
+            ),
             "scoped_commands": [
                 f"{current_command} --agent <agent-id>",
                 f"{current_command} --session <session-id>",
@@ -384,6 +431,22 @@ def _second_brain_status(
             ],
         },
     )
+
+
+def _second_brain_diagnostic_code(*, db_exists: bool, sample_records: int) -> str:
+    if not db_exists:
+        return "memory_db_missing"
+    if sample_records == 0:
+        return "memory_empty"
+    return "ready"
+
+
+def _second_brain_status_reason(*, db_exists: bool, sample_records: int) -> str:
+    if not db_exists:
+        return "Memory database will be created on first use."
+    if sample_records == 0:
+        return "Memory database exists but has no visible records yet."
+    return ""
 
 
 def _scope_values(request: GraphViewerRequest) -> tuple[str, ...]:
@@ -522,6 +585,12 @@ def _third_brain_provider_status(
     options = dict(provider_config.options or {})
     envelope_path = _option_path(options.get(_VIEWER_ENVELOPE_PATH_OPTION), roots=roots)
     snapshot_path = _option_path(options.get("snapshot_path"), roots=roots)
+    pragmagraph_required = bool(
+        provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None
+    )
+    pragmagraph_installed, pragmagraph_version = (
+        _pragmagraph_install_status() if pragmagraph_required else (True, "")
+    )
     capabilities = tuple(
         dict.fromkeys(
             (
@@ -535,29 +604,35 @@ def _third_brain_provider_status(
         provider_config.provider == PROVIDER_PRAGMAGRAPH
         and snapshot_path
         and snapshot_path.exists()
+        and pragmagraph_installed
     )
     ready = bool(
         graphfakos_installed
         and provider_config.enabled
         and (envelope_ready or snapshot_ready)
     )
-    reason = _third_brain_status_reason(
-        provider_config=provider_config,
-        graphfakos_installed=graphfakos_installed,
-        envelope_path=envelope_path,
-        snapshot_path=snapshot_path,
-    )
-    command = (
-        f"openminion graph view --brain third --provider {provider_config.name}"
-        if ready
-        else "openminion graph status"
-    )
     diagnostic_code = _third_brain_diagnostic_code(
         provider_config=provider_config,
         graphfakos_installed=graphfakos_installed,
+        pragmagraph_installed=pragmagraph_installed,
         envelope_path=envelope_path,
         snapshot_path=snapshot_path,
     )
+    reason = _third_brain_status_reason(
+        provider_config=provider_config,
+        graphfakos_installed=graphfakos_installed,
+        pragmagraph_installed=pragmagraph_installed,
+        envelope_path=envelope_path,
+        snapshot_path=snapshot_path,
+    )
+    if ready:
+        command = (
+            f"openminion graph view --brain third --provider {provider_config.name}"
+        )
+    elif diagnostic_code == "pragmagraph_missing":
+        command = "python -m pip install 'openminion[viewer]'"
+    else:
+        command = "openminion graph status"
     return GraphViewerProviderStatus(
         provider=provider_config.name,
         layer=LAYER_THIRD_BRAIN,
@@ -576,6 +651,9 @@ def _third_brain_provider_status(
             "viewer_envelope_exists": bool(envelope_path and envelope_path.exists()),
             "snapshot_path": str(snapshot_path) if snapshot_path else "",
             "snapshot_exists": bool(snapshot_path and snapshot_path.exists()),
+            "pragmagraph_required": pragmagraph_required,
+            "pragmagraph_installed": pragmagraph_installed,
+            "pragmagraph_version": pragmagraph_version,
             "refresh_mode": provider_config.refresh.mode,
             "status_command": f"openminion graph status --provider {provider_config.name}",
             "view_command": (
@@ -593,6 +671,7 @@ def _third_brain_diagnostic_code(
     *,
     provider_config: KnowledgeGraphProviderConfig,
     graphfakos_installed: bool,
+    pragmagraph_installed: bool,
     envelope_path: Path | None,
     snapshot_path: Path | None,
 ) -> str:
@@ -603,7 +682,9 @@ def _third_brain_diagnostic_code(
     if envelope_path is not None:
         return "ready" if envelope_path.exists() else "viewer_envelope_missing"
     if provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None:
-        return "ready" if snapshot_path.exists() else "snapshot_missing"
+        if not snapshot_path.exists():
+            return "snapshot_missing"
+        return "ready" if pragmagraph_installed else "pragmagraph_missing"
     return "viewer_envelope_unconfigured"
 
 
@@ -611,6 +692,7 @@ def _third_brain_status_reason(
     *,
     provider_config: KnowledgeGraphProviderConfig,
     graphfakos_installed: bool,
+    pragmagraph_installed: bool,
     envelope_path: Path | None,
     snapshot_path: Path | None,
 ) -> str:
@@ -625,6 +707,8 @@ def _third_brain_status_reason(
             else "Viewer envelope path is configured but not found yet."
         )
     if provider_config.provider == PROVIDER_PRAGMAGRAPH and snapshot_path is not None:
+        if snapshot_path.exists() and not pragmagraph_installed:
+            return "PragmaGraph snapshot viewing requires the pragmagraph package."
         return (
             ""
             if snapshot_path.exists()
@@ -640,8 +724,12 @@ def _third_brain_status_reason(
 def _diagnostic_label(code: str) -> str:
     return {
         "graphfakos_missing": "Install the viewer extra before opening graphs.",
+        "memory_empty": "Create memory through OpenMinion, then refresh the viewer.",
         "memory_db_missing": "Memory graph is ready; the database appears after first use.",
         "provider_disabled": "Enable the provider before opening it.",
+        "pragmagraph_missing": (
+            "Install the viewer extra before opening PragmaGraph snapshots."
+        ),
         "ready": "Ready to open visually.",
         "snapshot_missing": "Configured PragmaGraph snapshot was not found.",
         "viewer_envelope_missing": "Configured viewer envelope was not found.",
@@ -656,8 +744,13 @@ def _status_next_commands(
     third_brain: tuple[GraphViewerProviderStatus, ...],
 ) -> tuple[str, ...]:
     commands = []
-    if not graphfakos_installed:
-        commands.append("python -m pip install 'openminion[viewer]'")
+    install_viewer_extra = "python -m pip install 'openminion[viewer]'"
+    pragmagraph_missing = any(
+        provider.details.get("diagnostic_code") == "pragmagraph_missing"
+        for provider in third_brain
+    )
+    if not graphfakos_installed or pragmagraph_missing:
+        commands.append(install_viewer_extra)
     if second_brain.visual_ready:
         commands.append(second_brain.next_command)
     commands.extend(
@@ -767,11 +860,17 @@ def _serve_viewer(
     graph_request: Any,
     request: GraphViewerRequest,
 ) -> Any:
+    from graphfakos.cli import handle_provider_action
     from graphfakos.preview import LocalPreviewProviderSession
     from graphfakos.ui import render_provider_path, render_provider_path_fragment
 
     preview_provider = LocalPreviewProviderSession(provider)
     preview_graph_provider = cast(Any, preview_provider)
+    live_provider = _live_provider_for_graph(
+        graphfakos=graphfakos,
+        provider=provider,
+        graph_request=graph_request,
+    )
     return graphfakos.serve_local_viewer(
         render_path=lambda path, query: render_provider_path(
             preview_graph_provider,
@@ -785,10 +884,31 @@ def _serve_viewer(
             path,
             query,
         ),
+        handle_action=lambda path, payload: handle_provider_action(
+            preview_graph_provider,
+            path,
+            payload,
+        ),
         default_path=f"/{graph_request.screen}",
         host=request.host,
         port=request.port,
         open_browser=request.open_browser,
+        live_provider=live_provider,
+    )
+
+
+def _live_provider_for_graph(
+    *,
+    graphfakos: Any,
+    provider: Any,
+    graph_request: Any,
+) -> Any:
+    if getattr(provider, "graph_role", "") != "second_brain_memory":
+        return None
+    return OpenMinionMemoryGraphFakosLiveProvider(
+        graphfakos=graphfakos,
+        provider=provider,
+        request=graph_request,
     )
 
 

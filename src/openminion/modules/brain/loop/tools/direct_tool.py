@@ -315,25 +315,29 @@ def _direct_tool_batch_completed_successfully(
     if not ordered_tool_results:
         return False
     if _direct_tool_turn_match_by_name_only(loop_state):
-        executed_tool_names = tuple(
-            _canonical_direct_tool_name(
-                str(
-                    getattr(
-                        getattr(command_outcome, "approved_command", None),
-                        "tool_name",
-                        "",
-                    )
-                    or ""
-                ).strip()
-                or str(getattr(tool_call, "name", "") or "").strip()
-            )
-            for tool_call, command_outcome in ordered_tool_results
-        )
         remaining_tool_names = _remaining_direct_tool_name_sequence(loop_state)
         if not remaining_tool_names:
             return False
-        expected_prefix = remaining_tool_names[: len(executed_tool_names)]
-        if executed_tool_names != expected_prefix:
+        remaining_set = set(remaining_tool_names)
+        executed_tool_names = tuple(
+            name
+            for name in (
+                _canonical_direct_tool_name(
+                    str(
+                        getattr(
+                            getattr(command_outcome, "approved_command", None),
+                            "tool_name",
+                            "",
+                        )
+                        or ""
+                    ).strip()
+                    or str(getattr(tool_call, "name", "") or "").strip()
+                )
+                for tool_call, command_outcome in ordered_tool_results
+            )
+            if name in remaining_set
+        )
+        if not executed_tool_names:
             return False
     elif len(_direct_tool_turn_requested_calls(loop_state)) == 1:
         requested_call = _direct_tool_turn_requested_calls(loop_state)[0]
@@ -392,9 +396,12 @@ def _direct_tool_batch_completed_successfully(
             _direct_tool_completed_tool_names(loop_state) + executed_tool_names
         )
         _store_direct_tool_completed_tool_names(loop_state, completed_tool_names)
-        return completed_tool_names == _direct_tool_turn_requested_tool_names(
-            loop_state
+        requested_names = _direct_tool_turn_requested_tool_names(loop_state)
+        requested_set = set(requested_names)
+        completed_requested_names = tuple(
+            name for name in completed_tool_names if name in requested_set
         )
+        return completed_requested_names == requested_names
     return True
 
 

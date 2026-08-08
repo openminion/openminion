@@ -23,7 +23,7 @@ from openminion.api.server.app import _OpenMinionAPIHandler
 
 def test_api_shared_constants_contract() -> None:
     assert API_METRICS_TOKEN_HEADER == "X-Metrics-Token"
-    assert resolve_api_config_hint(None) == "~/.openminion/config.json"
+    assert resolve_api_config_hint(None) == "~/.openminion/agents.json"
     from openminion.api.operations.tools import (
         _API_TOOLS_DEFAULT_CHANNEL,
         _API_TOOLS_DEFAULT_TARGET,
@@ -95,7 +95,7 @@ def test_resolve_and_close_api_runtime_if_owned() -> None:
 
 
 def test_resolve_api_config_display_path_and_hint() -> None:
-    assert resolve_api_config_hint(None) == "~/.openminion/config.json"
+    assert resolve_api_config_hint(None) == "~/.openminion/agents.json"
     assert resolve_api_config_hint("config.json") == "config.json"
 
     display_path = resolve_api_config_display_path("config.json")

@@ -67,8 +67,11 @@ def assert_focus_turn_completed(transcript: str) -> None:
     visible = visible_text(transcript)
     done_matches = list(_DONE_RE.finditer(visible))
     assert done_matches, visible[-2000:]
-    assert_no_terminal_crash(visible)
+    for marker in _RAW_TOOL_MARKERS:
+        assert marker not in visible, marker
     after_final_done = visible[done_matches[-1].end() :]
+    for marker in _CRASH_MARKERS:
+        assert marker not in after_final_done, marker
     for marker in _INCOMPLETE_TURN_MARKERS:
         assert marker not in after_final_done, marker
 

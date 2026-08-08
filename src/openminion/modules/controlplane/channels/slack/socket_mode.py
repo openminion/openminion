@@ -56,6 +56,7 @@ class SlackSocketModeRunner:
         logger: logging.Logger | None = None,
         store: Any | None = None,
         outbox_worker: Any | None = None,
+        pairing_service: Any | None = None,
         bot_user_id: str | None = None,
         sleep_fn=time.sleep,
     ) -> None:
@@ -68,6 +69,7 @@ class SlackSocketModeRunner:
         self._log = logger or logging.getLogger(__name__)
         self._store = store
         self._outbox_worker = outbox_worker
+        self._pairing = pairing_service
         self._bot_user_id = bot_user_id
         self._sleep = sleep_fn
         self._connected = False

@@ -17,7 +17,7 @@ class GraphViewerRequest:
     edge_kind: str = ""
     tag: str = ""
     source: str = ""
-    min_score: str = ""
+    min_score: float | None = None
     evidence_filter: str = ""
     screen: str = "explore"
     query: str = ""

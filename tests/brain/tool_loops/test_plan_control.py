@@ -445,10 +445,7 @@ def test_plan_control_revise_records_full_plan_payload() -> None:
 
 
 def test_plan_control_terminal_actions_record_canonical_events() -> None:
-    for action, event_type in (
-        ("abandon", "task_plan.abandoned"),
-        ("complete", "task_plan.completed"),
-    ):
+    for action, event_type in (("abandon", "task_plan.abandoned"),):
         session_api = _FakeSessionAPI(active_plan=_active_plan())
         result = handle_plan_tool_call(
             loop_ctx=_Ctx(session_api=session_api),
@@ -461,6 +458,30 @@ def test_plan_control_terminal_actions_record_canonical_events() -> None:
 
         assert result.status == "success"
         assert session_api.events[0]["event_type"] == event_type
+
+
+def test_plan_control_complete_materializes_remaining_steps() -> None:
+    session_api = _FakeSessionAPI(active_plan=_active_plan())
+    result = handle_plan_tool_call(
+        loop_ctx=_Ctx(session_api=session_api),
+        arguments={
+            "action": "complete",
+            "plan_id": "plan-1",
+            "reason": "done",
+        },
+    )
+
+    assert result.status == "success"
+    assert [event["event_type"] for event in session_api.events] == [
+        "task_plan.step_completed",
+        "task_plan.step_completed",
+        "task_plan.completed",
+    ]
+    assert [
+        event["payload"].get("step_id")
+        for event in session_api.events
+        if event["event_type"] == "task_plan.step_completed"
+    ] == ["entry", "transport"]
 
 
 def test_plan_control_same_turn_declare_then_complete_uses_active_plan_override() -> (
@@ -491,6 +512,8 @@ def test_plan_control_same_turn_declare_then_complete_uses_active_plan_override(
     assert completed.status == "success"
     assert [event["event_type"] for event in session_api.events] == [
         "task_plan.declared",
+        "task_plan.step_completed",
+        "task_plan.step_completed",
         "task_plan.completed",
     ]
 

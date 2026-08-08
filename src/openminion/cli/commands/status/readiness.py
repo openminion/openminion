@@ -17,6 +17,7 @@ from openminion.cli.config import CLIRoots, resolve_cli_roots
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.services.bootstrap.onboarding import (
     OnboardingInspectionRequest,
+    OnboardingState,
     OnboardingStatus,
     OnboardingStatusService,
 )
@@ -136,6 +137,19 @@ def _build_readiness_checks(
 
 
 def _provider_check(onboarding: OnboardingStatus) -> ReadinessCheck:
+    if onboarding.state == OnboardingState.EXPLICIT_DEMO:
+        return ReadinessCheck(
+            id="provider",
+            status="demo",
+            message=onboarding.reason,
+            safe_next_action="Run `openminion setup` to configure a real provider.",
+            details={
+                "state": onboarding.state.value,
+                "track": onboarding.track.value,
+                "provider_name": onboarding.provider_name,
+                "credentials_ready": onboarding.credentials_ready,
+            },
+        )
     status = "ready" if onboarding.can_continue else "blocked"
     action = "" if onboarding.can_continue else onboarding.remediation_command
     return ReadinessCheck(
@@ -251,6 +265,8 @@ def _overall_status(checks: list[ReadinessCheck]) -> str:
     statuses = {check.status for check in checks}
     if "blocked" in statuses:
         return "blocked"
+    if "demo" in statuses:
+        return "demo"
     if "not_configured" in statuses:
         return "degraded"
     return "ready"

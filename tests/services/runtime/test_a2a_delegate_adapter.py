@@ -173,6 +173,30 @@ def test_async_status_and_cancel_route_through_a2a_lifecycle() -> None:
     assert call.cancelled == ["job-1"]
 
 
+def test_lifecycle_methods_resolve_from_bound_call_owner() -> None:
+    class _LifecycleOwner:
+        def call(self, *, command, session_id, trace_id):
+            del command, session_id, trace_id
+            return {"status": "success"}
+
+        def poll_task(self, *, task_id, session_id, trace_id):
+            del session_id, trace_id
+            return {"status": "running", "task_id": task_id}
+
+        def cancel_task(self, *, task_id, session_id, trace_id):
+            del session_id, trace_id
+            return {"status": "canceled", "task_id": task_id}
+
+    owner = _LifecycleOwner()
+    adapter = A2aRuntimeDelegateAdapter(
+        a2a_call=owner.call,
+        parent_agent_id="parent",
+    )
+
+    assert adapter.status(task_id="job-1").status == "running"
+    assert adapter.cancel(task_id="job-1").status == "canceled"
+
+
 def test_empty_args_short_circuit_without_calling_a2a() -> None:
     call = _RecordingCall({"status": BRAIN_ACTION_STATUS_SUCCESS})
     adapter = A2aRuntimeDelegateAdapter(a2a_call=call, parent_agent_id="parent")

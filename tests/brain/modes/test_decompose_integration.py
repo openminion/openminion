@@ -844,7 +844,9 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
 
     _patch_orchestrate_child_invoke(monkeypatch, _fake_invoke)
 
-    result = OrchestrateMode().execute(ctx)
+    with artifact_ctl(tmp_path / ".openminion") as ctl:
+        runner.artifactctl = ctl
+        result = OrchestrateMode().execute(ctx)
 
     assert result.status == "done"
     seen_worktrees = [call["workspace_root"] for call in tool_api.calls]
@@ -874,6 +876,15 @@ def test_orchestrate_code_children_use_isolated_worktrees_and_report_conflict(
     assert bucket["conflicts"] == [
         {"path": "seed.py", "subtask_ids": ["patch-a", "patch-b"]}
     ]
+    public_results = result.action_result.outputs["subtask_results"]
+    assert [item["child_artifact"]["subtask_id"] for item in public_results] == [
+        "patch-a",
+        "patch-b",
+    ]
+    assert all(
+        item["child_artifact"]["artifact"]["status"] == "stored"
+        for item in public_results
+    )
 
 
 def test_child_worktree_artifact_accept_applies_complete_change_set(tmp_path) -> None:

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import importlib
+import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-import threading
-from types import ModuleType
-from typing import Any, Mapping
 import sys
+import threading
+import tomllib
+from types import ModuleType, SimpleNamespace
+from typing import Any, Mapping
+from urllib.request import urlopen
 
 import pytest
 
@@ -17,6 +22,7 @@ from openminion.modules.context.knowledge import (
     LAYER_THIRD_BRAIN,
     UnknownProviderError,
 )
+from openminion.modules.context.knowledge.errors import GraphViewerSourceError
 from openminion.modules.context.knowledge.viewer import (
     GraphViewerRequest,
     inspect_graph_viewer_status,
@@ -24,6 +30,7 @@ from openminion.modules.context.knowledge.viewer import (
 )
 from openminion.modules.context.knowledge.viewer_memory import (
     OpenMinionMemoryGraphFakosProvider,
+    OpenMinionMemoryGraphFakosLiveProvider,
 )
 from openminion.modules.memory.models import MemoryRecord, MemoryRelation
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
@@ -176,6 +183,12 @@ class _FakeWorkspaceManifest:
     def to_dict(self) -> dict[str, object]:
         return {
             "schema_version": "graphfakos.workspace.v1",
+            "graph_id": self.graph.graph_id,
+            "provider_id": self.graph.provider_id,
+            "viewer_state": {
+                "screen": self.request.screen,
+                "query": self.request.query,
+            },
             "viewer_actions": [
                 "search",
                 "filter",
@@ -198,9 +211,20 @@ class _FakeWorkspaceManifest:
                 "raw_edge_count": len(self.graph.edges),
                 "level_of_detail": "visible",
             },
+            "provider_status": {
+                "provider_id": self.graph.provider_id,
+                "provider_label": self.graph.provider_label,
+                "graph_role": self.graph.graph_role,
+                "capabilities": list(self.graph.capabilities),
+            },
             "empty_state": dict(
                 (self.graph.provider_payload or {}).get("empty_state", {})
             ),
+            "desktop_backend_path": f"/{self.request.screen}",
+            "provider_payload": {
+                "provider_label": self.graph.provider_label,
+                "graph_role": self.graph.graph_role,
+            },
         }
 
 
@@ -246,6 +270,110 @@ def _package_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _seed_permutation_memory_graph(db_path: Path) -> None:
+    store = SQLiteMemoryStore(db_path)
+    records = (
+        MemoryRecord(
+            id="memory:launch",
+            scope="agent:alpha",
+            type="decision",
+            key="launch",
+            title="Launch Viewer",
+            content="Inspect memory graph launch readiness.",
+            source="validated",
+            confidence=0.9,
+            tags=("reviewed",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:02:00+00:00",
+        ),
+        MemoryRecord(
+            id="memory:viewer-fact",
+            scope="agent:alpha",
+            type="fact",
+            key="viewer-fact",
+            title="Viewer Fact",
+            content="GraphFakos can inspect the OpenMinion memory graph.",
+            source="validated",
+            confidence=0.7,
+            tags=("reviewed",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:04:00+00:00",
+        ),
+        MemoryRecord(
+            id="memory:archived",
+            scope="agent:beta",
+            type="decision",
+            key="archived",
+            title="Archived Decision",
+            content="Older decision from another agent.",
+            source="imported",
+            confidence=0.95,
+            tags=("draft",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:01:00+00:00",
+        ),
+        MemoryRecord(
+            id="memory:workflow",
+            scope="session:alpha",
+            type="procedure",
+            key="workflow",
+            title="Operator Workflow",
+            content="Run status before visual graph workflow inspection.",
+            source="validated",
+            confidence=0.85,
+            tags=("workflow",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:03:00+00:00",
+        ),
+        MemoryRecord(
+            id="memory:late-match",
+            scope="agent:alpha",
+            type="decision",
+            key="late-match",
+            title="Late Match",
+            content="This matching record protects post-filter limiting.",
+            source="validated",
+            confidence=0.93,
+            tags=("late",),
+            created_at="2026-07-21T00:00:00+00:00",
+            updated_at="2026-07-21T00:05:00+00:00",
+        ),
+    )
+    for record in records:
+        store.put(record)
+    for relation in (
+        MemoryRelation(
+            relation_id="relation:launch-viewer",
+            source_record_id="memory:launch",
+            target_record_id="memory:viewer-fact",
+            relation_type="supports",
+            created_at="2026-07-21T00:01:00+00:00",
+        ),
+        MemoryRelation(
+            relation_id="relation:archived-launch",
+            source_record_id="memory:archived",
+            target_record_id="memory:launch",
+            relation_type="corrects",
+            created_at="2026-07-21T00:02:00+00:00",
+        ),
+        MemoryRelation(
+            relation_id="relation:launch-workflow",
+            source_record_id="memory:launch",
+            target_record_id="memory:workflow",
+            relation_type="depends_on",
+            created_at="2026-07-21T00:03:00+00:00",
+        ),
+        MemoryRelation(
+            relation_id="relation:late-launch",
+            source_record_id="memory:late-match",
+            target_record_id="memory:launch",
+            relation_type="related_to",
+            created_at="2026-07-21T00:04:00+00:00",
+        ),
+    ):
+        store.put_relation(relation)
+
+
 def _example_envelope_path() -> Path:
     return _package_root() / "examples" / "graph-viewer" / "repo-viewer-envelope.json"
 
@@ -266,6 +394,28 @@ def _third_brain_example_config(envelope_path: Path) -> OpenMinionConfig:
         }
     }
     return config
+
+
+def _third_brain_pragmagraph_config(snapshot_path: Path) -> OpenMinionConfig:
+    config = OpenMinionConfig()
+    config.module_configs["knowledge_graphs"] = {
+        "provider": {
+            "active": ["repo_graph"],
+            "providers": {
+                "repo_graph": {
+                    "provider": "pragmagraph",
+                    "options": {"snapshot_path": str(snapshot_path)},
+                }
+            },
+        }
+    }
+    return config
+
+
+def _remove_pragmagraph_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in tuple(sys.modules):
+        if name == "pragmagraph" or name.startswith("pragmagraph."):
+            monkeypatch.delitem(sys.modules, name, raising=False)
 
 
 def test_second_brain_dry_run_builds_graph_from_memory_db(
@@ -329,6 +479,11 @@ def test_second_brain_dry_run_builds_graph_from_memory_db(
     assert result.diagnostics["provider_details"]["owner"] == "OpenMinion memory"
     assert result.diagnostics["viewer_manifest"]["schema_version"] == (
         "graphfakos.workspace.v1"
+    )
+    assert result.diagnostics["viewer_manifest"]["provider_id"] == "openminion-memory"
+    assert (
+        result.diagnostics["viewer_manifest"]["provider_status"]["provider_label"]
+        == "OpenMinion Memory"
     )
     assert "inspect_node" in result.diagnostics["viewer_manifest"]["viewer_actions"]
 
@@ -417,7 +572,13 @@ def test_current_memory_empty_state_does_not_seed_sample_data(
         "next_commands": [
             "openminion graph status",
             "openminion graph view --current --dry-run --json",
+            'openminion agent --message "remember a useful project fact"',
         ],
+        "status_command": "openminion graph status",
+        "refresh_command": "openminion graph view --current",
+        "create_memory_command": (
+            'openminion agent --message "remember a useful project fact"'
+        ),
         "scope_filter": [],
     }
     assert result.diagnostics["viewer_manifest"]["empty_state"] == {
@@ -453,6 +614,36 @@ def test_viewer_request_exposes_graphfakos_navigation_filters(
             updated_at=now,
         )
     )
+    store.put(
+        MemoryRecord(
+            id="memory:not-decision",
+            scope="agent:openminion",
+            type="fact",
+            key="filtered-type",
+            title="Filtered By Type",
+            content="This record should not pass the node-kind filter.",
+            source="validated",
+            confidence=0.95,
+            tags=("reviewed",),
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    store.put(
+        MemoryRecord(
+            id="memory:low-score",
+            scope="agent:openminion",
+            type="decision",
+            key="filtered-score",
+            title="Filtered By Score",
+            content="This record should not pass the score filter.",
+            source="validated",
+            confidence=0.5,
+            tags=("reviewed",),
+            created_at=now,
+            updated_at=now,
+        )
+    )
 
     result = launch_graph_viewer(
         config=OpenMinionConfig(),
@@ -463,7 +654,7 @@ def test_viewer_request_exposes_graphfakos_navigation_filters(
             edge_kind="supports",
             tag="reviewed",
             source="validated",
-            min_score="0.8",
+            min_score=0.8,
             evidence_filter="with_provenance",
             dry_run=True,
             memory_db=str(db_path),
@@ -478,6 +669,92 @@ def test_viewer_request_exposes_graphfakos_navigation_filters(
         "tag": "reviewed",
     }
     assert result.diagnostics["evidence_filter"] == "with_provenance"
+    assert result.diagnostics["node_count"] == 1
+    assert result.diagnostics["stats"]["records"] == 1
+
+
+@pytest.mark.parametrize(
+    ("graph_request", "expected_nodes", "expected_edges"),
+    [
+        (
+            _FakeGraphFakosRequest(filters={"node_kind": "decision"}),
+            ("memory:late-match", "memory:launch", "memory:archived"),
+            ("relation:late-launch", "relation:archived-launch"),
+        ),
+        (
+            _FakeGraphFakosRequest(filters={"source": "validated", "min_score": "0.8"}),
+            ("memory:late-match", "memory:workflow", "memory:launch"),
+            ("relation:late-launch", "relation:launch-workflow"),
+        ),
+        (
+            _FakeGraphFakosRequest(
+                filters={"tag": "reviewed", "edge_kind": "supports"}
+            ),
+            ("memory:viewer-fact", "memory:launch"),
+            ("relation:launch-viewer",),
+        ),
+        (
+            _FakeGraphFakosRequest(
+                filters={"scope": "agent:alpha"},
+            ),
+            ("memory:late-match", "memory:viewer-fact", "memory:launch"),
+            ("relation:launch-viewer", "relation:late-launch"),
+        ),
+        (
+            _FakeGraphFakosRequest(query="workflow"),
+            ("memory:workflow",),
+            (),
+        ),
+        (
+            _FakeGraphFakosRequest(filters={"tag": "late"}, limit=1),
+            ("memory:late-match",),
+            (),
+        ),
+    ],
+)
+def test_second_brain_provider_applies_filter_permutations(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    graph_request: _FakeGraphFakosRequest,
+    expected_nodes: tuple[str, ...],
+    expected_edges: tuple[str, ...],
+) -> None:
+    graphfakos = _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    _seed_permutation_memory_graph(db_path)
+
+    graph = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    ).load_graph(graph_request)
+
+    node_ids = tuple(node.id for node in graph.nodes)
+    edge_ids = tuple(edge.id for edge in graph.edges)
+    if graph_request.limit == 1:
+        assert node_ids == expected_nodes
+    else:
+        assert set(node_ids) == set(expected_nodes)
+    assert set(edge_ids) == set(expected_edges)
+    assert graph.stats["records"] == len(expected_nodes)
+    assert graph.stats["relations"] == len(expected_edges)
+
+
+def test_second_brain_provider_rejects_invalid_minimum_score(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graphfakos = _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    _seed_permutation_memory_graph(db_path)
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+
+    with pytest.raises(GraphViewerSourceError, match="must be numeric"):
+        provider.load_graph(_FakeGraphFakosRequest(filters={"min_score": "invalid"}))
 
 
 def test_second_brain_provider_adds_openminion_visual_metadata(
@@ -514,6 +791,20 @@ def test_second_brain_provider_adds_openminion_visual_metadata(
     assert "type:decision" in node.tags
     assert node.provider_payload["memory_type"] == "decision"
     assert isinstance(node.provider_payload["namespace"], dict)
+    assert (
+        graph.provider_details["refresh_strategy"] == "live_snapshot_reset_or_requery"
+    )
+    assert graph.provider_details["mutation_policy"] == "read_only_viewer"
+    assert graph.provider_payload["refresh"] == {
+        "strategy": "live_snapshot_reset_or_requery",
+        "writes_memory": False,
+        "live_patch_stream": True,
+    }
+    assert (
+        graph.provider_payload["mutation_policy"]["durable_memory_writes"]
+        == "unsupported_from_viewer"
+    )
+    assert graph.provider_payload["local_endpoints"]["graph_action"] == "/api/action"
     assert graph.provider_payload["viewer_actions"]
     assert "tag" in graph.available_facets
     assert "type:decision" in graph.available_facets["tag"]
@@ -557,6 +848,20 @@ def test_viewer_status_reports_readiness_and_next_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    now = "2026-07-21T00:00:00+00:00"
+    SQLiteMemoryStore(db_path).put(
+        MemoryRecord(
+            id="memory:status",
+            scope="agent:openminion",
+            type="fact",
+            key="status",
+            title="Status Memory",
+            content="Graph status should count real memory records.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
     envelope_path = tmp_path / "viewer.json"
     envelope_path.write_text("{}", encoding="utf-8")
     config = OpenMinionConfig()
@@ -577,12 +882,19 @@ def test_viewer_status_reports_readiness_and_next_commands(
     report = inspect_graph_viewer_status(
         config=config,
         roots=_roots(tmp_path),
+        memory_db=str(db_path),
     )
     payload = report.to_dict()
 
     assert payload["ok"] is True
     assert payload["graphfakos"] == {"installed": True, "version": "test"}
     assert payload["second_brain"]["visual_ready"] is True
+    assert payload["second_brain"]["details"]["sample_records"] == 1
+    assert (
+        payload["second_brain"]["details"]["refresh_strategy"]
+        == "live_snapshot_reset_or_requery"
+    )
+    assert "live_refresh" in payload["second_brain"]["capabilities"]
     assert payload["third_brain"][0]["visual_ready"] is True
     assert payload["third_brain"][0]["tags"] == ["code_graph"]
     assert "openminion graph view --current" in payload["next_commands"]
@@ -618,6 +930,79 @@ def test_viewer_status_reports_missing_envelope_as_not_visual_ready(
     assert third["reason"] == "Viewer envelope path is configured but not found yet."
     assert third["details"]["diagnostic_code"] == "viewer_envelope_missing"
     assert third["details"]["viewer_envelope_exists"] is False
+
+
+def test_viewer_status_explains_existing_empty_memory_db(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    SQLiteMemoryStore(db_path)
+
+    report = inspect_graph_viewer_status(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        memory_db=str(db_path),
+    )
+    second_brain = report.to_dict()["second_brain"]
+
+    assert second_brain["visual_ready"] is True
+    assert (
+        second_brain["reason"]
+        == "Memory database exists but has no visible records yet."
+    )
+    assert second_brain["details"]["diagnostic_code"] == "memory_empty"
+    assert second_brain["details"]["diagnostic_label"] == (
+        "Create memory through OpenMinion, then refresh the viewer."
+    )
+    assert second_brain["details"]["create_memory_command"] == (
+        'openminion agent --message "remember a useful project fact"'
+    )
+
+
+def test_viewer_status_requires_pragmagraph_for_snapshot(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_graphfakos(monkeypatch)
+    _remove_pragmagraph_modules(monkeypatch)
+    original_import_module = importlib.import_module
+
+    def _blocked_import_module(name: str, package: str | None = None) -> object:
+        if name == "pragmagraph":
+            raise ModuleNotFoundError(name)
+        return original_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", _blocked_import_module)
+    snapshot_path = tmp_path / "graph.snapshot.json"
+    snapshot_path.write_text("{}", encoding="utf-8")
+
+    report = inspect_graph_viewer_status(
+        config=_third_brain_pragmagraph_config(snapshot_path),
+        roots=_roots(tmp_path),
+    )
+    payload = report.to_dict()
+    third = payload["third_brain"][0]
+
+    assert third["visual_ready"] is False
+    assert third["reason"] == (
+        "PragmaGraph snapshot viewing requires the pragmagraph package."
+    )
+    assert third["next_command"] == "python -m pip install 'openminion[viewer]'"
+    assert third["details"]["diagnostic_code"] == "pragmagraph_missing"
+    assert third["details"]["pragmagraph_required"] is True
+    assert third["details"]["pragmagraph_installed"] is False
+    assert third["details"]["snapshot_exists"] is True
+    assert "python -m pip install 'openminion[viewer]'" in payload["next_commands"]
+
+
+def test_viewer_extra_installs_pragmagraph_runtime() -> None:
+    pyproject = tomllib.loads((_package_root() / "pyproject.toml").read_text())
+    viewer_extra = pyproject["project"]["optional-dependencies"]["viewer"]
+
+    assert "graphfakos>=0.0.8" in viewer_extra
+    assert "pragmagraph>=0.0.8" in viewer_extra
 
 
 def test_multiple_active_third_brain_providers_suggest_provider_flags(
@@ -718,9 +1103,18 @@ def test_openminion_graph_view_parser_registration() -> None:
     assert args.session_id == "s1"
     assert args.node_kind == "fact"
     assert args.tag == "scope:session:s1"
-    assert args.min_score == "0.7"
+    assert args.min_score == 0.7
     assert args.evidence_filter == "with_provenance"
     assert args.dry_run is True
+
+
+def test_openminion_graph_view_parser_rejects_invalid_minimum_score() -> None:
+    from openminion.cli.parser.base import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            ["graph", "view", "--min-score", "invalid", "--dry-run"]
+        )
 
 
 def test_openminion_graph_status_parser_registration() -> None:
@@ -769,6 +1163,321 @@ def test_second_brain_static_html_uses_real_graphfakos_shell(tmp_path) -> None:
     assert result.html_path == str(html_path)
     assert "GraphFakos" in html
     assert "HTML Viewer" in html
+
+
+def test_second_brain_dry_run_exposes_real_graphfakos_manifest(tmp_path) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    if not hasattr(graphfakos, "workspace_manifest_for_graph"):
+        pytest.skip("graphfakos workspace manifest helper is unavailable")
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    first = MemoryRecord(
+        id="memory:real-runtime",
+        scope="agent:openminion",
+        type="decision",
+        key="real-runtime-db",
+        title="Real Runtime DB",
+        content="Use the OpenMinion SQLite memory DB as the second brain.",
+        created_at=now,
+        updated_at=now,
+    )
+    second = MemoryRecord(
+        id="memory:real-viewer",
+        scope="agent:openminion",
+        type="fact",
+        key="real-viewer",
+        title="Real Viewer",
+        content="Render and inspect the second-brain graph through GraphFakos.",
+        created_at=now,
+        updated_at=now,
+    )
+    store.put(first)
+    store.put(second)
+    store.put_relation(
+        MemoryRelation(
+            relation_id="relation:real-runtime-viewer",
+            source_record_id=first.id,
+            target_record_id=second.id,
+            relation_type="supports",
+            created_at=now,
+        )
+    )
+
+    result = launch_graph_viewer(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(
+            brain="second",
+            dry_run=True,
+            memory_db=str(db_path),
+            screen="provider_status",
+        ),
+    )
+
+    manifest = result.diagnostics["viewer_manifest"]
+    provider_status = manifest["provider_status"]
+    assert result.provider == "openminion-memory"
+    assert result.layer == LAYER_SECOND_BRAIN
+    assert result.diagnostics["node_count"] == 2
+    assert result.diagnostics["edge_count"] == 1
+    assert manifest["schema_version"] == "graphfakos.workspace.v1"
+    assert manifest["graph_id"] == f"openminion-memory:{db_path.name}"
+    assert manifest["provider_id"] == "openminion-memory"
+    assert manifest["desktop_backend_path"] == "/provider_status"
+    assert manifest["performance_budget"]["rendered_node_count"] == 2
+    assert provider_status["provider_label"] == "OpenMinion Memory"
+    assert "durable_memory" in provider_status["capabilities"]
+    assert "live_refresh" in provider_status["capabilities"]
+    assert "inspect_node" in manifest["viewer_actions"]
+    assert manifest["provider_payload"]["graph_role"] == "second_brain_memory"
+
+
+def test_second_brain_local_server_routes_workbench_actions_safely(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    captured: dict[str, object] = {}
+
+    def _serve_local_viewer(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        render_path = kwargs["render_path"]
+        assert callable(render_path)
+        html = render_path("/explore", {})
+        assert "OpenMinion Second-Brain Memory" in html
+        return SimpleNamespace(
+            url="http://127.0.0.1:8767/explore",
+            opened=False,
+        )
+
+    monkeypatch.setattr(graphfakos, "serve_local_viewer", _serve_local_viewer)
+    db_path = tmp_path / "memory.db"
+    now = "2026-07-21T00:00:00+00:00"
+    SQLiteMemoryStore(db_path).put(
+        MemoryRecord(
+            id="memory:readonly",
+            scope="agent:openminion",
+            type="fact",
+            key="readonly",
+            title="Read Only Viewer",
+            content="Viewer actions must not silently write durable memory.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    result = launch_graph_viewer(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        request=GraphViewerRequest(
+            current=True,
+            memory_db=str(db_path),
+            open_browser=False,
+        ),
+    )
+
+    handle_action = captured["handle_action"]
+    assert callable(handle_action)
+    action_result = handle_action(
+        "/api/action",
+        {
+            "action_id": "draft:memory",
+            "action_type": "draft_node",
+            "target_id": "memory:readonly",
+            "label": "Draft memory edit",
+            "body": "This must remain provider-owned.",
+        },
+    )
+    capture_result = handle_action(
+        "/api/knowledge",
+        {
+            "text": "Capture from the visual workbench.",
+            "link_node_id": "memory:readonly",
+        },
+    )
+
+    assert result.mode == "server"
+    assert captured["handle_action"] is not None
+    assert captured["live_provider"] is not None
+    assert action_result["ok"] is False
+    assert action_result["status"]["status"] == "unsupported"
+    assert "does not support graph edit actions" in action_result["status"]["message"]
+    assert capture_result["ok"] is False
+    assert "does not support workbench knowledge capture" in capture_result["error"]
+
+
+def test_second_brain_live_provider_streams_snapshot_reset_after_memory_change(
+    tmp_path,
+) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    store.put(
+        MemoryRecord(
+            id="memory:first",
+            scope="agent:openminion",
+            type="fact",
+            key="first",
+            title="First Memory",
+            content="Initial live graph state.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    graph_request = graphfakos.GraphFakosRequest()
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+    live_provider = OpenMinionMemoryGraphFakosLiveProvider(
+        graphfakos=graphfakos,
+        provider=provider,
+        request=graph_request,
+    )
+
+    opened = live_provider.open_live_session(
+        graphfakos.GraphFakosLiveSessionRequest(session_id="viewer")
+    )
+    heartbeat = live_provider.load_patch(
+        graphfakos.GraphFakosLiveSessionRequest(
+            session_id="viewer",
+            cursor=opened.cursor,
+        )
+    )
+    store.put(
+        MemoryRecord(
+            id="memory:second",
+            scope="agent:openminion",
+            type="decision",
+            key="second",
+            title="Second Memory",
+            content="Live graph refresh should include this record.",
+            created_at=now,
+            updated_at="2026-07-21T00:01:00+00:00",
+        )
+    )
+    patch = live_provider.load_patch(
+        graphfakos.GraphFakosLiveSessionRequest(
+            session_id="viewer",
+            cursor=opened.cursor,
+        )
+    )
+    after_patch = live_provider.load_patch(
+        graphfakos.GraphFakosLiveSessionRequest(
+            session_id="viewer",
+            cursor=patch.cursor,
+        )
+    )
+
+    assert opened.status == "live"
+    assert heartbeat.status == "heartbeat"
+    assert patch.patch_id.startswith("openminion-memory:")
+    assert patch.operations[0].kind == "snapshot_reset"
+    assert len(patch.operations[0].graph.nodes) == 2
+    assert patch.operations[0].metadata["refresh_strategy"] == (
+        "live_snapshot_reset_or_requery"
+    )
+    assert patch.result_revision.value != opened.revision.value
+    assert after_patch.status == "heartbeat"
+    assert live_provider.diagnostics().last_revision == patch.result_revision.value
+
+
+def test_second_brain_served_viewer_live_api_exposes_memory_changes(tmp_path) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    from graphfakos.preview import LocalPreviewProviderSession
+    from graphfakos.ui import render_provider_path
+
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    store.put(
+        MemoryRecord(
+            id="memory:first-live-api",
+            scope="agent:openminion",
+            type="fact",
+            key="first-live-api",
+            title="First Live API Memory",
+            content="The served viewer starts with one memory.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    graph_request = graphfakos.GraphFakosRequest()
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+    preview_provider = LocalPreviewProviderSession(provider)
+    live_provider = OpenMinionMemoryGraphFakosLiveProvider(
+        graphfakos=graphfakos,
+        provider=provider,
+        request=graph_request,
+    )
+    try:
+        server = graphfakos.make_local_viewer_server(
+            render_path=lambda path, query: render_provider_path(
+                preview_provider,
+                graph_request,
+                path,
+                query,
+            ),
+            port=0,
+            live_provider=live_provider,
+        )
+    except PermissionError:
+        pytest.skip("local socket binding is unavailable in this sandbox")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = server.preview_url.rsplit("/", 1)[0]
+    try:
+        with urlopen(f"{base_url}/explore", timeout=5) as response:
+            html = response.read().decode("utf-8")
+        store.put(
+            MemoryRecord(
+                id="memory:second-live-api",
+                scope="agent:openminion",
+                type="decision",
+                key="second-live-api",
+                title="Second Live API Memory",
+                content="The served live API should stream this memory.",
+                created_at=now,
+                updated_at="2026-07-21T00:01:00+00:00",
+            )
+        )
+        with urlopen(f"{base_url}/api/live", timeout=5) as response:
+            event = response.read().decode("utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    payload = _sse_data_payload(event)
+    operation = payload["operations"][0]
+    assert "First Live API Memory" in html
+    assert "event: graphfakos.patch" in event
+    assert payload["patch_id"].startswith("openminion-memory:")
+    assert operation["kind"] == "snapshot_reset"
+    assert operation["metadata"]["refresh_strategy"] == (
+        "live_snapshot_reset_or_requery"
+    )
+    assert operation["metadata"]["node_count"] == 2
+    assert len(operation["graph"]["nodes"]) == 2
+    assert (
+        live_provider.diagnostics().last_revision == payload["result_revision"]["value"]
+    )
+
+
+def _sse_data_payload(event: str) -> dict[str, Any]:
+    for line in event.splitlines():
+        if line.startswith("data: "):
+            payload = json.loads(line.removeprefix("data: "))
+            assert isinstance(payload, dict)
+            return payload
+    pytest.fail(f"SSE event did not include data: {event}")
 
 
 def test_second_brain_provider_matches_graphfakos_conformance(tmp_path) -> None:
@@ -926,16 +1635,187 @@ def test_static_html_renders_in_playwright_when_chromium_available(tmp_path) -> 
     page_text = str(page_probe["text"])
     assert "GraphFakos" in page_text
     assert "Browser Viewer Smoke" in page_text
-    assert "Graph filters" in page_text
-    assert "Node kind" in page_text
+    assert "Active Query" in page_text
+    assert "Tools" in page_text
     assert "Evidence" in page_text
     assert page_probe["canvas_visible"] is True
+    assert page_probe["toolbar_present"] is True
     assert page_probe["node_count"] >= 1
     assert page_probe["graph_json_node_count"] == 1
     assert page_probe["inspect_overlay"] is True
 
 
+def test_served_viewer_live_refresh_updates_browser_state(tmp_path) -> None:
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    graphfakos = pytest.importorskip("graphfakos")
+    from graphfakos.preview import LocalPreviewProviderSession
+    from graphfakos.ui import render_provider_path
+
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    store.put(
+        MemoryRecord(
+            id="memory:browser-live-first",
+            scope="agent:openminion",
+            type="fact",
+            key="browser-live-first",
+            title="Browser Live First",
+            content="The browser live test starts with this node.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    graph_request = graphfakos.GraphFakosRequest()
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+    preview_provider = LocalPreviewProviderSession(provider)
+    live_provider = OpenMinionMemoryGraphFakosLiveProvider(
+        graphfakos=graphfakos,
+        provider=provider,
+        request=graph_request,
+    )
+    try:
+        server = graphfakos.make_local_viewer_server(
+            render_path=lambda path, query: render_provider_path(
+                preview_provider,
+                graph_request,
+                path,
+                query,
+            ),
+            port=0,
+            live_provider=live_provider,
+        )
+    except PermissionError:
+        pytest.skip("local socket binding is unavailable in this sandbox")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        page_probe = _playwright_live_refresh_probe(
+            playwright_sync=playwright_sync,
+            page_url=server.preview_url,
+            db_path=db_path,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert page_probe["initial_graph_node_count"] == 1
+    assert page_probe["live_graph_node_count"] == 2
+    assert "memory:browser-live-second" in page_probe["live_graph_node_ids"]
+    assert page_probe["live_patch_applied"] is True
+    assert "event: graphfakos.patch" in page_probe["live_event"]
+    assert page_probe["live_status"] == "live"
+    assert page_probe["live_status_text"] == "Live graph is current."
+
+
 def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, object]:
+    def _probe(page: Any) -> dict[str, object]:
+        page.goto(page_uri)
+        viewer = page.locator("graphfakos-viewer")
+        return {
+            "text": page.locator("body").inner_text(timeout=10_000),
+            "canvas_visible": page.locator(
+                "[aria-label='GraphFakos graph canvas']"
+            ).is_visible(timeout=10_000),
+            "toolbar_present": page.locator("[aria-label='Graph filters']").count()
+            == 1,
+            "node_count": page.locator("[data-gf-graph-item='node']").count(),
+            "inspect_overlay": page.locator("[data-gf-inspect-overlay='true']").count()
+            == 1,
+            "graph_json_node_count": viewer.evaluate(
+                "(element) => JSON.parse("
+                "element.getAttribute('data-graph-json') || '{}'"
+                ").nodes.length"
+            ),
+        }
+
+    return _run_playwright_probe(
+        playwright_sync=playwright_sync,
+        probe=_probe,
+        timeout_message="chromium browser smoke timed out",
+        error_prefix="playwright page probe failed",
+    )
+
+
+def _playwright_live_refresh_probe(
+    *,
+    playwright_sync: Any,
+    page_url: str,
+    db_path: Path,
+) -> dict[str, object]:
+    def _probe(page: Any) -> dict[str, object]:
+        page.goto(page_url)
+        viewer = page.locator("graphfakos-viewer")
+        initial_count = viewer.evaluate("(element) => element.graph.nodes.length")
+        SQLiteMemoryStore(db_path).put(
+            MemoryRecord(
+                id="memory:browser-live-second",
+                scope="agent:openminion",
+                type="decision",
+                key="browser-live-second",
+                title="Browser Live Second",
+                content="The browser should receive this live node.",
+                created_at="2026-07-21T00:00:00+00:00",
+                updated_at="2026-07-21T00:01:00+00:00",
+            )
+        )
+        live_probe = page.evaluate(
+            """async () => {
+              const viewer = document.querySelector("graphfakos-viewer");
+              if (!viewer?.applyLivePatch) {
+                throw new Error("GraphFakos live viewer API is unavailable");
+              }
+              const response = await fetch("/api/live");
+              const event = await response.text();
+              const dataLine = event
+                .split("\\n")
+                .find((line) => line.startsWith("data: "));
+              if (!dataLine) throw new Error(`missing live patch data: ${event}`);
+              const patch = JSON.parse(dataLine.replace("data: ", ""));
+              const result = viewer.applyLivePatch(patch);
+              return {
+                nodeCount: viewer.graph.nodes.length,
+                nodeIds: viewer.graph.nodes.map((node) => node.id),
+                status: viewer.getState().live_status,
+                applied: result.applied,
+                event,
+              };
+            }"""
+        )
+        return {
+            "initial_graph_node_count": initial_count,
+            "live_graph_node_count": live_probe["nodeCount"],
+            "live_graph_node_ids": live_probe["nodeIds"],
+            "live_status": live_probe["status"],
+            "live_patch_applied": live_probe["applied"],
+            "live_event": live_probe["event"],
+            "live_status_text": page.locator("[data-gf-live-status]").inner_text(
+                timeout=10_000
+            ),
+        }
+
+    return _run_playwright_probe(
+        playwright_sync=playwright_sync,
+        probe=_probe,
+        timeout_message="chromium live refresh smoke timed out",
+        error_prefix="playwright live refresh probe failed",
+        timeout_seconds=30,
+    )
+
+
+def _run_playwright_probe(
+    *,
+    playwright_sync: Any,
+    probe: Callable[[Any], dict[str, object]],
+    timeout_message: str,
+    error_prefix: str,
+    timeout_seconds: int = 60,
+) -> dict[str, object]:
     box: dict[str, object] = {}
 
     def _runner() -> None:
@@ -952,22 +1832,9 @@ def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, 
                 return
             try:
                 page = browser.new_page()
-                page.goto(page_uri)
-                box["probe"] = {
-                    "text": page.locator("body").inner_text(timeout=10_000),
-                    "canvas_visible": page.locator(
-                        "[aria-label='GraphFakos graph canvas']"
-                    ).is_visible(timeout=10_000),
-                    "node_count": page.locator("[data-gf-graph-item='node']").count(),
-                    "inspect_overlay": page.locator(
-                        "[data-gf-inspect-overlay='true']"
-                    ).count()
-                    == 1,
-                    "graph_json_node_count": page.locator("graphfakos-viewer").evaluate(
-                        "(viewer) => JSON.parse(viewer.querySelector("
-                        "\"script[data-graph-json='true']\").textContent).nodes.length"
-                    ),
-                }
+                box["probe"] = probe(page)
+            except Exception as exc:  # noqa: BLE001
+                box["error"] = f"{error_prefix}: {exc}"
             finally:
                 browser.close()
         finally:
@@ -975,10 +1842,12 @@ def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, 
 
     worker = threading.Thread(target=_runner, daemon=True)
     worker.start()
-    worker.join(timeout=60)
+    worker.join(timeout=timeout_seconds)
     if worker.is_alive():
-        pytest.skip("chromium browser smoke timed out")
+        pytest.skip(timeout_message)
     if "skip" in box:
         pytest.skip(str(box["skip"]))
+    if "error" in box:
+        pytest.fail(str(box["error"]))
     probe = box.get("probe", {})
     return dict(probe) if isinstance(probe, dict) else {}

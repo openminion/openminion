@@ -27,6 +27,10 @@ from tests.e2e.cli.focus.harness.probe import (
     sidecar_consent_prompt_visible,
 )
 from tests.e2e.cli.focus.harness.pty import PtySession, bracketed_paste_payload
+from tests.e2e.cli.focus.harness.scenarios import (
+    FocusScenario,
+    assert_scenario_contract,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -37,6 +41,42 @@ def test_expected_markers_ignore_echoed_prompt() -> None:
 
     with pytest.raises(AssertionError, match="next steps"):
         assert_expected_markers(transcript, prompt, ("next steps",))
+
+
+def test_scenario_contract_requires_expected_files_and_transcript_rules(
+    tmp_path: Path,
+) -> None:
+    scenario = FocusScenario(
+        scenario_id="contract-check",
+        prompt="",
+        min_generated_files=2,
+        expected_file_patterns=("README*",),
+        forbidden_transcript_markers=("code.repo_index(",),
+        validation_commands=(("{python}", "-c", "print('ok')"),),
+    )
+    (tmp_path / "tool.py").write_text("print('ok')\n", encoding="utf-8")
+
+    with pytest.raises(AssertionError, match="expected at least 2"):
+        assert_scenario_contract(
+            scenario,
+            scratch_dir=tmp_path,
+            transcript="",
+        )
+
+    (tmp_path / "README.md").write_text("# ok\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="forbidden marker"):
+        assert_scenario_contract(
+            scenario,
+            scratch_dir=tmp_path,
+            transcript="Running code.repo_index(.)",
+        )
+
+    assert_scenario_contract(
+        scenario,
+        scratch_dir=tmp_path,
+        transcript="Done",
+        python_bin=sys.executable,
+    )
 
 
 def test_composer_echo_probe_uses_visible_tail_for_long_input() -> None:
@@ -550,6 +590,20 @@ def test_turn_output_uses_prompt_boundary() -> None:
     transcript = f"banner\n❯ {prompt}\n● Final result.\nDone in 4s\n"
 
     assert turn_output_text(transcript, prompt).strip().startswith("● Final result.")
+
+
+def test_completed_turn_allows_debug_traceback_before_final_done() -> None:
+    transcript = (
+        "❯ create a module and test\n"
+        "● Running exec.run(python test_module.py)\n"
+        "Traceback (most recent call last):\n"
+        "ZeroDivisionError: division by zero\n"
+        "● Running file.write(module.py)\n"
+        "⏺ result: fixed the failing edge case.\n"
+        "Done in 12s\n"
+    )
+
+    assert_focus_turn_completed(transcript)
 
 
 def test_turn_output_preserves_answers_across_repeated_screen_frames() -> None:

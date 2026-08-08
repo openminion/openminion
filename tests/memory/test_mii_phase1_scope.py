@@ -11,15 +11,15 @@ from openminion.modules.memory.storage.memory import InMemoryMemoryStore
 from openminion.modules.memory.storage.base import SearchQueryOptions
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
 from sophiagraph.contracts.errors import InvalidArgumentError
-from sophiagraph.models.core import _assert_scope
+from sophiagraph.models import MemoryScope
 
 
 def test_project_scope_validation_is_additive() -> None:
-    _assert_scope("project:my-proj-123")
+    assert MemoryScope.parse("project:my-proj-123").is_project
     with pytest.raises(InvalidArgumentError):
-        _assert_scope("project:")
+        MemoryScope.parse("project:")
     with pytest.raises(InvalidArgumentError):
-        _assert_scope("invalid:proj")
+        MemoryScope.parse("invalid:proj")
 
 
 def test_project_scope_promotion_policy_respects_trust_boundary() -> None:

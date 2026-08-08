@@ -1,8 +1,13 @@
 """Token and run usage records projected from durable session facts."""
 
 from .contracts import (
+    TOKEN_USAGE_ROLLUP_SCHEMA_VERSION,
     TOKEN_USAGE_SCHEMA_VERSION,
     TokenUsageExportPayload,
+    TokenUsageProviderCoveragePayload,
+    TokenUsageRollupEfficiencyPayload,
+    TokenUsageRollupPayload,
+    TokenUsageSessionTrendPayload,
 )
 from .coverage import TokenUsageCoverage, TokenUsageDimensionCoverage
 from .formatting import format_run_stats_footer, format_session_stats_summary
@@ -20,12 +25,17 @@ __all__ = [
     "RunStatsSummary",
     "SessionStatsSummary",
     "StatsService",
+    "TOKEN_USAGE_ROLLUP_SCHEMA_VERSION",
     "TOKEN_USAGE_SCHEMA_VERSION",
     "TokenUsageEventRef",
     "TokenUsageCoverage",
     "TokenUsageDimensionCoverage",
     "TokenUsageExportPayload",
+    "TokenUsageProviderCoveragePayload",
+    "TokenUsageRollupEfficiencyPayload",
     "TokenUsageRecord",
+    "TokenUsageRollupPayload",
+    "TokenUsageSessionTrendPayload",
     "TokenUsageSummary",
     "ToolCallCount",
     "format_run_stats_footer",

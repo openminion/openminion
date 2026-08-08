@@ -496,7 +496,6 @@ def build_turn_context(
                 request_id=request_id,
                 memory_capsule_strategy=memory_capsule_strategy,
             )
-            return turn_context
 
     _populate_knowledge_graph_context(
         turn_context=turn_context,

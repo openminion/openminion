@@ -16,7 +16,7 @@ class RuntimeDelegationMixin:
         timeout_seconds: int = 120,
         approval_callback: Any | None = None,
     ) -> dict[str, Any]:
-        from openminion.cli.commands.agent_delegation import (
+        from openminion.cli.commands.agent.delegation import (
             AgentDelegateRequest,
             run_agent_delegate_request,
         )

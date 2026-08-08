@@ -36,6 +36,15 @@ _VALIDATION_REQUEST_PATTERNS = (
     "run validation",
     "validation result",
 )
+_REQUESTED_FILE_EXTENSIONS = (
+    ".py",
+    ".md",
+    ".toml",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+)
 
 
 def requested_closeout_markers(loop_state: Any) -> tuple[str, ...]:
@@ -112,6 +121,46 @@ def _changed_paths_from_tool_results(tool_results: list[dict[str, Any]]) -> list
     return changed_paths
 
 
+def missing_requested_file_artifact_labels(loop_state: Any) -> tuple[str, ...]:
+    user_text = "\n".join(
+        str(getattr(message, "content", "") or "")
+        for message in list(getattr(loop_state, "messages", []) or [])
+        if str(getattr(message, "role", "") or "").strip().lower() == "user"
+    ).lower()
+    if not user_text:
+        return ()
+    paths = tuple(
+        path.lower().rsplit("/", 1)[-1]
+        for path in _changed_paths_from_tool_results(
+            _mutating_file_tool_results(
+                _successful_substantive_tool_results(loop_state)
+            )
+        )
+    )
+    missing: list[str] = []
+    for requested_path in re.findall(r"`([^`]+)`", user_text):
+        file_name = requested_path.rsplit("/", 1)[-1].strip()
+        if (
+            file_name
+            and file_name.endswith(_REQUESTED_FILE_EXTENSIONS)
+            and file_name not in paths
+            and file_name not in missing
+        ):
+            missing.append(file_name)
+    if "readme" in user_text and not any(path.startswith("readme") for path in paths):
+        missing.append("README")
+    if ("cli entry" in user_text or "cli project" in user_text) and not any(
+        path in {"cli.py", "main.py", "__main__.py"} or path.endswith("_cli.py")
+        for path in paths
+    ):
+        missing.append("CLI entry")
+    if "test" in user_text and not any(
+        path.startswith("test") or path.endswith("_test.py") for path in paths
+    ):
+        missing.append("test file")
+    return tuple(missing)
+
+
 def _is_mutating_file_tool_result(item: dict[str, Any]) -> bool:
     tool_name = str(item.get("tool_name") or "").strip().lower()
     if tool_name in _MUTATING_FILE_TOOL_NAMES:
@@ -155,6 +204,10 @@ def requested_validation_without_exec_run(loop_state: Any) -> bool:
     return _user_requested_validation(loop_state) and not _has_successful_exec_run(
         _successful_substantive_tool_results(loop_state)
     )
+
+
+def mutating_file_evidence_can_closeout(loop_state: Any) -> bool:
+    return not requested_validation_without_exec_run(loop_state)
 
 
 def _tool_evidence_lines(tool_results: list[dict[str, Any]]) -> list[str]:
@@ -210,7 +263,16 @@ def tool_evidence_closeout_text(loop_state: Any, *, reason: str) -> str:
                 f"{marker}: not captured before closeout; preserved tool evidence "
                 "is reported below."
             )
-    if not lines:
+    if lines:
+        prefix: list[str] = []
+        if "result" not in requested:
+            prefix.append(f"result: {reason}")
+        if changed_paths and not any(
+            marker in {"files", "files changed"} for marker in requested
+        ):
+            prefix.append(f"files changed: {rendered_paths}")
+        lines = prefix + lines
+    else:
         lines = [f"result: {reason}"]
         if changed_paths:
             lines.append(f"files changed: {rendered_paths}")

@@ -79,3 +79,13 @@ def test_default_policy_allows_git_and_plan_runtime_prefixes():
 
     policy.ensure_tool_allowed("git.status")
     policy.ensure_tool_allowed("plan.list")
+
+
+def test_exact_tool_allow_does_not_admit_neighboring_names() -> None:
+    policy = Policy(
+        raw={"tools": {"allow_exact": ["transfer_to_child"], "allow_prefix": []}}
+    )
+
+    policy.ensure_tool_allowed("transfer_to_child")
+    with pytest.raises(ToolRuntimeError):
+        policy.ensure_tool_allowed("transfer_to_child_extra")

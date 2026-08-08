@@ -14,7 +14,6 @@ class BrowserPlaywrightRegistrar:
     is_provider_only = True
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        """Register tool."""
         from .plugin import register
 
         runtime_env = getattr(getattr(ctx, "config", None), "env", None)
@@ -23,7 +22,6 @@ class BrowserPlaywrightRegistrar:
         )
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
-        """Return ToolBindingManifest for browser_playwright module."""
         from openminion.modules.tool.contracts import ToolBindingManifest
 
         return ToolBindingManifest(

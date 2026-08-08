@@ -104,7 +104,26 @@ class AnthropicProvider:
 
     def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
         started = time.perf_counter()
-        model = _resolve_model(request, config, "claude-3-5-sonnet-latest")
+        model = _resolve_model(request, config, "claude-sonnet-5")
+        sampling_overrides = tuple(
+            name
+            for name, value in (
+                ("temperature", request.temperature),
+                ("top_p", request.top_p),
+            )
+            if value is not None
+        )
+        if model == "claude-sonnet-5" and sampling_overrides:
+            raise LLMCtlError(
+                "INVALID_ARGUMENT",
+                "Claude Sonnet 5 does not accept sampling overrides; omit "
+                + ", ".join(sampling_overrides),
+                details={
+                    "model": model,
+                    "parameters": list(sampling_overrides),
+                    "retryable": False,
+                },
+            )
         api_key = _resolve_api_key(config, self.name, required=True)
         base_url = str(config.get("base_url") or self.default_base_url).rstrip("/")
         behavior_profile = resolve_behavior_profile(

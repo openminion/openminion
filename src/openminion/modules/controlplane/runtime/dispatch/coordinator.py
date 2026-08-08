@@ -74,6 +74,16 @@ def _ctx_with_inbound_trace(
     return ctx
 
 
+def _inbound_with_metadata_trace(
+    inbound: InboundMessage, *, fallback_trace: str
+) -> InboundMessage:
+    metadata = inbound_metadata(inbound)
+    if str(metadata.get("trace_id", "")).strip():
+        return inbound
+    metadata["trace_id"] = fallback_trace
+    return replace(inbound, metadata=metadata, meta=dict(metadata))
+
+
 def _clarify_answer_rejection_or_none(
     *,
     chat: ChatDispatcher,
@@ -158,17 +168,34 @@ class ControlPlaneDispatcher:
 
     def handle_inbound(self, inbound: InboundMessage) -> JsonDict:
         inbound = canonicalize_inbound_message(inbound)
-        self._audit("inbound.received", channel=inbound.channel)
         ctx = self.router.resolve(inbound)
+        pending = self._clarify.get(ctx.session_id)
+        inbound = self._chat.apply_pending_trace(inbound, pending)
+        inbound = _inbound_with_metadata_trace(inbound, fallback_trace=ctx.trace_id)
+        ctx = _ctx_with_inbound_trace(inbound, ctx)
         self._audit(
-            "inbound.resolved", session_id=ctx.session_id, agent_id=ctx.agent_id
+            "inbound.received",
+            channel=inbound.channel,
+            trace_id=str(inbound_metadata(inbound).get("trace_id", "")),
+        )
+        self._audit(
+            "inbound.resolved",
+            session_id=ctx.session_id,
+            agent_id=ctx.agent_id,
+            trace_id=ctx.trace_id,
         )
         self.store.persist_inbound(inbound, ctx.session_id)
         outbound_payload, _ = self.dispatch(inbound)
         payload = to_legacy_payload(outbound_payload)
         if self.outbound_sender is not None:
             self.outbound_sender(payload)
-        self._audit("outbound.sent", kind=_outbound_kind(outbound_payload))
+        self._audit(
+            "outbound.sent",
+            kind=_outbound_kind(outbound_payload),
+            session_id=ctx.session_id,
+            agent_id=ctx.agent_id,
+            trace_id=ctx.trace_id,
+        )
         return payload
 
     def dispatch(

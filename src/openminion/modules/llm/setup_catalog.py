@@ -72,7 +72,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         api_format_id="anthropic-messages",
         default_base_url="https://api.anthropic.com/v1",
         credential_env="ANTHROPIC_API_KEY",
-        recommended_models=("claude-3-5-sonnet-latest",),
+        recommended_models=("claude-sonnet-5",),
         discovery_posture="recommended_only",
         setup_help_url="https://console.anthropic.com/settings/keys",
     ),
@@ -143,7 +143,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         api_format_id="openai-compatible",
         default_base_url="https://api.minimax.io/v1",
         credential_env="MINIMAX_API_KEY",
-        recommended_models=("MiniMax-M3", "MiniMax-M2.7-highspeed", "MiniMax-M2.7"),
+        recommended_models=("MiniMax-M2.7", "MiniMax-M2.7-highspeed"),
         discovery_posture="live_optional",
         setup_help_url="https://platform.minimax.io/docs/api-reference/text-openai-api",
     ),
@@ -155,7 +155,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         api_format_id="openai-compatible",
         default_base_url="https://api.moonshot.ai/v1",
         credential_env="MOONSHOT_API_KEY",
-        recommended_models=("kimi-k3",),
+        recommended_models=("kimi-k2.6",),
         discovery_posture="recommended_only",
         setup_help_url="https://platform.kimi.ai/docs/overview",
     ),
@@ -203,7 +203,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         api_format_id="openai-compatible",
         default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         credential_env="DASHSCOPE_API_KEY",
-        recommended_models=("qwen-plus",),
+        recommended_models=("qwen3.7-plus",),
         discovery_posture="recommended_only",
         setup_help_url=(
             "https://www.alibabacloud.com/help/en/model-studio/"
@@ -254,7 +254,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         api_format_id="openai-compatible",
         default_base_url="https://api.together.ai/v1",
         credential_env="TOGETHER_API_KEY",
-        recommended_models=("MiniMaxAI/MiniMax-M3",),
+        recommended_models=("MiniMaxAI/MiniMax-M2.7",),
         discovery_posture="recommended_only",
         setup_help_url="https://docs.together.ai/docs/inference/openai-compatibility",
     ),
@@ -285,7 +285,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
 )
 
 _PRESET_BY_ID = {preset.preset_id: preset for preset in _PRESETS}
-_FIRST_SCREEN_IDS = ("openai", "anthropic", "openrouter")
+_FIRST_SCREEN_IDS = ("openai", "anthropic", "openrouter", "minimax")
 
 
 def list_setup_presets() -> tuple[ProviderSetupPreset, ...]:
@@ -329,7 +329,7 @@ def resolve_model_choice(
         return ModelChoiceResult(
             preset_id=preset.preset_id,
             models=(manual,),
-            source="manual",
+            source=("recommended" if manual in preset.recommended_models else "manual"),
         )
 
     started = perf_counter()

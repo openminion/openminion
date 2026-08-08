@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import Literal
+from typing import Any, Literal
 
 from openminion.base.generated_paths import resolve_generated_root
 
@@ -18,6 +18,20 @@ MatrixClassification = Literal[
 ]
 
 SCHEMA_VERSION = "session-context-provider-matrix.v1"
+CERTIFICATION_RUN_SCHEMA_VERSION = "provider-session-resilience-run.v1"
+CERTIFICATION_REPORT_SCHEMA_VERSION = "provider-session-resilience-certification.v1"
+CERTIFICATION_REPORT_DIRNAME = "provider-session-resilience-certification"
+_ALLOWED_INJECTED_FAILURE_CODES = frozenset(
+    {
+        "auth_denied",
+        "model_access_denied",
+        "quota_or_rate_limit",
+        "timeout",
+        "malformed_output",
+        "structured_output_failed",
+        "transient_transport",
+    }
+)
 _SCRATCH_ROOT = (
     Path(__file__).resolve().parents[6]
     / "workspace-tmp"
@@ -73,6 +87,32 @@ class ProviderMatrix:
         }
 
 
+@dataclass(frozen=True)
+class ProviderSessionTarget:
+    provider_class: str
+    adapter: str
+    api_protocol: str
+    endpoint_authority: str
+    config_ref: str
+    agent_id: str
+    expected_model: str
+    required_capabilities: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ProviderSessionInjectedFailure:
+    provider_class: str
+    failure_code: str
+    retry_eligible: bool
+
+
+@dataclass(frozen=True)
+class ProviderSessionResilienceManifest:
+    run_id: str
+    targets: tuple[ProviderSessionTarget, ...]
+    injected_failures: tuple[ProviderSessionInjectedFailure, ...]
+
+
 def build_provider_matrix(
     *, root: Path | None = None, run_id: str | None = None
 ) -> ProviderMatrix:
@@ -88,6 +128,104 @@ def build_provider_matrix(
         generated_at_epoch=int(time.time()),
         rows=rows,
     )
+
+
+def provider_class_key(
+    *, adapter: str, api_protocol: str, endpoint_authority: str
+) -> str:
+    return "|".join(
+        (
+            adapter.strip().lower(),
+            api_protocol.strip().lower(),
+            endpoint_authority.strip().lower(),
+        )
+    )
+
+
+def load_provider_session_resilience_manifest(
+    path: Path,
+    *,
+    root: Path | None = None,
+) -> ProviderSessionResilienceManifest:
+    repo_root = root or Path(__file__).resolve().parents[6]
+    payload = _read_json(path)
+    if payload.get("schema_version") != CERTIFICATION_RUN_SCHEMA_VERSION:
+        raise ValueError("unsupported provider session resilience schema_version")
+    if _has_secret_bearing_field(payload):
+        raise ValueError("manifest contains a secret-bearing field")
+
+    run_id = _required_str(payload, "run_id")
+    targets_payload = payload.get("targets")
+    if not isinstance(targets_payload, list) or len(targets_payload) < 2:
+        raise ValueError("manifest requires at least two provider targets")
+
+    targets = tuple(
+        _parse_provider_session_target(target, repo_root=repo_root)
+        for target in targets_payload
+    )
+    class_keys = {
+        provider_class_key(
+            adapter=target.adapter,
+            api_protocol=target.api_protocol,
+            endpoint_authority=target.endpoint_authority,
+        )
+        for target in targets
+    }
+    if len(class_keys) < 2:
+        raise ValueError("manifest must include at least two distinct provider classes")
+    if len(class_keys) != len(targets):
+        raise ValueError("duplicate provider class targets are not allowed")
+
+    failures = tuple(
+        _parse_injected_failure(item) for item in payload.get("injected_failures", ())
+    )
+    return ProviderSessionResilienceManifest(
+        run_id=run_id,
+        targets=targets,
+        injected_failures=failures,
+    )
+
+
+def write_provider_session_resilience_report(
+    manifest: ProviderSessionResilienceManifest,
+    *,
+    manifest_path: Path,
+    root: Path | None = None,
+    validation_only: bool = True,
+) -> tuple[Path, Path]:
+    repo_root = root or Path(__file__).resolve().parents[6]
+    output_root = (
+        resolve_generated_root(repo_root)
+        / CERTIFICATION_REPORT_DIRNAME
+        / _safe_segment(manifest.run_id)
+    )
+    output_root.mkdir(parents=True, exist_ok=True)
+    rows = [
+        _certification_row(
+            target=target,
+            run_id=manifest.run_id,
+            validation_only=validation_only,
+        )
+        for target in manifest.targets
+    ]
+    payload = {
+        "schema_version": CERTIFICATION_REPORT_SCHEMA_VERSION,
+        "run_id": manifest.run_id,
+        "generated_at_epoch": int(time.time()),
+        "validation_only": validation_only,
+        "manifest_path": str(manifest_path.resolve(strict=False)),
+        "rows": rows,
+        "injected_failures": [asdict(item) for item in manifest.injected_failures],
+        "redaction_status": "redacted",
+    }
+    json_path = output_root / "certification-report.json"
+    markdown_path = output_root / "certification-report.md"
+    json_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    markdown_path.write_text(_render_certification_markdown(payload), encoding="utf-8")
+    return json_path, markdown_path
 
 
 def write_provider_matrix(
@@ -121,6 +259,173 @@ def load_provider_matrix(path: Path) -> ProviderMatrix:
         generated_at_epoch=int(payload["generated_at_epoch"]),
         rows=rows,
     )
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("manifest must be a JSON object")
+    return payload
+
+
+def _parse_provider_session_target(
+    payload: object,
+    *,
+    repo_root: Path,
+) -> ProviderSessionTarget:
+    if not isinstance(payload, dict):
+        raise ValueError("provider target must be a JSON object")
+    provider_class = _require_mapping_keys(
+        payload,
+        "provider_class",
+        ("adapter", "api_protocol", "endpoint_authority"),
+    )
+    capabilities = payload.get("required_capabilities")
+    if not isinstance(capabilities, list) or not capabilities:
+        raise ValueError("provider target requires capability facts")
+    normalized_capabilities = tuple(str(item).strip() for item in capabilities)
+    if not all(normalized_capabilities):
+        raise ValueError("provider target capability facts cannot be empty")
+
+    config_ref = _required_str(payload, "config_ref")
+    config_path = Path(config_ref).expanduser()
+    if not config_path.is_absolute():
+        config_path = repo_root / config_path
+    if not config_path.exists():
+        raise ValueError(f"provider config does not exist: {config_ref}")
+
+    return ProviderSessionTarget(
+        provider_class=provider_class_key(
+            adapter=str(provider_class["adapter"]),
+            api_protocol=str(provider_class["api_protocol"]),
+            endpoint_authority=str(provider_class["endpoint_authority"]),
+        ),
+        adapter=str(provider_class["adapter"]),
+        api_protocol=str(provider_class["api_protocol"]),
+        endpoint_authority=str(provider_class["endpoint_authority"]),
+        config_ref=config_ref,
+        agent_id=_required_str(payload, "agent_id"),
+        expected_model=_required_str(payload, "expected_model"),
+        required_capabilities=normalized_capabilities,
+    )
+
+
+def _parse_injected_failure(payload: object) -> ProviderSessionInjectedFailure:
+    if not isinstance(payload, dict):
+        raise ValueError("injected failure must be a JSON object")
+    failure_code = _required_str(payload, "failure_code")
+    if failure_code not in _ALLOWED_INJECTED_FAILURE_CODES:
+        raise ValueError(f"unsupported injected failure_code: {failure_code}")
+    return ProviderSessionInjectedFailure(
+        provider_class=_required_str(payload, "provider_class"),
+        failure_code=failure_code,
+        retry_eligible=bool(payload.get("retry_eligible")),
+    )
+
+
+def _certification_row(
+    *,
+    target: ProviderSessionTarget,
+    run_id: str,
+    validation_only: bool,
+) -> dict[str, object]:
+    return {
+        "provider_class": target.provider_class,
+        "adapter": target.adapter,
+        "api_protocol": target.api_protocol,
+        "endpoint_authority": target.endpoint_authority,
+        "model": target.expected_model,
+        "agent_id": target.agent_id,
+        "session_id": f"{run_id}:{target.provider_class}",
+        "command": _probe_command_for_target(target, run_id=run_id),
+        "required_capabilities": list(target.required_capabilities),
+        "classification": "blocked_external" if validation_only else "not_applicable",
+        "failure_code": "validate_only_live_not_run" if validation_only else "",
+        "retry_fallback_owner": "",
+        "final_provider_class": "",
+        "latency_ms": None,
+        "token_count": None,
+        "cost": None,
+        "quality_result": "not_evaluated",
+        "transcript_ref": "",
+        "trace_ref": "",
+        "redaction_status": "redacted",
+    }
+
+
+def _probe_command_for_target(target: ProviderSessionTarget, *, run_id: str) -> str:
+    return (
+        "tests/e2e/runners/run_cli_chat_probe.py "
+        f"--config {target.config_ref} "
+        f"--agent {target.agent_id} "
+        f"--session {run_id}:{target.provider_class} "
+        "--message '<turn-1>' --message '<turn-2>'"
+    )
+
+
+def _render_certification_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        f"# Provider Session Resilience Certification ({payload['run_id']})",
+        "",
+        "| Provider class | Agent | Model | Classification | Failure code |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for row in payload["rows"]:
+        lines.append(
+            "| "
+            f"{row['provider_class']} | {row['agent_id']} | {row['model']} | "
+            f"{row['classification']} | {row['failure_code'] or '-'} |"
+        )
+    if payload["injected_failures"]:
+        lines.extend(("", "## Injected Failures", ""))
+        for failure in payload["injected_failures"]:
+            lines.append(
+                "- "
+                f"{failure['provider_class']}: {failure['failure_code']} "
+                f"(retry_eligible={failure['retry_eligible']})"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def _required_str(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"missing required field: {key}")
+    return value.strip()
+
+
+def _require_mapping_keys(
+    payload: dict[str, Any],
+    key: str,
+    required_keys: tuple[str, ...],
+) -> dict[str, Any]:
+    value = payload.get(key)
+    if not isinstance(value, dict):
+        raise ValueError(f"missing required mapping: {key}")
+    missing = [item for item in required_keys if item not in value]
+    if missing:
+        raise ValueError(f"{key} is missing required keys: {', '.join(missing)}")
+    return value
+
+
+def _has_secret_bearing_field(value: object) -> bool:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            lowered = str(key).lower()
+            if any(
+                token in lowered
+                for token in ("secret", "api_key", "token", "password", "credential")
+            ):
+                return True
+            if _has_secret_bearing_field(child):
+                return True
+    if isinstance(value, list):
+        return any(_has_secret_bearing_field(item) for item in value)
+    return False
+
+
+def _safe_segment(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in value)
 
 
 def _row_for_target(
@@ -237,9 +542,17 @@ def _render_markdown(matrix: ProviderMatrix) -> str:
 
 
 __all__ = [
+    "CERTIFICATION_REPORT_SCHEMA_VERSION",
+    "CERTIFICATION_RUN_SCHEMA_VERSION",
     "ProviderMatrix",
     "ProviderMatrixRow",
+    "ProviderSessionInjectedFailure",
+    "ProviderSessionResilienceManifest",
+    "ProviderSessionTarget",
     "build_provider_matrix",
     "load_provider_matrix",
+    "load_provider_session_resilience_manifest",
+    "provider_class_key",
+    "write_provider_session_resilience_report",
     "write_provider_matrix",
 ]

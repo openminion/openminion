@@ -146,7 +146,6 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         return _l2_normalize(vector)
 
     def embed(self, text: str) -> EmbeddingResult:
-        """Generate embedding for single text."""
         vector: List[float]
         if self._ensure_sentence_transformer():
             encoded = self._st_model.encode(text or "", normalize_embeddings=True)
@@ -167,7 +166,6 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         )
 
     def embed_batch(self, texts: List[str]) -> EmbeddingBatchResult:
-        """Generate embeddings for a batch of texts."""
         results = [self.embed(text) for text in texts]
         return EmbeddingBatchResult(results=results)
 
@@ -189,7 +187,6 @@ class APIEmbeddingProvider(EmbeddingProvider):
         # Deterministic fallback until a real HTTP client is wired here.
 
     def embed(self, text: str) -> EmbeddingResult:
-        """Generate embedding for a single text via API."""
         import hashlib
 
         text_hash = hashlib.md5((text + self.model).encode()).hexdigest()
@@ -208,7 +205,6 @@ class APIEmbeddingProvider(EmbeddingProvider):
         )
 
     def embed_batch(self, texts: List[str]) -> EmbeddingBatchResult:
-        """Generate embeddings for a batch of texts via API."""
         results = [self.embed(text) for text in texts]
         return EmbeddingBatchResult(results=results)
 
@@ -227,7 +223,6 @@ class InMemoryVectorIndex:
         vectors: List[List[float]],
         metadata_list: Optional[List[dict]] = None,
     ) -> None:
-        """Add vectors to the index."""
         if metadata_list is None:
             metadata_list = [{} for _ in ids]
 
@@ -245,7 +240,6 @@ class InMemoryVectorIndex:
         top_k: int = 10,
         filters: Optional[dict] = None,
     ) -> List[tuple[str, float, dict]]:
-        """Search for similar vectors."""
         if len(query_vector) != self.dim:
             raise ValueError(
                 f"Query vector has dimension {len(query_vector)}, expected {self.dim}"
@@ -281,21 +275,17 @@ class InMemoryVectorIndex:
         return results[:top_k]
 
     def get_vector(self, vector_id: str) -> Optional[List[float]]:
-        """Get vector by ID."""
         return self.vectors.get(vector_id)
 
     def has_vector(self, vector_id: str) -> bool:
-        """Check if a vector exists."""
         return vector_id in self.vectors
 
     def delete_vectors(self, ids: List[str]) -> None:
-        """Delete vectors by ID."""
         for vector_id in ids:
             self.vectors.pop(vector_id, None)
             self.metadata.pop(vector_id, None)
 
     def clear(self) -> None:
-        """Clear the index."""
         self.vectors.clear()
         self.metadata.clear()
 
@@ -357,7 +347,6 @@ class SQLiteVecBackend(VectorIndexBackend):
         self._init_tables()
 
     def _init_tables(self):
-        """Initialize vector-specific tables."""
         cursor = self.conn.cursor()
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS vector_collections (
@@ -394,7 +383,6 @@ class SQLiteVecBackend(VectorIndexBackend):
         vectors: List[List[float]],
         metadata_list: Optional[List[dict]] = None,
     ) -> None:
-        """Add vectors to SQLite store."""
         if metadata_list is None:
             metadata_list = [{} for _ in ids]
 
@@ -471,7 +459,6 @@ class SQLiteVecBackend(VectorIndexBackend):
         return results[:top_k]
 
     def get_vector(self, vector_id: str) -> Optional[List[float]]:
-        """Get a single vector by ID."""
         cursor = self.conn.cursor()
         cursor.execute(
             """
@@ -487,7 +474,6 @@ class SQLiteVecBackend(VectorIndexBackend):
         return None
 
     def delete_vectors(self, ids: List[str]) -> None:
-        """Delete vectors by IDs."""
         if not ids:
             return
 
@@ -598,7 +584,6 @@ class QdrantVectorBackend(VectorIndexBackend):
         vectors: List[List[float]],
         metadata_list: Optional[List[dict]] = None,
     ) -> None:
-        """Add vectors to Qdrant."""
         self._ensure_client()
 
         if metadata_list is None:
@@ -660,7 +645,6 @@ class QdrantVectorBackend(VectorIndexBackend):
         ]
 
     def get_vector(self, vector_id: str) -> Optional[List[float]]:
-        """Get a single vector from Qdrant."""
         self._ensure_client()
 
         results = self._client.retrieve(
@@ -675,7 +659,6 @@ class QdrantVectorBackend(VectorIndexBackend):
         return None
 
     def delete_vectors(self, ids: List[str]) -> None:
-        """Delete vectors from Qdrant."""
         self._ensure_client()
 
         from qdrant_client.http import models
@@ -703,11 +686,9 @@ class VectorIndexAdapter:
 
     @property
     def _vector_index(self):
-        """Public getter for testing purposes to get direct access to underlying vector index."""
         return self.__vector_index
 
     def index_record(self, record: Any, content: str) -> str:
-        """Index a memory record with its content."""
         embedding_result = self.embedding_provider.embed(content)
 
         vector_id = getattr(record, "id", f"record_{int(time.time())}")
@@ -719,7 +700,6 @@ class VectorIndexAdapter:
         return vector_id
 
     def index_records_batch(self, records: List[Any], contents: List[str]):
-        """Batch index multiple records."""
         if len(records) != len(contents):
             raise ValueError("Records and contents must have the same length")
 
@@ -749,7 +729,6 @@ class VectorIndexAdapter:
     def search(
         self, query: str, top_k: Optional[int] = None
     ) -> List[tuple[Any, float, Dict]]:
-        """Semantic search in the vector store."""
         query_embedding = self.embedding_provider.embed(query)
 
         search_results = self.__vector_index.search(
@@ -783,7 +762,6 @@ class MockEmbeddingProvider(EmbeddingProvider):
     """Mock embedding provider for testing."""
 
     def embed(self, text: str) -> EmbeddingResult:
-        """Return mock embedding result."""
         import hashlib
 
         text_hash = hashlib.md5(text.encode()).hexdigest()
@@ -798,7 +776,6 @@ class MockEmbeddingProvider(EmbeddingProvider):
         )
 
     def embed_batch(self, texts: List[str]) -> EmbeddingBatchResult:
-        """Mock batch embedding."""
         results = [self.embed(text) for text in texts]
         return EmbeddingBatchResult(results=results)
 

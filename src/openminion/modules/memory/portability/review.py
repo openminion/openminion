@@ -30,7 +30,7 @@ from openminion.modules.memory.portability.review_contracts import (
     build_memory_review_artifact,
     review_sha256,
 )
-from sophiagraph.portability.row_codec import (
+from sophiagraph.portability import (
     candidate_from_dict,
     record_from_dict,
     relation_from_dict,

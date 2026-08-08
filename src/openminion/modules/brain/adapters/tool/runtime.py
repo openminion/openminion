@@ -1,8 +1,11 @@
 import copy
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Mapping
+from threading import Lock
+from typing import Any, Iterator, Mapping
 
 from openminion.base.logging import get_logger
 from openminion.base.config import resolve_data_root, resolve_home_root
@@ -44,6 +47,7 @@ from .command_metadata import (
     _extract_runtime_message_ref,
     _merge_orchestration_context_metadata,
     _orchestration_metadata_from_command,
+    _runtime_workspace_from_command,
 )
 from .policy_context import (
     _agent_id_from_policy,
@@ -59,6 +63,10 @@ from .results import (
 )
 
 _log = get_logger("brain.adapters.tool.runtime")
+_WORKSPACE_OVERRIDE: ContextVar[Path | None] = ContextVar(
+    "openminion_tool_workspace_override",
+    default=None,
+)
 
 
 def _is_confirm_required_code(code: Any) -> bool:
@@ -107,6 +115,8 @@ class ToolAdapter:
         agent_profile: Any | None = None,
     ) -> None:
         self.workspace_root = workspace_root
+        self._workspace_override_lock = Lock()
+        self._workspace_override_counts: dict[Path, int] = {}
         policy_from_none = policy is None
         self.policy = self._coerce_policy(policy)
         self.policy_adapter = policy_adapter
@@ -294,12 +304,45 @@ class ToolAdapter:
         return _CompositePolicyAdapter([base_adapter, extra_adapter])
 
     def _effective_workspace_root(self, policy: Policy | None = None) -> Path:
+        override = _WORKSPACE_OVERRIDE.get()
+        if override is not None:
+            return override
         raw = getattr(policy or self.policy, "raw", None)
         if isinstance(raw, Mapping):
             workspace_root = str(raw.get("workspace_root", "") or "").strip()
             if workspace_root:
                 return Path(workspace_root).expanduser()
         return self.workspace_root
+
+    @contextmanager
+    def workspace_override(self, workspace_root: Path) -> Iterator[None]:
+        workspace = Path(workspace_root).expanduser()
+        workspace_key = workspace.resolve(strict=False)
+        with self._workspace_override_lock:
+            self._workspace_override_counts[workspace_key] = (
+                self._workspace_override_counts.get(workspace_key, 0) + 1
+            )
+        token = _WORKSPACE_OVERRIDE.set(workspace)
+        try:
+            yield
+        finally:
+            _WORKSPACE_OVERRIDE.reset(token)
+            with self._workspace_override_lock:
+                remaining = self._workspace_override_counts.get(workspace_key, 0) - 1
+                if remaining > 0:
+                    self._workspace_override_counts[workspace_key] = remaining
+                else:
+                    self._workspace_override_counts.pop(workspace_key, None)
+
+    def _registered_workspace_override(self, raw_workspace: str) -> Path | None:
+        if not raw_workspace:
+            return None
+        workspace = Path(raw_workspace).expanduser()
+        workspace_key = workspace.resolve(strict=False)
+        with self._workspace_override_lock:
+            if self._workspace_override_counts.get(workspace_key, 0) > 0:
+                return workspace
+        return None
 
     def execute(
         self, *, command: dict[str, Any], session_id: str, trace_id: str
@@ -317,6 +360,7 @@ class ToolAdapter:
         start_time = time.monotonic()
         runtime_message_ref = _extract_runtime_message_ref(command=command, args=args)
         orchestration_metadata = _orchestration_metadata_from_command(command)
+        requested_workspace = _runtime_workspace_from_command(command)
         if (
             runtime_message_ref is not None
             and tool_name.startswith("reactions.")
@@ -339,13 +383,40 @@ class ToolAdapter:
                 runtime_tool = None
 
         policy_for_run = self.policy
+        workspace_override = self._registered_workspace_override(requested_workspace)
+        if requested_workspace and workspace_override is None:
+            return _error_envelope(
+                status=BRAIN_STATE_ERROR,
+                summary="Invalid runtime workspace context",
+                code="INVALID_RUNTIME_CONTEXT",
+                message="The requested child workspace is not active.",
+            )
+        workspace_override = workspace_override or _WORKSPACE_OVERRIDE.get()
+        if workspace_override is not None:
+            policy_raw = copy.deepcopy(getattr(policy_for_run, "raw", {}) or {})
+            policy_raw["workspace_root"] = str(workspace_override)
+            context_metadata = policy_raw.setdefault("context_metadata", {})
+            if isinstance(context_metadata, dict):
+                context_metadata["workspace_root"] = str(workspace_override)
+                context_metadata["cwd"] = str(workspace_override)
+            policy_for_run = Policy(raw=policy_raw)
         if runtime_message_ref is not None:
-            policy_raw = copy.deepcopy(getattr(self.policy, "raw", {}) or {})
+            policy_raw = copy.deepcopy(getattr(policy_for_run, "raw", {}) or {})
             tools_cfg = policy_raw.setdefault("tools", {})
             if isinstance(tools_cfg, dict):
                 reactions_cfg = tools_cfg.setdefault("reactions", {})
                 if isinstance(reactions_cfg, dict):
                     reactions_cfg["runtime_message_ref"] = runtime_message_ref
+            policy_for_run = Policy(raw=policy_raw)
+        if isinstance(spec, ToolSpec) and bool(
+            getattr(spec, "prompt_visible_runtime_name", False)
+        ):
+            policy_raw = copy.deepcopy(getattr(policy_for_run, "raw", {}) or {})
+            tools_cfg = policy_raw.setdefault("tools", {})
+            if isinstance(tools_cfg, dict):
+                allow_exact = list(tools_cfg.get("allow_exact", []) or [])
+                if tool_name not in allow_exact:
+                    tools_cfg["allow_exact"] = [*allow_exact, tool_name]
             policy_for_run = Policy(raw=policy_raw)
         policy_raw = getattr(policy_for_run, "raw", None)
         if isinstance(policy_raw, Mapping):

@@ -19,14 +19,12 @@ _LOGGER = get_logger("modules.controlplane.commands.registry")
 
 class CommandRegistryBaseMixin:
     def _register_builtin_commands(self) -> None:
-        """Register all built-in commands as CommandSpecs."""
         for spec in builtin_command_specs(self).values():
             self.register_command_spec(spec)
 
     def register_command_spec(
         self, spec: CommandSpec, skip_collision_check: bool = False
     ) -> bool:
-        """Register a command specification with collision handling."""
         if not skip_collision_check and spec.name in self._command_specs:
             original_spec = self._command_specs[spec.name]
             _LOGGER.warning(
@@ -48,34 +46,27 @@ class CommandRegistryBaseMixin:
         return True
 
     def get_command_spec(self, command_name: str) -> CommandSpec | None:
-        """Get command spec by name."""
         return self._command_specs.get(command_name)
 
     def list_commands(self) -> list[str]:
-        """List all registered (non-shadowed) command names."""
         return list(self._command_specs.keys())
 
     def list_shadowed_commands(self) -> list[str]:
-        """List all shadowed command names."""
         return list(self.shadowed_commands.keys())
 
     def get_all_registered_commands(self) -> list[CommandSpec]:
-        """Get all registered command specs (including shadowed ones)."""
         return list(self._command_specs.values()) + list(
             self.shadowed_commands.values()
         )
 
     def get_command_auth_requirement(self, command_name: str) -> AuthRequirement | None:
-        """Get auth requirement for a command."""
         spec = self._command_specs.get(command_name)
         return spec.auth_requirement if spec else None
 
     def get_loaded_modules(self) -> dict[str, str]:
-        """Get dictionary of loaded modules and their versions."""
         return self.loaded_modules.copy()
 
     def get_broken_modules(self):
-        """Get broken modules helper."""
         return self.broken_module_tracker.get_broken_modules()
 
     def register_broken_module(
@@ -84,17 +75,14 @@ class CommandRegistryBaseMixin:
         error: Exception,
         failed_commands: Optional[list[str]] = None,
     ) -> None:
-        """Register a module that couldn't be loaded."""
         self.broken_module_tracker.register_broken_module(
             module_name, error, failed_commands
         )
 
     def is_broken_module(self, module_name: str) -> bool:
-        """Check if a module has failed loading."""
         return self.broken_module_tracker.is_broken_module(module_name)
 
     def list_modules(self) -> dict:
-        """Get comprehensive module diagnostics."""
         broken_modules = self.broken_module_tracker.get_broken_modules()
         shadowed_module_names = set(
             spec.module_name for spec in self.shadowed_commands.values()

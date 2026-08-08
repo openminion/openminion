@@ -23,6 +23,7 @@ from openminion.cli.config import (
     resolve_identity_bundle_root,
 )
 from openminion.base.types import Message
+from openminion.modules.llm import LLMCtlError
 from openminion.modules.llm.providers.factory import SUPPORTED_PROVIDERS
 from openminion.modules.identity import load_identity_bundle
 from openminion.services.health.probes import (
@@ -403,12 +404,10 @@ def run_doctor(args) -> int:
             )
         else:
             checks.append(
-                _run_turn_smoke_check(
+                _run_requested_connection_check(
+                    args=args,
                     app=app,
-                    message=args.message,
-                    target=args.target,
-                    channel=args.channel,
-                    agent_id=selected_agent.name,
+                    selected_agent_name=selected_agent.name,
                 )
             )
 
@@ -844,6 +843,65 @@ def _run_turn_smoke_check(
             status="fail",
             message=f"Agent turn smoke test failed: {exc}",
             remediation="Run `openminion agent-check --json` for detailed functional failure context.",
+        )
+
+
+def _run_requested_connection_check(
+    *, args: Any, app: APIRuntime, selected_agent_name: str
+) -> DoctorCheck:
+    if getattr(args, "provider_check", False):
+        return _run_provider_connection_check(app=app, message=args.message)
+    return _run_turn_smoke_check(
+        app=app,
+        message=args.message,
+        target=args.target,
+        channel=args.channel,
+        agent_id=selected_agent_name,
+    )
+
+
+def _run_provider_connection_check(app: APIRuntime, message: str) -> DoctorCheck:
+    started = perf_counter()
+    try:
+        response = app.llm.client.complete(
+            [{"role": "user", "content": message}],
+            max_output_tokens=16,
+            temperature=0,
+        )
+        latency_ms = int((perf_counter() - started) * 1000)
+        if not response.ok:
+            error = response.error
+            detail = error.message if error else "provider request failed"
+            return DoctorCheck(
+                id="provider.connection_smoke",
+                status="fail",
+                message=f"Provider connection check failed: {detail}",
+                remediation="Verify the provider endpoint, credential, and selected model.",
+            )
+        if not response.output_text.strip():
+            return DoctorCheck(
+                id="provider.connection_smoke",
+                status="fail",
+                message="Provider connection check returned empty response text",
+                remediation="Verify the selected model can produce chat responses.",
+            )
+        return DoctorCheck(
+            id="provider.connection_smoke",
+            status="ok",
+            message="Provider connection check succeeded",
+            details={
+                "latency_ms": latency_ms,
+                "provider": response.provider,
+                "model": response.model,
+                "response_chars": len(response.output_text),
+            },
+        )
+    except (LLMCtlError, RuntimeError, TypeError, ValueError) as exc:
+        return DoctorCheck(
+            id="provider.connection_smoke",
+            status="fail",
+            message=f"Provider connection check failed: {exc}",
+            remediation="Verify the provider endpoint, credential, and selected model.",
         )
 
 

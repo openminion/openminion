@@ -33,6 +33,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "deny": [],
     },
     "tools": {
+        "allow_exact": [],
         "allow_prefix": [
             "file.",
             "code.",

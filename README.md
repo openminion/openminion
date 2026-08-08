@@ -26,7 +26,9 @@
 OpenMinion is the public preview of a runtime for running inspectable
 agents on your own machine. One shared runtime spans CLI, Python API, HTTP API,
 and daemon-backed workflows, with durable sessions, structured tools, and
-inspectable run state built in.
+inspectable run state built in. Long-running autonomy, live provider
+resilience, and memory/context usefulness claims remain proof-gated during the
+alpha period.
 
 ## Read This First
 
@@ -57,12 +59,14 @@ and should be treated as a scam.
 | Python | 3.11+ |
 | Best fit | Bounded local workflows, tool use, integrations, and operator-driven agents |
 | Main surfaces | CLI, Python API, local HTTP API, and daemon-backed execution |
-| State model | Sessions, conversations, threads, runs, artifacts, and memory |
+| State model | Local sessions, conversations, threads, runs, artifacts, and memory records |
 | Not the claim | Finished walk-away autonomy or a managed cloud control plane |
 
 OpenMinion is usable for focused local work today, but it remains under active
 development. Complex end-to-end prompts and long unsupervised tasks are still
-improving.
+improving. Current 2-hour autonomy certification support is validation-only;
+full 8-hour and 24-hour real elapsed certification pilots still require an
+approved run window, provider/model access, workspace, and budgets.
 
 ## Common Commands
 
@@ -73,6 +77,8 @@ openminion run "hello"
 openminion
 openminion tools list
 openminion doctor --check-turn --json
+# Optional: install "openminion[acp]" before using a local ACP client.
+openminion acp
 ```
 
 Useful operator surfaces:
@@ -86,7 +92,19 @@ openminion agent inspect --agent-id default --json
 
 ## Install
 
-Install the current package:
+Install the current package as an isolated command-line app:
+
+```bash
+pipx install openminion
+```
+
+or, with `uv`:
+
+```bash
+uv tool install openminion
+```
+
+Installing into an existing Python environment is also supported:
 
 ```bash
 python3.11 -m pip install openminion
@@ -112,12 +130,26 @@ export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
 
 ## Quick Start
 
-Initialize configuration and run one turn:
+For a real model-backed session, start with the bare command:
 
 ```bash
-openminion config init
-openminion run "Summarize the files in this directory."
+openminion
 ```
+
+When setup finishes and Focus opens, ask: `Give me one safe read-only command
+to inspect the current directory.`
+
+For a credential-free product tour, create an explicit echo/demo config:
+
+```bash
+openminion config init --provider echo
+openminion run "hello"
+openminion status readiness
+```
+
+Demo mode exercises configuration, storage, sessions, and CLI plumbing, but it
+does not call a model or prove provider-backed task quality. Readiness reports
+label this state `demo`, not `ready`.
 
 Open the interactive CLI:
 
@@ -149,7 +181,7 @@ complete runnable example and
 - one orchestration model across CLI, Python, HTTP, and daemon-backed paths
 - provider abstraction for local and hosted model backends
 - structured tools with model-facing contracts and policy-gated execution
-- durable session, run, artifact, memory, and conversation state
+- durable local session, run, artifact, memory-record, and conversation state
 - interactive and one-shot local workflows
 - diagnostics, status, logs, inspection, and OpenTelemetry-ready traces
 - extension surfaces for tools, providers, skills, memory, and integrations
@@ -158,6 +190,8 @@ complete runnable example and
 
 - finished “give it any complex task and walk away” autonomy
 - a hosted control plane or managed cloud agent service
+- provider-backed certification proof without configured provider credentials
+  and an approved run window
 - a black-box prompt wrapper that hides runtime state
 - automatic permission to perform unsafe or privileged actions
 - any cryptocurrency or investment product

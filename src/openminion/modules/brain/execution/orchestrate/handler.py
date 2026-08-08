@@ -389,6 +389,7 @@ class OrchestrateMode:
         )
         child_state = parent_state.model_copy(deep=True)
         child_state.goal = child_context.goal
+        child_state.last_user_input = child_context.prompt
         child_state.active_skill_id = child_context.active_skill_id
         child_state.constraints = list(child_context.constraints or [])
         child_state.plan = None
@@ -483,6 +484,7 @@ class OrchestrateMode:
         budget: BudgetCounters,
         child_state: WorkingState,
         result: ExecutionResult,
+        child_artifact: dict[str, Any] | None = None,
     ) -> SubtaskResult:
         action_result = getattr(result, "action_result", None)
         action_status = str(getattr(action_result, "status", "") or "").strip().lower()
@@ -510,7 +512,37 @@ class OrchestrateMode:
             output=output,
             error=_subtask_failure_error(result) if status == "failed" else None,
             tokens_used=max(0, int(budget.tokens) - tokens_remaining),
+            child_artifact=child_artifact,
         )
+
+    def _invoke_child(
+        self,
+        ctx: ExecutionContext,
+        *,
+        runner: Any,
+        child_state: WorkingState,
+        subtask: SubtaskSpec,
+        decision: Any,
+        prompt: str,
+    ) -> tuple[ExecutionResult, dict[str, Any] | None]:
+        lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
+        result_status = "error"
+        try:
+            with bind_runner_tool_workspace(runner, lease=lease):
+                result = invoke_decision_direct(
+                    runner,
+                    state=child_state,
+                    decision=decision,
+                    user_input=prompt,
+                    logger=ctx.logger,
+                    depth=1,
+                )
+            result_status = result.status
+        finally:
+            child_artifact = finalize_child_worktree(
+                ctx, lease=lease, status=result_status
+            )
+        return result, child_artifact
 
     def _execute_one_subtask(
         self,
@@ -556,21 +588,14 @@ class OrchestrateMode:
         runner = runner_from_context(ctx)
         if runner is None:
             raise RuntimeError("OrchestrateMode requires runner-backed services")
-        lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
-        result_status = "error"
-        try:
-            with bind_runner_tool_workspace(runner, lease=lease):
-                result = invoke_decision_direct(
-                    runner,
-                    state=child_state,
-                    decision=decision,
-                    user_input=prompt,
-                    logger=ctx.logger,
-                    depth=1,
-                )
-            result_status = result.status
-        finally:
-            finalize_child_worktree(ctx, lease=lease, status=result_status)
+        result, child_artifact = self._invoke_child(
+            ctx,
+            runner=runner,
+            child_state=child_state,
+            subtask=subtask,
+            decision=decision,
+            prompt=prompt,
+        )
         merge_child_policy_facts(ctx, child_state=child_state)
         subtask_result = self._result_from_mode_output(
             subtask=subtask,
@@ -578,6 +603,7 @@ class OrchestrateMode:
             budget=budget,
             child_state=child_state,
             result=result,
+            child_artifact=child_artifact,
         )
         self._emit_status(
             ctx,
@@ -674,21 +700,14 @@ class OrchestrateMode:
         runner = runner_from_context(ctx)
         if runner is None:
             raise RuntimeError("OrchestrateMode requires runner-backed services")
-        lease = allocate_child_worktree(subtask=subtask, child_state=child_state)
-        result_status = "error"
-        try:
-            with bind_runner_tool_workspace(runner, lease=lease):
-                result = invoke_decision_direct(
-                    runner,
-                    state=child_state,
-                    decision=decision,
-                    user_input=prompt,
-                    logger=ctx.logger,
-                    depth=1,
-                )
-            result_status = result.status
-        finally:
-            finalize_child_worktree(ctx, lease=lease, status=result_status)
+        result, child_artifact = self._invoke_child(
+            ctx,
+            runner=runner,
+            child_state=child_state,
+            subtask=subtask,
+            decision=decision,
+            prompt=prompt,
+        )
         merge_child_policy_facts(ctx, child_state=child_state)
         subtask_result = self._result_from_mode_output(
             subtask=subtask,
@@ -696,6 +715,7 @@ class OrchestrateMode:
             budget=budget,
             child_state=child_state,
             result=result,
+            child_artifact=child_artifact,
         )
         child_result = ChildTaskResult(
             subtask_id=subtask.subtask_id,
@@ -741,7 +761,10 @@ class OrchestrateMode:
             status="failed" if failed else "success",
             summary=str(getattr(synthesized, "message", "") or "").strip(),
             outputs={
-                "subtask_results": [item.model_dump(mode="python") for item in results],
+                "subtask_results": [
+                    item.model_dump(mode="python", exclude_none=True)
+                    for item in results
+                ],
                 "completed_subtasks": completed,
                 "total_subtasks": total,
                 "child_tasks": dict(ctx.state.child_tasks),

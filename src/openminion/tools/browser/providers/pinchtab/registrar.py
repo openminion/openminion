@@ -14,7 +14,6 @@ class BrowserPinchTabRegistrar:
     is_provider_only = True
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        """Register tool."""
         from .plugin import register
 
         runtime_cfg = getattr(ctx, "config", None) if ctx is not None else None
@@ -24,7 +23,6 @@ class BrowserPinchTabRegistrar:
         register(registry, env=runtime_env)
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
-        """Return ToolBindingManifest for browser_pinchtab module."""
         from openminion.modules.tool.contracts import (
             ToolBindingManifest,
         )

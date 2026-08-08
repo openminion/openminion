@@ -80,17 +80,6 @@ def runtime_unavailable_route_result(
     session_id: str | None = None,
     run_id: str | None = None,
 ) -> RouteResult:
-    if isinstance(exc, Exception):
-        return exception_route_result(
-            HTTPStatus.SERVICE_UNAVAILABLE,
-            code="runtime_unavailable",
-            exc=exc,
-            details={"path": path},
-            retryable=True,
-            retry_after_ms=1000,
-            session_id=session_id,
-            run_id=run_id,
-        )
     return error_route_result(
         HTTPStatus.SERVICE_UNAVAILABLE,
         code="runtime_unavailable",

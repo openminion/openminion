@@ -106,6 +106,16 @@ def _orchestration_metadata_from_command(command: Mapping[str, Any]) -> dict[str
     }
 
 
+def _runtime_workspace_from_command(command: Mapping[str, Any]) -> str:
+    meta = command.get("meta")
+    if not isinstance(meta, Mapping):
+        return ""
+    runtime_execution = meta.get("runtime_execution")
+    if not isinstance(runtime_execution, Mapping):
+        return ""
+    return str(runtime_execution.get("workspace_root") or "").strip()
+
+
 def _merge_orchestration_context_metadata(
     policy_raw: dict[str, Any],
     orchestration_metadata: Mapping[str, Any] | None,
@@ -134,4 +144,5 @@ __all__ = [
     "_extract_runtime_message_ref",
     "_merge_orchestration_context_metadata",
     "_orchestration_metadata_from_command",
+    "_runtime_workspace_from_command",
 ]

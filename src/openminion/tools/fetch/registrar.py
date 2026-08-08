@@ -17,13 +17,11 @@ class FetchRegistrar:
     is_provider_only = False
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        """Register tool."""
         from .plugin import register
 
         register(registry)
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
-        """Return ToolBindingManifest for fetch module."""
         from openminion.modules.tool.contracts import (
             ModelToolDef,
             RuntimeBindingDef,

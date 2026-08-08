@@ -32,12 +32,20 @@ def build_controlplane_sidecar_specs(
     *,
     config: ControlPlaneConfig,
     store: Any,
+    wizard_store: Any | None = None,
     audit_logger: AuditLogger,
     metrics: MetricsRegistry,
 ) -> list[ControlPlaneSidecarSpec]:
     specs: list[ControlPlaneSidecarSpec] = []
     if config.janitor_enabled:
-        specs.append(_janitor_spec(config, store=store, audit_logger=audit_logger))
+        specs.append(
+            _janitor_spec(
+                config,
+                store=store,
+                wizard_store=wizard_store,
+                audit_logger=audit_logger,
+            )
+        )
     if config.health_probe_enabled:
         specs.append(
             _health_probe_spec(
@@ -48,7 +56,11 @@ def build_controlplane_sidecar_specs(
 
 
 def _janitor_spec(
-    config: ControlPlaneConfig, *, store: Any, audit_logger: AuditLogger
+    config: ControlPlaneConfig,
+    *,
+    store: Any,
+    wizard_store: Any | None,
+    audit_logger: AuditLogger,
 ) -> ControlPlaneSidecarSpec:
     return ControlPlaneSidecarSpec(
         name="controlplane-janitor",
@@ -58,6 +70,7 @@ def _janitor_spec(
         adapter=ControlPlaneJanitorSidecar(
             janitor=ControlPlaneJanitor(
                 store=store,
+                wizard_store=wizard_store,
                 policy=ControlPlaneRetentionPolicy(
                     audit_retention_days=config.audit_retention_days,
                     outbox_terminal_retention_days=config.outbox_terminal_retention_days,

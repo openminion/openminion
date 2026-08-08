@@ -107,7 +107,7 @@ def test_non_test_src_importers_resolve() -> None:
 
     repo_root = Path(__file__).resolve().parents[3]
     known_non_test_importers = {
-        "src/openminion/cli/commands/agents.py",
+        "src/openminion/cli/commands/agent/control.py",
         "src/openminion/cli/commands/channel.py",
         "src/openminion/cli/commands/debug/registry.py",
         "src/openminion/services/bootstrap/config.py",

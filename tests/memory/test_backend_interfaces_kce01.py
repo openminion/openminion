@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
@@ -19,11 +20,16 @@ from openminion.modules.memory.backends import (
 )
 from openminion.modules.memory.errors import InvalidArgumentError
 from openminion.modules.memory.models import MemoryCandidate, MemoryNamespace
+from openminion.modules.memory.portability.models import (
+    MemoryBundleExportOptions,
+    MemoryBundleImportOptions,
+)
 from openminion.modules.memory.interfaces import ensure_memory_compatibility
 from openminion.modules.memory.service import MemoryService
 from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
 )
+from openminion.services.runtime.memory import _register_memory_backend_factories
 from openminion.modules.memory.storage.base import (
     CandidateListOptions,
     ListQueryOptions,
@@ -270,6 +276,98 @@ class TestBuiltinKnowledgeBackend:
                 store=InMemoryMemoryStore(),
                 backend=BuiltinKnowledgeBackend(InMemoryMemoryStore()),
             )
+
+    def test_runtime_builtin_backend_exports_and_imports_through_factory(self) -> None:
+        source_store = InMemoryMemoryStore()
+        _register_memory_backend_factories(audited_store=source_store)
+        source_backend = instantiate_backend(
+            config=KnowledgeBackendConfig(provider="sophiagraph")
+        )
+        source_service = MemoryService(backend=source_backend)
+        source_service.upsert_record(
+            scope="agent:source",
+            record_type="fact",
+            key="shell",
+            record_patch={"title": "Shell", "content": "Uses zsh"},
+        )
+
+        snapshot = source_backend.export_snapshot(
+            MemoryBundleExportOptions(scopes=["agent:source"])
+        )
+
+        assert snapshot.manifest["counts"]["records"] == 1
+
+        target_store = InMemoryMemoryStore()
+        _register_memory_backend_factories(audited_store=target_store)
+        target_backend = instantiate_backend(
+            config=KnowledgeBackendConfig(provider="sophiagraph")
+        )
+        result = target_backend.import_snapshot(
+            snapshot,
+            MemoryBundleImportOptions(
+                scope_rewrites={"agent:source": "agent:target"},
+                trust_mode="direct",
+                conflict_mode="error",
+                id_mode="preserve",
+            ),
+        )
+
+        assert result.applied is True
+        target_service = MemoryService(backend=target_backend)
+        records = target_service.list(ListQueryOptions(scopes=["agent:target"]))
+        assert [record.content for record in records] == ["Uses zsh"]
+
+    def test_runtime_builtin_backend_import_rejects_invalid_options(self) -> None:
+        store = InMemoryMemoryStore()
+        _register_memory_backend_factories(audited_store=store)
+        backend = instantiate_backend(
+            config=KnowledgeBackendConfig(provider="sophiagraph")
+        )
+        snapshot = backend.export_snapshot(MemoryBundleExportOptions(scopes=[]))
+
+        with pytest.raises(InvalidArgumentError, match="trust_mode"):
+            backend.import_snapshot(
+                snapshot,
+                MemoryBundleImportOptions(trust_mode="unsafe"),  # type: ignore[arg-type]
+            )
+
+    def test_runtime_builtin_backend_conflict_does_not_replace_target(self) -> None:
+        source_store = InMemoryMemoryStore()
+        _register_memory_backend_factories(audited_store=source_store)
+        source_backend = instantiate_backend(
+            config=KnowledgeBackendConfig(provider="sophiagraph")
+        )
+        source_service = MemoryService(backend=source_backend)
+        source_record = source_service.upsert_record(
+            scope="agent:source",
+            record_type="fact",
+            key="shell",
+            record_patch={"title": "Shell", "content": "Uses zsh"},
+        )
+        snapshot = source_backend.export_snapshot(
+            MemoryBundleExportOptions(scopes=["agent:source"])
+        )
+
+        target_store = InMemoryMemoryStore()
+        target_store.put(replace(source_record, content="Uses fish"))
+        _register_memory_backend_factories(audited_store=target_store)
+        target_backend = instantiate_backend(
+            config=KnowledgeBackendConfig(provider="sophiagraph")
+        )
+        result = target_backend.import_snapshot(
+            snapshot,
+            MemoryBundleImportOptions(conflict_mode="error"),
+        )
+
+        assert result.applied is False
+        assert result.conflicts == [
+            {
+                "record_id": source_record.id,
+                "target_id": source_record.id,
+                "reason": "exact_id_conflict",
+            }
+        ]
+        assert target_store.get(source_record.id).content == "Uses fish"  # type: ignore[union-attr]
 
 
 class TestNoneKnowledgeBackend:

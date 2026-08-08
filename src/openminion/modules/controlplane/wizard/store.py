@@ -44,7 +44,6 @@ class WizardStore:
     DEFAULT_TIMEOUT = timedelta(minutes=30)
 
     async def init(self):
-        """Initialize the store."""
         return None
 
     async def create_session(
@@ -57,7 +56,6 @@ class WizardStore:
         session_id: Optional[str] = None,
         timeout_duration: Optional[timedelta] = None,
     ) -> WizardSession:
-        """Create a new wizard session with timeout."""
         wizard_id = str(uuid.uuid4())
         timeout_dur = timeout_duration or self.DEFAULT_TIMEOUT
         session = WizardSession(
@@ -75,7 +73,6 @@ class WizardStore:
         return session
 
     async def is_session_expired(self, session: WizardSession) -> bool:
-        """Check if a session has expired based on timeout."""
         if session.timeout_at is None:
             return False
         return datetime.now(timezone.utc) > session.timeout_at
@@ -113,7 +110,6 @@ class WizardStore:
         return session
 
     async def save_session(self, session: WizardSession) -> bool:
-        """Save a wizard session."""
         session.updated_at = datetime.now(timezone.utc)
         if session.state == WizardState.ACTIVE:
             session.timeout_at = datetime.now(timezone.utc) + self.DEFAULT_TIMEOUT
@@ -132,12 +128,10 @@ class WizardStore:
         return True
 
     async def get_active_sessions_for_user(self, user_key: str) -> list[WizardSession]:
-        """Get all active sessions for a specific user, filtering expired ones."""
         sessions = await self._get_raw_sessions_by_user(user_key)
         return await self._collect_active_sessions(sessions)
 
     async def get_active_sessions_for_chat(self, chat_key: str) -> list[WizardSession]:
-        """Get all active sessions for a specific chat/channel, filtering expired ones."""
         sessions = await self._get_raw_sessions_by_chat(chat_key)
         return await self._collect_active_sessions(sessions)
 
@@ -158,23 +152,18 @@ class WizardStore:
         raise NotImplementedError
 
     async def _get_raw_session(self, wizard_id: str) -> Optional[WizardSession]:
-        """Internal implementation to get session without expiration check."""
         raise NotImplementedError
 
     async def _save_raw_session(self, session: WizardSession) -> bool:
-        """Internal implementation to save session."""
         raise NotImplementedError
 
     async def _get_raw_sessions_by_user(self, user_key: str) -> list[WizardSession]:
-        """Internal implementation to get sessions for user without expiration check."""
         raise NotImplementedError
 
     async def _get_raw_sessions_by_chat(self, chat_key: str) -> list[WizardSession]:
-        """Internal implementation to get sessions for chat without expiration check."""
         raise NotImplementedError
 
     async def close(self):
-        """Close resources used by the store."""
         pass
 
 
@@ -185,11 +174,9 @@ class InMemoryWizardStore(WizardStore):
         self._sessions: dict[str, WizardSession] = {}
 
     async def init(self):
-        """Initialize the in-memory store."""
         return None
 
     async def _get_raw_session(self, wizard_id: str) -> Optional[WizardSession]:
-        """Get session without expiration check."""
         return self._sessions.get(wizard_id)
 
     async def _save_raw_session(self, session: WizardSession) -> bool:
@@ -197,11 +184,9 @@ class InMemoryWizardStore(WizardStore):
         return True
 
     async def _get_raw_sessions_by_user(self, user_key: str) -> list[WizardSession]:
-        """Get sessions for user without expiration check."""
         return [s for s in self._sessions.values() if s.user_key == user_key]
 
     async def _get_raw_sessions_by_chat(self, chat_key: str) -> list[WizardSession]:
-        """Get sessions for chat without expiration check."""
         return [s for s in self._sessions.values() if s.chat_key == chat_key]
 
     async def delete_session(self, wizard_id: str) -> bool:

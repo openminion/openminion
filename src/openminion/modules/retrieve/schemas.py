@@ -9,7 +9,9 @@ from openminion.base.time import utc_now_iso as iso_now
 Purpose = Literal["plan", "act", "verify", "summarize", "decide"]
 SourceType = Literal["episode", "artifact", "skill", "mem", "doc"]
 ScopeType = Literal["session", "agent", "global", "project"]
-RetrievalStrategy = Literal["auto", "contextual", "raptor", "longrag_doc_group"]
+RetrievalStrategy = Literal[
+    "auto", "contextual", "semantic", "raptor", "longrag_doc_group"
+]
 UnitKind = Literal["chunk", "doc_group", "document"]
 HierarchyLevel = Literal["none", "root", "internal", "leaf"]
 RLMRaptorLevel = Literal["none", "internal", "leaf"]

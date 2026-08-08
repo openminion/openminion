@@ -49,3 +49,25 @@ Operator notes:
 4. OTel export is provider-neutral. LangSmith, Helicone, Arize, Datadog,
    Jaeger, and similar collectors should integrate through their OTel
    ingestion path rather than via bespoke openminion adapters.
+
+## Operator inspection CLI
+
+The standalone `telemetryctl` surface is JSON-first and intended for local
+debugging without introducing a dashboard dependency or runtime semantic
+analysis. It reports structural telemetry facts only.
+
+Useful commands:
+
+1. `telemetryctl doctor` checks the telemetry database path, trace root, and
+   OpenTelemetry exporter configuration.
+2. `telemetryctl catalog` prints registered event types with their OTel export
+   disposition (`span`, `metric`, `log`, or `excluded`).
+3. `telemetryctl trace list` lists recent LLM trace artifacts under
+   `<data_root>/traces/llm/`.
+4. `telemetryctl trace show <relative-path>` prints one trace artifact while
+   enforcing that the path stays under the trace root.
+
+These commands deliberately avoid content classification or response-quality
+judgment. Post-hoc eval/replay tooling may analyze captured traces separately,
+but runtime telemetry remains operational: paths, timings, IDs, counts,
+statuses, and export dispositions.

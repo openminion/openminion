@@ -346,6 +346,7 @@ print(json.dumps(results, sort_keys=True))
                         agents={"ops": AgentProfileConfig(name="ops", provider="echo")}
                     ),
                     os.devnull,
+                    None,
                 ),
             ),
             mock.patch(
@@ -357,7 +358,7 @@ print(json.dumps(results, sort_keys=True))
             code = args.handler(args)
         self.assertEqual(code, 0)
         output = buf.getvalue()
-        self.assertIn("Initialized onboarding config", output)
+        self.assertIn("Configuration saved", output)
         self.assertIn("Interactive launch skipped", output)
 
     def test_setup_list_providers_parse(self) -> None:
@@ -402,6 +403,7 @@ print(json.dumps(results, sort_keys=True))
                         agents={"ops": AgentProfileConfig(name="ops", provider="echo")}
                     ),
                     os.devnull,
+                    None,
                 ),
             ),
             mock.patch(
@@ -1045,6 +1047,7 @@ print(json.dumps(results, sort_keys=True))
             [
                 "config",
                 "api",
+                "acp",
                 "autonomy",
                 "browser",
                 "data",
@@ -1108,6 +1111,7 @@ print(json.dumps(results, sort_keys=True))
             [
                 "config",
                 "api",
+                "acp",
                 "autonomy",
                 "browser",
                 "data",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from openminion.base.config.providers import ProvidersConfig
 from openminion.modules.llm.setup_catalog import (
     SetupCatalogError,
     first_screen_presets,
@@ -39,7 +40,11 @@ def test_setup_catalog_covers_required_provider_matrix() -> None:
     assert preset_by_id["minimax"].runtime_adapter == "openai"
     assert preset_by_id["minimax"].api_format_id == "openai-compatible"
     assert preset_by_id["minimax"].credential_env == "MINIMAX_API_KEY"
-    assert preset_by_id["minimax"].recommended_models[0] == "MiniMax-M3"
+    assert preset_by_id["minimax"].recommended_models == (
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+    )
+    assert preset_by_id["anthropic"].recommended_models == ("claude-sonnet-5",)
     assert preset_by_id["kimi"].default_base_url == "https://api.moonshot.ai/v1"
     assert preset_by_id["anthropic"].api_format_id == "anthropic-messages"
     assert preset_by_id["custom-anthropic-compatible"].api_format_id == (
@@ -75,10 +80,9 @@ def test_hosted_provider_menus_exclude_local_ollama() -> None:
     first_ids = {preset.preset_id for preset in first_screen_presets()}
     more_ids = {preset.preset_id for preset in more_screen_presets()}
 
-    assert first_ids == {"openai", "anthropic", "openrouter"}
+    assert first_ids == {"openai", "anthropic", "openrouter", "minimax"}
     assert "ollama" not in more_ids
     assert {
-        "minimax",
         "kimi",
         "zai",
         "zai-coding",
@@ -130,3 +134,28 @@ def test_model_choice_manual_source_wins_without_ranking() -> None:
 
     assert result.source == "manual"
     assert result.models == ("operator-model",)
+
+
+def test_catalog_recommendation_keeps_recommended_source_when_selected() -> None:
+    preset = get_setup_preset("minimax")
+
+    result = resolve_model_choice(
+        preset=preset,
+        manual_model="MiniMax-M2.7-highspeed",
+    )
+
+    assert result.source == "recommended"
+    assert result.models == ("MiniMax-M2.7-highspeed",)
+
+
+def test_primary_provider_defaults_match_setup_recommendations() -> None:
+    providers = ProvidersConfig()
+
+    assert providers.openai.model == get_setup_preset("openai").recommended_models[0]
+    assert (
+        providers.anthropic.model == get_setup_preset("anthropic").recommended_models[0]
+    )
+    assert (
+        providers.openrouter.model
+        == get_setup_preset("openrouter").recommended_models[0]
+    )

@@ -1679,6 +1679,30 @@ class ProviderHTTPTests(unittest.TestCase):
         self.assertEqual(response.output_text, "Hello from Anthropic")
         self.assertEqual(response.usage.total_tokens, 14)
 
+    def test_anthropic_sonnet_5_rejects_sampling_overrides(self) -> None:
+        provider = AnthropicProvider()
+        request = LLMRequest.model_validate(
+            {
+                "model": "claude-sonnet-5",
+                "messages": [{"role": "user", "content": "hello"}],
+                "temperature": 0.2,
+                "top_p": 0.8,
+            }
+        )
+
+        with self.assertRaises(LLMCtlError) as error:
+            provider.complete(
+                request,
+                {"api_key": "test-key", "base_url": "https://api.anthropic.com/v1"},
+            )
+
+        self.assertEqual(error.exception.code, "INVALID_ARGUMENT")
+        self.assertEqual(
+            error.exception.details["parameters"],
+            ["temperature", "top_p"],
+        )
+        self.assertFalse(error.exception.details["retryable"])
+
     def test_ollama_does_not_parse_fallback_tool_call(self) -> None:
         provider = OllamaProvider()
         request = LLMRequest.model_validate(

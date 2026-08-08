@@ -1,7 +1,7 @@
 # OpenMinion Getting Started
 
 Status: active
-Last updated: 2026-07-30
+Last updated: 2026-08-07
 
 Purpose: give contributors and automation authors a package-local bootstrap and
 execution summary for work inside the `openminion` repo.
@@ -25,6 +25,13 @@ export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
 
 ## First run
 
+For a public package install, prefer an isolated command-line installation:
+
+```bash
+pipx install openminion
+# or: uv tool install openminion
+```
+
 Start with the bare command:
 
 ```bash
@@ -39,18 +46,22 @@ writes the canonical config at
 Focus. A useful first task is:
 
 ```text
-what is my operating system, and what command should I run to inspect memory?
+Give me one safe read-only command to inspect the current directory.
 ```
 
 The first screen stays intentionally small:
 
-1. **Hosted provider** for OpenAI, Anthropic, OpenRouter, and the additional
-   provider presets;
+1. **Hosted provider** for OpenAI, Anthropic, OpenRouter, MiniMax, and the
+   additional provider presets;
 2. **Local provider** for Ollama; or
 3. **Import an existing OpenMinion config** from YAML or JSON.
 
 Demo mode is not part of normal onboarding. It remains available through the
-explicit `openminion --demo` development/test path.
+explicit `openminion --demo` development/test path. A non-interactive demo can
+also be created with `openminion config init --provider echo`. It verifies
+local configuration, storage, session, and CLI plumbing only; it does not call
+a model. `openminion status readiness` therefore reports `overall=demo` for
+that configuration instead of claiming provider readiness.
 
 Setup distinguishes:
 
@@ -60,14 +71,15 @@ Setup distinguishes:
 2. runtime adapter, such as `openai`, `anthropic`, `openrouter`, `ollama`, or
    `cortensor`;
 3. API format, such as OpenAI-compatible or Anthropic-compatible; and
-4. model id, such as `gpt-4.1-mini` or `MiniMax-M3`.
+4. model id, such as `gpt-4.1-mini` or `MiniMax-M2.7`.
 
 Environment credentials are preferred. For example, OpenAI setup reads
 `OPENAI_API_KEY`; MiniMax setup reads `MINIMAX_API_KEY` while using the existing
-OpenAI-compatible adapter. Interactive setup may store a pasted key locally only
-after a hidden prompt, warning, and confirmation. On POSIX systems, setup-owned
-config directories are tightened to owner-only `0700`, and setup-created config
-files are owner-only `0600`.
+OpenAI-compatible adapter. Compatibility describes the API format, not a shared
+account or credential; each service still uses its own key. Interactive setup may
+store a pasted key locally only after a hidden prompt, warning, and confirmation.
+On POSIX systems, setup-owned config directories are tightened to owner-only
+`0700`, and setup-created config files are owner-only `0600`.
 
 Built-in hosted presets currently include:
 
@@ -124,8 +136,8 @@ Automation can use the same setup path without prompts:
 ```bash
 openminion setup \
   --provider minimax \
-  --model MiniMax-M3 \
-  --agent minimax-m3 \
+  --model MiniMax-M2.7 \
+  --agent minimax-m27 \
   --no-focus
 ```
 
@@ -135,8 +147,8 @@ For another OpenAI-compatible service, choose the service preset and model:
 openminion setup \
   --provider qwen-dashscope \
   --api-format openai-compatible \
-  --model qwen-plus \
-  --agent qwen-plus \
+  --model qwen3.7-plus \
+  --agent qwen3.7-plus \
   --no-focus
 ```
 

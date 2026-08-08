@@ -127,6 +127,7 @@ class _FakeCommandExecutor:
 
     outcomes: list[CommandExecutionOutcome] = field(default_factory=list)
     calls: list[Any] = field(default_factory=list)
+    context_calls: list[Any] = field(default_factory=list)
     _index: int = 0
     include_reflect_values: list[bool] = field(default_factory=list)
 
@@ -142,6 +143,7 @@ class _FakeCommandExecutor:
     ) -> CommandExecutionOutcome:
         tool_name = str(getattr(command, "tool_name", "") or "").strip()
         if tool_name == "code.repo_index":
+            self.context_calls.append(command)
             return CommandExecutionOutcome(
                 approved_command=command,
                 action_result=ActionResult(
@@ -180,6 +182,7 @@ class _FakeCommandExecutor:
                 ),
             )
         if tool_name == "code.repo_map":
+            self.context_calls.append(command)
             return CommandExecutionOutcome(
                 approved_command=command,
                 action_result=ActionResult(
@@ -190,6 +193,7 @@ class _FakeCommandExecutor:
                 ),
             )
         if tool_name == "code.symbol_find":
+            self.context_calls.append(command)
             symbol = str(getattr(command, "args", {}).get("symbol", "") or "")
             return CommandExecutionOutcome(
                 approved_command=command,
@@ -1098,6 +1102,53 @@ def test_coding_plan_prompt_uses_repo_map_only_as_fallback() -> None:
     assert "[REPO INDEX]" not in system_prompt
     assert "[REPO MAP - FALLBACK]" in system_prompt
     assert "auth.py :: AuthService" in system_prompt
+
+
+def test_coding_plan_skips_repo_context_when_user_says_not_to_inspect_first() -> None:
+    llm_client = _FakeLLMClient(
+        responses=[
+            _plan_response(
+                """
+                {
+                  "goal": "Create a scratch module",
+                  "phases": [
+                    {"name": "implement", "status": "active", "steps": ["write module"], "output": ""}
+                  ],
+                  "current_phase": "implement",
+                  "scratchpad": [],
+                  "completed_steps": [],
+                  "open_issues": [],
+                  "subtasks": []
+                }
+                """
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    executor = _FakeCommandExecutor()
+
+    result = CodingMode().execute(
+        _ctx(
+            llm_client,
+            executor,
+            user_input=(
+                "Begin by using file.write for `demo.py`; do not inspect the "
+                "repo first."
+            ),
+        )
+    )
+
+    assert result.status in {"done", "continue"}
+    system_prompt = llm_client.calls[0]["messages"][0].content
+    assert "[REPO INDEX]" not in system_prompt
+    assert "[REPO MAP" not in system_prompt
+    assert executor.context_calls == []
 
 
 def test_coding_plan_persists_to_module_state_and_resumes_on_continue() -> None:

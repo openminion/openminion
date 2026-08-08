@@ -164,10 +164,11 @@ def _build_memory_v2_gateway_adapter(
 
 def _register_memory_backend_factories(*, audited_store: Any) -> None:
     def _build_sophiagraph_backend(**kwargs: Any) -> KnowledgeBackend:
+        portability_service = MemoryService(store=audited_store)
         return BuiltinKnowledgeBackend(
             audited_store,
-            export_snapshot_fn=_export_bundle_snapshot_placeholder,
-            import_snapshot_fn=_import_bundle_snapshot_placeholder,
+            export_snapshot_fn=portability_service.export_bundle_snapshot,
+            import_snapshot_fn=portability_service.import_bundle_snapshot,
         )
 
     def _build_none_backend(**kwargs: Any) -> KnowledgeBackend:
@@ -186,18 +187,6 @@ def _register_memory_backend_factories(*, audited_store: Any) -> None:
     register_backend_factory("sophiagraph", _build_sophiagraph_backend)
     register_backend_factory("none", _build_none_backend)
     register_backend_factory("external", _build_external_backend)
-
-
-def _export_bundle_snapshot_placeholder(options: Any) -> Any:
-    raise NotImplementedError(
-        "builtin sophiagraph backend export_snapshot wiring lands in a later KCE slice"
-    )
-
-
-def _import_bundle_snapshot_placeholder(snapshot: Any, options: Any) -> Any:
-    raise NotImplementedError(
-        "builtin sophiagraph backend import_snapshot wiring lands in a later KCE slice"
-    )
 
 
 def _configure_memory_service_runtime(

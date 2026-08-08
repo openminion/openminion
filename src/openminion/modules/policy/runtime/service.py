@@ -326,6 +326,11 @@ class PolicyCtl:
     def revoke_grant(self, grant_id: str) -> bool:
         return self._store.revoke_grant(grant_id)
 
+    def resolve_active_grant_for_use(
+        self, grant_id: str, **criteria: Any
+    ) -> PolicyGrant | None:
+        return self._store.resolve_active_grant_for_use(grant_id, **criteria)
+
     def list_grants(
         self,
         *,

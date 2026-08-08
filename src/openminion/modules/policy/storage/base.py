@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import Any
 
 from ..models import PolicyGrant, PolicyGrantInput
@@ -31,6 +32,17 @@ class PolicyStore(ABC):
 
     @abstractmethod
     def consume_grant_use(self, grant_id: str) -> PolicyGrant | None: ...
+
+    @abstractmethod
+    def resolve_active_grant_for_use(
+        self,
+        grant_id: str,
+        *,
+        subject_id: str,
+        tool: str,
+        method: str,
+        required_target: Mapping[str, Any] | None = None,
+    ) -> PolicyGrant | None: ...
 
     @abstractmethod
     def cleanup_expired(self) -> int: ...

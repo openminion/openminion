@@ -10,6 +10,7 @@ from ....constants import (
     BRAIN_STATE_ACTIVE,
     BRAIN_STATE_DONE,
     BRAIN_STATE_ERROR,
+    BRAIN_TERMINAL_STATES,
     BRAIN_STATE_WAITING_USER,
 )
 from ....diagnostics.events import CanonicalEventLogger
@@ -705,7 +706,8 @@ def _dispatch_runtime_error(
     user_input: str | None,
     exc: Exception,
 ):
-    transition(state, "fatal_error", logger=logger)
+    if str(getattr(state, "status", "") or "") not in BRAIN_TERMINAL_STATES:
+        transition(state, "fatal_error", logger=logger)
     if user_input:
         logger.emit(
             "brain.clarify.llm.failed",

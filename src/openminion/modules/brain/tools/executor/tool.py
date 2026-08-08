@@ -44,7 +44,7 @@ from .arguments import (
     resolve_tool_spec_payload,
     sanitize_tool_command_args,
 )
-from .dispatch import _command_lineage_payload
+from .dispatch import _command_lineage_payload, _inject_runtime_tool_metadata
 from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.base.constants import STATE_KEY_SOURCE_OUTCOME
 
@@ -682,11 +682,7 @@ def _tool_dispatch_payload(
     permission_mode: str,
 ) -> dict[str, Any]:
     payload = command.model_dump(mode="json")
-    payload_meta = payload.get("meta")
-    if not isinstance(payload_meta, dict):
-        payload_meta = {}
-    payload_meta["orchestration"] = dict(lineage)
-    payload["meta"] = payload_meta
+    _inject_runtime_tool_metadata(payload, state=state, lineage=lineage)
     inputs = payload.get("inputs")
     if not isinstance(inputs, dict):
         inputs = {}

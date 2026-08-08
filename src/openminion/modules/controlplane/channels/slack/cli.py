@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -24,10 +25,22 @@ from openminion.modules.controlplane.channels.slack.config import (
     from_base_config as slack_from_base_config,
     load_config as load_slack_config,
 )
+from openminion.modules.controlplane.channels.slack.normalization import (
+    slack_session_scope_key,
+)
+from openminion.modules.controlplane.channels.slack.pairing_adapter import (
+    SlackPairingAdapter,
+)
 from openminion.modules.controlplane.config import (
     from_base_config as controlplane_from_base_config,
     load_config as load_controlplane_config,
 )
+from openminion.modules.controlplane.pairing import (
+    ControlPlanePairingService,
+    ControlPlanePairingStore,
+    PairingPolicy,
+)
+from openminion.modules.controlplane.storage.sqlite import SQLiteControlPlaneStore
 
 
 SlackRunnerBuilder = Callable[[str | None], Any]
@@ -143,14 +156,43 @@ def slack_identify(args: argparse.Namespace) -> int:
 
 
 def slack_pair(args: argparse.Namespace) -> int:
-    print(
-        "Slack pairing is intentionally blocked until the cross-channel pairing "
-        "core lands. This command will not create Slack-local pairing tokens."
+    team_id = str(getattr(args, "team_id", "") or "").strip()
+    channel_id = str(getattr(args, "channel_id", "") or "").strip()
+    if not team_id or not channel_id:
+        print(
+            "Usage: openminion channel slack pair "
+            "--team-id <id> --channel-id <id> [--user-id <id>]"
+        )
+        return 2
+    cfg = _load_slack_channel_config(getattr(args, "config", None))
+    if not cfg.pairing.enabled:
+        print("Slack pairing is disabled in channels.slack.pairing.")
+        return 2
+
+    issued = issue_slack_pair_token_for_cli(
+        config_path=getattr(args, "config", None),
+        team_id=team_id,
+        channel_id=channel_id,
+        user_id=getattr(args, "user_id", None),
+        ttl_seconds=getattr(args, "ttl_seconds", None),
+        scopes=_parse_scopes(getattr(args, "scopes", None)),
     )
+    expires_at = datetime.fromtimestamp(
+        issued.expires_at_ts, tz=timezone.utc
+    ).isoformat()
+    print("Slack pairing token created.")
+    print(f"PAIR_TOKEN={issued.token}")
+    print(f"PAIR_TOKEN_HINT={issued.token_hint}")
+    print(f"PAIR_TOKEN_HASH_PREFIX={issued.token_hash_prefix}")
+    print(f"PAIR_EXPIRES_AT={expires_at}")
+    print("PAIR_SCOPES=" + ",".join(issued.scopes))
+    print("Send this with the Slack app slash command:")
+    print(f"/openminion pair {issued.token}")
     print(
-        "Tracker: docs/trackers/wip/controlplane-cross-channel-pairing-generalization-tracker.md"
+        "Access: this paired Slack channel receives broad non-admin controlplane "
+        "access until a future ACL system narrows it."
     )
-    return 2
+    return 0
 
 
 def slack_run(
@@ -230,6 +272,9 @@ def register_slack_subcommands(
     _add_config_arg(pair)
     pair.add_argument("--team-id", default=None)
     pair.add_argument("--channel-id", default=None)
+    pair.add_argument("--user-id", default=None)
+    pair.add_argument("--ttl-seconds", type=int, default=None)
+    pair.add_argument("--scopes", default=None)
     pair.set_defaults(handler=handler, needs_app=False)
 
     run = subcommands.add_parser("run", help="Run the Slack channel")
@@ -278,6 +323,47 @@ def _register_direct(
         if name == "pair":
             parser.add_argument("--team-id", default=None)
             parser.add_argument("--channel-id", default=None)
+            parser.add_argument("--user-id", default=None)
+            parser.add_argument("--ttl-seconds", type=int, default=None)
+            parser.add_argument("--scopes", default=None)
+
+
+def issue_slack_pair_token_for_cli(
+    *,
+    config_path: str | None,
+    team_id: str,
+    channel_id: str,
+    user_id: str | None = None,
+    ttl_seconds: int | None = None,
+    scopes: list[str] | None = None,
+):
+    cfg = _load_slack_channel_config(config_path)
+    cp_cfg = _load_controlplane_config(config_path)
+    store = SQLiteControlPlaneStore(cp_cfg.sqlite_path, wal=cp_cfg.wal)
+    service = ControlPlanePairingService(
+        policy=PairingPolicy.from_config(cfg.pairing),
+        store=ControlPlanePairingStore(store),
+        adapter=SlackPairingAdapter(),
+        bridge_store=store,
+    )
+    expected_account_id = (
+        f"slack:{team_id}:user:{str(user_id).strip()}"
+        if str(user_id or "").strip()
+        else None
+    )
+    return service.issue_token(
+        expected_account_id=expected_account_id,
+        expected_chat_key=slack_session_scope_key(team_id, channel_id, None),
+        token_ttl_seconds=ttl_seconds or cfg.pairing.token_ttl_seconds,
+        scopes=scopes or list(cfg.pairing.default_scopes),
+    )
+
+
+def _parse_scopes(raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    scopes = [part.strip() for part in str(raw).split(",") if part.strip()]
+    return scopes or None
 
 
 def _resolve_named_secret(
@@ -420,7 +506,14 @@ def _slack_doctor_checks(args: argparse.Namespace) -> list[dict[str, Any]]:
         )
     )
     checks.append(_check("transport.mode", True, cfg.mode, required=False))
-    checks.append(_check("pairing.mode", False, "blocked on CCP", required=False))
+    checks.append(
+        _check(
+            "pairing.mode",
+            bool(cfg.pairing.enabled),
+            str(cfg.pairing.mode),
+            required=False,
+        )
+    )
     checks.append(
         _check(
             "pairings.active",

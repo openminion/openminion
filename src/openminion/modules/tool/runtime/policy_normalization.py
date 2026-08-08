@@ -67,7 +67,7 @@ def normalize_policy_legacy_aliases(raw: dict[str, Any]) -> dict[str, Any]:
         allow_prefix = tools_out.get("allow_prefix")
         if isinstance(allow_prefix, list):
             tools_out["allow_prefix"] = [str(item) for item in allow_prefix]
-        for key in ("deny_exact",):
+        for key in ("allow_exact", "deny_exact"):
             values = tools_out.get(key)
             if isinstance(values, list):
                 tools_out[key] = [

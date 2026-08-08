@@ -40,7 +40,7 @@ _PROVIDER_SPECS: dict[str, tuple[type[Any], dict[str, tuple[str, Any]]]] = {
     "anthropic": (
         AnthropicProviderConfig,
         {
-            "model": (_KIND_STR, "claude-3-5-sonnet-latest"),
+            "model": (_KIND_STR, "claude-sonnet-5"),
             "api_key": (_KIND_STR, ""),
             "api_key_env": (_KIND_STR, "ANTHROPIC_API_KEY"),
             "base_url": (_KIND_STR, "https://api.anthropic.com/v1"),

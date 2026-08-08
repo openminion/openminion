@@ -4,11 +4,11 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from openminion.cli.commands.agent_delegation import (
+from openminion.cli.commands.agent.delegation import (
     AgentDelegateRequest,
     run_agent_delegate_request,
 )
-from openminion.cli.commands.agents import (
+from openminion.cli.commands.agent.control import (
     agent_delegate,
     agent_ls,
     agent_status,
@@ -274,7 +274,7 @@ def test_agent_delegate_lifecycle_modes_use_task_id(capsys) -> None:
 
 
 def test_visible_agent_delegate_command_uses_operator_seam(capsys, monkeypatch) -> None:
-    import openminion.cli.commands.agents as agents_mod
+    import openminion.cli.commands.agent.control as agents_mod
 
     seen: dict[str, object] = {}
     config = SimpleNamespace(
@@ -336,7 +336,7 @@ def test_visible_agent_delegate_command_uses_operator_seam(capsys, monkeypatch) 
 
 
 def test_agent_list_alias_dispatches_to_agent_ls(capsys, monkeypatch) -> None:
-    import openminion.cli.commands.agents as agents_mod
+    import openminion.cli.commands.agent.control as agents_mod
 
     registry = SimpleNamespace(
         list_agents=lambda: [SimpleNamespace(agent_id="agent-1", display_name="Agent")],
@@ -367,7 +367,7 @@ def test_agent_list_alias_dispatches_to_agent_ls(capsys, monkeypatch) -> None:
 
 
 def test_agent_delegate_unavailable_seam_returns_failure(capsys, monkeypatch) -> None:
-    import openminion.cli.commands.agent_delegation as delegation_mod
+    import openminion.cli.commands.agent.delegation as delegation_mod
 
     monkeypatch.setattr(delegation_mod, "build_a2a_delegate_api", lambda **_: None)
 
@@ -391,7 +391,7 @@ def test_agent_delegate_unavailable_seam_returns_failure(capsys, monkeypatch) ->
 
 
 def test_delegate_request_threads_runtime_resolver_to_a2a_builder(monkeypatch) -> None:
-    import openminion.cli.commands.agent_delegation as delegation_mod
+    import openminion.cli.commands.agent.delegation as delegation_mod
 
     seam = _DelegateSeam()
     seen: dict[str, object] = {}

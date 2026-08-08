@@ -5,12 +5,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from openminion.modules.llm.providers.base import (
+from openminion.modules.llm.interfaces import (
     ProviderHistoryMessage,
     ProviderRequest,
     ProviderResponse,
+    run_async_compat,
 )
-from openminion.modules.llm.runtime.sync import run_async_compat
 
 from .schemas import MCPSamplingRequest, MCPSamplingResult
 

@@ -291,9 +291,13 @@ class A2aRuntimeDelegateAdapter:
     def _run_lifecycle(
         self, operation: str, task_id: str, method_name: str
     ) -> A2ADelegateResult:
+        caller = getattr(self._a2a_call, method_name, None)
+        if not callable(caller):
+            owner = getattr(self._a2a_call, "__self__", None)
+            caller = getattr(owner, method_name, None)
         try:
             return run_a2a_job_lifecycle(
-                caller=getattr(self._a2a_call, method_name, None),
+                caller=caller,
                 operation=operation,
                 task_id=task_id,
                 parent_agent_id=self._parent_agent_id,

@@ -71,6 +71,7 @@ class SubtaskResult(BaseModel):
     output: str = ""
     error: str | None = None
     tokens_used: int = Field(default=0, ge=0)
+    child_artifact: dict[str, Any] | None = None
 
 
 class ChildTaskResult(BaseModel):

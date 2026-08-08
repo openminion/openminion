@@ -4,6 +4,10 @@ from typing import Literal, TypedDict
 
 TokenUsageSchemaVersion = Literal["openminion.token_usage.v1"]
 TOKEN_USAGE_SCHEMA_VERSION: TokenUsageSchemaVersion = "openminion.token_usage.v1"
+TokenUsageRollupSchemaVersion = Literal["openminion.token_usage_rollup.v1"]
+TOKEN_USAGE_ROLLUP_SCHEMA_VERSION: TokenUsageRollupSchemaVersion = (
+    "openminion.token_usage_rollup.v1"
+)
 
 TOTAL_SOURCE_PROVIDER: Literal["provider"] = "provider"
 TOTAL_SOURCE_DERIVED: Literal["derived"] = "derived"
@@ -105,14 +109,97 @@ class TokenUsageExportPayload(TypedDict):
     totals_by_context_bucket: dict[str, int]
 
 
+class TokenUsageAdvisoryPayload(TypedDict):
+    code: str
+    message: str
+
+
+class TokenUsageRollupTotalsPayload(TypedDict):
+    provider_tokens: int
+    derived_tokens: int
+    context_estimated_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+
+
+class TokenUsageRollupCoveragePayload(TypedDict):
+    source_event_count: int
+    llm_call_events: int
+    provider_identified_llm_call_events: int
+    model_identified_llm_call_events: int
+    run_id_present_events: int
+    trace_id_present_events: int
+    llm_call_id_present_events: int
+
+
+class TokenUsageProviderCoveragePayload(TypedDict):
+    provider: str
+    model: str
+    llm_total_records: int
+    provider_total_records: int
+    derived_total_records: int
+    provider_tokens: int
+    derived_tokens: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+
+
+class TokenUsageRollupEfficiencyPayload(TypedDict):
+    total_visible_tokens: int
+    provider_total_ratio_bps: int
+    derived_total_ratio_bps: int
+    context_share_bps: int
+    cache_read_to_write_bps: int
+
+
+class TokenUsageSessionTrendPayload(TypedDict):
+    session_id: str
+    complete: bool
+    first_observed_at: str
+    last_observed_at: str
+    provider_tokens: int
+    derived_tokens: int
+    context_estimated_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    total_visible_tokens: int
+    advisory_codes: list[str]
+
+
+class TokenUsageRollupPayload(TypedDict):
+    schema_version: TokenUsageRollupSchemaVersion
+    session_count: int
+    input_session_count: int
+    only_warnings: bool
+    complete: bool
+    totals: TokenUsageRollupTotalsPayload
+    coverage: TokenUsageRollupCoveragePayload
+    provider_coverage: list[TokenUsageProviderCoveragePayload]
+    efficiency: TokenUsageRollupEfficiencyPayload
+    session_trends: list[TokenUsageSessionTrendPayload]
+    advisories: list[TokenUsageAdvisoryPayload]
+    summaries: list[TokenUsageExportPayload]
+
+
 __all__ = [
     "TOKEN_TOTAL_SOURCES",
+    "TOKEN_USAGE_ROLLUP_SCHEMA_VERSION",
     "TOKEN_USAGE_SCHEMA_VERSION",
     "TokenTotalSource",
+    "TokenUsageAdvisoryPayload",
     "TokenUsageCoveragePayload",
     "TokenUsageDimensionCoveragePayload",
     "TokenUsageEventRefPayload",
     "TokenUsageExportPayload",
+    "TokenUsageProviderCoveragePayload",
+    "TokenUsageRollupEfficiencyPayload",
+    "TokenUsageRollupCoveragePayload",
+    "TokenUsageRollupPayload",
+    "TokenUsageRollupSchemaVersion",
+    "TokenUsageSessionTrendPayload",
+    "TokenUsageRollupTotalsPayload",
     "TokenUsageRecordPayload",
     "TokenUsageSchemaVersion",
     "TokenUsageSourceRangePayload",

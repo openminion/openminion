@@ -1,5 +1,6 @@
 import argparse
 import json
+import sqlite3
 from pathlib import Path
 
 from openminion.modules.controlplane.channels.slack import cli as slack_cli
@@ -40,8 +41,48 @@ def test_slack_setup_writes_unified_config(tmp_path: Path, monkeypatch, capsys) 
     assert "Tokens: [redacted]" in capsys.readouterr().out
 
 
-def test_slack_pair_refuses_local_pairing_fork(capsys) -> None:
-    result = slack_cli.slack_pair(argparse.Namespace())
+def test_slack_pair_uses_shared_controlplane_token_store(
+    tmp_path: Path, capsys
+) -> None:
+    config_path = tmp_path / "agent.json"
+    cp_db = tmp_path / ".openminion" / "controlplane" / "cp.db"
+    config_path.write_text(
+        json.dumps(
+            {
+                "enabled_channels": ["slack"],
+                "channels": {
+                    "controlplane": {"sqlite_path": str(cp_db)},
+                    "slack": {
+                        "enabled": True,
+                        "botToken": "xoxb-test",
+                        "pairing": {"enabled": True, "tokenTtlSeconds": 60},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    assert result == 2
-    assert "cross-channel pairing core" in capsys.readouterr().out
+    result = slack_cli.slack_pair(
+        argparse.Namespace(
+            config=str(config_path),
+            team_id="T1",
+            channel_id="C1",
+            user_id="U1",
+            ttl_seconds=60,
+            scopes="cp.message.read,cp.message.write",
+        )
+    )
+
+    output = capsys.readouterr().out
+    assert result == 0
+    assert "Slack pairing token created." in output
+    assert "/openminion pair " in output
+    with sqlite3.connect(cp_db) as conn:
+        row = conn.execute(
+            """
+            SELECT channel, expected_account_id, expected_chat_key
+            FROM cp_pair_tokens
+            """
+        ).fetchone()
+    assert row == ("slack", "slack:T1:user:U1", "slack:T1:channel:C1")

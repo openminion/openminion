@@ -2,6 +2,7 @@
 
 import fnmatch
 import json
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from uuid import uuid4
@@ -363,9 +364,13 @@ def _tool_min_scope(registry: Any, runtime_name: str) -> str:
     return "READ_ONLY"
 
 
-def build_default_published_tools() -> list[PublishedTool]:
-    """Build default published tools helper."""
+def build_contract_fixture_published_tools() -> list[PublishedTool]:
+    """Build contract-fixture tools for MCP wire-shape tests.
 
+    These handlers intentionally return fixture payloads. Runtime publication
+    must use :func:`build_runtime_published_tools` so calls execute through the
+    real OpenMinion tool registry.
+    """
     return [
         PublishedTool(
             name="openminion.memory.export",
@@ -443,6 +448,18 @@ def build_default_published_tools() -> list[PublishedTool]:
             tags=["fetch"],
         ),
     ]
+
+
+def build_default_published_tools() -> list[PublishedTool]:
+    """Deprecated compatibility alias for contract-fixture tools."""
+
+    warnings.warn(
+        "build_default_published_tools() is a contract-fixture compatibility "
+        "alias; use build_runtime_published_tools() for runtime publication.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return build_contract_fixture_published_tools()
 
 
 def _default_memory_export_handler(args: dict[str, Any]) -> dict[str, Any]:

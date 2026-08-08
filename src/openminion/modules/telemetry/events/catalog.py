@@ -192,6 +192,7 @@ METRIC = "metric"
 MESSAGE = "message"
 MODULE_DEBUG_FAILURE = "module.debug.failure"
 MODULE_STATS = "module.stats"
+TELEMETRY_QUEUE_STATS = "telemetry.queue.stats"
 SUMMARY_UPDATED = "summary.updated"
 
 
@@ -370,6 +371,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         MESSAGE,
         MODULE_DEBUG_FAILURE,
         MODULE_STATS,
+        TELEMETRY_QUEUE_STATS,
         SUMMARY_UPDATED,
     }
 )
@@ -583,5 +585,6 @@ __all__ = [
     "MESSAGE",
     "MODULE_DEBUG_FAILURE",
     "MODULE_STATS",
+    "TELEMETRY_QUEUE_STATS",
     "SUMMARY_UPDATED",
 ]

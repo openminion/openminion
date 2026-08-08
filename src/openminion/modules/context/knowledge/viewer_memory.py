@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
 from openminion.modules.context.knowledge.constants import LAYER_SECOND_BRAIN
+from openminion.modules.context.knowledge.errors import GraphViewerSourceError
 
 OPENMINION_MEMORY_PROVIDER_ID = "openminion-memory"
+LIVE_REFRESH_CAPABILITY = "live_refresh"
+LIVE_REFRESH_STRATEGY = "live_snapshot_reset_or_requery"
 
 _MEMORY_TYPE_VISUALS = {
     "decision": {"color": "#2563eb", "icon": "check-circle", "shape": "hexagon"},
@@ -31,7 +36,7 @@ def memory_db_sample_count(db_path: Path) -> int:
         return 0
     try:
         store = SQLiteMemoryStore(db_path)
-        return len(tuple(store.list(ListQueryOptions(limit=20))))
+        return len(tuple(store.list(ListQueryOptions(scopes=[], limit=20))))
     except (OSError, RuntimeError, ValueError):
         return 0
 
@@ -51,6 +56,7 @@ class OpenMinionMemoryGraphFakosProvider:
         "durable_memory",
         "static_export",
         "local_preview",
+        LIVE_REFRESH_CAPABILITY,
     )
 
     def __init__(self, *, graphfakos: Any, db_path: Path, limit: int) -> None:
@@ -64,16 +70,21 @@ class OpenMinionMemoryGraphFakosProvider:
 
         store = SQLiteMemoryStore(self._db_path)
         scopes = _scope_filters(request)
+        limit = max(1, int(request.limit or self._limit))
+        query_limit = None if _has_post_query_filters(request) else limit
         records = tuple(
-            store.list(
+            record
+            for record in store.list(
                 ListQueryOptions(
                     scopes=scopes,
                     include_invalidated=True,
-                    limit=max(1, int(request.limit or self._limit)),
+                    limit=query_limit,
                 )
             )
-        )
+            if _record_matches_filters(record, request)
+        )[:limit]
         record_ids = {record.id for record in records}
+        edge_kind = _filter_value(request, "edge_kind")
         relations: list[Any] = []
         for record in records:
             record_relations: tuple[Any, ...] = tuple(
@@ -83,6 +94,7 @@ class OpenMinionMemoryGraphFakosProvider:
                 if (
                     relation.source_record_id in record_ids
                     and relation.target_record_id in record_ids
+                    and _relation_matches_edge_kind(relation, edge_kind)
                 ):
                     relations.append(relation)
         unique_relations = {relation.relation_id: relation for relation in relations}
@@ -129,6 +141,78 @@ def _scope_filters(request: Any) -> list[str]:
     return []
 
 
+def _record_matches_filters(record: Any, request: Any) -> bool:
+    record_type = str(getattr(record, "type", "") or "")
+    query = str(getattr(request, "query", "") or "").strip()
+    if query and not _record_matches_query(record, query):
+        return False
+    node_kind = _filter_value(request, "node_kind")
+    if node_kind and record_type != node_kind:
+        return False
+    tag = _filter_value(request, "tag")
+    if tag and tag not in _memory_record_tags(record, record_type):
+        return False
+    source = _filter_value(request, "source")
+    if source and str(getattr(record, "source", "") or "") != source:
+        return False
+    min_score = _min_score_filter(request)
+    confidence = float(getattr(record, "confidence", 0.0) or 0.0)
+    return min_score is None or confidence >= min_score
+
+
+def _relation_matches_edge_kind(relation: Any, edge_kind: str) -> bool:
+    return (
+        not edge_kind or str(getattr(relation, "relation_type", "") or "") == edge_kind
+    )
+
+
+def _has_post_query_filters(request: Any) -> bool:
+    return bool(
+        str(getattr(request, "query", "") or "").strip()
+        or _filter_value(request, "node_kind")
+        or _filter_value(request, "tag")
+        or _filter_value(request, "source")
+        or _filter_value(request, "min_score")
+    )
+
+
+def _record_matches_query(record: Any, query: str) -> bool:
+    needle = query.casefold()
+    return any(needle in value.casefold() for value in _record_search_values(record))
+
+
+def _record_search_values(record: Any) -> tuple[str, ...]:
+    content = getattr(record, "content", "")
+    if isinstance(content, Mapping):
+        content_values = tuple(str(value) for value in content.values() if value)
+    else:
+        content_values = (str(content),)
+    return (
+        str(getattr(record, "id", "") or ""),
+        str(getattr(record, "key", "") or ""),
+        str(getattr(record, "title", "") or ""),
+        *content_values,
+    )
+
+
+def _filter_value(request: Any, key: str) -> str:
+    filters = getattr(request, "filters", {}) or {}
+    return str(filters.get(key, "") or "").strip()
+
+
+def _min_score_filter(request: Any) -> float | None:
+    raw = _filter_value(request, "min_score")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise GraphViewerSourceError(
+            "Minimum score must be numeric.",
+            details={"min_score": raw},
+        ) from exc
+
+
 def _split_scope_filter(raw_scope: str) -> tuple[str, ...]:
     return tuple(
         dict.fromkeys(item.strip() for item in raw_scope.split(",") if item.strip())
@@ -163,6 +247,8 @@ def _memory_provider_details() -> dict[str, str]:
         "layer": LAYER_SECOND_BRAIN,
         "owner": "OpenMinion memory",
         "storage": "openminion memory SQLite",
+        "refresh_strategy": LIVE_REFRESH_STRATEGY,
+        "mutation_policy": "read_only_viewer",
         "filterable_fields": ",".join(
             (
                 "query",
@@ -180,6 +266,22 @@ def _memory_provider_details() -> dict[str, str]:
 def _memory_provider_payload(records: tuple[Any, ...]) -> dict[str, object]:
     return {
         "empty_state": _memory_empty_state() if not records else {},
+        "refresh": {
+            "strategy": LIVE_REFRESH_STRATEGY,
+            "writes_memory": False,
+            "live_patch_stream": True,
+        },
+        "mutation_policy": {
+            "durable_memory_writes": "unsupported_from_viewer",
+            "knowledge_capture": "provider_owned_when_supported",
+            "graph_actions": "provider_owned_when_supported",
+        },
+        "local_endpoints": {
+            "graph_action": "/api/action",
+            "knowledge_capture": "/api/knowledge",
+            "import_graph": "/api/import",
+            "reset_preview": "/api/reset",
+        },
         "viewer_actions": (
             "search",
             "filter",
@@ -345,8 +447,105 @@ def _content_summary(content: object) -> str:
     return str(content)[:500]
 
 
+class OpenMinionMemoryGraphFakosLiveProvider:
+    """Expose current memory graph changes through GraphFakos live patches."""
+
+    def __init__(self, *, graphfakos: Any, provider: Any, request: Any) -> None:
+        self._graphfakos = graphfakos
+        self._provider = provider
+        self._request = request
+        graph = provider.load_graph(request)
+        self._revision = _graph_revision(graphfakos, graph)
+
+    def open_live_session(self, request: Any) -> Any:
+        return self._graphfakos.GraphFakosLiveSessionStatus(
+            status="live",
+            revision=self._revision,
+            cursor=self._graphfakos.GraphFakosLiveSessionCursor(self._revision.value),
+            message="OpenMinion memory graph live refresh is enabled.",
+        )
+
+    def load_patch(self, request: Any) -> Any:
+        graph = self._provider.load_graph(self._request)
+        current_revision = _graph_revision(self._graphfakos, graph)
+        node_count = len(getattr(graph, "nodes", ()) or ())
+        edge_count = len(getattr(graph, "edges", ()) or ())
+        cursor = getattr(request, "cursor", None)
+        base_value = (
+            str(getattr(cursor, "value", "") or "").strip() or self._revision.value
+        )
+        if current_revision.value == base_value:
+            return self._graphfakos.GraphFakosLiveSessionStatus(
+                status="heartbeat",
+                revision=current_revision,
+                cursor=self._graphfakos.GraphFakosLiveSessionCursor(
+                    current_revision.value
+                ),
+                message="No memory graph changes are available.",
+            )
+        patch = self._graphfakos.GraphFakosGraphPatch(
+            patch_id=f"openminion-memory:{current_revision.value}",
+            base_revision=self._graphfakos.GraphFakosGraphRevision(base_value),
+            result_revision=current_revision,
+            cursor=self._graphfakos.GraphFakosLiveSessionCursor(current_revision.value),
+            operations=(
+                self._graphfakos.GraphFakosPatchOperation(
+                    kind="snapshot_reset",
+                    graph=graph,
+                    metadata={
+                        "provider": OPENMINION_MEMORY_PROVIDER_ID,
+                        "refresh_strategy": LIVE_REFRESH_STRATEGY,
+                        "node_count": node_count,
+                        "edge_count": edge_count,
+                    },
+                ),
+            ),
+        )
+        self._revision = current_revision
+        return patch
+
+    def diagnostics(self) -> Any:
+        return self._graphfakos.GraphFakosLiveSessionDiagnostics(
+            last_revision=self._revision.value,
+        )
+
+
+def _graph_revision(graphfakos: Any, graph: Any) -> Any:
+    payload = {
+        "nodes": [
+            {
+                "id": str(getattr(node, "id", "") or ""),
+                "label": str(getattr(node, "label", "") or ""),
+                "kind": str(getattr(node, "kind", "") or ""),
+                "summary": str(getattr(node, "summary", "") or ""),
+                "score": getattr(node, "score", None),
+                "source": str(getattr(node, "source", "") or ""),
+                "tags": list(getattr(node, "tags", ()) or ()),
+                "timestamps": dict(getattr(node, "timestamps", {}) or {}),
+            }
+            for node in getattr(graph, "nodes", ()) or ()
+        ],
+        "edges": [
+            {
+                "id": str(getattr(edge, "id", "") or ""),
+                "source_id": str(getattr(edge, "source_id", "") or ""),
+                "target_id": str(getattr(edge, "target_id", "") or ""),
+                "kind": str(getattr(edge, "kind", "") or ""),
+                "label": str(getattr(edge, "label", "") or ""),
+            }
+            for edge in getattr(graph, "edges", ()) or ()
+        ],
+        "stats": dict(getattr(graph, "stats", {}) or {}),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return graphfakos.GraphFakosGraphRevision(hashlib.sha256(encoded).hexdigest()[:16])
+
+
 __all__ = [
     "OPENMINION_MEMORY_PROVIDER_ID",
+    "LIVE_REFRESH_CAPABILITY",
+    "LIVE_REFRESH_STRATEGY",
     "OpenMinionMemoryGraphFakosProvider",
+    "OpenMinionMemoryGraphFakosLiveProvider",
     "memory_db_sample_count",
 ]

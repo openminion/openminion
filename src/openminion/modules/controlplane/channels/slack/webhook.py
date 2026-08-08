@@ -42,6 +42,7 @@ class SlackHttpEventsRunner:
         logger: logging.Logger | None = None,
         store: Any | None = None,
         outbox_worker: Any | None = None,
+        pairing_service: Any | None = None,
         bot_user_id: str | None = None,
     ) -> None:
         self._config = config
@@ -52,6 +53,7 @@ class SlackHttpEventsRunner:
         self._log = logger or logging.getLogger(__name__)
         self._store = store
         self._outbox_worker = outbox_worker
+        self._pairing = pairing_service
         self._outbox_managed_by_supervisor = False
         self._bot_user_id = bot_user_id
 

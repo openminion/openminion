@@ -21,6 +21,8 @@ from openminion.modules.storage.module_cli import (
     run_module_storage_command,
 )
 
+_STRATEGY_CHOICES = ["auto", "contextual", "semantic", "raptor", "longrag_doc_group"]
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -65,11 +67,30 @@ def _build_parser() -> argparse.ArgumentParser:
     retrieve.add_argument(
         "--strategy",
         default="auto",
-        choices=["auto", "contextual", "raptor", "longrag_doc_group"],
+        choices=_STRATEGY_CHOICES,
     )
     retrieve.add_argument("--scope", default="")
     retrieve.add_argument("--tags", default="")
     retrieve.add_argument("--types", default="")
+    retrieve.add_argument("--time-window-hours", type=int, default=None)
+
+    diagnose = sub.add_parser("diagnose", help="Explain a retrieval query pipeline")
+    diagnose.add_argument("--query", required=True)
+    diagnose.add_argument(
+        "--purpose",
+        default="act",
+        choices=["plan", "act", "verify", "summarize", "decide"],
+    )
+    diagnose.add_argument("--k", type=int, default=8)
+    diagnose.add_argument(
+        "--strategy",
+        default="auto",
+        choices=_STRATEGY_CHOICES,
+    )
+    diagnose.add_argument("--scope", default="")
+    diagnose.add_argument("--tags", default="")
+    diagnose.add_argument("--types", default="")
+    diagnose.add_argument("--time-window-hours", type=int, default=None)
 
     build = sub.add_parser("build-raptor", help="Build RAPTOR tree for a doc")
     build.add_argument("--doc-id", required=True)
@@ -92,99 +113,162 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-
+def _apply_module_roots(args: argparse.Namespace) -> tuple[str, str]:
     home_root = str(getattr(args, "home_root", "") or "").strip()
     data_root = str(getattr(args, "data_root", "") or "").strip()
     apply_home_data_root_env(home_root=home_root, data_root=data_root)
+    return home_root, data_root
 
+
+def _resolve_config_path(args: argparse.Namespace) -> Path:
     cfg_path = getattr(args, "config", None)
-    config_path = (
+    return (
         Path(cfg_path).expanduser().resolve()
         if cfg_path
         else resolve_default_config_path()
     )
 
-    if args.command == "storage":
-        cfg = load_config(config_path, env=dict(os.environ))
-        db_path = Path(cfg.storage.sqlite_path).expanduser().resolve(strict=False)
-        return run_module_storage_command(
-            args=args,
-            module_id="retrieve",
-            db_path=db_path,
-            home_root=home_root,
-            data_root=data_root,
-        )
 
-    service = RetrieveCtl(config=config_path)
-    try:
-        if args.command == "status":
-            print_json_payload(service.status())
-            return 0
+def _scope_from_arg(raw_scope: str) -> dict[str, Any]:
+    scope: dict[str, Any] = {}
+    if raw_scope.strip():
+        for item in split_comma_tokens(raw_scope):
+            key = item.strip().lower()
+            if key in {"session", "agent", "global", "project"}:
+                scope[key] = True
+    return scope
 
-        if args.command == "ingest-text":
-            tags = split_comma_tokens(args.tags)
-            result = service.ingest_source(
-                source_type=args.source_type,
-                source_ref=args.source_ref,
-                text=args.text,
-                scope=args.scope,
-                tags=tags,
-                title=args.title,
-                corpus_id=args.corpus_id or None,
-                unit_kind=args.unit_kind,
-            )
-            print_json_payload(result.model_dump(mode="json"))
-            return 0
 
-        if args.command == "retrieve":
-            tags = split_comma_tokens(args.tags)
-            types = split_comma_tokens(args.types)
-            scope: dict[str, Any] = {}
-            if args.scope.strip():
-                for item in split_comma_tokens(args.scope):
-                    key = item.strip().lower()
-                    if key in {"session", "agent", "global", "project"}:
-                        scope[key] = True
+def _retrieval_filters_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "tags": split_comma_tokens(args.tags),
+        "types": split_comma_tokens(args.types),
+        "time_window_hours": getattr(args, "time_window_hours", None),
+    }
 
-            rows = service.retrieve(
+
+def _run_storage_command(
+    *,
+    args: argparse.Namespace,
+    config_path: Path,
+    home_root: str,
+    data_root: str,
+) -> int:
+    cfg = load_config(config_path, env=dict(os.environ))
+    db_path = Path(cfg.storage.sqlite_path).expanduser().resolve(strict=False)
+    return run_module_storage_command(
+        args=args,
+        module_id="retrieve",
+        db_path=db_path,
+        home_root=home_root,
+        data_root=data_root,
+    )
+
+
+def _run_retrieve_or_diagnose(
+    service: RetrieveCtl,
+    args: argparse.Namespace,
+) -> int:
+    scope = _scope_from_arg(args.scope)
+    filters = _retrieval_filters_from_args(args)
+    if args.command == "diagnose":
+        print_json_payload(
+            service.diagnose_retrieval(
                 query=args.query,
                 purpose=args.purpose,
                 scope=scope,
                 k=args.k,
                 strategy=args.strategy,
-                filters={"tags": tags, "types": types},
+                filters=filters,
             )
-            print_json_payload(rows)
-            return 0
+        )
+        return 0
 
-        if args.command == "build-raptor":
-            result = service.build_raptor_tree(args.doc_id)
-            print_json_payload(result)
-            return 0
+    rows = service.retrieve(
+        query=args.query,
+        purpose=args.purpose,
+        scope=scope,
+        k=args.k,
+        strategy=args.strategy,
+        filters=filters,
+    )
+    print_json_payload(rows)
+    return 0
 
-        if args.command == "group-long":
-            result = service.group_long_units(
-                args.corpus_id,
-                {"min_tokens": args.min_tokens, "max_tokens": args.max_tokens},
-            )
-            print_json_payload(result)
-            return 0
 
-        if args.command == "expand":
-            rows = service.expand(ref=args.ref, mode=args.mode, k=args.k)
-            print_json_payload(rows)
-            return 0
+def _run_service_command(
+    *,
+    parser: argparse.ArgumentParser,
+    service: RetrieveCtl,
+    args: argparse.Namespace,
+) -> int:
+    if args.command == "status":
+        print_json_payload(service.status())
+        return 0
 
-        if args.command == "explain":
-            payload = service.explain(args.ref)
-            print_json_payload(payload)
-            return 0
+    if args.command == "ingest-text":
+        tags = split_comma_tokens(args.tags)
+        result = service.ingest_source(
+            source_type=args.source_type,
+            source_ref=args.source_ref,
+            text=args.text,
+            scope=args.scope,
+            tags=tags,
+            title=args.title,
+            corpus_id=args.corpus_id or None,
+            unit_kind=args.unit_kind,
+        )
+        print_json_payload(result.model_dump(mode="json"))
+        return 0
 
-        parser.error(f"unsupported command: {args.command}")
-        return 2
+    if args.command in {"retrieve", "diagnose"}:
+        return _run_retrieve_or_diagnose(service, args)
+
+    if args.command == "build-raptor":
+        result = service.build_raptor_tree(args.doc_id)
+        print_json_payload(result)
+        return 0
+
+    if args.command == "group-long":
+        result = service.group_long_units(
+            args.corpus_id,
+            {"min_tokens": args.min_tokens, "max_tokens": args.max_tokens},
+        )
+        print_json_payload(result)
+        return 0
+
+    if args.command == "expand":
+        rows = service.expand(ref=args.ref, mode=args.mode, k=args.k)
+        print_json_payload(rows)
+        return 0
+
+    if args.command == "explain":
+        payload = service.explain(args.ref)
+        print_json_payload(payload)
+        return 0
+
+    parser.error(f"unsupported command: {args.command}")
+    return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    home_root, data_root = _apply_module_roots(args)
+    config_path = _resolve_config_path(args)
+
+    if args.command == "storage":
+        return _run_storage_command(
+            args=args,
+            home_root=home_root,
+            data_root=data_root,
+            config_path=config_path,
+        )
+
+    service = RetrieveCtl(config=config_path)
+    try:
+        return _run_service_command(parser=parser, service=service, args=args)
     except Exception as exc:  # noqa: BLE001
         print(f"error: {exc}", file=sys.stderr)
         return 2

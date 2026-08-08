@@ -25,10 +25,16 @@ class CommandDispatcher:
             "cp.command.detected",
             canonical=command.canonical,
             session_id=ctx.session_id,
+            trace_id=ctx.trace_id,
         )
         result: CommandResult = self.registry.execute(command, ctx)
         event = "cp.command.executed" if result.ok else "cp.command.failed"
-        self._audit(event, canonical=command.canonical, session_id=ctx.session_id)
+        self._audit(
+            event,
+            canonical=command.canonical,
+            session_id=ctx.session_id,
+            trace_id=ctx.trace_id,
+        )
         return {
             "type": "command_result",
             "ok": result.ok,

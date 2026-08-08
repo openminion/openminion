@@ -15,7 +15,7 @@ def _missing_agent_registry() -> MagicMock:
 
 
 def _inspect_agent(registry: MagicMock, *, as_json: bool) -> tuple[int, str]:
-    from openminion.cli.commands.agents import agent_inspect
+    from openminion.cli.commands.agent.control import agent_inspect
 
     buf = io.StringIO()
     with redirect_stdout(buf):

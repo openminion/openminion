@@ -639,6 +639,56 @@ class ToolAdapterTests(unittest.TestCase):
 
             self.assertEqual(adapter._effective_workspace_root(), focused)
 
+    def test_tool_adapter_workspace_override_is_context_local(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first"
+            second = root / "second"
+            first.mkdir()
+            second.mkdir()
+            adapter = ToolAdapter(workspace_root=root)
+            barrier = Barrier(2)
+
+            def _resolve(path: Path) -> Path:
+                with adapter.workspace_override(path):
+                    barrier.wait()
+                    return adapter._effective_workspace_root()
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [
+                    executor.submit(_resolve, first),
+                    executor.submit(_resolve, second),
+                ]
+                resolved = {future.result() for future in futures}
+
+            self.assertEqual(resolved, {first, second})
+            self.assertEqual(adapter._effective_workspace_root(), root)
+
+    def test_tool_adapter_workspace_registration_crosses_worker_threads(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = root / "child"
+            child.mkdir()
+            adapter = ToolAdapter(workspace_root=root)
+
+            with adapter.workspace_override(child):
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    resolved = executor.submit(
+                        adapter._registered_workspace_override, str(child)
+                    ).result()
+
+            self.assertEqual(resolved, child)
+            self.assertIsNone(adapter._registered_workspace_override(str(child)))
+
     def test_tool_adapter_passes_a2a_delegate_seam_to_runtime_context(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
         from openminion.modules.tool.runtime.delegation import A2ADelegateResult
@@ -713,6 +763,43 @@ class ToolAdapterTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_prompt_visible_runtime_tool_gets_run_local_exact_policy_access(
+        self,
+    ) -> None:
+        from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
+        from openminion.modules.tool import ToolRegistry, ToolSpec
+
+        registry = ToolRegistry()
+        registry.add(
+            ToolSpec(
+                name="transfer_to_test_child",
+                args_model=dict,
+                min_scope="WRITE_SAFE",
+                handler=lambda arguments, _ctx: {
+                    "ok": True,
+                    "content": str(arguments.get("message", "")),
+                },
+                prompt_visible_runtime_name=True,
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = ToolAdapter(
+                workspace_root=Path(tmp),
+                runtime_registry=registry,
+            )
+            result = adapter.execute(
+                command={
+                    "tool_name": "transfer_to_test_child",
+                    "args": {"message": "delegated"},
+                },
+                session_id="s1",
+                trace_id="t1",
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["summary"], "delegated")
 
     def test_tool_workspace_binding_updates_adapter_and_policy(self) -> None:
         from openminion.modules.brain.adapters.tool.runtime import ToolAdapter
@@ -1346,6 +1433,27 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             ensure_adapter_compatibility(safety, adapter_type="safety")
             ensure_adapter_compatibility(rlm, adapter_type="rlm")
             ensure_adapter_compatibility(retrieve, adapter_type="retrieve")
+
+    def test_local_retrieve_adapter_logs_noop_methods(self) -> None:
+        from openminion.modules.brain.adapters.retrieve import LocalRetrieveAdapter
+
+        adapter = LocalRetrieveAdapter()
+        with self.assertLogs(
+            "openminion.modules.brain.adapters.retrieve.local", level="DEBUG"
+        ) as captured:
+            self.assertEqual(adapter.retrieve_with_context("q", {}, top_k=1), [])
+            self.assertEqual(
+                adapter.ingest_skill(
+                    skill_id="skill",
+                    version_hash="v1",
+                    source_ref="ref",
+                ),
+                {},
+            )
+
+        logs = "\n".join(captured.output)
+        self.assertIn("retrieve_with_context", logs)
+        self.assertIn("ingest_skill", logs)
 
     def test_local_llm_skill_selection_requires_explicit_skill_id_mention(self) -> None:
         from openminion.modules.brain.adapters.llm import LocalLLMAdapter

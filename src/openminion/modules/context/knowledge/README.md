@@ -108,6 +108,19 @@ must stay a lens: it may inspect current graph state, but it must not replace
 `runtime.memory_provider`, `memory.backend.provider`, or provider-owned graph
 indexers.
 
+The local viewer routes GraphFakos workbench forms through GraphFakos'
+provider-neutral action handler. That gives all providers the same capture,
+draft-action, import, reset, and unsupported-status shape. The current
+Sophiagraph-backed second-brain provider intentionally remains read-only from
+the viewer: durable memory writes require normal OpenMinion memory paths or a
+future explicit review workflow. Served current-memory views expose GraphFakos
+live `snapshot_reset` patches through the local `/api/live` event stream when
+Sophiagraph memory changes. Static HTML, dry-run probes, and host wrappers can
+always refresh by rerunning the same graph request. Empty current-memory states
+report whether the memory database is missing or simply has no visible records,
+plus the ordinary OpenMinion command to create memory without seeding demo data
+from the viewer.
+
 The second-brain viewer maps memory records into GraphFakos nodes with
 OpenMinion-specific visual metadata: memory type, tier, scope, confidence,
 namespace, timestamps, provenance, citations, and relation labels. Third-brain

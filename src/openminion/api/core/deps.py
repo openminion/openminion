@@ -6,6 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from openminion.base.constants import (
+    BASE_DEFAULT_CONFIG_DIRNAME,
+    BASE_DEFAULT_CONFIG_FILENAME,
+)
 from openminion.base.config.env import resolve_environment_config
 from openminion.base.config import ConfigManager
 from openminion.api.config import (
@@ -24,7 +28,9 @@ from openminion.services.diagnostics.debug import (
 )
 from openminion.modules.tool.exposure import get_visible_tool_specs_and_dispatch_map
 
-_DEFAULT_API_CONFIG_HINT = "~/.openminion/config.json"
+_DEFAULT_API_CONFIG_HINT = (
+    f"~/{BASE_DEFAULT_CONFIG_DIRNAME}/{BASE_DEFAULT_CONFIG_FILENAME}"
+)
 
 
 def resolve_api_config_display_path(config_path: Optional[str | Path]) -> str:

@@ -26,6 +26,9 @@ class LocalRetrieveAdapter:
     def retrieve_with_context(
         self, query: str, context: dict[str, Any], *, top_k: int = 10, **kwargs: Any
     ) -> list[dict]:
+        _LOGGER.debug(
+            "LocalRetrieveAdapter.retrieve_with_context() called - returning empty results"
+        )
         del query, context, top_k, kwargs
         return []
 
@@ -37,5 +40,8 @@ class LocalRetrieveAdapter:
         source_ref: str,
         meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        _LOGGER.debug(
+            "LocalRetrieveAdapter.ingest_skill() called - returning empty result"
+        )
         del skill_id, version_hash, source_ref, meta
         return {}
