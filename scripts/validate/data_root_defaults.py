@@ -34,9 +34,7 @@ def _should_scan(path: Path) -> bool:
     if not path.is_file() or path.suffix != ".py":
         return False
     rel = str(path.relative_to(REPO_ROOT))
-    if rel in ALLOWLIST_FILES:
-        return False
-    return True
+    return rel not in ALLOWLIST_FILES
 
 
 def main() -> int:
@@ -46,9 +44,9 @@ def main() -> int:
             continue
         rel = str(path.relative_to(REPO_ROOT))
         text = path.read_text(encoding="utf-8", errors="ignore")
-        for pattern in PATTERNS:
-            if pattern.search(text):
-                hits.append(f"{rel}: {pattern.pattern}")
+        hits.extend(
+            f"{rel}: {pattern.pattern}" for pattern in PATTERNS if pattern.search(text)
+        )
     if hits:
         emit_plain_findings("Legacy .openminion defaults detected:", hits)
         return 1

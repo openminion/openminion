@@ -8,11 +8,10 @@ import ast
 def is_type_checking_guard(node: ast.If) -> bool:
     """Return whether an ``if`` node is a ``TYPE_CHECKING`` guard."""
     test = node.test
-    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
-        return True
-    if isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
-        return True
-    return False
+    return (
+        (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
+        or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
+    )
 
 
 def collect_top_level_import_targets(tree: ast.Module) -> list[str]:
@@ -25,8 +24,7 @@ def collect_top_level_import_targets(tree: ast.Module) -> list[str]:
                 if node.module is not None and node.level == 0:
                     targets.append(node.module)
             elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    targets.append(alias.name)
+                targets.extend(alias.name for alias in node.names)
             elif isinstance(node, ast.If):
                 if is_type_checking_guard(node):
                     continue

@@ -57,9 +57,7 @@ def _should_scan(path: Path) -> bool:
         if part in ALLOWLIST_DIR_PARTS:
             return False
     rel = str(path.relative_to(REPO_ROOT))
-    if rel in ALLOWLIST_FILES:
-        return False
-    return True
+    return rel not in ALLOWLIST_FILES
 
 
 def _scan_file(path: Path) -> list[str]:
