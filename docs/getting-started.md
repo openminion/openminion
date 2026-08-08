@@ -64,10 +64,11 @@ Setup distinguishes:
 
 Environment credentials are preferred. For example, OpenAI setup reads
 `OPENAI_API_KEY`; MiniMax setup reads `MINIMAX_API_KEY` while using the existing
-OpenAI-compatible adapter. Interactive setup may store a pasted key locally only
-after a hidden prompt, warning, and confirmation. On POSIX systems, setup-owned
-config directories are tightened to owner-only `0700`, and setup-created config
-files are owner-only `0600`.
+OpenAI-compatible adapter. Compatibility describes the API format, not a shared
+account or credential; each service still uses its own key. Interactive setup may
+store a pasted key locally only after a hidden prompt, warning, and confirmation.
+On POSIX systems, setup-owned config directories are tightened to owner-only
+`0700`, and setup-created config files are owner-only `0600`.
 
 Built-in hosted presets currently include:
 

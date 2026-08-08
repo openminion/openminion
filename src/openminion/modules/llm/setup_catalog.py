@@ -72,7 +72,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         api_format_id="anthropic-messages",
         default_base_url="https://api.anthropic.com/v1",
         credential_env="ANTHROPIC_API_KEY",
-        recommended_models=("claude-3-5-sonnet-latest",),
+        recommended_models=("claude-sonnet-5",),
         discovery_posture="recommended_only",
         setup_help_url="https://console.anthropic.com/settings/keys",
     ),
@@ -329,7 +329,7 @@ def resolve_model_choice(
         return ModelChoiceResult(
             preset_id=preset.preset_id,
             models=(manual,),
-            source="manual",
+            source=("recommended" if manual in preset.recommended_models else "manual"),
         )
 
     started = perf_counter()

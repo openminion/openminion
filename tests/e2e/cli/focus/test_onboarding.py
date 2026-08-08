@@ -356,6 +356,7 @@ def test_missing_hosted_credential_cancels_without_writing(
         )
 
     assert not config_path.exists()
+    assert "Get or manage a key: https://platform.openai.com/api-keys" in transcript
     write_transcript(artifact_root(tmp_path), "onboarding-missing-key", transcript)
 
 
@@ -441,6 +442,7 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
     assert "MiniMax-M3 (recommended)" in transcript
     assert "MiniMax-M2.7-highspeed (recommended)" in transcript
     assert "MiniMax-M2.7 (recommended)" in transcript
+    assert "model: MiniMax-M2.7-highspeed [recommended]" in transcript
     assert fixture_key not in transcript
     assert fixture_key not in config_path.read_text(encoding="utf-8")
     _assert_owner_only(config_path)

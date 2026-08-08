@@ -5,7 +5,7 @@ import asyncio
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.types import Message
-from openminion.cli.commands.agents import add_agent_operator_subcommands
+from openminion.cli.commands.agent.control import add_agent_operator_subcommands
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.services.agent.memory.capsule import resolve_memory_root

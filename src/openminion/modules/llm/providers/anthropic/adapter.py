@@ -104,7 +104,7 @@ class AnthropicProvider:
 
     def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
         started = time.perf_counter()
-        model = _resolve_model(request, config, "claude-3-5-sonnet-latest")
+        model = _resolve_model(request, config, "claude-sonnet-5")
         api_key = _resolve_api_key(config, self.name, required=True)
         base_url = str(config.get("base_url") or self.default_base_url).rstrip("/")
         behavior_profile = resolve_behavior_profile(

@@ -24,8 +24,8 @@ _ALLOWLISTED_FILES: frozenset[str] = frozenset(
     {
         # CLI/process boundary (keep indefinitely)
         "openminion/cli/commands/acp.py",
-        "openminion/cli/commands/agent.py",
-        "openminion/cli/commands/agent_check.py",
+        "openminion/cli/commands/agent/check.py",
+        "openminion/cli/commands/agent/runner.py",
         "openminion/cli/commands/doctor.py",
         "openminion/cli/commands/gateway.py",
         "openminion/modules/controlplane/adapters/client.py",

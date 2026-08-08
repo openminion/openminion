@@ -211,7 +211,7 @@ def test_redacted_payload_hides_local_credentials(tmp_path: Path) -> None:
         ProviderSetupRequest(
             preset_id="anthropic",
             agent_id="ops",
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-5",
             stored_api_key="anthropic-local",
             allow_local_api_key=True,
             config_path=str(tmp_path / ".openminion" / "agents.json"),
@@ -405,6 +405,42 @@ def test_shared_adapter_setup_replaces_stale_selected_agent_overrides(
     }
 
 
+def test_minimax_and_openrouter_keep_separate_credential_references(
+    tmp_path: Path,
+) -> None:
+    shared_fixture_value = "same-fixture-value-not-for-network-use"
+    config_path = str(tmp_path / ".openminion" / "agents.json")
+    openrouter = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="openrouter",
+            agent_id="openrouter-agent",
+            model="openai/gpt-4.1-mini",
+            config_path=config_path,
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"OPENROUTER_API_KEY": shared_fixture_value},
+        )
+    )
+    minimax = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="minimax-agent",
+            model="MiniMax-M2.7",
+            config_path=config_path,
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"MINIMAX_API_KEY": shared_fixture_value},
+        ),
+        existing_config=openrouter.config,
+    )
+
+    payload = minimax.config.to_dict()
+    assert payload["providers"]["openrouter"]["api_key_env"] == ("OPENROUTER_API_KEY")
+    assert payload["providers"]["openai"]["api_key_env"] == "MINIMAX_API_KEY"
+    assert payload["providers"]["openai"]["base_url"] == ("https://api.minimax.io/v1")
+    assert shared_fixture_value not in json.dumps(payload)
+
+
 def test_claude_alias_counts_as_shared_anthropic_adapter(tmp_path: Path) -> None:
     existing = OpenMinionConfig()
     existing.agents = {
@@ -417,7 +453,7 @@ def test_claude_alias_counts_as_shared_anthropic_adapter(tmp_path: Path) -> None
         ProviderSetupRequest(
             preset_id="anthropic",
             agent_id="anthropic-new",
-            model="claude-3-5-sonnet-latest",
+            model="claude-sonnet-5",
             config_path=str(tmp_path / ".openminion" / "agents.json"),
             home_root=tmp_path,
             data_root=tmp_path / ".openminion",
@@ -431,7 +467,7 @@ def test_claude_alias_counts_as_shared_anthropic_adapter(tmp_path: Path) -> None
     assert payload["providers"]["anthropic"]["model"] == "legacy-claude-model"
     assert (
         payload["agents"]["anthropic-new"]["provider_config_overrides"]["model"]
-        == "claude-3-5-sonnet-latest"
+        == "claude-sonnet-5"
     )
 
 

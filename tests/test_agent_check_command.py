@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from datetime import timezone
 from dataclasses import dataclass
 
-from openminion.cli.commands.agent_check import run_agent_check
+from openminion.cli.commands.agent.check import run_agent_check
 from openminion.base.types import AgentResponse, Message
 
 

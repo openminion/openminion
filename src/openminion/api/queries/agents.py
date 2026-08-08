@@ -70,7 +70,7 @@ def inspect_agent(
     )
     try:
         storage_path = active_runtime.config.storage.path
-        from openminion.cli.commands.agents import agent_inspect
+        from openminion.cli.commands.agent.control import agent_inspect
         from openminion.modules.storage.runtime.registry_store import (
             AgentRegistryStore,
         )

@@ -21,9 +21,9 @@ src/openminion/base/debug.py	1	0	current broad-handler baseline; ratchet by narr
 src/openminion/base/logging.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/base/runtime/runners.py	4	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/bootstrap/update.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/commands/agent.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/commands/agent_check.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/cli/commands/agents.py	7	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/cli/commands/agent/check.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/cli/commands/agent/control.py	7	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/cli/commands/agent/runner.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/api.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/autonomy.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/cli/commands/channel.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

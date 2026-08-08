@@ -267,6 +267,8 @@ def _build_interactive_setup(
             f"No {preset.credential_env} environment variable was found. "
             "Environment variables remain preferable on shared machines."
         )
+        if preset.setup_help_url:
+            print(f"Get or manage a key: {preset.setup_help_url}")
         allow_local = _prompt_confirm(
             "Store a key in the owner-readable local OpenMinion config?",
             default=False,

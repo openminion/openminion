@@ -19,7 +19,7 @@ class OpenAIProviderConfig:
 
 @dataclass
 class AnthropicProviderConfig:
-    model: str = "claude-3-5-sonnet-latest"
+    model: str = "claude-sonnet-5"
     api_key: str = ""
     api_key_env: str = "ANTHROPIC_API_KEY"
     base_url: str = "https://api.anthropic.com/v1"

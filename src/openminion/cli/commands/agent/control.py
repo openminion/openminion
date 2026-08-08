@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from openminion.cli.config import load_cli_config, resolve_cli_roots
-from openminion.cli.commands.agent_delegation import (
+from openminion.cli.commands.agent.delegation import (
     agent_delegate_usage,
     render_agent_delegate_result,
     request_from_operator_args,

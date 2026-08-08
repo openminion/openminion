@@ -621,8 +621,8 @@ class ConfigCommandTests(unittest.TestCase):
         self.assertEqual(model, "MiniMax-M2.7-highspeed")
         output = buf.getvalue()
         self.assertIn("MiniMax-M3 (recommended)", output)
-        self.assertIn("MiniMax-M2.7-highspeed (recommended)", output)
         self.assertIn("MiniMax-M2.7 (recommended)", output)
+        self.assertIn("MiniMax-M2.7-highspeed (recommended)", output)
 
     def test_setup_wizard_secondary_provider_menu_has_back_and_cancel(self) -> None:
         with mock.patch("builtins.input", side_effect=["4", "b", "4", "c"]):
