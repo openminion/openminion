@@ -14,7 +14,9 @@ _RUNNER_PATH = (
 
 
 def _load_runner():
-    spec = importlib.util.spec_from_file_location("run_tokencensus_pipe_e2e", _RUNNER_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "run_tokencensus_pipe_e2e", _RUNNER_PATH
+    )
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

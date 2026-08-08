@@ -8,9 +8,8 @@ import ast
 def is_type_checking_guard(node: ast.If) -> bool:
     """Return whether an ``if`` node is a ``TYPE_CHECKING`` guard."""
     test = node.test
-    return (
-        (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING")
-        or (isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING")
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
     )
 
 

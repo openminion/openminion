@@ -579,8 +579,7 @@ def _materialize_remaining_completed_steps(
                 "plan_id": signal.plan_id,
                 "step_id": raw_step.get("step_id"),
                 "outcome": "success",
-                "output_summary": signal.reason
-                or "Completed by terminal plan signal.",
+                "output_summary": signal.reason or "Completed by terminal plan signal.",
             }
         )
         payload = completed.model_dump(mode="json")

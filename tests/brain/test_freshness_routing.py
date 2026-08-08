@@ -144,8 +144,7 @@ def test_direct_tool_request_accepts_the_tool_phrase() -> None:
             _runner(),
             state=_state(),
             user_input=(
-                "Use the task.pause tool with "
-                "task_id=bd77453dd55d4c2b876f8f53b499d54b."
+                "Use the task.pause tool with task_id=bd77453dd55d4c2b876f8f53b499d54b."
             ),
             logger=SimpleNamespace(),
         )

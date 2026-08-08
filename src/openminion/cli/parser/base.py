@@ -65,7 +65,9 @@ COMMAND_SPECS = (
     CommandSpec(
         "agent-check", "openminion.cli.commands.agent.check", "Run an agent check"
     ),
-    CommandSpec("agent-ctl", "openminion.cli.commands.agent.control", argparse.SUPPRESS),
+    CommandSpec(
+        "agent-ctl", "openminion.cli.commands.agent.control", argparse.SUPPRESS
+    ),
     CommandSpec("message", "openminion.cli.commands.message", "Message operations"),
     CommandSpec("plugins", "openminion.cli.commands.plugins", "Plugin operations"),
     CommandSpec("doctor", "openminion.cli.commands.doctor", "Run diagnostics"),

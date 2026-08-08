@@ -334,7 +334,5 @@ def _generated_scenario_files(scratch_dir: Path) -> list[Path]:
     return [
         path
         for path in scratch_dir.rglob("*")
-        if path.is_file()
-        and path.suffix != ".pyc"
-        and "__pycache__" not in path.parts
+        if path.is_file() and path.suffix != ".pyc" and "__pycache__" not in path.parts
     ]

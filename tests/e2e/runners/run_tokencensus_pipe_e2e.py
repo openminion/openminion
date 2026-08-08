@@ -48,7 +48,9 @@ def _require_success(result: subprocess.CompletedProcess[str], label: str) -> No
     )
 
 
-def _json_stdout(result: subprocess.CompletedProcess[str], label: str) -> dict[str, Any]:
+def _json_stdout(
+    result: subprocess.CompletedProcess[str], label: str
+) -> dict[str, Any]:
     _require_success(result, label)
     payload = json.loads(result.stdout)
     if not isinstance(payload, dict):
@@ -203,7 +205,9 @@ def _assert_no_source_injection(env: dict[str, str]) -> None:
 
 def _assert_usage_payload(payload: dict[str, Any]) -> None:
     if payload.get("schema_version") != "openminion.token_usage.v1":
-        raise RuntimeError(f"unexpected schema_version: {payload.get('schema_version')}")
+        raise RuntimeError(
+            f"unexpected schema_version: {payload.get('schema_version')}"
+        )
     if payload.get("session_id") != "token-pipe-session":
         raise RuntimeError("wrong session_id in token usage payload")
     totals = payload.get("totals") or {}
@@ -293,9 +297,11 @@ def _assert_negative_paths(
 
 
 def run_installed_pipe(args: argparse.Namespace) -> dict[str, Any]:
-    work_root = Path(
-        args.work_root or tempfile.mkdtemp(prefix="ospr-token-pipe-")
-    ).expanduser().resolve()
+    work_root = (
+        Path(args.work_root or tempfile.mkdtemp(prefix="ospr-token-pipe-"))
+        .expanduser()
+        .resolve()
+    )
     dist_root = work_root / "dist"
     venv_root = work_root / "venv"
     home_root = work_root / "home"
@@ -312,7 +318,11 @@ def run_installed_pipe(args: argparse.Namespace) -> dict[str, Any]:
     if venv_root.exists():
         shutil.rmtree(venv_root)
     _require_success(
-        _run([str(python_bin), "-m", "venv", str(venv_root)], cwd=WORKSPACE_ROOT, env=os.environ.copy()),
+        _run(
+            [str(python_bin), "-m", "venv", str(venv_root)],
+            cwd=WORKSPACE_ROOT,
+            env=os.environ.copy(),
+        ),
         "create installed proof venv",
     )
     installed_python = venv_root / "bin" / "python"
