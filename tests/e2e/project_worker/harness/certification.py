@@ -12,11 +12,13 @@ RUN_SCHEMA_VERSION = "sustained-autonomy-certification-run.v1"
 REPORT_SCHEMA_VERSION = "sustained-autonomy-certification-report.v1"
 REPORT_DIRNAME = "sustained-autonomy-certification"
 MINIMUM_ELAPSED_SECONDS = {
+    "research-2h-interim": 7_200,
     "research-8h": 28_800,
     "code-24h": 86_400,
 }
+INTERIM_PILOT_KINDS = frozenset({"research-2h-interim"})
 
-PilotKind = Literal["research-8h", "code-24h"]
+PilotKind = Literal["research-2h-interim", "research-8h", "code-24h"]
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,9 @@ def validate_certification_manifest(
 
     pilot_kind = _required_str(payload, "pilot_kind")
     if pilot_kind not in MINIMUM_ELAPSED_SECONDS:
-        raise ValueError("pilot_kind must be research-8h or code-24h")
+        raise ValueError(
+            "pilot_kind must be research-2h-interim, research-8h, or code-24h"
+        )
 
     minimum = _required_int(payload, "minimum_elapsed_seconds")
     required_minimum = MINIMUM_ELAPSED_SECONDS[pilot_kind]
@@ -124,6 +128,11 @@ def write_certification_report(
         "generated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "validation_only": validation_only,
         "outcome": "blocked_external" if validation_only else "not_started",
+        "certification_level": (
+            "interim_support"
+            if manifest.pilot_kind in INTERIM_PILOT_KINDS
+            else "full_certification"
+        ),
         "manifest_path": str(manifest_path.resolve(strict=False)),
         "manifest": asdict(manifest),
         "redaction_status": "redacted",
@@ -146,6 +155,7 @@ def _render_report_markdown(payload: dict[str, Any]) -> str:
         "",
         f"- Schema: `{payload['schema_version']}`",
         f"- Outcome: `{payload['outcome']}`",
+        f"- Certification level: `{payload['certification_level']}`",
         f"- Validation only: `{payload['validation_only']}`",
         f"- Pilot kind: `{manifest['pilot_kind']}`",
         f"- Minimum elapsed seconds: `{manifest['minimum_elapsed_seconds']}`",
@@ -228,6 +238,7 @@ def _safe_segment(value: str) -> str:
 
 __all__ = [
     "MINIMUM_ELAPSED_SECONDS",
+    "INTERIM_PILOT_KINDS",
     "REPORT_SCHEMA_VERSION",
     "RUN_SCHEMA_VERSION",
     "CertificationManifest",

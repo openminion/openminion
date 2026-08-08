@@ -74,7 +74,11 @@ def _write_manifest(tmp_path: Path, payload: dict[str, object]) -> Path:
 
 @pytest.mark.parametrize(
     ("pilot_kind", "minimum"),
-    (("research-8h", 28_800), ("code-24h", 86_400)),
+    (
+        ("research-2h-interim", 7_200),
+        ("research-8h", 28_800),
+        ("code-24h", 86_400),
+    ),
 )
 def test_certification_manifest_accepts_valid_pilot_kinds(
     tmp_path: Path,
@@ -143,8 +147,41 @@ def test_certification_report_writes_generated_root_without_secrets(
 
     assert payload["schema_version"] == REPORT_SCHEMA_VERSION
     assert payload["outcome"] == "blocked_external"
+    assert payload["certification_level"] == "full_certification"
     assert "test-configs/redacted-provider.json" in markdown_path.read_text()
     assert "api_key" not in json_path.read_text(encoding="utf-8").lower()
+
+
+def test_interim_two_hour_report_is_not_full_certification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.delenv("OPENMINION_GENERATED_ROOT", raising=False)
+    path = _write_manifest(
+        tmp_path,
+        _manifest(
+            tmp_path,
+            pilot_kind="research-2h-interim",
+            minimum_elapsed_seconds=7_200,
+        ),
+    )
+    manifest = validate_certification_manifest(
+        path,
+        now=datetime(2026, 8, 7, tzinfo=UTC),
+    )
+
+    json_path, markdown_path = write_certification_report(
+        manifest,
+        manifest_path=path,
+        root=tmp_path,
+        validation_only=True,
+    )
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert payload["certification_level"] == "interim_support"
+    assert "Certification level: `interim_support`" in markdown_path.read_text()
 
 
 def test_certify_runner_validate_only_writes_report(
