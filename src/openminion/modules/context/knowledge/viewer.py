@@ -30,6 +30,8 @@ from openminion.modules.context.knowledge.viewer_models import (
     GraphViewerStatusReport,
 )
 from openminion.modules.context.knowledge.viewer_memory import (
+    LIVE_REFRESH_CAPABILITY,
+    LIVE_REFRESH_STRATEGY,
     OPENMINION_MEMORY_PROVIDER_ID,
     OpenMinionMemoryGraphFakosProvider,
     OpenMinionMemoryGraphFakosLiveProvider,
@@ -287,6 +289,11 @@ def _empty_state(graph: Any, stats: Mapping[str, object]) -> dict[str, object]:
                 "openminion graph view --current --dry-run --json",
                 'openminion agent --message "remember a useful project fact"',
             ],
+            "status_command": "openminion graph status",
+            "refresh_command": "openminion graph view --current",
+            "create_memory_command": (
+                'openminion agent --message "remember a useful project fact"'
+            ),
             "scope_filter": scope_filter if isinstance(scope_filter, list) else [],
         }
     return {
@@ -354,6 +361,14 @@ def _second_brain_status(
     db_exists = db_path.exists()
     sample_records = memory_db_sample_count(db_path) if db_exists else 0
     current_command = "openminion graph view --current"
+    diagnostic_code = _second_brain_diagnostic_code(
+        db_exists=db_exists,
+        sample_records=sample_records,
+    )
+    current_reason = _second_brain_status_reason(
+        db_exists=db_exists,
+        sample_records=sample_records,
+    )
     if not graphfakos_installed:
         return GraphViewerProviderStatus(
             provider=OPENMINION_MEMORY_PROVIDER_ID,
@@ -368,7 +383,7 @@ def _second_brain_status(
                 "durable_memory",
                 "local_preview",
                 "static_export",
-                "live_refresh",
+                LIVE_REFRESH_CAPABILITY,
             ),
             details={
                 "diagnostic_code": "graphfakos_missing",
@@ -386,24 +401,26 @@ def _second_brain_status(
         active=True,
         enabled=True,
         visual_ready=True,
-        reason="" if db_exists else "Memory database will be created on first use.",
+        reason=current_reason,
         next_command=current_command,
         capabilities=(
             "durable_memory",
             "local_preview",
             "static_export",
-            "live_refresh",
+            LIVE_REFRESH_CAPABILITY,
         ),
         details={
-            "diagnostic_code": "ready" if db_exists else "memory_db_missing",
-            "diagnostic_label": _diagnostic_label(
-                "ready" if db_exists else "memory_db_missing"
-            ),
+            "diagnostic_code": diagnostic_code,
+            "diagnostic_label": _diagnostic_label(diagnostic_code),
             "memory_db": str(db_path),
             "memory_db_exists": db_exists,
             "sample_records": sample_records,
+            "refresh_strategy": LIVE_REFRESH_STRATEGY,
             "status_command": "openminion graph status",
             "current_command": current_command,
+            "create_memory_command": (
+                'openminion agent --message "remember a useful project fact"'
+            ),
             "scoped_commands": [
                 f"{current_command} --agent <agent-id>",
                 f"{current_command} --session <session-id>",
@@ -412,6 +429,22 @@ def _second_brain_status(
             ],
         },
     )
+
+
+def _second_brain_diagnostic_code(*, db_exists: bool, sample_records: int) -> str:
+    if not db_exists:
+        return "memory_db_missing"
+    if sample_records == 0:
+        return "memory_empty"
+    return "ready"
+
+
+def _second_brain_status_reason(*, db_exists: bool, sample_records: int) -> str:
+    if not db_exists:
+        return "Memory database will be created on first use."
+    if sample_records == 0:
+        return "Memory database exists but has no visible records yet."
+    return ""
 
 
 def _scope_values(request: GraphViewerRequest) -> tuple[str, ...]:
@@ -689,6 +722,7 @@ def _third_brain_status_reason(
 def _diagnostic_label(code: str) -> str:
     return {
         "graphfakos_missing": "Install the viewer extra before opening graphs.",
+        "memory_empty": "Create memory through OpenMinion, then refresh the viewer.",
         "memory_db_missing": "Memory graph is ready; the database appears after first use.",
         "provider_disabled": "Enable the provider before opening it.",
         "pragmagraph_missing": (

@@ -43,7 +43,10 @@ openminion graph view --current --dry-run --json
 
 If the graph is empty, create memory through the ordinary OpenMinion path, then
 rerun `openminion graph view --current`. The viewer does not seed demo memory
-or bypass the configured memory backend.
+or bypass the configured memory backend. `openminion graph status --json`
+distinguishes a missing memory database from an existing database with no
+visible records and includes the copyable command for creating memory through
+OpenMinion.
 
 `--current` is the user-facing shortcut for the current second-brain memory
 graph. Use scope flags when you want a narrower view:
@@ -81,6 +84,10 @@ button, filter controls, or empty-state guidance. A served second-brain viewer
 can stream GraphFakos live `snapshot_reset` patches when Sophiagraph memory
 changes. Static HTML and dry-run integrations should refresh by rerunning the
 same graph request.
+
+Served mode exposes GraphFakos' local `/api/live` event stream. OpenMinion keeps
+that stream read-only: it refreshes the visual graph from the configured memory
+backend and does not write, seed, or promote memory from the viewer.
 
 The same command accepts viewer filters that map directly to GraphFakos'
 toolbar controls:
@@ -185,9 +192,9 @@ memory backend contract.
 ## Validation
 
 The OpenMinion package keeps a focused graph-viewer regression suite covering
-status, current-memory dry runs, static HTML, third-brain envelopes, provider
-conformance, and a real-browser smoke when the dev Playwright dependency and
-Chromium browser are available:
+status, current-memory dry runs, served live-refresh patches, static HTML,
+third-brain envelopes, provider conformance, and a real-browser smoke when the
+dev Playwright dependency and Chromium browser are available:
 
 ```bash
 PYTHONPATH=src:../graphfakos/src:../pragmagraph/src:../sophiagraph/src \

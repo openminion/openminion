@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import importlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+import sys
 import threading
 import tomllib
 from types import ModuleType, SimpleNamespace
 from typing import Any, Mapping
-import sys
+from urllib.request import urlopen
 
 import pytest
 
@@ -570,6 +572,11 @@ def test_current_memory_empty_state_does_not_seed_sample_data(
             "openminion graph view --current --dry-run --json",
             'openminion agent --message "remember a useful project fact"',
         ],
+        "status_command": "openminion graph status",
+        "refresh_command": "openminion graph view --current",
+        "create_memory_command": (
+            'openminion agent --message "remember a useful project fact"'
+        ),
         "scope_filter": [],
     }
     assert result.diagnostics["viewer_manifest"]["empty_state"] == {
@@ -862,6 +869,10 @@ def test_viewer_status_reports_readiness_and_next_commands(
     assert payload["graphfakos"] == {"installed": True, "version": "test"}
     assert payload["second_brain"]["visual_ready"] is True
     assert payload["second_brain"]["details"]["sample_records"] == 1
+    assert (
+        payload["second_brain"]["details"]["refresh_strategy"]
+        == "live_snapshot_reset_or_requery"
+    )
     assert "live_refresh" in payload["second_brain"]["capabilities"]
     assert payload["third_brain"][0]["visual_ready"] is True
     assert payload["third_brain"][0]["tags"] == ["code_graph"]
@@ -898,6 +909,32 @@ def test_viewer_status_reports_missing_envelope_as_not_visual_ready(
     assert third["reason"] == "Viewer envelope path is configured but not found yet."
     assert third["details"]["diagnostic_code"] == "viewer_envelope_missing"
     assert third["details"]["viewer_envelope_exists"] is False
+
+
+def test_viewer_status_explains_existing_empty_memory_db(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    SQLiteMemoryStore(db_path)
+
+    report = inspect_graph_viewer_status(
+        config=OpenMinionConfig(),
+        roots=_roots(tmp_path),
+        memory_db=str(db_path),
+    )
+    second_brain = report.to_dict()["second_brain"]
+
+    assert second_brain["visual_ready"] is True
+    assert second_brain["reason"] == "Memory database exists but has no visible records yet."
+    assert second_brain["details"]["diagnostic_code"] == "memory_empty"
+    assert second_brain["details"]["diagnostic_label"] == (
+        "Create memory through OpenMinion, then refresh the viewer."
+    )
+    assert second_brain["details"]["create_memory_command"] == (
+        'openminion agent --message "remember a useful project fact"'
+    )
 
 
 def test_viewer_status_requires_pragmagraph_for_snapshot(
@@ -1313,6 +1350,101 @@ def test_second_brain_live_provider_streams_snapshot_reset_after_memory_change(
     assert patch.result_revision.value != opened.revision.value
     assert after_patch.status == "heartbeat"
     assert live_provider.diagnostics().last_revision == patch.result_revision.value
+
+
+def test_second_brain_served_viewer_live_api_exposes_memory_changes(tmp_path) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    from graphfakos.preview import LocalPreviewProviderSession
+    from graphfakos.ui import render_provider_path
+
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    store.put(
+        MemoryRecord(
+            id="memory:first-live-api",
+            scope="agent:openminion",
+            type="fact",
+            key="first-live-api",
+            title="First Live API Memory",
+            content="The served viewer starts with one memory.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    graph_request = graphfakos.GraphFakosRequest()
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+    preview_provider = LocalPreviewProviderSession(provider)
+    live_provider = OpenMinionMemoryGraphFakosLiveProvider(
+        graphfakos=graphfakos,
+        provider=provider,
+        request=graph_request,
+    )
+    try:
+        server = graphfakos.make_local_viewer_server(
+            render_path=lambda path, query: render_provider_path(
+                preview_provider,
+                graph_request,
+                path,
+                query,
+            ),
+            port=0,
+            live_provider=live_provider,
+        )
+    except PermissionError:
+        pytest.skip("local socket binding is unavailable in this sandbox")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = server.preview_url.rsplit("/", 1)[0]
+    try:
+        with urlopen(f"{base_url}/explore", timeout=5) as response:
+            html = response.read().decode("utf-8")
+        store.put(
+            MemoryRecord(
+                id="memory:second-live-api",
+                scope="agent:openminion",
+                type="decision",
+                key="second-live-api",
+                title="Second Live API Memory",
+                content="The served live API should stream this memory.",
+                created_at=now,
+                updated_at="2026-07-21T00:01:00+00:00",
+            )
+        )
+        with urlopen(f"{base_url}/api/live", timeout=5) as response:
+            event = response.read().decode("utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    payload = _sse_data_payload(event)
+    operation = payload["operations"][0]
+    assert "First Live API Memory" in html
+    assert "event: graphfakos.patch" in event
+    assert payload["patch_id"].startswith("openminion-memory:")
+    assert operation["kind"] == "snapshot_reset"
+    assert operation["metadata"]["refresh_strategy"] == (
+        "live_snapshot_reset_or_requery"
+    )
+    assert operation["metadata"]["node_count"] == 2
+    assert len(operation["graph"]["nodes"]) == 2
+    assert live_provider.diagnostics().last_revision == payload["result_revision"][
+        "value"
+    ]
+
+
+def _sse_data_payload(event: str) -> dict[str, Any]:
+    for line in event.splitlines():
+        if line.startswith("data: "):
+            payload = json.loads(line.removeprefix("data: "))
+            assert isinstance(payload, dict)
+            return payload
+    pytest.fail(f"SSE event did not include data: {event}")
 
 
 def test_second_brain_provider_matches_graphfakos_conformance(tmp_path) -> None:

@@ -94,7 +94,7 @@ Best for:
 2. opening the current second-brain memory graph in the shared GraphFakos viewer,
 3. opening configured third-brain provider graphs when they expose a viewer
    envelope or a PragmaGraph snapshot,
-4. inspecting nodes, relationships, provenance, citations, and provider status.
+4. inspecting nodes, relationships, provenance, citations, and provider status,
 5. embedding a provider-neutral graph lens in a host app without importing
    OpenMinion internals.
 
@@ -106,7 +106,8 @@ Notes:
    or graph indexer,
 3. `openminion graph status --json` reports GraphFakos availability, the
    second-brain memory database path, active third-brain providers, visual
-   readiness, diagnostic codes, and suggested next commands,
+   readiness, diagnostic codes, empty-memory guidance, and suggested next
+   commands,
 4. `openminion graph view --dry-run --json` builds the selected graph and
    returns counts, filters, facets, provider details, empty-state metadata, and
    a viewer-manifest summary without starting the local browser viewer,
@@ -122,8 +123,9 @@ Notes:
    provider-neutral action handler, while the current Sophiagraph second-brain
    lens returns explicit unsupported/provider-owned statuses for durable writes,
 9. served second-brain viewers can stream GraphFakos live `snapshot_reset`
-   patches when Sophiagraph memory changes; static HTML and JSON probes refresh
-   by rerunning the same viewer command,
+   patches through the local `/api/live` event stream when Sophiagraph memory
+   changes; static HTML and JSON probes refresh by rerunning the same viewer
+   command,
 10. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
    third-brain provider envelope.
 

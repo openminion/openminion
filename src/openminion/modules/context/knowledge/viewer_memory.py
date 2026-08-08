@@ -10,6 +10,8 @@ from typing import Any, Mapping
 from openminion.modules.context.knowledge.constants import LAYER_SECOND_BRAIN
 
 OPENMINION_MEMORY_PROVIDER_ID = "openminion-memory"
+LIVE_REFRESH_CAPABILITY = "live_refresh"
+LIVE_REFRESH_STRATEGY = "live_snapshot_reset_or_requery"
 
 _MEMORY_TYPE_VISUALS = {
     "decision": {"color": "#2563eb", "icon": "check-circle", "shape": "hexagon"},
@@ -53,7 +55,7 @@ class OpenMinionMemoryGraphFakosProvider:
         "durable_memory",
         "static_export",
         "local_preview",
-        "live_refresh",
+        LIVE_REFRESH_CAPABILITY,
     )
 
     def __init__(self, *, graphfakos: Any, db_path: Path, limit: int) -> None:
@@ -242,7 +244,7 @@ def _memory_provider_details() -> dict[str, str]:
         "layer": LAYER_SECOND_BRAIN,
         "owner": "OpenMinion memory",
         "storage": "openminion memory SQLite",
-        "refresh_strategy": "live_snapshot_reset_or_requery",
+        "refresh_strategy": LIVE_REFRESH_STRATEGY,
         "mutation_policy": "read_only_viewer",
         "filterable_fields": ",".join(
             (
@@ -262,7 +264,7 @@ def _memory_provider_payload(records: tuple[Any, ...]) -> dict[str, object]:
     return {
         "empty_state": _memory_empty_state() if not records else {},
         "refresh": {
-            "strategy": "live_snapshot_reset_or_requery",
+            "strategy": LIVE_REFRESH_STRATEGY,
             "writes_memory": False,
             "live_patch_stream": True,
         },
@@ -449,7 +451,10 @@ class OpenMinionMemoryGraphFakosLiveProvider:
         self._graphfakos = graphfakos
         self._provider = provider
         self._request = request
-        self._revision = _graph_revision(graphfakos, provider.load_graph(request))
+        graph = provider.load_graph(request)
+        self._revision = _graph_revision(graphfakos, graph)
+        self._last_node_count = len(getattr(graph, "nodes", ()) or ())
+        self._last_edge_count = len(getattr(graph, "edges", ()) or ())
 
     def open_live_session(self, request: Any) -> Any:
         return self._graphfakos.GraphFakosLiveSessionStatus(
@@ -462,11 +467,15 @@ class OpenMinionMemoryGraphFakosLiveProvider:
     def load_patch(self, request: Any) -> Any:
         graph = self._provider.load_graph(self._request)
         current_revision = _graph_revision(self._graphfakos, graph)
+        node_count = len(getattr(graph, "nodes", ()) or ())
+        edge_count = len(getattr(graph, "edges", ()) or ())
         cursor = getattr(request, "cursor", None)
         base_value = (
             str(getattr(cursor, "value", "") or "").strip() or self._revision.value
         )
         if current_revision.value == base_value:
+            self._last_node_count = node_count
+            self._last_edge_count = edge_count
             return self._graphfakos.GraphFakosLiveSessionStatus(
                 status="heartbeat",
                 revision=current_revision,
@@ -486,12 +495,16 @@ class OpenMinionMemoryGraphFakosLiveProvider:
                     graph=graph,
                     metadata={
                         "provider": OPENMINION_MEMORY_PROVIDER_ID,
-                        "refresh_strategy": "live_snapshot_reset_or_requery",
+                        "refresh_strategy": LIVE_REFRESH_STRATEGY,
+                        "node_count": node_count,
+                        "edge_count": edge_count,
                     },
                 ),
             ),
         )
         self._revision = current_revision
+        self._last_node_count = node_count
+        self._last_edge_count = edge_count
         return patch
 
     def diagnostics(self) -> Any:
@@ -537,6 +550,8 @@ def _graph_revision(graphfakos: Any, graph: Any) -> Any:
 
 __all__ = [
     "OPENMINION_MEMORY_PROVIDER_ID",
+    "LIVE_REFRESH_CAPABILITY",
+    "LIVE_REFRESH_STRATEGY",
     "OpenMinionMemoryGraphFakosProvider",
     "OpenMinionMemoryGraphFakosLiveProvider",
     "memory_db_sample_count",
