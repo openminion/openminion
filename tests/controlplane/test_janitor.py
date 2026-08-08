@@ -32,6 +32,16 @@ class _FakeStore:
         return [{"count": self.counts.get(table, 0)}]
 
 
+class _FakeWizardStore:
+    def __init__(self, expired: int) -> None:
+        self.expired = expired
+        self.calls = 0
+
+    async def expire_overdue(self) -> int:
+        self.calls += 1
+        return self.expired
+
+
 def test_janitor_deletes_each_retention_table_and_emits_audit() -> None:
     store = _FakeStore()
     audit = AuditLogger()
@@ -45,6 +55,18 @@ def test_janitor_deletes_each_retention_table_and_emits_audit() -> None:
     assert store.deleted == list(store.counts)
     assert audit.events[-1].event_type == "cp.janitor.cycle.completed"
     assert audit.events[-1].details["deleted"] == result.deleted
+
+
+def test_janitor_expires_overdue_wizard_sessions() -> None:
+    store = _FakeStore()
+    wizard_store = _FakeWizardStore(expired=2)
+    result = ControlPlaneJanitor(
+        store=store,
+        wizard_store=wizard_store,
+    ).run_once()
+
+    assert wizard_store.calls == 1
+    assert result.deleted["cp_wizard_sessions_expired"] == 2
 
 
 def test_janitor_dry_run_counts_without_deleting() -> None:

@@ -45,6 +45,8 @@ def inbound_from_slash(envelope: SlackSlashCommandEnvelope) -> InboundMessage:
         "team_id": envelope.team_id,
         "channel_id": envelope.channel_id,
         "command": envelope.command,
+        "channel_name": envelope.raw.get("channel_name"),
+        "slack_interaction": "slash_command",
         "response_url": envelope.response_url,
     }
     return canonicalize_inbound_message(

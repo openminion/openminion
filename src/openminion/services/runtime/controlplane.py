@@ -83,7 +83,7 @@ def build_controlplane_runtime_components(
         data_root=data_root,
     )
     store = _build_store(config=config, cp_cfg=cp_cfg)
-    _initialize_store(store=store, cp_cfg=cp_cfg)
+    wizard_store = _initialize_store(store=store, cp_cfg=cp_cfg)
 
     metrics = MetricsRegistry()
     metrics_sink = MetricsAuditSink(metrics)
@@ -161,6 +161,7 @@ def build_controlplane_runtime_components(
         sidecar_specs=build_controlplane_sidecar_specs(
             config=cp_cfg,
             store=store,
+            wizard_store=wizard_store,
             audit_logger=audit_logger,
             metrics=metrics,
         ),
@@ -182,14 +183,17 @@ def _build_store(*, config: OpenMinionConfig, cp_cfg: ControlPlaneConfig) -> Any
     )
 
 
-def _initialize_store(*, store: Any, cp_cfg: ControlPlaneConfig) -> None:
+def _initialize_store(*, store: Any, cp_cfg: ControlPlaneConfig) -> Any | None:
     if hasattr(store, "backfill_pairings_to_principals"):
         store.backfill_pairings_to_principals(status=PRINCIPAL_BINDING_STATUS_ACTIVE)
     if isinstance(store, SQLiteControlPlaneStore):
         cp_db_path = Path(cp_cfg.sqlite_path).expanduser().resolve(strict=False)
         wizard_db_path = cp_db_path.parent / "wizard.db"
         wizard_db_path.parent.mkdir(parents=True, exist_ok=True)
-        register_wizard_store("sqlite", SqliteWizardStore(wizard_db_path))
+        wizard_store = SqliteWizardStore(wizard_db_path)
+        register_wizard_store("sqlite", wizard_store)
+        return wizard_store
+    return None
 
 
 def _runtime_factory(

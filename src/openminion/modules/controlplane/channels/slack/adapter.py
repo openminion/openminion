@@ -26,6 +26,7 @@ def build_slack_runner(
     logger: logging.Logger | None = None,
     store: Any | None = None,
     outbox_worker: Any | None = None,
+    pairing_service: Any | None = None,
     bot_user_id: str | None = None,
     socket_client: SlackSocketClientAPI | None = None,
 ) -> SlackSocketModeRunner | SlackHttpEventsRunner:
@@ -39,6 +40,7 @@ def build_slack_runner(
             logger=logger,
             store=store,
             outbox_worker=outbox_worker,
+            pairing_service=pairing_service,
             bot_user_id=bot_user_id,
         )
     client = socket_client or _maybe_sdk_socket_client(config)
@@ -52,6 +54,7 @@ def build_slack_runner(
         logger=logger,
         store=store,
         outbox_worker=outbox_worker,
+        pairing_service=pairing_service,
         bot_user_id=bot_user_id,
     )
 

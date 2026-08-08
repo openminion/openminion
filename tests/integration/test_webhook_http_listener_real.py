@@ -10,6 +10,19 @@ from typing import Any
 from openminion.modules.controlplane.channels.telegram.listener import (
     WebhookHTTPListener,
 )
+from openminion.modules.controlplane.channels.telegram.webhook import (
+    TelegramWebhookRunner,
+)
+from tests.controlplane.telegram.integration.fixtures import drain_inbox, drain_outbox
+from tests.controlplane.telegram.integration.transports import (
+    DeterministicTelegramTransport,
+)
+from tests.integration.test_unified_config_webhook_roundtrip import (
+    WEBHOOK_SECRET,
+    _build_webhook_runtime,
+    _make_update,
+)
+from tests.integration.test_unified_config_bootstrap import _close_runtime
 
 
 class _RecordingRunner:
@@ -197,3 +210,100 @@ class WebhookListenerPortContentionTests(unittest.TestCase):
         finally:
             listener_a.stop(timeout=2.0)
             listener_b.stop(timeout=2.0)
+
+
+def test_listener_reaches_webhook_runner_and_durable_pipeline(tmp_path) -> None:
+    runtime = _build_webhook_runtime(tmp_path)
+    listener: WebhookHTTPListener | None = None
+    try:
+        runner = runtime.channels.get("telegram")
+        assert isinstance(runner, TelegramWebhookRunner)
+        transport = DeterministicTelegramTransport(bot_token="token")
+        runner._api = transport.api  # noqa: SLF001
+        runner._delivery._api = transport.api  # noqa: SLF001
+        runner.initialize()
+
+        listener = WebhookHTTPListener(
+            host="127.0.0.1",
+            port=0,
+            route_path="/telegram/webhook",
+            runner=runner,
+        )
+        listener.start()
+        _wait_for_listener(listener)
+
+        status, body = _post_to_listener(
+            listener,
+            "/telegram/webhook",
+            _make_update(text="listener durable hello", update_id=701),
+            secret=WEBHOOK_SECRET,
+        )
+
+        assert status == 200
+        assert body == {"success": True, "update_id": 701}
+        assert runtime.controlplane_components is not None
+        drain_inbox(runtime.controlplane_components.inbox_worker)
+        assert runner._outbox_worker is not None  # noqa: SLF001
+        drain_outbox(runner._outbox_worker)  # noqa: SLF001
+        assert transport.get_outbound_texts() == [
+            "[agent:default] listener durable hello"
+        ]
+
+        duplicate_status, duplicate_body = _post_to_listener(
+            listener,
+            "/telegram/webhook",
+            _make_update(text="duplicate ignored", update_id=701),
+            secret=WEBHOOK_SECRET,
+        )
+
+        assert duplicate_status == 200
+        assert duplicate_body == {
+            "success": True,
+            "duplicate": True,
+            "update_id": 701,
+        }
+        assert transport.get_outbound_texts() == [
+            "[agent:default] listener durable hello"
+        ]
+    finally:
+        if listener is not None:
+            listener.stop(timeout=2.0)
+        _close_runtime(runtime)
+
+
+def _wait_for_listener(listener: WebhookHTTPListener) -> None:
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(
+                ("127.0.0.1", listener.bound_port), timeout=0.1
+            ):
+                return
+        except OSError:
+            time.sleep(0.01)
+    raise AssertionError("listener did not accept connections")
+
+
+def _post_to_listener(
+    listener: WebhookHTTPListener,
+    path: str,
+    body: dict[str, Any],
+    *,
+    secret: str,
+) -> tuple[int, dict[str, Any]]:
+    conn = HTTPConnection("127.0.0.1", listener.bound_port, timeout=2.0)
+    try:
+        conn.request(
+            "POST",
+            path,
+            body=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Telegram-Bot-Api-Secret-Token": secret,
+            },
+        )
+        resp = conn.getresponse()
+        raw = resp.read()
+        return resp.status, json.loads(raw.decode("utf-8")) if raw else {}
+    finally:
+        conn.close()

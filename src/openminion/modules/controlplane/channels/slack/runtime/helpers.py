@@ -80,7 +80,12 @@ def process_envelope(
             chat_id=envelope.channel_id,
         )
         return {"ok": False, "reason": access.reason}
-    inbound = _with_access_auth(runner, inbound_from_envelope(envelope))
+    inbound = inbound_from_envelope(envelope)
+    pairing_result = _handle_pairing_attempt(runner, inbound)
+    if pairing_result is not None:
+        _deliver_pairing_reply(runner, pairing_result, envelope=envelope)
+        return {"ok": True, "status": "pairing_handled"}
+    inbound = _with_access_auth(runner, inbound)
     if enqueue_inbound_or_dispatch(
         runner,
         inbound=inbound,
@@ -111,7 +116,16 @@ def process_slash_command(
             chat_id=envelope.channel_id,
         )
         return {"ok": False, "reason": access.reason}
-    inbound = _with_access_auth(runner, inbound_from_slash(envelope))
+    inbound = inbound_from_slash(envelope)
+    pairing_result = _handle_pairing_attempt(runner, inbound)
+    if pairing_result is not None:
+        _deliver_pairing_reply(
+            runner,
+            pairing_result,
+            slash_channel_id=envelope.channel_id,
+        )
+        return {"ok": True, "status": "pairing_handled"}
+    inbound = _with_access_auth(runner, inbound)
     message_id = _slash_message_id(envelope)
     if enqueue_inbound_or_dispatch(
         runner,
@@ -223,6 +237,44 @@ def enqueue_or_deliver(
         chat_id=envelope.channel_id,
         thread_id=envelope.thread_ts,
     )
+
+
+def _handle_pairing_attempt(runner: Any, inbound: Any) -> Any | None:
+    pairing = getattr(runner, "_pairing", None)
+    if pairing is None:
+        return None
+    result = pairing.handle_pairing_attempt(inbound)
+    if bool(getattr(result, "handled", False)):
+        audit_event(
+            runner._audit_logger,  # noqa: SLF001
+            "cp.route.pairing_handled",
+            reason="pairing_attempt",
+            channel=CHANNEL_ID,
+            chat_id=getattr(inbound, "chat_id", None),
+        )
+        return result
+    return None
+
+
+def _deliver_pairing_reply(
+    runner: Any,
+    pairing_result: Any,
+    *,
+    envelope: SlackInboundEnvelope | None = None,
+    slash_channel_id: str | None = None,
+) -> None:
+    text = str(getattr(pairing_result, "reply_text", "") or "").strip()
+    if not text:
+        return
+    payload = {"type": "pairing", "text": text, "ok": True}
+    if envelope is not None:
+        runner._delivery.deliver(payload, to_reply_target(envelope))  # noqa: SLF001
+        return
+    if slash_channel_id is not None:
+        runner._delivery.deliver(  # noqa: SLF001
+            payload,
+            {"channel_id": slash_channel_id},
+        )
 
 
 def _inbox_payload_from_inbound(

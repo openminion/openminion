@@ -486,7 +486,11 @@ def _build_slack_adapter(
     from openminion.modules.controlplane.channels.slack.delivery import (
         SlackDeliveryService,
     )
+    from openminion.modules.controlplane.channels.slack.pairing_adapter import (
+        SlackPairingAdapter,
+    )
     from openminion.modules.controlplane.channels.slack.state import SlackStateStore
+    import openminion.modules.controlplane.pairing as cp_pairing
 
     slack_cfg = slack_from_base_config(
         base_config=config,
@@ -504,6 +508,14 @@ def _build_slack_adapter(
         audit_logger=components.audit_logger,
     )
     state_store = SlackStateStore(slack_cfg.state_sqlite_path)
+    pairing_service = cp_pairing.ControlPlanePairingService(
+        policy=cp_pairing.PairingPolicy.from_config(slack_cfg.pairing),
+        store=cp_pairing.ControlPlanePairingStore(components.store),
+        adapter=SlackPairingAdapter(),
+        bridge_store=components.store,
+        audit_logger=components.audit_logger,
+        logger=logger,
+    )
     runner = build_slack_runner(
         config=slack_cfg,
         runtime=components.dispatcher,
@@ -513,6 +525,7 @@ def _build_slack_adapter(
         logger=logger,
         store=components.store,
         outbox_worker=components.outbox_worker,
+        pairing_service=pairing_service,
     )
     setattr(runner, "_rate_limiter", components.rate_limiter)
     setattr(runner, "_brain_client", components.brain_client)
