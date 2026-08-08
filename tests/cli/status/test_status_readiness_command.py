@@ -81,6 +81,34 @@ def test_status_readiness_missing_config_still_returns_report(
     assert checks["policy"]["status"] == "blocked"
 
 
+def test_status_readiness_labels_demo_as_demo_not_provider_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = OpenMinionConfig()
+    _csc_install_default_agent(config, provider="echo")  # type: ignore[attr-defined]
+    config.runtime.demo_mode = True
+    config.runtime.log_level = "ERROR"
+    config.storage.path = str(tmp_path / "state" / "openminion.db")
+    save_config(config, str(config_path))
+    monkeypatch.setattr(
+        "openminion.cli.commands.status.readiness.shutil.which",
+        lambda _name: None,
+    )
+
+    code = run_status(_args(config_path=config_path, as_json=True))
+
+    payload = json.loads(capsys.readouterr().out)
+    checks = {item["id"]: item for item in payload["checks"]}
+    assert code == 0
+    assert payload["overall"] == "demo"
+    assert checks["provider"]["status"] == "demo"
+    assert checks["provider"]["details"]["state"] == "explicit_demo"
+    assert "real provider" in checks["provider"]["safe_next_action"]
+
+
 def _args(*, config_path: Path, as_json: bool) -> Namespace:
     return Namespace(
         config=str(config_path),

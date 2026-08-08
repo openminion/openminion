@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Protocol
 
@@ -75,11 +74,13 @@ def _ctx_with_inbound_trace(
     return ctx
 
 
-def _inbound_with_metadata_trace(inbound: InboundMessage) -> InboundMessage:
+def _inbound_with_metadata_trace(
+    inbound: InboundMessage, *, fallback_trace: str
+) -> InboundMessage:
     metadata = inbound_metadata(inbound)
     if str(metadata.get("trace_id", "")).strip():
         return inbound
-    metadata["trace_id"] = uuid.uuid4().hex
+    metadata["trace_id"] = fallback_trace
     return replace(inbound, metadata=metadata, meta=dict(metadata))
 
 
@@ -167,13 +168,16 @@ class ControlPlaneDispatcher:
 
     def handle_inbound(self, inbound: InboundMessage) -> JsonDict:
         inbound = canonicalize_inbound_message(inbound)
-        inbound = _inbound_with_metadata_trace(inbound)
+        ctx = self.router.resolve(inbound)
+        pending = self._clarify.get(ctx.session_id)
+        inbound = self._chat.apply_pending_trace(inbound, pending)
+        inbound = _inbound_with_metadata_trace(inbound, fallback_trace=ctx.trace_id)
+        ctx = _ctx_with_inbound_trace(inbound, ctx)
         self._audit(
             "inbound.received",
             channel=inbound.channel,
             trace_id=str(inbound_metadata(inbound).get("trace_id", "")),
         )
-        ctx = self.router.resolve(inbound)
         self._audit(
             "inbound.resolved",
             session_id=ctx.session_id,

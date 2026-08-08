@@ -53,13 +53,16 @@ class CapturingAuditLogger:
         outcome: str = "ok",
         severity: str = "info",
         details: dict[str, Any] | None = None,
+        **extra_details: Any,
     ) -> None:
+        event_details = dict(details or {})
+        event_details.update(extra_details)
         self.events.append(
             {
                 "event_type": event_type,
                 "outcome": outcome,
                 "severity": severity,
-                "details": dict(details or {}),
+                "details": event_details,
             }
         )
 

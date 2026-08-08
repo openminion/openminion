@@ -119,7 +119,7 @@ VALIDATE_PATTERN_SCRIPTS := \
 
 _VP_TARGETS := $(addprefix _vp-, $(VALIDATE_PATTERN_MODULES)) _vp-validate.direct_env_calls _vp-direct-env-calls
 
-.PHONY: help venv dev-install hooks-install hooks-run fix format format-check lint lint-advisory validate-patterns typecheck typecheck-strict test bench check eval $(_VP_TARGETS)
+.PHONY: help venv dev-install hooks-install hooks-run fix format format-check lint lint-advisory validate-patterns typecheck typecheck-strict test bench check release-check eval $(_VP_TARGETS)
 
 help:
 	@printf '%s\n' \
@@ -140,7 +140,8 @@ help:
 		'                     Override category: make eval ARGS="--category coding"' \
 		'  make test          Run the OpenMinion pytest suite (excluding benchmarks)' \
 		'  make bench         Run storage benchmark regression harness' \
-		'  make check         Run format-check, lint, and test'
+		'  make check         Run format-check, lint, and test' \
+		'  make release-check Build distribution artifacts and validate package metadata'
 
 venv:
 	@test -x "$(PYTHON)" || python3.11 -m venv "$(VENV)"
@@ -234,3 +235,7 @@ bench: $(DEV_STAMP)
 	$(PYTEST) -q "$(REPO_ROOT)/tests/storage/benchmarks" -m benchmark -s
 
 check: format-check lint test
+
+release-check: $(DEV_STAMP)
+	cd "$(REPO_ROOT)" && $(PYTHON) -m build
+	cd "$(REPO_ROOT)" && $(PYTHON) -m twine check dist/openminion-*.whl dist/openminion-*.tar.gz

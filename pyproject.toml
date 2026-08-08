@@ -66,6 +66,8 @@ remote = [
 dev = [
   # Exercise the optional ACP adapter in the standard development/CI suite.
   "agent-client-protocol>=0.12,<0.13",
+  # Local release checks build artifacts and validate their rendered metadata.
+  "build>=1,<2",
   # Package-integration tests exercise optional sibling package surfaces while
   # remaining skippable in a minimal runtime installation.
   "graphfakos>=0.0.8",
@@ -79,6 +81,7 @@ dev = [
   "pytest-asyncio>=0.23,<1",
   "pytest-timeout>=2.4,<3",
   "ruff>=0.11,<0.16",
+  "twine>=5,<7",
   # Coverage and pytest-cov back the repo's branch-coverage regression
   # workflows. Test/dev only.
   "coverage>=7",

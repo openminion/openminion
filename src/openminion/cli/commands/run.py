@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ from openminion.cli.transport.runtime_source import call_daemon_or_inproc
 from openminion.cli.transport.daemon_client import (
     daemon_request,
 )
-from openminion.cli.config import load_cli_config_from_args
+from openminion.cli.config import load_cli_config_from_args, resolve_cli_roots
 from openminion.cli.parser.flags import (
     add_json_output_flag,
     add_profile_selector,
@@ -54,18 +55,31 @@ def run_openminion(args: Any) -> int:
         setattr(args, "runtime_source", "inproc")
 
     path = "/v1/turn/stream" if bool(getattr(args, "stream", False)) else "/v1/turn"
-    result = call_daemon_or_inproc(
-        args=args,
-        auto_start=auto_start,
-        daemon_call=lambda endpoint: daemon_request(
-            endpoint=endpoint,
-            method="POST",
-            path=path,
-            payload=request_payload,
-            timeout_s=60,
-        ),
-        inproc_call=lambda: _run_inproc(args, request_payload),
+    previous_disable_level = logging.root.manager.disable
+    roots = resolve_cli_roots(
+        config_path=getattr(args, "config", None),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
     )
+    suppress_default_logs = not roots.env.openminion_log_level
+    if suppress_default_logs:
+        logging.disable(logging.INFO)
+    try:
+        result = call_daemon_or_inproc(
+            args=args,
+            auto_start=auto_start,
+            daemon_call=lambda endpoint: daemon_request(
+                endpoint=endpoint,
+                method="POST",
+                path=path,
+                payload=request_payload,
+                timeout_s=60,
+            ),
+            inproc_call=lambda: _run_inproc(args, request_payload),
+        )
+    finally:
+        if suppress_default_logs:
+            logging.disable(previous_disable_level)
     response = dict(result.payload)
     response.setdefault("runtime_source", result.source)
     if result.fallback_reason:

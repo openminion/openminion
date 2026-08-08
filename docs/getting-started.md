@@ -1,7 +1,7 @@
 # OpenMinion Getting Started
 
 Status: active
-Last updated: 2026-07-30
+Last updated: 2026-08-07
 
 Purpose: give contributors and automation authors a package-local bootstrap and
 execution summary for work inside the `openminion` repo.
@@ -24,6 +24,13 @@ export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
 ```
 
 ## First run
+
+For a public package install, prefer an isolated command-line installation:
+
+```bash
+pipx install openminion
+# or: uv tool install openminion
+```
 
 Start with the bare command:
 
@@ -50,7 +57,11 @@ The first screen stays intentionally small:
 3. **Import an existing OpenMinion config** from YAML or JSON.
 
 Demo mode is not part of normal onboarding. It remains available through the
-explicit `openminion --demo` development/test path.
+explicit `openminion --demo` development/test path. A non-interactive demo can
+also be created with `openminion config init --provider echo`. It verifies
+local configuration, storage, session, and CLI plumbing only; it does not call
+a model. `openminion status readiness` therefore reports `overall=demo` for
+that configuration instead of claiming provider readiness.
 
 Setup distinguishes:
 

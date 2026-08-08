@@ -92,7 +92,19 @@ openminion agent inspect --agent-id default --json
 
 ## Install
 
-Install the current package:
+Install the current package as an isolated command-line app:
+
+```bash
+pipx install openminion
+```
+
+or, with `uv`:
+
+```bash
+uv tool install openminion
+```
+
+Installing into an existing Python environment is also supported:
 
 ```bash
 python3.11 -m pip install openminion
@@ -118,12 +130,25 @@ export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
 
 ## Quick Start
 
-Initialize configuration and run one turn:
+For a real model-backed session, run guided setup and then ask for one bounded
+task:
 
 ```bash
-openminion config init
+openminion setup
 openminion run "Summarize the files in this directory."
 ```
+
+For a credential-free product tour, create an explicit echo/demo config:
+
+```bash
+openminion config init --provider echo
+openminion run "hello"
+openminion status readiness
+```
+
+Demo mode exercises configuration, storage, sessions, and CLI plumbing, but it
+does not call a model or prove provider-backed task quality. Readiness reports
+label this state `demo`, not `ready`.
 
 Open the interactive CLI:
 

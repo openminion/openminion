@@ -1,7 +1,7 @@
 # OpenMinion Releasing
 
 Status: active
-Last updated: 2026-07-03
+Last updated: 2026-08-07
 
 Purpose: give maintainers a compact package-local release smoke checklist for
 the public `openminion` package surface on the active alpha line defined by
@@ -37,7 +37,14 @@ Run from the package root:
   tests/a2a/test_google_a2a_v1_conformance.py
 .venv/bin/python3.11 -m ruff check .
 make lint
+make release-check
 ```
+
+`make release-check` builds the wheel and source distribution and validates
+their rendered package metadata. The hosted `Release` workflow separately
+installs both artifact types in fresh environments and exercises bootstrap,
+quiet demo turns across a process restart, readiness labeling, and missing
+provider-credential diagnosis before publication can run.
 
 ## Public-surface smoke
 
@@ -62,7 +69,7 @@ Run from the package root:
 
 ```bash
 .venv/bin/python3.11 -m compileall examples
-.venv/bin/python3.11 -m build --sdist --wheel --no-isolation
+make release-check
 ```
 
 ## Live confidence checks
