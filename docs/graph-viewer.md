@@ -192,9 +192,10 @@ memory backend contract.
 ## Validation
 
 The OpenMinion package keeps a focused graph-viewer regression suite covering
-status, current-memory dry runs, served live-refresh patches, static HTML,
-third-brain envelopes, provider conformance, and a real-browser smoke when the
-dev Playwright dependency and Chromium browser are available:
+status, current-memory dry runs, served live-refresh patches, browser-observed
+live state updates, static HTML, third-brain envelopes, provider conformance,
+and real-browser smoke when the dev Playwright dependency and Chromium browser
+are available:
 
 ```bash
 PYTHONPATH=src:../graphfakos/src:../pragmagraph/src:../sophiagraph/src \

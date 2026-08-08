@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import sys
@@ -1612,7 +1613,179 @@ def test_static_html_renders_in_playwright_when_chromium_available(tmp_path) -> 
     assert page_probe["inspect_overlay"] is True
 
 
+def test_served_viewer_live_refresh_updates_browser_state(tmp_path) -> None:
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    graphfakos = pytest.importorskip("graphfakos")
+    from graphfakos.preview import LocalPreviewProviderSession
+    from graphfakos.ui import render_provider_path
+
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    store.put(
+        MemoryRecord(
+            id="memory:browser-live-first",
+            scope="agent:openminion",
+            type="fact",
+            key="browser-live-first",
+            title="Browser Live First",
+            content="The browser live test starts with this node.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    graph_request = graphfakos.GraphFakosRequest()
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+    preview_provider = LocalPreviewProviderSession(provider)
+    live_provider = OpenMinionMemoryGraphFakosLiveProvider(
+        graphfakos=graphfakos,
+        provider=provider,
+        request=graph_request,
+    )
+    try:
+        server = graphfakos.make_local_viewer_server(
+            render_path=lambda path, query: render_provider_path(
+                preview_provider,
+                graph_request,
+                path,
+                query,
+            ),
+            port=0,
+            live_provider=live_provider,
+        )
+    except PermissionError:
+        pytest.skip("local socket binding is unavailable in this sandbox")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        page_probe = _playwright_live_refresh_probe(
+            playwright_sync=playwright_sync,
+            page_url=server.preview_url,
+            db_path=db_path,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert page_probe["initial_graph_node_count"] == 1
+    assert page_probe["live_graph_node_count"] == 2
+    assert "memory:browser-live-second" in page_probe["live_graph_node_ids"]
+    assert page_probe["live_patch_applied"] is True
+    assert "event: graphfakos.patch" in page_probe["live_event"]
+    assert page_probe["live_status"] == "live"
+    assert page_probe["live_status_text"] == "Live graph is current."
+
+
 def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, object]:
+    def _probe(page: Any) -> dict[str, object]:
+        page.goto(page_uri)
+        viewer = page.locator("graphfakos-viewer")
+        return {
+            "text": page.locator("body").inner_text(timeout=10_000),
+            "canvas_visible": page.locator(
+                "[aria-label='GraphFakos graph canvas']"
+            ).is_visible(timeout=10_000),
+            "toolbar_present": page.locator("[aria-label='Graph filters']").count()
+            == 1,
+            "node_count": page.locator("[data-gf-graph-item='node']").count(),
+            "inspect_overlay": page.locator(
+                "[data-gf-inspect-overlay='true']"
+            ).count()
+            == 1,
+            "graph_json_node_count": viewer.evaluate(
+                "(element) => JSON.parse("
+                "element.getAttribute('data-graph-json') || '{}'"
+                ").nodes.length"
+            ),
+        }
+
+    return _run_playwright_probe(
+        playwright_sync=playwright_sync,
+        probe=_probe,
+        timeout_message="chromium browser smoke timed out",
+        error_prefix="playwright page probe failed",
+    )
+
+
+def _playwright_live_refresh_probe(
+    *,
+    playwright_sync: Any,
+    page_url: str,
+    db_path: Path,
+) -> dict[str, object]:
+    def _probe(page: Any) -> dict[str, object]:
+        page.goto(page_url)
+        viewer = page.locator("graphfakos-viewer")
+        initial_count = viewer.evaluate("(element) => element.graph.nodes.length")
+        SQLiteMemoryStore(db_path).put(
+            MemoryRecord(
+                id="memory:browser-live-second",
+                scope="agent:openminion",
+                type="decision",
+                key="browser-live-second",
+                title="Browser Live Second",
+                content="The browser should receive this live node.",
+                created_at="2026-07-21T00:00:00+00:00",
+                updated_at="2026-07-21T00:01:00+00:00",
+            )
+        )
+        live_probe = page.evaluate(
+            """async () => {
+              const viewer = document.querySelector("graphfakos-viewer");
+              if (!viewer?.applyLivePatch) {
+                throw new Error("GraphFakos live viewer API is unavailable");
+              }
+              const response = await fetch("/api/live");
+              const event = await response.text();
+              const dataLine = event
+                .split("\\n")
+                .find((line) => line.startsWith("data: "));
+              if (!dataLine) throw new Error(`missing live patch data: ${event}`);
+              const patch = JSON.parse(dataLine.replace("data: ", ""));
+              const result = viewer.applyLivePatch(patch);
+              return {
+                nodeCount: viewer.graph.nodes.length,
+                nodeIds: viewer.graph.nodes.map((node) => node.id),
+                status: viewer.getState().live_status,
+                applied: result.applied,
+                event,
+              };
+            }"""
+        )
+        return {
+            "initial_graph_node_count": initial_count,
+            "live_graph_node_count": live_probe["nodeCount"],
+            "live_graph_node_ids": live_probe["nodeIds"],
+            "live_status": live_probe["status"],
+            "live_patch_applied": live_probe["applied"],
+            "live_event": live_probe["event"],
+            "live_status_text": page.locator("[data-gf-live-status]").inner_text(
+                timeout=10_000
+            ),
+        }
+
+    return _run_playwright_probe(
+        playwright_sync=playwright_sync,
+        probe=_probe,
+        timeout_message="chromium live refresh smoke timed out",
+        error_prefix="playwright live refresh probe failed",
+        timeout_seconds=30,
+    )
+
+
+def _run_playwright_probe(
+    *,
+    playwright_sync: Any,
+    probe: Callable[[Any], dict[str, object]],
+    timeout_message: str,
+    error_prefix: str,
+    timeout_seconds: int = 60,
+) -> dict[str, object]:
     box: dict[str, object] = {}
 
     def _runner() -> None:
@@ -1629,30 +1802,9 @@ def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, 
                 return
             try:
                 page = browser.new_page()
-                page.goto(page_uri)
-                viewer = page.locator("graphfakos-viewer")
-                box["probe"] = {
-                    "text": page.locator("body").inner_text(timeout=10_000),
-                    "canvas_visible": page.locator(
-                        "[aria-label='GraphFakos graph canvas']"
-                    ).is_visible(timeout=10_000),
-                    "toolbar_present": page.locator(
-                        "[aria-label='Graph filters']"
-                    ).count()
-                    == 1,
-                    "node_count": page.locator("[data-gf-graph-item='node']").count(),
-                    "inspect_overlay": page.locator(
-                        "[data-gf-inspect-overlay='true']"
-                    ).count()
-                    == 1,
-                    "graph_json_node_count": viewer.evaluate(
-                        "(element) => JSON.parse("
-                        "element.getAttribute('data-graph-json') || '{}'"
-                        ").nodes.length"
-                    ),
-                }
+                box["probe"] = probe(page)
             except Exception as exc:  # noqa: BLE001
-                box["error"] = f"playwright page probe failed: {exc}"
+                box["error"] = f"{error_prefix}: {exc}"
             finally:
                 browser.close()
         finally:
@@ -1660,9 +1812,9 @@ def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, 
 
     worker = threading.Thread(target=_runner, daemon=True)
     worker.start()
-    worker.join(timeout=60)
+    worker.join(timeout=timeout_seconds)
     if worker.is_alive():
-        pytest.skip("chromium browser smoke timed out")
+        pytest.skip(timeout_message)
     if "skip" in box:
         pytest.skip(str(box["skip"]))
     if "error" in box:
