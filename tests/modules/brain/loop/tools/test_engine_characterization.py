@@ -3507,6 +3507,123 @@ def test_tool_choice_none_second_retry_degrades_answer_only_closeout_to_budget_e
     )
 
 
+def test_tool_choice_none_missing_validation_continues_with_tools() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="file.write",
+                        arguments={"path": "b.py"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="call-3",
+                        name="exec.run",
+                        arguments={"cmd": "python -m pytest -q"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="result: validation passed",
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=3, llm_calls_max=6),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="file.write", args={"path": "b.py"}
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="wrote b.py",
+                    outputs={"path": "b.py"},
+                ),
+            ),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="exec.run", args={"cmd": "python -m pytest -q"}
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="1 passed",
+                    outputs={"stdout": "1 passed"},
+                ),
+            ),
+        ],
+    )
+    prof = AdaptiveToolLoopProfile(
+        profile_name="t",
+        mode_name="act_adaptive",
+        allowed_tools=frozenset({"file.write", "exec.run"}),
+        max_iterations=5,
+        allow_plan_tool=False,
+        tool_choice="none",
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=prof,
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(
+                role="user",
+                content=(
+                    "Use file.write for files, run a focused check with exec.run, "
+                    "and finish with the exact label `result:`."
+                ),
+            )
+        ],
+        tool_specs=_tool_specs("file.write", "exec.run"),
+        initial_state=AdaptiveToolLoopState(
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "file.write",
+                        "ok": True,
+                        "data": {"path": "a.py"},
+                    }
+                ]
+            }
+        ),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == "result: validation passed"
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        "file.write",
+        "exec.run",
+    ]
+    assert runtime.calls[0]["tool_choice"] == "auto"
+    assert runtime.calls[1]["tool_choice"] == "auto"
+    assert "tool_choice_none_retry_continued_for_validation" not in (
+        outcome.state.scratchpad
+    )
+
+
 def test_tool_choice_none_second_retry_salvages_mutating_file_evidence() -> None:
     runtime = _FakeRuntime(
         responses=[
@@ -6943,6 +7060,130 @@ def test_loop_retries_prose_closeout_when_file_artifacts_were_not_created() -> N
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
     assert bool(outcome.state.scratchpad.get("snippet_only_file_artifact_retry_used"))
+
+
+def test_loop_retries_closeout_when_requested_test_file_is_missing() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="file.write",
+                        arguments={"path": "math_ops.py"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c2",
+                        name="exec.run",
+                        arguments={"cmd": "python -m pytest -q"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="result: module complete",
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="c3",
+                        name="file.write",
+                        arguments={"path": "test_math_ops.py"},
+                    ),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="result: module and test complete",
+                finalization_status={"status": "final_answer", "reasoning": "done"},
+                finish_reason="stop",
+            ),
+        ]
+    )
+    loop_ctx = _LoopContext(
+        state=_state(tool_calls=4, llm_calls_max=6),
+        outcomes=[
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="file.write", args={"path": "math_ops.py"}
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="wrote math_ops.py",
+                    outputs={"path": "math_ops.py"},
+                ),
+            ),
+            _success_outcome("exec.run", "1 passed"),
+            CommandExecutionOutcome(
+                approved_command=SimpleNamespace(
+                    tool_name="file.write", args={"path": "test_math_ops.py"}
+                ),
+                action_result=ActionResult(
+                    command_id=new_uuid(),
+                    status="success",
+                    summary="wrote test_math_ops.py",
+                    outputs={"path": "test_math_ops.py"},
+                ),
+            ),
+        ],
+    )
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(
+            allowed_tools=frozenset({"file.write", "exec.run"}),
+            profile_name="general_adaptive_v1",
+            max_iterations=6,
+        ),
+        runtime=runtime,
+        model="m",
+        initial_messages=[
+            Message(
+                role="user",
+                content=(
+                    "Create a tiny Python module and test. Use file.write for "
+                    "files and direct exec.run commands for checks; do not only "
+                    "show code snippets. Finish with the exact label `result:`."
+                ),
+            )
+        ],
+        tool_specs=_tool_specs("file.write", "exec.run"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        "file.write",
+        "exec.run",
+        "file.write",
+    ]
+    assert bool(
+        outcome.state.scratchpad.get("missing_requested_file_artifacts_retry_used")
+    )
 
 
 def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> None:

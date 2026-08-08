@@ -261,7 +261,7 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
     ) as session:
         _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "1")
-        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Model \\(press Enter for the recommended default:")
         _reply(session, r"Create or repair this config\? \[Y/n\]:")
         _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
         transcript = session.wait_for_after(
@@ -303,7 +303,7 @@ def test_local_setup_is_keyless_and_cancellable(
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
         _reply(session, "Choose your setup path:", "2")
-        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Model \\(press Enter for the recommended default:")
         _reply(session, "Ollama base URL")
         _reply(session, r"Create or repair this config\? \[Y/n\]:", "n")
         transcript = session.wait_for_after(
@@ -343,7 +343,7 @@ def test_missing_hosted_credential_cancels_without_writing(
     ) as session:
         _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "1")
-        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Model \\(press Enter for the recommended default:")
         _reply(
             session,
             "Store a key in the owner-readable local OpenMinion config",
@@ -382,9 +382,9 @@ def test_hosted_more_menu_back_and_cancel_stays_readable_at_80_columns(
         cols=80,
     ) as session:
         _reply(session, "Choose your setup path:", "1")
-        _reply(session, "Choose your model service:", "4")
+        _reply(session, "Choose your model service:", "5")
         _reply(session, "Choose another service or custom endpoint:", "b")
-        _reply(session, "Choose your model service:", "4")
+        _reply(session, "Choose your model service:", "5")
         _reply(session, "Choose another service or custom endpoint:", "c")
         transcript = session.wait_for_after(
             "Setup failed: Setup cancelled before choosing provider.",
@@ -426,7 +426,6 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
     ) as session:
         _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "4")
-        _reply(session, "Choose another service or custom endpoint:", "4")
         _reply(session, "Choose a recommended model", "2")
         _reply(session, r"Create or repair this config\? \[Y/n\]:")
         _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
@@ -439,9 +438,8 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     assert payload["agents"]["openminion"]["provider"] == "openai"
     assert payload["providers"]["openai"]["model"] == "MiniMax-M2.7-highspeed"
-    assert "MiniMax-M3 (recommended)" in transcript
-    assert "MiniMax-M2.7-highspeed (recommended)" in transcript
     assert "MiniMax-M2.7 (recommended)" in transcript
+    assert "MiniMax-M2.7-highspeed (recommended)" in transcript
     assert "model: MiniMax-M2.7-highspeed [recommended]" in transcript
     assert fixture_key not in transcript
     assert fixture_key not in config_path.read_text(encoding="utf-8")
@@ -470,7 +468,7 @@ def test_local_ollama_check_failure_does_not_claim_readiness(
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
         _reply(session, "Choose your setup path:", "2")
-        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Model \\(press Enter for the recommended default:")
         _reply(session, "Ollama base URL", "http://127.0.0.1:1")
         _reply(session, r"Create or repair this config\? \[Y/n\]:")
         _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "y")
@@ -512,7 +510,7 @@ def test_local_ollama_check_can_be_declined_after_config_is_saved(
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
         _reply(session, "Choose your setup path:", "2")
-        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Model \\(press Enter for the recommended default:")
         _reply(session, "Ollama base URL")
         _reply(session, r"Create or repair this config\? \[Y/n\]:")
         _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "n")
@@ -558,7 +556,7 @@ def test_local_ollama_check_can_verify_against_fixture_server(
             _reply(session, "Choose your setup path:", "2")
             _reply(
                 session,
-                "Model \\(press Enter for the existing or recommended default:",
+                "Model \\(press Enter for the recommended default:",
                 "qwen2.5:14b",
             )
             _reply(session, "Ollama base URL", base_url)
@@ -651,7 +649,7 @@ def test_setup_cancellation_after_write_preserves_saved_truth(
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
         _reply(session, "Choose your setup path:", "2")
-        _reply(session, "Model \\(press Enter for the existing or recommended default:")
+        _reply(session, "Model \\(press Enter for the recommended default:")
         _reply(session, "Ollama base URL")
         _reply(session, r"Create or repair this config\? \[Y/n\]:")
         session.wait_for_after(
@@ -723,7 +721,6 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
     ) as session:
         _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "4")
-        _reply(session, "Choose another service or custom endpoint:", "4")
         _reply(session, "Choose a recommended model", "1")
         _reply(session, r"Create or repair this config\? \[Y/n\]:")
         _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
@@ -738,7 +735,7 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
     assert payload["providers"]["openai"]["model"] == "gpt-4.1-mini"
     assert (
         payload["agents"]["minimax-agent"]["provider_config_overrides"]["model"]
-        == "MiniMax-M3"
+        == "MiniMax-M2.7"
     )
     assert "repair: existing agents remain unchanged" in transcript
     assert fixture_key not in transcript
@@ -782,7 +779,7 @@ def test_provider_listing_is_width_safe(
     assert "API format: openai-compatible" in transcript
     assert "Credential: MINIMAX_API_KEY" in transcript
     assert "Endpoint: https://api.minimax.io/v1" in transcript
-    assert "Recommended models: MiniMax-M3" in transcript
+    assert "Recommended models: MiniMax-M2.7" in transcript
     write_transcript(
         artifact_root(tmp_path),
         f"onboarding-provider-list-{cols}",
@@ -803,7 +800,7 @@ def test_noninteractive_openai_compatible_setups_preserve_api_format(
         name="dashscope",
         preset_id="qwen-dashscope",
         base_url=dashscope_url,
-        model="qwen-plus",
+        model="qwen3.7-plus",
         credential_env="DASHSCOPE_API_KEY",
         credential="fixture-dashscope-key-not-for-network-use",
     )

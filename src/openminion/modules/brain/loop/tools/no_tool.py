@@ -420,16 +420,63 @@ def _has_file_mutation_attempt(loop_state: Any) -> bool:
     )
 
 
+def _successful_file_mutation_paths(loop_state: Any) -> tuple[str, ...]:
+    paths: list[str] = []
+    for item in _loop_tool_result_payloads(loop_state):
+        if not bool(item.get("ok")):
+            continue
+        if str(item.get("tool_name", "") or "").strip() not in _MUTATING_FILE_TOOLS:
+            continue
+        data = item.get("data")
+        raw_path = data.get("path") if isinstance(data, dict) else item.get("path")
+        path = str(raw_path or "").strip()
+        if path and path not in paths:
+            paths.append(path)
+    return tuple(paths)
+
+
+def _missing_requested_file_artifact_labels(loop_state: Any) -> tuple[str, ...]:
+    user_text = "\n".join(
+        str(getattr(message, "content", "") or "")
+        for message in list(getattr(loop_state, "messages", []) or [])
+        if str(getattr(message, "role", "") or "").strip().lower() == "user"
+    ).lower()
+    if not user_text:
+        return ()
+    paths = tuple(path.lower().rsplit("/", 1)[-1] for path in _successful_file_mutation_paths(loop_state))
+    missing: list[str] = []
+    if "readme" in user_text and not any(path.startswith("readme") for path in paths):
+        missing.append("README")
+    if "test" in user_text and not any(
+        path.startswith("test") or path.endswith("_test.py") for path in paths
+    ):
+        missing.append("test file")
+    return tuple(missing)
+
+
 def _retry_snippet_only_file_artifact_answer(
     runner: Any,
     *,
     normalized_final_text: str,
 ) -> tuple[bool, AdaptiveToolLoopOutcome | None] | None:
-    if _has_successful_file_mutation(runner.loop_state):
-        return None
     if not _user_requested_file_artifact_tooling(runner.loop_state):
         return None
+    missing_artifacts = _missing_requested_file_artifact_labels(runner.loop_state)
+    if _has_successful_file_mutation(runner.loop_state) and not missing_artifacts:
+        return None
     if _has_file_mutation_attempt(runner.loop_state):
+        if missing_artifacts and normalized_final_text:
+            retry_key = "missing_requested_file_artifacts_retry_used"
+            if not bool(runner.loop_state.scratchpad.get(retry_key, False)):
+                runner.loop_state.scratchpad[retry_key] = True
+                missing = ", ".join(missing_artifacts)
+                return runner._retry_with_system_message(
+                    "The user requested file artifacts that are not backed by "
+                    f"successful file-write evidence yet: {missing}. Use file.write "
+                    "for the missing artifacts now, then run any requested "
+                    "validation before the final answer.",
+                    discard_assistant_text=normalized_final_text,
+                )
         return _requested_direct_tool_not_executed_outcome(runner)
     if not normalized_final_text:
         return None

@@ -12,6 +12,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_BUDGET_EXHAUSTED,
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    ADAPTIVE_TERM_LLM_ERROR,
     AdaptiveToolLoopOutcome,
 )
 from openminion.modules.brain.loop.tools.iteration.helpers import _MUTATING_FILE_TOOLS
@@ -68,6 +69,13 @@ _RESERVE_TERMINATION_REASONS = frozenset(
 )
 
 
+def _is_tool_choice_none_closure_failure(outcome: AdaptiveToolLoopOutcome) -> bool:
+    if outcome.termination_reason != ADAPTIVE_TERM_LLM_ERROR:
+        return False
+    message = str(getattr(outcome, "error_message", "") or "").lower()
+    return "tool_choice=none" in message
+
+
 def _mutating_result_path(item: dict[str, Any]) -> str | None:
     for mapping in _mutating_result_mappings(item):
         for key in ("path", "file_path", "final_path", "target", "target_path"):
@@ -118,7 +126,10 @@ class CodingReserveMixin:
         *,
         outcome: AdaptiveToolLoopOutcome,
     ) -> bool:
-        if outcome.termination_reason not in _RESERVE_TERMINATION_REASONS:
+        if (
+            outcome.termination_reason not in _RESERVE_TERMINATION_REASONS
+            and not _is_tool_choice_none_closure_failure(outcome)
+        ):
             return False
         if self._coding_plan is None:
             return False
@@ -136,13 +147,11 @@ class CodingReserveMixin:
             return False
         if not self._has_successful_mutating_file_result():
             return False
-        budgets = getattr(ctx.state, "budgets_remaining", None)
-        if budgets is None:
-            return False
         return self._queue_verification_reserve(
             ctx,
             restore_answer_only_state=True,
-            ensure_tool_budget=True,
+            ensure_tool_budget=getattr(ctx.state, "budgets_remaining", None)
+            is not None,
         )
 
     def _maybe_continue_with_verify_closeout_reserve(

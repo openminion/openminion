@@ -112,6 +112,35 @@ def _changed_paths_from_tool_results(tool_results: list[dict[str, Any]]) -> list
     return changed_paths
 
 
+def missing_requested_file_artifact_labels(loop_state: Any) -> tuple[str, ...]:
+    user_text = "\n".join(
+        str(getattr(message, "content", "") or "")
+        for message in list(getattr(loop_state, "messages", []) or [])
+        if str(getattr(message, "role", "") or "").strip().lower() == "user"
+    ).lower()
+    if not user_text:
+        return ()
+    paths = tuple(
+        path.lower().rsplit("/", 1)[-1]
+        for path in _changed_paths_from_tool_results(
+            _mutating_file_tool_results(_successful_substantive_tool_results(loop_state))
+        )
+    )
+    missing: list[str] = []
+    if "readme" in user_text and not any(path.startswith("readme") for path in paths):
+        missing.append("README")
+    if ("cli entry" in user_text or "cli project" in user_text) and not any(
+        path in {"cli.py", "main.py", "__main__.py"} or path.endswith("_cli.py")
+        for path in paths
+    ):
+        missing.append("CLI entry")
+    if "test" in user_text and not any(
+        path.startswith("test") or path.endswith("_test.py") for path in paths
+    ):
+        missing.append("test file")
+    return tuple(missing)
+
+
 def _is_mutating_file_tool_result(item: dict[str, Any]) -> bool:
     tool_name = str(item.get("tool_name") or "").strip().lower()
     if tool_name in _MUTATING_FILE_TOOL_NAMES:
@@ -155,6 +184,10 @@ def requested_validation_without_exec_run(loop_state: Any) -> bool:
     return _user_requested_validation(loop_state) and not _has_successful_exec_run(
         _successful_substantive_tool_results(loop_state)
     )
+
+
+def mutating_file_evidence_can_closeout(loop_state: Any) -> bool:
+    return not requested_validation_without_exec_run(loop_state)
 
 
 def _tool_evidence_lines(tool_results: list[dict[str, Any]]) -> list[str]:

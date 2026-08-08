@@ -186,6 +186,100 @@ def test_explicit_existing_config_preserves_configured_model_provenance(
     assert result.config.storage.path == str(tmp_path / "existing.db")
 
 
+def test_different_openai_compatible_service_does_not_reuse_global_model(
+    tmp_path: Path,
+) -> None:
+    existing = OpenMinionConfig()
+    existing.providers.openai.model = "gpt-4.1-mini"
+    existing.providers.openai.base_url = "https://api.openai.com/v1"
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="minimax-agent",
+            config_path=str(tmp_path / ".openminion" / "agents.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"MINIMAX_API_KEY": "sk-mini"},
+        ),
+        existing_config=existing,
+    )
+
+    assert result.model_choice.selected_model == "MiniMax-M2.7"
+    assert result.model_choice.source == "recommended"
+
+
+def test_existing_agent_reuses_model_for_same_service(tmp_path: Path) -> None:
+    existing = OpenMinionConfig()
+    existing.agents = {
+        "minimax-agent": AgentProfileConfig(
+            name="minimax-agent",
+            provider="openai",
+            provider_config_overrides={
+                "model": "MiniMax-M2.7",
+                "base_url": "https://api.minimax.io/v1",
+                "provider_identity": {
+                    "transport_adapter": "openai_chat",
+                    "wire_protocol_family": "openai_chat_completions",
+                    "service_vendor": "minimax",
+                    "model_family": "minimax",
+                },
+            },
+        )
+    }
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="minimax",
+            agent_id="minimax-agent",
+            config_path=str(tmp_path / ".openminion" / "agents.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={"MINIMAX_API_KEY": "sk-mini"},
+        ),
+        existing_config=existing,
+    )
+
+    assert result.model_choice.selected_model == "MiniMax-M2.7"
+    assert result.model_choice.source == "configured"
+
+
+def test_dedicated_adapter_reuses_model_with_custom_endpoint(tmp_path: Path) -> None:
+    existing = OpenMinionConfig()
+    existing.providers.ollama.model = "local-custom-model"
+    existing.providers.ollama.base_url = "http://model-host.internal:11434"
+
+    result = build_provider_setup(
+        ProviderSetupRequest(
+            preset_id="ollama",
+            agent_id="local-agent",
+            config_path=str(tmp_path / ".openminion" / "agents.json"),
+            home_root=tmp_path,
+            data_root=tmp_path / ".openminion",
+            env={},
+        ),
+        existing_config=existing,
+    )
+
+    assert result.model_choice.selected_model == "local-custom-model"
+    assert result.model_choice.source == "configured"
+
+
+def test_custom_endpoint_requires_explicit_model(tmp_path: Path) -> None:
+    with pytest.raises(ProviderSetupError, match="requires an explicit model id"):
+        build_provider_setup(
+            ProviderSetupRequest(
+                preset_id="custom-openai-compatible",
+                agent_id="custom-agent",
+                base_url="https://models.example.invalid/v1",
+                config_path=str(tmp_path / ".openminion" / "agents.json"),
+                home_root=tmp_path,
+                data_root=tmp_path / ".openminion",
+                env={"OPENAI_COMPATIBLE_API_KEY": "sk-custom"},
+            )
+        )
+
+
 def test_local_credential_requires_explicit_storage_consent() -> None:
     preset = get_setup_preset("openai")
 
@@ -268,8 +362,8 @@ def test_shared_adapter_setup_uses_selected_agent_overrides(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("preset_id", "model", "credential_env", "base_url"),
     [
-        ("minimax", "MiniMax-M3", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
-        ("kimi", "kimi-k3", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
+        ("minimax", "MiniMax-M2.7", "MINIMAX_API_KEY", "https://api.minimax.io/v1"),
+        ("kimi", "kimi-k2.6", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
         ("zai", "glm-5.2", "ZAI_API_KEY", "https://api.z.ai/api/paas/v4/"),
         (
             "zai-coding",
@@ -285,7 +379,7 @@ def test_shared_adapter_setup_uses_selected_agent_overrides(tmp_path: Path) -> N
         ),
         (
             "qwen-dashscope",
-            "qwen-plus",
+            "qwen3.7-plus",
             "DASHSCOPE_API_KEY",
             "https://dashscope.aliyuncs.com/compatible-mode/v1",
         ),
@@ -304,7 +398,7 @@ def test_shared_adapter_setup_uses_selected_agent_overrides(tmp_path: Path) -> N
         ),
         (
             "together",
-            "MiniMaxAI/MiniMax-M3",
+            "MiniMaxAI/MiniMax-M2.7",
             "TOGETHER_API_KEY",
             "https://api.together.ai/v1",
         ),

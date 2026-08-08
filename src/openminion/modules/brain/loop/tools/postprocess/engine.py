@@ -52,6 +52,7 @@ from .rules import (
 )
 from .evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
+    mutating_file_evidence_can_closeout,
     mutating_file_evidence_fallback_text,
     requested_validation_without_exec_run,
 )
@@ -94,6 +95,8 @@ def _suppressed_tool_retry_message(
 
 
 def _mutating_file_fallback_outcome(runner: Any) -> AdaptiveToolLoopOutcome | None:
+    if not mutating_file_evidence_can_closeout(runner.loop_state):
+        return None
     fallback_text = mutating_file_evidence_fallback_text(runner.loop_state)
     if not fallback_text:
         return None
@@ -106,6 +109,14 @@ def _mutating_file_fallback_outcome(runner: Any) -> AdaptiveToolLoopOutcome | No
         state=runner.loop_state,
         allowed_tools=runner.allowed_tools,
         final_text=fallback_text,
+    )
+
+
+def _validation_blocked_answer_only_closeout(loop_state: Any) -> bool:
+    return bool(
+        loop_state.scratchpad.get(
+            "requested_validation_blocked_answer_only_closeout", False
+        )
     )
 
 
@@ -338,8 +349,19 @@ class AdaptiveLoopRunnerPostprocessMixin(
             self.loop_state,
             llm_tools,
         )
+        validation_needs_tool = requested_validation_without_exec_run(
+            self.loop_state
+        ) and bool(_successful_substantive_tool_results(self.loop_state))
         if forced_direct_choice is not None:
             llm_tool_choice = forced_direct_choice
+        if (
+            llm_tool_choice == "none"
+            and (
+                _validation_blocked_answer_only_closeout(self.loop_state)
+                or validation_needs_tool
+            )
+        ):
+            llm_tool_choice = "auto"
         if llm_tool_choice == "none" and any(
             str(getattr(spec, "name", "") or "").strip() == PLAN_TOOL_NAME
             for spec in llm_tools
@@ -353,17 +375,32 @@ class AdaptiveLoopRunnerPostprocessMixin(
             )
             or self.loop_state.scratchpad.get(MUTATING_FILE_CLOSEOUT_KEY, False)
         )
-        if _should_force_direct_tool_closure(self.loop_state):
+        should_force_direct_closure = _should_force_direct_tool_closure(
+            self.loop_state
+        )
+        direct_tool_closure_active = should_force_direct_closure or (
+            bool(
+                getattr(
+                    self.loop_state,
+                    "direct_tool_requested_batch_satisfied",
+                    False,
+                )
+            )
+            and bool(
+                getattr(self.loop_state, "direct_tool_closure_consumed", False)
+            )
+        )
+        if should_force_direct_closure:
             self.loop_state.direct_tool_closure_consumed = True
             self.loop_state.scratchpad["direct_tool_closure_forced"] = True
             self.loop_state.messages.append(
                 _build_direct_tool_closure_message(self.loop_state)
             )
             suppress_tools = True
-        elif bool(
-            getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
-        ) and bool(getattr(self.loop_state, "direct_tool_closure_consumed", False)):
+        elif direct_tool_closure_active:
             suppress_tools = True
+        if validation_needs_tool and not direct_tool_closure_active:
+            suppress_tools = False
 
         if suppress_tools:
             return [], "none", True
@@ -587,6 +624,11 @@ class AdaptiveLoopRunnerPostprocessMixin(
             compact_closeout = self._force_compact_answer_only_closeout()
             if compact_closeout is not None:
                 return False, compact_closeout
+            if _validation_blocked_answer_only_closeout(self.loop_state):
+                self.loop_state.scratchpad[
+                    "tool_choice_none_retry_continued_for_validation"
+                ] = True
+                return True, None
             if mutating_file_closeout_active or final_answer_reserve_active:
                 fallback_outcome = _mutating_file_fallback_outcome(self)
                 if fallback_outcome is not None:
@@ -598,6 +640,11 @@ class AdaptiveLoopRunnerPostprocessMixin(
                 compact_closeout = self._force_compact_answer_only_closeout()
                 if compact_closeout is not None:
                     return False, compact_closeout
+                if _validation_blocked_answer_only_closeout(self.loop_state):
+                    self.loop_state.scratchpad[
+                        "tool_choice_none_retry_continued_for_validation"
+                    ] = True
+                    return True, None
             termination_reason = (
                 ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED
                 if direct_tool_closure_active

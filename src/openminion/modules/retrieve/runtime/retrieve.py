@@ -24,6 +24,7 @@ from ..interfaces import (
 )
 from .retrieval import (
     RetrievalContext,
+    RetrievalExecution,
     resolve_retrieval_strategy,
 )
 from ..schemas import (
@@ -185,35 +186,17 @@ class RetrieveCtl:
         normalized_query = str(query or "").strip()
         if not normalized_query:
             return []
-
-        retrieval_k = max(1, int(k))
-        retrieval_filters = self._normalize_filters(filters)
-        resolved_strategy = self._resolve_strategy(
+        execution = self._execute_retrieval(
             query=normalized_query,
-            purpose=str(purpose or "act"),
-            strategy=str(strategy or "auto"),
+            purpose=purpose,
             scope=scope,
-            filters=retrieval_filters,
-        )
-        candidates = self._score_candidates(
-            query=normalized_query,
-            scope=scope,
-            filters=retrieval_filters,
-            limit=max(retrieval_k, int(self.config.defaults.lexical_candidate_count)),
-        )
-        scored_candidate_count = len(candidates)
-        if str(purpose).lower() == "verify":
-            candidates = self._filter_verify_candidates(candidates)
-
-        self._last_retrieval_degraded_reason = None
-        selected = self._select_candidates(
-            candidates=candidates,
-            strategy=resolved_strategy,
-            k=retrieval_k,
+            k=k,
+            strategy=strategy,
+            filters=filters,
         )
         items = [
-            self._to_retrieved_item(candidate=item, strategy=resolved_strategy)
-            for item in selected
+            self._to_retrieved_item(candidate=item, strategy=execution.strategy)
+            for item in execution.selected
         ]
         elapsed_ms = (perf_counter() - started) * 1000.0
         self._emit_retrieval_metrics(
@@ -221,17 +204,17 @@ class RetrieveCtl:
             query=normalized_query,
             purpose=purpose,
             requested_strategy=strategy,
-            resolved_strategy=resolved_strategy,
-            candidate_count=len(candidates),
-            scored_candidate_count=scored_candidate_count,
+            resolved_strategy=execution.strategy,
+            candidate_count=len(execution.candidates),
+            scored_candidate_count=execution.scored_candidate_count,
             item_count=len(items),
             elapsed_ms=elapsed_ms,
             degraded_reason=self._last_retrieval_degraded_reason,
             no_result_reason=diagnostic_ops.no_result_reason(
                 normalized_query=normalized_query,
-                scored_candidate_count=scored_candidate_count,
-                candidate_count=len(candidates),
-                selected_count=len(selected),
+                scored_candidate_count=execution.scored_candidate_count,
+                candidate_count=len(execution.candidates),
+                selected_count=len(execution.selected),
                 item_count=len(items),
                 purpose=purpose,
             ),
@@ -239,8 +222,8 @@ class RetrieveCtl:
         self._record_retrieval_run(
             scope=scope,
             query=normalized_query,
-            strategy=resolved_strategy,
-            k=retrieval_k,
+            strategy=execution.strategy,
+            k=execution.k,
             items=items,
         )
         return [item.model_dump(mode="json") for item in items]
@@ -279,35 +262,20 @@ class RetrieveCtl:
                 "top_candidates": [],
             }
 
-        resolved_strategy = self._resolve_strategy(
+        execution = self._execute_retrieval(
             query=normalized_query,
-            purpose=str(purpose or "act"),
-            strategy=str(strategy or "auto"),
+            purpose=purpose,
             scope=scope,
-            filters=retrieval_filters,
-        )
-        candidates = self._score_candidates(
-            query=normalized_query,
-            scope=scope,
-            filters=retrieval_filters,
-            limit=max(retrieval_k, int(self.config.defaults.lexical_candidate_count)),
-        )
-        scored_candidate_count = len(candidates)
-        if str(purpose).lower() == "verify":
-            candidates = self._filter_verify_candidates(candidates)
-
-        self._last_retrieval_degraded_reason = None
-        selected = self._select_candidates(
-            candidates=candidates,
-            strategy=resolved_strategy,
             k=retrieval_k,
+            strategy=strategy,
+            filters=retrieval_filters,
         )
-        returned_count = len(selected)
+        returned_count = len(execution.selected)
         no_result_reason = diagnostic_ops.no_result_reason(
             normalized_query=normalized_query,
-            scored_candidate_count=scored_candidate_count,
-            candidate_count=len(candidates),
-            selected_count=len(selected),
+            scored_candidate_count=execution.scored_candidate_count,
+            candidate_count=len(execution.candidates),
+            selected_count=len(execution.selected),
             item_count=returned_count,
             purpose=purpose,
         )
@@ -315,30 +283,73 @@ class RetrieveCtl:
             "query": normalized_query,
             "purpose": str(purpose or "act").strip().lower() or "act",
             "requested_strategy": str(strategy or "auto").strip().lower() or "auto",
-            "resolved_strategy": resolved_strategy,
+            "resolved_strategy": execution.strategy,
             "strategy_resolution_reason": self._strategy_resolution_reason(
                 requested_strategy=str(strategy or "auto"),
-                resolved_strategy=resolved_strategy,
+                resolved_strategy=execution.strategy,
                 scope=scope,
                 purpose=purpose,
             ),
-            "k": retrieval_k,
-            "filters": retrieval_filters.model_dump(mode="json"),
+            "k": execution.k,
+            "filters": execution.filters.model_dump(mode="json"),
             "vector_adapter": bool(self.vector_adapter),
             "embeddings_enabled": bool(self.config.defaults.embeddings_enabled),
             "counts": {
-                "scored_candidates": scored_candidate_count,
-                "after_verify_filter": len(candidates),
-                "selected": len(selected),
+                "scored_candidates": execution.scored_candidate_count,
+                "after_verify_filter": len(execution.candidates),
+                "selected": len(execution.selected),
                 "returned": returned_count,
             },
             "no_result_reason": no_result_reason,
             "degraded_reason": self._last_retrieval_degraded_reason,
             "top_candidates": [
                 diagnostic_ops.diagnostic_candidate(candidate)
-                for candidate in selected[:retrieval_k]
+                for candidate in execution.selected[: execution.k]
             ],
         }
+
+    def _execute_retrieval(
+        self,
+        *,
+        query: str,
+        purpose: str,
+        scope: dict[str, Any],
+        k: int,
+        strategy: str,
+        filters: dict[str, Any] | RetrievalFilters | None,
+    ) -> RetrievalExecution:
+        retrieval_k = max(1, int(k))
+        retrieval_filters = self._normalize_filters(filters)
+        resolved_strategy = self._resolve_strategy(
+            query=query,
+            purpose=str(purpose or "act"),
+            strategy=str(strategy or "auto"),
+            scope=scope,
+            filters=retrieval_filters,
+        )
+        candidates = self._score_candidates(
+            query=query,
+            scope=scope,
+            filters=retrieval_filters,
+            limit=max(retrieval_k, int(self.config.defaults.lexical_candidate_count)),
+        )
+        scored_candidate_count = len(candidates)
+        if str(purpose).lower() == "verify":
+            candidates = self._filter_verify_candidates(candidates)
+        self._last_retrieval_degraded_reason = None
+        selected = self._select_candidates(
+            candidates=candidates,
+            strategy=resolved_strategy,
+            k=retrieval_k,
+        )
+        return RetrievalExecution(
+            k=retrieval_k,
+            filters=retrieval_filters,
+            strategy=resolved_strategy,
+            candidates=candidates,
+            scored_candidate_count=scored_candidate_count,
+            selected=selected,
+        )
 
     def _normalize_filters(
         self, filters: dict[str, Any] | RetrievalFilters | None

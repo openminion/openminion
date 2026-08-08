@@ -105,6 +105,16 @@ class RetrievalContext:
     k: int
 
 
+@dataclass(frozen=True)
+class RetrievalExecution:
+    k: int
+    filters: RetrievalFilters
+    strategy: RetrievalStrategy
+    candidates: list[dict[str, Any]]
+    scored_candidate_count: int
+    selected: list[dict[str, Any]]
+
+
 class RetrievalStrategyResolver(Protocol):
     def resolve(self, ctx: RetrievalContext) -> RetrievalStrategy: ...
 

@@ -22,6 +22,7 @@ from openminion.modules.context.knowledge import (
     LAYER_THIRD_BRAIN,
     UnknownProviderError,
 )
+from openminion.modules.context.knowledge.errors import GraphViewerSourceError
 from openminion.modules.context.knowledge.viewer import (
     GraphViewerRequest,
     inspect_graph_viewer_status,
@@ -653,7 +654,7 @@ def test_viewer_request_exposes_graphfakos_navigation_filters(
             edge_kind="supports",
             tag="reviewed",
             source="validated",
-            min_score="0.8",
+            min_score=0.8,
             evidence_filter="with_provenance",
             dry_run=True,
             memory_db=str(db_path),
@@ -739,6 +740,23 @@ def test_second_brain_provider_applies_filter_permutations(
     assert graph.stats["relations"] == len(expected_edges)
 
 
+def test_second_brain_provider_rejects_invalid_minimum_score(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graphfakos = _install_fake_graphfakos(monkeypatch)
+    db_path = tmp_path / "memory.db"
+    _seed_permutation_memory_graph(db_path)
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+
+    with pytest.raises(GraphViewerSourceError, match="must be numeric"):
+        provider.load_graph(_FakeGraphFakosRequest(filters={"min_score": "invalid"}))
+
+
 def test_second_brain_provider_adds_openminion_visual_metadata(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -773,7 +791,9 @@ def test_second_brain_provider_adds_openminion_visual_metadata(
     assert "type:decision" in node.tags
     assert node.provider_payload["memory_type"] == "decision"
     assert isinstance(node.provider_payload["namespace"], dict)
-    assert graph.provider_details["refresh_strategy"] == "live_snapshot_reset_or_requery"
+    assert (
+        graph.provider_details["refresh_strategy"] == "live_snapshot_reset_or_requery"
+    )
     assert graph.provider_details["mutation_policy"] == "read_only_viewer"
     assert graph.provider_payload["refresh"] == {
         "strategy": "live_snapshot_reset_or_requery",
@@ -928,7 +948,10 @@ def test_viewer_status_explains_existing_empty_memory_db(
     second_brain = report.to_dict()["second_brain"]
 
     assert second_brain["visual_ready"] is True
-    assert second_brain["reason"] == "Memory database exists but has no visible records yet."
+    assert (
+        second_brain["reason"]
+        == "Memory database exists but has no visible records yet."
+    )
     assert second_brain["details"]["diagnostic_code"] == "memory_empty"
     assert second_brain["details"]["diagnostic_label"] == (
         "Create memory through OpenMinion, then refresh the viewer."
@@ -1080,9 +1103,18 @@ def test_openminion_graph_view_parser_registration() -> None:
     assert args.session_id == "s1"
     assert args.node_kind == "fact"
     assert args.tag == "scope:session:s1"
-    assert args.min_score == "0.7"
+    assert args.min_score == 0.7
     assert args.evidence_filter == "with_provenance"
     assert args.dry_run is True
+
+
+def test_openminion_graph_view_parser_rejects_invalid_minimum_score() -> None:
+    from openminion.cli.parser.base import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(
+            ["graph", "view", "--min-score", "invalid", "--dry-run"]
+        )
 
 
 def test_openminion_graph_status_parser_registration() -> None:
@@ -1434,9 +1466,9 @@ def test_second_brain_served_viewer_live_api_exposes_memory_changes(tmp_path) ->
     )
     assert operation["metadata"]["node_count"] == 2
     assert len(operation["graph"]["nodes"]) == 2
-    assert live_provider.diagnostics().last_revision == payload["result_revision"][
-        "value"
-    ]
+    assert (
+        live_provider.diagnostics().last_revision == payload["result_revision"]["value"]
+    )
 
 
 def _sse_data_payload(event: str) -> dict[str, Any]:
@@ -1693,9 +1725,7 @@ def _playwright_page_probe(*, playwright_sync: Any, page_uri: str) -> dict[str, 
             "toolbar_present": page.locator("[aria-label='Graph filters']").count()
             == 1,
             "node_count": page.locator("[data-gf-graph-item='node']").count(),
-            "inspect_overlay": page.locator(
-                "[data-gf-inspect-overlay='true']"
-            ).count()
+            "inspect_overlay": page.locator("[data-gf-inspect-overlay='true']").count()
             == 1,
             "graph_json_node_count": viewer.evaluate(
                 "(element) => JSON.parse("

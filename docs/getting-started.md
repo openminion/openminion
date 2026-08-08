@@ -51,8 +51,8 @@ what is my operating system, and what command should I run to inspect memory?
 
 The first screen stays intentionally small:
 
-1. **Hosted provider** for OpenAI, Anthropic, OpenRouter, and the additional
-   provider presets;
+1. **Hosted provider** for OpenAI, Anthropic, OpenRouter, MiniMax, and the
+   additional provider presets;
 2. **Local provider** for Ollama; or
 3. **Import an existing OpenMinion config** from YAML or JSON.
 
@@ -71,7 +71,7 @@ Setup distinguishes:
 2. runtime adapter, such as `openai`, `anthropic`, `openrouter`, `ollama`, or
    `cortensor`;
 3. API format, such as OpenAI-compatible or Anthropic-compatible; and
-4. model id, such as `gpt-4.1-mini` or `MiniMax-M3`.
+4. model id, such as `gpt-4.1-mini` or `MiniMax-M2.7`.
 
 Environment credentials are preferred. For example, OpenAI setup reads
 `OPENAI_API_KEY`; MiniMax setup reads `MINIMAX_API_KEY` while using the existing
@@ -136,7 +136,7 @@ Automation can use the same setup path without prompts:
 ```bash
 openminion setup \
   --provider minimax \
-  --model MiniMax-M3 \
+  --model MiniMax-M2.7 \
   --agent minimax-m3 \
   --no-focus
 ```
@@ -147,8 +147,8 @@ For another OpenAI-compatible service, choose the service preset and model:
 openminion setup \
   --provider qwen-dashscope \
   --api-format openai-compatible \
-  --model qwen-plus \
-  --agent qwen-plus \
+  --model qwen3.7-plus \
+  --agent qwen3.7-plus \
   --no-focus
 ```
 

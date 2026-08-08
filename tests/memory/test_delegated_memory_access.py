@@ -33,6 +33,7 @@ from sophiagraph.access import (
     AuthorizedSophiaGraphGateway,
     DelegatedMemoryAccessDeniedError,
     MemoryAccessContext,
+    MemoryAccessOperation,
     MemoryAccessRequest,
 )
 from sophiagraph.models import MemoryNamespace
@@ -197,6 +198,35 @@ def test_none_and_cancelled_postures_never_resolve(tmp_path: Path) -> None:
                 )
                 is None
             )
+        assert policy.list_grants()[0].uses_count == 0
+    finally:
+        policy.close()
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ("propose", "promote", "mutate", "export", "admin"),
+)
+def test_v1_resolver_rejects_non_read_operations_before_policy_use(
+    tmp_path: Path,
+    operation: MemoryAccessOperation,
+) -> None:
+    policy, grant_id = _policy_with_grant(tmp_path)
+    try:
+        resolver = OpenMinionDelegationMemoryGrantResolver(
+            policy,
+            _run_context(memory_grant_id=grant_id),
+            memory_scope_namespaces=(_namespace(),),
+        )
+
+        assert (
+            resolver.resolve_grant(
+                grant_id,
+                context=_access_context(),
+                operation=operation,
+            )
+            is None
+        )
         assert policy.list_grants()[0].uses_count == 0
     finally:
         policy.close()

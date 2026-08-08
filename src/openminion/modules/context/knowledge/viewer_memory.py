@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from openminion.modules.context.knowledge.constants import LAYER_SECOND_BRAIN
+from openminion.modules.context.knowledge.errors import GraphViewerSourceError
 
 OPENMINION_MEMORY_PROVIDER_ID = "openminion-memory"
 LIVE_REFRESH_CAPABILITY = "live_refresh"
@@ -161,8 +162,7 @@ def _record_matches_filters(record: Any, request: Any) -> bool:
 
 def _relation_matches_edge_kind(relation: Any, edge_kind: str) -> bool:
     return (
-        not edge_kind
-        or str(getattr(relation, "relation_type", "") or "") == edge_kind
+        not edge_kind or str(getattr(relation, "relation_type", "") or "") == edge_kind
     )
 
 
@@ -206,8 +206,11 @@ def _min_score_filter(request: Any) -> float | None:
         return None
     try:
         return float(raw)
-    except ValueError:
-        return None
+    except ValueError as exc:
+        raise GraphViewerSourceError(
+            "Minimum score must be numeric.",
+            details={"min_score": raw},
+        ) from exc
 
 
 def _split_scope_filter(raw_scope: str) -> tuple[str, ...]:
@@ -453,8 +456,6 @@ class OpenMinionMemoryGraphFakosLiveProvider:
         self._request = request
         graph = provider.load_graph(request)
         self._revision = _graph_revision(graphfakos, graph)
-        self._last_node_count = len(getattr(graph, "nodes", ()) or ())
-        self._last_edge_count = len(getattr(graph, "edges", ()) or ())
 
     def open_live_session(self, request: Any) -> Any:
         return self._graphfakos.GraphFakosLiveSessionStatus(
@@ -474,8 +475,6 @@ class OpenMinionMemoryGraphFakosLiveProvider:
             str(getattr(cursor, "value", "") or "").strip() or self._revision.value
         )
         if current_revision.value == base_value:
-            self._last_node_count = node_count
-            self._last_edge_count = edge_count
             return self._graphfakos.GraphFakosLiveSessionStatus(
                 status="heartbeat",
                 revision=current_revision,
@@ -503,8 +502,6 @@ class OpenMinionMemoryGraphFakosLiveProvider:
             ),
         )
         self._revision = current_revision
-        self._last_node_count = node_count
-        self._last_edge_count = edge_count
         return patch
 
     def diagnostics(self) -> Any:
@@ -540,12 +537,8 @@ def _graph_revision(graphfakos: Any, graph: Any) -> Any:
         ],
         "stats": dict(getattr(graph, "stats", {}) or {}),
     }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
-    return graphfakos.GraphFakosGraphRevision(
-        hashlib.sha256(encoded).hexdigest()[:16]
-    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return graphfakos.GraphFakosGraphRevision(hashlib.sha256(encoded).hexdigest()[:16])
 
 
 __all__ = [

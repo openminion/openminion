@@ -18,15 +18,6 @@ from sophiagraph.access import (
 from sophiagraph.contracts.errors import InvalidArgumentError
 from sophiagraph.models import MemoryNamespace
 
-_METHOD_BY_OPERATION = {
-    "read": "delegated_read",
-    "propose": "candidate_propose",
-    "promote": "candidate_promote",
-    "mutate": "durable_write",
-    "export": "export",
-    "admin": "admin",
-}
-
 
 @dataclass(frozen=True, slots=True)
 class DelegatedContextBudgetResult:
@@ -50,12 +41,10 @@ class OpenMinionDelegationMemoryGrantResolver:
         policy: ActivePolicyGrantResolver,
         run_context: DelegatedRunContextView,
         *,
-        project_operations: tuple[str, ...] = ("read",),
         memory_scope_namespaces: tuple[MemoryNamespace, ...] = (),
     ) -> None:
         self._policy = policy
         self._run_context = run_context
-        self._project_operations = project_operations
         self._memory_scope_namespaces = memory_scope_namespaces
 
     def resolve_grant(
@@ -69,18 +58,15 @@ class OpenMinionDelegationMemoryGrantResolver:
             return None
         if grant_id != self._run_context.memory_grant_id:
             return None
-        if operation not in self._project_operations:
+        if operation != "read":
             return None
         if self._run_context.cancelled:
-            return None
-        method = _METHOD_BY_OPERATION.get(operation)
-        if method is None:
             return None
         grant = self._policy.resolve_active_grant_for_use(
             grant_id,
             subject_id=self._run_context.child_agent_id,
             tool="memory",
-            method=method,
+            method="delegated_read",
             required_target={
                 "resource": "sophiagraph",
                 "delegated_memory": {

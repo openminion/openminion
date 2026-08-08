@@ -104,7 +104,9 @@ def _run_wizard(
         "Choose your setup path:",
         {
             "1": SetupSelection(
-                label="Hosted provider (OpenAI, Anthropic, OpenRouter, and more)",
+                label=(
+                    "Hosted provider (OpenAI, Anthropic, OpenRouter, MiniMax, and more)"
+                ),
                 value="hosted",
             ),
             "2": SetupSelection(label="Local provider (Ollama)", value="ollama"),
@@ -213,7 +215,7 @@ def _prompt_model(preset: ProviderSetupPreset) -> str:
         return selection.value
     recommended = preset.recommended_models[0]
     return _prompt_text(
-        f"Model (press Enter for the existing or recommended default: {recommended})"
+        f"Model (press Enter for the recommended default: {recommended})"
     )
 
 

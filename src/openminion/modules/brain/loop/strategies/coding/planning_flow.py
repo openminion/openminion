@@ -79,15 +79,7 @@ class CodingPlanningMixin:
             return plan, None
         fallback_plan = CodingPlan.fallback(goal)
         self._apply_plan_to_scratchpad(fallback_plan)
-        seed_response = (
-            response
-            if (
-                not bool(getattr(response, "ok", False))
-                or list(getattr(response, "tool_calls", []) or [])
-            )
-            else None
-        )
-        return fallback_plan, seed_response
+        return fallback_plan, None
 
     def _build_plan_system_prompt(
         self: Any,

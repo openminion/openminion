@@ -620,12 +620,11 @@ class ConfigCommandTests(unittest.TestCase):
 
         self.assertEqual(model, "MiniMax-M2.7-highspeed")
         output = buf.getvalue()
-        self.assertIn("MiniMax-M3 (recommended)", output)
         self.assertIn("MiniMax-M2.7 (recommended)", output)
         self.assertIn("MiniMax-M2.7-highspeed (recommended)", output)
 
     def test_setup_wizard_secondary_provider_menu_has_back_and_cancel(self) -> None:
-        with mock.patch("builtins.input", side_effect=["4", "b", "4", "c"]):
+        with mock.patch("builtins.input", side_effect=["5", "b", "5", "c"]):
             buf = io.StringIO()
             with (
                 redirect_stdout(buf),
@@ -679,7 +678,7 @@ class ConfigCommandTests(unittest.TestCase):
                 no_chat=True,
                 agent="ops-agent",
                 provider="minimax",
-                model="MiniMax-M3",
+                model="MiniMax-M2.7",
                 base_url=None,
                 api_format="anthropic-compatible",
                 check_provider=False,
@@ -705,7 +704,7 @@ class ConfigCommandTests(unittest.TestCase):
                 no_chat=True,
                 agent="qwen-agent",
                 provider="qwen-dashscope",
-                model="qwen-plus",
+                model="qwen3.7-plus",
                 base_url=workspace_url,
                 api_format="openai-compatible",
                 check_provider=False,

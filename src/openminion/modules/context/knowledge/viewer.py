@@ -269,7 +269,9 @@ def _request_filters(request: GraphViewerRequest) -> dict[str, str]:
     if scopes:
         filters["scope"] = ",".join(scopes)
     return {
-        key: str(value).strip() for key, value in filters.items() if str(value).strip()
+        key: str(value).strip()
+        for key, value in filters.items()
+        if value is not None and str(value).strip()
     }
 
 

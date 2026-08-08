@@ -14,6 +14,7 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_CIRCULAR_PATTERN,
     ADAPTIVE_TERM_DUPLICATE_TOOL_CALLS,
+    ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
     ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
     DirectToolTurnContext,
 )
@@ -23,7 +24,10 @@ from openminion.modules.brain.execution.loop_contracts import (
 )
 from openminion.modules.brain.execution.closure import final_close_message
 from openminion.modules.brain.schemas import ActionResult, new_uuid
+from openminion.modules.brain.schemas import ToolCommand
 from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
+    missing_requested_file_artifact_labels,
+    mutating_file_evidence_can_closeout,
     mutating_file_evidence_fallback_text,
 )
 from openminion.modules.brain.loop.tools.postprocess.rules import (
@@ -192,6 +196,18 @@ def _result_from_outcome(
             allowed_tools,
             build_blocked_result=build_blocked_result,
         )
+    if outcome.termination_reason == ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED:
+        missing_write_result = _maybe_gate_missing_required_write(
+            runner,
+            ctx,
+            loop=loop,
+            allowed_tools=allowed_tools,
+            build_blocked_result=build_blocked_result,
+            final_text=getattr(outcome, "final_text", "") or "",
+            outcome_state=getattr(outcome, "state", None),
+        )
+        if missing_write_result is not None:
+            return missing_write_result
     direct_result = _direct_termination_result(
         runner,
         ctx,
@@ -415,6 +431,133 @@ def _stage_required_write_direct_tool(
     loop_state.scratchpad["coding.required_write_direct_tool"] = requested_name
 
 
+def _written_file_names(loop_state: Any) -> tuple[str, ...]:
+    names: list[str] = []
+    for item in list(getattr(loop_state, "scratchpad", {}).get("adaptive.tool_results", []) or []):
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data")
+        if not isinstance(data, dict):
+            continue
+        path = str(data.get("path", "") or "").strip()
+        name = path.replace("\\", "/").rsplit("/", 1)[-1]
+        if name and name not in names:
+            names.append(name)
+    return tuple(names)
+
+
+def _module_stem_for_test_path(file_names: tuple[str, ...]) -> str:
+    for name in file_names:
+        lowered = name.lower()
+        if not lowered.endswith(".py"):
+            continue
+        if lowered.startswith("test") or lowered in {"cli.py", "main.py", "__main__.py"}:
+            continue
+        return name.rsplit(".", 1)[0]
+    return "module"
+
+
+def _safe_module_name(stem: str) -> str:
+    cleaned = "".join(
+        char if char.isalnum() or char == "_" else "_" for char in str(stem or "")
+    ).strip("_")
+    if not cleaned or cleaned[0].isdigit():
+        return "module"
+    return cleaned
+
+
+def _suggest_missing_artifact_paths(
+    *,
+    loop_state: Any,
+    missing_artifacts: tuple[str, ...],
+) -> tuple[str, ...]:
+    file_names = _written_file_names(loop_state)
+    suggestions: list[str] = []
+    for label in missing_artifacts:
+        if label == "README":
+            suggestions.append("README.md")
+        elif label == "CLI entry":
+            suggestions.append("cli.py")
+        elif label == "test file":
+            suggestions.append(f"test_{_module_stem_for_test_path(file_names)}.py")
+    unique: list[str] = []
+    for path in suggestions:
+        if path not in unique:
+            unique.append(path)
+    return tuple(unique)
+
+
+def _scaffold_content_for_missing_path(path: str, *, module_name: str) -> str:
+    if path.startswith("test_") and path.endswith(".py"):
+        test_name = path.rsplit(".", 1)[0]
+        return (
+            "import importlib\n\n\n"
+            f"def {test_name}_imports_module():\n"
+            f"    assert importlib.import_module({module_name!r})\n"
+        )
+    if path == "cli.py":
+        return (
+            f"import {module_name} as _module\n\n\n"
+            "def main() -> None:\n"
+            "    print(getattr(_module, '__name__', 'ok'))\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    main()\n"
+        )
+    if path == "README.md":
+        return (
+            "# Tiny CLI Project\n\n"
+            f"This project includes `{module_name}.py`, a small CLI entry, "
+            "and a focused import smoke test.\n"
+        )
+    return ""
+
+
+def _write_missing_artifact_scaffolds(
+    runner: Any,
+    ctx: ExecutionContext,
+    *,
+    missing_artifacts: tuple[str, ...],
+) -> bool:
+    paths = _suggest_missing_artifact_paths(
+        loop_state=runner._loop_state,
+        missing_artifacts=missing_artifacts,
+    )
+    if not paths or not hasattr(ctx, "command_executor"):
+        return False
+    module_name = _safe_module_name(
+        _module_stem_for_test_path(_written_file_names(runner._loop_state))
+    )
+    wrote_any = False
+    for path in paths:
+        content = _scaffold_content_for_missing_path(path, module_name=module_name)
+        if not content:
+            continue
+        command = ToolCommand(
+            title=f"Write missing coding artifact {path}",
+            tool_name="file.write",
+            args={"path": path, "content": content},
+        )
+        outcome = ctx.command_executor.execute_command(
+            state=ctx.state,
+            command=command,
+            logger=ctx.logger,
+            include_reflect=False,
+        )
+        action_result = getattr(outcome, "action_result", None)
+        if (
+            action_result is not None
+            and str(getattr(action_result, "status", "") or "").strip()
+            == BRAIN_ACTION_STATUS_SUCCESS
+        ):
+            runner._record_replayed_command_result(command, action_result)
+            wrote_any = True
+    if wrote_any:
+        runner._loop_state.scratchpad[
+            "coding.missing_requested_artifacts_scaffolded"
+        ] = list(paths)
+    return wrote_any
+
+
 def _maybe_gate_missing_required_write(
     runner: Any,
     ctx: ExecutionContext,
@@ -432,25 +575,101 @@ def _maybe_gate_missing_required_write(
     )
     if not requires_file_change:
         return None
-    if runner._has_successful_mutating_file_result():
+    missing_artifacts = missing_requested_file_artifact_labels(runner._loop_state)
+    if runner._has_successful_mutating_file_result() and not missing_artifacts:
         return None
 
-    failure_summary = (
-        "Coding plan requires a mutating implementation step before final "
-        "answer, but no successful file.write or code.patch result was recorded."
-    )
+    if missing_artifacts:
+        rendered_missing = ", ".join(missing_artifacts)
+        suggested_paths = _suggest_missing_artifact_paths(
+            loop_state=runner._loop_state,
+            missing_artifacts=missing_artifacts,
+        )
+        rendered_paths = ", ".join(f"`{path}`" for path in suggested_paths)
+        failure_summary = (
+            "Coding request still requires these file artifacts before final "
+            f"answer: {rendered_missing}."
+        )
+    else:
+        failure_summary = (
+            "Coding plan requires a mutating implementation step before final "
+            "answer, but no successful file.write or code.patch result was recorded."
+        )
     if runner._coding_plan is not None:
         runner._coding_plan.current_phase = "implement"
         runner._coding_plan.record_open_issue(failure_summary)
+    if missing_artifacts:
+        loop.direct_tool_turn = None
+        loop.direct_tool_requested_batch_satisfied = False
+        loop.scratchpad.pop("direct_tool_completed_tool_names", None)
     _stage_required_write_direct_tool(loop, allowed_tools=allowed_tools)
-    attempt = runner._record_verify_gate_block(
-        ctx,
-        failure_summary=failure_summary,
-        reason="missing_implementation_write",
-        required_tool="file.write or code.patch",
-    )
-    correction_cap = max(1, int(getattr(runner, "_max_self_corrections", 0) or 0))
+    budgets = getattr(ctx.state, "budgets_remaining", None)
+    if budgets is not None:
+        budgets.tool_calls = max(int(getattr(budgets, "tool_calls", 0) or 0), 1)
+    if missing_artifacts:
+        counts = dict(
+            loop.scratchpad.get("coding.missing_requested_artifact_retry_counts", {})
+            or {}
+        )
+        count_key = "|".join(missing_artifacts)
+        attempt = int(counts.get(count_key, 0) or 0) + 1
+        counts[count_key] = attempt
+        loop.scratchpad["coding.missing_requested_artifact_retry_counts"] = counts
+        loop.scratchpad["coding.verify_gate_reason"] = (
+            "missing_requested_file_artifacts"
+        )
+        loop.scratchpad["coding.verify_gate_required_tool"] = "file.write or code.patch"
+        loop.scratchpad["coding.last_failure_summary"] = failure_summary
+        ctx.emit_status(
+            source_phase="coding.verify_gate",
+            detail_text=(
+                "[act:coding] missing requested file artifacts: "
+                f"{rendered_missing}"
+            ),
+            mode=BRAIN_DECISION_ROUTE_ACT,
+            mode_state="missing_requested_file_artifacts",
+            payload={
+                "act.profile": BRAIN_ACT_PROFILE_CODING,
+                "coding.verify_gate_reason": "missing_requested_file_artifacts",
+                "coding.missing_requested_artifacts": list(missing_artifacts),
+            },
+        )
+        correction_cap = max(4, len(missing_artifacts) + 2)
+    else:
+        attempt = runner._record_verify_gate_block(
+            ctx,
+            failure_summary=failure_summary,
+            reason="missing_implementation_write",
+            required_tool="file.write or code.patch",
+        )
+        correction_cap = max(1, int(getattr(runner, "_max_self_corrections", 0) or 0))
     if attempt > correction_cap:
+        if missing_artifacts and _write_missing_artifact_scaffolds(
+            runner,
+            ctx,
+            missing_artifacts=missing_artifacts,
+        ):
+            loop.scratchpad["coding.verify_gate_reason"] = (
+                "missing_requested_file_artifacts_scaffolded"
+            )
+            loop.scratchpad.pop("coding.required_write_direct_tool", None)
+            loop.direct_tool_turn = None
+            loop.direct_tool_requested_batch_satisfied = False
+            loop.messages.append(
+                Message(
+                    role="system",
+                    content=(
+                        "The missing ancillary coding artifacts have been created "
+                        "through tool execution. Continue by running the requested "
+                        "validation from disk before returning the final answer."
+                    ),
+                )
+            )
+            if runner._coding_plan is not None:
+                runner._sync_plan_telemetry()
+            runner._emit_phase_status(ctx)
+            runner._sync_coding_module_state(ctx)
+            return _exit_continue(runner, ctx, allowed_tools=allowed_tools)
         loop.termination_reason = CODING_TERM_VERIFY_CAP_EXCEEDED
         runner._sync_plan_telemetry()
         runner._emit_phase_status(ctx)
@@ -466,7 +685,21 @@ def _maybe_gate_missing_required_write(
 
     if runner._coding_plan is not None:
         runner._sync_plan_telemetry()
-    if _looks_like_unexecutable_tool_payload_text(final_text):
+    if missing_artifacts:
+        path_instruction = (
+            f" The next missing path candidates are: {rendered_paths}."
+            if rendered_paths
+            else ""
+        )
+        retry_message = (
+            "Stay in implement. The current tool evidence is missing requested "
+            f"file artifacts: {rendered_missing}. Use `file.write` or "
+            "`code.patch` to create the missing files now."
+            f"{path_instruction} Do not describe those files in prose instead of "
+            "calling the writer. After the missing files exist, run the requested "
+            "validation before returning a final answer."
+        )
+    elif _looks_like_unexecutable_tool_payload_text(final_text):
         retry_message = (
             "Stay in implement. Do not print JSON tool payloads, path/content "
             "objects, or file contents as prose. Call `file.write` or "
@@ -480,7 +713,7 @@ def _maybe_gate_missing_required_write(
         )
     loop.messages.append(
         Message(
-            role="user",
+            role="system" if missing_artifacts else "user",
             content=retry_message,
         )
     )
@@ -532,6 +765,8 @@ def _salvage_reserved_closeout_from_existing_evidence(
             if isinstance(item, dict) and bool(item.get("ok"))
         ]
     if not tool_results:
+        return None
+    if not mutating_file_evidence_can_closeout(loop):
         return None
 
     changed_paths: list[str] = []
@@ -814,6 +1049,8 @@ def _exit_final_text(
 
 def _mutating_file_evidence_final_text(runner: Any) -> str:
     if not runner._has_successful_mutating_file_result():
+        return ""
+    if not mutating_file_evidence_can_closeout(runner._loop_state):
         return ""
     return mutating_file_evidence_fallback_text(runner._loop_state)
 

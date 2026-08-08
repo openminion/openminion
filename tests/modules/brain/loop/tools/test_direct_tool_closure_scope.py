@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.brain.loop.tools.contracts import (
+    AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
     DirectToolTurnContext,
 )
 from openminion.modules.brain.loop.tools.direct_tool import (
+    _direct_tool_batch_completed_successfully,
     _forced_tool_choice_for_direct_tool_turn,
     _should_force_direct_tool_closure,
 )
@@ -70,3 +75,42 @@ def test_direct_tool_choice_is_not_forced_for_multi_tool_sequences() -> None:
     )
 
     assert _forced_tool_choice_for_direct_tool_turn(state, []) is None
+
+
+def test_name_only_direct_tool_counts_requested_tool_in_mixed_batch() -> None:
+    state = AdaptiveToolLoopState(
+        direct_tool_turn=DirectToolTurnContext(
+            requested_tool_names=("file.write",),
+            requested_batch_signature="",
+            match_by_name_only=True,
+        ),
+    )
+    profile = AdaptiveToolLoopProfile(
+        profile_name="test",
+        mode_name="act",
+        allowed_tools=frozenset({"code.repo_index", "file.write"}),
+    )
+    ordered_results = [
+        (
+            SimpleNamespace(name="code.repo_index"),
+            SimpleNamespace(
+                approved_command=SimpleNamespace(tool_name="code.repo_index"),
+                action_result=ActionResult(command_id="c1", status="success"),
+            ),
+        ),
+        (
+            SimpleNamespace(name="file.write"),
+            SimpleNamespace(
+                approved_command=SimpleNamespace(tool_name="file.write"),
+                action_result=ActionResult(command_id="c2", status="success"),
+            ),
+        ),
+    ]
+
+    assert _direct_tool_batch_completed_successfully(
+        loop_state=state,
+        signature="",
+        ordered_tool_results=ordered_results,
+        profile=profile,
+    )
+    assert state.scratchpad["direct_tool_completed_tool_names"] == ["file.write"]

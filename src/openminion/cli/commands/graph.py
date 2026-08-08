@@ -49,7 +49,7 @@ def _run_graph_view(args: argparse.Namespace) -> int:
             edge_kind=args.edge_kind or "",
             tag=args.tag or "",
             source=args.source or "",
-            min_score=args.min_score or "",
+            min_score=args.min_score,
             evidence_filter=args.evidence_filter or "",
             screen=args.screen,
             query=args.query or "",
@@ -326,7 +326,8 @@ def _add_view_filter_flags(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--min-score",
-        default="",
+        type=float,
+        default=None,
         help="Filter viewer nodes by minimum score or confidence.",
     )
     parser.add_argument(

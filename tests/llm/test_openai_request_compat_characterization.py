@@ -155,14 +155,14 @@ def test_openai_request_compat_characterization(
     [
         (
             "minimax",
-            "MiniMax-M3",
+            "MiniMax-M2.7",
             "minimax",
             "minimax",
             "https://api.minimax.io/v1/chat/completions",
         ),
         (
             "kimi",
-            "kimi-k3",
+            "kimi-k2.6",
             "kimi",
             "kimi",
             "https://api.moonshot.ai/v1/chat/completions",
@@ -190,7 +190,7 @@ def test_openai_request_compat_characterization(
         ),
         (
             "qwen-dashscope",
-            "qwen-plus",
+            "qwen3.7-plus",
             "dashscope",
             "qwen",
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -218,7 +218,7 @@ def test_openai_request_compat_characterization(
         ),
         (
             "together",
-            "MiniMaxAI/MiniMax-M3",
+            "MiniMaxAI/MiniMax-M2.7",
             "together",
             "minimax",
             "https://api.together.ai/v1/chat/completions",
