@@ -5,7 +5,9 @@ from .contracts import (
     TOKEN_USAGE_SCHEMA_VERSION,
     TokenUsageExportPayload,
     TokenUsageProviderCoveragePayload,
+    TokenUsageRollupEfficiencyPayload,
     TokenUsageRollupPayload,
+    TokenUsageSessionTrendPayload,
 )
 from .coverage import TokenUsageCoverage, TokenUsageDimensionCoverage
 from .formatting import format_run_stats_footer, format_session_stats_summary
@@ -30,8 +32,10 @@ __all__ = [
     "TokenUsageDimensionCoverage",
     "TokenUsageExportPayload",
     "TokenUsageProviderCoveragePayload",
+    "TokenUsageRollupEfficiencyPayload",
     "TokenUsageRecord",
     "TokenUsageRollupPayload",
+    "TokenUsageSessionTrendPayload",
     "TokenUsageSummary",
     "ToolCallCount",
     "format_run_stats_footer",

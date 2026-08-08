@@ -111,6 +111,9 @@ key off the same facts without parsing prose.
 Recent rollups also show a provider/model coverage matrix so operators can see
 which providers report native totals and which paths still rely on derived
 totals.
+They also include compact efficiency and session-trend rows: visible tokens,
+provider-vs-derived share, context share, cache read/write ratio, and the
+highest-signal warning codes per recent session.
 `--json` emits the raw `openminion.token_usage.v1` envelope for one session or
 run, and a rollup envelope containing those raw session envelopes when
 `--recent` is used.
@@ -120,6 +123,8 @@ Example recent rollup:
 ```text
 status tokens: recent_sessions=10 with_usage=8 complete=yes
 totals: provider=12,840 derived=920 context_estimated=6,400 cache_read=1,200 cache_write=2,100
+efficiency: visible=20,160 provider_total=93% derived_total=7% context_share=32% cache_read/write=57%
+session trends: session-a=provider:6,300 derived:0 context:0; session-b=provider:0 derived:920 context:3,300 warnings:derived_total_tokens,context_dominates
 top sessions: session-a=6,300, session-b=4,220
 provider coverage: openai/gpt-4.1=records:8 provider:9,200 derived:0 cache_read:1,200; local/echo=records:2 provider:0 derived:920 cache_read:0
 coverage health: llm_calls=18 provider=18/18 model=18/18 usage_events=22 run_id=21/22 trace_id=22/22 llm_call_id=19/22
@@ -156,6 +161,28 @@ session envelopes:
       "output_tokens": 320,
       "cache_read_tokens": 0,
       "cache_write_tokens": 0
+    }
+  ],
+  "efficiency": {
+    "total_visible_tokens": 7320,
+    "provider_total_ratio_bps": 0,
+    "derived_total_ratio_bps": 10000,
+    "context_share_bps": 8743,
+    "cache_read_to_write_bps": 0
+  },
+  "session_trends": [
+    {
+      "session_id": "session-a",
+      "complete": true,
+      "first_observed_at": "2026-08-08T10:00:00Z",
+      "last_observed_at": "2026-08-08T10:02:00Z",
+      "provider_tokens": 0,
+      "derived_tokens": 920,
+      "context_estimated_tokens": 6400,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 2100,
+      "total_visible_tokens": 7320,
+      "advisory_codes": ["derived_total_tokens", "context_dominates"]
     }
   ],
   "advisories": [

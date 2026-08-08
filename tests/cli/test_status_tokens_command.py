@@ -376,6 +376,12 @@ def test_status_tokens_recent_rollup_shows_cross_session_insights(
     assert "recent_sessions=2" in output
     assert "with_usage=2" in output
     assert "context_estimated=20" in output
+    assert (
+        "efficiency: visible=26 provider_total=100% derived_total=0% "
+        "context_share=77% cache_read/write=0%"
+    ) in output
+    assert "session trends:" in output
+    assert "context:20" in output
     assert "top sessions:" in output
     assert "provider coverage: openai/gpt-a=records:1 provider:6" in output
     assert "coverage health:" in output
@@ -419,6 +425,13 @@ def test_status_tokens_recent_json_wraps_raw_session_envelopes(
     assert payload["only_warnings"] is False
     assert payload["totals"]["provider_tokens"] == 5
     assert payload["coverage"]["llm_call_events"] == 1
+    assert payload["efficiency"] == {
+        "total_visible_tokens": 5,
+        "provider_total_ratio_bps": 10000,
+        "derived_total_ratio_bps": 0,
+        "context_share_bps": 0,
+        "cache_read_to_write_bps": 0,
+    }
     assert payload["provider_coverage"] == [
         {
             "provider": "openai",
@@ -434,6 +447,22 @@ def test_status_tokens_recent_json_wraps_raw_session_envelopes(
             "cache_write_tokens": 0,
         }
     ]
+    assert len(payload["session_trends"]) == 1
+    trend = payload["session_trends"][0]
+    assert trend["session_id"] == "session-json"
+    assert trend["complete"] is True
+    assert trend["first_observed_at"]
+    assert trend["last_observed_at"]
+    assert trend["provider_tokens"] == 5
+    assert trend["derived_tokens"] == 0
+    assert trend["context_estimated_tokens"] == 0
+    assert trend["cache_read_tokens"] == 0
+    assert trend["cache_write_tokens"] == 0
+    assert trend["total_visible_tokens"] == 5
+    assert set(trend["advisory_codes"]) == {
+        "missing_run_correlation",
+        "missing_call_correlation",
+    }
     advisory_codes = {advisory["code"] for advisory in payload["advisories"]}
     assert "missing_call_correlation" in advisory_codes
     assert payload["summaries"][0]["schema_version"] == "openminion.token_usage.v1"

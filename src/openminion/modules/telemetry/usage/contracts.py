@@ -146,6 +146,28 @@ class TokenUsageProviderCoveragePayload(TypedDict):
     cache_write_tokens: int
 
 
+class TokenUsageRollupEfficiencyPayload(TypedDict):
+    total_visible_tokens: int
+    provider_total_ratio_bps: int
+    derived_total_ratio_bps: int
+    context_share_bps: int
+    cache_read_to_write_bps: int
+
+
+class TokenUsageSessionTrendPayload(TypedDict):
+    session_id: str
+    complete: bool
+    first_observed_at: str
+    last_observed_at: str
+    provider_tokens: int
+    derived_tokens: int
+    context_estimated_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    total_visible_tokens: int
+    advisory_codes: list[str]
+
+
 class TokenUsageRollupPayload(TypedDict):
     schema_version: TokenUsageRollupSchemaVersion
     session_count: int
@@ -155,6 +177,8 @@ class TokenUsageRollupPayload(TypedDict):
     totals: TokenUsageRollupTotalsPayload
     coverage: TokenUsageRollupCoveragePayload
     provider_coverage: list[TokenUsageProviderCoveragePayload]
+    efficiency: TokenUsageRollupEfficiencyPayload
+    session_trends: list[TokenUsageSessionTrendPayload]
     advisories: list[TokenUsageAdvisoryPayload]
     summaries: list[TokenUsageExportPayload]
 
@@ -170,9 +194,11 @@ __all__ = [
     "TokenUsageEventRefPayload",
     "TokenUsageExportPayload",
     "TokenUsageProviderCoveragePayload",
+    "TokenUsageRollupEfficiencyPayload",
     "TokenUsageRollupCoveragePayload",
     "TokenUsageRollupPayload",
     "TokenUsageRollupSchemaVersion",
+    "TokenUsageSessionTrendPayload",
     "TokenUsageRollupTotalsPayload",
     "TokenUsageRecordPayload",
     "TokenUsageSchemaVersion",

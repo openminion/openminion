@@ -16,6 +16,8 @@ from openminion.modules.telemetry.usage.contracts import (
     TOTAL_SOURCE_DERIVED,
     TOTAL_SOURCE_PROVIDER,
     TokenUsageProviderCoveragePayload,
+    TokenUsageRollupEfficiencyPayload,
+    TokenUsageSessionTrendPayload,
 )
 from openminion.modules.telemetry.usage.token_usage import (
     SURFACE_CONTEXT_BUCKET,
@@ -93,6 +95,16 @@ def _record_tokens(record: TokenUsageRecord) -> int:
 
 def _format_token_count(value: int) -> str:
     return f"{int(value):,}"
+
+
+def _ratio_bps(numerator: int, denominator: int) -> int:
+    if denominator <= 0:
+        return 0
+    return round((max(0, numerator) * 10_000) / denominator)
+
+
+def _format_ratio_bps(value: int) -> str:
+    return f"{int(value) / 100:.0f}%"
 
 
 def _top_llm_total(summary: TokenUsageSummary) -> tuple[str, int] | None:
@@ -327,6 +339,13 @@ def _format_warning_sessions(summaries: tuple[TokenUsageSummary, ...]) -> list[s
     return ["warning sessions: " + "; ".join(warning_parts[:5])]
 
 
+def _summary_advisory_codes(summary: TokenUsageSummary) -> list[str]:
+    codes = [advisory.code for advisory in _summary_advisories(summary)]
+    if not summary.records:
+        codes.append("no_usage_events")
+    return codes
+
+
 def _format_drilldowns(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
     top_sessions = sorted(
         (
@@ -522,6 +541,95 @@ def _provider_coverage_payload(
     return [coverage.as_payload() for coverage in ranked]
 
 
+def _rollup_efficiency_payload(
+    summaries: tuple[TokenUsageSummary, ...],
+) -> TokenUsageRollupEfficiencyPayload:
+    provider_tokens = sum(summary.total_provider_tokens for summary in summaries)
+    derived_tokens = sum(summary.total_derived_tokens for summary in summaries)
+    context_tokens = sum(
+        summary.totals_by_surface.get(SURFACE_CONTEXT_PACK, 0) for summary in summaries
+    )
+    cache_read_tokens = sum(summary.total_cache_read_tokens for summary in summaries)
+    cache_write_tokens = sum(summary.total_cache_write_tokens for summary in summaries)
+    llm_tokens = provider_tokens + derived_tokens
+    visible_tokens = llm_tokens + context_tokens
+    return {
+        "total_visible_tokens": visible_tokens,
+        "provider_total_ratio_bps": _ratio_bps(provider_tokens, llm_tokens),
+        "derived_total_ratio_bps": _ratio_bps(derived_tokens, llm_tokens),
+        "context_share_bps": _ratio_bps(context_tokens, visible_tokens),
+        "cache_read_to_write_bps": _ratio_bps(cache_read_tokens, cache_write_tokens),
+    }
+
+
+def _format_rollup_efficiency(
+    summaries: tuple[TokenUsageSummary, ...],
+) -> list[str]:
+    efficiency = _rollup_efficiency_payload(summaries)
+    if not efficiency["total_visible_tokens"]:
+        return []
+    return [
+        "efficiency: "
+        f"visible={_format_token_count(efficiency['total_visible_tokens'])} "
+        f"provider_total={_format_ratio_bps(efficiency['provider_total_ratio_bps'])} "
+        f"derived_total={_format_ratio_bps(efficiency['derived_total_ratio_bps'])} "
+        f"context_share={_format_ratio_bps(efficiency['context_share_bps'])} "
+        "cache_read/write="
+        f"{_format_ratio_bps(efficiency['cache_read_to_write_bps'])}"
+    ]
+
+
+def _observed_at(ref: object | None) -> str:
+    return str(getattr(ref, "observed_at", "") or "").strip()
+
+
+def _session_trend_payload(
+    summaries: tuple[TokenUsageSummary, ...],
+) -> list[TokenUsageSessionTrendPayload]:
+    trends: list[TokenUsageSessionTrendPayload] = []
+    for summary in summaries:
+        context_tokens = summary.totals_by_surface.get(SURFACE_CONTEXT_PACK, 0)
+        trends.append(
+            {
+                "session_id": summary.session_id,
+                "complete": summary.complete,
+                "first_observed_at": _observed_at(summary.first_source_event),
+                "last_observed_at": _observed_at(summary.last_source_event),
+                "provider_tokens": summary.total_provider_tokens,
+                "derived_tokens": summary.total_derived_tokens,
+                "context_estimated_tokens": context_tokens,
+                "cache_read_tokens": summary.total_cache_read_tokens,
+                "cache_write_tokens": summary.total_cache_write_tokens,
+                "total_visible_tokens": _summary_visible_tokens(summary),
+                "advisory_codes": _summary_advisory_codes(summary),
+            }
+        )
+    return trends
+
+
+def _format_session_trends(summaries: tuple[TokenUsageSummary, ...]) -> list[str]:
+    trends = _session_trend_payload(summaries)
+    if not trends:
+        return []
+    parts = []
+    for trend in trends[:5]:
+        segments = [
+            f"provider:{_format_token_count(trend['provider_tokens'])}",
+            f"derived:{_format_token_count(trend['derived_tokens'])}",
+            f"context:{_format_token_count(trend['context_estimated_tokens'])}",
+        ]
+        if trend["cache_read_tokens"] or trend["cache_write_tokens"]:
+            segments.append(
+                "cache:"
+                f"{_format_token_count(trend['cache_read_tokens'])}/"
+                f"{_format_token_count(trend['cache_write_tokens'])}"
+            )
+        if trend["advisory_codes"]:
+            segments.append("warnings:" + ",".join(trend["advisory_codes"][:3]))
+        parts.append(f"{trend['session_id']}=" + " ".join(segments))
+    return ["session trends: " + "; ".join(parts)]
+
+
 def _format_provider_coverage(
     summaries: tuple[TokenUsageSummary, ...],
 ) -> list[str]:
@@ -687,6 +795,8 @@ def format_token_rollup(
     lines.append(_format_ranked_totals("by surface", surface_totals))
     if context_buckets:
         lines.append(_format_ranked_totals("context buckets", context_buckets))
+    lines.extend(_format_rollup_efficiency(tuple(token_summaries)))
+    lines.extend(_format_session_trends(tuple(token_summaries)))
     top_sessions = sorted(
         (
             (summary.session_id, _summary_visible_tokens(summary))
@@ -733,6 +843,8 @@ def token_rollup_json_payload(
         "totals": _rollup_totals_payload(summaries),
         "coverage": _rollup_coverage_payload(summaries),
         "provider_coverage": _provider_coverage_payload(summaries),
+        "efficiency": _rollup_efficiency_payload(summaries),
+        "session_trends": _session_trend_payload(summaries),
         "advisories": _advisory_payload(advisories),
         "summaries": [summary_to_json_payload(summary) for summary in summaries],
     }
