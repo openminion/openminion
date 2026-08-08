@@ -195,6 +195,7 @@ markers = [
   "package_integration: requires optional package-integration dependencies",
   "telegram_live: hits real api.telegram.org; skipped unless TELEGRAM_BOT_TOKEN + TELEGRAM_LIVE_CHAT_ID set",
   "slack_live: hits real Slack APIs; skipped unless SLACK_BOT_TOKEN + SLACK_APP_TOKEN + SLACK_TEST_CHANNEL set",
+  "slow: slower opt-in tests that are skipped from default focused slices",
 ]
 
 # Scoped strict-typing configuration. `make typecheck` runs the whole-tree

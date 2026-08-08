@@ -7,6 +7,17 @@ from typing import Any
 from openminion.base.time import utc_now_iso as _iso_now
 from openminion.modules.controlplane.runtime.events import validate_audit_event
 
+_AUDIT_EVENT_FIELDS = (
+    "outcome",
+    "severity",
+    "chat_key",
+    "user_key",
+    "session_id",
+    "agent_id",
+    "trace_id",
+    "span_id",
+)
+
 
 def emit_audit_event(
     audit_logger: object | None, event_type: str, **details: object
@@ -14,7 +25,15 @@ def emit_audit_event(
     if audit_logger is None:
         return
     if hasattr(audit_logger, "emit"):
-        audit_logger.emit(event_type, details=dict(details))
+        event_fields = {
+            key: value
+            for key in _AUDIT_EVENT_FIELDS
+            if isinstance((value := details.get(key)), str) and value
+        }
+        error = details.get("error")
+        if isinstance(error, dict):
+            event_fields["error"] = error
+        audit_logger.emit(event_type, details=dict(details), **event_fields)
         return
     if hasattr(audit_logger, "log"):
         audit_logger.log(event_type, **details)

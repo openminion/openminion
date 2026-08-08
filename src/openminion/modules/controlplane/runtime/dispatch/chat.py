@@ -74,7 +74,10 @@ class ChatDispatcher:
         elif self.clarify.get(ctx.session_id) is not None:
             self.clarify.clear(ctx.session_id)
         self._audit(
-            "cp.chat.dispatched", session_id=ctx.session_id, agent_id=ctx.agent_id
+            "cp.chat.dispatched",
+            session_id=ctx.session_id,
+            agent_id=ctx.agent_id,
+            trace_id=ctx.trace_id,
         )
         return {
             "type": "chat",
