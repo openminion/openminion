@@ -9,9 +9,25 @@ import pytest
 
 from openminion.base.config import OpenMinionConfig
 from openminion.cli.commands.status.session_store import build_status_session_store
+from openminion.cli.commands.status.token_report import token_rollup_json_payload
 from openminion.cli.commands.status.tokens import run_tokens_status
 from openminion.cli.parser.base import build_parser
 from openminion.modules.session.storage.sqlite_store import SQLiteSessionStore
+from openminion.modules.telemetry.usage import (
+    TokenUsageCoverage,
+    TokenUsageRecord,
+    TokenUsageSummary,
+)
+from openminion.modules.telemetry.usage.coverage import TokenUsageDimensionCoverage
+from openminion.modules.telemetry.usage.token_usage import SURFACE_LLM_TOTAL
+
+_ROLLUP_FIXTURE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "telemetry"
+    / "fixtures"
+    / "token_usage"
+    / "openminion_token_usage_rollup_v1.json"
+)
 
 
 def _args(
@@ -361,6 +377,7 @@ def test_status_tokens_recent_rollup_shows_cross_session_insights(
     assert "with_usage=2" in output
     assert "context_estimated=20" in output
     assert "top sessions:" in output
+    assert "provider coverage: openai/gpt-a=records:1 provider:6" in output
     assert "coverage health:" in output
     assert "[context_dominates] context packing dominates recent usage" in output
     assert "drilldown: `openminion status tokens --session-id session-b`" in output
@@ -402,11 +419,83 @@ def test_status_tokens_recent_json_wraps_raw_session_envelopes(
     assert payload["only_warnings"] is False
     assert payload["totals"]["provider_tokens"] == 5
     assert payload["coverage"]["llm_call_events"] == 1
+    assert payload["provider_coverage"] == [
+        {
+            "provider": "openai",
+            "model": "gpt-json",
+            "llm_total_records": 1,
+            "provider_total_records": 1,
+            "derived_total_records": 0,
+            "provider_tokens": 5,
+            "derived_tokens": 0,
+            "input_tokens": 3,
+            "output_tokens": 2,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+        }
+    ]
     advisory_codes = {advisory["code"] for advisory in payload["advisories"]}
     assert "missing_call_correlation" in advisory_codes
     assert payload["summaries"][0]["schema_version"] == "openminion.token_usage.v1"
     assert payload["summaries"][0]["totals"]["provider_tokens"] == 5
     assert "ok" not in payload
+
+
+def test_status_tokens_recent_json_matches_rollup_fixture() -> None:
+    summary = TokenUsageSummary(
+        session_id="session-rollup-fixture",
+        records=(
+            TokenUsageRecord(
+                session_id="session-rollup-fixture",
+                run_id="run-rollup-fixture",
+                llm_call_id="call-provider",
+                provider="openai",
+                model="gpt-fixture",
+                surface=SURFACE_LLM_TOTAL,
+                source_event_type="llm.call.completed",
+                source_event_id="event-provider",
+                total_tokens=10,
+                total_source="provider",
+                input_tokens=6,
+                output_tokens=4,
+                cache_read_tokens=2,
+            ),
+            TokenUsageRecord(
+                session_id="session-rollup-fixture",
+                run_id="run-rollup-fixture",
+                llm_call_id="call-derived",
+                provider="openai",
+                model="gpt-fixture",
+                surface=SURFACE_LLM_TOTAL,
+                source_event_type="llm.call.completed",
+                source_event_id="event-derived",
+                total_tokens=5,
+                total_source="derived",
+                input_tokens=3,
+                output_tokens=2,
+            ),
+        ),
+        source_event_count=2,
+        events_scanned=2,
+        coverage=TokenUsageCoverage(
+            llm_call_events=2,
+            provider_identified_llm_call_events=2,
+            model_identified_llm_call_events=2,
+            run_id_present_events=2,
+            trace_id_present_events=0,
+            llm_call_id_present_events=2,
+            input_tokens=TokenUsageDimensionCoverage(reported=2),
+            output_tokens=TokenUsageDimensionCoverage(reported=2),
+            total_tokens=TokenUsageDimensionCoverage(reported=1, missing=1),
+            cache_read_tokens=TokenUsageDimensionCoverage(reported=1, missing=1),
+            cache_write_tokens=TokenUsageDimensionCoverage(missing=2),
+        ),
+    )
+
+    payload = token_rollup_json_payload((summary,), input_session_count=1)
+    expected = json.loads(_ROLLUP_FIXTURE_PATH.read_text(encoding="utf-8"))
+
+    assert payload == expected
 
 
 def test_status_tokens_recent_only_warnings_filters_clean_sessions(

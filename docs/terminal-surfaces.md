@@ -108,6 +108,9 @@ advisory codes such as `[missing_provider_identity]`,
 `[missing_call_correlation]`, `[derived_total_tokens]`,
 `[context_dominates]`, and `[cache_write_without_read]` so follow-up tooling can
 key off the same facts without parsing prose.
+Recent rollups also show a provider/model coverage matrix so operators can see
+which providers report native totals and which paths still rely on derived
+totals.
 `--json` emits the raw `openminion.token_usage.v1` envelope for one session or
 run, and a rollup envelope containing those raw session envelopes when
 `--recent` is used.
@@ -118,6 +121,7 @@ Example recent rollup:
 status tokens: recent_sessions=10 with_usage=8 complete=yes
 totals: provider=12,840 derived=920 context_estimated=6,400 cache_read=1,200 cache_write=2,100
 top sessions: session-a=6,300, session-b=4,220
+provider coverage: openai/gpt-4.1=records:8 provider:9,200 derived:0 cache_read:1,200; local/echo=records:2 provider:0 derived:920 cache_read:0
 coverage health: llm_calls=18 provider=18/18 model=18/18 usage_events=22 run_id=21/22 trace_id=22/22 llm_call_id=19/22
 recommendations: [missing_call_correlation] some usage events lack llm_call_id correlation; [context_dominates] context packing dominates recent usage; inspect bucket totals
 drilldown: `openminion status tokens --session-id session-a` | `openminion status tokens --session-id session-b`
@@ -139,6 +143,21 @@ session envelopes:
     "cache_read_tokens": 0,
     "cache_write_tokens": 2100
   },
+  "provider_coverage": [
+    {
+      "provider": "local",
+      "model": "echo",
+      "llm_total_records": 2,
+      "provider_total_records": 0,
+      "derived_total_records": 2,
+      "provider_tokens": 0,
+      "derived_tokens": 920,
+      "input_tokens": 600,
+      "output_tokens": 320,
+      "cache_read_tokens": 0,
+      "cache_write_tokens": 0
+    }
+  ],
   "advisories": [
     {
       "code": "context_dominates",

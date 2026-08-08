@@ -3,21 +3,41 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 from openminion.modules.telemetry.trace.turn_cost import TurnCostEnvelope
 from openminion.modules.telemetry.usage import (
+    TOKEN_USAGE_ROLLUP_SCHEMA_VERSION,
     TokenUsageRecord,
+    TokenUsageRollupPayload,
     TokenUsageSummary,
     summary_to_json_payload,
+)
+from openminion.modules.telemetry.usage.contracts import (
+    TOTAL_SOURCE_DERIVED,
+    TOTAL_SOURCE_PROVIDER,
+    TokenUsageProviderCoveragePayload,
 )
 from openminion.modules.telemetry.usage.token_usage import (
     SURFACE_CONTEXT_BUCKET,
     SURFACE_CONTEXT_PACK,
+    SURFACE_LLM_CACHE_DIAGNOSTIC,
+    SURFACE_LLM_CACHE_READ,
+    SURFACE_LLM_CACHE_WRITE,
+    SURFACE_LLM_OUTPUT,
+    SURFACE_LLM_PROMPT,
     SURFACE_LLM_TOTAL,
 )
 
-_ROLLUP_SCHEMA_VERSION = "openminion.token_usage_rollup.v1"
+_LLM_USAGE_SURFACES = frozenset(
+    {
+        SURFACE_LLM_TOTAL,
+        SURFACE_LLM_PROMPT,
+        SURFACE_LLM_OUTPUT,
+        SURFACE_LLM_CACHE_READ,
+        SURFACE_LLM_CACHE_WRITE,
+        SURFACE_LLM_CACHE_DIAGNOSTIC,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +47,36 @@ class Advisory:
 
     def as_payload(self) -> dict[str, str]:
         return {"code": self.code, "message": self.message}
+
+
+@dataclass(frozen=True)
+class ProviderCoverage:
+    provider: str
+    model: str
+    llm_total_records: int = 0
+    provider_total_records: int = 0
+    derived_total_records: int = 0
+    provider_tokens: int = 0
+    derived_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    def as_payload(self) -> TokenUsageProviderCoveragePayload:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "llm_total_records": self.llm_total_records,
+            "provider_total_records": self.provider_total_records,
+            "derived_total_records": self.derived_total_records,
+            "provider_tokens": self.provider_tokens,
+            "derived_tokens": self.derived_tokens,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+        }
 
 
 def _record_tokens(record: TokenUsageRecord) -> int:
@@ -422,6 +472,75 @@ def _advisory_payload(advisories: list[Advisory]) -> list[dict[str, str]]:
     return [advisory.as_payload() for advisory in advisories]
 
 
+def _provider_coverage_payload(
+    summaries: tuple[TokenUsageSummary, ...],
+) -> list[TokenUsageProviderCoveragePayload]:
+    grouped: dict[tuple[str, str], ProviderCoverage] = {}
+    for summary in summaries:
+        for record in summary.records:
+            if record.surface not in _LLM_USAGE_SURFACES:
+                continue
+            key = (record.provider or "-", record.model or "-")
+            current = grouped.get(key) or ProviderCoverage(
+                provider=key[0], model=key[1]
+            )
+            llm_total_records = current.llm_total_records
+            provider_total_records = current.provider_total_records
+            derived_total_records = current.derived_total_records
+            provider_tokens = current.provider_tokens
+            derived_tokens = current.derived_tokens
+            if record.surface == SURFACE_LLM_TOTAL:
+                llm_total_records += 1
+                if record.total_source == TOTAL_SOURCE_PROVIDER:
+                    provider_total_records += 1
+                    provider_tokens += record.total_tokens
+                elif record.total_source == TOTAL_SOURCE_DERIVED:
+                    derived_total_records += 1
+                    derived_tokens += record.total_tokens
+            grouped[key] = ProviderCoverage(
+                provider=current.provider,
+                model=current.model,
+                llm_total_records=llm_total_records,
+                provider_total_records=provider_total_records,
+                derived_total_records=derived_total_records,
+                provider_tokens=provider_tokens,
+                derived_tokens=derived_tokens,
+                input_tokens=current.input_tokens + record.input_tokens,
+                output_tokens=current.output_tokens + record.output_tokens,
+                cache_read_tokens=current.cache_read_tokens + record.cache_read_tokens,
+                cache_write_tokens=current.cache_write_tokens
+                + record.cache_write_tokens,
+            )
+    ranked = sorted(
+        grouped.values(),
+        key=lambda coverage: (
+            coverage.provider_tokens + coverage.derived_tokens,
+            coverage.llm_total_records,
+        ),
+        reverse=True,
+    )
+    return [coverage.as_payload() for coverage in ranked]
+
+
+def _format_provider_coverage(
+    summaries: tuple[TokenUsageSummary, ...],
+) -> list[str]:
+    coverage = _provider_coverage_payload(summaries)
+    if not coverage:
+        return []
+    parts = []
+    for row in coverage[:5]:
+        label = f"{row['provider']}/{row['model']}"
+        parts.append(
+            f"{label}="
+            f"records:{row['llm_total_records']} "
+            f"provider:{_format_token_count(row['provider_tokens'])} "
+            f"derived:{_format_token_count(row['derived_tokens'])} "
+            f"cache_read:{_format_token_count(row['cache_read_tokens'])}"
+        )
+    return ["provider coverage: " + "; ".join(parts)]
+
+
 def _rollup_totals_payload(summaries: tuple[TokenUsageSummary, ...]) -> dict[str, int]:
     return {
         "provider_tokens": sum(summary.total_provider_tokens for summary in summaries),
@@ -584,6 +703,7 @@ def format_token_rollup(
                 for session_id, tokens in top_sessions
             )
         )
+    lines.extend(_format_provider_coverage(tuple(token_summaries)))
     lines.extend(_rollup_coverage_health(summaries))
     lines.extend(_format_warning_sessions(summaries))
     lines.extend(_format_advisories(_rollup_advisories(summaries)))
@@ -600,10 +720,10 @@ def token_rollup_json_payload(
     *,
     input_session_count: int | None = None,
     only_warnings: bool = False,
-) -> dict[str, Any]:
+) -> TokenUsageRollupPayload:
     advisories = _rollup_advisories(summaries)
     return {
-        "schema_version": _ROLLUP_SCHEMA_VERSION,
+        "schema_version": TOKEN_USAGE_ROLLUP_SCHEMA_VERSION,
         "session_count": len(summaries),
         "input_session_count": (
             input_session_count if input_session_count is not None else len(summaries)
@@ -612,6 +732,7 @@ def token_rollup_json_payload(
         "complete": all(summary.complete for summary in summaries),
         "totals": _rollup_totals_payload(summaries),
         "coverage": _rollup_coverage_payload(summaries),
+        "provider_coverage": _provider_coverage_payload(summaries),
         "advisories": _advisory_payload(advisories),
         "summaries": [summary_to_json_payload(summary) for summary in summaries],
     }
