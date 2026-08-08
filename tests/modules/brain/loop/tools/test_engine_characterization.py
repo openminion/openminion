@@ -3989,8 +3989,7 @@ def test_tool_choice_none_compact_closeout_falls_back_when_labels_missing() -> N
             Message(
                 role="user",
                 content=(
-                    "Finish with `design:`, `files:`, `validation:`, and "
-                    "`follow-ups:`."
+                    "Finish with `design:`, `files:`, `validation:`, and `follow-ups:`."
                 ),
             )
         ],
@@ -7344,7 +7343,9 @@ def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> 
     )
 
 
-def test_loop_falls_back_when_long_closeout_ends_with_unfinished_starting_tail() -> None:
+def test_loop_falls_back_when_long_closeout_ends_with_unfinished_starting_tail() -> (
+    None
+):
     draft = (
         "Design Comparison:\n\n"
         "| Aspect | Design A | Design B |\n"
@@ -7565,17 +7566,14 @@ def test_loop_falls_back_to_evidence_when_typed_finalization_contract_is_missing
         initial_messages=[
             Message(
                 role="user",
-                content=(
-                    "Compare Python packaging metadata best practices and end "
-                    "with a short recommended direction."
-                ),
+                content="Compare Python packaging metadata best practices.",
             )
         ],
         tool_specs=_tool_specs("web.search"),
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "recommendation:" in str(outcome.final_text or "").lower()
+    assert "result:" in str(outcome.final_text or "").lower()
     assert "web.search" in str(outcome.final_text or "")
     assert bool(
         outcome.state.scratchpad.get(
@@ -7626,9 +7624,7 @@ def test_execution_preface_draft_detects_progress_note_after_tool_results() -> N
         "Starting with the core module:"
     )
     assert _looks_like_execution_preface_draft(
-        "Design Comparison\n\n"
-        "Chosen: stdlib argparse.\n\n"
-        "Creating section_summary.py:"
+        "Design Comparison\n\nChosen: stdlib argparse.\n\nCreating section_summary.py:"
     )
 
 

@@ -480,7 +480,10 @@ def _missing_requested_file_artifact_labels(loop_state: Any) -> tuple[str, ...]:
     ).lower()
     if not user_text:
         return ()
-    paths = tuple(path.lower().rsplit("/", 1)[-1] for path in _successful_file_mutation_paths(loop_state))
+    paths = tuple(
+        path.lower().rsplit("/", 1)[-1]
+        for path in _successful_file_mutation_paths(loop_state)
+    )
     missing: list[str] = []
     if "readme" in user_text and not any(path.startswith("readme") for path in paths):
         missing.append("README")

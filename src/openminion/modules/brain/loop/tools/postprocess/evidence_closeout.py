@@ -132,7 +132,9 @@ def missing_requested_file_artifact_labels(loop_state: Any) -> tuple[str, ...]:
     paths = tuple(
         path.lower().rsplit("/", 1)[-1]
         for path in _changed_paths_from_tool_results(
-            _mutating_file_tool_results(_successful_substantive_tool_results(loop_state))
+            _mutating_file_tool_results(
+                _successful_substantive_tool_results(loop_state)
+            )
         )
     )
     missing: list[str] = []

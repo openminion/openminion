@@ -9,6 +9,7 @@ import pytest
 
 from openminion.base.config import AgentProfileConfig, OpenMinionConfig
 from openminion.base.config.runtime.profile import build_runtime_config
+from openminion.modules.llm.setup_catalog import get_setup_preset, list_setup_presets
 from openminion.services.bootstrap.provider_setup import (
     ProviderSetupError,
     ProviderSetupRequest,
@@ -16,8 +17,8 @@ from openminion.services.bootstrap.provider_setup import (
     build_provider_setup,
     redacted_config_payload,
     resolve_setup_credential,
+    save_provider_setup,
 )
-from openminion.modules.llm.setup_catalog import get_setup_preset
 
 
 def test_env_first_credentials_store_reference_not_secret(tmp_path: Path) -> None:
@@ -446,6 +447,57 @@ def test_frontier_shared_adapter_presets_use_selected_agent_overrides(
         "openai_chat_completions"
     )
     assert overrides["provider_identity"]["service_vendor"] != "openai"
+
+
+def test_all_setup_presets_coexist_and_round_trip_runtime_profiles(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / ".openminion" / "agents.json"
+    config: OpenMinionConfig | None = None
+    latest_result = None
+    expected: dict[str, tuple[str, str, str, str]] = {}
+
+    for preset in list_setup_presets():
+        base_url = preset.default_base_url
+        if preset.requires_base_url:
+            base_url = f"https://{preset.preset_id}.example.invalid/v1"
+        env = {preset.credential_env: "fixture-key"} if preset.credential_env else {}
+        latest_result = build_provider_setup(
+            ProviderSetupRequest(
+                preset_id=preset.preset_id,
+                agent_id=preset.preset_id,
+                model=preset.recommended_models[0],
+                base_url=base_url,
+                config_path=str(config_path),
+                home_root=tmp_path,
+                data_root=tmp_path / ".openminion",
+                env=env,
+            ),
+            existing_config=config,
+        )
+        config = latest_result.config
+        expected[preset.preset_id] = (
+            preset.runtime_adapter,
+            preset.recommended_models[0],
+            base_url,
+            preset.credential_env,
+        )
+
+    assert latest_result is not None
+    saved_path = save_provider_setup(latest_result)
+    saved_text = saved_path.read_text(encoding="utf-8")
+    assert "fixture-key" not in saved_text
+    reloaded = OpenMinionConfig.from_dict(json.loads(saved_text))
+
+    for agent_id, (adapter, model, base_url, credential_env) in expected.items():
+        effective = build_runtime_config(reloaded, agent_id=agent_id)
+        profile = effective.agents[agent_id]
+        provider = getattr(effective.providers, profile.provider)
+        assert profile.provider == adapter, agent_id
+        assert provider.model == model, agent_id
+        assert provider.base_url == base_url, agent_id
+        if credential_env:
+            assert provider.api_key_env == credential_env, agent_id
 
 
 def test_shared_adapter_setup_replaces_stale_selected_agent_overrides(

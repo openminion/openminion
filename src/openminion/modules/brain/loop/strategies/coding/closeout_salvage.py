@@ -36,7 +36,9 @@ def salvage_reserved_closeout_from_existing_evidence(
     loop = runner._loop_state
     if not bool(loop.scratchpad.get("coding.final_answer_reserve_used")):
         return None
-    tool_results = tool_results if tool_results is not None else _successful_tool_results(loop)
+    tool_results = (
+        tool_results if tool_results is not None else _successful_tool_results(loop)
+    )
     if not tool_results:
         return None
     if not mutating_file_evidence_can_closeout(loop):

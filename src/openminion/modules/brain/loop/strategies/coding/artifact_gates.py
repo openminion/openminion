@@ -14,7 +14,14 @@ _FILE_ARTIFACT_TOOLING_PHRASES = (
     "using file.write",
     "with file.write",
 )
-_FILE_ARTIFACT_ACTION_WORDS = ("build", "create", "implement", "write", "project", "module")
+_FILE_ARTIFACT_ACTION_WORDS = (
+    "build",
+    "create",
+    "implement",
+    "write",
+    "project",
+    "module",
+)
 _DEFAULT_MISSING_ARTIFACT_PATHS = {
     "README": "README.md",
     "CLI entry": "cli.py",
@@ -137,7 +144,11 @@ def _module_stem_for_test_path(file_names: tuple[str, ...]) -> str:
         lowered = name.lower()
         if not lowered.endswith(".py"):
             continue
-        if lowered.startswith("test") or lowered in {"cli.py", "main.py", "__main__.py"}:
+        if lowered.startswith("test") or lowered in {
+            "cli.py",
+            "main.py",
+            "__main__.py",
+        }:
             continue
         return name.rsplit(".", 1)[0]
     return "module"

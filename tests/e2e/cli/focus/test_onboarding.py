@@ -18,7 +18,7 @@ from openminion.base.config import (
     resolve_config_path,
 )
 from openminion.modules.llm.setup_catalog import get_setup_preset
-from tests.e2e.cli.focus.harness import PtySession
+from tests.e2e.cli.focus.harness import FocusProbe, FocusScenario, PtySession
 from tests.e2e.cli.focus.harness.artifacts import artifact_root, write_transcript
 
 pytestmark = [pytest.mark.e2e, pytest.mark.timeout(240)]
@@ -52,6 +52,8 @@ def _command(
         command += ("--config", str(config_path))
     if setup_only:
         command += ("setup", "--no-focus", *extra_setup_args)
+    elif extra_setup_args:
+        command += ("setup", *extra_setup_args)
     return command
 
 
@@ -75,6 +77,41 @@ def _reply(session: PtySession, prompt: str, answer: str = "") -> None:
     session.type_line(answer)
 
 
+def _run_first_task(
+    session: PtySession,
+    *,
+    python_bin: Path,
+    openminion_root: Path,
+    data_root: Path,
+    config_path: Path,
+    timeout: int,
+) -> str:
+    probe = FocusProbe(
+        python_bin=python_bin,
+        openminion_root=openminion_root,
+        framework_root=openminion_root.parent,
+        data_root=data_root,
+        config_path=config_path,
+        agent_id="openminion",
+        workdir=openminion_root,
+        session_id="onboarding-first-run",
+        include_project_context=True,
+    )
+    probe.wait_ready(session)
+    return probe.run_turn(
+        session,
+        FocusScenario(
+            scenario_id="onboarding-first-task",
+            prompt=(
+                "In one sentence, give me one safe read-only command to inspect "
+                "the current directory and end with exactly: ONBOARDING_OK"
+            ),
+            expected_markers=("ONBOARDING_OK", "ls|find|Get-ChildItem"),
+            timeout=timeout,
+        ),
+    )
+
+
 def _assert_owner_only(path: Path) -> None:
     if os.name == "posix":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
@@ -89,14 +126,21 @@ class _OllamaFixtureHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         content_length = int(self.headers.get("Content-Length", "0"))
+        request_payload = {}
         if content_length:
-            self.rfile.read(content_length)
+            request_payload = json.loads(self.rfile.read(content_length))
+        messages = request_payload.get("messages", [])
+        last_message = messages[-1] if isinstance(messages, list) and messages else {}
+        prompt = str(last_message.get("content", "") or "").lower()
+        response_text = "openminion provider check ok"
+        if "openminion provider check ok" not in prompt:
+            response_text = "Use ls to inspect the current directory. ONBOARDING_OK"
         payload = json.dumps(
             {
                 "model": "qwen2.5:14b",
                 "message": {
                     "role": "assistant",
-                    "content": "openminion provider check ok",
+                    "content": response_text,
                 },
                 "done": True,
                 "done_reason": "stop",
@@ -275,6 +319,8 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
     assert payload["providers"]["openai"]["model"] == "gpt-4.1-mini"
     assert payload["providers"]["openai"]["api_key"] == ""
     assert "[recommended]" in transcript
+    assert "service: OpenAI" in transcript
+    assert "runtime adapter:" not in transcript
     assert "Connection not tested; no provider request was made." in transcript
     assert fixture_key not in transcript
     assert fixture_key not in config_path.read_text(encoding="utf-8")
@@ -539,16 +585,16 @@ def test_local_ollama_check_can_verify_against_fixture_server(
 ) -> None:
     home_root = tmp_path / "home"
     data_root = tmp_path / "data"
-    config_path = home_root / ".openminion" / "config.json"
+    config_path = resolve_config_path(None, home_root=home_root)
 
     with _ollama_fixture_server() as base_url:
         with PtySession(
             argv=_command(
                 python_bin=python_bin,
-                config_path=config_path,
+                config_path=None,
                 home_root=home_root,
                 data_root=data_root,
-                setup_only=True,
+                setup_only=False,
             ),
             cwd=openminion_root,
             env=_environment(home_root=home_root, data_root=data_root),
@@ -562,15 +608,21 @@ def test_local_ollama_check_can_verify_against_fixture_server(
             _reply(session, "Ollama base URL", base_url)
             _reply(session, r"Create or repair this config\? \[Y/n\]:")
             _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "y")
-            transcript = session.wait_for_after(
-                "Interactive launch skipped",
-                offset=0,
+            session.wait_for_after("Entering OpenMinion", offset=0, timeout=120)
+            first_task = _run_first_task(
+                session,
+                python_bin=python_bin,
+                openminion_root=openminion_root,
+                data_root=data_root,
+                config_path=config_path,
                 timeout=120,
             )
+            transcript = session.transcript
 
     assert "Connection verified." in transcript
     assert "Connection not tested" not in transcript
     assert "Connection check failed" not in transcript
+    assert "ONBOARDING_OK" in first_task
     _assert_owner_only(config_path)
     write_transcript(
         artifact_root(tmp_path),
@@ -738,6 +790,8 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
         == "MiniMax-M2.7"
     )
     assert "repair: existing agents remain unchanged" in transcript
+    assert "service: MiniMax" in transcript
+    assert "runtime adapter:" not in transcript
     assert fixture_key not in transcript
     assert fixture_key not in config_path.read_text(encoding="utf-8")
     _assert_owner_only(config_path)
@@ -846,7 +900,7 @@ def test_noninteractive_openai_compatible_setups_preserve_api_format(
     )
 
 
-def test_live_provider_setup_check(
+def test_live_provider_setup_and_first_task(
     tmp_path: Path,
     python_bin: Path,
     openminion_root: Path,
@@ -873,7 +927,7 @@ def test_live_provider_setup_check(
             config_path=config_path,
             home_root=home_root,
             data_root=data_root,
-            setup_only=True,
+            setup_only=False,
             extra_setup_args=("--provider", preset_id, "--check-provider"),
         ),
         cwd=openminion_root,
@@ -883,14 +937,20 @@ def test_live_provider_setup_check(
             **{preset.credential_env: credential},
         ),
     ) as session:
-        transcript = session.wait_for_after(
-            "Interactive launch skipped",
-            offset=0,
+        session.wait_for_after("Entering OpenMinion", offset=0, timeout=240)
+        first_task = _run_first_task(
+            session,
+            python_bin=python_bin,
+            openminion_root=openminion_root,
+            data_root=data_root,
+            config_path=config_path,
             timeout=240,
         )
+        transcript = session.transcript
 
     assert "Connection not tested" not in transcript
     assert "Connection check failed" not in transcript
+    assert "ONBOARDING_OK" in first_task
     assert credential not in transcript
     assert credential not in config_path.read_text(encoding="utf-8")
     _assert_owner_only(config_path)

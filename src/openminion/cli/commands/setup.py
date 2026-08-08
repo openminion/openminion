@@ -508,7 +508,14 @@ def run_setup(args) -> int:
             mode = config.agents[_default_agent_id].provider
         if mode in {"demo", "echo"}:
             connection_state = "not applicable"
-        print(f"Configuration saved at {saved_path} (mode: {mode})")
+        service_label = mode
+        if interactive_preset is not None:
+            service_label = interactive_preset.display_label
+        else:
+            preset_id = str(getattr(args, "provider", "") or "").strip()
+            if preset_id:
+                service_label = get_setup_preset(preset_id).display_label
+        print(f"Configuration saved at {saved_path} (service: {service_label})")
 
         doctor_code = _resolve_runtime_helper("_run_setup_doctor")(
             config_path=saved_path
@@ -543,9 +550,7 @@ def run_setup(args) -> int:
             print("Connection verified.")
 
         if getattr(args, "no_chat", False):
-            print(
-                "Interactive launch skipped because --no-chat/--no-focus was requested."
-            )
+            print("Interactive launch skipped because it was disabled for this setup.")
             return 0
 
         if connection_state == "not tested":

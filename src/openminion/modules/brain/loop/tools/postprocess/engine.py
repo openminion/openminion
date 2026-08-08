@@ -149,9 +149,9 @@ def _validation_gate_compact_closeout(
             ),
         )
     )
-    runner.loop_state.scratchpad["requested_validation_blocked_answer_only_closeout"] = (
-        True
-    )
+    runner.loop_state.scratchpad[
+        "requested_validation_blocked_answer_only_closeout"
+    ] = True
     return True, None
 
 
@@ -407,12 +407,9 @@ class AdaptiveLoopRunnerPostprocessMixin(
         validation_tool_available = validation_needs_tool and self._exec_run_available()
         if forced_direct_choice is not None:
             llm_tool_choice = forced_direct_choice
-        if (
-            llm_tool_choice == "none"
-            and (
-                _validation_blocked_answer_only_closeout(self.loop_state)
-                or validation_tool_available
-            )
+        if llm_tool_choice == "none" and (
+            _validation_blocked_answer_only_closeout(self.loop_state)
+            or validation_tool_available
         ):
             llm_tool_choice = "auto"
         if llm_tool_choice == "none" and any(
@@ -428,9 +425,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             )
             or self.loop_state.scratchpad.get(MUTATING_FILE_CLOSEOUT_KEY, False)
         )
-        should_force_direct_closure = _should_force_direct_tool_closure(
-            self.loop_state
-        )
+        should_force_direct_closure = _should_force_direct_tool_closure(self.loop_state)
         direct_tool_closure_active = should_force_direct_closure or (
             bool(
                 getattr(
@@ -439,9 +434,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
                     False,
                 )
             )
-            and bool(
-                getattr(self.loop_state, "direct_tool_closure_consumed", False)
-            )
+            and bool(getattr(self.loop_state, "direct_tool_closure_consumed", False))
         )
         if should_force_direct_closure:
             self.loop_state.direct_tool_closure_consumed = True

@@ -29,9 +29,9 @@ closed in the workspace tracker board:
 
 The package-local check originally found one skill tracker in `wip/` with 100%
 completion and seven historical skill trackers in `qa/`. Those have been
-closed with current verification evidence and now live in `docs/trackers/done/`
-in the workspace docs tree. Treat future skill work as trigger-based product
-work, not as unresolved lifecycle cleanup.
+closed with current verification evidence in the workspace documentation
+lifecycle. Treat future skill work as trigger-based product work, not as
+unresolved lifecycle cleanup.
 
 ## Recommended Next Order
 

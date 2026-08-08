@@ -597,7 +597,7 @@ def _record_missing_artifact_attempt(
     ctx.emit_status(
         source_phase="coding.verify_gate",
         detail_text=(
-            "[act:coding] missing requested file artifacts: " f"{rendered_missing}"
+            f"[act:coding] missing requested file artifacts: {rendered_missing}"
         ),
         mode=BRAIN_DECISION_ROUTE_ACT,
         mode_state="missing_requested_file_artifacts",

@@ -130,13 +130,14 @@ export OPENMINION_DATA_ROOT="$OPENMINION_HOME/.openminion"
 
 ## Quick Start
 
-For a real model-backed session, run guided setup and then ask for one bounded
-task:
+For a real model-backed session, start with the bare command:
 
 ```bash
-openminion setup
-openminion run "Summarize the files in this directory."
+openminion
 ```
+
+When setup finishes and Focus opens, ask: `Give me one safe read-only command
+to inspect the current directory.`
 
 For a credential-free product tour, create an explicit echo/demo config:
 

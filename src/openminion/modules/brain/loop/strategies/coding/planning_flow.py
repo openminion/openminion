@@ -11,7 +11,7 @@ from openminion.modules.brain.constants import (
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.tools import build_loop_thinking_metadata
 from openminion.modules.brain.schemas import ToolCommand
-from openminion.modules.llm.schemas import Message
+from openminion.modules.llm.schemas import LLMResponse, Message
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_CODE_REPO_INDEX,
     MODEL_CODE_REPO_MAP,
@@ -57,7 +57,7 @@ class CodingPlanningMixin:
         *,
         runtime: DefaultCodingLLMRuntime,
         model: str,
-    ) -> tuple[CodingPlan, Any | None]:
+    ) -> tuple[CodingPlan, LLMResponse | None]:
         goal = (
             str(
                 ctx.user_input
@@ -86,7 +86,8 @@ class CodingPlanningMixin:
             return plan, None
         fallback_plan = CodingPlan.fallback(goal)
         self._apply_plan_to_scratchpad(fallback_plan)
-        return fallback_plan, None
+        seed_response = response if not response.ok or response.tool_calls else None
+        return fallback_plan, seed_response
 
     def _build_plan_system_prompt(
         self: Any,

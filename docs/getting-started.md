@@ -46,7 +46,7 @@ writes the canonical config at
 Focus. A useful first task is:
 
 ```text
-what is my operating system, and what command should I run to inspect memory?
+Give me one safe read-only command to inspect the current directory.
 ```
 
 The first screen stays intentionally small:
