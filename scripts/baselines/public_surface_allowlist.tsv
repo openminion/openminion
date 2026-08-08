@@ -192,8 +192,6 @@ tools/gws/plugin.py	openminion.modules.tool.runtime.context
 tools/location/plugin.py	openminion.modules.tool.runtime.context
 tools/location/plugin.py	openminion.modules.tool.runtime.environment
 tools/location/plugin.py	openminion.modules.tool.runtime.network
-tools/mcp/sampling.py	openminion.modules.llm.providers.base
-tools/mcp/sampling.py	openminion.modules.llm.runtime.sync
 tools/memory/plugin.py	openminion.modules.memory.storage.base
 tools/memory/plugin.py	openminion.modules.tool.runtime
 tools/reaction/plugin.py	openminion.modules.tool.runtime
