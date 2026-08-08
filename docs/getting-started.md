@@ -137,7 +137,7 @@ Automation can use the same setup path without prompts:
 openminion setup \
   --provider minimax \
   --model MiniMax-M2.7 \
-  --agent minimax-m3 \
+  --agent minimax-m27 \
   --no-focus
 ```
 
