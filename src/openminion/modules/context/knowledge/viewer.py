@@ -32,6 +32,7 @@ from openminion.modules.context.knowledge.viewer_models import (
 from openminion.modules.context.knowledge.viewer_memory import (
     OPENMINION_MEMORY_PROVIDER_ID,
     OpenMinionMemoryGraphFakosProvider,
+    OpenMinionMemoryGraphFakosLiveProvider,
     memory_db_sample_count,
 )
 from openminion.modules.memory.constants import DEFAULT_INTEGRATED_SQLITE_SUBPATH
@@ -363,7 +364,12 @@ def _second_brain_status(
             visual_ready=False,
             reason="GraphFakos is not installed.",
             next_command="python -m pip install 'openminion[viewer]'",
-            capabilities=("durable_memory", "local_preview", "static_export"),
+            capabilities=(
+                "durable_memory",
+                "local_preview",
+                "static_export",
+                "live_refresh",
+            ),
             details={
                 "diagnostic_code": "graphfakos_missing",
                 "diagnostic_label": _diagnostic_label("graphfakos_missing"),
@@ -382,7 +388,12 @@ def _second_brain_status(
         visual_ready=True,
         reason="" if db_exists else "Memory database will be created on first use.",
         next_command=current_command,
-        capabilities=("durable_memory", "local_preview", "static_export"),
+        capabilities=(
+            "durable_memory",
+            "local_preview",
+            "static_export",
+            "live_refresh",
+        ),
         details={
             "diagnostic_code": "ready" if db_exists else "memory_db_missing",
             "diagnostic_label": _diagnostic_label(
@@ -819,6 +830,11 @@ def _serve_viewer(
 
     preview_provider = LocalPreviewProviderSession(provider)
     preview_graph_provider = cast(Any, preview_provider)
+    live_provider = _live_provider_for_graph(
+        graphfakos=graphfakos,
+        provider=provider,
+        graph_request=graph_request,
+    )
     return graphfakos.serve_local_viewer(
         render_path=lambda path, query: render_provider_path(
             preview_graph_provider,
@@ -841,6 +857,22 @@ def _serve_viewer(
         host=request.host,
         port=request.port,
         open_browser=request.open_browser,
+        live_provider=live_provider,
+    )
+
+
+def _live_provider_for_graph(
+    *,
+    graphfakos: Any,
+    provider: Any,
+    graph_request: Any,
+) -> Any:
+    if getattr(provider, "graph_role", "") != "second_brain_memory":
+        return None
+    return OpenMinionMemoryGraphFakosLiveProvider(
+        graphfakos=graphfakos,
+        provider=provider,
+        request=graph_request,
     )
 
 

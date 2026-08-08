@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -51,6 +53,7 @@ class OpenMinionMemoryGraphFakosProvider:
         "durable_memory",
         "static_export",
         "local_preview",
+        "live_refresh",
     )
 
     def __init__(self, *, graphfakos: Any, db_path: Path, limit: int) -> None:
@@ -239,7 +242,7 @@ def _memory_provider_details() -> dict[str, str]:
         "layer": LAYER_SECOND_BRAIN,
         "owner": "OpenMinion memory",
         "storage": "openminion memory SQLite",
-        "refresh_strategy": "rerun_viewer_request",
+        "refresh_strategy": "live_snapshot_reset_or_requery",
         "mutation_policy": "read_only_viewer",
         "filterable_fields": ",".join(
             (
@@ -259,9 +262,9 @@ def _memory_provider_payload(records: tuple[Any, ...]) -> dict[str, object]:
     return {
         "empty_state": _memory_empty_state() if not records else {},
         "refresh": {
-            "strategy": "rerun_viewer_request",
+            "strategy": "live_snapshot_reset_or_requery",
             "writes_memory": False,
-            "live_patch_stream": False,
+            "live_patch_stream": True,
         },
         "mutation_policy": {
             "durable_memory_writes": "unsupported_from_viewer",
@@ -439,8 +442,102 @@ def _content_summary(content: object) -> str:
     return str(content)[:500]
 
 
+class OpenMinionMemoryGraphFakosLiveProvider:
+    """Expose current memory graph changes through GraphFakos live patches."""
+
+    def __init__(self, *, graphfakos: Any, provider: Any, request: Any) -> None:
+        self._graphfakos = graphfakos
+        self._provider = provider
+        self._request = request
+        self._revision = _graph_revision(graphfakos, provider.load_graph(request))
+
+    def open_live_session(self, request: Any) -> Any:
+        return self._graphfakos.GraphFakosLiveSessionStatus(
+            status="live",
+            revision=self._revision,
+            cursor=self._graphfakos.GraphFakosLiveSessionCursor(self._revision.value),
+            message="OpenMinion memory graph live refresh is enabled.",
+        )
+
+    def load_patch(self, request: Any) -> Any:
+        graph = self._provider.load_graph(self._request)
+        current_revision = _graph_revision(self._graphfakos, graph)
+        cursor = getattr(request, "cursor", None)
+        base_value = (
+            str(getattr(cursor, "value", "") or "").strip() or self._revision.value
+        )
+        if current_revision.value == base_value:
+            return self._graphfakos.GraphFakosLiveSessionStatus(
+                status="heartbeat",
+                revision=current_revision,
+                cursor=self._graphfakos.GraphFakosLiveSessionCursor(
+                    current_revision.value
+                ),
+                message="No memory graph changes are available.",
+            )
+        patch = self._graphfakos.GraphFakosGraphPatch(
+            patch_id=f"openminion-memory:{current_revision.value}",
+            base_revision=self._graphfakos.GraphFakosGraphRevision(base_value),
+            result_revision=current_revision,
+            cursor=self._graphfakos.GraphFakosLiveSessionCursor(current_revision.value),
+            operations=(
+                self._graphfakos.GraphFakosPatchOperation(
+                    kind="snapshot_reset",
+                    graph=graph,
+                    metadata={
+                        "provider": OPENMINION_MEMORY_PROVIDER_ID,
+                        "refresh_strategy": "live_snapshot_reset_or_requery",
+                    },
+                ),
+            ),
+        )
+        self._revision = current_revision
+        return patch
+
+    def diagnostics(self) -> Any:
+        return self._graphfakos.GraphFakosLiveSessionDiagnostics(
+            last_revision=self._revision.value,
+        )
+
+
+def _graph_revision(graphfakos: Any, graph: Any) -> Any:
+    payload = {
+        "nodes": [
+            {
+                "id": str(getattr(node, "id", "") or ""),
+                "label": str(getattr(node, "label", "") or ""),
+                "kind": str(getattr(node, "kind", "") or ""),
+                "summary": str(getattr(node, "summary", "") or ""),
+                "score": getattr(node, "score", None),
+                "source": str(getattr(node, "source", "") or ""),
+                "tags": list(getattr(node, "tags", ()) or ()),
+                "timestamps": dict(getattr(node, "timestamps", {}) or {}),
+            }
+            for node in getattr(graph, "nodes", ()) or ()
+        ],
+        "edges": [
+            {
+                "id": str(getattr(edge, "id", "") or ""),
+                "source_id": str(getattr(edge, "source_id", "") or ""),
+                "target_id": str(getattr(edge, "target_id", "") or ""),
+                "kind": str(getattr(edge, "kind", "") or ""),
+                "label": str(getattr(edge, "label", "") or ""),
+            }
+            for edge in getattr(graph, "edges", ()) or ()
+        ],
+        "stats": dict(getattr(graph, "stats", {}) or {}),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
+    return graphfakos.GraphFakosGraphRevision(
+        hashlib.sha256(encoded).hexdigest()[:16]
+    )
+
+
 __all__ = [
     "OPENMINION_MEMORY_PROVIDER_ID",
     "OpenMinionMemoryGraphFakosProvider",
+    "OpenMinionMemoryGraphFakosLiveProvider",
     "memory_db_sample_count",
 ]

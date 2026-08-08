@@ -26,6 +26,7 @@ from openminion.modules.context.knowledge.viewer import (
 )
 from openminion.modules.context.knowledge.viewer_memory import (
     OpenMinionMemoryGraphFakosProvider,
+    OpenMinionMemoryGraphFakosLiveProvider,
 )
 from openminion.modules.memory.models import MemoryRecord, MemoryRelation
 from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
@@ -764,12 +765,12 @@ def test_second_brain_provider_adds_openminion_visual_metadata(
     assert "type:decision" in node.tags
     assert node.provider_payload["memory_type"] == "decision"
     assert isinstance(node.provider_payload["namespace"], dict)
-    assert graph.provider_details["refresh_strategy"] == "rerun_viewer_request"
+    assert graph.provider_details["refresh_strategy"] == "live_snapshot_reset_or_requery"
     assert graph.provider_details["mutation_policy"] == "read_only_viewer"
     assert graph.provider_payload["refresh"] == {
-        "strategy": "rerun_viewer_request",
+        "strategy": "live_snapshot_reset_or_requery",
         "writes_memory": False,
-        "live_patch_stream": False,
+        "live_patch_stream": True,
     }
     assert (
         graph.provider_payload["mutation_policy"]["durable_memory_writes"]
@@ -861,6 +862,7 @@ def test_viewer_status_reports_readiness_and_next_commands(
     assert payload["graphfakos"] == {"installed": True, "version": "test"}
     assert payload["second_brain"]["visual_ready"] is True
     assert payload["second_brain"]["details"]["sample_records"] == 1
+    assert "live_refresh" in payload["second_brain"]["capabilities"]
     assert payload["third_brain"][0]["visual_ready"] is True
     assert payload["third_brain"][0]["tags"] == ["code_graph"]
     assert "openminion graph view --current" in payload["next_commands"]
@@ -1156,6 +1158,7 @@ def test_second_brain_dry_run_exposes_real_graphfakos_manifest(tmp_path) -> None
     assert manifest["performance_budget"]["rendered_node_count"] == 2
     assert provider_status["provider_label"] == "OpenMinion Memory"
     assert "durable_memory" in provider_status["capabilities"]
+    assert "live_refresh" in provider_status["capabilities"]
     assert "inspect_node" in manifest["viewer_actions"]
     assert manifest["provider_payload"]["graph_role"] == "second_brain_memory"
 
@@ -1226,11 +1229,90 @@ def test_second_brain_local_server_routes_workbench_actions_safely(
 
     assert result.mode == "server"
     assert captured["handle_action"] is not None
+    assert captured["live_provider"] is not None
     assert action_result["ok"] is False
     assert action_result["status"]["status"] == "unsupported"
     assert "does not support graph edit actions" in action_result["status"]["message"]
     assert capture_result["ok"] is False
     assert "does not support workbench knowledge capture" in capture_result["error"]
+
+
+def test_second_brain_live_provider_streams_snapshot_reset_after_memory_change(
+    tmp_path,
+) -> None:
+    graphfakos = pytest.importorskip("graphfakos")
+    db_path = tmp_path / "memory.db"
+    store = SQLiteMemoryStore(db_path)
+    now = "2026-07-21T00:00:00+00:00"
+    store.put(
+        MemoryRecord(
+            id="memory:first",
+            scope="agent:openminion",
+            type="fact",
+            key="first",
+            title="First Memory",
+            content="Initial live graph state.",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    graph_request = graphfakos.GraphFakosRequest()
+    provider = OpenMinionMemoryGraphFakosProvider(
+        graphfakos=graphfakos,
+        db_path=db_path,
+        limit=20,
+    )
+    live_provider = OpenMinionMemoryGraphFakosLiveProvider(
+        graphfakos=graphfakos,
+        provider=provider,
+        request=graph_request,
+    )
+
+    opened = live_provider.open_live_session(
+        graphfakos.GraphFakosLiveSessionRequest(session_id="viewer")
+    )
+    heartbeat = live_provider.load_patch(
+        graphfakos.GraphFakosLiveSessionRequest(
+            session_id="viewer",
+            cursor=opened.cursor,
+        )
+    )
+    store.put(
+        MemoryRecord(
+            id="memory:second",
+            scope="agent:openminion",
+            type="decision",
+            key="second",
+            title="Second Memory",
+            content="Live graph refresh should include this record.",
+            created_at=now,
+            updated_at="2026-07-21T00:01:00+00:00",
+        )
+    )
+    patch = live_provider.load_patch(
+        graphfakos.GraphFakosLiveSessionRequest(
+            session_id="viewer",
+            cursor=opened.cursor,
+        )
+    )
+    after_patch = live_provider.load_patch(
+        graphfakos.GraphFakosLiveSessionRequest(
+            session_id="viewer",
+            cursor=patch.cursor,
+        )
+    )
+
+    assert opened.status == "live"
+    assert heartbeat.status == "heartbeat"
+    assert patch.patch_id.startswith("openminion-memory:")
+    assert patch.operations[0].kind == "snapshot_reset"
+    assert len(patch.operations[0].graph.nodes) == 2
+    assert patch.operations[0].metadata["refresh_strategy"] == (
+        "live_snapshot_reset_or_requery"
+    )
+    assert patch.result_revision.value != opened.revision.value
+    assert after_patch.status == "heartbeat"
+    assert live_provider.diagnostics().last_revision == patch.result_revision.value
 
 
 def test_second_brain_provider_matches_graphfakos_conformance(tmp_path) -> None:

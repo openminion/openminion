@@ -34,6 +34,17 @@ It reports:
 openminion graph view --current
 ```
 
+If you are not sure whether there is memory yet, run:
+
+```bash
+openminion graph status
+openminion graph view --current --dry-run --json
+```
+
+If the graph is empty, create memory through the ordinary OpenMinion path, then
+rerun `openminion graph view --current`. The viewer does not seed demo memory
+or bypass the configured memory backend.
+
 `--current` is the user-facing shortcut for the current second-brain memory
 graph. Use scope flags when you want a narrower view:
 
@@ -66,9 +77,10 @@ openminion graph view --current --dry-run --json
 Use the returned `viewer_manifest.viewer_state`,
 `viewer_manifest.performance_budget`, `provider_details`, and
 `provider_payload` fields to decide whether to show a launch button, refresh
-button, filter controls, or empty-state guidance. The second-brain viewer is
-refresh-by-requery: rerun the same graph request to show newly written
-Sophiagraph memory. It does not stream live patches yet.
+button, filter controls, or empty-state guidance. A served second-brain viewer
+can stream GraphFakos live `snapshot_reset` patches when Sophiagraph memory
+changes. Static HTML and dry-run integrations should refresh by rerunning the
+same graph request.
 
 The same command accepts viewer filters that map directly to GraphFakos'
 toolbar controls:
@@ -105,8 +117,9 @@ For the current Sophiagraph-backed second-brain viewer, durable writes remain
 read-only from the visual surface. Graph edit actions and knowledge captures
 return an explicit unsupported/provider-owned status unless a future provider
 or OpenMinion review workflow implements that action. Users can still search,
-filter, inspect, copy citations, export visible graph state, and rerun the
-viewer request to refresh the latest memory.
+filter, inspect, copy citations, export visible graph state, receive live
+snapshot refreshes in the served viewer, and rerun the viewer request to refresh
+static or wrapper views.
 
 ## Open A Third-Brain Provider
 

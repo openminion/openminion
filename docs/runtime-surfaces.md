@@ -121,8 +121,9 @@ Notes:
 8. served local viewers route workbench forms through GraphFakos'
    provider-neutral action handler, while the current Sophiagraph second-brain
    lens returns explicit unsupported/provider-owned statuses for durable writes,
-9. second-brain refresh is currently refresh-by-requery: rerun the same viewer
-   command or JSON probe to inspect newly written memory,
+9. served second-brain viewers can stream GraphFakos live `snapshot_reset`
+   patches when Sophiagraph memory changes; static HTML and JSON probes refresh
+   by rerunning the same viewer command,
 10. see `docs/graph-viewer.md` and `examples/graph-viewer/` for a copyable
    third-brain provider envelope.
 
