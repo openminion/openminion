@@ -1,7 +1,7 @@
 # OpenMinion Certification Readiness Matrix
 
 Status: active
-Last updated: 2026-07-03
+Last updated: 2026-08-08
 
 Purpose: summarize the current proof posture for the public `openminion`
 package surface.
@@ -18,6 +18,8 @@ package surface.
 | operator companion CLIs | `openminiond`, `artifactctl`, `memctl`, `brainctl`, `policyctl`, and siblings | `pyproject.toml`, package-local `make lint`, public-surface/layout validators | alpha-ready |
 | examples | hello examples, quickstart, `sample` module | `examples/` plus `python -m compileall examples` | alpha-ready |
 | package docs | README, docs entrypoint, compatibility/release/source-boundary refs | `README.md`, `docs/`, `API_COMPATIBILITY.md`, `RELEASING.md`, current canonical-version package proof | alpha-ready |
+| long-horizon project worker | `docs/long-horizon-project-worker.md`, project-worker E2E runner, autonomy reports | deterministic compressed pilots plus a validation-only 2-hour interim certification support report; full 8-hour and 24-hour real elapsed certification pilots remain pending | alpha substrate, not certification-ready |
+| memory/context usefulness | memory records, session/context surfaces, scorecard references | local utility and audit evidence exists; live provider-backed ContextCtl proof and paired usefulness claims remain routed to their owning trackers | alpha substrate, claim-gated |
 
 ## Remaining alpha caveats
 
@@ -28,6 +30,10 @@ These are still true even when the public package surface is documented:
    alpha as long as docs and public boundaries stay honest,
 3. the repo contains broader runtime, validator, and integration surfaces than
    the narrow public package contract.
+4. durable local records are not the same as certified long-running autonomy or
+   provider-backed memory/context usefulness.
+5. validation-only interim reports and compressed pilots are support evidence;
+   they do not replace real elapsed certification pilots.
 
 ## Current package note
 

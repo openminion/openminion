@@ -25,19 +25,25 @@ capability-specific proof.
 
 ## Current Proof Shape
 
-The current alpha proof uses deterministic compressed pilots and a live interactive CLI
-smoke proof:
+The current alpha proof uses deterministic compressed pilots, a validation-only
+2-hour certification support check, and a live interactive CLI smoke proof:
 
 1. a 30-minute local fixture,
 2. a 2-hour coding/research fixture,
 3. a 24-hour restart/resume fixture,
 4. a 72-hour multi-day fixture,
-5. a live provider-backed interactive tools scenario when credentials and quota are
+5. a 2-hour interim certification manifest/report check that proves the
+   certification path can validate and write a support report, but is not a
+   certification pass,
+6. a live provider-backed interactive tools scenario when credentials and quota are
    available.
 
 The compressed pilots prove reporting, restart/resume, operator-control,
 permission, failure-recovery, and verification-gate behavior without waiting
 for real elapsed time.
+
+The interim certification check is support evidence only. It does not replace
+the real elapsed 8-hour research and 24-hour code-bearing certification pilots.
 
 ## Claim Boundary
 
@@ -45,9 +51,10 @@ The project-worker path is suitable for alpha testing and contributor
 iteration. Do not treat it as a finished "give it any complex task and walk
 away for days" product claim yet.
 
-Before that claim is made, OpenMinion needs real elapsed multi-day pilot
-evidence plus capability-specific proof for the user-facing surfaces involved
-in the objective.
+Before that claim is made, OpenMinion needs real elapsed 8-hour and 24-hour
+certification pilots, a later multi-day pilot for multi-day claims, and
+capability-specific proof for the user-facing surfaces involved in the
+objective.
 
 ## Running Local Project-Worker Checks
 
