@@ -21,6 +21,13 @@ from .llm import DefaultCodingLLMRuntime
 from .prompts import build_coding_plan_system_prompt
 from .plan import CodingPlan, coding_plan_from_payload
 
+_NO_INITIAL_REPO_INSPECTION_PHRASES = (
+    "do not inspect the repo first",
+    "don't inspect the repo first",
+    "do not inspect the repository first",
+    "don't inspect the repository first",
+)
+
 
 class CodingPlanningMixin:
     def _load_context_action_result(
@@ -85,12 +92,21 @@ class CodingPlanningMixin:
         self: Any,
         ctx: ExecutionContext,
     ) -> str:
+        if self._user_requested_no_initial_repo_inspection(ctx):
+            return build_coding_plan_system_prompt()
         repo_index = self._load_repo_index_context(ctx)
         repo_map = "" if repo_index else self._load_repo_map_context(ctx)
         return build_coding_plan_system_prompt(
             repo_index=repo_index,
             repo_map=repo_map,
         )
+
+    def _user_requested_no_initial_repo_inspection(
+        self: Any,
+        ctx: ExecutionContext,
+    ) -> bool:
+        text = str(ctx.user_input or ctx.state.goal or "").lower()
+        return any(phrase in text for phrase in _NO_INITIAL_REPO_INSPECTION_PHRASES)
 
     def _load_repo_index_context(self: Any, ctx: ExecutionContext) -> str:
         action_result = self._load_context_action_result(

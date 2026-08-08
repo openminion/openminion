@@ -313,6 +313,43 @@ def _typed_finalization_fallback_status(
     )
 
 
+def _finalization_status_from_tool_evidence(
+    runner: Any,
+    *,
+    requires_finalization_status: bool,
+    finalization_status: Any,
+    final_text: Any,
+) -> Any:
+    if not requires_finalization_status or finalization_status is not None:
+        return finalization_status
+    if (
+        _looks_like_structured_final_answer(str(final_text or ""))
+        and _count_substantive_non_control_tool_results(runner.loop_state) > 0
+    ):
+        return FinalizationStatus(
+            status="final_answer",
+            reasoning=(
+                "Accepted structured final answer when the typed finalization trailer "
+                "was omitted."
+            ),
+        )
+    evidence_fallback_used = any(
+        bool(runner.loop_state.scratchpad.get(key, False))
+        for key in (
+            "pre_tool_draft_echo_used_evidence_fallback",
+            "raw_tool_payload_used_evidence_fallback",
+            "missing_requested_closeout_markers_used_evidence_fallback",
+            "typed_finalization_contract_used_evidence_fallback",
+        )
+    )
+    if evidence_fallback_used and str(final_text or "").strip():
+        return FinalizationStatus(
+            status="final_answer",
+            reasoning="Synthesized final answer from successful tool evidence.",
+        )
+    return finalization_status
+
+
 def _retry_or_fail_internal_failure_final_text(
     runner: Any,
     *,
@@ -839,19 +876,12 @@ class AdaptiveLoopRunnerNoToolMixin:
         )
         if empty_final_retry is not None:
             return empty_final_retry
-        if (
-            requires_finalization_status
-            and finalization_status is None
-            and _looks_like_structured_final_answer(str(final_text or ""))
-            and _count_substantive_non_control_tool_results(self.loop_state) > 0
-        ):
-            finalization_status = FinalizationStatus(
-                status="final_answer",
-                reasoning=(
-                    "Accepted structured final answer when the typed "
-                    "finalization trailer was omitted."
-                ),
-            )
+        finalization_status = _finalization_status_from_tool_evidence(
+            self,
+            requires_finalization_status=requires_finalization_status,
+            finalization_status=finalization_status,
+            final_text=final_text,
+        )
         if (
             requires_finalization_status
             and finalization_status is None

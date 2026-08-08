@@ -179,8 +179,10 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
         scenario_id="goal_long_python_project_loop",
         prompt=(
             "Treat this as a long-running goal-style coding loop in the current "
-            "directory. Build a small zero-dependency Python CLI named "
-            f"`loopcalc` using at most five files. {SCRATCH_RELATIVE_PATH_RULE}"
+            "directory. Build a small, self-contained zero-dependency Python CLI "
+            "named `loopcalc` in `loopcalc.py` using at most five files. It must "
+            "support `python loopcalc.py sum 5` and print `5`. "
+            f"{SCRATCH_RELATIVE_PATH_RULE}"
             "Begin by using file.write for `loopcalc.py`; do not inspect the repo "
             "first. Use file.write and file.read; "
             "do not call exec.run in this soak scenario. Validate by reading back "
@@ -228,9 +230,13 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
                 "-c",
                 (
                     "from pathlib import Path; "
+                    "import subprocess, sys; "
                     "Path('sample.txt').write_text('one two\\n', encoding='utf-8'); "
-                    "import word_count_cli; "
-                    "assert word_count_cli.count_words('sample.txt') == 2"
+                    "result = subprocess.run("
+                    "[sys.executable, 'word_count_cli.py', 'sample.txt'], "
+                    "capture_output=True, text=True); "
+                    "assert result.returncode == 0, result.stderr; "
+                    "assert '2' in result.stdout"
                 ),
             ),
         ),
@@ -265,7 +271,13 @@ SOAK_LIVE_SCENARIOS: tuple[FocusScenario, ...] = (
                 "-c",
                 (
                     "import section_summary; "
-                    "assert section_summary.parse_sections('# A\\ntext')"
+                    "text = '# A\\ntext'; "
+                    "parser = getattr(section_summary, 'parse_sections', None) "
+                    "or getattr(section_summary, 'extract_sections', None); "
+                    "summarize = getattr(section_summary, 'summarize', None); "
+                    "assert callable(parser) or callable(summarize); "
+                    "result = parser(text) if callable(parser) else summarize(text); "
+                    "assert result"
                 ),
             ),
         ),

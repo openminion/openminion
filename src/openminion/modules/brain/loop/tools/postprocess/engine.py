@@ -52,9 +52,11 @@ from .rules import (
 )
 from .evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
+    missing_requested_closeout_markers,
     mutating_file_evidence_can_closeout,
     mutating_file_evidence_fallback_text,
     requested_validation_without_exec_run,
+    tool_evidence_closeout_outcome,
 )
 from ..response_payloads import _pending_finalization_salvage_text
 from ..runtime import _extract_visible_response_text
@@ -120,6 +122,39 @@ def _validation_blocked_answer_only_closeout(loop_state: Any) -> bool:
     )
 
 
+def _validation_gate_compact_closeout(
+    runner: Any,
+) -> tuple[bool, AdaptiveToolLoopOutcome | None]:
+    if not requested_validation_without_exec_run(runner.loop_state):
+        return False, None
+    if not runner._exec_run_available():
+        runner.loop_state.scratchpad[
+            "requested_validation_blocked_answer_only_closeout"
+        ] = True
+        return True, tool_evidence_closeout_outcome(
+            profile=runner.profile,
+            loop_state=runner.loop_state,
+            allowed_tools=runner.allowed_tools,
+            reason="requested validation could not run in this tool profile",
+            scratchpad_key="validation_unavailable_used_tool_evidence_closeout",
+        )
+    runner.loop_state.messages.append(
+        Message(
+            role="system",
+            content=(
+                "The user requested validation, but this turn has no successful "
+                "exec.run validation result yet. Do not return an answer-only "
+                "closeout. Call exec.run with the requested validation command "
+                "now, then return the final answer from the actual tool result."
+            ),
+        )
+    )
+    runner.loop_state.scratchpad["requested_validation_blocked_answer_only_closeout"] = (
+        True
+    )
+    return True, None
+
+
 class AdaptiveLoopRunnerPostprocessMixin(
     AdaptiveLoopRunnerClosureMixin,
     AdaptiveLoopRunnerNoToolMixin,
@@ -150,23 +185,9 @@ class AdaptiveLoopRunnerPostprocessMixin(
         tool_results = _successful_substantive_tool_results(self.loop_state)
         if not tool_results:
             return None
-        if requested_validation_without_exec_run(self.loop_state):
-            self.loop_state.messages.append(
-                Message(
-                    role="system",
-                    content=(
-                        "The user requested validation, but this turn has no "
-                        "successful exec.run validation result yet. Do not return "
-                        "an answer-only closeout. Call exec.run with the requested "
-                        "validation command now, then return the final answer from "
-                        "the actual tool result."
-                    ),
-                )
-            )
-            self.loop_state.scratchpad[
-                "requested_validation_blocked_answer_only_closeout"
-            ] = True
-            return None
+        validation_blocked, validation_outcome = _validation_gate_compact_closeout(self)
+        if validation_blocked:
+            return validation_outcome
         self.loop_state.scratchpad[
             "tool_choice_none_compact_answer_only_retry_used"
         ] = True
@@ -212,6 +233,18 @@ class AdaptiveLoopRunnerPostprocessMixin(
             and not _is_internal_failure_final_text(final_text)
             and not _looks_like_execution_preface_draft(final_text)
         ):
+            if missing_requested_closeout_markers(self.loop_state, final_text):
+                fallback_outcome = tool_evidence_closeout_outcome(
+                    profile=self.profile,
+                    loop_state=self.loop_state,
+                    allowed_tools=self.allowed_tools,
+                    reason="requested closeout labels were missing",
+                    scratchpad_key=(
+                        "compact_closeout_missing_requested_markers_used_fallback"
+                    ),
+                )
+                if fallback_outcome is not None:
+                    return fallback_outcome
             self.loop_state.termination_reason = ADAPTIVE_TERM_FINAL_TEXT
             return AdaptiveToolLoopOutcome(
                 profile_name=self.profile.profile_name,
@@ -234,6 +267,25 @@ class AdaptiveLoopRunnerPostprocessMixin(
             allowed_tools=self.allowed_tools,
             final_text=final_text,
         )
+
+    def _exec_run_available(self) -> bool:
+        return "exec.run" in self.allowed_tools or any(
+            str(getattr(spec, "name", "") or "").strip() == "exec.run"
+            for spec in self.active_tool_specs
+        )
+
+    def _compact_closeout_or_validation_continue(
+        self,
+    ) -> tuple[bool, AdaptiveToolLoopOutcome | None] | None:
+        compact_closeout = self._force_compact_answer_only_closeout()
+        if compact_closeout is not None:
+            return False, compact_closeout
+        if _validation_blocked_answer_only_closeout(self.loop_state):
+            self.loop_state.scratchpad[
+                "tool_choice_none_retry_continued_for_validation"
+            ] = True
+            return True, None
+        return None
 
     def _handle_iteration_cap(self) -> tuple[str, AdaptiveToolLoopOutcome | None]:
         profile = self.profile
@@ -352,13 +404,14 @@ class AdaptiveLoopRunnerPostprocessMixin(
         validation_needs_tool = requested_validation_without_exec_run(
             self.loop_state
         ) and bool(_successful_substantive_tool_results(self.loop_state))
+        validation_tool_available = validation_needs_tool and self._exec_run_available()
         if forced_direct_choice is not None:
             llm_tool_choice = forced_direct_choice
         if (
             llm_tool_choice == "none"
             and (
                 _validation_blocked_answer_only_closeout(self.loop_state)
-                or validation_needs_tool
+                or validation_tool_available
             )
         ):
             llm_tool_choice = "auto"
@@ -399,7 +452,7 @@ class AdaptiveLoopRunnerPostprocessMixin(
             suppress_tools = True
         elif direct_tool_closure_active:
             suppress_tools = True
-        if validation_needs_tool and not direct_tool_closure_active:
+        if validation_tool_available and not direct_tool_closure_active:
             suppress_tools = False
 
         if suppress_tools:
@@ -621,14 +674,9 @@ class AdaptiveLoopRunnerPostprocessMixin(
             or final_answer_reserve_active
             or mutating_file_closeout_active
         ):
-            compact_closeout = self._force_compact_answer_only_closeout()
-            if compact_closeout is not None:
-                return False, compact_closeout
-            if _validation_blocked_answer_only_closeout(self.loop_state):
-                self.loop_state.scratchpad[
-                    "tool_choice_none_retry_continued_for_validation"
-                ] = True
-                return True, None
+            closeout_result = self._compact_closeout_or_validation_continue()
+            if closeout_result is not None:
+                return closeout_result
             if mutating_file_closeout_active or final_answer_reserve_active:
                 fallback_outcome = _mutating_file_fallback_outcome(self)
                 if fallback_outcome is not None:
@@ -637,14 +685,9 @@ class AdaptiveLoopRunnerPostprocessMixin(
             error_message = "Answer-only finalization kept returning tool calls."
         else:
             if not direct_tool_closure_active or direct_tool_batch_satisfied:
-                compact_closeout = self._force_compact_answer_only_closeout()
-                if compact_closeout is not None:
-                    return False, compact_closeout
-                if _validation_blocked_answer_only_closeout(self.loop_state):
-                    self.loop_state.scratchpad[
-                        "tool_choice_none_retry_continued_for_validation"
-                    ] = True
-                    return True, None
+                closeout_result = self._compact_closeout_or_validation_continue()
+                if closeout_result is not None:
+                    return closeout_result
             termination_reason = (
                 ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED
                 if direct_tool_closure_active

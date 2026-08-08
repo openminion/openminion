@@ -139,7 +139,7 @@ src/openminion/modules/brain/loop/rollouts/runner.py	3	0	current broad-handler b
 src/openminion/modules/brain/loop/rollouts/scorer.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/self_compaction.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/strategies/coding/plan.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/loop/strategies/coding/results.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/brain/loop/strategies/coding/terminal_results.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/strategies/coding/verification.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/strategies/coding/verification_flow.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/loop/strategies/research/handler.py	8	3	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

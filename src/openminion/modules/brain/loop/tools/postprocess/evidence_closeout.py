@@ -36,6 +36,15 @@ _VALIDATION_REQUEST_PATTERNS = (
     "run validation",
     "validation result",
 )
+_REQUESTED_FILE_EXTENSIONS = (
+    ".py",
+    ".md",
+    ".toml",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+)
 
 
 def requested_closeout_markers(loop_state: Any) -> tuple[str, ...]:
@@ -127,6 +136,15 @@ def missing_requested_file_artifact_labels(loop_state: Any) -> tuple[str, ...]:
         )
     )
     missing: list[str] = []
+    for requested_path in re.findall(r"`([^`]+)`", user_text):
+        file_name = requested_path.rsplit("/", 1)[-1].strip()
+        if (
+            file_name
+            and file_name.endswith(_REQUESTED_FILE_EXTENSIONS)
+            and file_name not in paths
+            and file_name not in missing
+        ):
+            missing.append(file_name)
     if "readme" in user_text and not any(path.startswith("readme") for path in paths):
         missing.append("README")
     if ("cli entry" in user_text or "cli project" in user_text) and not any(
@@ -243,7 +261,16 @@ def tool_evidence_closeout_text(loop_state: Any, *, reason: str) -> str:
                 f"{marker}: not captured before closeout; preserved tool evidence "
                 "is reported below."
             )
-    if not lines:
+    if lines:
+        prefix: list[str] = []
+        if "result" not in requested:
+            prefix.append(f"result: {reason}")
+        if changed_paths and not any(
+            marker in {"files", "files changed"} for marker in requested
+        ):
+            prefix.append(f"files changed: {rendered_paths}")
+        lines = prefix + lines
+    else:
         lines = [f"result: {reason}"]
         if changed_paths:
             lines.append(f"files changed: {rendered_paths}")

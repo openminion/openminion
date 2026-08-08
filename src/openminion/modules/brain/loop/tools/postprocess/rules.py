@@ -32,6 +32,10 @@ _PROGRESS_GERUND_RE = re.compile(
     r"inspecting|looking)\b",
     re.IGNORECASE,
 )
+_UNFINISHED_CLOSEOUT_TAIL_RE = re.compile(
+    r"(?im)(?:^|\n)\s*(?:starting with|beginning with|next up|now creating|"
+    r"now writing|creating|writing|updating|adding)\b[^\n]{0,120}:\s*$"
+)
 _UNFULFILLED_FILE_PLAN_RE = re.compile(
     r"\b(?:files?\s+to\s+(?:create|write)|(?:i['’]?ll|i will|we['’]?ll|we will)"
     r"\s+(?:write|create|add)\s+(?:all\s+)?files?|(?:brief\s+)?plan\s*:\s*"
@@ -53,8 +57,9 @@ _PLAINTEXT_FILE_WRITE_TOOL_RE = re.compile(
     r"(?ims)^\s*file\.write\s*$.*^\s*path\s*:\s*\S+.*^\s*content\s*:",
 )
 _PLAINTEXT_EXEC_RUN_TOOL_RE = re.compile(
-    r"(?im)^\s*exec\.run\s+(?:cmd|command)\s*:",
+    r"(?im)^\s*exec\.run(?:\s+(?:cmd|command)\s*:|\s+\S+)",
 )
+_PLAINTEXT_FILE_WRITE_SHORTHAND_RE = re.compile(r"(?im)^\s*file\.write\s+\S+")
 _PLAINTEXT_TOOL_FUNCTION_CALL_RE = re.compile(
     r"(?im)^\s*(?:file|exec|web|search|fetch|host|process|task|plan|code)"
     r"\.[A-Za-z0-9_]+\s*\(",
@@ -171,6 +176,7 @@ def _looks_like_unexecutable_tool_payload_text(text: str) -> bool:
             and any(arg_key in lower_token for arg_key in _TOOL_ARGUMENT_KEYS)
         )
         or _PLAINTEXT_FILE_WRITE_TOOL_RE.search(token) is not None
+        or _PLAINTEXT_FILE_WRITE_SHORTHAND_RE.search(token) is not None
         or _PLAINTEXT_EXEC_RUN_TOOL_RE.search(token) is not None
         or _PLAINTEXT_TOOL_FUNCTION_CALL_RE.search(token) is not None
         or _PLAINTEXT_TOOL_CALLS_ARRAY_RE.search(token) is not None
@@ -221,6 +227,8 @@ def _looks_like_execution_preface_draft(text: str) -> bool:
     if _UNFULFILLED_FILE_PLAN_RE.search(current):
         return True
     if _STEP_PLAN_TAG_RE.search(current):
+        return True
+    if _UNFINISHED_CLOSEOUT_TAIL_RE.search(current):
         return True
     if len(current) > 280:
         return False

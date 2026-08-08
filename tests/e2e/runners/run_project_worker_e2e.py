@@ -62,6 +62,9 @@ def _run(name: str) -> int:
         return 2
     env = os.environ.copy()
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    artifact_root = str(env.get("OPENMINION_PROJECT_WORKER_E2E_ARTIFACT_ROOT", "")).strip()
+    if artifact_root:
+        env.setdefault("OPENMINION_CLI_FOCUS_E2E_ARTIFACT_ROOT", artifact_root)
     if any(scenario.live for scenario in scenarios):
         env["OPENMINION_LIVE_CLI_FOCUS_E2E"] = "1"
     if any(scenario.complex for scenario in scenarios):

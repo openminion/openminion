@@ -64,6 +64,9 @@ from .runtime import (
     _runner_and_profile_from_context,
 )
 from . import subtasks as _subtasks_module
+from .artifact_gates import (
+    user_explicitly_requested_file_artifact as _results_user_requested_file_artifact,
+)
 from .results import (
     _exit_autonomous_blocked as _results_exit_autonomous_blocked,
     _exit_budget_exhausted as _results_exit_budget_exhausted,
@@ -71,7 +74,6 @@ from .results import (
     _exit_final_text as _results_exit_final_text,
     _maybe_continue_after_tool_failure as _results_maybe_continue_after_tool_failure,
     _result_from_outcome as _results_from_outcome,
-    _user_explicitly_requested_file_artifact as _results_user_requested_file_artifact,
 )
 from .subtasks import _dispatch_subtasks_if_needed as _subtasks_dispatch_if_needed
 from .verification_flow import CodingVerificationMixin

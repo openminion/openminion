@@ -592,6 +592,20 @@ def test_turn_output_uses_prompt_boundary() -> None:
     assert turn_output_text(transcript, prompt).strip().startswith("● Final result.")
 
 
+def test_completed_turn_allows_debug_traceback_before_final_done() -> None:
+    transcript = (
+        "❯ create a module and test\n"
+        "● Running exec.run(python test_module.py)\n"
+        "Traceback (most recent call last):\n"
+        "ZeroDivisionError: division by zero\n"
+        "● Running file.write(module.py)\n"
+        "⏺ result: fixed the failing edge case.\n"
+        "Done in 12s\n"
+    )
+
+    assert_focus_turn_completed(transcript)
+
+
 def test_turn_output_preserves_answers_across_repeated_screen_frames() -> None:
     prompt = "Inspect nasm availability."
     transcript = (

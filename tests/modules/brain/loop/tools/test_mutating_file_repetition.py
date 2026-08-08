@@ -130,6 +130,45 @@ def test_missing_requested_file_artifacts_include_cli_entry() -> None:
     )
 
 
+def test_missing_requested_file_artifacts_include_named_module() -> None:
+    state = AdaptiveToolLoopState(
+        messages=[
+            Message(
+                role="user",
+                content=(
+                    "Implement module code in `section_summary.py`, plus CLI "
+                    "entry, tests, and README."
+                ),
+            )
+        ],
+        scratchpad={
+            "adaptive.tool_results": [
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "README.md"},
+                },
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "cli.py"},
+                },
+                {
+                    "tool_name": "file.write",
+                    "ok": True,
+                    "data": {"path": "test_module.py"},
+                },
+            ]
+        },
+    )
+
+    from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
+        missing_requested_file_artifact_labels,
+    )
+
+    assert missing_requested_file_artifact_labels(state) == ("section_summary.py",)
+
+
 def test_mutating_file_repetition_ignores_non_mutating_tools() -> None:
     state = AdaptiveToolLoopState()
     batch = [(_tool_call("file.read", "module.py"), _success("module.py"))]
