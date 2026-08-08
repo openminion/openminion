@@ -54,7 +54,7 @@ errors/adapt.py	154	9	29	7
 errors/catalog.py	98	2	9	3
 errors/contracts.py	43	2	16	4
 generated_paths.py	84	4	29	3
-logging.py	271	19	42	4
+logging.py	270	19	42	4
 protocol.py	363	16	65	6
 redaction.py	68	4	20	2
 runtime/__init__.py	74	0	0	0

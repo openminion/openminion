@@ -16,7 +16,6 @@ SEGMENT_ORDER = [
 
 
 def sort_segments_by_position(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sort segments according to canonical position-aware ordering."""
     order_map = {name: i for i, name in enumerate(SEGMENT_ORDER)}
     return sorted(
         segments,
@@ -29,8 +28,6 @@ def sort_segments_by_position(segments: list[dict[str, Any]]) -> list[dict[str, 
 
 @dataclass
 class ValuePerTokenBudget:
-    """Budget allocation based on value-per-token scoring."""
-
     bucket: str
     base_cap: int
     value_score: float = 1.0
@@ -47,7 +44,6 @@ def allocate_value_budgets(
     *,
     min_per_bucket: int = 50,
 ) -> list[ValuePerTokenBudget]:
-    """Allocate token budgets proportional to value scores."""
     total_value = sum(b.value_score for b in buckets) or 1.0
     for b in buckets:
         share = b.value_score / total_value
@@ -61,8 +57,6 @@ def allocate_value_budgets(
 
 
 class RolloverTrigger:
-    """Evaluates whether a prompt-context rollover should happen."""
-
     TOKEN_PRESSURE = "token_pressure"
     EXPLICIT_REQUEST = "explicit_request"
     TASK_BOUNDARY = "task_boundary"
@@ -86,7 +80,6 @@ class RolloverTrigger:
         explicit_request: bool = False,
         at_task_boundary: bool = False,
     ) -> list[str]:
-        """Return list of rollover reasons that fired."""
         reasons: list[str] = []
         if explicit_request:
             reasons.append(self.EXPLICIT_REQUEST)
@@ -102,8 +95,6 @@ class RolloverTrigger:
 
 @runtime_checkable
 class SessionStore(Protocol):
-    """Session store protocol for rollover orchestration."""
-
     def create_prompt_context(self, session_id: str, **kw) -> str: ...
     def close_prompt_context(self, prompt_context_id: str, **kw) -> None: ...
     def get_active_prompt_context(self, session_id: str) -> dict | None: ...
@@ -114,15 +105,11 @@ class SessionStore(Protocol):
 
 @runtime_checkable
 class CompactionStore(Protocol):
-    """Compaction service protocol for seed generation."""
-
     def checkpoint(self, session_id: str, **kw) -> str: ...
     def build_rollover_seed(self, session_id: str, **kw) -> Any: ...
 
 
 class RolloverOrchestrator:
-    """Coordinate checkpoint, seed, and prompt-context rollover steps."""
-
     def __init__(
         self,
         *,
@@ -145,7 +132,6 @@ class RolloverOrchestrator:
         explicit_request: bool = False,
         at_task_boundary: bool = False,
     ) -> dict[str, Any]:
-        """Run rollover when any trigger fires and return the result payload."""
         reasons = self._trigger.evaluate(
             prompt_tokens=prompt_tokens,
             budget_tokens=budget_tokens,
@@ -169,7 +155,6 @@ class RolloverOrchestrator:
         *,
         reasons: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Checkpoint, build a seed, and swap prompt contexts."""
         reasons = reasons or ["explicit_request"]
         reason_str = "|".join(reasons)
 
@@ -229,13 +214,10 @@ class RolloverOrchestrator:
         return result
 
     def get_last_rollover(self, session_id: str) -> dict[str, Any] | None:
-        """Return the most recent rollover result for a session."""
         return self._last_rollover.get(session_id)
 
 
 class RecallAPI:
-    """Read structured sections back out of a rendered seed bundle."""
-
     def __init__(self, seed_sections: list[dict[str, Any]] | None = None) -> None:
         self._sections = seed_sections or []
         self._index: dict[str, list[dict]] = {}
@@ -245,7 +227,6 @@ class RecallAPI:
 
     @classmethod
     def from_seed_text(cls, seed_text: str) -> "RecallAPI":
-        """Parse a rendered seed text into structured sections."""
         sections = []
         current_type = "unknown"
         current_lines: list[str] = []
@@ -274,27 +255,22 @@ class RecallAPI:
         return cls(sections)
 
     def get_decisions(self) -> list[str]:
-        """Return all prior decisions."""
         return [s["text"] for s in self._index.get("decisions", [])]
 
     def get_constraints(self) -> list[str]:
-        """Return all prior constraints."""
         return [s["text"] for s in self._index.get("constraints", [])]
 
     def get_summary(self) -> str:
-        """Return the prior context summary."""
         summaries = self._index.get("summary", [])
         return summaries[0]["text"] if summaries else ""
 
     def get_entities(self) -> list[str]:
-        """Return known entities from prior context."""
         entities = self._index.get("entities", [])
         if not entities:
             return []
         return [e.strip() for e in entities[0]["text"].split("\n") if e.strip()]
 
     def get_open_loops(self) -> list[str]:
-        """Return open loops/tasks from prior context."""
         loops = self._index.get("open_loops", [])
         if not loops:
             return []
@@ -314,7 +290,6 @@ def sanitize_tool_output_for_context(
     max_tokens: int = 150,
     strip_binary: bool = True,
 ) -> str:
-    """Strip unsafe markers and cap tool output before prompt injection."""
     if strip_binary:
         raw_output = "".join(c for c in raw_output if c.isprintable() or c in "\n\t ")
 
@@ -330,7 +305,6 @@ def sanitize_tool_output_for_context(
 
 
 def compute_prefix_hash(segments: list[dict[str, Any]]) -> str:
-    """Compute a stable hash for cacheable prefix segments."""
     prefix_segments = [
         s
         for s in segments
@@ -344,7 +318,6 @@ def check_prefix_stability(
     current_hash: str,
     previous_hash: str,
 ) -> dict[str, Any]:
-    """Check if the static prefix has remained stable across assemblies."""
     stable = current_hash == previous_hash
     return {
         "stable": stable,
@@ -360,7 +333,6 @@ def inject_seed_into_segments(
     *,
     max_seed_tokens: int = 1200,
 ) -> list[dict[str, Any]]:
-    """Insert rendered seed text between mission snapshot and summaries."""
     if not seed_text or not seed_text.strip():
         return segments
 
@@ -397,7 +369,6 @@ def build_cache_key(
     *,
     purpose: str = "act",
 ) -> str:
-    """Build a deterministic cache key for provider KV-cache reuse."""
     data = f"{agent_id}|{model_hint}|{prefix_hash}|{purpose}"
     return hashlib.sha256(data.encode()).hexdigest()[:24]
 
@@ -408,7 +379,6 @@ def should_use_cached_prefix(
     *,
     known_cache_prefixes: dict[str, str] | None = None,
 ) -> bool:
-    """Determine if the current prefix matches a known cached prefix."""
     if not known_cache_prefixes:
         return False
     cached = known_cache_prefixes.get(model_hint)

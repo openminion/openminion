@@ -12,7 +12,6 @@ class WeatherApiRegistrar:
     is_provider_only = True
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        """Register the WeatherAPI provider into the weather facade."""
         del ctx
         from .plugin import register
 

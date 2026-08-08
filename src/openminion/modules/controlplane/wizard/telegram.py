@@ -38,14 +38,12 @@ class TelegramInteractionChannel(InteractionChannel):
         self.timeout_seconds = 300  # 5 minute default timeout
 
     def is_cancel_requested(self) -> bool:
-        """Check if user sent a cancel command."""
         return self._cancel_requested
 
     async def _send_text(self, text: str) -> None:
         await self.bot.send_message(chat_id=self.chat_id, text=text)
 
     async def cancel_wizard(self, message: str | None = None) -> bool:
-        """Send a cancellation message on Telegram."""
         try:
             if self.bot and self.chat_id:
                 await self._send_text(message or "Operation cancelled.")
@@ -60,7 +58,6 @@ class TelegramInteractionChannel(InteractionChannel):
         default_value: str | None = None,
         hint: str | None = None,
     ) -> PromptResponse:
-        """Send a prompt and await the next reply for this chat."""
         try:
             full_message = message
             if hint:
@@ -90,7 +87,6 @@ class TelegramInteractionChannel(InteractionChannel):
             )
 
     async def _wait_for_user_input(self) -> str | None:
-        """Wait for a message from the user in the correct chat."""
         try:
             start_time = asyncio.get_event_loop().time()
 
@@ -129,7 +125,6 @@ class TelegramInteractionChannel(InteractionChannel):
         default_index: int | None = None,
         allow_multiple: bool = False,
     ) -> ChoiceResponse:
-        """Send options to Telegram and wait for user selection."""
         try:
             option_texts = []
             for i, opt in enumerate(options):
@@ -185,7 +180,6 @@ class TelegramInteractionChannel(InteractionChannel):
     async def confirm(
         self, message: str, default: bool = True, danger: bool = False
     ) -> ConfirmResponse:
-        """Send confirmation prompt to Telegram with Yes/No options."""
         try:
             full_message = f"{message}\n\n"
             if danger:
@@ -219,7 +213,6 @@ class TelegramInteractionChannel(InteractionChannel):
     async def message(
         self, content: str, title: str | None = None, style: str | None = None
     ) -> MessageResponse:
-        """Send a non-interactive message to Telegram."""
         try:
             formatted_content = content
             if title:
@@ -234,7 +227,6 @@ class TelegramInteractionChannel(InteractionChannel):
     async def diff(
         self, original: str, modified: str, title: str | None = None
     ) -> MessageResponse:
-        """Show differences in Telegram format (simplified)."""
         try:
             original_lines = original.split("\n")
             modified_lines = modified.split("\n")
@@ -277,7 +269,6 @@ class TelegramInteractionChannel(InteractionChannel):
     async def progress(
         self, description: str, percent: float, details: str | None = None
     ) -> MessageResponse:
-        """Update progress indicator as a message in Telegram."""
         try:
             bar_length = 20
             filled_blocks = int(bar_length * percent)
@@ -294,16 +285,13 @@ class TelegramInteractionChannel(InteractionChannel):
             return MessageResponse(delivered=False, error=str(e))
 
     def get_interaction_mode(self) -> InteractionMode:
-        """Get Telegram interaction mode."""
         return resolve_interaction_mode("telegram")
 
     def supports_advanced_ui(self) -> bool:
-        """Check if advanced UI features are supported."""
         return True  # Telegram supports rich formatting
 
     # Context management for wizards
     async def start_wizard_context(self, wizard_session_id: str) -> bool:
-        """Record the active wizard session for this Telegram chat."""
         try:
             if self.storage:
                 await self.storage.set(
@@ -321,7 +309,6 @@ class TelegramInteractionChannel(InteractionChannel):
             return False
 
     async def end_wizard_context(self, wizard_session_id: str) -> bool:
-        """Clear the active wizard session for this Telegram chat."""
         try:
             if self.storage:
                 await self.storage.delete(f"wizard:{self.chat_id}")

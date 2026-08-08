@@ -14,13 +14,11 @@ class FetchScraplingRegistrar:
     is_provider_only = True
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        """Register tool."""
         from .plugin import register
 
         register(registry)
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
-        """Return empty ToolBindingManifest for fetch_scrapling module (internal_only)."""
         from openminion.modules.tool.contracts import ToolBindingManifest
 
         return ToolBindingManifest(

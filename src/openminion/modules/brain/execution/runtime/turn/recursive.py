@@ -11,6 +11,7 @@ from ....constants import (
     BRAIN_DISPOSITION_CLOSE,
     BRAIN_STATE_DONE,
     BRAIN_STATE_ERROR,
+    BRAIN_TERMINAL_STATES,
     BRAIN_STATE_WAITING_USER,
 )
 from ....diagnostics.events import CanonicalEventLogger
@@ -299,7 +300,8 @@ def _recursive_runtime_error(
         {"error": str(exc), "source": _recursive_source(runner)},
         trace_id=state.trace_id,
     )
-    transition(state, "fatal_error", logger=logger)
+    if state.status not in BRAIN_TERMINAL_STATES:
+        transition(state, "fatal_error", logger=logger)
     return _runner_delegate(
         "_respond_with_meta",
         runner,

@@ -74,7 +74,6 @@ class DefaultWizardStepHandler(BaseWizardStepHandler):
     async def process_response(
         self, session: WizardSession, user_input: str
     ) -> WizardAction:
-        """Process user input generically."""
         user_input_lower = user_input.strip().lower()
         if user_input_lower == WIZARD_HELP_TOKEN:
             return WizardAction.SHOW_HELP
@@ -91,7 +90,6 @@ class DefaultWizardStepHandler(BaseWizardStepHandler):
         return WizardAction.NEXT_STEP
 
     async def get_prompt_for_step(self, session: WizardSession) -> str:
-        """Get generic prompt for current step."""
         step_prompts = {
             1: f"What is the first piece of information for {session.command_name}?",
             2: f"What comes next for {session.command_name}?",
@@ -104,7 +102,6 @@ class DefaultWizardStepHandler(BaseWizardStepHandler):
         )
 
     async def get_help_text(self, session: WizardSession) -> str:
-        """Get generic help text."""
         return f"""Step {session.step}/{session.total_steps} help:
 - Enter your response normally and press Enter
 - Type '{WIZARD_HELP_TOKEN}' for help with this step
@@ -124,7 +121,6 @@ class WizardExecutor:
         self.step_handlers: dict[str, BaseWizardStepHandler] = {}
 
     def register_step_handler(self, command_name: str, handler: BaseWizardStepHandler):
-        """Register a custom step handler for a specific command."""
         self.step_handlers[command_name] = handler
 
     async def start_wizard(
@@ -135,7 +131,6 @@ class WizardExecutor:
         chat_key: str,
         initial_state: dict[str, Any] = None,
     ) -> WizardSession:
-        """Start a new wizard session."""
         session = await self.store.create_session(
             command_name=command_name,
             step=1,
@@ -152,7 +147,6 @@ class WizardExecutor:
         return session
 
     async def process_input(self, wizard_id: str, user_input: str) -> WizardResult:
-        """Process user input for an ongoing wizard."""
         session = await self.store.get_session(wizard_id)
         if not session or session.state != WizardState.ACTIVE:
             return WizardResult(
@@ -311,7 +305,6 @@ class WizardExecutor:
         )
 
     async def get_current_prompt(self, wizard_id: str) -> Optional[str]:
-        """Get the current step prompt for a wizard."""
         session = await self.store.get_session(wizard_id)
         if not session or session.state != WizardState.ACTIVE:
             return None
@@ -322,7 +315,6 @@ class WizardExecutor:
         return await handler.get_prompt_for_step(session)
 
     async def cancel_wizard(self, wizard_id: str, reason: str = None) -> bool:
-        """Explicitly cancel an active wizard."""
         session = await self.store.get_session(wizard_id)
         if not session or session.state != WizardState.ACTIVE:
             return False
@@ -331,7 +323,6 @@ class WizardExecutor:
         return True
 
     async def timeout_wizard(self, wizard_id: str) -> bool:
-        """Mark a wizard as timed out."""
         session = await self.store.get_session(wizard_id)
         if not session or session.state != WizardState.ACTIVE:
             return False
@@ -344,7 +335,6 @@ _wizard_executor: Optional[WizardExecutor] = None
 
 
 async def get_wizard_executor() -> WizardExecutor:
-    """Get the global wizard executor."""
     global _wizard_executor
     if not _wizard_executor:
         wizard_store = await get_wizard_store()

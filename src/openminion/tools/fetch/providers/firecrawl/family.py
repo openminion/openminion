@@ -7,8 +7,6 @@ from .provider import provider
 
 
 def _register_firecrawl_fetch() -> None:
-    """Register the Firecrawl provider against the parent fetch facade."""
-
     register_provider(provider)
 
 

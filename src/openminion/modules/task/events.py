@@ -12,16 +12,13 @@ class TaskEventPublisher:
         self._handlers: list[EventHandler] = []
 
     def subscribe(self, handler: EventHandler) -> None:
-        """Add an event handler"""
         self._handlers.append(handler)
 
     def unsubscribe(self, handler: EventHandler) -> None:
-        """Remove an event handler"""
         if handler in self._handlers:
             self._handlers.remove(handler)
 
     def publish(self, event: TaskEvent) -> None:
-        """Publish an event to all subscribed handlers."""
         for handler in self._handlers:
             try:
                 handler(event)
@@ -51,7 +48,6 @@ MISSION_CURSOR_UPDATED = "mission.cursor_updated"
 def create_task_created_event(
     task_id: str, title: str, trace_id: str | None = None
 ) -> TaskEvent:
-    """Create a task.created event."""
     from datetime import datetime, timezone
     from .schemas import TaskStatus
 
@@ -67,7 +63,6 @@ def create_task_created_event(
 def create_plan_created_event(
     task_id: str, plan_id: str, plan_name: str | None, trace_id: str | None = None
 ) -> TaskEvent:
-    """Create a plan.created event."""
     from datetime import datetime, timezone
 
     return TaskEvent(
@@ -83,7 +78,6 @@ def create_plan_created_event(
 def create_mission_cursor_updated_event(
     task_id: str, plan_id: str, step_id: str | None, trace_id: str | None = None
 ) -> TaskEvent:
-    """Create a mission.cursor_updated event."""
     from datetime import datetime, timezone
 
     return TaskEvent(
@@ -105,7 +99,6 @@ def create_mission_paused_event(
     reason: str | None = None,
     trace_id: str | None = None,
 ) -> TaskEvent:
-    """Create a mission.paused event."""
     from datetime import datetime, timezone
 
     return TaskEvent(
@@ -131,7 +124,6 @@ def create_mission_resumed_event(
     decision_id: str,
     trace_id: str | None = None,
 ) -> TaskEvent:
-    """Create a mission.resumed event."""
     from datetime import datetime, timezone
 
     return TaskEvent(

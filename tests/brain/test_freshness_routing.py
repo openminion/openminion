@@ -133,6 +133,28 @@ def test_direct_tool_request_skips_freshness_classifier_call() -> None:
     assert diagnostics.classifier_mode == "skipped_direct_tool_request"
 
 
+def test_direct_tool_request_accepts_the_tool_phrase() -> None:
+    with patch(
+        "openminion.modules.brain.bootstrap.freshness_classify.call_structured_with_retry",
+        side_effect=AssertionError(
+            "classifier should be skipped for direct tool request"
+        ),
+    ):
+        contract, obligations, diagnostics = classify_request_freshness(
+            _runner(),
+            state=_state(),
+            user_input=(
+                "Use the task.pause tool with "
+                "task_id=bd77453dd55d4c2b876f8f53b499d54b."
+            ),
+            logger=SimpleNamespace(),
+        )
+
+    assert contract.intent == "task.pause"
+    assert obligations.require_live_data is False
+    assert diagnostics.classifier_mode == "skipped_direct_tool_request"
+
+
 def test_explicit_tool_command_skips_freshness_classifier_call() -> None:
     with patch(
         "openminion.modules.brain.bootstrap.freshness_classify.call_structured_with_retry",

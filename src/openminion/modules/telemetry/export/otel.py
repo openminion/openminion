@@ -129,12 +129,8 @@ class ExportedOTELRecord:
     attributes: dict[str, Any]
     timestamp_ns: int
     terminal: bool = False
-    # end timestamp for paired-span emission. None for non-paired
-    # spans and for non-span records.
     end_timestamp_ns: int | None = None
-    # OTel metric kind for metric records. Empty for non-metric records.
     metric_kind: str = ""
-    # numeric value for metric records. Zero for non-metric records.
     metric_value: float = 0.0
 
 
@@ -899,6 +895,10 @@ def _normalize_otel_json_value(
     return str(value)
 
 
+def event_export_dispositions() -> dict[str, str]:
+    return dict(_EVENT_CLASSIFICATION)
+
+
 def _trace_key_for_event(event: TelemetryEvent) -> str:
     payload = event.data if isinstance(event.data, dict) else {}
     for key in ("trace_id", "run_id", "request_id"):
@@ -937,7 +937,6 @@ _METRIC_KIND_BY_EVENT: dict[str, str] = {
     "storage.pool.stats": _KIND_GAUGE,
     "memory.scope_capacity.evicted": _KIND_COUNTER,
     "memory.soft_deleted.purged": _KIND_COUNTER,
-    # OTEL-04 additions
     "llm.cache.metrics": _KIND_GAUGE,
     "module.stats": _KIND_GAUGE,
     "tui.render": _KIND_HISTOGRAM,
@@ -995,4 +994,5 @@ __all__ = [
     "OTELTraceSink",
     "RecordingOTELTraceSink",
     "create_otel_trace_sink",
+    "event_export_dispositions",
 ]

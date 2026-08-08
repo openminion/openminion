@@ -130,13 +130,11 @@ class FileRegistrar:
     is_provider_only = False
 
     def register(self, registry: ToolRegistry, ctx: ToolRegisterContext = None) -> None:
-        """Register file tools with runtime registry."""
         from .plugin import register as tool_register
 
         tool_register(registry)
 
     def get_manifest(self, ctx: ToolRegisterContext) -> Any:
-        """Return ToolBindingManifest for file module."""
         return ToolBindingManifest(
             module_id="file",
             model_tools=FILE_MODEL_TOOLS,

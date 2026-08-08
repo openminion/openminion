@@ -101,7 +101,6 @@ def index_tool_category(registry: "ToolRegistry", tool_name: str, tool: Tool) ->
 
 
 def tools_by_category(registry: "ToolRegistry", category: str) -> list[str]:
-    """Return tool names registered under the given category."""
     names = set(registry._category_index.get(category, set()))
     if not names:
         for tool_name in registry._tools.keys():
@@ -117,7 +116,6 @@ def tools_by_category(registry: "ToolRegistry", category: str) -> list[str]:
 
 
 def category_for_tool(registry: "ToolRegistry", tool_name: str) -> ToolCategoryEntry:
-    """Resolve the category entry for a tool, preferring mapped overrides."""
     mapped = _mapped_category_for_tool_name(tool_name)
     if mapped is not None:
         normalized_mapped = _normalize_category_info(tool_name, mapped)
@@ -165,7 +163,6 @@ def category_for_tool(registry: "ToolRegistry", tool_name: str) -> ToolCategoryE
 
 
 def all_categories(registry: "ToolRegistry") -> list[str]:
-    """Return all categories currently indexed in the registry."""
     return sorted(registry._category_index.keys())
 
 
@@ -196,7 +193,6 @@ def infer_categories_from_index(
 
 
 def register_tool(registry: "ToolRegistry", tool: Any) -> None:
-    """Register a tool, wrapping its handler if necessary."""
     key = str(tool.name).strip()
     if not key:
         raise ToolRuntimeError(
@@ -216,7 +212,6 @@ def register_tool(registry: "ToolRegistry", tool: Any) -> None:
 
 
 def unregister_tool(registry: "ToolRegistry", tool_name: str) -> None:
-    """Remove a runtime tool from registry indexes if present."""
     key = str(tool_name or "").strip()
     if not key:
         return
@@ -262,7 +257,6 @@ def add_tool_spec(registry: "ToolRegistry", spec: Any) -> None:
 
 
 def list_by_capability(registry: "ToolRegistry", capability: str) -> list[ToolSpec]:
-    """Return ToolSpec entries whose resolved_capabilities contain the needle."""
     needle = str(capability or "").strip()
     if not needle:
         return []
