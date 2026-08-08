@@ -21,6 +21,8 @@ from openminion.modules.storage.module_cli import (
     run_module_storage_command,
 )
 
+_STRATEGY_CHOICES = ["auto", "contextual", "semantic", "raptor", "longrag_doc_group"]
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -65,11 +67,30 @@ def _build_parser() -> argparse.ArgumentParser:
     retrieve.add_argument(
         "--strategy",
         default="auto",
-        choices=["auto", "contextual", "raptor", "longrag_doc_group"],
+        choices=_STRATEGY_CHOICES,
     )
     retrieve.add_argument("--scope", default="")
     retrieve.add_argument("--tags", default="")
     retrieve.add_argument("--types", default="")
+    retrieve.add_argument("--time-window-hours", type=int, default=None)
+
+    diagnose = sub.add_parser("diagnose", help="Explain a retrieval query pipeline")
+    diagnose.add_argument("--query", required=True)
+    diagnose.add_argument(
+        "--purpose",
+        default="act",
+        choices=["plan", "act", "verify", "summarize", "decide"],
+    )
+    diagnose.add_argument("--k", type=int, default=8)
+    diagnose.add_argument(
+        "--strategy",
+        default="auto",
+        choices=_STRATEGY_CHOICES,
+    )
+    diagnose.add_argument("--scope", default="")
+    diagnose.add_argument("--tags", default="")
+    diagnose.add_argument("--types", default="")
+    diagnose.add_argument("--time-window-hours", type=int, default=None)
 
     build = sub.add_parser("build-raptor", help="Build RAPTOR tree for a doc")
     build.add_argument("--doc-id", required=True)
@@ -139,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             print_json_payload(result.model_dump(mode="json"))
             return 0
 
-        if args.command == "retrieve":
+        if args.command in {"retrieve", "diagnose"}:
             tags = split_comma_tokens(args.tags)
             types = split_comma_tokens(args.types)
             scope: dict[str, Any] = {}
@@ -149,13 +170,31 @@ def main(argv: list[str] | None = None) -> int:
                     if key in {"session", "agent", "global", "project"}:
                         scope[key] = True
 
+            filters = {
+                "tags": tags,
+                "types": types,
+                "time_window_hours": getattr(args, "time_window_hours", None),
+            }
+            if args.command == "diagnose":
+                print_json_payload(
+                    service.diagnose_retrieval(
+                        query=args.query,
+                        purpose=args.purpose,
+                        scope=scope,
+                        k=args.k,
+                        strategy=args.strategy,
+                        filters=filters,
+                    )
+                )
+                return 0
+
             rows = service.retrieve(
                 query=args.query,
                 purpose=args.purpose,
                 scope=scope,
                 k=args.k,
                 strategy=args.strategy,
-                filters={"tags": tags, "types": types},
+                filters=filters,
             )
             print_json_payload(rows)
             return 0

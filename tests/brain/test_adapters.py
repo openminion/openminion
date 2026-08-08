@@ -1434,6 +1434,27 @@ class AdapterInterfaceContractTests(unittest.TestCase):
             ensure_adapter_compatibility(rlm, adapter_type="rlm")
             ensure_adapter_compatibility(retrieve, adapter_type="retrieve")
 
+    def test_local_retrieve_adapter_logs_noop_methods(self) -> None:
+        from openminion.modules.brain.adapters.retrieve import LocalRetrieveAdapter
+
+        adapter = LocalRetrieveAdapter()
+        with self.assertLogs(
+            "openminion.modules.brain.adapters.retrieve.local", level="DEBUG"
+        ) as captured:
+            self.assertEqual(adapter.retrieve_with_context("q", {}, top_k=1), [])
+            self.assertEqual(
+                adapter.ingest_skill(
+                    skill_id="skill",
+                    version_hash="v1",
+                    source_ref="ref",
+                ),
+                {},
+            )
+
+        logs = "\n".join(captured.output)
+        self.assertIn("retrieve_with_context", logs)
+        self.assertIn("ingest_skill", logs)
+
     def test_local_llm_skill_selection_requires_explicit_skill_id_mention(self) -> None:
         from openminion.modules.brain.adapters.llm import LocalLLMAdapter
         from openminion.modules.brain.bootstrap.skill.selection import (

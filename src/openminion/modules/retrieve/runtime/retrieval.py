@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Protocol, Sequence, cast
 
 from openminion.modules.memory.runtime.scorer import clamp01
@@ -58,6 +58,18 @@ def _normalize_scope_keys(raw_scope_keys: Sequence[str]) -> list[str]:
             continue
         seen.add(key)
         normalized.append(key)
+    return normalized
+
+
+def _normalize_filter_tags(raw_tags: Sequence[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_tags:
+        tag = str(raw or "").strip().lower()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        normalized.append(tag)
     return normalized
 
 
@@ -120,6 +132,10 @@ def resolve_retrieval_strategy(
         return "contextual"
     if bool(scope.get("doc_heavy")):
         return "raptor"
+    if default_strategy == "semantic":
+        if vector_adapter_enabled and embeddings_enabled:
+            return "semantic"
+        return "contextual"
     if default_strategy in {"contextual", "raptor", "longrag_doc_group"}:
         return cast(RetrievalStrategy, default_strategy)
     return "contextual"
@@ -216,6 +232,34 @@ def _candidate_row_matches_filters(
         (datetime.now(timezone.utc) - created_dt).total_seconds() / 3600.0,
     )
     return age_hours <= float(filters.time_window_hours)
+
+
+def _append_filter_sql(
+    service: Any,
+    *,
+    where: list[str],
+    params: list[Any],
+    filters: RetrievalFilters,
+) -> None:
+    scope_keys = _normalize_scope_keys(filters.scope_keys)
+    if scope_keys:
+        where.append("d.scope_key IN ({})".format(",".join("?" for _ in scope_keys)))
+        params.extend(scope_keys)
+    if filters.types:
+        where.append(
+            "d.source_type IN ({})".format(",".join("?" for _ in filters.types))
+        )
+        params.extend([service._normalize_source_type(item) for item in filters.types])
+    tags = _normalize_filter_tags(filters.tags)
+    if tags:
+        where.append("(" + " OR ".join("LOWER(d.tags_json) LIKE ?" for _ in tags) + ")")
+        params.extend(f"%{json.dumps(tag)}%" for tag in tags)
+    if filters.time_window_hours is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(
+            hours=float(filters.time_window_hours)
+        )
+        where.append("d.created_at >= ?")
+        params.append(cutoff.isoformat())
 
 
 def _candidate_from_row(
@@ -321,6 +365,7 @@ def _select_semantic(
     target_k: int,
 ) -> list[dict[str, Any]]:
     if service.vector_adapter is None:
+        setattr(service, "_last_retrieval_degraded_reason", "vector_adapter_missing")
         return _select_contextual(candidates, target_k)
     return select_candidates_semantic(service, candidates=candidates, k=target_k)
 
@@ -473,6 +518,7 @@ def select_candidates_semantic(
             ),
         )
     except Exception as exc:
+        setattr(service, "_last_retrieval_degraded_reason", "semantic_adapter_failed")
         _LOGGER.warning("semantic_search_fallback: %s", exc, exc_info=True)
     return candidates[:k]
 
@@ -595,15 +641,7 @@ def search_rows(
     if allowed_scopes:
         where.append("d.scope IN ({})".format(",".join("?" for _ in allowed_scopes)))
         params.extend(allowed_scopes)
-    scope_keys = _normalize_scope_keys(filters.scope_keys)
-    if scope_keys:
-        where.append("d.scope_key IN ({})".format(",".join("?" for _ in scope_keys)))
-        params.extend(scope_keys)
-    if filters.types:
-        where.append(
-            "d.source_type IN ({})".format(",".join("?" for _ in filters.types))
-        )
-        params.extend([service._normalize_source_type(item) for item in filters.types])
+    _append_filter_sql(service, where=where, params=params, filters=filters)
 
     where_sql = " AND ".join(where) if where else "1=1"
     sql = (
@@ -635,15 +673,7 @@ def recent_rows(
     if allowed_scopes:
         where.append("d.scope IN ({})".format(",".join("?" for _ in allowed_scopes)))
         params.extend(allowed_scopes)
-    scope_keys = _normalize_scope_keys(filters.scope_keys)
-    if scope_keys:
-        where.append("d.scope_key IN ({})".format(",".join("?" for _ in scope_keys)))
-        params.extend(scope_keys)
-    if filters.types:
-        where.append(
-            "d.source_type IN ({})".format(",".join("?" for _ in filters.types))
-        )
-        params.extend([service._normalize_source_type(item) for item in filters.types])
+    _append_filter_sql(service, where=where, params=params, filters=filters)
 
     sql = (
         "SELECT u.unit_id, u.doc_id, u.unit_kind, u.level, u.node_id, u.group_id, u.text_ref, u.offsets_json, "

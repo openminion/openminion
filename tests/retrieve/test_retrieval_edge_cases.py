@@ -10,6 +10,7 @@ from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
 from openminion.modules.retrieve.runtime.retrieval import (
     _title_identity_boost,
     generate_candidates,
+    search_rows,
     select_candidates,
     select_candidates_semantic,
 )
@@ -282,3 +283,39 @@ def test_generate_candidates_does_not_overfetch_without_post_filters(
         == []
     )
     assert observed_limits == [2]
+
+
+def test_search_rows_pushes_tag_and_time_filters_into_sql() -> None:
+    class _Cursor:
+        def fetchall(self) -> list[dict[str, Any]]:
+            return []
+
+    class _Store:
+        sql = ""
+        params: tuple[Any, ...] = ()
+
+        def execute(self, sql: str, params: tuple[Any, ...]) -> _Cursor:
+            self.sql = sql
+            self.params = params
+            return _Cursor()
+
+    class _Service:
+        _fts_enabled = True
+        store = _Store()
+
+        def _normalize_source_type(self, source_type: str) -> str:
+            return source_type
+
+    service = _Service()
+
+    search_rows(
+        service,
+        tokens=["alpha"],
+        allowed_scopes=["project"],
+        filters=RetrievalFilters(tags=["Keep"], time_window_hours=24),
+        limit=5,
+    )
+
+    assert "LOWER(d.tags_json) LIKE ?" in service.store.sql
+    assert "d.created_at >= ?" in service.store.sql
+    assert '%"keep"%' in service.store.params

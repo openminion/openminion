@@ -42,6 +42,17 @@ class RetrieveCtlInterface(Protocol):
         self, item: dict[str, Any] | Any | str
     ) -> dict[str, Any]: ...  # RetrievedItem
 
+    def diagnose_retrieval(
+        self,
+        *,
+        query: str,
+        purpose: str,
+        scope: dict[str, Any],
+        k: int,
+        strategy: str,
+        filters: dict[str, Any] | Any | None = None,
+    ) -> dict[str, Any]: ...
+
     def ingest_artifact(
         self, artifact_ref: str, meta: dict[str, Any] | None = None
     ) -> dict[str, Any]: ...  # IngestResult

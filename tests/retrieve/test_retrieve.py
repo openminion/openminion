@@ -3,9 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
+from openminion.modules.retrieve.schemas import RetrieveRequest
 
 
-def _config(tmp_path: Path) -> dict:
+def _config(tmp_path: Path, *, embeddings_enabled: bool = False) -> dict:
     return {
         "version": 1,
         "retrievectl": {
@@ -17,7 +18,7 @@ def _config(tmp_path: Path) -> dict:
             "defaults": {
                 "strategy": "contextual",
                 "contextual_enabled": True,
-                "embeddings_enabled": False,
+                "embeddings_enabled": embeddings_enabled,
                 "lexical_candidate_count": 25,
                 "snippet_tokens": 120,
                 "chunk_target_tokens": 30,
@@ -71,6 +72,89 @@ def test_contextual_retrieve_returns_provenance(tmp_path: Path) -> None:
         assert isinstance(first["meta"].get("doc_id"), str)
         assert isinstance(first["meta"].get("unit_id"), str)
         assert "score_breakdown" in first["meta"]
+    finally:
+        service.close()
+
+
+def test_semantic_strategy_is_public_and_uses_vector_scores(tmp_path: Path) -> None:
+    RetrieveRequest(query="alpha", strategy="semantic")
+    service = RetrieveCtl(_config(tmp_path, embeddings_enabled=True))
+    try:
+        service.ingest_source(
+            source_type="doc",
+            source_ref="doc://semantic/a",
+            text="alpha semantic candidate one",
+            scope="project",
+            tags=["semantic"],
+            title="semantic one",
+            unit_kind="chunk",
+        )
+        service.ingest_source(
+            source_type="doc",
+            source_ref="doc://semantic/b",
+            text="alpha semantic candidate two",
+            scope="project",
+            tags=["semantic"],
+            title="semantic two",
+            unit_kind="chunk",
+        )
+        preferred_unit_id = str(
+            service.store.execute(
+                "SELECT unit_id FROM retrievectl_docs d "
+                "JOIN retrievectl_units u ON u.doc_id = d.doc_id "
+                "WHERE d.source_ref = ?",
+                ("doc://semantic/b",),
+            ).fetchone()["unit_id"]
+        )
+
+        class _VectorAdapter:
+            def search(self, **_kwargs: object) -> list[dict[str, object]]:
+                return [{"id": preferred_unit_id, "score": 0.99}]
+
+        service.vector_adapter = _VectorAdapter()
+
+        rows = service.retrieve(
+            query="alpha semantic",
+            purpose="act",
+            scope={"project": True},
+            k=2,
+            strategy="semantic",
+        )
+
+        assert rows
+        assert rows[0]["meta"]["unit_id"] == preferred_unit_id
+        assert rows[0]["retrieval_strategy"] == "semantic"
+    finally:
+        service.close()
+
+
+def test_diagnose_retrieval_reports_counts_and_no_result_reason(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    try:
+        empty = service.diagnose_retrieval(
+            query="  ",
+            purpose="act",
+            scope={"project": True},
+            k=3,
+            strategy="contextual",
+        )
+        missing = service.diagnose_retrieval(
+            query="not indexed",
+            purpose="act",
+            scope={"project": True},
+            k=3,
+            strategy="contextual",
+        )
+
+        assert empty["no_result_reason"] == "empty_query"
+        assert missing["no_result_reason"] == "no_candidates"
+        assert missing["counts"] == {
+            "scored_candidates": 0,
+            "after_verify_filter": 0,
+            "selected": 0,
+            "returned": 0,
+        }
+        assert missing["strategy_resolution_reason"] == "explicit"
     finally:
         service.close()
 

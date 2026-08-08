@@ -14,6 +14,7 @@ from openminion.modules.memory.runtime.scorer import (
 )
 
 from . import expansion as expansion_ops
+from . import diagnostics as diagnostic_ops
 from . import ingestion as ingestion_ops
 from . import retrieval as retrieval_ops
 from ..config import RetrieveCtlConfig, load_config, resolve_default_config_path
@@ -98,6 +99,7 @@ class RetrieveCtl:
         self._telemetryctl = telemetryctl
         self._telemetry_session_id = str(telemetry_session_id or "").strip() or None
         self._telemetry_turn_id = str(telemetry_turn_id or "").strip() or None
+        self._last_retrieval_degraded_reason: str | None = None
 
     def close(self) -> None:
         self.store.close()
@@ -199,9 +201,11 @@ class RetrieveCtl:
             filters=retrieval_filters,
             limit=max(retrieval_k, int(self.config.defaults.lexical_candidate_count)),
         )
+        scored_candidate_count = len(candidates)
         if str(purpose).lower() == "verify":
             candidates = self._filter_verify_candidates(candidates)
 
+        self._last_retrieval_degraded_reason = None
         selected = self._select_candidates(
             candidates=candidates,
             strategy=resolved_strategy,
@@ -219,8 +223,18 @@ class RetrieveCtl:
             requested_strategy=strategy,
             resolved_strategy=resolved_strategy,
             candidate_count=len(candidates),
+            scored_candidate_count=scored_candidate_count,
             item_count=len(items),
             elapsed_ms=elapsed_ms,
+            degraded_reason=self._last_retrieval_degraded_reason,
+            no_result_reason=diagnostic_ops.no_result_reason(
+                normalized_query=normalized_query,
+                scored_candidate_count=scored_candidate_count,
+                candidate_count=len(candidates),
+                selected_count=len(selected),
+                item_count=len(items),
+                purpose=purpose,
+            ),
         )
         self._record_retrieval_run(
             scope=scope,
@@ -230,6 +244,101 @@ class RetrieveCtl:
             items=items,
         )
         return [item.model_dump(mode="json") for item in items]
+
+    def diagnose_retrieval(
+        self,
+        *,
+        query: str,
+        purpose: str,
+        scope: dict[str, Any],
+        k: int,
+        strategy: str,
+        filters: dict[str, Any] | RetrievalFilters | None = None,
+    ) -> dict[str, Any]:
+        normalized_query = str(query or "").strip()
+        retrieval_k = max(1, int(k))
+        retrieval_filters = self._normalize_filters(filters)
+        if not normalized_query:
+            return {
+                "query": "",
+                "purpose": str(purpose or "act").strip().lower() or "act",
+                "requested_strategy": str(strategy or "auto").strip().lower() or "auto",
+                "resolved_strategy": "contextual",
+                "k": retrieval_k,
+                "filters": retrieval_filters.model_dump(mode="json"),
+                "vector_adapter": bool(self.vector_adapter),
+                "embeddings_enabled": bool(self.config.defaults.embeddings_enabled),
+                "counts": {
+                    "scored_candidates": 0,
+                    "after_verify_filter": 0,
+                    "selected": 0,
+                    "returned": 0,
+                },
+                "no_result_reason": "empty_query",
+                "degraded_reason": None,
+                "top_candidates": [],
+            }
+
+        resolved_strategy = self._resolve_strategy(
+            query=normalized_query,
+            purpose=str(purpose or "act"),
+            strategy=str(strategy or "auto"),
+            scope=scope,
+            filters=retrieval_filters,
+        )
+        candidates = self._score_candidates(
+            query=normalized_query,
+            scope=scope,
+            filters=retrieval_filters,
+            limit=max(retrieval_k, int(self.config.defaults.lexical_candidate_count)),
+        )
+        scored_candidate_count = len(candidates)
+        if str(purpose).lower() == "verify":
+            candidates = self._filter_verify_candidates(candidates)
+
+        self._last_retrieval_degraded_reason = None
+        selected = self._select_candidates(
+            candidates=candidates,
+            strategy=resolved_strategy,
+            k=retrieval_k,
+        )
+        returned_count = len(selected)
+        no_result_reason = diagnostic_ops.no_result_reason(
+            normalized_query=normalized_query,
+            scored_candidate_count=scored_candidate_count,
+            candidate_count=len(candidates),
+            selected_count=len(selected),
+            item_count=returned_count,
+            purpose=purpose,
+        )
+        return {
+            "query": normalized_query,
+            "purpose": str(purpose or "act").strip().lower() or "act",
+            "requested_strategy": str(strategy or "auto").strip().lower() or "auto",
+            "resolved_strategy": resolved_strategy,
+            "strategy_resolution_reason": self._strategy_resolution_reason(
+                requested_strategy=str(strategy or "auto"),
+                resolved_strategy=resolved_strategy,
+                scope=scope,
+                purpose=purpose,
+            ),
+            "k": retrieval_k,
+            "filters": retrieval_filters.model_dump(mode="json"),
+            "vector_adapter": bool(self.vector_adapter),
+            "embeddings_enabled": bool(self.config.defaults.embeddings_enabled),
+            "counts": {
+                "scored_candidates": scored_candidate_count,
+                "after_verify_filter": len(candidates),
+                "selected": len(selected),
+                "returned": returned_count,
+            },
+            "no_result_reason": no_result_reason,
+            "degraded_reason": self._last_retrieval_degraded_reason,
+            "top_candidates": [
+                diagnostic_ops.diagnostic_candidate(candidate)
+                for candidate in selected[:retrieval_k]
+            ],
+        }
 
     def _normalize_filters(
         self, filters: dict[str, Any] | RetrievalFilters | None
@@ -290,8 +399,11 @@ class RetrieveCtl:
         requested_strategy: str,
         resolved_strategy: RetrievalStrategy,
         candidate_count: int,
+        scored_candidate_count: int,
         item_count: int,
         elapsed_ms: float,
+        degraded_reason: str | None = None,
+        no_result_reason: str | None = None,
     ) -> None:
         session_id = self._resolve_telemetry_session_id(scope=scope)
         turn_id = self._resolve_telemetry_turn_id(scope=scope)
@@ -301,7 +413,24 @@ class RetrieveCtl:
             "purpose": str(purpose or "").strip().lower() or "act",
             "requested_strategy": str(requested_strategy or "").strip().lower()
             or "auto",
+            "strategy_resolution_reason": self._strategy_resolution_reason(
+                requested_strategy=requested_strategy,
+                resolved_strategy=resolved_strategy,
+                scope=scope,
+                purpose=purpose,
+            ),
+            "vector_adapter": "available"
+            if self.vector_adapter is not None
+            else "missing",
+            "embeddings_enabled": str(
+                bool(self.config.defaults.embeddings_enabled)
+            ).lower(),
+            "scored_candidates": int(max(0, scored_candidate_count)),
         }
+        if degraded_reason:
+            telemetry_extra["degraded_reason"] = degraded_reason
+        if no_result_reason:
+            telemetry_extra["no_result_reason"] = no_result_reason
         self._emit_query_metrics(
             session_id=session_id,
             turn_id=turn_id,
@@ -328,8 +457,25 @@ class RetrieveCtl:
                 result_count=0,
                 latency_ms=elapsed_ms,
                 token_estimate=token_estimate,
-                extra={**telemetry_extra, "reason": "no_results"},
+                extra={**telemetry_extra, "reason": no_result_reason or "no_results"},
             )
+
+    def _strategy_resolution_reason(
+        self,
+        *,
+        requested_strategy: str,
+        resolved_strategy: RetrievalStrategy,
+        scope: Mapping[str, Any],
+        purpose: str,
+    ) -> str:
+        return diagnostic_ops.strategy_resolution_reason(
+            requested_strategy=requested_strategy,
+            resolved_strategy=resolved_strategy,
+            scope=scope,
+            purpose=purpose,
+            vector_adapter_available=self.vector_adapter is not None,
+            embeddings_enabled=bool(self.config.defaults.embeddings_enabled),
+        )
 
     def _record_retrieval_run(
         self,
