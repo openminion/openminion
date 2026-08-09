@@ -169,7 +169,6 @@ def _looks_like_unexecutable_tool_payload_text(text: str) -> bool:
         or _looks_like_file_write_argument_json(parsed)
         or lower_token.startswith("[system: unexecutable_tool_envelope]")
         or lower_token.startswith("<invoke")
-        or "minimax:tool_call" in lower_token
         or _looks_like_embedded_tool_payload_json(token)
         or (
             any(tool_key in lower_token for tool_key in ('"tool"', '"tool_name"'))

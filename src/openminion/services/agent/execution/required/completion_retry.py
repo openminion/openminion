@@ -46,7 +46,6 @@ def _looks_like_embedded_tool_response_text(text: str | None) -> bool:
     return (
         "unexecutable_tool_envelope" in lowered
         or lowered.startswith("<invoke")
-        or "minimax:tool_call" in lowered
         or (
             normalized.startswith("```")
             and '"tool"' in lowered

@@ -275,7 +275,7 @@ class TestRegistryIsolation:
 
 
 class TestResolverCapabilityField:
-    def test_default_lane_resolves_to_identity_capability(self) -> None:
+    def test_anthropic_lane_resolves_to_provider_safe_names_capability(self) -> None:
         profile = resolve_behavior_profile(
             provider="anthropic",
             model="claude-3-5-sonnet-20241022",
@@ -283,12 +283,12 @@ class TestResolverCapabilityField:
         )
 
         assert isinstance(profile.tool_schema_capability, ToolSchemaCapability)
-        assert profile.tool_schema_capability.id == "identity"
+        assert profile.tool_schema_capability.id == "provider_safe_tool_names"
         assert (
-            profile.tool_schema_capability.requires_external_name_normalization is False
+            profile.tool_schema_capability.requires_external_name_normalization is True
         )
 
-    def test_openai_lane_resolves_to_openai_dialect_safe_names_capability(
+    def test_openai_lane_resolves_to_provider_safe_names_capability(
         self,
     ) -> None:
         profile = resolve_behavior_profile(
@@ -297,13 +297,13 @@ class TestResolverCapabilityField:
             base_url="https://api.openai.com/v1",
         )
 
-        assert profile.tool_schema_capability.id == "openai_dialect_safe_names"
+        assert profile.tool_schema_capability.id == "provider_safe_tool_names"
         assert (
             profile.tool_schema_capability.requires_external_name_normalization is True
         )
         assert profile.tool_schema_capability.max_external_name_length == 128
 
-    def test_openrouter_lane_resolves_to_openai_dialect_safe_names_capability(
+    def test_openrouter_lane_resolves_to_provider_safe_names_capability(
         self,
     ) -> None:
         profile = resolve_behavior_profile(
@@ -312,7 +312,7 @@ class TestResolverCapabilityField:
             base_url="https://openrouter.ai/api/v1",
         )
 
-        assert profile.tool_schema_capability.id == "openai_dialect_safe_names"
+        assert profile.tool_schema_capability.id == "provider_safe_tool_names"
         assert (
             profile.tool_schema_capability.requires_external_name_normalization is True
         )
@@ -355,7 +355,7 @@ class TestResolverCapabilityField:
 
         assert profile.profile_id == "minimax_openai_compat"
         assert profile.tool_schema_capability == direct
-        assert profile.tool_schema_capability.id == "openai_dialect_safe_names"
+        assert profile.tool_schema_capability.id == "provider_safe_tool_names"
 
 
 class TestBuildToolSchemaNameMapProfileParameter:
@@ -368,7 +368,7 @@ class TestBuildToolSchemaNameMapProfileParameter:
             model_name="gpt-4",
         )
 
-        assert name_map.capability.id == "openai_dialect_safe_names"
+        assert name_map.capability.id == "provider_safe_tool_names"
 
     def test_explicit_capability_argument_overrides_direct_resolution(self) -> None:
         # Caller passes an explicit capability (typically from the

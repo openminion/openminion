@@ -20,6 +20,9 @@ from openminion.services.agent.execution.required.completion import (
     _retry_stale_draft_final_response,
     post_execution_follow_up_result,
 )
+from openminion.services.agent.execution.required.completion_retry import (
+    _looks_like_embedded_tool_response_text,
+)
 from openminion.services.agent.execution.required.state import CompletionContext
 
 
@@ -110,6 +113,13 @@ def _runner(runtime_ops: _FakeRuntimeOps) -> Any:
             ),
         ),
     )
+
+
+def test_required_lane_embedded_tool_response_uses_generic_markup_detector() -> None:
+    assert _looks_like_embedded_tool_response_text(
+        '<minimax:tool_call><invoke name="web.search"></invoke></minimax:tool_call>'
+    )
+    assert not _looks_like_embedded_tool_response_text("plain final answer")
 
 
 def test_required_lane_initial_follow_up_recovers_minimax_tool_json_batch() -> None:

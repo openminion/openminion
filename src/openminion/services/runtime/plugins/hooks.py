@@ -6,7 +6,7 @@ from openminion.base.config import OpenMinionConfig
 from openminion.base.types import AgentResponse, Message
 
 if TYPE_CHECKING:
-    from openminion.modules.llm.providers.registry import ProviderRegistry
+    from openminion.modules.llm.providers.plugins import ProviderRegistry
     from openminion.modules.tool.registry import ToolRegistry
 
 

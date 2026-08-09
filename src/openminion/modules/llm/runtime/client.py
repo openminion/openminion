@@ -38,6 +38,7 @@ from ..schemas import (
     ToolSpec,
     UsageInfo,
 )
+from ..streaming import response_stream_events, stream_error_event
 from .flow import (
     ToolPolicyContext as _ToolPolicyContext,
     _apply_budgets,
@@ -407,22 +408,33 @@ class LLMClient:
             update={"provider": provider_name, "model": model_name}
         )
 
+        def _candidate_events() -> Iterator[LLMStreamEvent]:
+            stream_method = getattr(provider, "stream", None)
+            if callable(stream_method):
+                yield from stream_method(call_request, cfg)
+                return
+            response = self._normalize_response(
+                provider.complete(call_request, cfg),
+                provider_name,
+                model_name,
+                allowed_tool_names=[
+                    tool.name for tool in call_request.tools or [] if tool.name
+                ],
+            )
+            yield from response_stream_events(response)
+
         emitted_done = False
         try:
-            for event in provider.stream(call_request, cfg):
+            for event in _candidate_events():
                 if not isinstance(event, LLMStreamEvent):
                     continue
                 if event.type == "done":
                     emitted_done = True
+                    yield event
+                    break
                 yield event
         except Exception as exc:  # noqa: BLE001 - provider may raise unstructured
-            yield LLMStreamEvent(
-                type="error",
-                error=ResponseError(
-                    code="PROVIDER_ERROR",
-                    message=f"provider stream raised: {exc}",
-                ),
-            )
+            yield stream_error_event(exc)
             if not emitted_done:
                 yield LLMStreamEvent(type="done")
             return

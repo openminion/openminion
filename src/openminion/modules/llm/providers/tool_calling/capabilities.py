@@ -58,9 +58,9 @@ def resolve_tool_schema_capability(
     model_name: str | None,
 ) -> ToolSchemaCapability:
     provider = str(provider_name or "").strip().lower()
-    if provider in {"openai", "openrouter"}:
+    if provider in {"openai", "openrouter", "anthropic", "claude"}:
         return ToolSchemaCapability(
-            id="openai_dialect_safe_names",
+            id="provider_safe_tool_names",
             requires_external_name_normalization=True,
             allowed_name_pattern=r"^[A-Za-z0-9_-]{1,128}$",
             max_external_name_length=128,
@@ -116,7 +116,7 @@ def build_tool_schema_name_map(
             )
             raise LLMCtlError(
                 "INVALID_ARGUMENT",
-                "OpenAI-dialect tool-name sanitization collision: "
+                "Provider tool-name sanitization collision: "
                 f"{canonical_name!r} and {colliding_name!r} both map to "
                 f"{external_name!r}",
                 {

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterator
+from typing import Any, Dict
 from unittest import mock
 
 from openminion.modules.llm.providers.openai.adapter import OpenAIProvider
-from openminion.modules.llm.schemas import LLMRequest, LLMResponse, LLMStreamEvent
+from openminion.modules.llm.schemas import (
+    LLMRequest,
+    LLMResponse,
+    LLMStreamEvent,
+    ResponseError,
+    ToolCall,
+)
 
 
 def _make_request() -> LLMRequest:
@@ -35,7 +41,6 @@ def _config_for_provider() -> Dict[str, Any]:
 
 
 def test_stream_yields_deltas_before_terminal_done():
-
     provider = OpenAIProvider()
     chunks = [_delta_chunk("Hey"), _delta_chunk("! "), _delta_chunk("How can I help?")]
     sse_lines = _sse_lines_from_chunks(chunks)
@@ -70,7 +75,6 @@ def test_stream_deltas_carry_content_in_emission_order():
 
 
 def test_stream_terminates_with_done_even_when_provider_yields_no_deltas():
-
     provider = OpenAIProvider()
     with mock.patch(
         "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
@@ -84,7 +88,6 @@ def test_stream_terminates_with_done_even_when_provider_yields_no_deltas():
 
 
 def test_protocol_default_stream_falls_back_to_complete_for_non_streaming_providers():
-
     from openminion.modules.llm.providers.contract import StubProvider
 
     stub = StubProvider()
@@ -99,7 +102,6 @@ def test_protocol_default_stream_falls_back_to_complete_for_non_streaming_provid
 
 
 def test_llmclient_stream_propagates_terminal_done_when_provider_yields_one():
-
     fake_provider = mock.Mock()
     fake_provider.stream = mock.Mock(
         return_value=iter(
@@ -115,7 +117,6 @@ def test_llmclient_stream_propagates_terminal_done_when_provider_yields_one():
 
 
 def test_llmclient_stream_synthesizes_done_when_provider_forgets():
-
     fake_provider = mock.Mock()
     fake_provider.stream = mock.Mock(
         return_value=iter(
@@ -128,8 +129,72 @@ def test_llmclient_stream_synthesizes_done_when_provider_forgets():
     assert events[-1].type == "done"
 
 
-def test_stream_emits_typed_error_on_auth_failure():
+def test_llmclient_stream_suppresses_native_events_after_done():
+    fake_provider = mock.Mock()
+    fake_provider.stream = mock.Mock(
+        return_value=iter(
+            [
+                LLMStreamEvent(type="delta", delta_text="hello"),
+                LLMStreamEvent(type="done"),
+                LLMStreamEvent(type="delta", delta_text="late"),
+            ]
+        )
+    )
+    events = _drive_client_stream(fake_provider)
+    assert [event.type for event in events] == ["delta", "done"]
+    assert [event.delta_text for event in events if event.delta_text] == ["hello"]
 
+
+def test_llmclient_stream_falls_back_to_complete_with_ordered_tool_calls():
+    class _CompleteOnlyProvider:
+        name = "complete-only"
+
+        def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
+            del request, config
+            return LLMResponse(
+                ok=True,
+                provider=self.name,
+                model="fallback-v1",
+                output_text="hello",
+                tool_calls=[
+                    ToolCall(id="call-1", name="search", arguments={"q": "a"}),
+                    ToolCall(id="call-2", name="open", arguments={"id": "b"}),
+                ],
+            )
+
+    events = _drive_client_stream(_CompleteOnlyProvider())
+    assert [event.type for event in events] == ["delta", "delta", "delta", "done"]
+    assert events[0].delta_text == "hello"
+    assert [event.tool_call.name for event in events if event.tool_call] == [
+        "search",
+        "open",
+    ]
+
+
+def test_llmclient_stream_fallback_emits_complete_response_error():
+    class _CompleteOnlyProvider:
+        name = "complete-only"
+
+        def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
+            del request, config
+            return LLMResponse(
+                ok=False,
+                provider=self.name,
+                model="fallback-v1",
+                error=ResponseError(
+                    code="PROVIDER_ERROR",
+                    message="fallback response failed",
+                    details={"source": "complete"},
+                ),
+            )
+
+    events = _drive_client_stream(_CompleteOnlyProvider())
+    assert [event.type for event in events] == ["error", "done"]
+    assert events[0].error is not None
+    assert events[0].error.details == {"source": "complete"}
+
+
+def test_stream_emits_typed_error_on_auth_failure():
     from openminion.modules.llm.errors import LLMCtlError
 
     provider = OpenAIProvider()
@@ -147,7 +212,6 @@ def test_stream_emits_typed_error_on_auth_failure():
 
 
 def test_stream_emits_typed_error_on_mid_stream_provider_failure():
-
     from openminion.modules.llm.errors import LLMCtlError
 
     def _raising_lines():
@@ -165,7 +229,6 @@ def test_stream_emits_typed_error_on_mid_stream_provider_failure():
 
 
 def test_llmclient_stream_wraps_unexpected_provider_exceptions_as_typed_error():
-
     def _raising_iter():
         yield LLMStreamEvent(type="delta", delta_text="boom")
         raise RuntimeError("provider exploded")
@@ -178,8 +241,22 @@ def test_llmclient_stream_wraps_unexpected_provider_exceptions_as_typed_error():
     assert types[-1] == "done"
 
 
-def test_llmclient_stream_emits_error_when_provider_unknown():
+def test_llmclient_stream_wraps_complete_fallback_exceptions_as_typed_error():
+    class _CompleteOnlyProvider:
+        name = "complete-only"
 
+        def complete(self, request: LLMRequest, config: Dict[str, Any]) -> LLMResponse:
+            del request, config
+            raise RuntimeError("complete exploded")
+
+    events = _drive_client_stream(_CompleteOnlyProvider())
+    types = [event.type for event in events]
+    assert types == ["error", "done"]
+    assert events[0].error is not None
+    assert events[0].error.code == "PROVIDER_ERROR"
+
+
+def test_llmclient_stream_emits_error_when_provider_unknown():
     from openminion.modules.llm.runtime.client import LLMClient
 
     fake_llmctl = mock.MagicMock()
@@ -202,7 +279,6 @@ def test_llmclient_stream_emits_error_when_provider_unknown():
 
 
 def test_openai_adapter_never_yields_thinking_chunks_in_v1():
-
     import typing
 
     from openminion.modules.llm.schemas import LLMStreamEvent as _Event
@@ -219,7 +295,6 @@ def test_openai_adapter_never_yields_thinking_chunks_in_v1():
 
 
 def test_openai_stream_does_not_yield_unknown_event_types():
-
     provider = OpenAIProvider()
     chunks = [_delta_chunk("hello"), _delta_chunk(" world")]
     sse_lines = _sse_lines_from_chunks(chunks)
@@ -232,8 +307,21 @@ def test_openai_stream_does_not_yield_unknown_event_types():
         assert e.type in {"delta", "done", "error"}
 
 
-def test_complete_rejection_message_points_at_llmclient_stream_method():
+def test_openai_stream_malformed_recognized_event_emits_provider_error():
+    provider = OpenAIProvider()
+    with mock.patch(
+        "openminion.modules.llm.providers.openai.adapter.iter_sse_post_lines",
+        return_value=iter(["event: message", "data: {not-json"]),
+    ):
+        events = list(provider.stream(_make_request(), _config_for_provider()))
+    assert [event.type for event in events] == ["error", "done"]
+    err_event = events[0]
+    assert err_event.error is not None
+    assert err_event.error.code == "PROVIDER_ERROR"
+    assert err_event.error.details.get("stream_event_type") == "message"
 
+
+def test_complete_rejection_message_points_at_llmclient_stream_method():
     from openminion.modules.llm.runtime.client import LLMClient
 
     fake_llmctl = mock.MagicMock()
@@ -259,7 +347,6 @@ def test_complete_rejection_message_points_at_llmclient_stream_method():
 
 
 def _drive_client_stream(fake_provider: Any) -> list[LLMStreamEvent]:
-
     from openminion.modules.llm.runtime.client import LLMClient
 
     fake_llmctl = mock.MagicMock()
@@ -285,6 +372,3 @@ def _drive_client_stream(fake_provider: Any) -> list[LLMStreamEvent]:
         ),
     ):
         return list(client.stream(messages=[{"role": "user", "content": "hi"}]))
-
-
-_ = Iterator
