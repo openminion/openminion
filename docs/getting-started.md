@@ -49,12 +49,9 @@ Focus. A useful first task is:
 Give me one safe read-only command to inspect the current directory.
 ```
 
-The first screen stays intentionally small:
-
-1. **Hosted provider** for OpenAI, Anthropic, OpenRouter, MiniMax, and the
-   additional provider presets;
-2. **Local provider** for Ollama; or
-3. **Import an existing OpenMinion config** from YAML or JSON.
+The first screen goes directly to the model service. OpenAI, Anthropic,
+OpenRouter, MiniMax, and local Ollama appear first; additional services,
+custom endpoints, and config import remain available from the same menu.
 
 Demo mode is not part of normal onboarding. It remains available through the
 explicit `openminion --demo` development/test path. A non-interactive demo can

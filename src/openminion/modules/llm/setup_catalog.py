@@ -56,7 +56,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         preset_id="openai",
         display_label="OpenAI",
         runtime_adapter="openai",
-        api_format_label="OpenAI-compatible",
+        api_format_label="OpenAI API",
         api_format_id="openai-compatible",
         default_base_url="https://api.openai.com/v1",
         credential_env="OPENAI_API_KEY",
@@ -68,7 +68,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
         preset_id="anthropic",
         display_label="Anthropic",
         runtime_adapter="anthropic",
-        api_format_label="Anthropic Messages",
+        api_format_label="Anthropic Messages API",
         api_format_id="anthropic-messages",
         default_base_url="https://api.anthropic.com/v1",
         credential_env="ANTHROPIC_API_KEY",
@@ -285,7 +285,7 @@ _PRESETS: tuple[ProviderSetupPreset, ...] = (
 )
 
 _PRESET_BY_ID = {preset.preset_id: preset for preset in _PRESETS}
-_FIRST_SCREEN_IDS = ("openai", "anthropic", "openrouter", "minimax")
+_FIRST_SCREEN_IDS = ("openai", "anthropic", "openrouter", "minimax", "ollama")
 
 
 def list_setup_presets() -> tuple[ProviderSetupPreset, ...]:

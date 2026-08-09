@@ -259,7 +259,7 @@ def test_bare_command_imports_config_and_reaches_focus(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your setup path:", "3")
+        _reply(session, "Choose your model service:", "7")
         _reply(session, "OpenMinion config file:", str(import_path))
         _reply(session, r"Import this config\? \[Y/n\]:")
         session.wait_for_after(
@@ -303,11 +303,10 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
             OPENAI_API_KEY=fixture_key,
         ),
     ) as session:
-        _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "1")
-        _reply(session, "Model \\(press Enter for the recommended default:")
-        _reply(session, r"Create or repair this config\? \[Y/n\]:")
-        _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
+        _reply(session, "Model \\[")
+        _reply(session, r"Save this configuration\? \[Y/n\]:")
+        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -348,12 +347,12 @@ def test_local_setup_is_keyless_and_cancellable(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your setup path:", "2")
-        _reply(session, "Model \\(press Enter for the recommended default:")
+        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
-        _reply(session, r"Create or repair this config\? \[Y/n\]:", "n")
+        _reply(session, r"Save this configuration\? \[Y/n\]:", "n")
         transcript = session.wait_for_after(
-            "Setup failed: Setup cancelled before writing config.",
+            "Setup cancelled; configuration not written.",
             offset=0,
             timeout=90,
         )
@@ -387,9 +386,8 @@ def test_missing_hosted_credential_cancels_without_writing(
             OPENAI_API_KEY="",
         ),
     ) as session:
-        _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "1")
-        _reply(session, "Model \\(press Enter for the recommended default:")
+        _reply(session, "Model \\[")
         _reply(
             session,
             "Store a key in the owner-readable local OpenMinion config",
@@ -427,13 +425,12 @@ def test_hosted_more_menu_back_and_cancel_stays_readable_at_80_columns(
         env=_environment(home_root=home_root, data_root=data_root),
         cols=80,
     ) as session:
-        _reply(session, "Choose your setup path:", "1")
-        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Choose your model service:", "6")
         _reply(session, "Choose another service or custom endpoint:", "b")
-        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Choose your model service:", "6")
         _reply(session, "Choose another service or custom endpoint:", "c")
         transcript = session.wait_for_after(
-            "Setup failed: Setup cancelled before choosing provider.",
+            "Setup cancelled; configuration not written.",
             offset=0,
             timeout=90,
         )
@@ -470,11 +467,10 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
             MINIMAX_API_KEY=fixture_key,
         ),
     ) as session:
-        _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "4")
         _reply(session, "Choose a recommended model", "2")
-        _reply(session, r"Create or repair this config\? \[Y/n\]:")
-        _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
+        _reply(session, r"Save this configuration\? \[Y/n\]:")
+        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -513,11 +509,11 @@ def test_local_ollama_check_failure_does_not_claim_readiness(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your setup path:", "2")
-        _reply(session, "Model \\(press Enter for the recommended default:")
+        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Model \\[")
         _reply(session, "Ollama base URL", "http://127.0.0.1:1")
-        _reply(session, r"Create or repair this config\? \[Y/n\]:")
-        _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "y")
+        _reply(session, r"Save this configuration\? \[Y/n\]:")
+        _reply(session, r"Test Ollama now\? \[Y/n\]:", "y")
         transcript = session.wait_for_after(
             "Connection check failed",
             offset=0,
@@ -555,11 +551,11 @@ def test_local_ollama_check_can_be_declined_after_config_is_saved(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your setup path:", "2")
-        _reply(session, "Model \\(press Enter for the recommended default:")
+        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
-        _reply(session, r"Create or repair this config\? \[Y/n\]:")
-        _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "n")
+        _reply(session, r"Save this configuration\? \[Y/n\]:")
+        _reply(session, r"Test Ollama now\? \[Y/n\]:", "n")
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
@@ -599,15 +595,15 @@ def test_local_ollama_check_can_verify_against_fixture_server(
             cwd=openminion_root,
             env=_environment(home_root=home_root, data_root=data_root),
         ) as session:
-            _reply(session, "Choose your setup path:", "2")
+            _reply(session, "Choose your model service:", "5")
             _reply(
                 session,
-                "Model \\(press Enter for the recommended default:",
+                "Model \\[",
                 "qwen2.5:14b",
             )
             _reply(session, "Ollama base URL", base_url)
-            _reply(session, r"Create or repair this config\? \[Y/n\]:")
-            _reply(session, r"Run local Ollama check after doctor\? \[Y/n\]:", "y")
+            _reply(session, r"Save this configuration\? \[Y/n\]:")
+            _reply(session, r"Test Ollama now\? \[Y/n\]:", "y")
             session.wait_for_after("Entering OpenMinion", offset=0, timeout=120)
             first_task = _run_first_task(
                 session,
@@ -657,7 +653,7 @@ def test_setup_cancellation_before_write_is_clean(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        session.wait_for_after("Choose your setup path:", offset=0, timeout=90)
+        session.wait_for_after("Choose your model service:", offset=0, timeout=90)
         session.send(control)
         transcript = session.wait_for_after(
             "Setup cancelled; configuration not written.",
@@ -700,12 +696,12 @@ def test_setup_cancellation_after_write_preserves_saved_truth(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your setup path:", "2")
-        _reply(session, "Model \\(press Enter for the recommended default:")
+        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
-        _reply(session, r"Create or repair this config\? \[Y/n\]:")
+        _reply(session, r"Save this configuration\? \[Y/n\]:")
         session.wait_for_after(
-            r"Run local Ollama check after doctor\? \[Y/n\]:",
+            r"Test Ollama now\? \[Y/n\]:",
             offset=0,
             timeout=120,
         )
@@ -771,11 +767,10 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
             MINIMAX_API_KEY=fixture_key,
         ),
     ) as session:
-        _reply(session, "Choose your setup path:", "1")
         _reply(session, "Choose your model service:", "4")
         _reply(session, "Choose a recommended model", "1")
-        _reply(session, r"Create or repair this config\? \[Y/n\]:")
-        _reply(session, r"Run provider check after doctor\? \[y/N\]:", "n")
+        _reply(session, r"Save this configuration\? \[Y/n\]:")
+        _reply(session, r"Test this provider now\? \[y/N\]:", "n")
         transcript = session.wait_for_after(
             "Interactive launch skipped",
             offset=0,
