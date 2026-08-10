@@ -310,13 +310,15 @@ def test_paired_llm_call_events_collapse_to_single_span() -> None:
         )
     )
 
-    assert len(sink.records) == 1
-    record = sink.records[0]
+    spans = [record for record in sink.records if record.kind == "span"]
+    assert len(spans) == 1
+    record = spans[0]
     assert record.kind == "span"
-    assert record.name == "llm.call"
+    assert record.name == "chat claude-opus-4-7"
+    assert record.span_kind == "CLIENT"
     assert record.timestamp_ns == 1_000 * 1_000_000_000
     assert record.end_timestamp_ns == int(1002.5 * 1_000_000_000)
-    assert record.attributes.get("gen_ai.system") == "anthropic"
+    assert record.attributes.get("gen_ai.provider.name") == "anthropic"
     assert record.attributes.get("gen_ai.usage.input_tokens") == 100
 
 
@@ -383,13 +385,13 @@ def test_tool_prefix_still_routes_to_span_via_legacy_fast_path() -> None:
     )
 
 
-def test_unknown_event_type_falls_back_to_root_span_event() -> None:
+def test_policy_event_uses_named_event_record() -> None:
     exporter, sink = _make_exporter()
 
     exporter.export(_event("policy.applied"))
 
     assert len(sink.records) == 1
-    assert sink.records[0].kind == "event"
+    assert sink.records[0].kind == "event_record"
 
 
 def test_otel_exporter_config_carries_backend_and_headers_fields() -> None:
@@ -522,10 +524,30 @@ def test_otel_04_every_catalog_event_resolves_to_a_valid_class() -> None:
         f"classification covered {covered} but catalog has {len(EVENT_TYPES)}"
     )
 
-    assert classified["paired_span"] == {"llm.call.started", "rlm.tick.started"}
+    assert classified["paired_span"] == {
+        "agent.execution.started",
+        "agent.handoff.started",
+        "agent.phase.started",
+        "agent.turn.started",
+        "llm.call.started",
+        "rlm.tick.started",
+        "tool.execution.started",
+    }
     assert classified["paired_completion"] == {
+        "agent.execution.cancelled",
+        "agent.execution.completed",
+        "agent.execution.failed",
+        "agent.execution.paused",
+        "agent.handoff.completed",
+        "agent.handoff.failed",
+        "agent.phase.completed",
+        "agent.phase.failed",
+        "agent.turn.completed",
+        "agent.turn.failed",
         "llm.call.completed",
         "rlm.tick.completed",
+        "tool.execution.completed",
+        "tool.execution.failed",
     }
     assert classified["excluded"] == {"metric", "message"}
     assert classified["span"].issuperset(
@@ -715,21 +737,20 @@ def test_model_provider_event_emits_required_performance_metrics() -> None:
         "openminion_model_retries_total",
         "openminion_model_request_bytes",
         "openminion_model_response_bytes",
-        "openminion_model_input_tokens",
-        "openminion_model_output_tokens",
-        "openminion_model_cached_tokens",
+        "gen_ai.client.token.usage",
+        "gen_ai.client.operation.duration",
         "openminion_context_bytes",
         "openminion_context_tokens",
         "openminion_context_segment_count",
         "openminion_tool_schema_bytes",
         "openminion_tool_schema_count",
         "openminion_exposed_tool_count",
-        "openminion_provider_round_trip_ms",
     }.issubset(names)
     for metric in metrics:
         assert "session_id" not in metric.attributes
         assert "model" not in metric.attributes
-        assert metric.attributes["transport"] == "http"
+        if metric.name != "gen_ai.client.token.usage":
+            assert metric.attributes["transport"] == "http"
 
 
 def test_tool_event_emits_call_duplicate_and_duration_metrics() -> None:
@@ -871,6 +892,7 @@ def test_sdk_sink_emits_histogram_counter_and_gauge_metrics() -> None:
         "session_id": "session-1",
         "turn_id": "turn-1",
         "timestamp_ns": 100,
+        "unit": "1",
     }
     sink.emit_metric(
         **common,

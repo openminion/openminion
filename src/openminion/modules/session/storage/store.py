@@ -61,6 +61,8 @@ from .components import (
     list_cron_jobs as _list_cron_jobs_facade,
     list_cron_runs as _list_cron_runs_facade,
     list_run_records as _list_run_records_facade,
+    list_run_records_by_invocation as _list_run_records_by_invocation_facade,
+    list_run_records_by_thread as _list_run_records_by_thread_facade,
     mark_cron_delivery_target as _mark_cron_delivery_target_facade,
     reindex_sidecars as _reindex_sidecars_facade,
     renew_cron_run_lease as _renew_cron_run_lease_facade,
@@ -401,6 +403,8 @@ class SQLiteSessionStore(SessionStore):
     add_run_usage_delta = _add_run_usage_delta_facade
     get_run_record = _get_run_record_facade
     list_run_records = _list_run_records_facade
+    list_run_records_by_thread = _list_run_records_by_thread_facade
+    list_run_records_by_invocation = _list_run_records_by_invocation_facade
     add_message_ref = _add_message_ref_facade
     update_derived_views = _update_derived_views_facade
     get_slice = _get_slice_facade
@@ -489,6 +493,16 @@ class SQLiteSessionStore(SessionStore):
 
             self._ensure_column("sessions", "active_profile_version", "TEXT")
             self._ensure_column("session_events", "prompt_context_id", "TEXT")
+            self._ensure_column("run_records", "invocation_id", "TEXT")
+            self._ensure_column("run_records", "thread_id", "TEXT")
+            self._record_store.execute_count(
+                "CREATE INDEX IF NOT EXISTS idx_run_records_session_thread "
+                "ON run_records(session_id, thread_id, started_at DESC)"
+            )
+            self._record_store.execute_count(
+                "CREATE INDEX IF NOT EXISTS idx_run_records_invocation "
+                "ON run_records(invocation_id, started_at DESC)"
+            )
 
     def _ensure_column(self, table: str, column: str, ddl_tail: str) -> None:
         _ensure_store_column(
@@ -507,6 +521,18 @@ class SQLiteSessionStore(SessionStore):
                 self._record_store,
                 table_name="sessions",
                 column_name="active_profile_version",
+                ddl_tail="TEXT",
+            )
+            _ensure_store_column(
+                self._record_store,
+                table_name="run_records",
+                column_name="invocation_id",
+                ddl_tail="TEXT",
+            )
+            _ensure_store_column(
+                self._record_store,
+                table_name="run_records",
+                column_name="thread_id",
                 ddl_tail="TEXT",
             )
 

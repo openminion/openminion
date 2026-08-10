@@ -28,6 +28,7 @@ def test_chat_phases_closed_set_matches_contract():
         "context_pack_build",
         "gateway_routing",
         "gateway_session_context",
+        "session_compaction",
         "brain_state_load",
         "brain_pre_dispatch",
         "brain_budget_check",
@@ -42,6 +43,9 @@ def test_chat_phases_closed_set_matches_contract():
         "response_normalization",
         "response_persistence",
         "memory_write",
+        "memory_followup_flush",
+        "memory_summary_checkpoint",
+        "memory_summary_structure",
         "run_record_finish",
         "response_delivery",
         "response_delivered_event",
@@ -95,6 +99,28 @@ def test_payload_rejects_misaligned_provider_call_latency() -> None:
             time_to_first_text_ms=None,
             provider_call_purposes=("entry",),
             provider_call_latency_ms=(10, 20),
+        )
+
+
+def test_payload_rejects_negative_provider_attempt_latency() -> None:
+    with pytest.raises(ValueError):
+        ChatPhaseTimingPayload(
+            cold_start=False,
+            total_turn_ms=10,
+            time_to_first_text_ms=None,
+            provider_attempts=(
+                {
+                    "logical_call_id": "call-1",
+                    "semantic_purpose": "entry",
+                    "attempt": 1,
+                    "provider": "fixture",
+                    "model": "fixture-model",
+                    "route_posture": "primary",
+                    "attempt_posture": "initial",
+                    "latency_ms": -1,
+                    "outcome": "ok",
+                },
+            ),
         )
 
 
@@ -324,3 +350,60 @@ def test_active_timer_aggregates_provider_call_costs():
     assert payload.provider_response_bytes > 0
     assert payload.tool_schema_count_max == 1
     assert payload.tool_schema_bytes_total > 0
+
+
+def test_active_timer_records_provider_attempt_sequence():
+    timer = ChatPhaseTimer()
+
+    with use_chat_phase_timer(timer):
+        timer.record_provider_attempt(
+            logical_call_id="call-1",
+            semantic_purpose="entry",
+            attempt=1,
+            provider="primary",
+            model="primary-model",
+            route_posture="primary",
+            attempt_posture="initial",
+            latency_ms=12,
+            outcome="error",
+            error_code="TIMEOUT",
+        )
+        timer.record_provider_attempt(
+            logical_call_id="call-1",
+            semantic_purpose="entry",
+            attempt=1,
+            provider="fallback",
+            model="fallback-model",
+            route_posture="fallback",
+            attempt_posture="initial",
+            latency_ms=18,
+            outcome="ok",
+        )
+
+    payload = timer.build_payload()
+    attempts = payload.as_dict()["provider_attempts"]
+    assert attempts == [
+        {
+            "logical_call_id": "call-1",
+            "semantic_purpose": "entry",
+            "attempt": 1,
+            "provider": "primary",
+            "model": "primary-model",
+            "route_posture": "primary",
+            "attempt_posture": "initial",
+            "latency_ms": 12,
+            "outcome": "error",
+            "error_code": "TIMEOUT",
+        },
+        {
+            "logical_call_id": "call-1",
+            "semantic_purpose": "entry",
+            "attempt": 1,
+            "provider": "fallback",
+            "model": "fallback-model",
+            "route_posture": "fallback",
+            "attempt_posture": "initial",
+            "latency_ms": 18,
+            "outcome": "ok",
+        },
+    ]

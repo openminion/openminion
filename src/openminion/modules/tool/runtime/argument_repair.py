@@ -56,12 +56,10 @@ def tool_family_for_argument_repair(tool_name: str) -> str | None:
 
 def simple_required_fields(tool_name: str) -> tuple[str, ...]:
     family = tool_family_for_argument_repair(tool_name)
-    if family in {MODEL_TIME, MODEL_LOCATION}:
+    if family in {MODEL_TIME, MODEL_LOCATION, MODEL_WEATHER}:
         return ()
     if family == MODEL_WEB_SEARCH:
         return ("query",)
-    if family == MODEL_WEATHER:
-        return ("location",)
     return ()
 
 
@@ -77,11 +75,6 @@ def missing_simple_required_fields(
             if str(args.get(key, "")).strip():
                 return ()
         return ("query",)
-    if family == MODEL_WEATHER:
-        for key in ("location", "city", "query", "place"):
-            if str(args.get(key, "")).strip():
-                return ()
-        return ("location",)
     return ()
 
 
@@ -119,15 +112,14 @@ def synthesize_simple_tool_arguments(
         return normalized_args
 
     if family == MODEL_WEATHER:
-        if not missing_simple_required_fields(
-            tool_name=tool_name,
-            arguments=normalized_args,
+        if any(
+            str(normalized_args.get(key, "")).strip()
+            for key in ("location", "city", "query", "place")
         ):
             return normalized_args
         location = extract_single_weather_location(user_input)
-        if not location:
-            return None
-        normalized_args["location"] = location
+        if location:
+            normalized_args["location"] = location
         return normalized_args
 
     return None

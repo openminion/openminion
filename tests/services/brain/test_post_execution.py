@@ -2510,6 +2510,54 @@ def test_postprocess_turn_uses_aggregated_tool_results_from_action_outputs() -> 
     assert '"tool_name": "file.read"' in response.metadata["tool_results"]
 
 
+def test_postprocess_turn_preserves_no_tool_termination_reason() -> None:
+    bridge = DummyBridge()
+    bridge._config = OpenMinionConfig()
+    _csc_install_default_agent(bridge._config)
+    bridge._provider = SimpleNamespace(name="fake-provider")
+    bridge._telemetryctl = _DummyTelemetry()
+    bridge._identity_metadata = dict
+    runner = SimpleNamespace(session_api=_DummySessionAPI({}))
+    step_out = SimpleNamespace(
+        message="The requested tool was not executed.",
+        status="error",
+        action_result=SimpleNamespace(
+            status="failed",
+            summary="tool not executed",
+            command_id="cmd-final",
+            outputs={"adaptive.termination_reason": "requested_tool_not_executed"},
+            error=SimpleNamespace(
+                code="act_requested_tool_not_executed",
+                details={},
+            ),
+        ),
+        working_state=SimpleNamespace(
+            plan=SimpleNamespace(steps=[]),
+            llm_calls_used=1,
+            active_mode_name="act",
+            unresolved_clarify_items=[],
+        ),
+    )
+
+    response = asyncio.run(
+        bridge._postprocess_turn(
+            runner=runner,
+            step_out=step_out,
+            message=Message(channel="console", target="user", body="weather?"),
+            history=[],
+            session_id="s-no-tool",
+            request_id="trace-no-tool",
+            turn_id="turn-no-tool",
+            turn_start_time=0.0,
+        )
+    )
+
+    assert (
+        response.metadata["tool_loop_termination_reason"]
+        == "requested_tool_not_executed"
+    )
+
+
 def test_postprocess_turn_exposes_cumulative_tool_results_from_last_result() -> None:
     bridge = DummyBridge()
     bridge._config = OpenMinionConfig()

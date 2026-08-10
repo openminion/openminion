@@ -36,6 +36,7 @@ from openminion.base.config.runtime.tools import (
     ToolRuntimeConfig,
     coerce_tool_runtime_config,
 )
+from openminion.base.config.runtime.telemetry import OTELExporterConfig
 from openminion.base.config.tool_selection import ToolSelectionConfig
 
 _BASE_IDENTITY_DIRNAME = "identity"
@@ -48,20 +49,6 @@ class ToolPolicyConfig:
     max_calls_per_run: int = 50
     max_calls_per_tool: int = 4
     max_budget_cost_per_run: int = 16
-
-
-@dataclass
-class OTELExporterConfig:
-    enabled: bool = False
-    endpoint: str = ""
-    protocol: str = "http"
-    service_name: str = "openminion"
-    sample_rate: float = 1.0
-    include_assistant_body: bool = False
-    backend: str = ""
-    headers: dict[str, str] = field(default_factory=dict)
-    noncritical_queue_capacity: int = 1024
-    queue_flush_timeout_seconds: float = 2.0
 
 
 @dataclass

@@ -209,6 +209,17 @@ content, paths, credentials, or resource payloads.
 Runtime-backed interactive sessions can emit that counter. Paths without a live
 telemetry service report no event rather than inferring usage as zero.
 
+## Telemetry invocation inspection
+
+`telemetryctl invocation list` lists locally persisted invocation identities
+with filters for agent, status, and event type. Use
+`telemetryctl invocation show <invocation-id>` for deterministic structural
+events and timing, token, cache, cost, policy, and correlated-log summaries.
+`telemetryctl invocation graph <invocation-id>` shows finite execution
+segments plus orphan and propagation diagnostics. These commands do not
+interpret hidden reasoning or print prompt, completion, tool argument, or tool
+result content.
+
 ## Retirement status
 
 The operator approved dashboard deletion on 2026-07-14 after the replacement

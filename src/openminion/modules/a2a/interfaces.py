@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 
 A2A_INTERFACE_VERSION = "v1"
+A2A_OBSERVABILITY_SCHEMA_VERSION = "openminion.a2a_observability.v1"
 _REQUIRED_RUNTIME_METHODS = (
     "register_agent",
     "list_agents",

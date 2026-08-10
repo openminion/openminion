@@ -64,6 +64,18 @@ class TelemetryAdapterContract(Protocol):
 
     def __init__(self, service: TelemetryContract) -> None: ...
 
+    def bind_execution(
+        self,
+        session_id: str,
+        turn_id: str,
+        *,
+        invocation_id: str,
+        execution_id: str,
+        agent_id: str,
+    ) -> None: ...
+
+    def unbind_execution(self, session_id: str, turn_id: str) -> None: ...
+
     async def emit_tick(
         self, session_id: str, turn_id: str, elapsed_ms: float, mode: str | None = ...
     ) -> None: ...

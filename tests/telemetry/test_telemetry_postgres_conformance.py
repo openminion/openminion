@@ -7,6 +7,10 @@ import pytest
 
 from openminion.modules.storage.engine import StorageEngineConfig
 from openminion.modules.telemetry.storage import build_telemetry_store
+from openminion.modules.telemetry.schemas import (
+    TelemetryEvent,
+    normalize_telemetry_event,
+)
 from openminion.modules.telemetry.storage.store import (
     PostgresTelemetryStore,
     SQLiteTelemetryStore,
@@ -41,26 +45,29 @@ def telemetry_store_case(request: pytest.FixtureRequest, tmp_path: Path):
 
 def test_telemetry_store_round_trip(telemetry_store_case) -> None:
     _backend, store = telemetry_store_case
-    store.insert_event(
-        session_id="sess-1",
-        turn_id="turn-1",
-        event_type="tool.completed",
-        timestamp=1.25,
-        data={"tool": "time"},
+    first = normalize_telemetry_event(
+        TelemetryEvent(
+            session_id="sess-1",
+            turn_id="turn-1",
+            event_type="tool.completed",
+            timestamp=1.25,
+            data={"tool": "time"},
+        )
     )
-    store.insert_event(
-        session_id="sess-1",
-        turn_id="turn-2",
-        event_type="llm_call",
-        timestamp=2.5,
-        data={"model": "haiku"},
+    second = normalize_telemetry_event(
+        TelemetryEvent(
+            session_id="sess-1",
+            turn_id="turn-2",
+            event_type="llm_call",
+            timestamp=2.5,
+            data={"model": "haiku"},
+        )
     )
+    store.insert_event(first)
+    store.insert_event(second)
 
     rows = store.fetch_session_events("sess-1")
-    assert rows == [
-        ("turn-1", "tool.completed", 1.25, '{"tool": "time"}'),
-        ("turn-2", "llm_call", 2.5, '{"model": "haiku"}'),
-    ]
+    assert rows == [first, second]
     assert store.fetch_session_events("missing") == []
 
 
@@ -96,5 +103,64 @@ def test_build_telemetry_store_returns_postgres_store(tmp_path: Path) -> None:
         )
         try:
             assert isinstance(store, PostgresTelemetryStore)
+        finally:
+            store.close()
+
+
+@pytest.mark.postgres
+def test_postgres_legacy_table_is_upgraded_to_event_v2() -> None:
+    with open_postgres_record_store("mpt1_telemetry_upgrade") as (
+        record_store,
+        _schema_name,
+    ):
+        record_store.execute_count("DROP TABLE IF EXISTS events")
+        record_store.execute_count(
+            """
+            CREATE TABLE events (
+                id BIGSERIAL PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                timestamp DOUBLE PRECISION NOT NULL,
+                data TEXT NOT NULL
+            )
+            """
+        )
+        record_store.insert(
+            "events",
+            {
+                "session_id": "legacy-session",
+                "turn_id": "legacy-turn",
+                "event_type": "tick",
+                "timestamp": 1.0,
+                "data": "{}",
+            },
+        )
+
+        store = PostgresTelemetryStore(record_store=record_store)
+        try:
+            columns = {
+                str(row["name"])
+                for row in record_store.query_dicts(
+                    """
+                    SELECT column_name AS name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = 'events'
+                    """
+                )
+            }
+            assert {
+                "schema_version",
+                "event_id",
+                "trace_key",
+                "invocation_id",
+                "execution_id",
+                "agent_id",
+                "mode",
+            }.issubset(columns)
+            event = store.fetch_session_events("legacy-session")[0]
+            assert event.schema_version == "openminion.telemetry_event.v1"
+            assert event.invocation_id is None
         finally:
             store.close()

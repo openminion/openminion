@@ -1,6 +1,6 @@
 import asyncio
-from dataclasses import dataclass
-import json
+from dataclasses import dataclass, replace
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -20,17 +20,52 @@ from .constants import (
 )
 from openminion.modules.storage.record_store import RecordStore
 from .storage.store import PostgresTelemetryStore, SQLiteTelemetryStore
+from .storage.base import TelemetryStore
 
 from .interfaces import TELEMETRY_INTERFACE_VERSION
 from .schemas import (
     TelemetryEvent,
+    normalize_telemetry_event,
+    TelemetryDeletionResult,
     SessionTelemetry,
     ModuleTelemetryStats,
     CostSummary,
     calculate_cost,
 )
+from .trace.layout import delete_invocation_trace_artifacts, resolve_trace_root
+from .trace.metadata import apply_content_policy
 
 _LOG = logging.getLogger(__name__)
+
+
+def build_execution_traceparent(invocation_id: str, execution_id: str) -> str:
+    trace_id = hashlib.sha256(str(invocation_id).encode("utf-8")).hexdigest()[:32]
+    span_id = hashlib.sha256(str(execution_id).encode("utf-8")).hexdigest()[:16]
+    return f"00-{trace_id}-{span_id}-01"
+
+
+def _external_sensitive_fields(config: OTELExporterConfig) -> frozenset[str]:
+    fields: set[str] = set()
+    if config.include_input_messages:
+        fields.update(
+            {"user_message", "history", "input_messages", "gen_ai.input.messages"}
+        )
+    if config.include_output_messages or config.include_assistant_body:
+        fields.update(
+            {"content", "output_messages", "output_text", "gen_ai.output.messages"}
+        )
+    if config.include_tool_content:
+        fields.update(
+            {
+                "arguments",
+                "result",
+                "tool_definitions",
+                "gen_ai.tool.call.arguments",
+                "gen_ai.tool.call.result",
+                "gen_ai.tool.definitions",
+            }
+        )
+    return frozenset(fields)
 
 
 class TelemetryService:
@@ -44,25 +79,38 @@ class TelemetryService:
         env: Optional[Mapping[str, str]] = None,
         record_store: RecordStore | None = None,
         otel_exporter_config: OTELExporterConfig | None = None,
+        include_local_content: bool | None = None,
     ) -> None:
         path_info = resolve_telemetry_db_path(
             db_path=db_path,
             home_root=home_root,
             env=env,
         )
-        Path(path_info.db_path).parent.mkdir(parents=True, exist_ok=True)
+        db_parent = Path(path_info.db_path).parent
+        db_parent.mkdir(parents=True, exist_ok=True)
+        if path_info.path_source != "explicit_override":
+            db_parent.chmod(0o700)
         self._db_path = path_info.db_path
         self._path_mode = path_info.path_mode
         self._path_source = path_info.path_source
         self._home_root = path_info.home_root
+        self._store: TelemetryStore
         if record_store is not None:
             self._store = PostgresTelemetryStore(record_store=record_store)
         else:
             self._store = SQLiteTelemetryStore(self._db_path)
+            Path(self._db_path).chmod(0o600)
         self._otel_exporter = OpenTelemetryTraceExporter(
             otel_exporter_config,
             logger=_LOG,
         )
+        config = otel_exporter_config or OTELExporterConfig()
+        self._include_local_content = bool(
+            config.include_local_content
+            if include_local_content is None
+            else include_local_content
+        )
+        self._external_sensitive_fields = _external_sensitive_fields(config)
 
     @property
     def contract_version(self) -> str:
@@ -79,50 +127,82 @@ class TelemetryService:
 
     async def record_event(self, event: TelemetryEvent) -> None:
         """Record a telemetry event."""
-        payload = dict(event.data or {})
-        if event.mode and "mode" not in payload:
-            payload["mode"] = str(event.mode).strip().lower()
+        normalized = normalize_telemetry_event(event)
+        local_event = self._content_policy_event(
+            normalized, allow_sensitive_content=self._include_local_content
+        )
         await asyncio.to_thread(
             self._store.insert_event,
-            session_id=event.session_id,
-            turn_id=event.turn_id,
-            event_type=event.event_type,
-            timestamp=event.timestamp,
-            data=payload,
+            local_event,
         )
         self._otel_exporter.export(
-            TelemetryEvent(
-                session_id=event.session_id,
-                turn_id=event.turn_id,
-                event_type=event.event_type,
-                timestamp=event.timestamp,
-                data=payload,
-                mode=event.mode,
+            self._content_policy_event(
+                normalized,
+                allowed_sensitive_fields=self._external_sensitive_fields,
             )
         )
 
     def record_event_sync(self, event: TelemetryEvent) -> None:
         """Record a telemetry event from sync runtime hooks."""
-        payload = dict(event.data or {})
-        if event.mode and "mode" not in payload:
-            payload["mode"] = str(event.mode).strip().lower()
+        normalized = normalize_telemetry_event(event)
         self._store.insert_event(
-            session_id=event.session_id,
-            turn_id=event.turn_id,
-            event_type=event.event_type,
-            timestamp=event.timestamp,
-            data=payload,
-        )
-        self._otel_exporter.export(
-            TelemetryEvent(
-                session_id=event.session_id,
-                turn_id=event.turn_id,
-                event_type=event.event_type,
-                timestamp=event.timestamp,
-                data=payload,
-                mode=event.mode,
+            self._content_policy_event(
+                normalized, allow_sensitive_content=self._include_local_content
             )
         )
+        self._otel_exporter.export(
+            self._content_policy_event(
+                normalized,
+                allowed_sensitive_fields=self._external_sensitive_fields,
+            )
+        )
+
+    @staticmethod
+    def _content_policy_event(
+        event: TelemetryEvent,
+        *,
+        allow_sensitive_content: bool = False,
+        allowed_sensitive_fields: frozenset[str] = frozenset(),
+    ) -> TelemetryEvent:
+        return replace(
+            event,
+            data=apply_content_policy(
+                event.data,
+                allow_sensitive_content=allow_sensitive_content,
+                allowed_sensitive_fields=allowed_sensitive_fields,
+            ),
+        )
+
+    def delete_invocation(self, invocation_id: str) -> TelemetryDeletionResult:
+        database_rows = self._store.delete_invocation_events(invocation_id)
+        artifacts = delete_invocation_trace_artifacts(
+            resolve_trace_root(
+                home_root=Path(self._home_root) if self._home_root else None
+            ),
+            invocation_id=invocation_id,
+        )
+        pending_exports = self._otel_exporter.delete_pending_invocation(invocation_id)
+        result = TelemetryDeletionResult(
+            invocation_id=invocation_id,
+            database_rows_deleted=database_rows,
+            artifacts_deleted=artifacts,
+            pending_exports_deleted=pending_exports,
+        )
+        self.record_event_sync(
+            TelemetryEvent(
+                session_id="telemetry",
+                turn_id="retention",
+                event_type="telemetry.retention.deleted",
+                data={
+                    "target_invocation_id": invocation_id,
+                    "database_rows_deleted": database_rows,
+                    "artifacts_deleted": artifacts,
+                    "pending_exports_deleted": pending_exports,
+                    "external_collector_status": result.external_collector_status,
+                },
+            )
+        )
+        return result
 
     async def record_metric(
         self, name: str, value: float, tags: Optional[dict[str, str]] = None
@@ -151,18 +231,12 @@ class TelemetryService:
         events: list[TelemetryEvent] = []
         module_stats: dict[str, ModuleTelemetryStats] = {}
 
-        for turn_id, event_type, timestamp, data_str in rows:
-            data = json.loads(data_str)
-            events.append(
-                TelemetryEvent(
-                    session_id=session_id,
-                    turn_id=turn_id,
-                    event_type=event_type,
-                    timestamp=float(timestamp),
-                    data=data,
-                    mode=str(data.get("mode", "")).strip().lower() or None,
-                )
-            )
+        for event in rows:
+            turn_id = event.turn_id
+            event_type = event.event_type
+            timestamp = event.timestamp
+            data = event.data
+            events.append(event)
 
             if first_ts is None:
                 first_ts = float(timestamp)
@@ -223,6 +297,15 @@ class TelemetryService:
             module_stats=module_stats,
             events=events,
         )
+
+    async def get_invocation_events(self, invocation_id: str) -> list[TelemetryEvent]:
+        return await asyncio.to_thread(
+            self._store.fetch_invocation_events,
+            invocation_id,
+        )
+
+    async def get_events(self) -> list[TelemetryEvent]:
+        return await asyncio.to_thread(self._store.fetch_events)
 
     async def get_module_summary(self, session_id: str) -> dict[str, dict[str, Any]]:
         """Get module-level aggregated telemetry stats for a session."""
@@ -390,6 +473,47 @@ class TelemetryCtl:
 
     def __init__(self, service: TelemetryService) -> None:
         self._service = service
+        self._execution_contexts: dict[tuple[str, str], dict[str, str]] = {}
+
+    def bind_execution(
+        self,
+        session_id: str,
+        turn_id: str,
+        *,
+        invocation_id: str,
+        execution_id: str,
+        agent_id: str,
+    ) -> None:
+        self._execution_contexts[(str(session_id), str(turn_id))] = {
+            "invocation_id": str(invocation_id),
+            "execution_id": str(execution_id),
+            "agent_id": str(agent_id),
+        }
+
+    def unbind_execution(self, session_id: str, turn_id: str) -> None:
+        self._execution_contexts.pop((str(session_id), str(turn_id)), None)
+
+    def _event(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+        data: dict[str, Any],
+        mode: str | None,
+    ) -> TelemetryEvent:
+        correlation = self._execution_contexts.get((str(session_id), str(turn_id)), {})
+        return TelemetryEvent(
+            session_id=session_id,
+            turn_id=turn_id,
+            event_type=event_type,
+            mode=mode,
+            data={**correlation, **data},
+            trace_key=correlation.get("invocation_id"),
+            invocation_id=correlation.get("invocation_id"),
+            execution_id=correlation.get("execution_id"),
+            agent_id=correlation.get("agent_id"),
+        )
 
     async def emit_tick(
         self,
@@ -400,7 +524,7 @@ class TelemetryCtl:
     ) -> None:
         """Emit a tick event."""
         await self._service.record_event(
-            TelemetryEvent(
+            self._event(
                 session_id=session_id,
                 turn_id=turn_id,
                 event_type="tick",
@@ -424,7 +548,7 @@ class TelemetryCtl:
     ) -> None:
         """Emit a tool call event."""
         await self._service.record_event(
-            TelemetryEvent(
+            self._event(
                 session_id=session_id,
                 turn_id=turn_id,
                 event_type="tool_call",
@@ -449,7 +573,7 @@ class TelemetryCtl:
     ) -> None:
         """Emit an LLM call event with token usage."""
         await self._service.record_event(
-            TelemetryEvent(
+            self._event(
                 session_id=session_id,
                 turn_id=turn_id,
                 event_type="llm_call",
@@ -473,7 +597,7 @@ class TelemetryCtl:
     ) -> None:
         """Emit a context pack event."""
         await self._service.record_event(
-            TelemetryEvent(
+            self._event(
                 session_id=session_id,
                 turn_id=turn_id,
                 event_type="context_pack",
@@ -517,7 +641,7 @@ class TelemetryCtl:
             payload.update(extra)
 
         await self._service.record_event(
-            TelemetryEvent(
+            self._event(
                 session_id=session_id,
                 turn_id=turn_id,
                 event_type="module.stats",
@@ -639,6 +763,9 @@ class TelemetryCtl:
         mode: str | None = None,
     ) -> None:
         event_payload = dict(payload or {})
+        correlation = self._execution_contexts.get((str(session_id), str(turn_id)), {})
+        for name, value in correlation.items():
+            event_payload.setdefault(name, value)
         if trace_id and "trace_id" not in event_payload:
             event_payload["trace_id"] = str(trace_id)
         if actor_type and "actor_type" not in event_payload:
@@ -648,7 +775,7 @@ class TelemetryCtl:
         if error and "error" not in event_payload:
             event_payload["error"] = dict(error)
         await self._service.record_event(
-            TelemetryEvent(
+            self._event(
                 session_id=session_id,
                 turn_id=turn_id,
                 event_type=event_type,

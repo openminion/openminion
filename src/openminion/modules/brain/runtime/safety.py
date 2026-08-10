@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol
 
+from openminion.modules.telemetry.events.module import emit_module_telemetry
+
 SAFETY_INTERFACE_VERSION = "v1"
 
 
@@ -57,11 +59,29 @@ class SafetyContract(Protocol):
 
     def is_normal(self) -> bool: ...
 
-    def stop(self, *, session_id: str | None = ..., reason: str = ...) -> bool: ...
+    def stop(
+        self,
+        *,
+        session_id: str | None = ...,
+        reason: str = ...,
+        metadata: dict[str, Any] | None = ...,
+    ) -> bool: ...
 
-    def kill(self, *, session_id: str | None = ..., reason: str = ...) -> bool: ...
+    def kill(
+        self,
+        *,
+        session_id: str | None = ...,
+        reason: str = ...,
+        metadata: dict[str, Any] | None = ...,
+    ) -> bool: ...
 
-    def panic(self, *, session_id: str | None = ..., reason: str = ...) -> bool: ...
+    def panic(
+        self,
+        *,
+        session_id: str | None = ...,
+        reason: str = ...,
+        metadata: dict[str, Any] | None = ...,
+    ) -> bool: ...
 
     def reset(self) -> None: ...
 
@@ -73,10 +93,11 @@ class SafetyContract(Protocol):
 class SafetyService:
     """Runtime skeleton for safety control."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, telemetryctl: Any | None = None) -> None:
         self._state = SafetyState.NORMAL
         self._lock = threading.RLock()
         self._events: list[SafetyEvent] = []
+        self._telemetryctl = telemetryctl
 
     @property
     def contract_version(self) -> str:
@@ -93,7 +114,13 @@ class SafetyService:
         """Return whether the service is in the normal state."""
         return self.state == SafetyState.NORMAL
 
-    def stop(self, *, session_id: str | None = None, reason: str = "") -> bool:
+    def stop(
+        self,
+        *,
+        session_id: str | None = None,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         """Request graceful stop."""
         with self._lock:
             if self._state != SafetyState.NORMAL:
@@ -106,12 +133,20 @@ class SafetyService:
                     state_after=SafetyState.STOPPING,
                     reason=reason,
                     session_id=session_id,
+                    metadata=dict(metadata or {}),
                 )
             )
+            self._emit_event(self._events[-1])
             self._state = SafetyState.STOPPED
             return True
 
-    def kill(self, *, session_id: str | None = None, reason: str = "") -> bool:
+    def kill(
+        self,
+        *,
+        session_id: str | None = None,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         """Request immediate termination."""
         with self._lock:
             if self._state in {SafetyState.KILLED, SafetyState.PANICKED}:
@@ -125,12 +160,20 @@ class SafetyService:
                     state_after=SafetyState.KILLING,
                     reason=reason,
                     session_id=session_id,
+                    metadata=dict(metadata or {}),
                 )
             )
+            self._emit_event(self._events[-1])
             self._state = SafetyState.KILLED
             return True
 
-    def panic(self, *, session_id: str | None = None, reason: str = "") -> bool:
+    def panic(
+        self,
+        *,
+        session_id: str | None = None,
+        reason: str = "",
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         """Request emergency stop."""
         with self._lock:
             if self._state == SafetyState.PANICKED:
@@ -144,8 +187,10 @@ class SafetyService:
                     state_after=SafetyState.PANICKING,
                     reason=reason,
                     session_id=session_id,
+                    metadata=dict(metadata or {}),
                 )
             )
+            self._emit_event(self._events[-1])
             self._state = SafetyState.PANICKED
             return True
 
@@ -163,6 +208,37 @@ class SafetyService:
         """Clear event history."""
         with self._lock:
             self._events.clear()
+
+    def _emit_event(self, event: SafetyEvent) -> None:
+        metadata = event.metadata
+        if self._telemetryctl is None or not event.session_id:
+            return
+        reason_code = "".join(
+            char if char.isalnum() else "_"
+            for char in str(event.reason or "").strip().lower()
+        )[:64].strip("_")
+        emit_module_telemetry(
+            self._telemetryctl,
+            "emit_canonical_event",
+            event.session_id,
+            str(metadata.get("turn_id") or event.session_id),
+            "safety.preempted",
+            {
+                "trace_id": str(metadata.get("trace_id") or ""),
+                "invocation_id": str(metadata.get("invocation_id") or ""),
+                "execution_id": str(metadata.get("execution_id") or ""),
+                "action": event.action.value,
+                "state_before": event.state_before.value,
+                "state_after": event.state_after.value,
+                "violation_category": str(
+                    metadata.get("violation_category") or "runtime_safety"
+                ),
+                "reason_code": reason_code or "unspecified",
+            },
+            trace_id=str(metadata.get("trace_id") or "") or None,
+            status="preempted",
+            logger=__import__("logging").getLogger(__name__),
+        )
 
 
 __all__ = [

@@ -20,6 +20,10 @@ Typed config fields:
 - `service_name`
 - `protocol` (`http/protobuf` or `grpc`)
 - `include_assistant_body` (default `false`)
+- `include_input_messages`, `include_output_messages`, and
+  `include_tool_content` (independent, default `false`)
+- `include_local_content` (independent local persistence control, default
+  `false`)
 - `sample_rate` (deterministic by trace key)
 
 Current exporter coverage:
@@ -42,8 +46,9 @@ Operator notes:
 
 1. Install the optional extras with `pip install openminion[otel]`.
 2. Body/content fields are excluded from exported attributes by default.
-   Set `include_assistant_body=true` only when the collector boundary is
-   trusted and the additional exposure is intentional.
+   The compatibility flag `include_assistant_body=true` enables output
+   messages only. Input messages and tool content require their separate
+   controls.
 3. List and tuple payloads are exported as compact deterministic JSON strings
    at their original attribute keys so multi-value payloads stay unambiguous.
 4. OTel export is provider-neutral. LangSmith, Helicone, Arize, Datadog,
@@ -66,6 +71,11 @@ Useful commands:
    `<data_root>/traces/llm/`.
 4. `telemetryctl trace show <relative-path>` prints one trace artifact while
    enforcing that the path stays under the trace root.
+5. `telemetryctl invocation list` lists durable invocations and legacy gaps.
+6. `telemetryctl invocation show <invocation-id>` prints structural events,
+   timing, token/cache/cost, policy, log, orphan, and propagation facts.
+7. `telemetryctl invocation graph <invocation-id>` prints finite execution
+   segments and their links without prompt or reasoning interpretation.
 
 These commands deliberately avoid content classification or response-quality
 judgment. Post-hoc eval/replay tooling may analyze captured traces separately,

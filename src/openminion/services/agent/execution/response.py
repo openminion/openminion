@@ -56,8 +56,12 @@ def merge_turn_metadata(
     *,
     model: str | None = None,
 ) -> dict[str, str]:
+    identity = {
+        key: str(runtime.inbound.metadata.get(key, "") or "")
+        for key in ("invocation_id", "execution_id", "invocation_scope")
+    }
     return merge_metadata(
-        metadata,
+        metadata | identity,
         model=model,
         provider_name=str(getattr(service._provider, "name", "") or ""),
         inference_steps=runtime.inference_steps,

@@ -27,6 +27,10 @@ from openminion.services.brain.post_execution.constants import (
 )
 
 _TURN_SIGNATURE_WINDOW = 16
+_LLM_PURPOSES = (
+    "act decide entry judge plan reflect self_compaction "
+    "skill_selection summarize tool_shortlist"
+).split()
 
 
 def _resolve_turn_session_ids(*, message: Message) -> tuple[str, str]:
@@ -48,7 +52,7 @@ def _resolve_turn_session_ids(*, message: Message) -> tuple[str, str]:
 
 def _normalize_llm_purpose(purpose: str) -> str | None:
     normalized = str(purpose or "").strip().lower()
-    if normalized in {"decide", "plan", "reflect"}:
+    if normalized in _LLM_PURPOSES:
         return normalized
     if normalized in {"respond_followup", "follow_up"}:
         return "follow_up"
@@ -62,12 +66,7 @@ def _collect_llm_call_counts_by_purpose(
     trace_id: str | None,
     fallback_total_llm_calls: int,
 ) -> dict[str, int]:
-    counts: dict[str, int] = {
-        "decide": 0,
-        "plan": 0,
-        "reflect": 0,
-        "follow_up": 0,
-    }
+    counts: dict[str, int] = {purpose: 0 for purpose in (*_LLM_PURPOSES, "follow_up")}
     try:
         events = runner.session_api.list_events(session_id)
     except Exception:  # noqa: BLE001

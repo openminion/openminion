@@ -1,7 +1,7 @@
 """Resource resolution and tool execution context assembly."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from collections.abc import Mapping
 
 from openminion.base.config import resolve_data_root
@@ -17,6 +17,7 @@ from openminion.services.agent.memory.gateway_adapter import (
     DisabledMemoryGatewayAdapter,
     MemoryServiceGatewayAdapter,
 )
+from openminion.services.agent.telemetry import _service_port_telemetryctl
 from openminion.services.runtime.a2a_delegate import build_a2a_delegate_api
 from openminion.services.runtime.bootstrap import build_agent_memory_service
 
@@ -121,6 +122,7 @@ class ExecutionResources:
                 home_root=home_root,
                 agent_id=self._service_port.identity_agent_id,
                 env=env_payload or None,
+                telemetryctl=_service_port_telemetryctl(self._service_port),
             )
         except Exception:
             self._a2a_delegate_api = None
@@ -169,6 +171,7 @@ class ExecutionResources:
             authored_tools_api=getattr(self._runtime, "authored_tools", None),
             a2a_delegate_api=self._resolve_a2a_delegate_api(),
             agent_query=getattr(self._runtime, "agent_discovery_snapshot", None),
+            telemetryctl=_service_port_telemetryctl(self._service_port),
         )
 
     def build_context_with_overrides(
@@ -179,11 +182,12 @@ class ExecutionResources:
     ) -> ToolExecutionContext:
         context = self.build_context()
         if context_metadata_overrides and isinstance(context.metadata, dict):
+            metadata = cast(dict[str, Any], context.metadata)
             for key, value in context_metadata_overrides.items():
                 token = str(key or "").strip()
                 if not token:
                     continue
-                context.metadata[token] = (
+                metadata[token] = (
                     dict(value)
                     if token == "runtime_env" and isinstance(value, Mapping)
                     else str(value)

@@ -1,6 +1,112 @@
 """Stable metadata assembly for provider trace results."""
 
 import json
+from typing import Any, cast
+
+
+_SENSITIVE_FIELDS = frozenset(
+    {
+        "content",
+        "system_prompt",
+        "system_instructions",
+        "user_message",
+        "history",
+        "input_messages",
+        "output_messages",
+        "output_text",
+        "arguments",
+        "result",
+        "tool_definitions",
+        "file_path",
+        "path",
+        "command",
+        "diff_body",
+        "itinerary_details",
+        "raw_source",
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
+        "gen_ai.system_instructions",
+        "gen_ai.tool.call.arguments",
+        "gen_ai.tool.call.result",
+        "gen_ai.tool.definitions",
+    }
+)
+_PROHIBITED_FIELDS = frozenset(
+    {
+        "api_key",
+        "access_token",
+        "approval_token",
+        "auth_header",
+        "authorization",
+        "cookie",
+        "credentials",
+        "environment",
+        "env",
+        "headers",
+        "hidden_reasoning",
+        "hidden_chain_of_thought",
+        "private_key",
+        "password",
+        "refresh_token",
+        "raw_env",
+        "reasoning_content",
+        "reasoning_summary",
+        "thinking",
+        "thinking_blocks",
+        "gen_ai.reasoning",
+    }
+)
+
+
+def apply_content_policy(
+    payload: dict[str, Any],
+    *,
+    allow_sensitive_content: bool,
+    allowed_sensitive_fields: frozenset[str] = frozenset(),
+    max_string_length: int = 4096,
+) -> dict[str, Any]:
+    removed: list[str] = []
+    truncated: list[dict[str, int | str]] = []
+
+    def clean(value: Any, path: str) -> Any:
+        if isinstance(value, dict):
+            result: dict[str, Any] = {}
+            for raw_key, item in value.items():
+                key = str(raw_key)
+                field = key.lower()
+                item_path = f"{path}.{key}" if path else key
+                if field in _PROHIBITED_FIELDS or field.endswith("_secret"):
+                    removed.append(item_path)
+                    continue
+                if (
+                    field in _SENSITIVE_FIELDS
+                    and not allow_sensitive_content
+                    and field not in allowed_sensitive_fields
+                ):
+                    removed.append(item_path)
+                    continue
+                result[key] = clean(item, item_path)
+            return result
+        if isinstance(value, list):
+            return [clean(item, f"{path}[]") for item in value]
+        if isinstance(value, str) and len(value) > max_string_length:
+            truncated.append(
+                {
+                    "field": path,
+                    "original_size": len(value),
+                    "retained_size": max_string_length,
+                }
+            )
+            return value[:max_string_length]
+        return value
+
+    cleaned = clean(dict(payload or {}), "")
+    cleaned["_telemetry_policy"] = {
+        "sensitive_content": "included" if allow_sensitive_content else "omitted",
+        "removed_fields": sorted(set(removed)),
+        "truncations": truncated,
+    }
+    return cast(dict[str, Any], cleaned)
 
 
 def merge_trace_metadata(
@@ -45,4 +151,4 @@ def merge_trace_metadata(
     return merged
 
 
-__all__ = ["merge_trace_metadata"]
+__all__ = ["apply_content_policy", "merge_trace_metadata"]

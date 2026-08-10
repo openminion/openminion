@@ -18,6 +18,10 @@ from openminion.modules.llm.diagnostics.events import (
     emit_llm_operation,
     emit_tool_envelope_recovery_event,
 )
+from openminion.modules.telemetry.trace.phase_timing import (
+    ChatPhaseTimer,
+    use_chat_phase_timer,
+)
 from openminion.modules.telemetry.events.catalog import (
     TOOL_ENVELOPE_REPAIR_EXHAUSTED,
     TOOL_ENVELOPE_REPAIR_RETRY,
@@ -124,6 +128,44 @@ def _make_runtime(
     return runtime
 
 
+def _make_fallback_runtime(
+    *,
+    telemetryctl: TelemetryCtl,
+    primary: _SequenceProvider,
+    fallback: _SequenceProvider,
+) -> LLMCTL:
+    runtime = LLMCTL.from_config(
+        {
+            "version": 1,
+            "llmctl": {
+                "default_provider": primary.name,
+                "default_model": "primary-model",
+                "retries": {"max_retries": 0, "backoff_ms": 0},
+                "routing_defaults": {
+                    "primary": {"provider": primary.name, "model": "primary-model"},
+                    "fallbacks": [
+                        {
+                            "provider": fallback.name,
+                            "model": "fallback-model",
+                            "on": ["PROVIDER_ERROR"],
+                        }
+                    ],
+                },
+            },
+            "providers": {primary.name: {}, fallback.name: {}},
+            "agents": {
+                "default": {
+                    "tool_policy": {"enable_tools": True},
+                }
+            },
+        },
+        telemetryctl=telemetryctl,
+    )
+    runtime.registry.add(primary)
+    runtime.registry.add(fallback)
+    return runtime
+
+
 def _request_payload(session_id: str, turn_id: str) -> Dict[str, Any]:
     return {
         "messages": [{"role": "user", "content": "hello telemetry"}],
@@ -131,6 +173,8 @@ def _request_payload(session_id: str, turn_id: str) -> Dict[str, Any]:
             "session_id": session_id,
             "turn_id": turn_id,
             "trace_id": "trace-1",
+            "llm_call_id": "call-entry-1",
+            "purpose": "entry",
             "mode_name": "plan",
         },
     }
@@ -212,6 +256,76 @@ def test_llm_module_emits_retry_and_error_for_retryable_failure(temp_db: str) ->
     assert stats["operation_counts"]["error"] == 1
     assert stats["operation_counts"]["retry"] == 1
     assert stats["operation_counts"]["response"] == 1
+
+
+def test_llm_runtime_records_physical_retry_attempts_on_active_timer(
+    temp_db: str,
+) -> None:
+    async def _case() -> list[dict[str, object]]:
+        service = TelemetryService(temp_db)
+        provider = _SequenceProvider(
+            [
+                LLMCtlError("RATE_LIMITED", "retry later"),
+                _make_response(output_text="recovered", latency_ms=13),
+            ]
+        )
+        runtime = _make_runtime(
+            telemetryctl=TelemetryCtl(service),
+            provider=provider,
+        )
+        timer = ChatPhaseTimer()
+        try:
+            with use_chat_phase_timer(timer):
+                response = await runtime.client(agent_name="default").call(
+                    _request_payload("sess-llm-physical-retry", "turn-1")
+                )
+            assert response.ok is True
+            return list(timer.build_payload().provider_attempts)
+        finally:
+            await service.close()
+
+    attempts = _run(_case())
+
+    assert [item["semantic_purpose"] for item in attempts] == ["entry", "entry"]
+    assert [item["logical_call_id"] for item in attempts] == [
+        "call-entry-1",
+        "call-entry-1",
+    ]
+    assert [item["route_posture"] for item in attempts] == ["primary", "primary"]
+    assert [item["attempt_posture"] for item in attempts] == ["initial", "retry"]
+    assert [item["outcome"] for item in attempts] == ["error", "ok"]
+
+
+def test_llm_runtime_records_physical_fallback_attempt_on_active_timer(
+    temp_db: str,
+) -> None:
+    async def _case() -> list[dict[str, object]]:
+        service = TelemetryService(temp_db)
+        primary = _SequenceProvider([LLMCtlError("PROVIDER_ERROR", "try fallback")])
+        fallback = _SequenceProvider([_make_response(output_text="fallback ok")])
+        fallback.name = "fallback_provider"
+        runtime = _make_fallback_runtime(
+            telemetryctl=TelemetryCtl(service),
+            primary=primary,
+            fallback=fallback,
+        )
+        timer = ChatPhaseTimer()
+        try:
+            with use_chat_phase_timer(timer):
+                response = await runtime.client(agent_name="default").call(
+                    _request_payload("sess-llm-physical-fallback", "turn-1")
+                )
+            assert response.ok is True
+            return list(timer.build_payload().provider_attempts)
+        finally:
+            await service.close()
+
+    attempts = _run(_case())
+
+    assert [item["semantic_purpose"] for item in attempts] == ["entry", "entry"]
+    assert [item["route_posture"] for item in attempts] == ["primary", "fallback"]
+    assert [item["attempt_posture"] for item in attempts] == ["initial", "initial"]
+    assert [item["outcome"] for item in attempts] == ["error", "ok"]
 
 
 def test_llm_module_emits_terminal_error_without_retry(temp_db: str) -> None:

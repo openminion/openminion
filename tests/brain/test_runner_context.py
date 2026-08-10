@@ -330,7 +330,7 @@ def test_decide_context_includes_current_datetime() -> None:
             "entry_text_answer_rule",
         ):
             assert str(style_overrides.get(key, "")).strip()
-        assert "filename, path, location, or target details" in str(
+        assert "no available tool or documented default can resolve it" in str(
             style_overrides.get("entry_clarify_rule", "")
         )
         assert "no blocking detail is missing" in str(

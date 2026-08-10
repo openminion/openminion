@@ -252,6 +252,11 @@ def _request_metadata(
         _maybe_set_string_metadata(metadata, key=key, value=manifest.get(key))
     if mode_name:
         metadata["mode_name"] = mode_name
+    _maybe_set_string_metadata(
+        metadata,
+        key="llm_call_id",
+        value=hints.get("_llm_call_id") or context.get("llm_call_id"),
+    )
 
     for metadata_key, hint_key in (
         ("thinking_requested_profile", "thinking_requested_profile"),

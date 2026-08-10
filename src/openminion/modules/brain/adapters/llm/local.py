@@ -465,7 +465,6 @@ def _clarify_tool_response(*, model: str, question: str) -> LLMResponse:
 def _clarify_question_for_tool(tool_name: str) -> str:
     return {
         "file.read": "What path should I read?",
-        "weather": "Which location should I check the weather for?",
     }.get(str(tool_name or "").strip().lower(), "")
 
 

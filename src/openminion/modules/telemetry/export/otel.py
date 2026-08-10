@@ -1,31 +1,33 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
-import json
 import logging
-import time
-from typing import Any, Protocol
+from typing import Any
 
 from openminion.base.config import OTELExporterConfig
 from ..schemas import TelemetryEvent
-from .performance_metrics import performance_metrics_for_event
+from .attributes import (
+    agent_span_name as _agent_span_name,
+    attributes_for_event as _attributes_for_event,
+    model_span_name as _model_span_name,
+    span_kind_for_event as _span_kind_for_event,
+    tool_span_name as _tool_span_name,
+)
+from .performance_metrics import (
+    generic_metric_projection,
+    performance_metrics_for_event,
+)
 from .queueing import NoncriticalExportQueue
+from .logs import log_projection_for_event
+from .sdk import (
+    ExportedOTELRecord,
+    OpenTelemetrySDKSink as _OpenTelemetrySDKSink,
+    OTELTraceSink,
+    RecordingOTELTraceSink,
+    create_otel_trace_sink,
+)
 
 _LOG = logging.getLogger(__name__)
-_PROSE_KEYS = frozenset(
-    {
-        "assistant_body",
-        "assistant_text",
-        "body",
-        "content",
-        "final_text",
-        "message",
-        "summary",
-        "text",
-        "user_message",
-    }
-)
 _TERMINAL_EVENT_PREFIXES = (
     "turn.assistant",
     "turn.tool",
@@ -37,9 +39,8 @@ _CLASS_SPAN = "span"
 _CLASS_METRIC = "metric"
 _CLASS_LOG = "log_record"
 _CLASS_EXCLUDED = "excluded"
-_KIND_COUNTER = "counter"
-_KIND_GAUGE = "gauge"
-_KIND_HISTOGRAM = "histogram"
+OTEL_SEMCONV_VERSION = "1.44.0"
+OTEL_GENAI_SEMCONV_COMMIT = "46d43c8949afb53765a202e89f4534eeb75ca3fa"
 
 _EVENT_CLASSIFICATION: dict[str, str] = {
     "storage.query": _CLASS_SPAN,
@@ -50,8 +51,7 @@ _EVENT_CLASSIFICATION: dict[str, str] = {
     "memory.soft_deleted.purged": _CLASS_METRIC,
     "llm.call.completed": _CLASS_SPAN,
     # LLM cache metrics — point-in-time hit/miss observation. Treat
-    # as gauge per the metric-kind table; operator may flip to counter via
-    # _METRIC_KIND_BY_EVENT if the source semantics shift.
+    # as a gauge; its source semantics are point-in-time rather than cumulative.
     "llm.cache.metrics": _CLASS_METRIC,
     "chat.phase_timing": _CLASS_SPAN,
     "module.stats": _CLASS_METRIC,
@@ -71,366 +71,53 @@ _PAIRED_SPAN_CLASSES: dict[str, tuple[str, tuple[str, ...], str]] = {
         "llm.call",
     ),
     "rlm.tick.started": ("rlm.tick.completed", ("tick_id", "tick_index"), "rlm.tick"),
+    "tool.execution.started": (
+        "tool.execution.completed",
+        ("tool_call_id", "call_id"),
+        "execute_tool",
+    ),
+    "agent.execution.started": (
+        "agent.execution.completed",
+        ("execution_id",),
+        "invoke_agent",
+    ),
+    "agent.turn.started": (
+        "agent.turn.completed",
+        ("turn_operation_id", "turn_id"),
+        "openminion.turn",
+    ),
+    "agent.phase.started": (
+        "agent.phase.completed",
+        ("phase_id",),
+        "openminion.phase",
+    ),
+    "agent.handoff.started": (
+        "agent.handoff.completed",
+        ("handoff_id",),
+        "invoke_agent",
+    ),
 }
 _PAIRED_COMPLETION_EVENTS: dict[str, tuple[str, tuple[str, ...]]] = {
     completion: (start, pairing_keys)
     for start, (completion, pairing_keys, _) in _PAIRED_SPAN_CLASSES.items()
 }
-
-
-class OTELTraceSink(Protocol):
-    def emit_span(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        span_name: str,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-        end_timestamp_ns: int | None = None,
-    ) -> None: ...
-
-    def emit_event(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        event_name: str,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-        terminal: bool,
-    ) -> None: ...
-
-    def emit_metric(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        metric_name: str,
-        metric_kind: str,
-        value: float,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-    ) -> None: ...
-
-    def close(self) -> None: ...
-
-
-@dataclass(frozen=True)
-class ExportedOTELRecord:
-    kind: str
-    trace_key: str
-    session_id: str
-    turn_id: str
-    name: str
-    attributes: dict[str, Any]
-    timestamp_ns: int
-    terminal: bool = False
-    end_timestamp_ns: int | None = None
-    metric_kind: str = ""
-    metric_value: float = 0.0
-
-
-class RecordingOTELTraceSink:
-    """Test sink that records transformed spans/events without SDK deps."""
-
-    def __init__(self) -> None:
-        self.records: list[ExportedOTELRecord] = []
-
-    def emit_span(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        span_name: str,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-        end_timestamp_ns: int | None = None,
-    ) -> None:
-        self.records.append(
-            ExportedOTELRecord(
-                kind="span",
-                trace_key=trace_key,
-                session_id=session_id,
-                turn_id=turn_id,
-                name=span_name,
-                attributes=dict(attributes),
-                timestamp_ns=timestamp_ns,
-                end_timestamp_ns=end_timestamp_ns,
-            )
-        )
-
-    def emit_event(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        event_name: str,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-        terminal: bool,
-    ) -> None:
-        self.records.append(
-            ExportedOTELRecord(
-                kind="event",
-                trace_key=trace_key,
-                session_id=session_id,
-                turn_id=turn_id,
-                name=event_name,
-                attributes=dict(attributes),
-                timestamp_ns=timestamp_ns,
-                terminal=terminal,
-            )
-        )
-
-    def emit_metric(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        metric_name: str,
-        metric_kind: str,
-        value: float,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-    ) -> None:
-        self.records.append(
-            ExportedOTELRecord(
-                kind="metric",
-                trace_key=trace_key,
-                session_id=session_id,
-                turn_id=turn_id,
-                name=metric_name,
-                attributes=dict(attributes),
-                timestamp_ns=timestamp_ns,
-                metric_kind=metric_kind,
-                metric_value=float(value),
-            )
-        )
-
-    def close(self) -> None:
-        return
-
-
-class _OpenTelemetrySDKSink:
-    def __init__(
-        self,
-        *,
-        tracer: Any,
-        trace_provider: Any,
-        meter: Any | None = None,
-        metric_provider: Any | None = None,
-    ) -> None:
-        self._tracer = tracer
-        self._trace_provider = trace_provider
-        self._meter = meter
-        self._metric_provider = metric_provider
-        self._root_spans: dict[str, Any] = {}
-        self._metric_instruments: dict[tuple[str, str], Any] = {}
-        self._gauge_values: dict[tuple[str, tuple[tuple[str, Any], ...]], float] = {}
-
-    def emit_span(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        span_name: str,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-        end_timestamp_ns: int | None = None,
-    ) -> None:
-        from opentelemetry.trace import set_span_in_context
-
-        parent = self._ensure_root_span(
-            trace_key=trace_key,
-            session_id=session_id,
-            turn_id=turn_id,
-            timestamp_ns=timestamp_ns,
-        )
-        child = self._tracer.start_span(
-            span_name,
-            context=set_span_in_context(parent),
-            start_time=timestamp_ns,
-        )
-        for key, value in attributes.items():
-            child.set_attribute(key, value)
-        child.end(
-            end_time=end_timestamp_ns if end_timestamp_ns is not None else timestamp_ns
-        )
-
-    def emit_metric(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        metric_name: str,
-        metric_kind: str,
-        value: float,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-    ) -> None:
-        if self._meter is None:
-            return
-        instrument = self._metric_instrument(metric_name, metric_kind)
-        clean_attributes = dict(attributes)
-        if metric_kind == _KIND_HISTOGRAM:
-            instrument.record(float(value), clean_attributes)
-            return
-        if metric_kind == _KIND_COUNTER:
-            instrument.add(max(0.0, float(value)), clean_attributes)
-            return
-        if hasattr(instrument, "set"):
-            instrument.set(float(value), clean_attributes)
-            return
-        gauge_key = (
-            metric_name,
-            tuple(sorted((str(key), value) for key, value in clean_attributes.items())),
-        )
-        previous = self._gauge_values.get(gauge_key, 0.0)
-        current = float(value)
-        instrument.add(current - previous, clean_attributes)
-        self._gauge_values[gauge_key] = current
-
-    def emit_event(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        event_name: str,
-        attributes: dict[str, Any],
-        timestamp_ns: int,
-        terminal: bool,
-    ) -> None:
-        root = self._ensure_root_span(
-            trace_key=trace_key,
-            session_id=session_id,
-            turn_id=turn_id,
-            timestamp_ns=timestamp_ns,
-        )
-        root.add_event(event_name, attributes=attributes, timestamp=timestamp_ns)
-        if terminal:
-            root.end(end_time=timestamp_ns)
-            self._root_spans.pop(trace_key, None)
-
-    def close(self) -> None:
-        for trace_key, span in list(self._root_spans.items()):
-            try:
-                span.end(end_time=time.time_ns())
-            except Exception:  # noqa: BLE001
-                pass
-            self._root_spans.pop(trace_key, None)
-        self._trace_provider.force_flush()
-        self._trace_provider.shutdown()
-        if self._metric_provider is not None:
-            self._metric_provider.force_flush()
-            self._metric_provider.shutdown()
-
-    def _ensure_root_span(
-        self,
-        *,
-        trace_key: str,
-        session_id: str,
-        turn_id: str,
-        timestamp_ns: int,
-    ) -> Any:
-        root = self._root_spans.get(trace_key)
-        if root is not None:
-            return root
-        root = self._tracer.start_span(
-            "openminion.turn",
-            start_time=timestamp_ns,
-            attributes={
-                "openminion.trace_key": trace_key,
-                "openminion.session_id": session_id,
-                "openminion.turn_id": turn_id,
-            },
-        )
-        self._root_spans[trace_key] = root
-        return root
-
-    def _metric_instrument(self, metric_name: str, metric_kind: str) -> Any:
-        key = (metric_name, metric_kind)
-        instrument = self._metric_instruments.get(key)
-        if instrument is not None:
-            return instrument
-        assert self._meter is not None
-        if metric_kind == _KIND_HISTOGRAM:
-            instrument = self._meter.create_histogram(metric_name, unit="1")
-        elif metric_kind == _KIND_COUNTER:
-            instrument = self._meter.create_counter(metric_name, unit="1")
-        elif hasattr(self._meter, "create_gauge"):
-            instrument = self._meter.create_gauge(metric_name, unit="1")
-        else:
-            instrument = self._meter.create_up_down_counter(metric_name, unit="1")
-        self._metric_instruments[key] = instrument
-        return instrument
-
-
-def create_otel_trace_sink(
-    config: OTELExporterConfig,
-    *,
-    logger: logging.Logger | None = None,
-) -> OTELTraceSink | None:
-    if not bool(config.enabled):
-        return None
-    endpoint = str(config.endpoint or "").strip()
-    if not endpoint:
-        return None
-    log = logger or _LOG
-    try:
-        if str(config.protocol or "").strip().lower() == "grpc":
-            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-                OTLPSpanExporter,
-            )
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
-                OTLPMetricExporter,
-            )
-        else:
-            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-                OTLPSpanExporter,
-            )
-            from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
-                OTLPMetricExporter,
-            )
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.metrics import MeterProvider
-        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    except Exception as exc:  # noqa: BLE001
-        log.warning("OpenTelemetry SDK unavailable; OTLP export disabled: %s", exc)
-        return None
-
-    resource = Resource.create(
-        {"service.name": str(config.service_name or "openminion")}
-    )
-    trace_provider = TracerProvider(resource=resource)
-    headers = dict(getattr(config, "headers", {}) or {})
-    exporter_kwargs: dict[str, Any] = {"endpoint": endpoint}
-    if headers:
-        exporter_kwargs["headers"] = headers
-    trace_provider.add_span_processor(
-        BatchSpanProcessor(OTLPSpanExporter(**exporter_kwargs))
-    )
-    metric_reader = PeriodicExportingMetricReader(OTLPMetricExporter(**exporter_kwargs))
-    metric_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-    tracer = trace_provider.get_tracer("openminion.telemetry.otel")
-    meter = metric_provider.get_meter("openminion.telemetry.performance")
-    return _OpenTelemetrySDKSink(
-        tracer=tracer,
-        trace_provider=trace_provider,
-        meter=meter,
-        metric_provider=metric_provider,
-    )
+_PAIRED_COMPLETION_EVENTS["llm.call.failed"] = (
+    "llm.call.started",
+    ("llm_call_id", "call_id", "request_id"),
+)
+_PAIRED_COMPLETION_EVENTS["tool.execution.failed"] = (
+    "tool.execution.started",
+    ("tool_call_id", "call_id"),
+)
+for _terminal, _started, _keys in (
+    ("agent.execution.paused", "agent.execution.started", ("execution_id",)),
+    ("agent.execution.failed", "agent.execution.started", ("execution_id",)),
+    ("agent.execution.cancelled", "agent.execution.started", ("execution_id",)),
+    ("agent.turn.failed", "agent.turn.started", ("turn_operation_id", "turn_id")),
+    ("agent.phase.failed", "agent.phase.started", ("phase_id",)),
+    ("agent.handoff.failed", "agent.handoff.started", ("handoff_id",)),
+):
+    _PAIRED_COMPLETION_EVENTS[_terminal] = (_started, _keys)
 
 
 class OpenTelemetryTraceExporter:
@@ -452,6 +139,9 @@ class OpenTelemetryTraceExporter:
                 logger=self._logger,
             )
         self._pending_paired_spans: dict[str, dict[str, Any]] = {}
+        self._deferred_spans: dict[str, list[dict[str, Any]]] = {}
+        self._deferred_events: dict[str, list[dict[str, Any]]] = {}
+        self._deferred_logs: dict[str, list[dict[str, Any]]] = {}
         self._export_queue = (
             NoncriticalExportQueue(
                 capacity=int(
@@ -497,6 +187,11 @@ class OpenTelemetryTraceExporter:
             }
         return self._export_queue.stats()
 
+    def delete_pending_invocation(self, invocation_id: str) -> int:
+        if self._export_queue is None:
+            return 0
+        return self._export_queue.delete_pending_invocation(invocation_id)
+
     def _export_now(
         self,
         event: TelemetryEvent,
@@ -522,6 +217,12 @@ class OpenTelemetryTraceExporter:
                     timestamp_ns=timestamp_ns,
                     trace_key=trace_key,
                 )
+                self._emit_log_projection(
+                    event=event,
+                    attributes=attributes,
+                    timestamp_ns=timestamp_ns,
+                    trace_key=trace_key,
+                )
                 return True
             if event_type in _PAIRED_COMPLETION_EVENTS:
                 if self._emit_paired_completion(
@@ -531,50 +232,37 @@ class OpenTelemetryTraceExporter:
                     timestamp_ns=timestamp_ns,
                     trace_key=trace_key,
                 ):
+                    self._emit_log_projection(
+                        event=event,
+                        attributes=attributes,
+                        timestamp_ns=timestamp_ns,
+                        trace_key=trace_key,
+                    )
+                    self._emit_performance_metrics(
+                        event=event,
+                        timestamp_ns=timestamp_ns,
+                        trace_key=trace_key,
+                    )
                     return True
-            classification = _EVENT_CLASSIFICATION.get(event_type)
-            if classification is None and event_type.startswith("tool."):
-                classification = _CLASS_SPAN
-            if classification == _CLASS_SPAN:
-                self._sink.emit_span(
-                    trace_key=trace_key,
-                    session_id=event.session_id,
-                    turn_id=event.turn_id,
-                    span_name=event_type or "openminion.event",
-                    attributes=attributes,
-                    timestamp_ns=timestamp_ns,
-                )
+            if self._emit_log_projection(
+                event=event,
+                attributes=attributes,
+                timestamp_ns=timestamp_ns,
+                trace_key=trace_key,
+            ):
                 self._emit_performance_metrics(
                     event=event,
                     timestamp_ns=timestamp_ns,
                     trace_key=trace_key,
                 )
-            elif classification == _CLASS_METRIC:
-                self._sink.emit_metric(
-                    trace_key=trace_key,
-                    session_id=event.session_id,
-                    turn_id=event.turn_id,
-                    metric_name=event_type or "openminion.event",
-                    metric_kind=_metric_kind_for_event(event_type),
-                    value=_metric_value_for_event(event),
-                    attributes=attributes,
-                    timestamp_ns=timestamp_ns,
-                )
-                self._emit_performance_metrics(
-                    event=event,
-                    timestamp_ns=timestamp_ns,
-                    trace_key=trace_key,
-                )
-            else:
-                self._sink.emit_event(
-                    trace_key=trace_key,
-                    session_id=event.session_id,
-                    turn_id=event.turn_id,
-                    event_name=event_type or "event",
-                    attributes=attributes,
-                    timestamp_ns=timestamp_ns,
-                    terminal=_is_terminal_event(event.event_type),
-                )
+                return True
+            self._emit_classified_projection(
+                event=event,
+                event_type=event_type,
+                trace_key=trace_key,
+                timestamp_ns=timestamp_ns,
+                attributes=attributes,
+            )
             return True
         except Exception as exc:  # noqa: BLE001
             self._logger.warning(
@@ -583,6 +271,150 @@ class OpenTelemetryTraceExporter:
                 exc,
             )
             return False
+
+    def _emit_classified_projection(
+        self,
+        *,
+        event: TelemetryEvent,
+        event_type: str,
+        trace_key: str,
+        timestamp_ns: int,
+        attributes: dict[str, Any],
+    ) -> None:
+        assert self._sink is not None
+        classification = _EVENT_CLASSIFICATION.get(event_type)
+        if classification is None and event_type.startswith("tool."):
+            classification = _CLASS_SPAN
+        if classification == _CLASS_SPAN:
+            self._emit_or_defer_span(
+                event=event,
+                trace_key=trace_key,
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                span_name=event_type or "openminion.event",
+                attributes=attributes,
+                timestamp_ns=timestamp_ns,
+                span_key=f"event:{event_type}:{timestamp_ns}",
+                parent_span_key=_parent_span_key_for_event(event),
+            )
+        elif classification == _CLASS_METRIC:
+            metric_kind, unit, value = generic_metric_projection(event)
+            self._sink.emit_metric(
+                trace_key=trace_key,
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                metric_name=event_type or "openminion.event",
+                metric_kind=metric_kind,
+                unit=unit,
+                value=value,
+                attributes=attributes,
+                timestamp_ns=timestamp_ns,
+            )
+        else:
+            self._emit_or_defer_event(
+                event=event,
+                trace_key=trace_key,
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                event_name=event_type or "event",
+                attributes=attributes,
+                timestamp_ns=timestamp_ns,
+                terminal=_is_terminal_event(event.event_type),
+                parent_span_key=_parent_span_key_for_event(event),
+            )
+        self._emit_performance_metrics(
+            event=event,
+            timestamp_ns=timestamp_ns,
+            trace_key=trace_key,
+        )
+
+    def _emit_log_projection(
+        self,
+        *,
+        event: TelemetryEvent,
+        attributes: dict[str, Any],
+        timestamp_ns: int,
+        trace_key: str,
+    ) -> bool:
+        if self._sink is None:
+            return False
+        projection = log_projection_for_event(event, attributes=attributes)
+        if projection is None:
+            return False
+        self._emit_or_defer_log(
+            event=event,
+            trace_key=trace_key,
+            session_id=event.session_id,
+            turn_id=event.turn_id,
+            record_type=projection.record_type,
+            event_name=projection.event_name,
+            severity=projection.severity,
+            body=projection.body,
+            attributes=projection.attributes,
+            timestamp_ns=timestamp_ns,
+            parent_span_key=_parent_span_key_for_event(event),
+        )
+        return True
+
+    def _pending_execution_id(self, event: TelemetryEvent) -> str:
+        execution_id = str(
+            event.execution_id or (event.data or {}).get("execution_id") or ""
+        )
+        if not execution_id:
+            return ""
+        slot = f"agent.execution.started:{execution_id}"
+        return execution_id if slot in self._pending_paired_spans else ""
+
+    def _emit_or_defer_span(
+        self,
+        *,
+        event: TelemetryEvent,
+        execution_id: str = "",
+        **span: Any,
+    ) -> None:
+        pending_execution_id = execution_id or self._pending_execution_id(event)
+        if pending_execution_id:
+            self._deferred_spans.setdefault(pending_execution_id, []).append(span)
+            return
+        assert self._sink is not None
+        self._sink.emit_span(**span)
+
+    def _emit_or_defer_event(
+        self,
+        *,
+        event: TelemetryEvent,
+        **record: Any,
+    ) -> None:
+        execution_id = self._pending_execution_id(event)
+        if execution_id:
+            self._deferred_events.setdefault(execution_id, []).append(record)
+            return
+        assert self._sink is not None
+        self._sink.emit_event(**record)
+
+    def _emit_or_defer_log(
+        self,
+        *,
+        event: TelemetryEvent,
+        **record: Any,
+    ) -> None:
+        execution_id = self._pending_execution_id(event)
+        if execution_id:
+            self._deferred_logs.setdefault(execution_id, []).append(record)
+            return
+        assert self._sink is not None
+        self._sink.emit_log(**record)
+
+    def _flush_execution(self, execution_id: str) -> None:
+        assert self._sink is not None
+        spans = self._deferred_spans.pop(execution_id, [])
+        spans.sort(key=lambda item: _span_depth(str(item.get("span_key") or "")))
+        for span in spans:
+            self._sink.emit_span(**span)
+        for record in self._deferred_events.pop(execution_id, []):
+            self._sink.emit_event(**record)
+        for record in self._deferred_logs.pop(execution_id, []):
+            self._sink.emit_log(**record)
 
     def _emit_performance_metrics(
         self,
@@ -600,6 +432,7 @@ class OpenTelemetryTraceExporter:
                 turn_id=event.turn_id,
                 metric_name=metric["name"],
                 metric_kind=metric["kind"],
+                unit=str(metric["unit"]),
                 value=float(metric["value"]),
                 attributes=dict(metric["attributes"]),
                 timestamp_ns=timestamp_ns,
@@ -619,7 +452,8 @@ class OpenTelemetryTraceExporter:
         if not pairing_id:
             # No pairing key — fall back to a log record at the sink so the
             # signal is not silently lost.
-            self._sink.emit_event(  # type: ignore[union-attr]
+            self._emit_or_defer_event(
+                event=event,
                 trace_key=trace_key,
                 session_id=event.session_id,
                 turn_id=event.turn_id,
@@ -627,9 +461,11 @@ class OpenTelemetryTraceExporter:
                 attributes=attributes,
                 timestamp_ns=timestamp_ns,
                 terminal=False,
+                parent_span_key=_parent_span_key_for_event(event),
             )
             return
         slot = f"{event_type}:{pairing_id}"
+        span_key, parent_span_key = _span_keys(event_type, event, pairing_id)
         if (
             slot not in self._pending_paired_spans
             and len(self._pending_paired_spans) >= self._MAX_PENDING_PAIRED_SPANS
@@ -643,6 +479,21 @@ class OpenTelemetryTraceExporter:
             "turn_id": event.turn_id,
             "attributes": dict(attributes),
             "start_timestamp_ns": timestamp_ns,
+            "span_name": (
+                _model_span_name(event)
+                if event_type == "llm.call.started"
+                else _tool_span_name(event)
+                if event_type == "tool.execution.started"
+                else _agent_span_name(event)
+                if event_type.startswith("agent.")
+                else _PAIRED_SPAN_CLASSES[event_type][2]
+            ),
+            "span_kind": _span_kind_for_event(event),
+            "parent_traceparent": str((event.data or {}).get("traceparent") or ""),
+            "tracestate": str((event.data or {}).get("tracestate") or ""),
+            "span_links": tuple((event.data or {}).get("span_links") or ()),
+            "span_key": span_key,
+            "parent_span_key": parent_span_key,
         }
 
     def _emit_paired_completion(
@@ -664,16 +515,34 @@ class OpenTelemetryTraceExporter:
             return False
         merged_attributes = dict(pending["attributes"])
         merged_attributes.update(attributes)
-        span_name = _PAIRED_SPAN_CLASSES[start_event_type][2]
-        self._sink.emit_span(  # type: ignore[union-attr]
-            trace_key=trace_key,
-            session_id=event.session_id,
-            turn_id=event.turn_id,
-            span_name=span_name,
-            attributes=merged_attributes,
-            timestamp_ns=int(pending["start_timestamp_ns"]),
-            end_timestamp_ns=timestamp_ns,
+        span_name = str(pending["span_name"])
+        span: dict[str, Any] = {
+            "trace_key": trace_key,
+            "session_id": event.session_id,
+            "turn_id": event.turn_id,
+            "span_name": span_name,
+            "attributes": merged_attributes,
+            "timestamp_ns": int(pending["start_timestamp_ns"]),
+            "end_timestamp_ns": timestamp_ns,
+            "span_kind": str(pending["span_kind"]),
+            "parent_traceparent": str(pending["parent_traceparent"]),
+            "tracestate": str(pending["tracestate"]),
+            "span_links": tuple(pending["span_links"]),
+            "span_key": str(pending["span_key"]),
+            "parent_span_key": str(pending["parent_span_key"]),
+        }
+        execution_id = str(
+            event.execution_id or (event.data or {}).get("execution_id") or ""
         )
+        if start_event_type == "agent.execution.started":
+            self._sink.emit_span(**span)  # type: ignore[union-attr]
+            if execution_id:
+                self._flush_execution(execution_id)
+        else:
+            self._emit_or_defer_span(
+                event=event,
+                **span,
+            )
         return True
 
     def close(self) -> None:
@@ -689,210 +558,68 @@ class OpenTelemetryTraceExporter:
             self._sink = None
             self._export_queue = None
             self._pending_paired_spans.clear()
+            self._deferred_spans.clear()
+            self._deferred_events.clear()
+            self._deferred_logs.clear()
 
 
-def _attributes_for_event(
+def _execution_span_key(event: TelemetryEvent) -> str:
+    execution_id = str(
+        event.execution_id or (event.data or {}).get("execution_id") or ""
+    )
+    return f"execution:{execution_id}" if execution_id else ""
+
+
+def _turn_span_key(event: TelemetryEvent) -> str:
+    execution_id = str(
+        event.execution_id or (event.data or {}).get("execution_id") or ""
+    )
+    turn_id = str(event.turn_id or "")
+    return f"turn:{execution_id}:{turn_id}" if execution_id and turn_id else ""
+
+
+def _span_keys(
+    start_event_type: str,
     event: TelemetryEvent,
-    *,
-    include_assistant_body: bool,
-) -> dict[str, Any]:
-    flattened: dict[str, Any] = {
-        "openminion.event_type": str(event.event_type or ""),
-        "openminion.session_id": str(event.session_id or ""),
-        "openminion.turn_id": str(event.turn_id or ""),
-    }
-    if event.mode:
-        flattened["openminion.mode"] = str(event.mode)
-    _flatten_payload(
-        event.data,
-        prefix="openminion.payload",
-        out=flattened,
-        include_assistant_body=include_assistant_body,
-    )
-    flattened.update(_gen_ai_attributes_for_event(event))
-    return flattened
+    pairing_id: str,
+) -> tuple[str, str]:
+    if start_event_type == "agent.execution.started":
+        return _execution_span_key(event), ""
+    if start_event_type == "agent.turn.started":
+        return _turn_span_key(event), _execution_span_key(event)
+    if start_event_type == "agent.phase.started":
+        return f"phase:{pairing_id}", _turn_span_key(event)
+    if start_event_type == "llm.call.started":
+        return f"llm:{pairing_id}", _turn_span_key(event)
+    if start_event_type == "tool.execution.started":
+        return f"tool:{pairing_id}", _turn_span_key(event)
+    if start_event_type == "agent.handoff.started":
+        return f"handoff:{pairing_id}", _turn_span_key(event)
+    return f"operation:{start_event_type}:{pairing_id}", _turn_span_key(event)
 
 
-_GEN_AI_LLM_EVENT_TYPES = frozenset(
-    {
-        "llm.call.started",
-        "llm.call.completed",
-        "llm.request.started",
-        "llm.ensemble.completed",
-        "llm.candidate.finished",
-        "llm.judge.completed",
-        "llm_call",
-    }
-)
-_GEN_AI_INPUT_TOKEN_KEYS = ("input_tokens", "prompt_tokens")
-_GEN_AI_OUTPUT_TOKEN_KEYS = ("output_tokens", "completion_tokens")
-
-
-def _gen_ai_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
-    """Return OTel GenAI semantic attributes for LLM telemetry events."""
-
-    event_type = str(event.event_type or "").strip()
-    if event_type not in _GEN_AI_LLM_EVENT_TYPES:
-        return {}
-
+def _parent_span_key_for_event(event: TelemetryEvent) -> str:
+    event_type = str(event.event_type or "")
     payload = event.data if isinstance(event.data, dict) else {}
-    attributes: dict[str, Any] = {
-        "gen_ai.operation.name": "chat",
-    }
-
-    model = payload.get("model") or payload.get("model_id")
-    if model:
-        attributes["gen_ai.request.model"] = str(model)
-
-    provider = (
-        payload.get("provider") or payload.get("provider_name") or payload.get("vendor")
-    )
-    if provider:
-        attributes["gen_ai.system"] = str(provider)
-    elif model:
-        attributes["gen_ai.system"] = _infer_gen_ai_system_from_model(str(model))
-
-    usage = payload.get("usage")
-    if isinstance(usage, dict):
-        input_tokens = _first_int(usage, _GEN_AI_INPUT_TOKEN_KEYS)
-        if input_tokens is not None:
-            attributes["gen_ai.usage.input_tokens"] = input_tokens
-        output_tokens = _first_int(usage, _GEN_AI_OUTPUT_TOKEN_KEYS)
-        if output_tokens is not None:
-            attributes["gen_ai.usage.output_tokens"] = output_tokens
-
-    response_id = (
-        payload.get("response_id")
-        or payload.get("llm_call_id")
-        or payload.get("request_id")
-    )
-    if response_id:
-        attributes["gen_ai.response.id"] = str(response_id)
-
-    finish_reason = payload.get("finish_reason") or payload.get("stop_reason")
-    if finish_reason:
-        attributes["gen_ai.response.finish_reasons"] = json.dumps(
-            [str(finish_reason)],
-            ensure_ascii=True,
-            separators=(",", ":"),
+    if event_type.startswith("tool.execution."):
+        pairing_id = _resolve_pairing_id(event, ("tool_call_id", "call_id"))
+        return f"tool:{pairing_id}" if pairing_id else _turn_span_key(event)
+    if event_type.startswith("llm.call."):
+        pairing_id = _resolve_pairing_id(
+            event,
+            ("llm_call_id", "call_id", "request_id"),
         )
-
-    return attributes
-
-
-def _infer_gen_ai_system_from_model(model: str) -> str:
-    """Best-effort provider name inference from a model id.
-
-    Used when telemetry payloads carry the model but not an explicit provider.
-    Returns ``"openminion"`` as the fallback so the attribute is always set on
-    LLM events (per the OTel spec recommendation).
-    """
-
-    lower = model.lower()
-    if lower.startswith("claude") or lower.startswith("anthropic"):
-        return "anthropic"
-    if lower.startswith("gpt") or lower.startswith("o1") or "openai" in lower:
-        return "openai"
-    if lower.startswith("gemini") or "google" in lower:
-        return "google"
-    if "llama" in lower:
-        return "meta"
-    if "mistral" in lower:
-        return "mistral"
-    if "groq" in lower:
-        return "groq"
-    if "cerebras" in lower:
-        return "cerebras"
-    if "ollama" in lower:
-        return "ollama"
-    return "openminion"
+        return f"llm:{pairing_id}" if pairing_id else _turn_span_key(event)
+    if event_type.startswith("agent.handoff."):
+        pairing_id = str(payload.get("handoff_id") or "")
+        return f"handoff:{pairing_id}" if pairing_id else _turn_span_key(event)
+    if event_type.startswith("agent.execution."):
+        return _execution_span_key(event)
+    return _turn_span_key(event) or _execution_span_key(event)
 
 
-def _first_int(source: dict[str, Any], keys: tuple[str, ...]) -> int | None:
-    for key in keys:
-        value = source.get(key)
-        if value is None:
-            continue
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            continue
-    return None
-
-
-def _flatten_payload(
-    value: Any,
-    *,
-    prefix: str,
-    out: dict[str, Any],
-    include_assistant_body: bool,
-) -> None:
-    key_name = prefix.rsplit(".", 1)[-1].lower()
-    if isinstance(value, dict):
-        for key, item in value.items():
-            clean_key = str(key or "").strip()
-            if not clean_key:
-                continue
-            _flatten_payload(
-                item,
-                prefix=f"{prefix}.{clean_key}",
-                out=out,
-                include_assistant_body=include_assistant_body,
-            )
-        return
-    if isinstance(value, (list, tuple)):
-        if not include_assistant_body and key_name in _PROSE_KEYS:
-            return
-        out[prefix] = json.dumps(
-            _normalize_otel_json_value(
-                list(value),
-                include_assistant_body=include_assistant_body,
-            ),
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        return
-    if isinstance(value, bool | int | float):
-        out[prefix] = value
-        return
-    if value is None:
-        return
-    text = str(value)
-    if not include_assistant_body and key_name in _PROSE_KEYS:
-        return
-    out[prefix] = text
-
-
-def _normalize_otel_json_value(
-    value: Any,
-    *,
-    include_assistant_body: bool,
-) -> Any:
-    if isinstance(value, dict):
-        normalized: dict[str, Any] = {}
-        for key, item in value.items():
-            clean_key = str(key or "").strip()
-            if not clean_key:
-                continue
-            if not include_assistant_body and clean_key.lower() in _PROSE_KEYS:
-                continue
-            normalized[clean_key] = _normalize_otel_json_value(
-                item,
-                include_assistant_body=include_assistant_body,
-            )
-        return normalized
-    if isinstance(value, (list, tuple)):
-        return [
-            _normalize_otel_json_value(
-                item,
-                include_assistant_body=include_assistant_body,
-            )
-            for item in value
-        ]
-    if isinstance(value, bool | int | float) or value is None:
-        return value
-    return str(value)
+def _span_depth(span_key: str) -> int:
+    return {"turn": 0, "phase": 1}.get(span_key.partition(":")[0], 2)
 
 
 def event_export_dispositions() -> dict[str, str]:
@@ -900,6 +627,9 @@ def event_export_dispositions() -> dict[str, str]:
 
 
 def _trace_key_for_event(event: TelemetryEvent) -> str:
+    trace_key = str(event.trace_key or "").strip()
+    if trace_key:
+        return trace_key
     payload = event.data if isinstance(event.data, dict) else {}
     for key in ("trace_id", "run_id", "request_id"):
         value = str(payload.get(key, "") or "").strip()
@@ -933,53 +663,13 @@ def _timestamp_ns(raw_timestamp: float) -> int:
     return max(1, int(float(raw_timestamp or 0.0) * 1_000_000_000))
 
 
-_METRIC_KIND_BY_EVENT: dict[str, str] = {
-    "storage.pool.stats": _KIND_GAUGE,
-    "memory.scope_capacity.evicted": _KIND_COUNTER,
-    "memory.soft_deleted.purged": _KIND_COUNTER,
-    "llm.cache.metrics": _KIND_GAUGE,
-    "module.stats": _KIND_GAUGE,
-    "tui.render": _KIND_HISTOGRAM,
-    "telemetry.queue.stats": _KIND_GAUGE,
-}
-
-
-def _metric_kind_for_event(event_type: str) -> str:
-    return _METRIC_KIND_BY_EVENT.get(event_type, "gauge")
-
-
-_METRIC_VALUE_KEYS: tuple[str, ...] = (
-    "value",
-    "count",
-    "delta",
-    "total",
-    "size",
-    "depth",
-    "active",
-    "pool_size",
-)
-
-
-def _metric_value_for_event(event: TelemetryEvent) -> float:
-    payload = event.data if isinstance(event.data, dict) else {}
-    for key in _METRIC_VALUE_KEYS:
-        candidate = payload.get(key)
-        if candidate is None:
-            continue
-        try:
-            return float(candidate)
-        except (TypeError, ValueError):
-            continue
-    return 1.0
-
-
 def _resolve_pairing_id(
     event: TelemetryEvent,
     pairing_keys: tuple[str, ...],
 ) -> str:
     payload = event.data if isinstance(event.data, dict) else {}
     for key in pairing_keys:
-        value = payload.get(key)
+        value = payload.get(key) or getattr(event, key, None)
         if value is None:
             continue
         text = str(value).strip()
@@ -989,6 +679,7 @@ def _resolve_pairing_id(
 
 
 __all__ = [
+    "_OpenTelemetrySDKSink",
     "ExportedOTELRecord",
     "OpenTelemetryTraceExporter",
     "OTELTraceSink",

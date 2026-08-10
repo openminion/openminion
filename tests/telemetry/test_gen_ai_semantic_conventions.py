@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from openminion.modules.telemetry.export.otel import _attributes_for_event
+from openminion.modules.telemetry.export.otel import (
+    OTEL_GENAI_SEMCONV_COMMIT,
+    OTEL_SEMCONV_VERSION,
+    _attributes_for_event,
+)
 from openminion.modules.telemetry.schemas import TelemetryEvent
 
 
@@ -30,7 +34,7 @@ def test_llm_call_completed_emits_gen_ai_attributes() -> None:
     )
     attrs = _attributes_for_event(event, include_assistant_body=False)
     assert attrs["gen_ai.operation.name"] == "chat"
-    assert attrs["gen_ai.system"] == "anthropic"
+    assert attrs["gen_ai.provider.name"] == "anthropic"
     assert attrs["gen_ai.request.model"] == "claude-opus-4-7"
     assert attrs["gen_ai.usage.input_tokens"] == 1234
     assert attrs["gen_ai.usage.output_tokens"] == 567
@@ -38,10 +42,10 @@ def test_llm_call_completed_emits_gen_ai_attributes() -> None:
     assert json.loads(attrs["gen_ai.response.finish_reasons"]) == ["end_turn"]
 
 
-def test_gen_ai_system_inferred_from_model_when_provider_missing() -> None:
+def test_provider_is_omitted_when_not_reported() -> None:
     event = _make_llm_event(payload={"model": "gpt-4o"})
     attrs = _attributes_for_event(event, include_assistant_body=False)
-    assert attrs["gen_ai.system"] == "openai"
+    assert "gen_ai.provider.name" not in attrs
 
 
 def test_gen_ai_prompt_completion_token_keys_supported() -> None:
@@ -71,7 +75,7 @@ def test_missing_usage_keys_omit_token_attributes_not_zero_fill() -> None:
     assert "gen_ai.usage.input_tokens" not in attrs
     assert "gen_ai.usage.output_tokens" not in attrs
     assert attrs["gen_ai.request.model"] == "claude-opus-4-7"
-    assert attrs["gen_ai.system"] == "anthropic"
+    assert "gen_ai.provider.name" not in attrs
 
 
 def test_negative_path_failed_llm_call_finish_reason_error() -> None:
@@ -83,3 +87,8 @@ def test_negative_path_failed_llm_call_finish_reason_error() -> None:
     )
     attrs = _attributes_for_event(event, include_assistant_body=False)
     assert json.loads(attrs["gen_ai.response.finish_reasons"]) == ["error"]
+
+
+def test_semantic_convention_targets_are_pinned() -> None:
+    assert OTEL_SEMCONV_VERSION == "1.44.0"
+    assert OTEL_GENAI_SEMCONV_COMMIT == "46d43c8949afb53765a202e89f4534eeb75ca3fa"

@@ -8,7 +8,10 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from pydantic import ValidationError
 
-from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
+from openminion.modules.telemetry.trace.phase_timing import (
+    active_chat_phase,
+    record_active_chat_provider_attempt,
+)
 
 from ..constants import (
     LLM_TOOL_CALL_STATUS_BLOCKED,
@@ -313,6 +316,159 @@ def _emit_operation(
     )
 
 
+def _request_semantic_purpose(request: LLMRequest) -> str:
+    metadata = dict(request.metadata or {})
+    return str(metadata.get("purpose", "") or "unknown").strip() or "unknown"
+
+
+def _request_logical_call_id(request: LLMRequest) -> str:
+    metadata = dict(request.metadata or {})
+    for key in ("llm_call_id", "trace_id", "request_id", "turn_id"):
+        value = str(metadata.get(key, "") or "").strip()
+        if value:
+            return value
+    return "unavailable"
+
+
+def _attempt_posture(*, attempt: int) -> str:
+    return "initial" if int(attempt or 1) <= 1 else "retry"
+
+
+def _provider_attempt_extra(
+    *, request: LLMRequest, attempt: int, route_posture: str
+) -> Dict[str, Any]:
+    return {
+        "logical_call_id": _request_logical_call_id(request),
+        "semantic_purpose": _request_semantic_purpose(request),
+        "route_posture": route_posture,
+        "attempt_posture": _attempt_posture(attempt=attempt),
+    }
+
+
+def _extra_with_latency(
+    extra: Dict[str, Any], *, response: LLMResponse
+) -> Dict[str, Any]:
+    return {**extra, "latency_ms": response.latency_ms}
+
+
+def _record_provider_attempt_result(
+    *,
+    attempt_extra: Dict[str, Any],
+    attempt: int,
+    provider_name: str,
+    model_name: str,
+    response: LLMResponse,
+    outcome: str,
+    error_code: str | None = None,
+) -> None:
+    record_active_chat_provider_attempt(
+        logical_call_id=str(attempt_extra["logical_call_id"]),
+        semantic_purpose=str(attempt_extra["semantic_purpose"]),
+        attempt=attempt,
+        provider=provider_name,
+        model=model_name,
+        route_posture=str(attempt_extra["route_posture"]),
+        attempt_posture=str(attempt_extra["attempt_posture"]),
+        latency_ms=response.latency_ms,
+        outcome=outcome,
+        error_code=error_code,
+    )
+
+
+def _provider_call_request_and_config(
+    client: Any,
+    *,
+    request: LLMRequest,
+    provider_name: str,
+    model_name: str,
+) -> Tuple[LLMRequest, Dict[str, Any]]:
+    with active_chat_phase("provider_request_build"):
+        call_request = request.model_copy(
+            update={"provider": provider_name, "model": model_name}
+        )
+        cfg = resolve_provider_config(client.llmctl.config, provider_name)
+        cfg["timeouts"] = client.llmctl.config.llmctl.timeouts.model_dump()
+    return call_request, cfg
+
+
+def _complete_provider_attempt(
+    client: Any,
+    *,
+    provider: Any,
+    call_request: LLMRequest,
+    cfg: Dict[str, Any],
+    provider_name: str,
+    model_name: str,
+) -> LLMResponse:
+    try:
+        with active_chat_phase("provider_round_trip"):
+            raw_resp = provider.complete(call_request, cfg)
+        with active_chat_phase("response_normalization"):
+            return client._normalize_response(
+                raw_resp,
+                provider_name,
+                model_name,
+                allowed_tool_names={
+                    str(getattr(tool, "name", "") or "").strip()
+                    for tool in call_request.tools or []
+                    if str(getattr(tool, "name", "") or "").strip()
+                },
+            )
+    except LLMCtlError as exc:
+        return client._error_response(
+            provider=provider_name,
+            model=model_name,
+            code=exc.code,
+            message=exc.message,
+            details=exc.details,
+        )
+    except Exception as exc:
+        return client._error_response(
+            provider=provider_name,
+            model=model_name,
+            code="PROVIDER_ERROR",
+            message=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def _emit_provider_success(
+    client: Any,
+    *,
+    call_request: LLMRequest,
+    attempt_extra: Dict[str, Any],
+    attempt: int,
+    provider_name: str,
+    model_name: str,
+    response: LLMResponse,
+) -> None:
+    _record_provider_attempt_result(
+        attempt_extra=attempt_extra,
+        attempt=attempt,
+        provider_name=provider_name,
+        model_name=model_name,
+        response=response,
+        outcome="ok",
+    )
+    client._emit_operation(
+        request=call_request,
+        operation="response",
+        provider_name=provider_name,
+        model_name=model_name,
+        attempt=attempt,
+        extra=_extra_with_latency(attempt_extra, response=response),
+    )
+    cache_hit = client._cache_hit_payload(response)
+    if cache_hit is not None:
+        client._emit_operation(
+            request=call_request,
+            operation="cache_hit",
+            provider_name=provider_name,
+            model_name=model_name,
+            attempt=attempt,
+            extra={**cache_hit, **attempt_extra},
+        )
+
+
 def _emit_tool_envelope_recovery(
     client: Any,
     *,
@@ -395,6 +551,7 @@ def _execute_with_routing(
         model_name,
         request,
         overrides,
+        route_posture="primary",
     )
     if response.ok or not routing:
         return response
@@ -408,6 +565,7 @@ def _execute_with_routing(
             fallback.model,
             request,
             overrides,
+            route_posture="fallback",
         )
         if response.ok:
             return response
@@ -423,6 +581,8 @@ def _call_with_retries(
     model_name: str,
     request: LLMRequest,
     overrides: Dict[str, Any],
+    *,
+    route_posture: str = "primary",
 ) -> LLMResponse:
     max_retries, backoff_ms = client._retry_config(overrides)
     last_response: Optional[LLMResponse] = None
@@ -439,79 +599,66 @@ def _call_with_retries(
                 message=f"Unknown provider: {provider_name}",
             )
 
-        with active_chat_phase("provider_request_build"):
-            call_request = request.model_copy(
-                update={"provider": provider_name, "model": model_name}
-            )
-            cfg = resolve_provider_config(client.llmctl.config, provider_name)
-            cfg["timeouts"] = client.llmctl.config.llmctl.timeouts.model_dump()
+        call_request, cfg = _provider_call_request_and_config(
+            client,
+            request=request,
+            provider_name=provider_name,
+            model_name=model_name,
+        )
+
+        attempt_number = attempt + 1
+        attempt_extra = _provider_attempt_extra(
+            request=request,
+            attempt=attempt_number,
+            route_posture=route_posture,
+        )
 
         client._emit_operation(
             request=call_request,
             operation="request",
             provider_name=provider_name,
             model_name=model_name,
-            attempt=attempt + 1,
+            attempt=attempt_number,
+            extra=attempt_extra,
         )
 
-        try:
-            with active_chat_phase("provider_round_trip"):
-                raw_resp = provider.complete(call_request, cfg)
-            with active_chat_phase("response_normalization"):
-                response = client._normalize_response(
-                    raw_resp,
-                    provider_name,
-                    model_name,
-                    allowed_tool_names={
-                        str(getattr(tool, "name", "") or "").strip()
-                        for tool in call_request.tools or []
-                        if str(getattr(tool, "name", "") or "").strip()
-                    },
-                )
-        except LLMCtlError as exc:
-            response = client._error_response(
-                provider=provider_name,
-                model=model_name,
-                code=exc.code,
-                message=exc.message,
-                details=exc.details,
-            )
-        except Exception as exc:
-            response = client._error_response(
-                provider=provider_name,
-                model=model_name,
-                code="PROVIDER_ERROR",
-                message=f"{type(exc).__name__}: {exc}",
-            )
+        response = _complete_provider_attempt(
+            client,
+            provider=provider,
+            call_request=call_request,
+            cfg=cfg,
+            provider_name=provider_name,
+            model_name=model_name,
+        )
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         if response.latency_ms <= 0:
             response = response.model_copy(update={"latency_ms": elapsed_ms})
 
         if response.ok:
-            client._emit_operation(
-                request=call_request,
-                operation="response",
+            _emit_provider_success(
+                client,
+                call_request=call_request,
+                attempt_extra=attempt_extra,
+                attempt=attempt_number,
                 provider_name=provider_name,
                 model_name=model_name,
-                attempt=attempt + 1,
-                extra={"latency_ms": response.latency_ms},
+                response=response,
             )
-            cache_hit = client._cache_hit_payload(response)
-            if cache_hit is not None:
-                client._emit_operation(
-                    request=call_request,
-                    operation="cache_hit",
-                    provider_name=provider_name,
-                    model_name=model_name,
-                    attempt=attempt + 1,
-                    extra=cache_hit,
-                )
             return response
 
         last_response = response
         err_code = (
             response.error.code if response.error is not None else "PROVIDER_ERROR"
+        )
+        _record_provider_attempt_result(
+            attempt_extra=attempt_extra,
+            attempt=attempt_number,
+            provider_name=provider_name,
+            model_name=model_name,
+            response=response,
+            outcome="error",
+            error_code=err_code,
         )
         client._emit_operation(
             request=call_request,
@@ -519,9 +666,9 @@ def _call_with_retries(
             provider_name=provider_name,
             model_name=model_name,
             status="error",
-            attempt=attempt + 1,
+            attempt=attempt_number,
             error_code=err_code,
-            extra={"latency_ms": response.latency_ms},
+            extra=_extra_with_latency(attempt_extra, response=response),
         )
         if err_code in RETRYABLE_CODES and attempt < max_retries:
             client._emit_operation(
@@ -529,8 +676,9 @@ def _call_with_retries(
                 operation="retry",
                 provider_name=provider_name,
                 model_name=model_name,
-                attempt=attempt + 1,
+                attempt=attempt_number,
                 error_code=err_code,
+                extra={**attempt_extra, "attempt_posture": "retry"},
             )
             time.sleep(max(0.0, (backoff_ms / 1000.0) * (2**attempt)))
             continue

@@ -10,9 +10,14 @@ from openminion.modules.telemetry.storage.hook import (
     MIGRATION_EVENT_TYPE,
     TelemetryServiceStorageHook,
 )
+from openminion.modules.telemetry.storage.migrations import list_migrations
 
 
 MODULE_APP_ID = 0x4F4D0001
+
+
+def test_telemetry_migration_head_includes_event_v2() -> None:
+    assert list_migrations() == ["0001_baseline", "0002_event_v2"]
 
 
 def _init_db(path: Path) -> None:

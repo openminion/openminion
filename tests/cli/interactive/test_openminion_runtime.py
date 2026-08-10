@@ -348,6 +348,7 @@ async def test_openminion_runtime_marks_focus_returns_as_caller_delivered() -> N
             "cwd": str(Path("/tmp/focus-ws").resolve(strict=False)),
             "caller_handles_delivery": "true",
             "conversation_id": "focus-sess-001",
+            "resume": "true",
         }
     ]
 
@@ -432,6 +433,31 @@ async def test_openminion_focus_runtime_reuses_stable_conversation_id() -> None:
     assert second_metadata["conversation_id"] == f"focus-{first_session_id}"
     assert first_metadata["caller_handles_delivery"] == "true"
     assert second_metadata["caller_handles_delivery"] == "true"
+    assert first_metadata["resume"] == "true"
+    assert second_metadata["resume"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_openminion_focus_runtime_preserves_explicit_reset_metadata() -> None:
+    rt = _FakeRuntime()
+    focus_rt = OpenMinionRuntime(
+        rt,
+        target="focus",
+        working_dir="/tmp/focus-ws",
+    )
+
+    _ = [
+        chunk
+        async for chunk in focus_rt.send_message(
+            "start over",
+            inbound_metadata={"reset_session": "true"},
+        )
+    ]
+
+    metadata = rt.resolve_gateway("alpha").calls[0]["inbound_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["reset_session"] == "true"
+    assert "resume" not in metadata
 
 
 @pytest.mark.asyncio

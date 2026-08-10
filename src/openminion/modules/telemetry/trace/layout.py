@@ -1,4 +1,5 @@
 import re
+import json
 from pathlib import Path
 
 from openminion.base.config.env import resolve_environment_config
@@ -30,6 +31,32 @@ def resolve_trace_root(*, home_root: Path | None) -> Path:
     return data_root / "traces"
 
 
+def delete_invocation_trace_artifacts(trace_root: Path, *, invocation_id: str) -> int:
+    if not trace_root.exists():
+        return 0
+    removed = 0
+    for path in trace_root.rglob("*.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not _contains_invocation(payload, invocation_id):
+            continue
+        path.unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
+def _contains_invocation(value: object, invocation_id: str) -> bool:
+    if isinstance(value, dict):
+        if str(value.get("invocation_id") or "") == invocation_id:
+            return True
+        return any(_contains_invocation(item, invocation_id) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_invocation(item, invocation_id) for item in value)
+    return False
+
+
 def build_trace_file_path(
     trace_root: Path,
     *,
@@ -47,6 +74,13 @@ def build_trace_file_path(
     path = run_dir / filename
     relative = str(path.relative_to(trace_root))
     return path, relative
+
+
+def write_protected_trace_file(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o600)
 
 
 def _extract_agent_id(session_id: str) -> str:
@@ -81,4 +115,9 @@ def _safe_segment(value: str, *, fallback: str) -> str:
     return normalized or fallback
 
 
-__all__ = ["resolve_trace_root", "build_trace_file_path"]
+__all__ = [
+    "build_trace_file_path",
+    "delete_invocation_trace_artifacts",
+    "resolve_trace_root",
+    "write_protected_trace_file",
+]

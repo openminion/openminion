@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from openminion.modules.tool.runtime.argument_repair import (
+    synthesize_simple_tool_arguments,
     tool_family_for_argument_repair,
 )
 from openminion.modules.tool.contracts.model_ids import (
@@ -165,6 +166,11 @@ def build_forced_tool_command(
     args: dict[str, Any] | None = None
     if family in {MODEL_TIME, MODEL_LOCATION, MODEL_HOST_METRICS}:
         args = {}
+    elif family == MODEL_WEATHER:
+        args = synthesize_simple_tool_arguments(
+            tool_name=normalized_tool_name,
+            user_input=user_input,
+        )
     elif lower_name == MODEL_EXEC_RUN:
         return None
     elif lower_name == "fetch.providers":

@@ -1,9 +1,11 @@
 import hashlib
 import json
 import threading
+from contextvars import copy_context
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.memory.runtime.gc import (
     apply_confidence_decay,
     compress_old_summaries as compress_old_summaries_gc,
@@ -381,22 +383,28 @@ class SessionLifecycleMixin:
         )
         if timeout_seconds <= 0:
             try:
-                result = structurer(safe_summary, max(0, int(turn_count)))
+                with active_chat_phase("memory_summary_structure"):
+                    result = structurer(safe_summary, max(0, int(turn_count)))
             except Exception:
                 return None
             return result if isinstance(result, dict) else None
 
         result_box: dict[str, Any] = {}
         error_box: dict[str, BaseException] = {}
+        active_context = copy_context()
 
         def _worker() -> None:
             try:
-                result_box["value"] = structurer(safe_summary, max(0, int(turn_count)))
+                with active_chat_phase("memory_summary_structure"):
+                    result_box["value"] = structurer(
+                        safe_summary,
+                        max(0, int(turn_count)),
+                    )
             except BaseException as exc:  # pragma: no cover - defensive
                 error_box["value"] = exc
 
         worker = threading.Thread(
-            target=_worker,
+            target=lambda: active_context.run(_worker),
             name="session-summary-structurer",
             daemon=True,
         )

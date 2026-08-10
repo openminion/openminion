@@ -3,6 +3,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from openminion.base.config import SKILL_SELECTION_AUTO, skill_value_to_list
+from openminion.modules.brain.constants import SKILL_SELECTION_REASON_ENTRY
 from openminion.modules.brain.config import (
     DIRECT_PROMPT_BUDGET_TOKENS as _DIRECT_PROMPT_BUDGET_TOKENS,
     MAX_SKILLS_PER_SESSION as _MAX_SKILLS_PER_SESSION,
@@ -227,6 +228,44 @@ def resolve_skill_pipeline(
             selection_reason=_SKILL_SELECTION_REASON_DIRECT_SINGLE_CATALOG,
             routed_intent=normalized_intent,
             shortlisted_ids=[ref.skill_id for ref in selected_refs],
+        )
+
+    entry_refs = _entry_candidate_refs(
+        runner=runner,
+        state=state,
+        catalog=effective_catalog,
+        capacity=capacity,
+    )
+    if entry_refs:
+        _emit_shortlist(
+            logger=logger,
+            state=state,
+            shortlisted_ids=[ref.skill_id for ref in entry_refs],
+            strategy="entry",
+            query=normalized_intent,
+        )
+        _emit_skill_selection_event(
+            logger=logger,
+            state=state,
+            model="",
+            selection_mode="entry",
+            selected_refs=entry_refs,
+            effective_count=len(effective_catalog),
+            capacity=capacity,
+            routed_intent=normalized_intent,
+            fail_closed_reason=None,
+            context_budget=context_budget,
+            shortlisted_ids=[ref.skill_id for ref in entry_refs],
+        )
+        return SkillPipelineResult(
+            selected_refs=entry_refs,
+            selection_mode="entry",
+            context_budget=context_budget,
+            capacity=capacity,
+            effective_count=len(effective_catalog),
+            selection_reason=SKILL_SELECTION_REASON_ENTRY,
+            routed_intent=normalized_intent,
+            shortlisted_ids=[ref.skill_id for ref in entry_refs],
         )
 
     if len(effective_catalog) > capacity * 2:
@@ -534,6 +573,44 @@ def _configured_skill_capacity(profile: Any) -> int:
         return max(1, int(raw_capacity))
     except (TypeError, ValueError):
         return _MAX_SKILLS_PER_SESSION
+
+
+def _effective_skill_selection_strategy(
+    *, runner: "BrainRunner", state: "WorkingState"
+) -> str:
+    state_strategy = (
+        str(getattr(state, "skill_selection_mode", "") or "").strip().lower()
+    )
+    if state_strategy == "entry":
+        return "entry"
+    for raw in (
+        getattr(getattr(runner, "options", None), "skill_selection_strategy", None),
+        getattr(getattr(runner, "profile", None), "skill_selection_strategy", None),
+    ):
+        strategy = str(raw or "").strip().lower()
+        if strategy in {"auto", "entry", "llm"}:
+            return strategy
+    return "llm"
+
+
+def _entry_candidate_refs(
+    *,
+    runner: "BrainRunner",
+    state: "WorkingState",
+    catalog: list[dict[str, Any]],
+    capacity: int,
+) -> list[SkillRef]:
+    if _effective_skill_selection_strategy(runner=runner, state=state) not in {
+        "auto",
+        "entry",
+    }:
+        return []
+    if not catalog or len(catalog) > max(1, capacity):
+        return []
+    token_count = sum(_catalog_entry_tokens(entry) for entry in catalog)
+    if token_count > _DIRECT_PROMPT_BUDGET_TOKENS:
+        return []
+    return _catalog_refs(catalog, source="entry")
 
 
 def _catalog_entry_tokens(entry: dict[str, Any]) -> int:

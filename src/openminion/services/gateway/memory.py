@@ -5,6 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.memory.errors import MemctlError
 from openminion.services.constants import MEMORY_CAPSULE_STRATEGY_REFRESH_ON_WRITE
 
@@ -311,7 +312,8 @@ def _maybe_checkpoint_summary(
     if not callable(checkpoint_summary):
         return
     try:
-        checkpoint_summary(session_id)
+        with active_chat_phase("memory_summary_checkpoint"):
+            checkpoint_summary(session_id)
     except Exception as exc:
         logger.warning(
             "agent session summary checkpoint failed agent_id=%s session_id=%s run_id=%s error=%s",

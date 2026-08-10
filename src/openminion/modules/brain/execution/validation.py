@@ -12,7 +12,6 @@ from openminion.modules.tool.runtime.argument_repair import (
 )
 from openminion.modules.tool.contracts.model_ids import (
     MODEL_EXEC_RUN,
-    MODEL_WEATHER,
     MODEL_WEB_FETCH,
     MODEL_WEB_SEARCH,
 )
@@ -98,14 +97,6 @@ def validate_tool_args(
         return None
 
     missing_csv = ", ".join(missing)
-    if family == MODEL_WEATHER:
-        return {
-            "message": "Which location should I check weather for?",
-            "missing": missing,
-            "reason_code": "weather_location_required",
-            "suggestion": "Provide a city or location name.",
-            "source": "bounded_argument_repair",
-        }
     if family == MODEL_WEB_SEARCH:
         return {
             "message": (
@@ -127,13 +118,6 @@ def validate_tool_args(
 
 def _build_forced_tool_guard(*, tool_name: str) -> ForcedToolGuard | None:
     normalized_tool_name = normalize_tool_name_for_brain(tool_name) or str(tool_name)
-    family = tool_family_for_argument_repair(normalized_tool_name)
-    if family == MODEL_WEATHER:
-        return ForcedToolGuard(
-            reason_code="weather_location_required",
-            question="Which location should I check weather for?",
-            missing_fields=("location",),
-        )
     if normalized_tool_name == MODEL_WEB_FETCH:
         return ForcedToolGuard(
             reason_code="web_fetch_url_required",

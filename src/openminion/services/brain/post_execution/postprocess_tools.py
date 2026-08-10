@@ -84,7 +84,7 @@ async def _apply_tool_result_postprocess(
         and isinstance(command, dict)
         and command.get("kind") == "tool"
     ):
-        return response_text, termination_reason, []
+        return response_text, explicit_termination_reason or termination_reason, []
 
     tool_result = self._tool_result_from_action(
         command=command,

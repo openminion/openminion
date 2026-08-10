@@ -20,6 +20,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
     ADAPTIVE_TERM_ITERATION_CAP,
+    ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
     ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
     AdaptiveToolLoopOutcome,
     AdaptiveToolLoopState,
@@ -522,6 +523,23 @@ def test_budget_exhausted_does_not_trigger_failure_memory_extraction() -> None:
     ) as extract_mock:
         mode._result_from_outcome(ctx, outcome=_failure_outcome("budget_exhausted"))
         extract_mock.assert_not_called()
+
+
+def test_requested_tool_failure_preserves_typed_termination_reason() -> None:
+    llm_client = _FakeLLMClient(responses=[])
+    executor = _FakeCommandExecutor()
+    ctx, _services = _ctx(llm_client, executor)
+
+    result = ActLoopMode()._result_from_outcome(
+        ctx,
+        outcome=_failure_outcome(ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED),
+    )
+
+    assert result.action_result is not None
+    assert (
+        result.action_result.outputs["adaptive.termination_reason"]
+        == ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED
+    )
 
 
 def test_budget_exhausted_fail_closes_when_typed_finalization_is_required() -> None:

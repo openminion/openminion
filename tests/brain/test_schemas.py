@@ -601,6 +601,14 @@ class Phase2SchemaTests(unittest.TestCase):
             RunnerOptions(skill_selection_strategy="LLM").skill_selection_strategy,
             "llm",
         )
+        self.assertEqual(
+            RunnerOptions(skill_selection_strategy="AUTO").skill_selection_strategy,
+            "auto",
+        )
+        self.assertEqual(
+            RunnerOptions(skill_selection_strategy="ENTRY").skill_selection_strategy,
+            "entry",
+        )
         with self.assertLogs(
             "openminion.modules.brain.config", level="WARNING"
         ) as captured:
@@ -647,10 +655,10 @@ class Phase2SchemaTests(unittest.TestCase):
                     max_total_llm_tokens=2000,
                     max_elapsed_ms=10000,
                 ),
-                skill_selection_strategy="llm",
+                skill_selection_strategy="entry",
             )
         )
-        self.assertEqual(cfg.brain.skill_selection_strategy, "llm")
+        self.assertEqual(cfg.brain.skill_selection_strategy, "entry")
 
     def test_runtime_config_accepts_context_budget_prerouting_override(self) -> None:
         cfg = RuntimeConfig(

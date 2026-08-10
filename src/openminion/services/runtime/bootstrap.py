@@ -953,6 +953,7 @@ def build_agent_runtime_service(
     config_manager: ConfigManager | None = None,
     retrieve_service: Any | None = None,
     action_policy_service: Any | None = None,
+    telemetryctl: Any | None = None,
 ) -> tuple[object, str, str]:
     from openminion.modules.brain.paths import resolve_brain_sessions_db_path
 
@@ -982,6 +983,7 @@ def build_agent_runtime_service(
             config_manager=config_manager,
             retrieve_service=retrieve_service,
             action_policy_service=action_policy_service,
+            telemetryctl=telemetryctl,
         ),
         "brain",
         fallback_reason,

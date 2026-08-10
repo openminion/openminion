@@ -623,7 +623,10 @@ def build_runtime_tool_specs(
         "exec.kill": "Kill a running process by ID.",
         "web.search": "Search the web for current information.",
         "web.fetch": "Fetch and summarize web content from a URL.",
-        "weather": "Get current weather for a location.",
+        "weather": (
+            "Get current weather for a named place, or omit location to use the "
+            "current approximate location."
+        ),
         "time": "Get the current time for a timezone or locale.",
         "location": "Resolve or infer a geographic location.",
         "host.metrics": "Get local host platform, disk usage, and memory metrics.",

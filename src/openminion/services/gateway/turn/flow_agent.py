@@ -86,6 +86,9 @@ class GatewayTurnAgentExecutionMixin:
                 ),
                 "session_id": routing.session.id,
                 "run_id": run_id,
+                "invocation_id": routing.normalized_inbound_metadata.get(
+                    "invocation_id", ""
+                ),
                 "request_id": routing.normalized_request_id,
                 "thread_decision_action": routing.routing_action,
                 "thread_decision_reason": routing.routing_reason,

@@ -873,11 +873,13 @@ class ActLoopFinalizationMixin:
                 == ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED
                 else "act_finalization_contract_missing"
             )
+            action_result = _build_error_result(message, code)
+            action_result.outputs.update(telemetry_payload)
             return ExecutionResult(
                 status=BRAIN_STATE_ERROR,
                 working_state=ctx.state,
                 message=message,
-                action_result=_build_error_result(message, code),
+                action_result=action_result,
             )
         if outcome.termination_reason == ADAPTIVE_TERM_DISALLOWED_TOOL:
             message = outcome.error_message or "Disallowed tool requested."

@@ -375,6 +375,8 @@ V15_SCHEMA: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS run_records (
       run_id               TEXT PRIMARY KEY,
       session_id           TEXT NOT NULL,
+      invocation_id        TEXT,
+      thread_id            TEXT,
       prompt_context_id    TEXT,
       run_type             TEXT NOT NULL DEFAULT 'llm',
       status               TEXT NOT NULL DEFAULT 'pending',
@@ -391,6 +393,14 @@ V15_SCHEMA: tuple[str, ...] = (
     """
     CREATE INDEX IF NOT EXISTS idx_run_records_session_status
     ON run_records(session_id, status, started_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_records_session_thread
+    ON run_records(session_id, thread_id, started_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_records_invocation
+    ON run_records(invocation_id, started_at DESC)
     """,
     """
     CREATE TABLE IF NOT EXISTS message_refs (

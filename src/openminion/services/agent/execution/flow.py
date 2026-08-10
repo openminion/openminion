@@ -1,4 +1,5 @@
 import json
+import sys
 from typing import Any, Optional
 
 from openminion.base.types import AgentResponse, Message
@@ -9,6 +10,8 @@ from openminion.services.runtime.plugins.hooks import PluginContext as HookConte
 
 from ..context import build_context
 from ..context.history import _provider_tool_call_strategy
+from ..identity_binding import apply_execution_identity
+from ..telemetry import AgentExecutionTelemetry
 from .composition import build_service_port, build_turn_executor
 from .dependencies import ExecutorDeps
 from .response import finalize_turn_response, tool_calls_payload
@@ -40,6 +43,7 @@ def _build_runtime_context(
         inbound=applied_inbound,
         history=history,
     )
+    apply_execution_identity(applied_inbound.metadata)
     runtime = TurnRuntimeContext(
         inbound=applied_inbound,
         plugin_context=plugin_context,
@@ -377,6 +381,8 @@ class AgentTurnFlowMixin:
             progress_callback=progress_callback,
             approval_callback=approval_callback,
         )
+        telemetry = AgentExecutionTelemetry(self, inbound=inbound, runtime=runtime)
+        await telemetry.start()
 
         def _finalize_response(response: AgentResponse) -> AgentResponse:
             return finalize_turn_response(
@@ -387,49 +393,54 @@ class AgentTurnFlowMixin:
                 plugin_context=plugin_context,
             )
 
-        _prepare_self_improvement_metadata(self, runtime)
+        try:
+            _prepare_self_improvement_metadata(self, runtime)
 
-        plan = _build_and_apply_tool_plan(
-            service_port,
-            inbound=inbound,
-            runtime=runtime,
-            forced_tools=forced_tools,
-            capability_category=capability_category,
-        )
-        unavailable = self._build_unavailable_response(
-            finalize_response=_finalize_response,
-            plan=plan,
-            intent_category=plan.intent_category,
-            inbound=inbound,
-        )
-        if unavailable is not None:
-            return unavailable
+            plan = _build_and_apply_tool_plan(
+                service_port,
+                inbound=inbound,
+                runtime=runtime,
+                forced_tools=forced_tools,
+                capability_category=capability_category,
+            )
+            unavailable = self._build_unavailable_response(
+                finalize_response=_finalize_response,
+                plan=plan,
+                intent_category=plan.intent_category,
+                inbound=inbound,
+            )
+            if unavailable is not None:
+                return await telemetry.finish(unavailable)
 
-        if plan.capability_primary is None and plan.effective_forced_tools:
-            plan.capability_primary = plan.effective_forced_tools[0]
+            if plan.capability_primary is None and plan.effective_forced_tools:
+                plan.capability_primary = plan.effective_forced_tools[0]
 
-        tool_budget_state = (
-            ToolBudgetState() if self._security_policy is not None else None
-        )
-        executor_deps = _build_executor_deps(self, _finalize_response)
-        required_outcome = await _run_required_lane(
-            executor=executor,
-            plan=plan,
-            tool_call_strategy=tool_call_strategy,
-            tool_budget_state=tool_budget_state,
-            executor_deps=executor_deps,
-        )
-        if required_outcome.response is not None:
-            return required_outcome.response
+            tool_budget_state = (
+                ToolBudgetState() if self._security_policy is not None else None
+            )
+            executor_deps = _build_executor_deps(self, _finalize_response)
+            required_outcome = await _run_required_lane(
+                executor=executor,
+                plan=plan,
+                tool_call_strategy=tool_call_strategy,
+                tool_budget_state=tool_budget_state,
+                executor_deps=executor_deps,
+            )
+            if required_outcome.response is not None:
+                return await telemetry.finish(required_outcome.response)
 
-        return await _complete_unforced_lane(
-            self,
-            executor=executor,
-            runtime=runtime,
-            plan=plan,
-            required_outcome=required_outcome,
-            tool_call_strategy=tool_call_strategy,
-            tool_budget_state=tool_budget_state,
-            executor_deps=executor_deps,
-            finalize_response=_finalize_response,
-        )
+            response = await _complete_unforced_lane(
+                self,
+                executor=executor,
+                runtime=runtime,
+                plan=plan,
+                required_outcome=required_outcome,
+                tool_call_strategy=tool_call_strategy,
+                tool_budget_state=tool_budget_state,
+                executor_deps=executor_deps,
+                finalize_response=_finalize_response,
+            )
+            return await telemetry.finish(response)
+        finally:
+            if exc := sys.exception():
+                await telemetry.fail(exc)

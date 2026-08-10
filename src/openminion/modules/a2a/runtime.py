@@ -682,6 +682,7 @@ class A2ARuntime:
             idempotency_key=request.idempotency_key,
             trace_id=request.trace_id,
             meta={"cached": cached},
+            observability=request.observability,
         )
 
     def _error_result_envelope(
@@ -712,6 +713,7 @@ class A2ARuntime:
             idempotency_key=request.idempotency_key,
             trace_id=request.trace_id,
             meta={"cached": cached, "error": True},
+            observability=request.observability,
         )
 
     def _in_progress_result_envelope(
@@ -744,6 +746,7 @@ class A2ARuntime:
             idempotency_key=request.idempotency_key,
             trace_id=request.trace_id,
             meta={"cached": cached, "in_progress": True},
+            observability=request.observability,
         )
 
     def _build_descriptor(

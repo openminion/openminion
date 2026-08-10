@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import sys
 import time
 import uuid
 from collections.abc import Mapping
@@ -29,6 +30,8 @@ from openminion.services.security.blast_radius.wiring import (
 from openminion.services.security.tool_execution import (
     build_execution_boundary_policy_adapter,
 )
+from openminion.services.agent.identity_binding import issue_execution_identity
+from openminion.services.agent.telemetry import AgentExecutionTelemetry
 
 
 def _emit_prep_status(
@@ -439,6 +442,11 @@ class BrainBridgeTurnMixin:
         runtime_session_id, brain_session_id = self._resolve_turn_session_ids(
             message=message
         )
+        invocation_id, execution_id, invocation_scope = issue_execution_identity(
+            message.metadata
+        )
+        message.metadata["invocation_id"] = invocation_id
+        message.metadata["execution_id"] = execution_id
         resolved_capability_category = str(capability_category or "").strip() or None
         self._logger.info(
             "BrainBridgeService handling turn for runtime_session=%s brain_session=%s forced_tools=%s capability_category=%s",
@@ -462,6 +470,10 @@ class BrainBridgeTurnMixin:
             brain_session_id=brain_session_id,
             progress_callback=progress_callback,
         )
+        message.metadata["session_id"] = session_id
+        message.metadata["turn_id"] = turn_id
+        telemetry = AgentExecutionTelemetry(self, inbound=message, runtime=None)
+        await telemetry.start()
 
         if callable(approval_callback):
             loop = asyncio.get_running_loop()
@@ -476,28 +488,36 @@ class BrainBridgeTurnMixin:
                 )
 
             approval_callback = _sync_approval_callback
-        step_out = await asyncio.to_thread(
-            self._execute_turn,
-            runner=runner,
-            session_id=session_id,
-            request_id=request_id,
-            message=message,
-            forced_tools=forced_tools,
-            capability_category=resolved_capability_category,
-            progress_callback=progress_callback,
-            approval_callback=approval_callback,
-        )
+        try:
+            step_out = await asyncio.to_thread(
+                self._execute_turn,
+                runner=runner,
+                session_id=session_id,
+                request_id=request_id,
+                message=message,
+                forced_tools=forced_tools,
+                capability_category=resolved_capability_category,
+                progress_callback=progress_callback,
+                approval_callback=approval_callback,
+            )
 
-        return await self._postprocess_turn(
-            runner=runner,
-            step_out=step_out,
-            message=message,
-            history=history,
-            session_id=session_id,
-            request_id=request_id,
-            turn_id=turn_id,
-            turn_start_time=turn_start_time,
-        )
+            response = await self._postprocess_turn(
+                runner=runner,
+                step_out=step_out,
+                message=message,
+                history=history,
+                session_id=session_id,
+                request_id=request_id,
+                turn_id=turn_id,
+                turn_start_time=turn_start_time,
+            )
+        finally:
+            if exc := sys.exception():
+                await telemetry.fail(exc)
+        response.metadata.setdefault("invocation_id", invocation_id)
+        response.metadata.setdefault("execution_id", execution_id)
+        response.metadata.setdefault("invocation_scope", invocation_scope)
+        return await telemetry.finish(response)
 
 
 from .context import (  # noqa: E402

@@ -5,7 +5,12 @@ from collections.abc import Mapping
 
 from openminion.base.config.env import EnvironmentConfig, resolve_environment_config
 
-from .layout import build_trace_file_path, resolve_trace_root
+from .layout import (
+    build_trace_file_path,
+    resolve_trace_root,
+    write_protected_trace_file,
+)
+from .metadata import apply_content_policy
 
 
 def trace_requests_enabled(
@@ -24,6 +29,8 @@ def trace_context_payload(
     trace_id: str = "",
     agent_id: str = "",
     run_id: str = "",
+    invocation_id: str = "",
+    execution_id: str = "",
     provider: str = "",
     model: str = "",
     home_root: Path | None = None,
@@ -61,6 +68,8 @@ def trace_context_payload(
         "trace_id": str(trace_id or ""),
         "agent_id": str(agent_id or ""),
         "run_id": str(run_id or ""),
+        "invocation_id": str(invocation_id or ""),
+        "execution_id": str(execution_id or ""),
         "provider": str(provider or ""),
         "model": str(model or ""),
         "home_root": str(home_root) if home_root is not None else "",
@@ -100,8 +109,6 @@ def write_structured_trace(
         label=label,
         suffix="-structured.json",
     )
-    trace_path.parent.mkdir(parents=True, exist_ok=True)
-
     payload: dict[str, Any] = {}
     if trace_path.exists():
         try:
@@ -122,6 +129,8 @@ def write_structured_trace(
             "trace_id": str(trace_meta.get("trace_id") or ""),
             "agent_id": str(trace_meta.get("agent_id") or ""),
             "run_id": str(trace_meta.get("run_id") or ""),
+            "invocation_id": str(trace_meta.get("invocation_id") or ""),
+            "execution_id": str(trace_meta.get("execution_id") or ""),
         },
     )
     if str(trace_meta.get("provider") or "").strip():
@@ -129,10 +138,13 @@ def write_structured_trace(
     if str(trace_meta.get("model") or "").strip():
         trace_patch.setdefault("model", str(trace_meta.get("model") or ""))
 
-    merged = _merge_dicts(payload, trace_patch)
-    trace_path.write_text(
+    merged = apply_content_policy(
+        _merge_dicts(payload, trace_patch),
+        allow_sensitive_content=True,
+    )
+    write_protected_trace_file(
+        trace_path,
         json.dumps(merged, indent=2, sort_keys=True, default=str),
-        encoding="utf-8",
     )
     return relative
 

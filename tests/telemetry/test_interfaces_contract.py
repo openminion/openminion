@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,8 @@ from openminion.modules.telemetry.interfaces import (
     ensure_telemetry_interface_compatibility,
 )
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
+from openminion.modules.telemetry.storage.base import TelemetryStore
+from openminion.modules.telemetry.storage.store import SQLiteTelemetryStore
 
 
 class TestTelemetryInterfaceContract:
@@ -38,6 +41,17 @@ class TestTelemetryInterfaceContract:
         assert hasattr(ctl, "emit_module_operation")
         assert hasattr(ctl, "emit_module_counter")
         assert hasattr(ctl, "emit_tool_exec_operation")
+
+    def test_storage_contract_signatures_match_implementation(self):
+        for method_name in (
+            "insert_event",
+            "fetch_session_events",
+            "fetch_invocation_events",
+            "fetch_execution_events",
+        ):
+            assert inspect.signature(getattr(TelemetryStore, method_name)) == (
+                inspect.signature(getattr(SQLiteTelemetryStore, method_name))
+            )
 
     def test_telemetry_compatibility_with_current_implementation(self, tmp_path: Path):
         service = TelemetryService(db_path=tmp_path / "telemetry.db")

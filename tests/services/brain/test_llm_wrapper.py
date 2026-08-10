@@ -459,7 +459,7 @@ def test_llm_wrapper_request_trace_preserves_structured_tool_choice(
     }
 
 
-def test_llm_wrapper_writes_thinking_blocks_into_traces(
+def test_llm_wrapper_omits_thinking_blocks_from_traces(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv("OPENMINION_TRACE_REQUESTS", "1")
@@ -485,11 +485,8 @@ def test_llm_wrapper_writes_thinking_blocks_into_traces(
     structured_trace = trace_root / "step01-call01-structured.json"
     response_payload = json.loads(response_trace.read_text(encoding="utf-8"))
     structured_payload = json.loads(structured_trace.read_text(encoding="utf-8"))
-    assert response_payload["thinking_blocks"][0]["content"] == "use the tool result"
-    assert (
-        structured_payload["response"]["thinking_blocks"][0]["content"]
-        == "use the tool result"
-    )
+    assert "thinking_blocks" not in response_payload
+    assert "thinking_blocks" not in structured_payload["response"]
 
 
 def test_llm_wrapper_emits_llm_call_mode_from_request_metadata() -> None:

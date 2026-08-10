@@ -1499,7 +1499,7 @@ class AdapterInterfaceContractTests(unittest.TestCase):
         )
         self.assertEqual(explicit_match.get("skill_ids"), ["github.skill"])
 
-    def test_local_llm_single_weather_tool_prefers_clarify_tool(self) -> None:
+    def test_local_llm_single_weather_tool_uses_current_location_fallback(self) -> None:
         from openminion.modules.brain.adapters.llm import LocalLLMAdapter
         from openminion.modules.llm.schemas import LLMRequest, Message, ToolSpec
 
@@ -1521,11 +1521,8 @@ class AdapterInterfaceContractTests(unittest.TestCase):
         )
 
         self.assertEqual(len(response.tool_calls), 1)
-        self.assertEqual(response.tool_calls[0].name, "clarify")
-        self.assertIn(
-            "location",
-            str(response.tool_calls[0].arguments.get("question", "")).lower(),
-        )
+        self.assertEqual(response.tool_calls[0].name, "weather")
+        self.assertEqual(response.tool_calls[0].arguments, {})
 
     def test_interface_validator_rejects_incompatible_adapter(self) -> None:
         class _Broken:

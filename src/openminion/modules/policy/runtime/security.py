@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from openminion.modules.tool.contracts.model_ids import MODEL_BROWSER
+from openminion.modules.telemetry.events.module import emit_module_telemetry
 
 DECISION_ALLOW = "allow"
 DECISION_DENY = "deny"
@@ -69,6 +70,10 @@ class SecurityPolicyContext:
     origin: str = ""
     run_id: str = ""
     session_id: str = ""
+    trace_id: str = ""
+    turn_id: str = ""
+    invocation_id: str = ""
+    execution_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -216,6 +221,7 @@ class SecurityPolicyEngine:
         identity_constraints: list[str] = [],
         tool_budget_policy: ToolBudgetPolicy | None = None,
         default_tool_required_scopes: frozenset[str] | None = None,
+        telemetryctl: Any | None = None,
     ) -> None:
         self._policy_version = str(policy_version).strip() or "v1"
         self._rules = dict(rules or _default_rules())
@@ -227,6 +233,7 @@ class SecurityPolicyEngine:
             if _normalize_token(scope)
         }
         self._default_tool_required_scopes = frozenset(normalized_default_scopes)
+        self._telemetryctl = telemetryctl
 
     @property
     def policy_version(self) -> str:
@@ -339,6 +346,11 @@ class SecurityPolicyEngine:
         )
 
     def evaluate(self, check: SecurityPolicyCheck) -> SecurityPolicyDecision:
+        decision = self._evaluate(check)
+        self._emit_decision(check, decision)
+        return decision
+
+    def _evaluate(self, check: SecurityPolicyCheck) -> SecurityPolicyDecision:
         # First check identity constraints before other checks
         violation = self._check_identity_constraint_violation(check)
         if violation:
@@ -419,6 +431,43 @@ class SecurityPolicyEngine:
             decision=DECISION_ALLOW,
             reason_code="allowed",
             policy_version=self._policy_version,
+        )
+
+    def _emit_decision(
+        self,
+        check: SecurityPolicyCheck,
+        decision: SecurityPolicyDecision,
+    ) -> None:
+        context = check.context
+        if self._telemetryctl is None or not context.session_id:
+            return
+        payload = {
+            "trace_id": context.trace_id,
+            "invocation_id": context.invocation_id,
+            "execution_id": context.execution_id,
+            "policy_version": decision.policy_version,
+            "owner": "security_policy",
+            "resource": _normalize_token(check.action.resource),
+            "action": _normalize_token(check.action.verb),
+            "risk": _normalize_risk(check.action.risk),
+            "decision": decision.decision,
+            "reason_code": _normalize_token(decision.reason_code),
+            "approval_state": (
+                "required"
+                if decision.decision == DECISION_REQUIRE_APPROVAL
+                else "not_required"
+            ),
+        }
+        emit_module_telemetry(
+            self._telemetryctl,
+            "emit_canonical_event",
+            context.session_id,
+            context.turn_id or context.run_id or context.session_id,
+            "policy.decision",
+            payload,
+            trace_id=context.trace_id or None,
+            status=decision.decision,
+            logger=__import__("logging").getLogger(__name__),
         )
 
     def update_identity_constraints(self, identity_constraints: list[str]) -> None:

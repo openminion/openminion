@@ -11,6 +11,7 @@ from .constants import (
     A2A_IDEMPOTENCY_TERMINAL_STATUSES,
     A2A_TERMINAL_JOB_STATES,
 )
+from .interfaces import A2A_OBSERVABILITY_SCHEMA_VERSION
 
 
 def new_uuid() -> str:
@@ -39,6 +40,30 @@ MESSAGE_TYPES = {
 IDEMPOTENCY_REQUIRED_TYPES = {MESSAGE_TYPE_CALL, MESSAGE_TYPE_JOB_START}
 
 
+def is_valid_traceparent(value: str) -> bool:
+    parts = str(value or "").strip().split("-")
+    if len(parts) != 4:
+        return False
+    version, trace_id, parent_id, flags = parts
+    if version.lower() == "ff":
+        return False
+    try:
+        int(version, 16)
+        int(trace_id, 16)
+        int(parent_id, 16)
+        int(flags, 16)
+    except ValueError:
+        return False
+    return (
+        len(version) == 2
+        and len(trace_id) == 32
+        and trace_id != "0" * 32
+        and len(parent_id) == 16
+        and parent_id != "0" * 16
+        and len(flags) == 2
+    )
+
+
 class EnvelopeValidationError(ValueError):
     """Raised when an envelope violates the contract requirements."""
 
@@ -55,6 +80,57 @@ def validate_envelope_contract(envelope: "Envelope") -> None:
     if envelope.requires_idempotency() and not envelope.idempotency_key.strip():
         raise EnvelopeValidationError(
             "idempotency_key is required for call and job.start"
+        )
+    if envelope.observability is not None:
+        envelope.observability.validate()
+
+
+@dataclass(frozen=True)
+class A2AObservabilityContext:
+    invocation_id: str
+    execution_id: str
+    handoff_id: str
+    traceparent: str
+    tracestate: str | None = None
+    schema_version: str = A2A_OBSERVABILITY_SCHEMA_VERSION
+
+    def validate(self) -> None:
+        if self.schema_version != A2A_OBSERVABILITY_SCHEMA_VERSION:
+            raise EnvelopeValidationError(
+                f"Unsupported A2A observability schema: {self.schema_version!r}"
+            )
+        for name in ("invocation_id", "execution_id", "handoff_id"):
+            value = str(getattr(self, name) or "").strip()
+            try:
+                uuid.UUID(value)
+            except ValueError as exc:
+                raise EnvelopeValidationError(
+                    f"A2A observability {name} must be a UUID"
+                ) from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "schema_version": self.schema_version,
+            "invocation_id": self.invocation_id,
+            "execution_id": self.execution_id,
+            "handoff_id": self.handoff_id,
+            "traceparent": self.traceparent,
+        }
+        if self.tracestate is not None:
+            payload["tracestate"] = self.tracestate
+        return payload
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "A2AObservabilityContext":
+        return cls(
+            schema_version=str(raw.get("schema_version", "")),
+            invocation_id=str(raw.get("invocation_id", "")),
+            execution_id=str(raw.get("execution_id", "")),
+            handoff_id=str(raw.get("handoff_id", "")),
+            traceparent=str(raw.get("traceparent", "")),
+            tracestate=(
+                None if raw.get("tracestate") is None else str(raw["tracestate"])
+            ),
         )
 
 
@@ -103,6 +179,7 @@ class Envelope:
     timeout_ms: int = 30_000
     idempotency_key: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
+    observability: A2AObservabilityContext | None = None
 
     @classmethod
     def new(
@@ -118,6 +195,7 @@ class Envelope:
         idempotency_key: str = "",
         trace_id: str | None = None,
         meta: dict[str, Any] | None = None,
+        observability: A2AObservabilityContext | None = None,
     ) -> "Envelope":
         return cls(
             msg_id=new_uuid(),
@@ -133,10 +211,11 @@ class Envelope:
             timeout_ms=timeout_ms,
             idempotency_key=idempotency_key,
             meta=meta or {},
+            observability=observability,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "msg_id": self.msg_id,
             "trace_id": self.trace_id,
             "ts": self.ts,
@@ -151,6 +230,9 @@ class Envelope:
             "idempotency_key": self.idempotency_key,
             "meta": self.meta,
         }
+        if self.observability is not None:
+            payload["observability"] = self.observability.to_dict()
+        return payload
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=True)
@@ -177,6 +259,11 @@ class Envelope:
             timeout_ms=int(raw.get("timeout_ms", 30_000)),
             idempotency_key=str(raw.get("idempotency_key", "")),
             meta=dict(raw.get("meta", {})),
+            observability=(
+                A2AObservabilityContext.from_dict(raw["observability"])
+                if isinstance(raw.get("observability"), dict)
+                else None
+            ),
         )
 
     def requires_idempotency(self) -> bool:

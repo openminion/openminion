@@ -1,10 +1,14 @@
 import asyncio
 import inspect
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 
-def consume_telemetry_task(task: "asyncio.Task[Any]", *, logger: Any) -> None:
+async def _await_telemetry_result(result: Awaitable[Any]) -> Any:
+    return await result
+
+
+def consume_telemetry_task(task: "asyncio.Future[Any]", *, logger: Any) -> None:
     try:
         task.result()
     except Exception:
@@ -15,7 +19,7 @@ def run_telemetry_result(
     result: Any,
     *,
     logger: Any,
-    consume_task_callback: Callable[["asyncio.Task[Any]"], None] | None = None,
+    consume_task_callback: Callable[["asyncio.Future[Any]"], object] | None = None,
 ) -> bool:
     callback = consume_task_callback or (
         lambda task: consume_telemetry_task(task, logger=logger)
@@ -32,12 +36,12 @@ def run_telemetry_result(
             loop = asyncio.get_running_loop()
         except RuntimeError:
             try:
-                asyncio.run(result)
+                asyncio.run(_await_telemetry_result(result))
             except Exception:
                 logger.warning("telemetry emit failed", exc_info=True)
                 return False
             return True
-        task = loop.create_task(result)
+        task: asyncio.Task[Any] = loop.create_task(_await_telemetry_result(result))
         task.add_done_callback(callback)
         return True
     return True

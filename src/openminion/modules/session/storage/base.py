@@ -390,6 +390,8 @@ class SessionStore(ABC):
         run_type: str = "llm",
         *,
         run_id: str | None = None,
+        invocation_id: str | None = None,
+        thread_id: str | None = None,
         prompt_context_id: str | None = None,
         model_id: str | None = None,
         meta: dict[str, Any] | None = None,
@@ -419,6 +421,16 @@ class SessionStore(ABC):
 
     @abstractmethod
     def list_run_records(self, session_id: str) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    def list_run_records_by_thread(
+        self, session_id: str, thread_id: str
+    ) -> list[dict[str, Any]]: ...
+
+    @abstractmethod
+    def list_run_records_by_invocation(
+        self, invocation_id: str
+    ) -> list[dict[str, Any]]: ...
 
     @abstractmethod
     def add_message_ref(

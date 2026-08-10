@@ -363,8 +363,8 @@ src/openminion/services/agent/execution/tool_arguments.py	1	0	current broad-hand
 src/openminion/services/agent/execution/tool_plan.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/agent/identity_binding.py	11	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/agent/memory/gateway_adapter.py	7	4	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/agent/service.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/agent/telemetry.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/agent/service.py	4	0	AOBS/TCPL best-effort telemetry/binding boundary; ratchet by narrowing in agent service cleanup
+src/openminion/services/agent/telemetry.py	3	0	AOBS/TCPL trace/export best-effort telemetry boundary; ratchet by narrowing in telemetry cleanup
 src/openminion/services/brain/client.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/factory/retrieve.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/factory/rlm.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
@@ -372,7 +372,7 @@ src/openminion/services/brain/factory/vector.py	3	0	current broad-handler baseli
 src/openminion/services/brain/metadata.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/post_execution/context.py	13	6	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/post_execution/followup.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/services/brain/post_execution/mixin.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/services/brain/post_execution/mixin.py	2	1	AOBS/TCPL brain-bridge failure telemetry boundary; ratchet by narrowing in post-execution cleanup
 src/openminion/services/brain/post_execution/reset.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/post_execution/usage.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/services/brain/service.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

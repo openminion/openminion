@@ -8,6 +8,10 @@ from typing import Any, Mapping
 from openminion.base.types import Message
 from openminion.cli.presentation.models import ChatMessage, MessageKind, ToolEvent
 from openminion.cli.presentation.tool.blocks import tool_call_body
+from openminion.services.gateway.constants import (
+    CALLER_HANDLES_DELIVERY_METADATA_KEY,
+)
+from openminion.services.gateway.routing import parse_metadata_bool
 
 TARGET_KIND_FOCUS: str = "focus"
 _TIMESTAMPED_SENDER_PREFIX_RE = re.compile(
@@ -19,6 +23,20 @@ class RuntimeMessageMixin:
     _agent_id: str | None
     _target: str
     _working_dir: str | None
+
+    @staticmethod
+    def _apply_focus_turn_metadata(metadata: dict[str, str]) -> None:
+        if not str(
+            metadata.get(CALLER_HANDLES_DELIVERY_METADATA_KEY, "") or ""
+        ).strip():
+            metadata[CALLER_HANDLES_DELIVERY_METADATA_KEY] = "true"
+        if (
+            "resume" not in metadata
+            and not str(metadata.get("thread_id", "") or "").strip()
+            and not parse_metadata_bool(metadata, "reset")
+            and not parse_metadata_bool(metadata, "reset_session")
+        ):
+            metadata["resume"] = "true"
 
     def _record_to_chat_messages(self, record: object) -> list[ChatMessage]:
         role = str(getattr(record, "role", "") or "").strip().lower()

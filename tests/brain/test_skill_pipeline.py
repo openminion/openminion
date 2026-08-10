@@ -144,6 +144,7 @@ def _runner(
     llm: _LLM | None = None,
     retrieve_api: _RetrieveAPI | None = None,
     profile: SimpleNamespace | None = None,
+    skill_selection_strategy: str = "llm",
 ) -> SimpleNamespace:
     skill_api = MagicMock()
     skill_api.catalog_summaries.return_value = list(catalog)
@@ -160,6 +161,7 @@ def _runner(
         llm_api=llm,
         retrieve_api=retrieve_api,
         profile=profile or _profile(),
+        options=SimpleNamespace(skill_selection_strategy=skill_selection_strategy),
     )
 
 
@@ -202,6 +204,63 @@ def test_resolve_skill_pipeline_direct_selects_single_catalog_skill_without_llm(
     assert result.context_budget == "medium"
     runner.llm_api.call_structured.assert_not_called()
     assert any(event["type"] == "skill.selected" for event in logger.events)
+
+
+def test_entry_strategy_uses_bounded_candidates_without_selector_llm() -> None:
+    llm = _LLM({"skill_ids": ["alpha"], "intent": "ignored"})
+    runner = _runner(
+        catalog=_catalog("alpha", "beta"),
+        llm=llm,
+        skill_selection_strategy="entry",
+    )
+    state = _state()
+    logger = _Logger()
+
+    result = resolve_skill_pipeline(
+        runner,
+        intent="please help with a general workflow",
+        purpose="plan",
+        state=state,
+        logger=logger,
+    )
+
+    assert result.selection_mode == "entry"
+    assert result.selection_reason == skill_pipeline.SKILL_SELECTION_REASON_ENTRY
+    assert [ref.skill_id for ref in result.selected_refs] == ["alpha", "beta"]
+    assert llm.calls == []
+    prerouting = [
+        event["payload"]
+        for event in logger.events
+        if event["type"] == "skill.prerouting"
+    ]
+    assert prerouting[-1]["strategy"] == "entry"
+    assert prerouting[-1]["selected_skill_ids"] == ["alpha", "beta"]
+
+
+def test_entry_strategy_falls_back_to_selector_when_catalog_exceeds_budget(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(skill_pipeline, "_direct_capacity", lambda catalog: 1)
+    llm = _LLM({"skill_ids": ["alpha"], "intent": "picked"})
+    runner = _runner(
+        catalog=_catalog("alpha", "beta", "gamma"),
+        llm=llm,
+        skill_selection_strategy="entry",
+    )
+    state = _state()
+    logger = _Logger()
+
+    result = resolve_skill_pipeline(
+        runner,
+        intent="please help with a general workflow",
+        purpose="plan",
+        state=state,
+        logger=logger,
+    )
+
+    assert result.selection_mode in {"retrieval-select", "llm-select"}
+    assert [ref.skill_id for ref in result.selected_refs] == ["alpha"]
+    assert len(llm.calls) == 1
 
 
 def test_load_catalog_preserves_existing_selection_metadata() -> None:

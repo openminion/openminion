@@ -28,9 +28,6 @@ from openminion.cli.interactive.project_context import (
     build_project_context_metadata,
 )
 from openminion.modules.telemetry.trace import phase_timing
-from openminion.services.gateway.constants import (
-    CALLER_HANDLES_DELIVERY_METADATA_KEY,
-)
 from openminion.base.config.settings import SettingsResolver
 from openminion.modules.brain.tools.lifecycle import register_settings_lifecycle_hooks
 from .agent_sidebar import build_agent_sidebar_items
@@ -806,11 +803,8 @@ class OpenMinionRuntime(
             and not str(merged.get("conversation_id", "") or "").strip()
         ):
             merged["conversation_id"] = self._conversation_id
-        if (
-            self._target == _TARGET_KIND_FOCUS
-            and not str(merged.get(CALLER_HANDLES_DELIVERY_METADATA_KEY, "")).strip()
-        ):
-            merged[CALLER_HANDLES_DELIVERY_METADATA_KEY] = "true"
+        if self._target == _TARGET_KIND_FOCUS:
+            self._apply_focus_turn_metadata(merged)
         return merged or None
 
     def _begin_turn_usage_tracking(self) -> None:

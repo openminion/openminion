@@ -76,13 +76,13 @@ TOOL_OUTCOME_SUCCESS_ALLOWLIST = frozenset(
 
 def normalize_skill_selection_strategy(raw: Any) -> str:
     strategy = str(raw or "llm").strip().lower() or "llm"
-    if strategy != "llm":
+    if strategy not in {"auto", "entry", "llm"}:
         _LOGGER.warning(
             "Invalid skill_selection_strategy=%r; falling back to 'llm'",
             strategy,
         )
         return "llm"
-    return "llm"
+    return strategy
 
 
 class AdapterSubConfig(BaseModel):

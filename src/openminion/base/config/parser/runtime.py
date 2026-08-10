@@ -126,6 +126,7 @@ def _parse_telemetry_exporter_config(raw: Any) -> OTELExporterConfig:
             if not clean_key:
                 continue
             headers[clean_key] = str(value or "")
+    include_assistant_body = _as_bool(raw.get("include_assistant_body"), False)
     return OTELExporterConfig(
         enabled=_as_bool(raw.get("enabled"), False),
         endpoint=str(raw.get("endpoint", "") or "").strip(),
@@ -135,9 +136,21 @@ def _parse_telemetry_exporter_config(raw: Any) -> OTELExporterConfig:
             or "openminion"
         ),
         sample_rate=max(0.0, min(1.0, _as_float(raw.get("sample_rate"), 1.0))),
-        include_assistant_body=_as_bool(raw.get("include_assistant_body"), False),
+        include_assistant_body=include_assistant_body,
+        include_input_messages=_as_bool(raw.get("include_input_messages"), False),
+        include_output_messages=_as_bool(
+            raw.get("include_output_messages"), include_assistant_body
+        ),
+        include_tool_content=_as_bool(raw.get("include_tool_content"), False),
+        include_local_content=_as_bool(raw.get("include_local_content"), False),
         backend=str(raw.get("backend", "") or "").strip(),
         headers=headers,
+        noncritical_queue_capacity=max(
+            0, _as_int(raw.get("noncritical_queue_capacity"), 1024)
+        ),
+        queue_flush_timeout_seconds=max(
+            0.0, _as_float(raw.get("queue_flush_timeout_seconds"), 2.0)
+        ),
     )
 
 

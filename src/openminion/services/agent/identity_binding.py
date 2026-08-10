@@ -1,6 +1,7 @@
 from pathlib import Path
 import logging
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from openminion.base.config.env import EnvironmentConfig
 from openminion.base.config.runtime import resolve_identity_root_from_env
@@ -44,6 +45,19 @@ from openminion.services.bootstrap.paths import (
 )
 
 from .context.history import _IDENTITY_FRAME, _resolve_system_prompt
+
+
+def issue_execution_identity(metadata: dict[str, Any]) -> tuple[str, str, str]:
+    invocation_id = str(metadata.get("invocation_id") or "").strip()
+    scope = "durable" if invocation_id else "runtime"
+    return invocation_id or uuid4().hex, uuid4().hex, scope
+
+
+def apply_execution_identity(metadata: dict[str, Any]) -> None:
+    invocation_id, execution_id, invocation_scope = issue_execution_identity(metadata)
+    metadata["invocation_id"] = invocation_id
+    metadata["execution_id"] = execution_id
+    metadata["invocation_scope"] = invocation_scope
 
 
 class AgentIdentityMixin:

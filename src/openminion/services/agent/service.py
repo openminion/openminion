@@ -238,6 +238,7 @@ class AgentService(AgentTurnFlowMixin):
         tools: ToolRegistry | None = None,
         security_policy: SecurityPolicyEngine | None = None,
         self_improvement: SelfImprovementEngine | None = None,
+        telemetryctl: Any | None = None,
     ) -> None:
         self._config = config
         self._plugins = plugins
@@ -248,6 +249,7 @@ class AgentService(AgentTurnFlowMixin):
         self._tools = tools
         self._security_policy = security_policy
         self._self_improvement = self_improvement
+        self._telemetryctl = telemetryctl
         self._tool_selection = (
             ToolSelectionService(config.runtime.tool_selection, tools)
             if tools
@@ -260,6 +262,50 @@ class AgentService(AgentTurnFlowMixin):
         self._identity_tool_filter: dict | None = None
         self._last_identity_snippet = None
         self._init_identity_runtime()
+
+    def _bind_execution_telemetry(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        invocation_id: str,
+        execution_id: str,
+    ) -> None:
+        if self._telemetryctl is None:
+            return
+        self._telemetryctl.bind_execution(
+            session_id,
+            turn_id,
+            invocation_id=invocation_id,
+            execution_id=execution_id,
+            agent_id=self._identity_agent_id,
+        )
+
+    def _unbind_execution_telemetry(self, *, session_id: str, turn_id: str) -> None:
+        if self._telemetryctl is not None:
+            self._telemetryctl.unbind_execution(session_id, turn_id)
+
+    async def _emit_agent_event(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        status: str,
+    ) -> None:
+        if self._telemetryctl is None:
+            return
+        try:
+            await self._telemetryctl.emit_canonical_event(
+                session_id,
+                turn_id,
+                event_type,
+                payload,
+                status=status,
+            )
+        except Exception:
+            self._logger.warning("agent telemetry emit failed", exc_info=True)
 
     @staticmethod
     def _sanitize_arguments_for_spec(

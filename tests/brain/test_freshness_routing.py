@@ -371,6 +371,65 @@ def test_final_answer_verifier_accepts_nested_tool_result_dates() -> None:
     )
 
 
+def test_weather_freshness_requires_weather_category_evidence() -> None:
+    contract = FreshnessContract(
+        intent="current_weather_here",
+        domain="weather",
+        time_sensitive=True,
+        needs_live_data=True,
+        answer_mode="browse_then_answer",
+    )
+    obligations = FreshnessObligations(
+        require_live_data=True,
+        answer_mode="browse_then_answer",
+    )
+    location_only = ActionResult(
+        command_id="cmd-location",
+        status="success",
+        summary="Resolved current location",
+        outputs={
+            "tool_results": [
+                {
+                    "tool_name": "location",
+                    "ok": True,
+                    "data": {"city": "San Francisco"},
+                }
+            ]
+        },
+    )
+
+    assert verify_freshness_answer(
+        contract=contract,
+        obligations=obligations,
+        answer="I will get the weather next.",
+        action_result=location_only,
+    ) == ["Missing weather-domain live-data evidence for a freshness-sensitive answer."]
+
+    weather_result = ActionResult(
+        command_id="cmd-weather",
+        status="success",
+        summary="Fetched current weather",
+        outputs={
+            "tool_results": [
+                {
+                    "tool_name": "weather",
+                    "ok": True,
+                    "data": {"temperature_c": 14},
+                }
+            ]
+        },
+    )
+    assert (
+        verify_freshness_answer(
+            contract=contract,
+            obligations=obligations,
+            answer="It is 14 C in San Francisco.",
+            action_result=weather_result,
+        )
+        == []
+    )
+
+
 def test_final_close_message_blocks_unsupported_current_answer() -> None:
     state = _state()
     state.freshness_contract = FreshnessContract(

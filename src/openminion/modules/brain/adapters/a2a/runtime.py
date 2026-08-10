@@ -54,6 +54,51 @@ def _typed_delegation_result_summary(value: Any) -> dict[str, Any] | None:
         return None
 
 
+def _call_response_payload(
+    response: Any,
+    *,
+    started_at: float,
+    in_progress_code: str,
+) -> dict[str, Any]:
+    payload = response.params if isinstance(response.params, dict) else {}
+    if payload.get("ok") is True:
+        data = payload.get("data", {})
+        normalized_data = data if isinstance(data, dict) else {}
+        return {
+            "status": BRAIN_ACTION_STATUS_SUCCESS,
+            "summary": _delegate_result_summary(
+                normalized_data,
+                fallback=f"A2A call completed: {response.from_agent}.{response.method}",
+            ),
+            "outputs": normalized_data,
+            "artifact_refs": [],
+            "memory_refs": [],
+            "metrics": _metrics(started_at),
+        }
+
+    status_code = str(payload.get("status") or "A2A_FAILED")
+    if status_code == in_progress_code or payload.get("task_id"):
+        return {
+            "status": BRAIN_JOB_STATUS_RUNNING,
+            "task_id": payload.get("task_id"),
+            "poll_after_ms": 1000,
+            "summary": "A2A job already in progress.",
+            "metrics": _metrics(started_at),
+        }
+
+    error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    return {
+        "status": BRAIN_ACTION_STATUS_FAILED,
+        "summary": str(error.get("message") or "A2A call failed"),
+        "error": {
+            "code": str(error.get("code") or status_code),
+            "message": str(error.get("message") or "A2A call failed"),
+            "details": error.get("details"),
+        },
+        "metrics": _metrics(started_at),
+    }
+
+
 class A2actlAdapter:
     """Adapter for Agent-to-Agent communication via openminion-a2a runtime."""
 
@@ -126,6 +171,7 @@ class A2actlAdapter:
 
         try:
             from openminion.modules.a2a.models import (
+                A2AObservabilityContext,
                 Envelope,
                 MESSAGE_TYPE_CALL,
                 MESSAGE_TYPE_JOB_START,
@@ -138,6 +184,12 @@ class A2actlAdapter:
                 "error": {"code": "A2A_RUNTIME_MISSING", "message": str(exc)},
             }
 
+        observability_raw = command.get("observability")
+        observability = (
+            A2AObservabilityContext.from_dict(observability_raw)
+            if isinstance(observability_raw, dict)
+            else None
+        )
         envelope = Envelope.new(
             from_agent=from_agent,
             to_agent=target,
@@ -152,6 +204,7 @@ class A2actlAdapter:
                 "session_id": str(session_id or "").strip(),
                 "from_agent": from_agent,
             },
+            observability=observability,
         )
 
         try:
@@ -165,51 +218,11 @@ class A2actlAdapter:
                     "metrics": _metrics(start),
                 }
 
-            response = runtime.call(envelope)
-            payload = response.params if isinstance(response.params, dict) else {}
-            if payload.get("ok") is True:
-                data = payload.get("data", {})
-                normalized_data = data if isinstance(data, dict) else {}
-                summary = _delegate_result_summary(
-                    normalized_data,
-                    fallback=(
-                        f"A2A call completed: {response.from_agent}.{response.method}"
-                    ),
-                )
-                return {
-                    "status": BRAIN_ACTION_STATUS_SUCCESS,
-                    "summary": summary,
-                    "outputs": normalized_data,
-                    "artifact_refs": [],
-                    "memory_refs": [],
-                    "metrics": _metrics(start),
-                }
-
-            status_code = str(payload.get("status") or "A2A_FAILED")
-            if status_code == ERROR_CODE_IN_PROGRESS or payload.get("task_id"):
-                return {
-                    "status": BRAIN_JOB_STATUS_RUNNING,
-                    "task_id": payload.get("task_id"),
-                    "poll_after_ms": 1000,
-                    "summary": "A2A job already in progress.",
-                    "metrics": _metrics(start),
-                }
-
-            error = (
-                payload.get("error") if isinstance(payload.get("error"), dict) else {}
+            return _call_response_payload(
+                runtime.call(envelope),
+                started_at=start,
+                in_progress_code=ERROR_CODE_IN_PROGRESS,
             )
-            return {
-                "status": BRAIN_ACTION_STATUS_FAILED,
-                "summary": str(error.get("message") or "A2A call failed"),
-                "error": {
-                    "code": str(error.get("code") or status_code),
-                    "message": str(error.get("message") or "A2A call failed"),
-                    "details": error.get("details")
-                    if isinstance(error, dict)
-                    else None,
-                },
-                "metrics": _metrics(start),
-            }
         except A2AError as exc:
             return {
                 "status": BRAIN_ACTION_STATUS_FAILED,

@@ -7,6 +7,7 @@ from typing import Any
 
 from openminion.modules.telemetry.cli import main
 from openminion.modules.telemetry.service import TelemetryCtl, TelemetryService
+from openminion.modules.telemetry.cli import _invocation_summary
 
 
 def _run(coro: Any) -> Any:
@@ -54,3 +55,22 @@ def test_telemetryctl_summary_prints_sorted_module_and_metric_keys(
         "latency_bucket_ms"
     ]
     assert list(payload["openminion-tool"]["operation_counts"].keys()) == ["completed"]
+
+
+def test_invocation_summary_reports_legacy_orphan_and_propagation_diagnostics() -> None:
+    from openminion.modules.telemetry.schemas import TelemetryEvent
+
+    payload = _invocation_summary(
+        "invocation-1",
+        [
+            TelemetryEvent(
+                session_id="session-1",
+                turn_id="turn-1",
+                event_type="agent.execution.failed",
+                data={"trace_context_status": "invalid", "status": "error"},
+            )
+        ],
+    )
+
+    assert payload["diagnostics"]["orphan_terminal_events"] == 1
+    assert payload["diagnostics"]["propagation"]["invalid"] == 1

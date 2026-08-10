@@ -18,8 +18,9 @@ DECIDE_STYLE_OVERRIDES: dict[str, str] = {
         "workflow as direct one-shot file/tool calls."
     ),
     "entry_clarify_rule": (
-        "Use the clarify tool whenever a missing detail blocks meaningful progress, "
-        "including filename, path, location, or target details needed to continue. "
+        "Use the clarify tool only when a required detail blocks meaningful progress "
+        "and no available tool or documented default can resolve it. Do not clarify "
+        "for optional tool arguments or information an available tool can discover. "
         "Do not ask blocking clarifying questions in plain text when clarify(question=...) is available."
     ),
     "entry_no_routing_metadata_rule": (

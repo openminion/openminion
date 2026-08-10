@@ -3,6 +3,7 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from openminion.base.types import Message
+from openminion.modules.telemetry.trace.phase_timing import active_chat_phase
 from openminion.modules.task.run import (
     ATTACH_ROLE_OBSERVER,
     ATTACH_ROLE_WRITER,
@@ -24,6 +25,19 @@ from .flow_models import _RoutingResult
 
 
 class GatewayTurnSetupMixin:
+    def _resolve_invocation_id(
+        self, *, session_id: str, thread_id: str
+    ) -> tuple[str, str]:
+        if thread_id and hasattr(self._sessions, "list_run_records_by_thread"):
+            records = self._sessions.list_run_records_by_thread(session_id, thread_id)
+            for record in records:
+                invocation_id = str(record.get("invocation_id") or "").strip()
+                if invocation_id:
+                    return invocation_id, "resumed_thread"
+            if records:
+                return uuid4().hex, "legacy_thread_without_invocation"
+        return uuid4().hex, "new_thread"
+
     def _resolve_attach_role(self, routing: _RoutingResult) -> tuple[str, bool]:
         lifecycle = routing.lifecycle
         attach_role = ""
@@ -131,16 +145,26 @@ class GatewayTurnSetupMixin:
             thread_state=lifecycle.thread_state,
             qualifier=lifecycle.qualifier,
         )
+        invocation_id, invocation_reason = self._resolve_invocation_id(
+            session_id=session_id,
+            thread_id=thread_id,
+        )
+        lifecycle_payload["invocation_id"] = invocation_id
+        lifecycle_payload["invocation_reason"] = invocation_reason
+        routing.normalized_inbound_metadata["invocation_id"] = invocation_id
         run_id = uuid4().hex
         if hasattr(self._sessions, "create_run_record"):
             self._sessions.create_run_record(
                 session_id,
                 run_type="llm",
                 run_id=run_id,
+                invocation_id=invocation_id,
+                thread_id=thread_id or None,
                 meta={
                     "request_id": normalized_request_id,
                     "channel": channel,
                     "target": target,
+                    "invocation_reason": invocation_reason,
                     **self._lifecycle_ops.optional_ids(
                         conversation_id=conversation_id,
                         thread_id=thread_id,
@@ -171,7 +195,8 @@ class GatewayTurnSetupMixin:
         run_id: str,
         history: list[Message],
     ) -> TurnContext:
-        self._memory_followup_queue.flush(session_id=routing.session.id)
+        with active_chat_phase("memory_followup_flush"):
+            self._memory_followup_queue.flush(session_id=routing.session.id)
         return build_turn_context(
             history=history,
             agent_id=self._agent_id,
