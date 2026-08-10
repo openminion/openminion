@@ -82,7 +82,7 @@ _FORBIDDEN_LABELS = frozenset(
 
 
 def performance_metrics_for_event(event: TelemetryEvent) -> list[dict[str, Any]]:
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     event_type = str(event.event_type or "").strip()
     if event_type == "chat.phase_timing":
         return _chat_phase_metrics(payload)
@@ -120,7 +120,7 @@ def performance_metrics_for_event(event: TelemetryEvent) -> list[dict[str, Any]]
 
 
 def generic_metric_projection(event: TelemetryEvent) -> tuple[str, str, float]:
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     for key in _GENERIC_METRIC_VALUE_KEYS:
         try:
             return (

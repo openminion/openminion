@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from openminion.base.config import OTELExporterConfig
 from openminion.modules.telemetry.config import load_config
 from openminion.modules.telemetry.events.catalog import EVENT_TYPES
 from openminion.modules.telemetry.export.otel import event_export_dispositions
@@ -46,23 +47,19 @@ def build_doctor_report(
     )
     trace_root = resolve_trace_root(home_root=Path(home_root) if home_root else None)
     config = load_config(home_root=home_root)
+    database = _database_status(Path(path_info.db_path))
+    traces = _directory_status(trace_root)
+    exporter = _exporter_status(config.otel_exporter)
+    status = (
+        "attention"
+        if "unavailable" in {database["status"], traces["status"]}
+        or exporter["status"] == "incomplete"
+        else "ready"
+    )
     return {
-        "database": _database_status(Path(path_info.db_path)),
-        "otel_exporter": {
-            "enabled": bool(config.otel_exporter.enabled),
-            "endpoint_configured": bool(
-                str(config.otel_exporter.endpoint or "").strip()
-            ),
-            "protocol": str(config.otel_exporter.protocol or ""),
-            "sample_rate": float(config.otel_exporter.sample_rate),
-            "include_assistant_body": bool(config.otel_exporter.include_assistant_body),
-            "noncritical_queue_capacity": int(
-                config.otel_exporter.noncritical_queue_capacity
-            ),
-            "queue_flush_timeout_seconds": float(
-                config.otel_exporter.queue_flush_timeout_seconds
-            ),
-        },
+        "status": status,
+        "database": database,
+        "otel_exporter": exporter,
         "paths": {
             "db_path": path_info.db_path,
             "path_mode": path_info.path_mode,
@@ -70,7 +67,7 @@ def build_doctor_report(
             "home_root": path_info.home_root,
             "trace_root": str(trace_root),
         },
-        "trace_root": _directory_status(trace_root),
+        "trace_root": traces,
     }
 
 
@@ -102,7 +99,7 @@ def list_trace_files(
                 "modified_at": _utc_iso(stat.st_mtime),
             }
         )
-        if len(rows) >= max(1, int(limit)):
+        if len(rows) >= limit:
             break
     return {
         "trace_root": str(root),
@@ -137,22 +134,62 @@ def read_trace_file(*, trace_root: Path, trace_path: str) -> dict[str, Any]:
 
 def _database_status(path: Path) -> dict[str, Any]:
     parent = path.parent
+    exists = path.exists()
+    writable = path.is_file() and os.access(path, os.R_OK | os.W_OK)
+    parent_writable = _is_writable_directory(parent)
+    creatable = not exists and _has_writable_ancestor(parent)
     return {
-        "exists": path.exists(),
+        "status": "ready" if writable or creatable else "unavailable",
+        "exists": exists,
+        "writable": writable,
         "parent_exists": parent.exists(),
-        "parent_writable": _is_writable_directory(parent),
+        "parent_writable": parent_writable,
+        "creatable": creatable,
     }
 
 
 def _directory_status(path: Path) -> dict[str, Any]:
+    exists = path.exists()
+    writable = _is_writable_directory(path)
+    creatable = not exists and _has_writable_ancestor(path.parent)
     return {
-        "exists": path.exists(),
-        "writable": _is_writable_directory(path if path.exists() else path.parent),
+        "status": "ready" if writable or creatable else "unavailable",
+        "exists": exists,
+        "writable": writable,
+        "creatable": creatable,
     }
 
 
 def _is_writable_directory(path: Path) -> bool:
     return path.exists() and path.is_dir() and os.access(path, os.W_OK)
+
+
+def _has_writable_ancestor(path: Path) -> bool:
+    candidate = path
+    while not candidate.exists() and candidate != candidate.parent:
+        candidate = candidate.parent
+    return _is_writable_directory(candidate)
+
+
+def _exporter_status(config: OTELExporterConfig) -> dict[str, Any]:
+    enabled = config.enabled
+    endpoint_configured = bool(config.endpoint.strip())
+    if not enabled:
+        status = "disabled"
+    elif endpoint_configured:
+        status = "ready"
+    else:
+        status = "incomplete"
+    return {
+        "status": status,
+        "enabled": enabled,
+        "endpoint_configured": endpoint_configured,
+        "protocol": config.protocol,
+        "sample_rate": config.sample_rate,
+        "include_assistant_body": config.include_assistant_body,
+        "noncritical_queue_capacity": config.noncritical_queue_capacity,
+        "queue_flush_timeout_seconds": config.queue_flush_timeout_seconds,
+    }
 
 
 def _trace_kind(filename: str) -> str:

@@ -35,8 +35,10 @@ def test_database_artifact_and_pending_export_deletion_is_auditable(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
-    service = TelemetryService(home_root=tmp_path)
-    service._otel_exporter = _DeletionExporter(pending=2)
+    service = TelemetryService(
+        home_root=tmp_path,
+        external_exporter=_DeletionExporter(pending=2),
+    )
     asyncio.run(
         service.record_event(
             TelemetryEvent(

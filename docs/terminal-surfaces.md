@@ -211,6 +211,10 @@ telemetry service report no event rather than inferring usage as zero.
 
 ## Telemetry invocation inspection
 
+`telemetryctl doctor` reports whether local telemetry paths are ready and
+whether external OpenTelemetry export is `disabled`, `ready`, or `incomplete`.
+Local telemetry remains usable when external export is disabled.
+
 `telemetryctl invocation list` lists locally persisted invocation identities
 with filters for agent, status, and event type. Use
 `telemetryctl invocation show <invocation-id>` for deterministic structural

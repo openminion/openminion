@@ -22,7 +22,7 @@ from openminion.modules.storage.record_store import RecordStore
 from .storage.store import PostgresTelemetryStore, SQLiteTelemetryStore
 from .storage.base import TelemetryStore
 
-from .interfaces import TELEMETRY_INTERFACE_VERSION
+from .interfaces import TELEMETRY_INTERFACE_VERSION, TelemetryExporter
 from .schemas import (
     TelemetryEvent,
     normalize_telemetry_event,
@@ -79,6 +79,7 @@ class TelemetryService:
         env: Optional[Mapping[str, str]] = None,
         record_store: RecordStore | None = None,
         otel_exporter_config: OTELExporterConfig | None = None,
+        external_exporter: TelemetryExporter | None = None,
         include_local_content: bool | None = None,
     ) -> None:
         path_info = resolve_telemetry_db_path(
@@ -100,11 +101,12 @@ class TelemetryService:
         else:
             self._store = SQLiteTelemetryStore(self._db_path)
             Path(self._db_path).chmod(0o600)
-        self._otel_exporter = OpenTelemetryTraceExporter(
-            otel_exporter_config,
-            logger=_LOG,
-        )
         config = otel_exporter_config or OTELExporterConfig()
+        self._external_exporter = (
+            external_exporter
+            if external_exporter is not None
+            else OpenTelemetryTraceExporter(config, logger=_LOG)
+        )
         self._include_local_content = bool(
             config.include_local_content
             if include_local_content is None
@@ -118,11 +120,11 @@ class TelemetryService:
         return TELEMETRY_INTERFACE_VERSION
 
     async def close(self) -> None:
-        self._otel_exporter.close()
+        self._external_exporter.close()
         await asyncio.to_thread(self._store.close)
 
     def close_sync(self) -> None:
-        self._otel_exporter.close()
+        self._external_exporter.close()
         self._store.close()
 
     async def record_event(self, event: TelemetryEvent) -> None:
@@ -135,7 +137,7 @@ class TelemetryService:
             self._store.insert_event,
             local_event,
         )
-        self._otel_exporter.export(
+        self._external_exporter.export(
             self._content_policy_event(
                 normalized,
                 allowed_sensitive_fields=self._external_sensitive_fields,
@@ -150,7 +152,7 @@ class TelemetryService:
                 normalized, allow_sensitive_content=self._include_local_content
             )
         )
-        self._otel_exporter.export(
+        self._external_exporter.export(
             self._content_policy_event(
                 normalized,
                 allowed_sensitive_fields=self._external_sensitive_fields,
@@ -181,7 +183,9 @@ class TelemetryService:
             ),
             invocation_id=invocation_id,
         )
-        pending_exports = self._otel_exporter.delete_pending_invocation(invocation_id)
+        pending_exports = self._external_exporter.delete_pending_invocation(
+            invocation_id
+        )
         result = TelemetryDeletionResult(
             invocation_id=invocation_id,
             database_rows_deleted=database_rows,
@@ -878,6 +882,7 @@ def create_telemetry_adapter(
     home_root: Optional[str | Path] = None,
     env: Optional[Mapping[str, str]] = None,
     otel_exporter_config: OTELExporterConfig | None = None,
+    external_exporter: TelemetryExporter | None = None,
 ) -> TelemetryCtl:
     """Factory function to create a telemetry adapter."""
     service = TelemetryService(
@@ -885,5 +890,6 @@ def create_telemetry_adapter(
         home_root=home_root,
         env=env,
         otel_exporter_config=otel_exporter_config,
+        external_exporter=external_exporter,
     )
     return TelemetryCtl(service)

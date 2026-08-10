@@ -12,6 +12,7 @@ from openminion.modules.telemetry.lifecycle import (
 )
 from openminion.modules.telemetry.storage import hook as storage_hook
 from openminion.modules.telemetry.export.otel import OpenTelemetryTraceExporter
+from openminion.modules.telemetry.interfaces import TelemetryExporter
 from openminion.modules.telemetry.schemas import (
     CostSummary,
     ModuleTelemetryStats,
@@ -34,6 +35,7 @@ __all__ = (
     "map_runtime_event_to_lifecycle_event",
     "TelemetryService",
     "TelemetryEvent",
+    "TelemetryExporter",
     "SessionTelemetry",
     "ModuleTelemetryStats",
     "OTELExporterConfig",

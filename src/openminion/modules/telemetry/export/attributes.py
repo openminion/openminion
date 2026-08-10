@@ -69,7 +69,7 @@ def _gen_ai_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
     if event_type not in _GEN_AI_LLM_EVENT_TYPES:
         return {}
 
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     attributes: dict[str, Any] = {"gen_ai.operation.name": "chat"}
 
     model = payload.get("model") or payload.get("model_id")
@@ -177,7 +177,7 @@ def tool_span_name(event: TelemetryEvent) -> str:
 def tool_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
     if not str(event.event_type or "").startswith("tool.execution."):
         return {}
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     attributes: dict[str, Any] = {"gen_ai.operation.name": "execute_tool"}
     tool_name = payload.get("tool_name")
     if tool_name:
@@ -194,7 +194,7 @@ def tool_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
 
 
 def agent_span_name(event: TelemetryEvent) -> str:
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     event_type = str(event.event_type or "")
     agent_name = str(
         payload.get("target_agent") or payload.get("agent_name") or event.agent_id or ""
@@ -211,7 +211,7 @@ def agent_span_name(event: TelemetryEvent) -> str:
 
 
 def span_kind_for_event(event: TelemetryEvent) -> str:
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     if str(event.event_type or "") == "llm.call.started":
         return "CLIENT"
     if (
@@ -225,7 +225,7 @@ def span_kind_for_event(event: TelemetryEvent) -> str:
 def agent_attributes_for_event(event: TelemetryEvent) -> dict[str, Any]:
     if not str(event.event_type or "").startswith("agent."):
         return {}
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     attributes: dict[str, Any] = {}
     if str(event.event_type).startswith(("agent.execution.", "agent.handoff.")):
         attributes["gen_ai.operation.name"] = str(

@@ -42,7 +42,7 @@ def log_projection_for_event(
     attributes: dict[str, Any],
 ) -> OTelLogProjection | None:
     event_type = str(event.event_type or "").strip()
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     status = str(payload.get("status") or "").strip().lower()
     if event_type == "tool.execution.completed" and not bool(
         payload.get("audit_enabled", False)

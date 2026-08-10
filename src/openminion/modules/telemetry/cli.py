@@ -25,6 +25,13 @@ from .service import TelemetryService
 from .trace.layout import resolve_trace_root
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="telemetryctl",
@@ -64,7 +71,7 @@ def _build_parser() -> argparse.ArgumentParser:
     trace_sub = trace.add_subparsers(dest="trace_command", required=True)
     trace_list = trace_sub.add_parser("list", help="List recent trace artifacts.")
     trace_list.add_argument(
-        "--limit", type=int, default=20, help="Maximum files to list."
+        "--limit", type=_positive_int, default=20, help="Maximum files to list."
     )
     trace_list.add_argument(
         "--agent-id",
@@ -82,19 +89,29 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     invocation_list = invocation_sub.add_parser("list", help="List invocations.")
-    invocation_list.add_argument("--limit", type=int, default=20)
-    invocation_list.add_argument("--agent-id", default="")
-    invocation_list.add_argument("--status", default="")
-    invocation_list.add_argument("--event-type", default="")
-    invocation_list.add_argument("--db", default=None)
+    invocation_list.add_argument(
+        "--limit", type=_positive_int, default=20, help="Maximum invocations to list."
+    )
+    invocation_list.add_argument("--agent-id", default="", help="Filter by agent ID.")
+    invocation_list.add_argument("--status", default="", help="Filter by status.")
+    invocation_list.add_argument(
+        "--event-type", default="", help="Filter by exact event type."
+    )
+    invocation_list.add_argument(
+        "--db", default=None, help="Explicit telemetry SQLite path override."
+    )
     for command in ("show", "graph"):
         invocation_show = invocation_sub.add_parser(
             command,
             help=f"{command.title()} one invocation.",
         )
-        invocation_show.add_argument("invocation_id")
-        invocation_show.add_argument("--event-type", default="")
-        invocation_show.add_argument("--db", default=None)
+        invocation_show.add_argument("invocation_id", help="Invocation UUID.")
+        invocation_show.add_argument(
+            "--event-type", default="", help="Filter by exact event type."
+        )
+        invocation_show.add_argument(
+            "--db", default=None, help="Explicit telemetry SQLite path override."
+        )
     return parser
 
 
@@ -131,13 +148,13 @@ async def _print_summary(*, db_path, session_id: str) -> int:
 
 
 def _safe_invocation_id(value: str) -> str:
-    normalized = str(value or "").strip()
+    normalized = value.strip()
     uuid.UUID(normalized)
     return normalized
 
 
 def _event_row(event) -> dict[str, Any]:
-    data = event.data if isinstance(event.data, dict) else {}
+    data = event.data
     error = data.get("error")
     error_type = (
         str(error.get("type") or error.get("code") or "")
@@ -169,7 +186,7 @@ def _invocation_summary(invocation_id: str, events: list) -> dict[str, Any]:
     propagation = {"valid": 0, "invalid": 0, "unavailable": 0}
     log_events: list[str] = []
     for event in events:
-        data = event.data if isinstance(event.data, dict) else {}
+        data = event.data
         usage = data.get("usage")
         if isinstance(usage, dict):
             input_tokens += int(
@@ -272,7 +289,7 @@ async def _print_invocation(*, args, db_path) -> int:
                     continue
                 if agent_id and event.agent_id != agent_id:
                     continue
-                if status and str((event.data or {}).get("status") or "") != status:
+                if status and str(event.data.get("status") or "") != status:
                     continue
                 grouped.setdefault(event.invocation_id, []).append(event)
             rows = [
@@ -281,7 +298,7 @@ async def _print_invocation(*, args, db_path) -> int:
                     grouped,
                     key=lambda key: max(event.timestamp for event in grouped[key]),
                     reverse=True,
-                )[: max(0, int(args.limit))]
+                )[: args.limit]
             ]
             payload = {
                 "count": len(rows),
@@ -304,7 +321,7 @@ async def _print_invocation(*, args, db_path) -> int:
 
 
 def _trace_root_from_args(args) -> Path:
-    home_root = str(getattr(args, "home_root", "") or "").strip()
+    home_root = str(args.home_root or "").strip()
     return resolve_trace_root(home_root=Path(home_root) if home_root else None)
 
 
@@ -327,8 +344,8 @@ def _print_trace_list(args) -> int:
     print_json_payload(
         list_trace_files(
             trace_root=_trace_root_from_args(args),
-            limit=int(getattr(args, "limit", 20) or 20),
-            agent_id=str(getattr(args, "agent_id", "") or ""),
+            limit=args.limit,
+            agent_id=args.agent_id,
         )
     )
     return 0
@@ -338,7 +355,7 @@ def _print_trace_show(args) -> int:
     print_json_payload(
         read_trace_file(
             trace_root=_trace_root_from_args(args),
-            trace_path=str(getattr(args, "path", "") or ""),
+            trace_path=args.path,
         )
     )
     return 0
@@ -348,8 +365,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    home_root = str(getattr(args, "home_root", "") or "").strip()
-    data_root = str(getattr(args, "data_root", "") or "").strip()
+    home_root = str(args.home_root or "").strip()
+    data_root = str(args.data_root or "").strip()
     apply_home_data_root_env(home_root=home_root, data_root=data_root)
 
     if args.command == "catalog":
@@ -359,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return _print_doctor(db_path=db_path, home_root=home_root or None)
     if args.command == "trace":
-        trace_command = str(getattr(args, "trace_command", "") or "").strip()
+        trace_command = args.trace_command
         if trace_command == "list":
             return _print_trace_list(args)
         if trace_command == "show":
@@ -371,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(
             _print_summary(
                 db_path=db_path,
-                session_id=str(getattr(args, "session_id", "") or "").strip(),
+                session_id=args.session_id.strip(),
             )
         )
     if args.command != "storage":

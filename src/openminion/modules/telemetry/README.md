@@ -6,6 +6,13 @@ Runtime peer: standalone (no `services/` peer)
 
 This module owns telemetry adapters, service APIs, trace layout, lifecycle hooks, telemetry persistence, and OpenTelemetry export. Primary contracts: `interfaces.py`, `schemas.py`, `service.py`, `adapter.py`, and `export/otel.py`. Typed telemetry payloads live in `schemas.py` and module event helpers.
 
+`TelemetryService` persists canonical events locally before calling the
+`TelemetryExporter` protocol in `interfaces.py`. `OpenTelemetryTraceExporter`
+is the default external adapter, and another external backend can implement the
+same three-method contract without changing local storage or event schemas.
+External exporter implementations own their failure handling; the service does
+not add a second exception-suppression layer around them.
+
 ## OpenTelemetry export
 
 OpenTelemetry export is additive. Local telemetry persistence remains the
@@ -63,8 +70,9 @@ analysis. It reports structural telemetry facts only.
 
 Useful commands:
 
-1. `telemetryctl doctor` checks the telemetry database path, trace root, and
-   OpenTelemetry exporter configuration.
+1. `telemetryctl doctor` reports an overall `ready` or `attention` status plus
+   database, trace-root, and OpenTelemetry exporter readiness. A disabled
+   exporter is valid; an enabled exporter without an endpoint is `incomplete`.
 2. `telemetryctl catalog` prints registered event types with their OTel export
    disposition (`span`, `metric`, `log`, or `excluded`).
 3. `telemetryctl trace list` lists recent LLM trace artifacts under

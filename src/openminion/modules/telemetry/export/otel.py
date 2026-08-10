@@ -144,12 +144,8 @@ class OpenTelemetryTraceExporter:
         self._deferred_logs: dict[str, list[dict[str, Any]]] = {}
         self._export_queue = (
             NoncriticalExportQueue(
-                capacity=int(
-                    getattr(self._config, "noncritical_queue_capacity", 1024) or 0
-                ),
-                flush_timeout_seconds=float(
-                    getattr(self._config, "queue_flush_timeout_seconds", 2.0) or 0.0
-                ),
+                capacity=int(self._config.noncritical_queue_capacity),
+                flush_timeout_seconds=float(self._config.queue_flush_timeout_seconds),
                 export_now=self._export_now,
             )
             if self._sink is not None
@@ -601,7 +597,7 @@ def _span_keys(
 
 def _parent_span_key_for_event(event: TelemetryEvent) -> str:
     event_type = str(event.event_type or "")
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     if event_type.startswith("tool.execution."):
         pairing_id = _resolve_pairing_id(event, ("tool_call_id", "call_id"))
         return f"tool:{pairing_id}" if pairing_id else _turn_span_key(event)
@@ -631,7 +627,7 @@ def _trace_key_for_event(event: TelemetryEvent) -> str:
     trace_key = str(event.trace_key or "").strip()
     if trace_key:
         return trace_key
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     for key in ("trace_id", "run_id", "request_id"):
         value = str(payload.get(key, "") or "").strip()
         if value:
@@ -668,7 +664,7 @@ def _resolve_pairing_id(
     event: TelemetryEvent,
     pairing_keys: tuple[str, ...],
 ) -> str:
-    payload = event.data if isinstance(event.data, dict) else {}
+    payload = event.data
     for key in pairing_keys:
         value = payload.get(key) or getattr(event, key, None)
         if value is None:

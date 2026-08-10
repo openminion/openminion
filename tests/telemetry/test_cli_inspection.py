@@ -38,11 +38,40 @@ def test_telemetryctl_doctor_reports_paths_and_exporter_config(
     )
 
     payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ready"
     assert payload["paths"]["db_path"] == str(db_path.resolve(strict=False))
     assert payload["paths"]["trace_root"].endswith("/traces")
     assert payload["database"]["parent_writable"] is False
+    assert payload["database"]["creatable"] is True
+    assert payload["database"]["status"] == "ready"
     assert payload["otel_exporter"]["enabled"] is False
+    assert payload["otel_exporter"]["status"] == "disabled"
     assert payload["otel_exporter"]["noncritical_queue_capacity"] == 1024
+
+
+def test_telemetryctl_doctor_reports_incomplete_external_exporter(
+    capsys,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "home" / ".openminion" / "agents.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        json.dumps({"runtime": {"telemetry_exporter": {"enabled": True}}}),
+        encoding="utf-8",
+    )
+
+    assert main(["--home-root", str(tmp_path / "home"), "doctor"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "attention"
+    assert payload["otel_exporter"]["status"] == "incomplete"
+    assert payload["otel_exporter"]["endpoint_configured"] is False
+
+
+def test_telemetryctl_rejects_non_positive_list_limit() -> None:
+    with pytest.raises(SystemExit):
+        main(["invocation", "list", "--limit", "0"])
 
 
 def test_telemetryctl_trace_list_and_show(

@@ -47,7 +47,7 @@ class NoncriticalExportQueue:
         event_type = str(event.event_type or "").strip()
         if event_type == "telemetry.queue.stats":
             return False
-        payload = event.data if isinstance(event.data, dict) else {}
+        payload = event.data
         criticality = str(payload.get("criticality", "") or "").strip().lower()
         return criticality in _QUEUED_CRITICALITIES
 

@@ -1,7 +1,8 @@
-from dataclasses import dataclass
-from typing import Any, Protocol, Optional
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Optional, Protocol
+
 from .schemas import TelemetryEvent, SessionTelemetry, CostSummary
 
 
@@ -57,6 +58,20 @@ class TelemetryContract(Protocol):
     ) -> CostSummary: ...
 
     def get_path_debug(self) -> dict[str, Any]: ...
+
+
+class TelemetryExporter(Protocol):
+    """External export boundary for canonical telemetry events.
+
+    Implementations own their failure handling; the local service does not
+    hide exporter exceptions.
+    """
+
+    def export(self, event: TelemetryEvent) -> bool: ...
+
+    def delete_pending_invocation(self, invocation_id: str) -> int: ...
+
+    def close(self) -> None: ...
 
 
 class TelemetryAdapterContract(Protocol):
