@@ -38,11 +38,7 @@ def _build_identity_config(identity_payload: dict[str, Any]) -> IdentityConfig:
 
 
 def _identity_context_to_payload(config: OpenMinionConfig) -> dict[str, Any]:
-    budget = getattr(
-        config.context,
-        "identity_budget",
-        getattr(config.context, "budget", None),
-    )
+    budget = config.context.identity_budget
     return {
         "context": {
             "identity_budget": (

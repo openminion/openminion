@@ -100,8 +100,6 @@ def _normalize_self_improvement_mode(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in {"review-first", "review_first"}:
         return "review_first"
-    if normalized in {"auto", "automatic"}:
-        return "automatic"
     return "automatic"
 
 
@@ -109,8 +107,6 @@ def _normalize_process_mode(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     if normalized in {"single-process", "single_process", "inproc", "in-process"}:
         return "single-process"
-    if normalized in {"daemon", "service"}:
-        return "daemon"
     return "daemon"
 
 
@@ -154,8 +150,6 @@ def _normalize_memory_provider(value: Any) -> str:
 
 def _normalize_identity_budget_truncate_strategy(value: Any) -> str:
     normalized = str(value or "").strip().lower()
-    if normalized in {"sentence", "sentences"}:
-        return "sentences"
     if normalized in {"bullet", "bullets"}:
         return "bullets"
     return "sentences"
@@ -163,10 +157,8 @@ def _normalize_identity_budget_truncate_strategy(value: Any) -> str:
 
 def _normalize_brain_integration_mode(value: Any) -> str:
     normalized = str(value or "").strip().lower()
-    if normalized in {"", "ctxctl_authoritative"}:
+    if normalized in {"", "ctxctl_authoritative", "contextctl_authoritative"}:
         return "contextctl_authoritative"
-    if normalized == "contextctl_authoritative":
-        return normalized
     if normalized == "legacy_compat":
         raise ConfigError(
             "gateway.brain_integration_mode=legacy_compat is no longer supported. "

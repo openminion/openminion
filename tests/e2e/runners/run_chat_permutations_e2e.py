@@ -54,22 +54,34 @@ def _auto_confirm_limit() -> int:
     return max(value, 1)
 
 
-DEFAULT_CONVERSATIONS = [
+RELEASE_GATE_CONVERSATION = (
     REPO_ROOT
     / "openminion"
     / "tests"
     / "e2e"
     / "fixtures"
     / "chat_permutations"
-    / "e2e_chat_long_conversation.txt",
+    / "e2e_chat_tool_calling_release_gate.txt"
+)
+EXTERNAL_SERVICES_CONVERSATION = (
     REPO_ROOT
     / "openminion"
     / "tests"
     / "e2e"
     / "fixtures"
     / "chat_permutations"
-    / "e2e_chat_tool_calling_permutations.txt",
-]
+    / "e2e_chat_tool_calling_external_services.txt"
+)
+DIAGNOSTIC_CONVERSATION = (
+    REPO_ROOT
+    / "openminion"
+    / "tests"
+    / "e2e"
+    / "fixtures"
+    / "chat_permutations"
+    / "e2e_chat_tool_calling_permutations.txt"
+)
+DEFAULT_CONVERSATIONS = [RELEASE_GATE_CONVERSATION]
 EDGECASE_CONVERSATION = (
     REPO_ROOT
     / "openminion"
@@ -109,6 +121,9 @@ API_KEY_ENVS = {
     "groq": "GROQ_API_KEY",
     "cortensor": "CORTENSOR_API_KEY",
 }
+EXTERNAL_SERVICES_FIXTURES = {EXTERNAL_SERVICES_CONVERSATION.name}
+TINYFISH_API_KEY_ENV = "TINYFISH_API_KEY"
+PINCHTAB_SERVICE_ENVS = ("PINCHTAB_URL", "PINCHTAB_AUTOSTART")
 
 PROVIDER_CONFIG_KEY = {
     "claude": "anthropic",
@@ -397,6 +412,18 @@ def _is_provider_available(provider: str) -> tuple[bool, str]:
     return True, "ok"
 
 
+def _external_service_prerequisite_reason(conversation_path: Path) -> str:
+    if conversation_path.name not in EXTERNAL_SERVICES_FIXTURES:
+        return ""
+    reasons = []
+    if not os.getenv(TINYFISH_API_KEY_ENV, "").strip():
+        reasons.append(f"missing_provider_key:{TINYFISH_API_KEY_ENV}")
+    if not any(os.getenv(name, "").strip() for name in PINCHTAB_SERVICE_ENVS):
+        joined = "/".join(PINCHTAB_SERVICE_ENVS)
+        reasons.append(f"external_service_unavailable:{joined}")
+    return "; ".join(reasons)
+
+
 def _build_conversation(
     template_path: Path, _workdir: Path, *, skip_network: bool
 ) -> str:
@@ -451,6 +478,8 @@ def _resolve_conversations(
     conversation_dir: str | None,
     include_edgecases: bool,
     include_chaos: bool,
+    include_external_services: bool,
+    include_diagnostic: bool,
 ) -> list[Path]:
     if conversations:
         return [Path(item).expanduser().resolve() for item in conversations]
@@ -462,6 +491,10 @@ def _resolve_conversations(
         return sorted(root.glob("*.txt"))
 
     resolved = list(DEFAULT_CONVERSATIONS)
+    if include_external_services and EXTERNAL_SERVICES_CONVERSATION.exists():
+        resolved.append(EXTERNAL_SERVICES_CONVERSATION)
+    if include_diagnostic and DIAGNOSTIC_CONVERSATION.exists():
+        resolved.append(DIAGNOSTIC_CONVERSATION)
     if include_edgecases and EDGECASE_CONVERSATION.exists():
         resolved.append(EDGECASE_CONVERSATION)
     if include_chaos and CHAOS_CONVERSATION.exists():
@@ -685,6 +718,16 @@ def main(argv: Iterable[str] | None = None) -> int:
         action="store_true",
         help="Include chaos tool calling template",
     )
+    parser.add_argument(
+        "--include-external-services",
+        action="store_true",
+        help="Include opt-in search/browser/weather fixture with external prerequisites.",
+    )
+    parser.add_argument(
+        "--include-diagnostic",
+        action="store_true",
+        help="Include the original broad diagnostic permutation fixture.",
+    )
     parser.add_argument("--log-root", default="", help="Log output root")
     parser.add_argument("--config-root", default="", help="Config output root")
     parser.add_argument(
@@ -714,6 +757,10 @@ def main(argv: Iterable[str] | None = None) -> int:
         or bool(os.getenv("OPENMINION_E2E_EDGECASES", "").strip()),
         include_chaos=args.include_chaos
         or bool(os.getenv("OPENMINION_E2E_CHAOS", "").strip()),
+        include_external_services=args.include_external_services
+        or bool(os.getenv("OPENMINION_E2E_EXTERNAL_SERVICES", "").strip()),
+        include_diagnostic=args.include_diagnostic
+        or bool(os.getenv("OPENMINION_E2E_DIAGNOSTIC", "").strip()),
     )
     if not conversation_paths:
         print("No conversation templates found.", file=sys.stderr)
@@ -748,6 +795,25 @@ def main(argv: Iterable[str] | None = None) -> int:
         models = _resolve_models(provider)
         for model in models:
             for conversation_path in conversation_paths:
+                prerequisite_reason = _external_service_prerequisite_reason(
+                    conversation_path
+                )
+                if prerequisite_reason:
+                    results.append(
+                        RunResult(
+                            provider=provider,
+                            model=model,
+                            scenario=conversation_path.stem,
+                            ok=False,
+                            skipped=True,
+                            reason=prerequisite_reason,
+                            log_path=(
+                                log_root / f"{_slug(provider)}--{_slug(model)}--"
+                                f"{_slug(conversation_path.stem)}.log"
+                            ),
+                        )
+                    )
+                    continue
                 data_root = Path(
                     tempfile.mkdtemp(
                         prefix=f"openminion-e2e-{provider}-",

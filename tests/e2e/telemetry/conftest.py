@@ -20,6 +20,23 @@ ARTIFACT_ROOT = (
 )
 
 
+def _require_docker_daemon() -> None:
+    try:
+        result = subprocess.run(
+            ["docker", "info"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        pytest.skip("Docker is required for telemetry E2E collector tests")
+    if result.returncode:
+        reason = (
+            result.stderr or result.stdout or "Docker daemon is unavailable"
+        ).strip()
+        pytest.skip(f"Docker is required for telemetry E2E collector tests: {reason}")
+
+
 def _wait_for_collector() -> None:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
@@ -39,6 +56,7 @@ def collector_artifacts() -> Path:
     env = {**os.environ, "OTEL_E2E_ARTIFACTS": str(ARTIFACT_ROOT)}
     compose = ["docker", "compose", "-f", str(COMPOSE_FILE)]
 
+    _require_docker_daemon()
     subprocess.run([*compose, "down", "--remove-orphans"], env=env, check=False)
     subprocess.run([*compose, "up", "-d"], env=env, check=True)
     try:

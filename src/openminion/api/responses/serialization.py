@@ -58,10 +58,7 @@ def attach_response_meta(
 ) -> dict[str, Any]:
     response_payload = dict(payload)
     existing_meta = response_payload.get("meta")
-    if isinstance(existing_meta, dict):
-        meta = dict(existing_meta)
-    else:
-        meta = {}
+    meta = dict(existing_meta) if isinstance(existing_meta, dict) else {}
     meta["request_id"] = request_id
     meta["method"] = method
     meta["path"] = path

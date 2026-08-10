@@ -212,54 +212,49 @@ def register_api_debug_providers(
 
         return probe
 
-    if runtime is not None:
+    provider_specs: tuple[tuple[str, DebugStatus, WiringSource, dict[str, Any]], ...]
+    if runtime is None:
+        provider_specs = (
+            (
+                "openminion",
+                DebugStatus.WARN,
+                WiringSource.UNKNOWN,
+                {"note": "runtime not available"},
+            ),
+        )
+    else:
         tool_count = len(
             resolve_api_tool_provider_specs_and_dispatch_map(runtime.tools)[0]
         )
         plugin_names = runtime.plugins.names()
         provider = getattr(runtime, "provider", None)
         provider_name = str(getattr(provider, "name", "") or "unknown")
-
-        _register_debug_provider(
-            registry,
-            module_name="openminion",
-            probe_fn=make_probe(
+        provider_specs = (
+            (
                 "openminion",
                 DebugStatus.OK,
                 WiringSource.REAL,
                 {"provider": provider_name},
             ),
-        )
-        _register_debug_provider(
-            registry,
-            module_name="openminion-tool",
-            probe_fn=make_probe(
+            (
                 "openminion-tool",
                 DebugStatus.OK,
                 WiringSource.REAL,
                 {"tool_count": tool_count},
             ),
-        )
-        _register_debug_provider(
-            registry,
-            module_name="openminion-plugins",
-            probe_fn=make_probe(
+            (
                 "openminion-plugins",
                 DebugStatus.OK,
                 WiringSource.REAL if plugin_names else WiringSource.STUB,
                 {"loaded_plugins": plugin_names},
             ),
         )
-    else:
+
+    for module_name, status, wiring, details in provider_specs:
         _register_debug_provider(
             registry,
-            module_name="openminion",
-            probe_fn=make_probe(
-                "openminion",
-                DebugStatus.WARN,
-                WiringSource.UNKNOWN,
-                {"note": "runtime not available"},
-            ),
+            module_name=module_name,
+            probe_fn=make_probe(module_name, status, wiring, details),
         )
 
 

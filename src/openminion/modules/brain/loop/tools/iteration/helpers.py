@@ -336,6 +336,71 @@ def _build_enrichment_message(
     )
 
 
+def _file_write_argument_shape_guidance(
+    *,
+    tool_name: str,
+    error_code: str,
+    lowered_failure_text: str,
+) -> str:
+    if tool_name not in {"file.write", "file_write"}:
+        return ""
+    if not (
+        error_code.strip().upper() in {"INVALID_ARGUMENT", "TOOL_ARG_VALIDATION_FAILED"}
+        or "invalid tool arguments" in lowered_failure_text
+        or "validation error" in lowered_failure_text
+    ):
+        return ""
+    return (
+        "For file.write, pass supported arguments only: path and content "
+        "as strings. Do not pass nested objects, file arrays, or prose-only snippets."
+    )
+
+
+def _is_exec_argument_shape_error(
+    *,
+    tool_name: str,
+    error_code: str,
+    lowered_failure_text: str,
+) -> bool:
+    if tool_name != "exec.run":
+        return False
+    normalized_code = error_code.strip().upper()
+    if normalized_code == "INVALID_ARGUMENT":
+        return any(
+            marker in lowered_failure_text
+            for marker in (
+                "validation error for execrunargs",
+                "extra inputs are not permitted",
+                "environment_variables",
+                "\ndesc\n",
+            )
+        )
+    return normalized_code == "POLICY_DENIED" and any(
+        marker in lowered_failure_text for marker in ('["python"', "[python,")
+    )
+
+
+def _is_exec_verifier_failure(
+    *,
+    tool_name: str,
+    error_code: str,
+    lowered_failure_text: str,
+) -> bool:
+    return (
+        tool_name == "exec.run"
+        and error_code.strip().upper() == "EXEC_ERROR"
+        and any(
+            marker in lowered_failure_text
+            for marker in (
+                "python -m pytest",
+                "short test summary info",
+                "assertionerror",
+                "failed tests/",
+            )
+        )
+    )
+
+
 def _build_tool_failure_recovery_message(
     *,
     tool_name: str,
@@ -388,38 +453,15 @@ def _build_tool_failure_recovery_message(
         and error_code.strip().upper() == "INVALID_ARGUMENT"
         and "working_dir" in lowered_failure_text
     )
-    is_exec_argument_shape_error = tool_name == "exec.run" and (
-        (
-            error_code.strip().upper() == "INVALID_ARGUMENT"
-            and any(
-                marker in lowered_failure_text
-                for marker in (
-                    "validation error for execrunargs",
-                    "extra inputs are not permitted",
-                    "environment_variables",
-                    "\ndesc\n",
-                )
-            )
-        )
-        or (
-            error_code.strip().upper() == "POLICY_DENIED"
-            and any(
-                marker in lowered_failure_text for marker in ('["python"', "[python,")
-            )
-        )
+    is_exec_argument_shape_error = _is_exec_argument_shape_error(
+        tool_name=tool_name,
+        error_code=error_code,
+        lowered_failure_text=lowered_failure_text,
     )
-    is_exec_verifier_failure = (
-        tool_name == "exec.run"
-        and error_code.strip().upper() == "EXEC_ERROR"
-        and any(
-            marker in lowered_failure_text
-            for marker in (
-                "python -m pytest",
-                "short test summary info",
-                "assertionerror",
-                "failed tests/",
-            )
-        )
+    is_exec_verifier_failure = _is_exec_verifier_failure(
+        tool_name=tool_name,
+        error_code=error_code,
+        lowered_failure_text=lowered_failure_text,
     )
     if status not in {BRAIN_ACTION_STATUS_FAILED, BRAIN_ACTION_STATUS_TIMEOUT} and not (
         status == BRAIN_ACTION_STATUS_BLOCKED
@@ -478,6 +520,13 @@ def _build_tool_failure_recovery_message(
             "verifier again, and reuse the same verification command only after "
             "the patch is in place."
         ).strip()
+    file_write_guidance = _file_write_argument_shape_guidance(
+        tool_name=tool_name,
+        error_code=error_code,
+        lowered_failure_text=lowered_failure_text,
+    )
+    if file_write_guidance:
+        recovery_suffix = f"{recovery_suffix} {file_write_guidance}".strip()
     return Message(
         role="system",
         content=(

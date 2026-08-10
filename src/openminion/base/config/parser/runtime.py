@@ -338,18 +338,16 @@ def _system_runtime_mirror(config: RuntimeConfig) -> dict[str, Any]:
         "plugins": plugin_runtime_policy_to_dict(config.plugins),
         "ops": _config_value_to_payload(config.ops),
     }
-    brain_mirror: dict[str, Any] = {}
     if config.has_tool_schema_shortlisting_enabled:
-        brain_mirror["tool_schema_shortlisting_enabled"] = bool(
+        system_payload["tool_schema_shortlisting_enabled"] = bool(
             config.tool_schema_shortlisting_enabled
         )
     if config.has_allow_background_write_authorization:
-        brain_mirror["allow_background_write_authorization"] = bool(
+        system_payload["allow_background_write_authorization"] = bool(
             config.allow_background_write_authorization
         )
     if config.has_trailer_guidance_variant:
-        brain_mirror["trailer_guidance_variant"] = dict(
+        system_payload["trailer_guidance_variant"] = dict(
             config.trailer_guidance_variant or {}
         )
-    system_payload.update(brain_mirror)
     return {key: value for key, value in system_payload.items() if value}

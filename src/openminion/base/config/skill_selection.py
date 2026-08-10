@@ -44,8 +44,6 @@ def normalize_skill_catalog(value: Any) -> list[str]:
 
 def skill_value_to_payload(value: str | list[str] | None) -> str | list[str] | None:
     normalized = normalize_skill_value(value)
-    if normalized is None:
-        return None
     return list(normalized) if isinstance(normalized, list) else normalized
 
 

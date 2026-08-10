@@ -248,9 +248,7 @@ class CortensorE2ESuite:
         self.env = os.environ.copy()
         self.env["HOME"] = str(self.root)
         self.env["OPENMINION_HOME"] = str(self.openminion_home)
-        self.env["OPENMINION_DATA_ROOT"] = str(
-            self.openminion_home / ".openminion"
-        )
+        self.env["OPENMINION_DATA_ROOT"] = str(self.openminion_home / ".openminion")
         self.env["OPENMINION_GENERATED_ROOT"] = str(
             Path(self.env["OPENMINION_DATA_ROOT"]).expanduser().resolve() / "runtime"
         )

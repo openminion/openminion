@@ -1,0 +1,10 @@
+search for openminion tool calling
+google openminion tool calling
+lookup tool calling examples
+fetch from https://example.com
+curl https://example.com
+open browser and go to example.com
+take screenshot
+list tabs
+What's the weather in Tokyo?
+/exit

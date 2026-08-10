@@ -68,8 +68,7 @@ class SettingsResolver:
         return self.load()
 
     def get(self, key: str, default: Any = None) -> Any:
-        value = self.load().get(key, default)
-        return copy.deepcopy(value)
+        return copy.deepcopy(self.load().get(key, default))
 
     def lifecycle_hooks_for_event(self, event_type: str) -> list[dict[str, str]]:
         hooks = self.load().get("hooks", {})

@@ -3,6 +3,7 @@ import sys
 
 import pytest
 
+import openminion.base.runtime.runners as runners_module
 from openminion.base.runtime.runners import LocalRunner
 from openminion.base.runtime.sandbox import (
     ExecutionSandboxSpec,
@@ -130,6 +131,17 @@ def test_fs_write_outside_workspace_denied(tmp_path):
     sb = _sandbox(tmp_path, write_allow=[str(tmp_path)])
     with pytest.raises(PermissionError, match="outside allowed roots"):
         runner.fs_write(FsWriteSpec(path="/tmp/evil.txt", content="x"), sb)
+
+
+def test_fs_path_resolution_failure_fails_closed(tmp_path, monkeypatch):
+    def fail_resolution(path):
+        raise OSError(f"cannot resolve {path}")
+
+    monkeypatch.setattr(runners_module.os.path, "realpath", fail_resolution)
+    with pytest.raises(OSError, match="cannot resolve"):
+        runner.fs_write(
+            FsWriteSpec(path=str(tmp_path / "out.txt"), content="x"), _sandbox(tmp_path)
+        )
 
 
 def test_fs_write_bytes(tmp_path):

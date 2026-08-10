@@ -89,7 +89,10 @@ from openminion.modules.brain.loop.tools.postprocess.rules import (
     _looks_like_unexecutable_tool_payload_text,
 )
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
-from openminion.modules.brain.loop.tools.no_tool import AdaptiveLoopRunnerNoToolMixin
+from openminion.modules.brain.loop.tools.no_tool import (
+    AdaptiveLoopRunnerNoToolMixin,
+    _retry_snippet_only_file_artifact_answer,
+)
 from openminion.modules.brain.loop.tools.iteration.termination import (
     finalize_iteration_cap_exit,
 )
@@ -1320,6 +1323,80 @@ class TestBuildToolFailureRecoveryMessage:
         assert "plain command string" in msg.content
         assert "not a JSON array" in msg.content
         assert "omit desc, environment_variables" in msg.content
+
+    def test_file_write_argument_shape_error_gets_schema_guidance(self) -> None:
+        ar = ActionResult(
+            command_id="x",
+            status="failed",
+            summary="Invalid tool arguments",
+            error=ActionError(
+                code="TOOL_ARG_VALIDATION_FAILED",
+                message=(
+                    "2 validation errors for FileWriteArgs\n"
+                    "path\n  Field required\n"
+                    "content\n  Input should be a valid string"
+                ),
+            ),
+        )
+        msg = _build_tool_failure_recovery_message(
+            tool_name="file.write",
+            action_result=ar,
+        )
+        assert msg is not None
+        assert "path and content as strings" in msg.content
+        assert "Do not repeat the same invalid call" in msg.content
+
+    def test_failed_file_write_final_answer_gets_repair_retry(self) -> None:
+        class RetryRunner:
+            def __init__(self) -> None:
+                self.loop_state = AdaptiveToolLoopState(
+                    messages=[
+                        Message(
+                            role="user",
+                            content=(
+                                "Build a tiny Python CLI project with tests and README. "
+                                "Use file.write for files and do not only show code."
+                            ),
+                        )
+                    ],
+                    scratchpad={
+                        "adaptive.tool_results": [
+                            {
+                                "tool_name": "file.write",
+                                "ok": False,
+                                "error": "Invalid tool arguments",
+                                "data": {
+                                    "error_code": "TOOL_ARG_VALIDATION_FAILED",
+                                },
+                            }
+                        ]
+                    },
+                )
+                self.retry_message = ""
+                self.discarded = ""
+
+            def _retry_with_system_message(
+                self,
+                message: str,
+                *,
+                discard_assistant_text: str | None = None,
+            ) -> tuple[bool, None]:
+                self.retry_message = message
+                self.discarded = str(discard_assistant_text or "")
+                return True, None
+
+        runner = RetryRunner()
+
+        result = _retry_snippet_only_file_artifact_answer(
+            runner,
+            normalized_final_text="Invalid tool arguments",
+        )
+
+        assert result == (True, None)
+        assert runner.loop_state.scratchpad["failed_file_mutation_retry_used"] is True
+        assert "previous file mutation tool call failed" in runner.retry_message
+        assert "path and content as strings" in runner.retry_message
+        assert runner.discarded == "Invalid tool arguments"
 
     def test_exec_run_policy_denied_array_command_gets_string_guidance(self) -> None:
         ar = ActionResult(

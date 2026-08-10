@@ -114,9 +114,7 @@ def postgres_store(tmp_path: Path):
     engine = sa.create_engine(schema_url(postgres_url, schema_name), future=True)
     store = PostgresMemoryStore(
         engine,
-        database_path=(
-            tmp_path / ".openminion" / "memory" / "postgres-operability.db"
-        ),
+        database_path=(tmp_path / ".openminion" / "memory" / "postgres-operability.db"),
     )
     try:
         yield store

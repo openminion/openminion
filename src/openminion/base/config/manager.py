@@ -30,9 +30,7 @@ class ConfigManager:
     env: EnvironmentConfig = field(init=False)
 
     def __post_init__(self) -> None:
-        runtime_env = (
-            getattr(getattr(self.base_config, "runtime", None), "env", None) or {}
-        )
+        runtime_env = self.base_config.runtime.env or {}
         object.__setattr__(
             self,
             "env",

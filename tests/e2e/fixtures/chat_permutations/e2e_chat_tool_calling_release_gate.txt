@@ -1,0 +1,7 @@
+/status
+Write to file {{WORKDIR}}/nl_write_a.txt the following content: hello A
+Read file {{WORKDIR}}/nl_write_a.txt
+tool write_file {"path": "{{WORKDIR}}/explicit_a.txt", "content": "explicit A"}
+tool read_file {"path": "{{WORKDIR}}/explicit_a.txt", "max_chars": 12}
+tool calculate_expression {"expression": "(2+3)*5"}
+/exit

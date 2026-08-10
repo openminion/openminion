@@ -442,17 +442,10 @@ def _user_requested_file_artifact_tooling(loop_state: Any) -> bool:
     return explicit_tooling and artifact_intent
 
 
-def _has_successful_file_mutation(loop_state: Any) -> bool:
+def _has_file_mutation_attempt(loop_state: Any, *, ok: bool | None = None) -> bool:
     return any(
-        bool(item.get("ok"))
+        (ok is None or bool(item.get("ok")) is ok)
         and str(item.get("tool_name", "") or "").strip() in _MUTATING_FILE_TOOLS
-        for item in _loop_tool_result_payloads(loop_state)
-    )
-
-
-def _has_file_mutation_attempt(loop_state: Any) -> bool:
-    return any(
-        str(item.get("tool_name", "") or "").strip() in _MUTATING_FILE_TOOLS
         for item in _loop_tool_result_payloads(loop_state)
     )
 
@@ -502,9 +495,22 @@ def _retry_snippet_only_file_artifact_answer(
     if not _user_requested_file_artifact_tooling(runner.loop_state):
         return None
     missing_artifacts = _missing_requested_file_artifact_labels(runner.loop_state)
-    if _has_successful_file_mutation(runner.loop_state) and not missing_artifacts:
+    if _has_file_mutation_attempt(runner.loop_state, ok=True) and not missing_artifacts:
         return None
     if _has_file_mutation_attempt(runner.loop_state):
+        if _has_file_mutation_attempt(runner.loop_state, ok=False) and not bool(
+            runner.loop_state.scratchpad.get("failed_file_mutation_retry_used", False)
+        ):
+            runner.loop_state.scratchpad["failed_file_mutation_retry_used"] = True
+            missing = ", ".join(missing_artifacts)
+            return runner._retry_with_system_message(
+                "The previous file mutation tool call failed. "
+                f"{f'Missing requested artifacts: {missing}. ' if missing else ''}"
+                "Retry with corrected file.write or code.patch arguments. For "
+                "file.write, pass path and content as strings. Do not stop with "
+                "the tool error as the final answer.",
+                discard_assistant_text=normalized_final_text,
+            )
         if missing_artifacts and normalized_final_text:
             retry_key = "missing_requested_file_artifacts_retry_used"
             if not bool(runner.loop_state.scratchpad.get(retry_key, False)):

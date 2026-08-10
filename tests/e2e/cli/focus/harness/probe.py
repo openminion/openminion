@@ -642,11 +642,7 @@ class FocusProbe:
                 self._submit_composer_line(session, scenario.approval_reply)
                 event_offset = len(session.visible_transcript)
                 continue
-            if (
-                done_match is not None
-                and not approval_visible
-                and not active_turn_busy(screen_text)
-            ):
+            if done_match is not None and not approval_visible:
                 break
         else:
             raise AssertionError(

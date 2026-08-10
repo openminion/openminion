@@ -55,6 +55,17 @@ def _with_skill(
         ctl.close()
 
 
+def _proposal_queue_error(exc: Exception, *, proposal_id: str) -> RouteResult:
+    message = str(exc)
+    not_found = "not found" in message.lower()
+    return _error(
+        HTTPStatus.NOT_FOUND if not_found else HTTPStatus.BAD_REQUEST,
+        code="NOT_FOUND" if not_found else "invalid_request",
+        message=message,
+        details={"proposal_id": proposal_id},
+    )
+
+
 def list_skills(ctx: APIRouteContext, *, query: str | None) -> RouteResult:
     query_args = parse_qs(query or "", keep_blank_values=False)
     status_raw = query_args.get("status", [None])[0]
@@ -275,18 +286,7 @@ def review_proposal(
                 criterion_decisions=criteria_raw,
             )
         except ProposalQueueError as exc:
-            if "not found" in str(exc).lower():
-                http_status = HTTPStatus.NOT_FOUND
-                code = "NOT_FOUND"
-            else:
-                http_status = HTTPStatus.BAD_REQUEST
-                code = "invalid_request"
-            return _error(
-                http_status,
-                code=code,
-                message=str(exc),
-                details={"proposal_id": proposal_id},
-            )
+            return _proposal_queue_error(exc, proposal_id=proposal_id)
         except ValueError as exc:
             return _error(
                 HTTPStatus.BAD_REQUEST,
@@ -321,18 +321,7 @@ def apply_proposal(ctx: APIRouteContext, *, proposal_id: str) -> RouteResult:
                 current_catalog=catalog_rows,
             )
         except ProposalQueueError as exc:
-            if "not found" in str(exc).lower():
-                http_status = HTTPStatus.NOT_FOUND
-                code = "NOT_FOUND"
-            else:
-                http_status = HTTPStatus.BAD_REQUEST
-                code = "invalid_request"
-            return _error(
-                http_status,
-                code=code,
-                message=str(exc),
-                details={"proposal_id": proposal_id},
-            )
+            return _proposal_queue_error(exc, proposal_id=proposal_id)
         return RouteResult(
             status=HTTPStatus.OK,
             payload={

@@ -53,8 +53,7 @@ def _redact_value(value: Any, *, key_hint: str) -> tuple[Any, int]:
         return redact_sensitive_text(value)
 
     if isinstance(value, Mapping):
-        safe, count = redact_mapping(value)
-        return safe, count
+        return redact_mapping(value)
 
     if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
         redacted_items: list[Any] = []
