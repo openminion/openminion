@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 from dataclasses import replace
@@ -163,6 +164,11 @@ async def run_e2e_test(
 
 def main() -> int:
     args = parse_args()
+    openminion_root = Path(__file__).resolve().parents[3]
+    data_root = openminion_root / ".openminion"
+    os.environ["OPENMINION_HOME"] = str(openminion_root)
+    os.environ["OPENMINION_DATA_ROOT"] = str(data_root)
+    os.environ["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
 
     print("=== CRDH-07 E2E Smoke Test ===")
     print(f"Config: {args.config}")

@@ -334,6 +334,7 @@ class FocusProbe:
         return {
             "OPENMINION_HOME": str(self.openminion_root),
             "OPENMINION_DATA_ROOT": str(self.data_root),
+            "OPENMINION_GENERATED_ROOT": str(self.data_root / "runtime"),
             "PYTHONPATH": "src",
             "OPENMINION_SHOW_RESPONSE_TIME": "1",
             "PYTHONDONTWRITEBYTECODE": "1",

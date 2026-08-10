@@ -38,6 +38,7 @@ def test_first_user_cli_path_succeeds_with_echo_provider(tmp_path: Path) -> None
     env = dict(os.environ)
     env["OPENMINION_HOME"] = str(home_root)
     env["OPENMINION_DATA_ROOT"] = str(data_root)
+    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
 
     config_init = _run_cli(
         "--config",

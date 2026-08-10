@@ -80,7 +80,7 @@ def sqlite_store(tmp_path):
 
 
 @pytest.fixture
-def postgres_store():
+def postgres_store(tmp_path: Path):
     postgres_url = str(os.environ.get("OPENMINION_TEST_POSTGRES_URL", "")).strip()
     if not postgres_url:
         pytest.skip("OPENMINION_TEST_POSTGRES_URL is not set")
@@ -92,7 +92,7 @@ def postgres_store():
     try:
         store = PostgresMemoryStore(
             engine,
-            database_path=Path.cwd() / ".openminion-memory-postgres-search-test",
+            database_path=tmp_path / ".openminion" / "memory" / "postgres-search.db",
         )
         _populate(store)
         yield store

@@ -66,6 +66,7 @@ def _environment(
     return {
         "OPENMINION_HOME": str(home_root),
         "OPENMINION_DATA_ROOT": str(data_root),
+        "OPENMINION_GENERATED_ROOT": str(data_root / "runtime"),
         "PYTHONPATH": "src",
         "PYTHONDONTWRITEBYTECODE": "1",
         **overrides,

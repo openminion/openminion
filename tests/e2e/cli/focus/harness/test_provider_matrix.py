@@ -35,6 +35,9 @@ def test_provider_matrix_writes_versioned_artifacts(
 ) -> None:
     monkeypatch.setenv("OPENMINION_HOME", str(tmp_path))
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv(
+        "OPENMINION_GENERATED_ROOT", str(tmp_path / "data" / "runtime")
+    )
     for relative in (
         "test-configs/per-agent-minimax-official.json",
         "test-configs/per-agent-openrouter-gpt-4o-mini.json",

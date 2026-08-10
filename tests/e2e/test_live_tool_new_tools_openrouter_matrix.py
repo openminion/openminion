@@ -273,6 +273,9 @@ def live_agent(request: pytest.FixtureRequest) -> dict:
     runtime_home = _runtime_home_root()
     os.environ.setdefault("OPENMINION_HOME", str(runtime_home))
     os.environ["OPENMINION_DATA_ROOT"] = str(runtime_home / ".openminion")
+    os.environ["OPENMINION_GENERATED_ROOT"] = str(
+        runtime_home / ".openminion" / "runtime"
+    )
 
     runtime = APIRuntime.from_config_path(str(config_path))
     yield {

@@ -503,6 +503,9 @@ def test_cli_chat_probe_passes_data_root_to_child_cli(
     assert isinstance(env, dict)
     assert command[command.index("--data-root") + 1] == str(data_root.resolve())
     assert env["OPENMINION_DATA_ROOT"] == str(data_root.resolve())
+    assert env["OPENMINION_GENERATED_ROOT"] == str(
+        data_root.resolve() / "runtime"
+    )
 
 
 @pytest.mark.parametrize(
@@ -646,6 +649,13 @@ def test_cli_gate_main_sets_runtime_env_and_runs_local(
     assert gate.main(["local"]) == 0
     assert captured["PYTHONDONTWRITEBYTECODE"] == "1"
     assert captured["PYTHONPATH"] == str(gate.ROOT / "src")
+    expected_home = gate.ROOT.resolve()
+    expected_data_root = expected_home / ".openminion"
+    assert captured["OPENMINION_HOME"] == str(expected_home)
+    assert captured["OPENMINION_DATA_ROOT"] == str(expected_data_root)
+    assert captured["OPENMINION_GENERATED_ROOT"] == str(
+        expected_data_root / "runtime"
+    )
 
 
 def test_chat_permutations_runner_artifacts_use_generated_root(

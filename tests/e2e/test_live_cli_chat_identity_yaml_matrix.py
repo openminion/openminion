@@ -251,6 +251,7 @@ def _run_cli_turn(
     for key in (
         "OPENMINION_CONFIG",
         "OPENMINION_DATA_ROOT",
+        "OPENMINION_GENERATED_ROOT",
         "OPENMINION_IDENTITY_DB",
         "OPENMINION_IDENTITY_ROOT",
         "OPENMINION_TRACE_REQUESTS_DIR",
@@ -259,6 +260,7 @@ def _run_cli_turn(
     openminion_root = _openminion_root()
     env["OPENMINION_HOME"] = str(_runtime_home_root())
     env["OPENMINION_DATA_ROOT"] = str(data_root)
+    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     env["OPENMINION_IDENTITY_ROOT"] = str(identity_root)
     env["OPENMINION_TRACE_REQUESTS"] = "1"
     env["OPENMINION_TRACE_REQUESTS_DIR"] = str(trace_root)

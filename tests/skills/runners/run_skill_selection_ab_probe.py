@@ -107,6 +107,7 @@ def main() -> int:
     env = os.environ.copy()
     env["OPENMINION_HOME"] = str(home_root)
     env["OPENMINION_DATA_ROOT"] = str(data_root)
+    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     env["PYTHONPATH"] = "src"
 
     if not args.skip_ingest:

@@ -1289,10 +1289,12 @@ def main() -> int:
         env["OPENMINION_DATA_ROOT"] = str(normalized_data_root)
         cmd.extend(("--data-root", str(normalized_data_root)))
     else:
-        env.setdefault(
-            "OPENMINION_DATA_ROOT",
-            str(_default_probe_data_root(home_root=home_root, session_id=args.session)),
+        env["OPENMINION_DATA_ROOT"] = str(
+            _default_probe_data_root(home_root=home_root, session_id=args.session)
         )
+    env["OPENMINION_GENERATED_ROOT"] = str(
+        Path(env["OPENMINION_DATA_ROOT"]).expanduser().resolve() / "runtime"
+    )
     if args.trace_root:
         env["OPENMINION_TRACE_REQUESTS"] = "1"
         normalized_trace_root = _normalize_probe_path(

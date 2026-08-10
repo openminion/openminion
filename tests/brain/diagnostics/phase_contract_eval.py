@@ -224,6 +224,8 @@ def run_live_chat_scenario(
         env.update(
             {
                 "OPENMINION_HOME": str(repo_path),
+                "OPENMINION_DATA_ROOT": str(trace_root / "data"),
+                "OPENMINION_GENERATED_ROOT": str(trace_root / "data" / "runtime"),
                 OPENMINION_TRACE_REQUESTS_ENV: "1",
                 OPENMINION_TRACE_REQUESTS_DIR_ENV: str(trace_root),
                 "PYTHONPATH": "src",

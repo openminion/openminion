@@ -509,6 +509,11 @@ def _runner_env() -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
+    home_root = ROOT.resolve()
+    data_root = home_root / ".openminion"
+    env["OPENMINION_HOME"] = str(home_root)
+    env["OPENMINION_DATA_ROOT"] = str(data_root)
+    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     return env
 
 

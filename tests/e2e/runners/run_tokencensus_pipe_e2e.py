@@ -193,6 +193,7 @@ def _installed_env(home_root: Path, data_root: Path) -> dict[str, str]:
     env.pop("PYTHONPATH", None)
     env["OPENMINION_HOME"] = str(home_root)
     env["OPENMINION_DATA_ROOT"] = str(data_root)
+    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     return env
 

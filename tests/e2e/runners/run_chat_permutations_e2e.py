@@ -439,6 +439,7 @@ def _scenario_data_root_parent(log_root: Path) -> Path:
 def _chat_subprocess_env(*, data_root: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(OPENMINION_DIR / "src")
+    env["OPENMINION_HOME"] = str(OPENMINION_DIR)
     env[OPENMINION_DATA_ROOT_ENV] = str(data_root)
     env[OPENMINION_GENERATED_ROOT_ENV] = str(data_root / "runtime")
     return env

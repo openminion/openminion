@@ -218,6 +218,7 @@ def _run_env(*, data_root: Path, trace_root: Path | None = None) -> dict[str, st
     for key in (
         "OPENMINION_CONFIG",
         "OPENMINION_DATA_ROOT",
+        "OPENMINION_GENERATED_ROOT",
         "OPENMINION_IDENTITY_DB",
         "OPENMINION_IDENTITY_ROOT",
         "OPENMINION_TRACE_REQUESTS_DIR",
@@ -226,6 +227,7 @@ def _run_env(*, data_root: Path, trace_root: Path | None = None) -> dict[str, st
 
     env["OPENMINION_HOME"] = str(runtime_home_root())
     env["OPENMINION_DATA_ROOT"] = str(data_root)
+    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     if trace_root is not None:
         env["OPENMINION_TRACE_REQUESTS"] = "1"
         env["OPENMINION_TRACE_REQUESTS_DIR"] = str(trace_root)

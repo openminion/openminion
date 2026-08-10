@@ -283,9 +283,7 @@ def main() -> int:
     args = parser.parse_args()
 
     framework_root = Path(__file__).resolve().parents[4]
-    openminion_dir = Path(
-        os.environ.get("OPENMINION_HOME", "") or framework_root / "openminion"
-    ).resolve()
+    openminion_dir = (framework_root / "openminion").resolve()
     config_path = (
         Path(args.config)
         if args.config
@@ -297,7 +295,10 @@ def main() -> int:
         else (openminion_dir / ".venv" / "bin" / "python3.11")
     )
 
-    os.environ.setdefault("OPENMINION_HOME", str(openminion_dir))
+    data_root = openminion_dir / ".openminion"
+    os.environ["OPENMINION_HOME"] = str(openminion_dir)
+    os.environ["OPENMINION_DATA_ROOT"] = str(data_root)
+    os.environ["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
 
     if not py_bin.exists():
         print(f"FAIL: python binary not found: {py_bin}")

@@ -94,6 +94,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _set_runtime_roots(env: dict[str, str]) -> None:
+    home_root = ROOT.resolve()
+    data_root = home_root / ".openminion"
+    env["OPENMINION_HOME"] = str(home_root)
+    env["OPENMINION_DATA_ROOT"] = str(data_root)
+    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if not PYTHON.is_file():
@@ -102,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     env = os.environ.copy()
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     env.setdefault("PYTHONPATH", str(ROOT / "src"))
+    _set_runtime_roots(env)
     if args.mode in {"local", "all"}:
         result = _run_local(env)
         if result:

@@ -131,9 +131,9 @@ class AutonomySmokeSuite:
         self.env["PYTHONPATH"] = "src"
         self.env.setdefault("HOME", str(self.root))
         self.env["OPENMINION_HOME"] = str(self.openminion_home)
-        self.env.setdefault(
-            "OPENMINION_DATA_ROOT",
-            str(self.openminion_home / ".openminion"),
+        self.env["OPENMINION_DATA_ROOT"] = str(self.output_dir / "data")
+        self.env["OPENMINION_GENERATED_ROOT"] = str(
+            Path(self.env["OPENMINION_DATA_ROOT"]).expanduser().resolve() / "runtime"
         )
 
     def _write_text(self, relpath: str, content: str) -> str:
