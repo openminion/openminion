@@ -381,7 +381,7 @@ class AgentTurnFlowMixin:
             progress_callback=progress_callback,
             approval_callback=approval_callback,
         )
-        telemetry = AgentExecutionTelemetry(self, inbound=inbound, runtime=runtime)
+        telemetry = AgentExecutionTelemetry(self, inbound=inbound)
         await telemetry.start()
 
         def _finalize_response(response: AgentResponse) -> AgentResponse:

@@ -505,6 +505,7 @@ class OpenTelemetryTraceExporter:
         timestamp_ns: int,
         trace_key: str,
     ) -> bool:
+        assert self._sink is not None
         start_event_type, pairing_keys = _PAIRED_COMPLETION_EVENTS[event_type]
         pairing_id = _resolve_pairing_id(event, pairing_keys)
         if not pairing_id:
@@ -535,7 +536,7 @@ class OpenTelemetryTraceExporter:
             event.execution_id or (event.data or {}).get("execution_id") or ""
         )
         if start_event_type == "agent.execution.started":
-            self._sink.emit_span(**span)  # type: ignore[union-attr]
+            self._sink.emit_span(**span)
             if execution_id:
                 self._flush_execution(execution_id)
         else:

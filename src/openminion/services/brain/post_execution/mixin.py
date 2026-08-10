@@ -472,7 +472,7 @@ class BrainBridgeTurnMixin:
         )
         message.metadata["session_id"] = session_id
         message.metadata["turn_id"] = turn_id
-        telemetry = AgentExecutionTelemetry(self, inbound=message, runtime=None)
+        telemetry = AgentExecutionTelemetry(self, inbound=message)
         await telemetry.start()
 
         if callable(approval_callback):

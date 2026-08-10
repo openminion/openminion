@@ -346,10 +346,9 @@ def _service_port_telemetryctl(service_port: Any) -> Any | None:
 
 
 class AgentExecutionTelemetry:
-    def __init__(self, service: Any, *, inbound: Any, runtime: Any) -> None:
+    def __init__(self, service: Any, *, inbound: Any) -> None:
         self._service = service
         self._inbound = inbound
-        self._runtime = runtime
         self._session_id = str(inbound.metadata.get("session_id") or "").strip()
         self._turn_id = str(
             inbound.metadata.get("turn_id")
