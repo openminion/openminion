@@ -86,6 +86,11 @@ class SqlGoalRepository:
             return None
         return Goal.model_validate(json.loads(rows[0]["goal_json"]))
 
+    def _require_goal(self, goal_id: str) -> Goal:
+        if (goal := self.get(goal_id)) is None:
+            raise KeyError(f"Unknown goal_id: {goal_id!r}")
+        return goal
+
     def list_active(self) -> list[Goal]:
         rows = self._store.query_dicts(
             """
@@ -107,9 +112,7 @@ class SqlGoalRepository:
     ) -> Goal:
         normalized_goal_id = _strip_required(goal_id, label="goal_id")
         normalized_session_id = _strip_required(session_id, label="session_id")
-        goal = self.get(normalized_goal_id)
-        if goal is None:
-            raise KeyError(f"Unknown goal_id: {normalized_goal_id!r}")
+        goal = self._require_goal(normalized_goal_id)
         now = _utc_now()
         if active:
             self._store.execute_count(
@@ -249,9 +252,7 @@ class SqlGoalRepository:
         new_status: GoalStatus | str,
         reason: str = "",
     ) -> Goal:
-        goal = self.get(goal_id)
-        if goal is None:
-            raise KeyError(f"Unknown goal_id: {goal_id!r}")
+        goal = self._require_goal(goal_id)
         normalized_status = validate_goal_status_transition(goal.status, new_status)
         updated = goal.model_copy(update={"status": normalized_status})
         persisted = self._persist_goal(updated, latest_reason=reason)
@@ -264,9 +265,7 @@ class SqlGoalRepository:
         return persisted
 
     def replace(self, goal: Goal, *, reason: str = "") -> Goal:
-        current = self.get(goal.goal_id)
-        if current is None:
-            raise KeyError(f"Unknown goal_id: {goal.goal_id!r}")
+        current = self._require_goal(goal.goal_id)
         persisted = self._persist_goal(goal, latest_reason=reason)
         if current.status != goal.status:
             self._record_audit(
@@ -278,18 +277,14 @@ class SqlGoalRepository:
         return persisted
 
     def set_apd_plan_id(self, goal_id: str, plan_id: str) -> Goal:
-        goal = self.get(goal_id)
-        if goal is None:
-            raise KeyError(f"Unknown goal_id: {goal_id!r}")
+        goal = self._require_goal(goal_id)
         updated = goal.model_copy(
             update={"apd_plan_id": str(plan_id or "").strip() or None}
         )
         return self._persist_goal(updated)
 
     def set_owner(self, goal_id: str, owner_agent_id: str | None) -> Goal:
-        goal = self.get(goal_id)
-        if goal is None:
-            raise KeyError(f"Unknown goal_id: {goal_id!r}")
+        goal = self._require_goal(goal_id)
         updated = goal.model_copy(
             update={"owner_agent_id": str(owner_agent_id or "").strip() or None}
         )
@@ -302,9 +297,7 @@ class SqlGoalRepository:
         return self.transition_status(goal_id, GoalStatus.ACTIVE, reason=reason)
 
     def abort(self, goal_id: str, *, reason: str = "") -> Goal:
-        goal = self.get(goal_id)
-        if goal is None:
-            raise KeyError(f"Unknown goal_id: {goal_id!r}")
+        goal = self._require_goal(goal_id)
         updated = goal.model_copy(
             update={
                 "status": validate_goal_status_transition(
@@ -330,9 +323,7 @@ class SqlGoalRepository:
         return persisted
 
     def add_external_blocker(self, goal_id: str, blocker: ExternalBlocker) -> Goal:
-        goal = self.get(goal_id)
-        if goal is None:
-            raise KeyError(f"Unknown goal_id: {goal_id!r}")
+        goal = self._require_goal(goal_id)
         updated = goal.model_copy(
             update={"external_blockers": [*goal.external_blockers, blocker]}
         )
@@ -341,9 +332,7 @@ class SqlGoalRepository:
         )
 
     def clear_external_blocker(self, goal_id: str, blocker_id: str) -> Goal:
-        goal = self.get(goal_id)
-        if goal is None:
-            raise KeyError(f"Unknown goal_id: {goal_id!r}")
+        goal = self._require_goal(goal_id)
         normalized = str(blocker_id or "").strip()
         updated = goal.model_copy(
             update={
@@ -359,8 +348,6 @@ class SqlGoalRepository:
         )
 
     def record_drift_signal_audit(self, signal: GoalDriftSignal) -> None:
-        """Record drift signal audit helper."""
-
         evidence_payload: dict[str, object] = {
             "signal_id": signal.signal_id,
             "kind": signal.kind,

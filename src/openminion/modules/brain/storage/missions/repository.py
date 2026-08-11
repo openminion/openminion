@@ -101,7 +101,6 @@ class SqlMissionStateRepository:
         prior_status: str | None,
         new_status: str | None,
         reason: str = "",
-        actor: str = "system",
     ) -> None:
         self._store.execute_count(
             """
@@ -124,10 +123,10 @@ class SqlMissionStateRepository:
                 None,
                 mission_id,
                 _utc_now(),
-                str(prior_status or "").strip() or None,
-                str(new_status or "").strip() or None,
-                str(reason or "").strip(),
-                str(actor or "").strip() or "system",
+                prior_status.strip() if prior_status else None,
+                new_status.strip() if new_status else None,
+                reason.strip(),
+                "system",
                 "{}",
             ),
         )
@@ -162,10 +161,7 @@ class SqlMissionStateRepository:
             reason=reason or "operator_cancelled",
         )
 
-    def list_mission_audit_trail(
-        self,
-        mission_id: str,
-    ) -> list[LifecycleAuditRecord]:
+    def list_mission_audit_trail(self, mission_id: str) -> list[LifecycleAuditRecord]:
         rows = self._store.query_dicts(
             """
             SELECT entity_kind, entity_id, timestamp, prior_status, new_status, reason,
