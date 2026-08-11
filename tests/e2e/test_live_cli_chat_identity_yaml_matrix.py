@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from openminion.base.generated_paths import resolve_generated_root
 from tests.helpers.live_cli_chat_alibaba import skip_if_provider_auth_rejected
 
 pytestmark = pytest.mark.e2e
@@ -149,7 +150,9 @@ def _timeout_seconds() -> int:
 
 
 def _artifact_dir() -> Path:
-    artifact_dir = _runtime_home_root() / ".openminion" / "runtime" / "cli-chat-e2e"
+    artifact_dir = (
+        resolve_generated_root(home_root=_runtime_home_root()) / "cli-chat-e2e"
+    )
     artifact_dir.mkdir(parents=True, exist_ok=True)
     return artifact_dir
 
@@ -258,7 +261,7 @@ def _run_cli_turn(
     ):
         env.pop(key, None)
     openminion_root = _openminion_root()
-    env["OPENMINION_HOME"] = str(_runtime_home_root())
+    env["OPENMINION_HOME"] = str(_artifact_dir() / "home-roots" / session_id)
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     env["OPENMINION_IDENTITY_ROOT"] = str(identity_root)

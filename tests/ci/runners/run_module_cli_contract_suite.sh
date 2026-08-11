@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/../../helpers/runtime_roots.sh"
+isolate_openminion_test_roots openminion-module-cli-contract
 PY="${OPENMINION_PY:-$ROOT/.venv/bin/python3.11}"
 
 if [[ ! -x "$PY" ]]; then

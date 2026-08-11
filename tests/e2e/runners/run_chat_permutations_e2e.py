@@ -30,6 +30,7 @@ from openminion.base.constants import (  # noqa: E402
     OPENMINION_DATA_ROOT_ENV,
     OPENMINION_GENERATED_ROOT_ENV,
 )
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 AUTO_CONFIRM_LIMIT_ENV = "OPENMINION_LIVE_CLI_CHAT_AUTO_CONFIRM_LIMIT"
 AUTO_CONFIRM_LIMIT_DEFAULT = 32
@@ -690,6 +691,7 @@ def _run_chat(
 
 
 def main(argv: Iterable[str] | None = None) -> int:
+    isolate_runtime_roots(prefix="openminion-chat-permutations-")
     parser = argparse.ArgumentParser(
         description="Run long chat permutations across providers/models."
     )

@@ -17,6 +17,13 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 from urllib.parse import quote
 
+
+OPENMINION_ROOT = Path(__file__).resolve().parents[3]
+if str(OPENMINION_ROOT) not in sys.path:
+    sys.path.insert(0, str(OPENMINION_ROOT))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
 DEFAULT_CORTENSOR_TEST_API_KEY = "fabc7432-a81e-47a9-a352-31145275809a"
 
 
@@ -409,9 +416,9 @@ class CortensorE2ESuite:
         cfg["gateway"]["api_turn_timeout_seconds"] = int(
             self.args.api_turn_timeout_seconds
         )
-        tmp_dir = self.root / ".tmp"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        output_path = tmp_dir / (
+        generated_root = Path(self.env["OPENMINION_GENERATED_ROOT"])
+        generated_root.mkdir(parents=True, exist_ok=True)
+        output_path = generated_root / (
             "cortensor-e2e-runtime-"
             + name_suffix
             + "-"
@@ -1677,7 +1684,7 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--report-path",
         default="",
-        help="Optional output JSON report path. Defaults to .tmp generated filename.",
+        help="Optional output JSON report path. Defaults to isolated system temp.",
     )
     return parser.parse_args(argv)
 
@@ -1712,17 +1719,12 @@ def _required_tools_verified(
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    generated_root = isolate_runtime_roots(prefix="openminion-cortensor-e2e-")
     args = _parse_args(argv or sys.argv[1:])
     suite = CortensorE2ESuite(args)
     report = suite.run()
-    default_report_path = (
-        Path(args.root).resolve()
-        / ".tmp"
-        / (
-            "cortensor-e2e-suite-"
-            + datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-            + ".json"
-        )
+    default_report_path = generated_root / (
+        "cortensor-e2e-suite-" + datetime.utcnow().strftime("%Y%m%dT%H%M%SZ") + ".json"
     )
     report_path = (
         Path(args.report_path).resolve()

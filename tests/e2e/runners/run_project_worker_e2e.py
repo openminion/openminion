@@ -21,6 +21,7 @@ from tests.e2e.project_worker.harness import (  # noqa: E402
     write_project_pilot_artifacts,
 )
 from tests.e2e.project_worker.harness.registry import PROJECT_WORKER_SCENARIOS  # noqa: E402
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 def suite_names() -> tuple[str, ...]:
@@ -113,6 +114,7 @@ def _run_certify(args: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    isolate_runtime_roots(prefix="openminion-project-worker-")
     args = list(sys.argv[1:] if argv is None else argv)
     mode = args[0] if args else "local"
     if mode in {"--list", "list"}:

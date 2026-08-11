@@ -1,6 +1,4 @@
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-OPENMINION_HOME ?= $(REPO_ROOT)
-OPENMINION_DATA_ROOT ?= $(OPENMINION_HOME)/.openminion
 OPENMINION_EVAL_ROOT ?= $(REPO_ROOT)/.deps/openminion-eval
 VENV := $(REPO_ROOT)/.venv
 DEV_STAMP := $(VENV)/.baseline-tools-installed
@@ -224,14 +222,10 @@ validate-patterns: $(_VP_TARGETS)
 
 test: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \
-	OPENMINION_HOME="$(OPENMINION_HOME)" \
-	OPENMINION_DATA_ROOT="$(OPENMINION_DATA_ROOT)" \
 	$(PYTEST) -q -m "not benchmark" "$(REPO_ROOT)/tests"
 
 bench: $(DEV_STAMP)
 	PYTHONPATH="$(REPO_ROOT)/src" \
-	OPENMINION_HOME="$(OPENMINION_HOME)" \
-	OPENMINION_DATA_ROOT="$(OPENMINION_DATA_ROOT)" \
 	$(PYTEST) -q "$(REPO_ROOT)/tests/storage/benchmarks" -m benchmark -s
 
 check: format-check lint test

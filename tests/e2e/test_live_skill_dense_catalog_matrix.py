@@ -225,7 +225,7 @@ def _run_env(*, data_root: Path, trace_root: Path | None = None) -> dict[str, st
     ):
         env.pop(key, None)
 
-    env["OPENMINION_HOME"] = str(runtime_home_root())
+    env["OPENMINION_HOME"] = str(data_root.parent / "home-roots" / data_root.name)
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     if trace_root is not None:

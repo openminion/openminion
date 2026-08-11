@@ -51,3 +51,30 @@ def test_focus_probe_does_not_add_demo_flag_for_real_provider(tmp_path: Path) ->
 
     assert probe.uses_echo_agent() is False
     assert "--demo" not in probe.command()
+
+
+def test_focus_probe_child_home_is_outside_package_checkout(tmp_path: Path) -> None:
+    package_root = tmp_path / "openminion"
+    package_root.mkdir()
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"agents": {"openminion": {"provider": "echo"}}}),
+        encoding="utf-8",
+    )
+    data_root = tmp_path / "runtime" / "data"
+    probe = FocusProbe(
+        python_bin=Path("python"),
+        openminion_root=package_root,
+        framework_root=tmp_path,
+        data_root=data_root,
+        config_path=config,
+        agent_id="openminion",
+        workdir=tmp_path,
+        session_id="s1",
+    )
+
+    environment = probe.environment()
+
+    assert Path(environment["OPENMINION_HOME"]) != package_root
+    assert Path(environment["OPENMINION_DATA_ROOT"]) == data_root
+    assert Path(environment["OPENMINION_GENERATED_ROOT"]) == data_root / "runtime"

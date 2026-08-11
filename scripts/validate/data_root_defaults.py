@@ -35,30 +35,32 @@ TEST_ROOT_ENV_NAMES = (
     "OPENMINION_DATA_ROOT",
     "OPENMINION_GENERATED_ROOT",
 )
-TEST_RUNTIME_ROOT_OWNERS = (
-    "tests/brain/diagnostics/phase_contract_eval.py",
-    "tests/e2e/cli/focus/harness/probe.py",
-    "tests/e2e/cli/focus/harness/test_provider_matrix.py",
-    "tests/e2e/cli/focus/test_onboarding.py",
-    "tests/e2e/runners/run_autonomy_smoke.py",
-    "tests/e2e/runners/run_chat_permutations_e2e.py",
-    "tests/e2e/runners/run_cli_chat_probe.py",
-    "tests/e2e/runners/run_cli_e2e_gate.py",
-    "tests/e2e/runners/run_cortensor_e2e_suite.py",
-    "tests/e2e/runners/run_crdh_e2e_smoke.py",
-    "tests/e2e/runners/run_daily_assistant_smoke_suite.py",
-    "tests/e2e/runners/run_inference_validation_smoke.py",
-    "tests/e2e/runners/run_memory_identity_e2e_smoke.py",
-    "tests/e2e/runners/run_tokencensus_pipe_e2e.py",
-    "tests/e2e/test_live_cli_chat_identity_yaml_matrix.py",
-    "tests/e2e/test_live_skill_dense_catalog_matrix.py",
-    "tests/e2e/test_live_tool_new_tools_openrouter_matrix.py",
-    "tests/e2e/test_live_tool_profile_matrix.py",
-    "tests/helpers/live_cli_chat_alibaba.py",
-    "tests/skills/runners/run_nl_named_skill_baseline.py",
-    "tests/skills/runners/run_skill_selection_ab_probe.py",
-    "tests/test_public_first_run_cli.py",
-)
+PYTHON_RUNNER_ROOT_EXEMPTIONS = {
+    "tests/brain/diagnostics/runners/run_chx09_mode_matrix.py": (
+        "uses TemporaryDirectory for every matrix run"
+    ),
+    "tests/ci/runners/run_exec_validation_matrix_lane.py": (
+        "delegates only to pytest, whose conftest owns isolation"
+    ),
+    "tests/e2e/runners/run_cli_focus_e2e.py": (
+        "delegates only to pytest, whose conftest owns isolation"
+    ),
+    "tests/e2e/runners/run_memory_identity_e2e_smoke.py": (
+        "uses TemporaryDirectory for its runtime root"
+    ),
+    "tests/e2e/runners/run_tokencensus_pipe_e2e.py": (
+        "requires an explicit root or creates one with tempfile.mkdtemp"
+    ),
+    "tests/e2e/runners/run_trailer_conformance_matrix.py": (
+        "reads an explicit existing data root and requires an output path"
+    ),
+    "tests/skills/runners/run_skill_prerouting_resilience_report.py": (
+        "reads explicit inputs and writes only an explicit optional output"
+    ),
+    "tests/skills/runners/run_skill_selection_ab_probe.py": (
+        "requires an explicit caller-owned root"
+    ),
+}
 
 
 def _is_path_cwd_call(node: ast.AST) -> bool:
@@ -114,13 +116,59 @@ def main() -> int:
     if 'monkeypatch.delenv("OPENMINION_GENERATED_ROOT"' not in conftest_text:
         hits.append("tests/conftest.py: generated root must derive from isolated data")
 
-    for rel in TEST_RUNTIME_ROOT_OWNERS:
-        text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+    helper_contracts = (
+        (TESTS_DIR / "helpers" / "runtime_roots.py", "tempfile.mkdtemp"),
+        (TESTS_DIR / "helpers" / "runtime_roots.sh", "mktemp -d"),
+    )
+    for helper_path, temp_root_marker in helper_contracts:
+        rel = str(helper_path.relative_to(REPO_ROOT))
+        if not helper_path.is_file():
+            hits.append(f"{rel}: missing shared runtime-root helper")
+            continue
+        helper_text = helper_path.read_text(encoding="utf-8")
+        if temp_root_marker not in helper_text:
+            hits.append(f"{rel}: missing system-temp root owner")
         for env_name in TEST_ROOT_ENV_NAMES:
-            if env_name not in text:
-                hits.append(f"{rel}: missing explicit {env_name} runtime root")
-        if 'setdefault("OPENMINION_DATA_ROOT"' in text:
-            hits.append(f"{rel}: inherits ambient OPENMINION_DATA_ROOT")
+            if env_name not in helper_text:
+                hits.append(f"{rel}: missing {env_name}")
+
+    python_runners = sorted(TESTS_DIR.glob("**/runners/run_*.py"))
+    discovered_runner_paths = {
+        str(path.relative_to(REPO_ROOT)) for path in python_runners
+    }
+    for stale_path in sorted(
+        set(PYTHON_RUNNER_ROOT_EXEMPTIONS).difference(discovered_runner_paths)
+    ):
+        hits.append(f"{stale_path}: stale runtime-root exemption")
+    for path in python_runners:
+        rel = str(path.relative_to(REPO_ROOT))
+        text = path.read_text(encoding="utf-8")
+        isolated = "isolate_runtime_roots(" in text
+        exempt = rel in PYTHON_RUNNER_ROOT_EXEMPTIONS
+        if not isolated and not exempt:
+            hits.append(f"{rel}: unmanaged executable test runtime roots")
+        if isolated and exempt:
+            hits.append(f"{rel}: redundant runtime-root exemption")
+
+    for path in sorted(TESTS_DIR.glob("**/runners/run_*.sh")):
+        rel = str(path.relative_to(REPO_ROOT))
+        text = path.read_text(encoding="utf-8")
+        if "helpers/runtime_roots.sh" not in text:
+            hits.append(f"{rel}: missing shared shell runtime-root helper")
+        if "isolate_openminion_test_roots " not in text:
+            hits.append(f"{rel}: unmanaged executable shell runtime roots")
+        if "${OPENMINION_DIR}/test-configs/" in text:
+            hits.append(f"{rel}: package-checkout config write default")
+        if "--config test-configs/" in text:
+            hits.append(f"{rel}: missing package-relative test config")
+        if "${TMPDIR:-/tmp}/openminion-test-artifacts" in text:
+            hits.append(f"{rel}: shared temporary artifact default")
+
+    makefile_text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    if "OPENMINION_HOME ?= $(REPO_ROOT)" in makefile_text:
+        hits.append("Makefile: test home defaults to the package checkout")
+    if "OPENMINION_DATA_ROOT ?= $(OPENMINION_HOME)/.openminion" in makefile_text:
+        hits.append("Makefile: test data defaults to the package checkout")
 
     for path in TESTS_DIR.rglob("*.py"):
         text = path.read_text(encoding="utf-8", errors="ignore")

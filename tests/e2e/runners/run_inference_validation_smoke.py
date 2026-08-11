@@ -7,9 +7,17 @@ import json
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+
+
+OPENMINION_ROOT = Path(__file__).resolve().parents[3]
+if str(OPENMINION_ROOT) not in sys.path:
+    sys.path.insert(0, str(OPENMINION_ROOT))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
 
 
 @dataclass
@@ -257,6 +265,7 @@ def check_retrieve_debug(
 
 
 def main() -> int:
+    isolate_runtime_roots(prefix="openminion-inference-smoke-")
     parser = argparse.ArgumentParser(
         description="Inference behavior smoke validator (chat + gateway)."
     )
@@ -294,11 +303,6 @@ def main() -> int:
         if args.python_bin
         else (openminion_dir / ".venv" / "bin" / "python3.11")
     )
-
-    data_root = openminion_dir / ".openminion"
-    os.environ["OPENMINION_HOME"] = str(openminion_dir)
-    os.environ["OPENMINION_DATA_ROOT"] = str(data_root)
-    os.environ["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
 
     if not py_bin.exists():
         print(f"FAIL: python binary not found: {py_bin}")

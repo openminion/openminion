@@ -11,6 +11,7 @@ from typing import Literal
 
 import pytest
 
+from openminion.base.generated_paths import resolve_generated_root
 from tests.e2e.runners.run_cli_chat_probe import _TIMEOUT_EXIT_CODE, _run_probe_session
 from tests.helpers.live_e2e_profiles import resolve_live_config_path
 
@@ -164,9 +165,7 @@ def _probe_input_turn_count(user_input: str) -> int:
 
 
 def artifact_dir() -> Path:
-    # Keep live E2E evidence under the OpenMinion generated-runtime tree
-    # regardless of ambient OPENMINION_HOME / generated-root overrides.
-    root = runtime_home_root() / ".openminion" / "runtime" / "cli-chat-e2e"
+    root = resolve_generated_root(home_root=runtime_home_root()) / "cli-chat-e2e"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -608,7 +607,7 @@ def run_cli_session(
     ):
         env.pop(key, None)
 
-    env["OPENMINION_HOME"] = str(runtime_home_root())
+    env["OPENMINION_HOME"] = str(artifacts_root / "home-roots" / session_id)
     env["OPENMINION_DATA_ROOT"] = str(data_root)
     env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     env["OPENMINION_TRACE_REQUESTS"] = "1"

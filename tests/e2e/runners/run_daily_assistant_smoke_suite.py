@@ -14,6 +14,11 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
 CATALOG_PATH = (
     ROOT.parent
     / "docs"
@@ -107,9 +112,10 @@ class DailyAssistantSmokeLedger:
 
 
 def main(argv: list[str] | None = None) -> int:
+    generated_root = isolate_runtime_roots(prefix="openminion-daily-smoke-")
     args = _parse_args(argv)
     definitions = _load_catalog_definitions(Path(args.catalog))
-    output_dir = _resolve_output_dir(args.output_dir)
+    output_dir = _resolve_output_dir(args.output_dir, generated_root=generated_root)
     ledger = DailyAssistantSmokeLedger(
         catalog_path=str(Path(args.catalog).resolve()),
         mode="live" if args.include_live else "hermetic",
@@ -171,12 +177,12 @@ def _split_backtick_tokens(raw: str) -> tuple[str, ...]:
     return tuple(value for value in values if value)
 
 
-def _resolve_output_dir(raw_output_dir: str) -> Path:
+def _resolve_output_dir(raw_output_dir: str, *, generated_root: Path) -> Path:
     if raw_output_dir:
         output_dir = Path(raw_output_dir).expanduser().resolve()
     else:
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        output_dir = ROOT / ".openminion" / "runtime" / "daily-assistant-smoke" / stamp
+        output_dir = generated_root / "daily-assistant-smoke" / stamp
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
 
@@ -509,11 +515,6 @@ def _runner_env() -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src")
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
-    home_root = ROOT.resolve()
-    data_root = home_root / ".openminion"
-    env["OPENMINION_HOME"] = str(home_root)
-    env["OPENMINION_DATA_ROOT"] = str(data_root)
-    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
     return env
 
 

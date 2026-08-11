@@ -16,7 +16,7 @@ if _SOPHIAGRAPH_SRC.exists():
 _COLLECTION_RUNTIME_TMP = tempfile.TemporaryDirectory(
     prefix="openminion-pytest-collection-"
 )
-_COLLECTION_HOME = Path(_COLLECTION_RUNTIME_TMP.name)
+_COLLECTION_HOME = Path(_COLLECTION_RUNTIME_TMP.name).resolve()
 _COLLECTION_DATA_ROOT = _COLLECTION_HOME / ".openminion"
 os.environ["OPENMINION_HOME"] = str(_COLLECTION_HOME)
 os.environ["OPENMINION_DATA_ROOT"] = str(_COLLECTION_DATA_ROOT)

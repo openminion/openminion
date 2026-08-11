@@ -331,8 +331,9 @@ class FocusProbe:
         return command
 
     def environment(self) -> dict[str, str]:
+        home_root = self.data_root.parent / "home-roots" / self.session_id
         return {
-            "OPENMINION_HOME": str(self.openminion_root),
+            "OPENMINION_HOME": str(home_root),
             "OPENMINION_DATA_ROOT": str(self.data_root),
             "OPENMINION_GENERATED_ROOT": str(self.data_root / "runtime"),
             "PYTHONPATH": "src",

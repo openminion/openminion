@@ -2,9 +2,17 @@
 set -euo pipefail
 
 OPENMINION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-ARTIFACT_ROOT="${OPENMINION_TEST_ARTIFACT_ROOT:-${TMPDIR:-/tmp}/openminion-test-artifacts}"
+source "$(dirname "${BASH_SOURCE[0]}")/../../helpers/runtime_roots.sh"
+isolate_openminion_test_roots openminion-identity-phase1
+ARTIFACT_ROOT="${OPENMINION_TEST_ARTIFACT_ROOT:-$OPENMINION_GENERATED_ROOT}"
 ARTIFACT_DIR="${1:-$ARTIFACT_ROOT/openminion-identity-phase1-validation}"
+LIVE_CONFIG="${OPENMINION_LIVE_CLI_CHAT_CONFIG:-$OPENMINION_DIR/../test-configs/per-agent-alibaba-minimax.json}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+
+test -f "$LIVE_CONFIG" || {
+  printf 'Missing live MiniMax config: %s\n' "$LIVE_CONFIG" >&2
+  exit 2
+}
 
 mkdir -p "$ARTIFACT_DIR"
 cd "$OPENMINION_DIR"
@@ -34,10 +42,10 @@ PYTHONPATH=src "$PY" -m pytest -q \
 
 (
   unset OPENMINION_DATA_ROOT OPENMINION_TRACE_REQUESTS_DIR
-  OPENMINION_HOME="${OPENMINION_HOME:-$OPENMINION_DIR}" \
+  OPENMINION_HOME="$OPENMINION_HOME" \
   OPENMINION_TRACE_REQUESTS=1 \
   PYTHONPATH=src .venv/bin/python3.11 -m openminion \
-    --config test-configs/per-agent-alibaba-minimax.json \
+    --config "$LIVE_CONFIG" \
     --agent alibaba-minimax --session identity-authority-interop-redo --verbosity quiet --progress off <<'EOCHAT'
 hello
 /exit

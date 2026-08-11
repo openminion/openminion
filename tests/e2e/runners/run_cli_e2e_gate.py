@@ -10,6 +10,11 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.helpers.runtime_roots import isolate_runtime_roots  # noqa: E402
+
 PYTHON = ROOT / ".venv" / "bin" / "python3.11"
 TIMEOUT_ENV = "OPENMINION_CLI_E2E_GATE_TIMEOUT_SECONDS"
 DEFAULT_LIVE_TIMEOUT_SECONDS = 1800
@@ -94,14 +99,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _set_runtime_roots(env: dict[str, str]) -> None:
-    home_root = ROOT.resolve()
-    data_root = home_root / ".openminion"
-    env["OPENMINION_HOME"] = str(home_root)
-    env["OPENMINION_DATA_ROOT"] = str(data_root)
-    env["OPENMINION_GENERATED_ROOT"] = str(data_root / "runtime")
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if not PYTHON.is_file():
@@ -110,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     env = os.environ.copy()
     env.setdefault("PYTHONDONTWRITEBYTECODE", "1")
     env.setdefault("PYTHONPATH", str(ROOT / "src"))
-    _set_runtime_roots(env)
+    isolate_runtime_roots(env, prefix="openminion-cli-e2e-gate-")
     if args.mode in {"local", "all"}:
         result = _run_local(env)
         if result:
