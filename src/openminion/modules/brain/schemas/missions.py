@@ -174,21 +174,20 @@ class MissionVerifierExpectation(BaseModel):
 
     @model_validator(mode="after")
     def _validate_expectation_consistency(self) -> "MissionVerifierExpectation":
-        if self.autonomous_completion_supported and not self.expected_verifier_families:
+        families = self.expected_verifier_families
+        if self.autonomous_completion_supported and not families:
             raise ValueError(
                 "MissionVerifierExpectation with "
                 "`autonomous_completion_supported=True` must list at "
                 "least one expected_verifier_family."
             )
-        if not self.autonomous_completion_supported and self.expected_verifier_families:
+        if not self.autonomous_completion_supported and families:
             raise ValueError(
                 "MissionVerifierExpectation with "
                 "`autonomous_completion_supported=False` must have an "
                 "empty expected_verifier_families list."
             )
-        if len(set(self.expected_verifier_families)) != len(
-            self.expected_verifier_families
-        ):
+        if len(set(families)) != len(families):
             raise ValueError(
                 "MissionVerifierExpectation.expected_verifier_families "
                 "must have unique values."
@@ -250,7 +249,6 @@ def should_emit_exploratory_disclosure(
     return ExploratoryDisclosure(
         mission_type=mission_type,
         reason=reason,
-        emitted_at_run_start=True,
     )
 
 

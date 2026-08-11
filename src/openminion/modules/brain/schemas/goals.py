@@ -327,9 +327,7 @@ def evaluate_goal_wall_clock_budget(
     """Return a structural failure condition when the wall-clock budget is exhausted."""
 
     budget = goal.wall_clock_budget_seconds
-    if budget is None:
-        return None
-    if float(elapsed_seconds) <= float(budget):
+    if budget is None or elapsed_seconds <= budget:
         return None
     return FailureCondition(
         condition_id=f"{goal.goal_id}-wall-clock-budget",
@@ -347,14 +345,14 @@ def evaluate_goal_cost_budget(
     """Return a structural failure condition when cumulative cost is exhausted."""
 
     token_budget = goal.cost_budget_tokens
-    if token_budget is not None and int(consumed_tokens) > int(token_budget):
+    if token_budget is not None and consumed_tokens > token_budget:
         return FailureCondition(
             condition_id=f"{goal.goal_id}-cost-budget-tokens",
             kind="budget_exhausted",
             description="cost_budget",
         )
     dollar_budget = goal.cost_budget_dollars
-    if dollar_budget is not None and float(consumed_dollars) > float(dollar_budget):
+    if dollar_budget is not None and consumed_dollars > dollar_budget:
         return FailureCondition(
             condition_id=f"{goal.goal_id}-cost-budget-dollars",
             kind="budget_exhausted",

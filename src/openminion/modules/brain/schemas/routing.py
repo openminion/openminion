@@ -103,8 +103,6 @@ def normalize_decomposed_subtasks(value: Any) -> Any:
             normalized.append(item)
             continue
         payload = dict(item)
-        if "subtasks" in payload:
-            payload.pop("subtasks", None)
         if not str(payload.get("subtask_id") or "").strip():
             for alias in ("id", "intent_id"):
                 legacy_id = str(payload.get(alias) or "").strip()
@@ -209,9 +207,8 @@ def _truncate_at_word_boundary(text: str, *, limit: int) -> str:
 
 
 def normalize_session_work_summary(value: Any) -> str:
-    normalized = str(value or "").strip()
     return _truncate_at_word_boundary(
-        normalized,
+        str(value or ""),
         limit=_SESSION_WORK_SUMMARY_MAX_CHARS,
     )
 

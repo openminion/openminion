@@ -223,9 +223,7 @@ class FeasibilityReport(BaseModel):
 
     @model_validator(mode="after")
     def _sync_assessment_refs(self) -> "FeasibilityReport":
-        assessment_ids = [
-            item.intent_id for item in self.assessments if str(item.intent_id).strip()
-        ]
+        assessment_ids = [item.intent_id for item in self.assessments]
         if not self.viable_intent_ids:
             self.viable_intent_ids = [
                 item.intent_id
@@ -568,26 +566,21 @@ class Plan(BaseModel):
 
     def first_executable_step(self) -> Command | None:
         for step in self.steps:
-            if str(getattr(step, "kind", "") or "").strip() in {
-                "tool",
-                "agent",
-                "think",
-                "finish",
-            }:
+            if step.kind in {"tool", "agent", "think", "finish"}:
                 return step
         return None
 
     @model_validator(mode="after")
     def _reject_unresolved_placeholder_steps(self) -> "Plan":
         for index, step in enumerate(self.steps, start=1):
-            if str(getattr(step, "kind", "") or "").strip() == "finish":
+            if step.kind == "finish":
                 final_message = str(getattr(step, "final_message", "") or "").strip()
                 if contains_unresolved_template_text(final_message):
                     raise ValueError(
                         "Plan finish step contains unresolved template placeholders "
                         f"at steps[{index - 1}].final_message"
                     )
-            if str(getattr(step, "kind", "") or "").strip() == "tool":
+            if step.kind == "tool":
                 unknown_path = find_unknown_sentinel_path(
                     getattr(step, "args", {}) or {},
                     prefix=f"steps[{index - 1}].args",
