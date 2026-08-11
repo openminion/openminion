@@ -24,10 +24,9 @@ class TelegramPairingAdapter:
         *,
         channel_context: dict[str, Any] | None = None,
     ) -> PairingAttempt | None:
-        context = dict(channel_context or {})
         token = _extract_start_token(
             inbound.text,
-            bot_username=context.get("bot_username"),
+            bot_username=(channel_context or {}).get("bot_username"),
         )
         if token is None:
             return None
@@ -38,14 +37,12 @@ class TelegramPairingAdapter:
         if user_id is None or chat_id is None:
             return None
         topic_id = telegram.get("topic_id")
-        chat_type = str(telegram.get("chat_type") or "private")
-        session_chat_key = session_scope_key(int(chat_id), _optional_int(topic_id))
         return PairingAttempt(
             channel="telegram",
             token=token,
             account_id=f"{self.account_namespace}:user:{user_id}",
             chat_key=f"{self.account_namespace}:chat:{chat_id}",
-            chat_type=chat_type,
+            chat_type=str(telegram.get("chat_type") or "private"),
             extra={
                 "topic_id": topic_id,
                 "telegram_user_id": user_id,
@@ -53,7 +50,9 @@ class TelegramPairingAdapter:
                 "subject_id": str(chat_id),
                 "user_id": str(user_id),
                 "session_user_key": f"telegram:{user_id}",
-                "session_chat_key": session_chat_key,
+                "session_chat_key": session_scope_key(
+                    int(chat_id), _optional_int(topic_id)
+                ),
             },
         )
 

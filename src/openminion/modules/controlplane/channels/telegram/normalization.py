@@ -65,8 +65,6 @@ def to_inbound_message(
     control_event: ControlEvent,
     extra_meta: dict[str, Any] | None = None,
 ) -> InboundMessage:
-    chat_key = session_scope_key(envelope.chat_id, envelope.topic_id)
-    merged_extra = dict(extra_meta or {})
     canonical_metadata = {
         "telegram": {
             "chat_id": envelope.chat_id,
@@ -84,11 +82,11 @@ def to_inbound_message(
             "thread_id": control_event.thread_id,
             "message_id": control_event.message_id,
         },
-        **merged_extra,
+        **dict(extra_meta or {}),
     }
     inbound = InboundMessage(
         user_key=f"telegram:{envelope.from_user.id}",
-        chat_key=chat_key,
+        chat_key=session_scope_key(envelope.chat_id, envelope.topic_id),
         text=normalized_text,
         channel="telegram",
         thread_key=f"telegram-topic:{envelope.topic_id}"

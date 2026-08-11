@@ -284,19 +284,14 @@ def split_text(text: str, *, limit: int) -> list[str]:
 
 
 def _split_hard(text: str, limit: int) -> list[str]:
-    lines = text.splitlines()
     out: list[str] = []
-    for line in lines:
+    for line in text.splitlines():
         trimmed = line.rstrip()
-        if not trimmed:
-            continue
-        if len(trimmed) <= limit:
-            out.append(trimmed)
-            continue
-        start = 0
-        while start < len(trimmed):
-            out.append(trimmed[start : start + limit])
-            start += limit
+        if trimmed:
+            out.extend(
+                trimmed[start : start + limit]
+                for start in range(0, len(trimmed), limit)
+            )
     return out
 
 
@@ -528,10 +523,4 @@ def _split_link(token_text: str, limit: int) -> list[str]:
 def _split_entity_body(body: str, limit: int) -> list[str]:
     if len(body) <= limit:
         return [body]
-    chunks: list[str] = []
-    start = 0
-    while start < len(body):
-        end = min(start + limit, len(body))
-        chunks.append(body[start:end])
-        start = end
-    return chunks
+    return [body[start : start + limit] for start in range(0, len(body), limit)]

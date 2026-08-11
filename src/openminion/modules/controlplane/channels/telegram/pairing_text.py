@@ -20,8 +20,7 @@ def extract_start_token(text: str, *, bot_username: str | None) -> str | None:
 
     if cmd.lower() != "start" or len(parts) < 2:
         return None
-    token = parts[1].strip().split()[0]
-    return token or None
+    return parts[1].split()[0]
 
 
 __all__ = ["extract_start_token"]
