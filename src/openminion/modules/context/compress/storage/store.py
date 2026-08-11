@@ -120,8 +120,6 @@ def _create_telemetry_schema(record_store: RecordStore, *, postgres: bool) -> No
 
 
 class _CompressTelemetryStoreMixin(CompressTelemetryStore):
-    """Backend-neutral telemetry store behavior shared across backends."""
-
     def _list_migrations(self) -> list[str]:
         return list_migrations()
 
@@ -201,9 +199,7 @@ class _CompressTelemetryStoreMixin(CompressTelemetryStore):
         rows = self._record_store.query_dicts(
             "SELECT * FROM compression_runs WHERE run_id=?", (run_id,)
         )
-        if not rows:
-            return None
-        return RunRow(**dict(rows[0]))
+        return RunRow(**dict(rows[0])) if rows else None
 
     def get_dropped_reasons(self, run_id: str) -> list[DroppedReasonRow]:
         rows = self._record_store.query_dicts(
@@ -216,9 +212,6 @@ class _CompressTelemetryStoreMixin(CompressTelemetryStore):
         run = self.get_run(run_id)
         if run is None:
             return None
-        reasons = self.get_dropped_reasons(run_id)
-        dropped_stats = {r.reason: r.count for r in reasons}
-        warnings = [w for w in run.warnings.split("|") if w]
         return ExplainPayload(
             run_id=run.run_id,
             request_id=run.request_id,
@@ -230,9 +223,11 @@ class _CompressTelemetryStoreMixin(CompressTelemetryStore):
             empty_augmentation=bool(run.empty_augmentation),
             empty_reason=None,  # not stored separately yet
             fallback_used=bool(run.fallback_used),
-            dropped_reason_stats=dropped_stats,
+            dropped_reason_stats={
+                row.reason: row.count for row in self.get_dropped_reasons(run_id)
+            },
             count_by_type={},  # requires separate table; deferred to future card
-            warnings=warnings,
+            warnings=[warning for warning in run.warnings.split("|") if warning],
             policy_hash=run.policy_hash,
             input_hash=run.input_hash,
             output_hash=run.output_hash,
