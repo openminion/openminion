@@ -67,30 +67,20 @@ def _model_json_schema(schema: Any) -> dict[str, Any]:
     return dict(payload)
 
 
-def _schema_property_names(
-    payload: dict[str, Any], *, omit_fields: set[str] | None = None
+def _schema_names(
+    payload: dict[str, Any],
+    key: str,
+    *,
+    omit_fields: set[str] | None = None,
 ) -> list[str]:
-    properties = payload.get("properties")
-    if not isinstance(properties, dict):
+    values = payload.get(key)
+    if not isinstance(values, (dict, list)):
         return []
+    omitted = omit_fields or set()
     names: list[str] = []
-    for raw_name in properties:
+    for raw_name in values:
         name = str(raw_name).strip()
-        if name and name not in (omit_fields or set()):
-            names.append(name)
-    return names
-
-
-def _schema_required_names(
-    payload: dict[str, Any], *, omit_fields: set[str] | None = None
-) -> list[str]:
-    required = payload.get("required")
-    if not isinstance(required, list):
-        return []
-    names: list[str] = []
-    for raw_name in required:
-        name = str(raw_name).strip()
-        if name and name not in (omit_fields or set()):
+        if name and name not in omitted:
             names.append(name)
     return names
 
@@ -157,10 +147,10 @@ def _schema_retry_guidance(schema: Any, *, omit_fields: set[str] | None = None) 
     title = str(payload.get("title", "")).strip()
     if title:
         parts.append(f"Schema: {title}.")
-    allowed_keys = _schema_property_names(payload, omit_fields=omit_fields)
+    allowed_keys = _schema_names(payload, "properties", omit_fields=omit_fields)
     if allowed_keys:
         parts.append(f"Schema keys: {', '.join(allowed_keys[:10])}.")
-    required_keys = _schema_required_names(payload, omit_fields=omit_fields)
+    required_keys = _schema_names(payload, "required", omit_fields=omit_fields)
     if required_keys:
         parts.append(f"Required schema keys: {', '.join(required_keys[:10])}.")
     if payload.get("additionalProperties") is False:
@@ -388,14 +378,8 @@ def build_structured_retry_message(
 
 def is_retryable_structured_result(
     result: Any,
-    *,
-    schema_name: str,
-    context: dict[str, Any],
 ) -> bool:
-    if not isinstance(result, dict):
-        return False
-    del schema_name, context
-    return bool(result.get(STRUCTURED_RETRYABLE_KEY))
+    return isinstance(result, dict) and bool(result.get(STRUCTURED_RETRYABLE_KEY))
 
 
 def strip_structured_retry_metadata(result: Any) -> Any:
@@ -495,14 +479,14 @@ def _schema_sequence(
         not _is_decision_schema(schema_name)
         or profile.retry_strategy != RetryStrategy.PROGRESSIVE_SIMPLIFICATION
     ):
-        return [schema for _ in range(max_attempts)]
+        return [schema] * max_attempts
     sequence: list[Any] = [schema]
     if schema_name == "Decision":
         sequence.extend([SimplifiedDecision, UltraSimpleDecision])
     elif schema_name == "SimplifiedDecision":
         sequence.append(UltraSimpleDecision)
     else:
-        sequence.extend([schema for _ in range(max_attempts - 1)])
+        sequence.extend([schema] * (max_attempts - 1))
     return sequence[:max_attempts]
 
 
@@ -639,33 +623,17 @@ def call_structured_with_retry(
         active_context=active_context,
         attempt_index=attempt_index,
         result=result,
-        outcome=(
-            "retryable"
-            if is_retryable_structured_result(
-                result,
-                schema_name=_schema_name(active_schema),
-                context=active_context,
-            )
-            else "accepted"
-        ),
+        outcome=("retryable" if is_retryable_structured_result(result) else "accepted"),
     )
 
     while True:
         active_schema_name = _schema_name(active_schema)
-        if not is_retryable_structured_result(
-            result,
-            schema_name=active_schema_name,
-            context=active_context,
-        ):
+        if not is_retryable_structured_result(result):
             finalized = _finalize_result_for_schema(
                 schema_name=active_schema_name,
                 result=result,
             )
-            if not is_retryable_structured_result(
-                finalized,
-                schema_name=active_schema_name,
-                context=active_context,
-            ):
+            if not is_retryable_structured_result(finalized):
                 _write_attempt_trace(
                     active_schema=active_schema,
                     active_context=active_context,
@@ -730,11 +698,7 @@ def call_structured_with_retry(
                 result=result,
                 outcome=(
                     "retryable"
-                    if is_retryable_structured_result(
-                        result,
-                        schema_name=_schema_name(active_schema),
-                        context=active_context,
-                    )
+                    if is_retryable_structured_result(result)
                     else "accepted"
                 ),
             )

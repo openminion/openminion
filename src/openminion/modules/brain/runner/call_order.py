@@ -1,3 +1,4 @@
+from time import time
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -7,8 +8,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 def track_call_started(
     runner: "BrainRunner", llm_call_id: str, purpose: str, model: str
 ) -> None:
-    from time import time
-
     runner._call_order_tracker[llm_call_id] = {
         "started_at": time(),
         "purpose": purpose,
@@ -24,8 +23,6 @@ def track_manifest_emitted(runner: "BrainRunner", llm_call_id: str) -> None:
 
 
 def track_call_completed(runner: "BrainRunner", llm_call_id: str) -> None:
-    from time import time
-
     if llm_call_id in runner._call_order_tracker:
         runner._call_order_tracker[llm_call_id]["completed_at"] = time()
 

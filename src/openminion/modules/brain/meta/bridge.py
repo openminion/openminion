@@ -41,9 +41,9 @@ def _evaluate_with_checkpoint(
 
 
 def _meta_override_for_hook(runner: "BrainRunner", hook: str) -> MetaResult | None:
-    if runner._meta_overrides and hook in runner._meta_overrides:
-        return runner._meta_overrides.pop(hook)
-    return None
+    if runner._meta_overrides is None:
+        return None
+    return runner._meta_overrides.pop(hook, None)
 
 
 def _meta_is_disabled(runner: "BrainRunner", *, override: MetaResult | None) -> bool:
@@ -85,31 +85,14 @@ def _resolve_meta_result(
 
 
 def _meta_metric_aliases(metrics: MetaMetrics) -> dict[str, float | int]:
-    grounding_confidence = getattr(
-        metrics, "grounding_confidence", getattr(metrics, "grounding_score", 1.0)
-    )
-    grounding_score = getattr(metrics, "grounding_score", grounding_confidence)
-    recent_failures = getattr(
-        metrics, "recent_failures", getattr(metrics, "repeat_error_count", 0)
-    )
-    loop_count = getattr(
-        metrics, "loop_count", getattr(metrics, "ticks_without_progress", 0)
-    )
-    replan_count = getattr(
-        metrics, "replan_count", getattr(metrics, "no_new_facts_streak", 0)
-    )
-    budget_remaining = getattr(
-        metrics, "budget_remaining", 1.0 - getattr(metrics, "budget_pressure", 0.0)
-    )
-    budget_pressure = getattr(metrics, "budget_pressure", 1.0 - budget_remaining)
     return {
-        "grounding_confidence": grounding_confidence,
-        "grounding_score": grounding_score,
-        "recent_failures": recent_failures,
-        "loop_count": loop_count,
-        "replan_count": replan_count,
-        "budget_remaining": budget_remaining,
-        "budget_pressure": budget_pressure,
+        "grounding_confidence": metrics.grounding_confidence,
+        "grounding_score": metrics.grounding_confidence,
+        "recent_failures": metrics.recent_failures,
+        "loop_count": metrics.loop_count,
+        "replan_count": metrics.replan_count,
+        "budget_remaining": metrics.budget_remaining,
+        "budget_pressure": metrics.budget_pressure,
     }
 
 
@@ -247,8 +230,6 @@ def apply_meta_directive(
     application = MetaApplication(
         tier_before=state.tier,
         tier_after=state.tier,
-        constraints_added=[],
-        budgets_adjusted=False,
         llm_calls_max_before=state.llm_calls_max,
         llm_calls_max_after=state.llm_calls_max,
     )

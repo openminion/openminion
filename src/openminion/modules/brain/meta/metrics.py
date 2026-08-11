@@ -76,8 +76,7 @@ def build_meta_metrics(
     # LLM respond.clarify is conversational clarification and must pass through.
     # Runtime clarification signal should only reflect pending runtime clarification items.
     needs_clarification = bool(
-        getattr(state, "unresolved_clarify_items", None)
-        or getattr(state, "pending_clarify_items", None)
+        state.unresolved_clarify_items or state.pending_clarify_items
     )
     ambiguity_score = 0.0
     if (
@@ -88,9 +87,7 @@ def build_meta_metrics(
     ):
         ambiguity_score = max(ambiguity_score, 0.7)
 
-    unknown_fields_count = 0
-    if needs_clarification:
-        unknown_fields_count = 1
+    unknown_fields_count = int(needs_clarification)
 
     intent_confidence = decision.confidence if decision is not None else 0.7
     if needs_clarification:
@@ -144,8 +141,8 @@ def build_meta_metrics(
     ):
         tool_auth_error_count_recent = 1
 
-    llm_calls_used = getattr(state, "llm_calls_used", 0)
-    llm_calls_max = max(1, getattr(state, "llm_calls_max", 8))
+    llm_calls_used = state.llm_calls_used
+    llm_calls_max = state.llm_calls_max
     tool_calls_used = max(
         0, budget_caps.tool_calls - state.budgets_remaining.tool_calls
     )
@@ -222,7 +219,7 @@ def _risk_score_for_command(command: Command | None) -> int:
     if command is None:
         return 10
     risk_map = {"low": 20, "med": 55, "high": 85}
-    return int(risk_map.get(getattr(command, "risk_level", "low"), 20))
+    return int(risk_map.get(command.risk_level, 20))
 
 
 def _command_has_side_effects(command: Command | None) -> bool:
@@ -233,7 +230,7 @@ def _command_has_side_effects(command: Command | None) -> bool:
     if command.kind != BRAIN_COMMAND_KIND_TOOL:
         return False
 
-    tool_name = str(getattr(command, "tool_name", "")).strip().lower()
+    tool_name = command.tool_name.strip().lower()
     read_only_tools = {
         MODEL_FILE_LIST_DIR,
         MODEL_FILE_READ,
@@ -247,10 +244,7 @@ def _command_has_side_effects(command: Command | None) -> bool:
         return False
 
     if tool_name == MODEL_EXEC_RUN:
-        args = getattr(command, "args", {}) or {}
-        raw_command = (
-            str(args.get("command", "")).strip() if isinstance(args, dict) else ""
-        )
+        raw_command = str(command.args.get("command", "")).strip()
         if is_read_only_exec_command(
             raw_command,
             shell_family=resolve_shell_family(),
@@ -265,11 +259,11 @@ def _command_is_irreversible(command: Command | None) -> bool:
     """Return True for narrow irreversible-action safety latches."""
     if command is None:
         return False
-    if getattr(command, "risk_level", "low") == "high":
+    if command.risk_level == "high":
         return True
-    if command.kind != "tool":
+    if command.kind != BRAIN_COMMAND_KIND_TOOL:
         return False
-    tool_name = getattr(command, "tool_name", "").lower()
+    tool_name = command.tool_name.lower()
     dangerous = {
         "rm",
         "delete",
@@ -283,11 +277,9 @@ def _command_is_irreversible(command: Command | None) -> bool:
     }
     if tool_name in dangerous:
         return True
-    args = getattr(command, "args", {})
-    if isinstance(args, dict):
-        for key in ("force", "recursive", "permanent", "delete"):
-            if bool(args.get(key)):
-                return True
+    for key in ("force", "recursive", "permanent", "delete"):
+        if bool(command.args.get(key)):
+            return True
     return False
 
 
@@ -332,8 +324,6 @@ def _ratio(used: int, max_value: int) -> float:
 
 
 def _max_ratio(*values: float) -> float:
-    if not values:
-        return 0.0
     return max(values)
 
 
