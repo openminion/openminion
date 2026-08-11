@@ -27,12 +27,10 @@ def normalize_command_text(text: str) -> str:
         "profile": "/profile",
         "agent": "/profile",
     }
-    if lower in aliases:
-        return aliases[lower]
     if lower.startswith(("profile use ", "agent use ")):
         parts = value.split(None, 2)
         return "/profile use " + parts[2] if len(parts) == 3 else value
-    return value
+    return aliases.get(lower, value)
 
 
 def normalize_slash_command_text(command: str, text: str) -> str:
