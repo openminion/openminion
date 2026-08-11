@@ -435,6 +435,7 @@ def _prepare_outcome(
     tool_name: str,
     disposition: str,
     action_result: ActionResult,
+    tool_budget_debited: bool = False,
 ) -> PrepareOutcome:
     return PrepareOutcome(
         approved_command=command,
@@ -443,6 +444,7 @@ def _prepare_outcome(
         tool_name=tool_name,
         disposition=disposition,
         action_result=action_result,
+        tool_budget_debited=tool_budget_debited,
     )
 
 
@@ -455,6 +457,7 @@ def _remembered_prepare_outcome(
     tool_name: str,
     disposition: str,
     action_result: ActionResult,
+    tool_budget_debited: bool = False,
 ) -> PrepareOutcome:
     runner._remember_idempotency(state=state, command=command, result=action_result)
     return _prepare_outcome(
@@ -463,6 +466,7 @@ def _remembered_prepare_outcome(
         tool_name=tool_name,
         disposition=disposition,
         action_result=action_result,
+        tool_budget_debited=tool_budget_debited,
     )
 
 
@@ -614,6 +618,7 @@ def _validation_failed_outcome(
         tool_name=tool_name,
         disposition="validation_failed",
         action_result=result,
+        tool_budget_debited=True,
     )
 
 
@@ -946,6 +951,7 @@ def finalize_tool_result(
         approved_command=prepared_dispatch.approved_command,
         action_result=normalized,
         job=job,
+        tool_budget_debited=True,
     )
 
 

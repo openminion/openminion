@@ -137,6 +137,9 @@ class RunnerCommandExecutor:
             approved_command=approved,
             action_result=action_result,
             job=job,
+            tool_budget_debited=(
+                getattr(approved, "kind", "") == BRAIN_COMMAND_KIND_TOOL
+            ),
         )
 
     def stage_tool_outcome_candidate(

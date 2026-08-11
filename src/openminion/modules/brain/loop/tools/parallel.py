@@ -16,7 +16,6 @@ class ParallelDispatchResult:
     parallel_fan_out_count: int
     tool_calls_parallel: int
     tool_calls_sequential: int
-    budget_managed_in_dispatch: bool = False
 
 
 def _tool_command_for_call(
@@ -144,7 +143,6 @@ def _execute_parallel_tool_batch_without_prepared_dispatch(
         parallel_fan_out_count=parallel_fan_out_count,
         tool_calls_parallel=tool_calls_parallel,
         tool_calls_sequential=tool_calls_sequential,
-        budget_managed_in_dispatch=False,
     )
 
 
@@ -329,5 +327,4 @@ def execute_parallel_tool_batch(
         parallel_fan_out_count=parallel_fan_out_count,
         tool_calls_parallel=tool_calls_parallel,
         tool_calls_sequential=tool_calls_sequential,
-        budget_managed_in_dispatch=False,
     )

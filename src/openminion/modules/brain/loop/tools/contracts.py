@@ -116,6 +116,7 @@ class CommandExecutionOutcome:
     action_result: ActionResult | None = None
     job: JobHandle | None = None
     reflect_report: ReflectReport | None = None
+    tool_budget_debited: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +152,7 @@ class PrepareOutcome:
     tool_name: str
     disposition: str
     action_result: ActionResult
+    tool_budget_debited: bool = False
 
 
 @dataclass(frozen=True, slots=True)

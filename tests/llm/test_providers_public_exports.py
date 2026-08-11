@@ -23,6 +23,16 @@ def test_provider_public_exports_include_tool_calling_helpers() -> None:
     assert detect_raw_tool_payload_json(text)
 
 
+def test_raw_tool_payload_detection_reads_embedded_tool_call_json() -> None:
+    text = (
+        "I'll write the requested files now.\n"
+        '{"tool_calls":[{"type":"file.write","name":"file_write_1",'
+        '"path":"README.md","content":"hello"}]}'
+    )
+
+    assert detect_raw_tool_payload_json(text)
+
+
 def test_provider_public_exports_include_response_and_tool_contracts() -> None:
     response = ProviderResponse(text="done", model="demo")
     spec = ProviderToolSpec(

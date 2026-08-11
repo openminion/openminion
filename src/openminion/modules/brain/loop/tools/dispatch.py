@@ -180,7 +180,6 @@ def _handle_exact_date_requirements(
                 ordered_tool_results=[],
                 cached_indices=frozenset(),
                 iter_batch_parallel_count=0,
-                dispatch_budget_managed=False,
                 batch_had_progress=False,
                 continue_loop=False,
                 outcome=AdaptiveToolLoopOutcome(
@@ -220,7 +219,6 @@ def _handle_exact_date_requirements(
             ordered_tool_results=[],
             cached_indices=frozenset(),
             iter_batch_parallel_count=0,
-            dispatch_budget_managed=False,
             batch_had_progress=False,
             continue_loop=True,
             outcome=None,
@@ -236,7 +234,7 @@ def _dispatch_tool_batches(
     tool_calls: list[Any],
     tool_batch_runner: Any,
     loop_cache: Any,
-) -> tuple[list[tuple[Any, Any]], frozenset[int], int, bool]:
+) -> tuple[list[tuple[Any, Any]], frozenset[int], int]:
     cached_results: dict[int, Any] = {}
     uncached_tool_calls: list[Any] = []
     for tc_idx, tool_call in enumerate(tool_calls):
@@ -249,7 +247,6 @@ def _dispatch_tool_batches(
             uncached_tool_calls.append(tool_call)
 
     iter_batch_parallel_count = 0
-    dispatch_budget_managed = False
     if tool_batch_runner is None:
         if uncached_tool_calls:
             dispatch_result = execute_parallel_tool_batch(
@@ -267,9 +264,6 @@ def _dispatch_tool_batches(
                 tool_calls_sequential=dispatch_result.tool_calls_sequential,
             )
             iter_batch_parallel_count = dispatch_result.tool_calls_parallel
-            dispatch_budget_managed = bool(
-                getattr(dispatch_result, "budget_managed_in_dispatch", False)
-            )
             dispatch_pairs: list[tuple[Any, Any]] = list(
                 dispatch_result.ordered_results
             )
@@ -299,5 +293,4 @@ def _dispatch_tool_batches(
         ordered_tool_results,
         frozenset(cached_results),
         iter_batch_parallel_count,
-        dispatch_budget_managed,
     )

@@ -5282,6 +5282,74 @@ class TestFinalizeIterationCapExit:
         ]
         assert any("Do not call tools" in message for message in retry_system_messages)
 
+    def test_force_finalization_retries_embedded_tool_call_json(self) -> None:
+        leaked_text = (
+            "I'll create the temporary working folder and set up the project there. "
+            "Let me write the necessary files directly.\n\n"
+            '{"tool_calls":['
+            '{"type":"file.write","name":"file_write_1",'
+            '"path":"tmp-work/README.md","content":"README content"},'
+            '{"type":"file.write","name":"file_write_2",'
+            '"path":"tmp-work/notes.md","content":"Project notes with objectives, '
+            'implementation status, tests, documentation, and follow-up work."}'
+            "]}"
+        )
+        assert len(leaked_text) > 280
+        prof = _profile(
+            allowed_tools=frozenset({"file.write"}),
+            profile_name="general_adaptive_v1",
+        )
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="tool", content='{"status":"success"}')],
+            total_tool_calls=1,
+        )
+        loop_ctx = _LoopContext(state=_state())
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text=leaked_text,
+                    assistant_messages=[
+                        Message(role="assistant", content=leaked_text)
+                    ],
+                    finish_reason="stop",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="Created the requested workspace files.",
+                    assistant_messages=[
+                        Message(
+                            role="assistant",
+                            content="Created the requested workspace files.",
+                        )
+                    ],
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=None,
+            metadata=None,
+            allowed_tools=frozenset({"file.write"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert result.final_text == "Created the requested workspace files."
+        assert len(runtime.calls) == 2
+        assert all(message.content != leaked_text for message in st_loop.messages)
+
     def test_force_finalization_rejects_provider_fallback_text(self) -> None:
         prof = _profile(
             allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"

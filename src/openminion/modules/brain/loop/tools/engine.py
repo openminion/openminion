@@ -589,7 +589,6 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 ordered_tool_results=dispatch_phase.ordered_tool_results,
                 cached_indices=dispatch_phase.cached_indices,
                 iter_batch_parallel_count=dispatch_phase.iter_batch_parallel_count,
-                dispatch_budget_managed=dispatch_phase.dispatch_budget_managed,
                 initial_batch_had_progress=dispatch_phase.batch_had_progress,
                 loop_cache=self.loop_cache,
                 loop_profiler=self.loop_profiler,

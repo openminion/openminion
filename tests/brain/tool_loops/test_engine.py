@@ -426,6 +426,70 @@ def test_engine_runs_multiple_rounds_and_appends_tool_messages() -> None:
     )
 
 
+def test_engine_debits_each_tool_result_once() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="",
+                tool_calls=[
+                    ToolCall(id="call-1", name="file.read", arguments={}),
+                    ToolCall(id="call-2", name="exec.run", arguments={}),
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="fake-model",
+                output_text="done",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    state = _state(tool_calls=8)
+    managed = CommandExecutionOutcome(
+        approved_command=SimpleNamespace(),
+        action_result=ActionResult(
+            command_id=new_uuid(), status="success", summary="read ok"
+        ),
+        tool_budget_debited=True,
+    )
+    denied = CommandExecutionOutcome(
+        approved_command=SimpleNamespace(),
+        action_result=ActionResult(
+            command_id=new_uuid(), status="failed", summary="denied"
+        ),
+    )
+
+    @dataclass
+    class _MixedBudgetContext(_LoopContext):
+        def execute_command(self, *, command, include_reflect: bool = False):
+            outcome = super().execute_command(
+                command=command,
+                include_reflect=include_reflect,
+            )
+            if outcome.tool_budget_debited:
+                self.state.budgets_remaining.tool_calls -= 1
+            return outcome
+
+    loop_ctx = _MixedBudgetContext(state=state, outcomes=[managed, denied])
+
+    outcome = run_adaptive_tool_loop(
+        loop_ctx,
+        profile=_profile(allowed_tools=frozenset({"file.read", "exec.run"})),
+        runtime=runtime,
+        model="fake-model",
+        initial_messages=[Message(role="user", content="inspect and test")],
+        tool_specs=_tool_specs("file.read", "exec.run"),
+    )
+
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert loop_ctx.state.budgets_remaining.tool_calls == 6
+
+
 def test_engine_retries_empty_plan_lookup_after_substantive_tool_results() -> None:
     runtime = _FakeRuntime(
         responses=[

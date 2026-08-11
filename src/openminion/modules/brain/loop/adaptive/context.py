@@ -344,6 +344,7 @@ class _AdaptiveLoopContextAdapter:
         outcome = CommandExecutionOutcome(
             approved_command=prepare_outcome.approved_command,
             action_result=prepare_outcome.action_result,
+            tool_budget_debited=prepare_outcome.tool_budget_debited,
         )
         return self._postprocess_outcome(
             outcome,

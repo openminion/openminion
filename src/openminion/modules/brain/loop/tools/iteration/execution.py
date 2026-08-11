@@ -111,7 +111,6 @@ def execute_iteration_results(
     ordered_tool_results: list[tuple[Any, Any]],
     cached_indices: frozenset[int],
     iter_batch_parallel_count: int,
-    dispatch_budget_managed: bool,
     initial_batch_had_progress: bool,
     loop_cache: Any,
     loop_profiler: Any,
@@ -155,7 +154,9 @@ def execute_iteration_results(
         )
         loop_state.tool_calls_made.append(tool_name)
         loop_state.total_tool_calls += 1
-        if not (dispatch_budget_managed and not iter_tc_cache_hit):
+        if iter_tc_cache_hit or not bool(
+            getattr(command_outcome, "tool_budget_debited", False)
+        ):
             debit_tool_budget(loop_ctx)
 
         action_result = command_outcome.action_result or build_missing_action_result(

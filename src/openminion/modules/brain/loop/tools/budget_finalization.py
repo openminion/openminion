@@ -7,6 +7,7 @@ from openminion.modules.brain.loop.constants import (
     BUDGET_FINALIZATION_STATUS_RETRY_PROMPT,
 )
 from openminion.modules.brain.schemas import FinalizationStatus
+from openminion.modules.llm.contracts import detect_raw_tool_payload_json
 from openminion.modules.llm.schemas import Message
 from pydantic import ValidationError
 
@@ -22,6 +23,7 @@ from .contracts import (
     AdaptiveToolLoopState,
 )
 from .runtime import (
+    _extract_visible_response_text,
     _normalize_finalization_status_response,
 )
 from .status import emit_adaptive_status
@@ -39,7 +41,10 @@ def _retry_answer_only_completion_if_needed(
     allowed_tools: list[str],
     stop_outcome: Any,
 ) -> tuple[Any, AdaptiveToolLoopOutcome | None]:
-    if not list(getattr(response, "tool_calls", []) or []):
+    has_tool_attempt = bool(list(getattr(response, "tool_calls", []) or [])) or (
+        detect_raw_tool_payload_json(_extract_visible_response_text(response))
+    )
+    if not has_tool_attempt:
         return response, None
     retry_key = "budget_answer_only_tool_choice_none_retry_used"
     if bool(loop_state.scratchpad.get(retry_key, False)):

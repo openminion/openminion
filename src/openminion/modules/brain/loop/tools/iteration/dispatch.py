@@ -64,7 +64,6 @@ class LoopDispatchResult(NamedTuple):
     ordered_tool_results: list[tuple[Any, Any]]
     cached_indices: frozenset[int]
     iter_batch_parallel_count: int
-    dispatch_budget_managed: bool
     batch_had_progress: bool
     continue_loop: bool
     outcome: AdaptiveToolLoopOutcome | None
@@ -130,7 +129,6 @@ def _handle_decompose_calls(
                 ordered_tool_results=[],
                 cached_indices=frozenset(),
                 iter_batch_parallel_count=0,
-                dispatch_budget_managed=False,
                 batch_had_progress=False,
                 continue_loop=False,
                 outcome=_decompose_invalid_outcome(
@@ -173,7 +171,6 @@ def _handle_decompose_calls(
             ordered_tool_results=[],
             cached_indices=frozenset(),
             iter_batch_parallel_count=0,
-            dispatch_budget_managed=False,
             batch_had_progress=False,
             continue_loop=True,
             outcome=None,
@@ -188,7 +185,6 @@ def _handle_decompose_calls(
             ordered_tool_results=[],
             cached_indices=frozenset(),
             iter_batch_parallel_count=0,
-            dispatch_budget_managed=False,
             batch_had_progress=False,
             continue_loop=False,
             outcome=_decompose_invalid_outcome(
@@ -228,7 +224,6 @@ def _handle_decompose_calls(
             ordered_tool_results=[],
             cached_indices=frozenset(),
             iter_batch_parallel_count=0,
-            dispatch_budget_managed=False,
             batch_had_progress=False,
             continue_loop=False,
             outcome=AdaptiveToolLoopOutcome(
@@ -295,7 +290,6 @@ def _handle_decompose_calls(
         ordered_tool_results=[],
         cached_indices=frozenset(),
         iter_batch_parallel_count=0,
-        dispatch_budget_managed=False,
         batch_had_progress=False,
         continue_loop=True,
         outcome=None,
@@ -388,7 +382,6 @@ def _process_plan_tool_calls(
                 ordered_tool_results=[],
                 cached_indices=frozenset(),
                 iter_batch_parallel_count=0,
-                dispatch_budget_managed=False,
                 batch_had_progress=batch_had_progress,
                 continue_loop=True,
                 outcome=None,
@@ -460,7 +453,6 @@ def _process_review_tool_calls(
                 ordered_tool_results=[],
                 cached_indices=frozenset(),
                 iter_batch_parallel_count=0,
-                dispatch_budget_managed=False,
                 batch_had_progress=batch_had_progress,
                 continue_loop=True,
                 outcome=None,
@@ -675,7 +667,6 @@ def _finish_tool_request_only_dispatch(
         ordered_tool_results=[],
         cached_indices=frozenset(),
         iter_batch_parallel_count=0,
-        dispatch_budget_managed=False,
         batch_had_progress=True,
         continue_loop=True,
         outcome=None,
@@ -848,7 +839,6 @@ def prepare_iteration_dispatch(
         ordered_tool_results,
         cached_indices,
         iter_batch_parallel_count,
-        dispatch_budget_managed,
     ) = _dispatch_tool_batches(
         loop_ctx,
         profile=profile,
@@ -863,7 +853,6 @@ def prepare_iteration_dispatch(
         ordered_tool_results=ordered_tool_results,
         cached_indices=cached_indices,
         iter_batch_parallel_count=iter_batch_parallel_count,
-        dispatch_budget_managed=dispatch_budget_managed,
         batch_had_progress=batch_had_progress,
         continue_loop=False,
         outcome=None,

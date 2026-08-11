@@ -341,33 +341,28 @@ def detect_raw_xml_tool_wrapper(text: str) -> bool:
 def detect_raw_tool_payload_json(text: str) -> bool:
     if not text:
         return False
-    token = str(text or "").strip()
-    lower = token.lower()
-    if not (
-        token.startswith("{")
-        or token.startswith("[")
-        or token.startswith("```")
-        or "```json" in lower
-    ):
-        return False
-    if not (
-        '"tool"' in lower
-        or '"tool_calls"' in lower
-        or '"name"' in lower
-        or '":op"' in lower
-    ):
-        return False
-    return any(
-        key in lower
-        for key in (
-            '"arguments"',
-            '"args"',
-            '":args"',
-            '"command"',
-            '"path"',
-            '"query"',
-        )
+    name_keys = ("name", "tool_name", "tool", ":op")
+    argument_keys = (
+        "arguments", "args", ":args", "parameters", "tool_input",
+        "input", "command", "path", "query", "content",
     )
+    for candidate in _json_payload_candidates(text):
+        payload = _decode_json(candidate)
+        if not isinstance(payload, (dict, list)):
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("tool_calls"), list):
+            if payload["tool_calls"]:
+                return True
+            continue
+        items = payload if isinstance(payload, list) else [payload]
+        if any(
+            isinstance(item, dict)
+            and any(isinstance(item.get(key), str) for key in name_keys)
+            and any(key in item for key in argument_keys)
+            for item in items
+        ):
+            return True
+    return False
 
 
 def sanitize_envelope_leak(text: str, *, metadata: dict[str, Any] | None = None) -> str:
