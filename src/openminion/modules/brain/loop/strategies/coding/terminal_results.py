@@ -16,7 +16,6 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionResult,
 )
 from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
-    mutating_file_evidence_can_closeout,
     mutating_file_evidence_fallback_text,
 )
 from openminion.modules.brain.schemas.base import new_uuid
@@ -174,8 +173,6 @@ def _exit_final_text(
 
 def _mutating_file_evidence_final_text(runner: Any) -> str:
     if not runner._has_successful_mutating_file_result():
-        return ""
-    if not mutating_file_evidence_can_closeout(runner._loop_state):
         return ""
     return mutating_file_evidence_fallback_text(runner._loop_state)
 

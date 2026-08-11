@@ -81,8 +81,6 @@ from openminion.modules.brain.loop.tools.duplicate_batch import (
 )
 from openminion.modules.brain.loop.tools.postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
-    _final_text_parrots_policy_denial,
-    _looks_like_execution_preface_draft,
     _looks_like_unexecutable_tool_payload_text,
 )
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
@@ -1619,7 +1617,7 @@ def test_loop_executes_tool_then_completes() -> None:
     assert len(loop_ctx.commands) == 1
 
 
-def test_loop_ignores_execution_preface_assistant_message_when_tools_present() -> None:
+def test_loop_preserves_assistant_message_without_semantic_preface_scoring() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1666,10 +1664,10 @@ def test_loop_ignores_execution_preface_assistant_message_when_tools_present() -
         message.content
         for message in outcome.state.messages
         if message.role == "assistant"
-    ] == ["verified and complete"]
+    ] == ["I'll read pyproject.toml and README.md now.", "verified and complete"]
 
 
-def test_loop_ignores_execution_preface_output_text_when_tools_present() -> None:
+def test_loop_preserves_output_text_without_semantic_preface_scoring() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1710,7 +1708,10 @@ def test_loop_ignores_execution_preface_output_text_when_tools_present() -> None
         message.content
         for message in outcome.state.messages
         if message.role == "assistant"
-    ] == ["verified and complete"]
+    ] == [
+        "Reading pyproject.toml and README.md to verify the required strings are present:",
+        "verified and complete",
+    ]
 
 
 def test_loop_accepts_model_authored_status_shaped_text() -> None:
@@ -3357,7 +3358,7 @@ def test_tool_choice_none_second_retry_degrades_answer_only_closeout_to_budget_e
     )
 
 
-def test_tool_choice_none_missing_validation_continues_with_tools() -> None:
+def test_tool_choice_none_does_not_infer_validation_intent_from_user_prose() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -3463,12 +3464,9 @@ def test_tool_choice_none_missing_validation_continues_with_tools() -> None:
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text == "result: validation passed"
-    assert [command.tool_name for command in loop_ctx.commands] == [
-        "file.write",
-        "exec.run",
-    ]
-    assert runtime.calls[0]["tool_choice"] == "auto"
-    assert runtime.calls[1]["tool_choice"] == "auto"
+    assert loop_ctx.commands == []
+    assert runtime.calls[0]["tool_choice"] == "none"
+    assert runtime.calls[1]["tool_choice"] == "none"
     assert "tool_choice_none_retry_continued_for_validation" not in (
         outcome.state.scratchpad
     )
@@ -3510,7 +3508,6 @@ def test_tool_choice_none_second_retry_salvages_mutating_file_evidence() -> None
     )
     initial_state = AdaptiveToolLoopState(
         scratchpad={
-            "adaptive.requested_closeout_markers": ["result"],
             "adaptive.tool_results": [
                 {
                     "tool_name": "file.write",
@@ -3536,7 +3533,7 @@ def test_tool_choice_none_second_retry_salvages_mutating_file_evidence() -> None
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text is not None
     assert "result:" in outcome.final_text
-    assert "file mutations" in outcome.final_text
+    assert "successful file writes" in outcome.final_text
 
 
 def test_final_answer_reserve_tool_choice_none_retry_salvages_mutating_file_evidence() -> (
@@ -3578,7 +3575,6 @@ def test_final_answer_reserve_tool_choice_none_retry_salvages_mutating_file_evid
     initial_state = AdaptiveToolLoopState(
         scratchpad={
             "coding.final_answer_reserve_used": True,
-            "adaptive.requested_closeout_markers": ["result"],
             "adaptive.tool_results": [
                 {
                     "tool_name": "file.write",
@@ -3604,7 +3600,7 @@ def test_final_answer_reserve_tool_choice_none_retry_salvages_mutating_file_evid
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert outcome.final_text is not None
     assert outcome.final_text.startswith("result:")
-    assert "file mutations" in outcome.final_text
+    assert "successful file writes" in outcome.final_text
     assert (
         outcome.state.scratchpad["mutating_file_closeout_used_evidence_fallback"]
         is True
@@ -3766,7 +3762,9 @@ def test_tool_choice_none_compact_closeout_accepts_visible_text_with_tool_calls(
     assert outcome.final_text == "result: files changed a.py, b.py"
 
 
-def test_tool_choice_none_compact_closeout_falls_back_when_labels_missing() -> None:
+def test_tool_choice_none_compact_closeout_accepts_model_text_without_label_scoring() -> (
+    None
+):
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -3838,18 +3836,13 @@ def test_tool_choice_none_compact_closeout_falls_back_when_labels_missing() -> N
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text is not None
-    assert "validation:" in outcome.final_text
-    assert "follow-ups:" in outcome.final_text
-    assert (
-        outcome.state.scratchpad[
-            "compact_closeout_missing_requested_markers_used_fallback"
-        ]
-        is True
+    assert outcome.final_text == "design: simple\nfiles: a.py, b.py"
+    assert "compact_closeout_missing_requested_markers_used_fallback" not in (
+        outcome.state.scratchpad
     )
 
 
-def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation() -> (
+def test_tool_choice_none_compact_closeout_accepts_model_text_without_shape_scoring() -> (
     None
 ):
     runtime = _FakeRuntime(
@@ -3931,13 +3924,11 @@ def test_tool_choice_none_compact_closeout_returns_truthful_missing_validation()
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text is not None
-    assert "result:" in outcome.final_text
-    assert "validation: deterministic validation was not captured" in outcome.final_text
-    assert "files changed: a.py" in outcome.final_text
-    assert (
-        outcome.state.scratchpad["requested_validation_blocked_answer_only_closeout"]
-        is True
+    assert outcome.final_text == (
+        "PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest -q"
+    )
+    assert "requested_validation_blocked_answer_only_closeout" not in (
+        outcome.state.scratchpad
     )
 
 
@@ -5849,7 +5840,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         assert out is not None
         assert out.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
         assert "result:" in str(out.final_text or "").lower()
-        assert "validation:" in str(out.final_text or "").lower()
+        assert "validation:" not in str(out.final_text or "").lower()
         assert "tool evidence:" in str(out.final_text or "").lower()
 
     def test_preserves_model_answer_without_runtime_label_scoring(
@@ -7541,52 +7532,6 @@ def test_loop_fails_closed_when_typed_finalization_contract_is_missing() -> None
     assert outcome.finalization_status is None
 
 
-def test_execution_preface_draft_detects_future_tense_tool_batch() -> None:
-    assert _looks_like_execution_preface_draft(
-        "I'll execute the required tool batch: web.fetch for the PyPA URL, "
-        "then file.write for both pyproject.toml and README.md."
-    )
-
-
-def test_execution_preface_draft_detects_progress_note_after_tool_results() -> None:
-    assert _looks_like_execution_preface_draft(
-        "Reading pyproject.toml and README.md to verify the required strings "
-        "are present:"
-    )
-    assert _looks_like_execution_preface_draft(
-        "I'll read the full report.py to see exactly what was completed and "
-        "what needs to be finished."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Based on the existing tool results, I can see the project is mostly "
-        "complete. Let me verify the tests."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Let me check the current state of the project by reading the existing files."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Proceeding to add `tests/` and `pyproject.toml`, then run validation."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Brief plan: Create 4 files (`loopcalc.py` CLI, `loopcalc_core.py` helper, "
-        "`smoke_test.py`, `README.md`), write them with file.write, then read back "
-        "`loopcalc_core.py` to validate persistence. Writing files now."
-    )
-    assert _looks_like_execution_preface_draft(
-        "Design Comparison:\n\n"
-        "| Aspect | Design A | Design B |\n"
-        "|--------|----------|----------|\n"
-        "| Parser approach | regex | string splitting |\n\n"
-        "Implementation plan:\n"
-        "- `section_summary.py` - Core module\n"
-        "- `cli.py` - CLI entry\n\n"
-        "Starting with the core module:"
-    )
-    assert _looks_like_execution_preface_draft(
-        "Design Comparison\n\nChosen: stdlib argparse.\n\nCreating section_summary.py:"
-    )
-
-
 def test_unexecutable_tool_payload_detects_embedded_json_after_prose() -> None:
     assert _looks_like_unexecutable_tool_payload_text(
         "I'll continue from the completed tool results. Now I need to verify "
@@ -7698,35 +7643,6 @@ def test_final_answer_references_unbacked_source_urls_detects_missing_fetch() ->
             "PLAN\n- fetch https://docs.astral.sh/uv/getting-started/installation/\n"
             "UNCERTAINTIES\n- https://pipx.pypa.io/"
         ),
-    )
-
-
-def test_final_text_parrots_policy_denial_detects_exec_run_echo() -> None:
-    st_loop = AdaptiveToolLoopState(
-        scratchpad={
-            "adaptive.tool_results": [
-                {
-                    "tool_name": "exec.run",
-                    "ok": False,
-                    "content": "Denied by policy: command 'pip' is not allowlisted",
-                    "data": {
-                        "error": {
-                            "details": {
-                                "suggested_fix": (
-                                    "Run the allowed direct command `python -m pytest -q "
-                                    "tests` from the workspace instead."
-                                )
-                            }
-                        }
-                    },
-                }
-            ]
-        }
-    )
-
-    assert _final_text_parrots_policy_denial(
-        st_loop,
-        text="Denied by policy: command 'pip' is not allowlisted",
     )
 
 

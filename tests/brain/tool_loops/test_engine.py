@@ -26,6 +26,7 @@ from openminion.modules.brain.loop.tools import (
     ADAPTIVE_TERM_DECOMPOSE_REQUESTED,
     ADAPTIVE_TERM_DIRECT_TOOL_CLOSURE_FAILED,
     ADAPTIVE_TERM_FINALIZATION_BLOCKED,
+    ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_FINAL_TEXT,
     ADAPTIVE_TERM_ITERATION_CAP,
     ADAPTIVE_TERM_JOB_PENDING,
@@ -4040,11 +4041,6 @@ def test_engine_retries_once_when_explicit_direct_tool_turn_returns_zero_call_su
         "The requested tool was not executed, so I cannot truthfully claim it succeeded."
     )
     assert len(runtime.calls) == 1
-    assert any(
-        "use file.write for the required files" in str(message.content).lower()
-        for message in runtime.calls[0]["messages"]
-        if getattr(message, "role", "") == "system"
-    )
 
 
 def test_engine_tracks_multi_step_direct_tool_sequence_across_iterations() -> None:
@@ -5134,13 +5130,8 @@ def test_engine_fails_closed_when_typed_finalization_remains_missing() -> None:
         tool_specs=_tool_specs("web.search", "web.fetch"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "tool evidence:" in outcome.final_text
-    assert bool(
-        outcome.state.scratchpad.get(
-            "typed_finalization_contract_used_evidence_fallback"
-        )
-    )
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    assert outcome.final_text is None
 
 
 def test_engine_retries_raw_tool_result_json_as_final_answer() -> None:
@@ -5361,17 +5352,8 @@ def test_engine_retries_provider_fallback_final_answer_after_tool_work() -> None
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text == "sample.txt currently contains the expected content."
-    assert len(runtime.calls) == 3
-    retry_system_messages = [
-        str(message.content)
-        for message in runtime.calls[2]["messages"]
-        if message.role == "system"
-    ]
-    assert any(
-        "provider recovery/fallback message" in message
-        for message in retry_system_messages
-    )
+    assert outcome.final_text == fallback_text
+    assert len(runtime.calls) == 2
 
 
 def test_engine_salvages_typed_finalization_with_status_only_follow_up() -> None:

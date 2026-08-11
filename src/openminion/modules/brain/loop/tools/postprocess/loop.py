@@ -20,7 +20,6 @@ from ..contracts import (
 from .evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
     MUTATING_FILE_PATH_COUNTS_KEY,
-    missing_requested_file_artifact_labels,
 )
 from ..snapshot import LoopSnapshot, LoopToolCallRecord, compress_transcript
 from ..telemetry import _emit_iteration_event
@@ -125,20 +124,6 @@ def _mutating_file_closeout_message(loop_state: Any) -> Message:
     )
 
 
-def _missing_artifact_repetition_message(loop_state: Any) -> Message:
-    missing = ", ".join(missing_requested_file_artifact_labels(loop_state))
-    return Message(
-        role="system",
-        content=(
-            "You have repeatedly updated the same file path, but the user "
-            f"requested additional file artifacts that are still missing: {missing}. "
-            "Stop rewriting the same file. Use file.write for the missing "
-            "artifacts now, then run the requested validation before returning "
-            "the final answer."
-        ),
-    )
-
-
 def _track_successful_mutating_file_progress(
     loop_state: Any,
     ordered_tool_results: list[tuple[Any, Any]],
@@ -156,15 +141,7 @@ def _track_successful_mutating_file_progress(
         iteration_tool_sequences=iteration_tool_sequences,
     )
     if repeated_mutation:
-        missing_artifacts = missing_requested_file_artifact_labels(loop_state)
-        if missing_artifacts:
-            loop_state.scratchpad.pop(MUTATING_FILE_CLOSEOUT_KEY, None)
-            loop_state.scratchpad["mutating_file_repetition_missing_artifacts"] = list(
-                missing_artifacts
-            )
-            loop_state.messages.append(_missing_artifact_repetition_message(loop_state))
-        else:
-            loop_state.messages.append(_mutating_file_closeout_message(loop_state))
+        loop_state.messages.append(_mutating_file_closeout_message(loop_state))
 
 
 def _track_repeated_tool_sequence(
