@@ -8,11 +8,7 @@ def _normalize_openai_role(role: str) -> str:
 
 
 def render_openai(pack: ContextPack | dict[str, Any], *, model: str) -> dict[str, Any]:
-    """Render a ContextPack as an OpenAI chat completion request payload.
-
-    All message roles (system, user, assistant, tool) are passed through as-is.
-    Developer role is mapped to system for OpenAI compatibility.
-    """
+    """Render an OpenAI payload, mapping developer messages to system."""
     if isinstance(pack, ContextPack):
         messages = [_normalize_message_openai(m) for m in pack.messages]
     else:
@@ -26,11 +22,7 @@ def render_openai(pack: ContextPack | dict[str, Any], *, model: str) -> dict[str
 def render_anthropic(
     pack: ContextPack | dict[str, Any], *, model: str
 ) -> dict[str, Any]:
-    """Render a ContextPack as an Anthropic messages API request payload.
-
-    System and developer blocks are merged into top-level `system` string.
-    Only user/assistant turns go into `messages`.
-    """
+    """Render Anthropic system and user/assistant message fields."""
     if isinstance(pack, ContextPack):
         raw_messages = [{"role": m.role, "content": m.content} for m in pack.messages]
     else:

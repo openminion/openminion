@@ -127,18 +127,12 @@ class PrefixCacheAdapter:
         if self._provider in {"openai", "anthropic"} and model_hint:
             payload["model"] = model_hint
 
-        canonical = json.dumps(
-            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        )
+        canonical = _canonical_json(payload)
         digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return f"{self._provider}:{digest}"
 
     def cache_control_blocks(self, *, prefix_hash: str) -> dict[str, Any]:
-        """Return provider-specific cache control metadata for a given prefix hash.
-
-        This dict is intended to be merged into the API request payload so the
-        provider knows which prefix boundary to cache up to.
-        """
+        """Return provider cache metadata for this prefix boundary."""
         if self._provider == "anthropic":
             return {
                 "cache_control": {"type": "ephemeral"},

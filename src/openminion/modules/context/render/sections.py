@@ -47,8 +47,7 @@ def render_fact_table(
         if not item.ttl_valid:
             continue
         lines.append(f"- ({item.record_id}) {item.text}")
-    text = "\n".join(lines)
-    fitted, _ = fit_to_budget(text, max_tokens)
+    fitted, _ = fit_to_budget("\n".join(lines), max_tokens)
     return fitted
 
 
@@ -62,8 +61,7 @@ def render_memory_cards(
     for item in records:
         pin = " pinned" if item.pinned else ""
         lines.append(f"- ({item.record_type}{pin}) ({item.record_id}) {item.text}")
-    text = "\n".join(lines)
-    fitted, _ = fit_to_budget(text, max_tokens)
+    fitted, _ = fit_to_budget("\n".join(lines), max_tokens)
     return fitted
 
 
@@ -81,8 +79,7 @@ def render_artifact_digest(
     lines.extend(f"- {item}" for item in digest.bullets[:ARTIFACT_PREVIEW_MAX_BULLETS])
     if digest.excerpt:
         lines.append(f"excerpt: {digest.excerpt[:ARTIFACT_PREVIEW_MAX_CHARS]}")
-    text = "\n".join(lines)
-    fitted, _ = fit_to_budget(text, max_tokens)
+    fitted, _ = fit_to_budget("\n".join(lines), max_tokens)
     return fitted
 
 
@@ -101,8 +98,7 @@ def render_procedure_snippet(
         lines.extend(f"{i + 1}. {item}" for i, item in enumerate(proc.steps[:10]))
     if proc.rollback_hint:
         lines.append(f"Rollback: {proc.rollback_hint}")
-    text = "\n".join(lines)
-    fitted, _ = fit_to_budget(text, max_tokens)
+    fitted, _ = fit_to_budget("\n".join(lines), max_tokens)
     return fitted
 
 
@@ -236,11 +232,7 @@ def response_instructions(constraints: BuildConstraints) -> str:
 
 
 def _render_trailer_feedback(feedback: dict[str, Any]) -> str:
-    """Render PTCH trailer validator feedback as structured bullets.
-
-    Pure rendering — runtime does not re-interpret the feedback payload;
-    it transports the structured hints verbatim for the model to consume.
-    """
+    """Render structured PTCH feedback without reinterpreting it."""
     lines: list[str] = []
     kind = str(feedback.get("kind") or "").strip()
     route = str(feedback.get("route") or "").strip()
@@ -296,7 +288,6 @@ def _render_active_plan(plan: TaskPlan) -> str:
 
 def _render_task_digest(digest: dict[str, Any]) -> str:
     """Render durable task digest fields without ranking or interpretation."""
-
     lines: list[str] = []
     current = digest.get("current_task")
     if isinstance(current, dict):
