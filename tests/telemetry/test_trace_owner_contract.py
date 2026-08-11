@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from openminion.base.config import OTELExporterConfig
+from openminion.modules.telemetry.inspection import build_telemetry_debug_report
+from openminion.modules.telemetry.schemas import TelemetryEvent
+from openminion.modules.telemetry.service import TelemetryService
 from openminion.modules.telemetry.trace.structured import (
     trace_context_payload,
     write_structured_trace,
@@ -133,3 +137,63 @@ def test_write_structured_trace_merges_nested_dicts_and_keeps_existing_keys(
     assert payload["response"]["output_text"] == "ok"
     assert payload["state_snapshot"]["status"] == "active"
     assert payload["state_snapshot"]["waiting_user"] is True
+
+
+def test_debug_trace_links_are_direct_bounded_facts_without_root_scan(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    trace_root = tmp_path / "traces"
+    paths = []
+    for index in range(101):
+        path = trace_root / f"llm/agent/run/trace-{index:03d}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+        paths.append(str(path.relative_to(trace_root)))
+    service = TelemetryService(str(tmp_path / "telemetry.db"))
+    try:
+        service.record_event_sync(
+            TelemetryEvent(
+                session_id="session-1",
+                turn_id="turn-1",
+                event_type="agent.invocation.started",
+                event_id="start",
+                timestamp=1.0,
+                invocation_id="invocation-1",
+            )
+        )
+        service.record_event_sync(
+            TelemetryEvent(
+                session_id="session-1",
+                turn_id="turn-1",
+                event_type="llm.call.completed",
+                event_id="call",
+                timestamp=2.0,
+                invocation_id="invocation-1",
+                data={
+                    "llm_call_id": "call-1",
+                    "trace_artifact_paths": paths,
+                    "trace_artifacts_complete": True,
+                },
+            )
+        )
+        monkeypatch.setattr(
+            Path,
+            "rglob",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("trace roots must not be scanned")
+            ),
+        )
+        payload = build_telemetry_debug_report(
+            service,
+            trace_root=trace_root,
+            exporter_config=OTELExporterConfig(),
+        ).to_dict()
+    finally:
+        service.close_sync()
+
+    assert payload["invocation"]["trace_count"] == 101
+    assert len(payload["links"]["trace_paths"]) == 100
+    assert any(
+        item["code"] == "TRACE_LINKS_TRUNCATED" for item in payload["diagnostics"]
+    )

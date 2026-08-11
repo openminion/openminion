@@ -19,6 +19,8 @@ _PALETTE_ENTRIES = [
     ("/tools", "Show available tools", "cmd-tools"),
     ("/sessions", "Show recent sessions", "cmd-sessions"),
     ("/status", "Show CLI runtime status", "cmd-status"),
+    ("/telemetry", "Show telemetry diagnostics", "cmd-telemetry"),
+    ("/trace", "List trace metadata", "cmd-trace"),
     ("/debug", "Toggle debug pane", "cmd-debug"),
     ("/exit", "Exit the interactive CLI", "cmd-exit"),
 ]
@@ -38,6 +40,10 @@ class FocusActionMixin:
             }
             if result == "cmd-status":
                 self._handle_command("/status")
+            elif result == "cmd-telemetry":
+                self._handle_command("/telemetry")
+            elif result == "cmd-trace":
+                self._handle_command("/trace")
             elif result == "cmd-exit":
                 self.run_worker(self._confirm_exit(), exclusive=False)
             elif result in actions:

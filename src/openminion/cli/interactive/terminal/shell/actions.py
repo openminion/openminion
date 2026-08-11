@@ -54,6 +54,7 @@ from .renderers import (
     _switch_theme_variant,
 )
 from .sessions import resume_session, start_new_session
+from .slash_output import handle_debug_output_slash
 
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -709,8 +710,9 @@ async def _handle_slash(
     if cmd == "/model":
         _handle_slash_model(text, runtime=runtime, console=console)
         return False
-    if cmd == "/cost":
-        _render_cost_snapshot(runtime=runtime, console=console)
+    if handle_debug_output_slash(
+        cmd, text, runtime=runtime, console=console, cost_renderer=_render_cost_snapshot
+    ):
         return False
     if cmd == "/agents":
         _handle_slash_agents(text, runtime=runtime, console=console)

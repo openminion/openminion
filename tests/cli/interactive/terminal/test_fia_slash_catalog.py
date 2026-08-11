@@ -20,6 +20,7 @@ from openminion.cli.interactive.terminal.shell.actions import (
 )
 from openminion.cli.interactive.terminal.shell.slash_output import (
     PROMPT_SAFE_OUTPUT_SLASHES,
+    handle_debug_output_slash,
 )
 from openminion.cli.interactive.terminal.shell.sessions import resume_session
 from openminion.cli.interactive.terminal.status_line import TerminalStatusLine
@@ -130,6 +131,7 @@ def _extract_implemented_slashes() -> set[str]:
         _handle_slash,
         _handle_session_slash,
         _handle_shell_preference_slash,
+        handle_debug_output_slash,
     )
     for dispatcher in dispatchers:
         tree = ast.parse(inspect.getsource(dispatcher))

@@ -1,11 +1,17 @@
 import logging
+from datetime import datetime
 from typing import Any, Optional
 from collections.abc import Callable
 
-from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.modules.storage.runtime.session_store import EventRecord, SessionStore
 from openminion.services.gateway.turn.runtime import _correlation_payload
-from openminion.modules.task.run import Run, append_lifecycle_event
+from openminion.modules.task.run import (
+    Run,
+    append_lifecycle_event,
+)
+from openminion.modules.task.run.status import resolve_invocation_terminal
 from openminion.services.brain.adapters.run_verification import bind_run_terminal_event
+from openminion.services.agent.telemetry import InvocationLifecycleFact
 
 
 class _GatewayTurnLifecycleOps:
@@ -14,7 +20,8 @@ class _GatewayTurnLifecycleOps:
         *,
         sessions: SessionStore,
         logger: logging.Logger,
-        emit_run_state: Callable[..., None],
+        emit_run_state: Callable[..., EventRecord | None],
+        emit_invocation_lifecycle: Callable[[InvocationLifecycleFact], bool] | None,
         typed_terminal_resolver: Optional[
             Callable[..., Optional[tuple[Any, ...]]]
         ] = None,
@@ -22,7 +29,13 @@ class _GatewayTurnLifecycleOps:
         self._sessions = sessions
         self._logger = logger
         self._emit_run_state = emit_run_state
+        self._emit_invocation_lifecycle = emit_invocation_lifecycle
         self._typed_terminal_resolver = typed_terminal_resolver
+
+    def emit_invocation_lifecycle(self, fact: InvocationLifecycleFact) -> bool:
+        return bool(
+            self._emit_invocation_lifecycle and self._emit_invocation_lifecycle(fact)
+        )
 
     def emit_memory_event(
         self,
@@ -64,8 +77,8 @@ class _GatewayTurnLifecycleOps:
         attach_id: str | None,
         payload: dict[str, str],
         session_turn_fence_token: int | None = None,
-    ) -> None:
-        append_lifecycle_event(
+    ) -> EventRecord:
+        record = append_lifecycle_event(
             self._sessions,
             session_id=session_id,
             event_type=event_type,
@@ -75,6 +88,13 @@ class _GatewayTurnLifecycleOps:
             payload=payload,
             session_turn_fence_token=session_turn_fence_token,
         )
+        if event_type in {"response.delivered", "response.acked"}:
+            self._emit_resolved_invocation_terminal(
+                record,
+                conversation_id=conversation_id or "",
+                thread_id=thread_id or "",
+            )
+        return record
 
     def emit_terminal_run_state(
         self,
@@ -91,7 +111,7 @@ class _GatewayTurnLifecycleOps:
             Callable[..., Optional[tuple[Any, ...]]]
         ] = None,
         session_turn_fence_token: int | None = None,
-    ) -> None:
+    ) -> EventRecord | None:
         resolver = typed_terminal_resolver or self._typed_terminal_resolver
         if resolver is not None:
             try:
@@ -118,7 +138,7 @@ class _GatewayTurnLifecycleOps:
                     )
                 else:
                     try:
-                        bind_run_terminal_event(
+                        terminal_event = bind_run_terminal_event(
                             run=run,
                             goal=goal,
                             verifier_results=verifier_results,
@@ -131,7 +151,12 @@ class _GatewayTurnLifecycleOps:
                             attach_id=attach_id,
                             extra_payload=dict(payload or {}),
                         )
-                        return
+                        self._emit_resolved_invocation_terminal(
+                            terminal_event,
+                            conversation_id=conversation_id or "",
+                            thread_id=thread_id or "",
+                        )
+                        return terminal_event
                     except Exception as exc:
                         self._logger.warning(
                             "bind_run_terminal_event failed run_id=%s error=%s; "
@@ -149,7 +174,58 @@ class _GatewayTurnLifecycleOps:
         }
         if session_turn_fence_token is not None:
             kwargs["session_turn_fence_token"] = session_turn_fence_token
-        self._emit_run_state(**kwargs)
+        terminal_event = self._emit_run_state(**kwargs)
+        if terminal_event is not None:
+            self._emit_resolved_invocation_terminal(
+                terminal_event,
+                conversation_id=conversation_id or "",
+                thread_id=thread_id or "",
+            )
+        return terminal_event
+
+    def _emit_resolved_invocation_terminal(
+        self,
+        source: EventRecord,
+        *,
+        conversation_id: str,
+        thread_id: str,
+    ) -> bool:
+        projection = resolve_invocation_terminal(
+            self._sessions,
+            session_id=source.session_id,
+            trigger_event=source,
+            conversation_id=conversation_id,
+            thread_id=thread_id,
+        )
+        if projection is None:
+            return False
+        event_types = {
+            "settled": "agent.invocation.completed",
+            "failed": "agent.invocation.failed",
+            "cancelled": "agent.invocation.cancelled",
+        }
+        return self.emit_invocation_lifecycle(
+            InvocationLifecycleFact(
+                event_id=f"agent.invocation:{projection.invocation_id}:terminal",
+                timestamp=datetime.fromisoformat(
+                    projection.source_timestamp
+                ).timestamp(),
+                event_type=event_types[projection.resolved_state],
+                invocation_id=projection.invocation_id,
+                session_id=source.session_id,
+                turn_id=str(source.payload.get("request_id") or projection.run_id),
+                payload={
+                    "scope": "durable",
+                    "source_event_id": projection.source_event_id,
+                    "source_event_type": projection.source_event_type,
+                    "resolved_state": projection.resolved_state,
+                    "run_id": projection.run_id,
+                    "thread_id": projection.thread_id,
+                    "provider": source.payload.get("provider") or None,
+                    "model": source.payload.get("model") or None,
+                },
+            )
+        )
 
     @staticmethod
     def corr_payload(

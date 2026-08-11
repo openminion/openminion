@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from typing import Any
 
 from openminion.base.config import OTELExporterConfig
@@ -26,6 +27,7 @@ from .sdk import (
     RecordingOTELTraceSink,
     create_otel_trace_sink,
 )
+from ..interfaces import TelemetryExportProbeResult
 
 _LOG = logging.getLogger(__name__)
 _TERMINAL_EVENT_PREFIXES = (
@@ -57,6 +59,7 @@ _EVENT_CLASSIFICATION: dict[str, str] = {
     "module.stats": _CLASS_METRIC,
     "tui.render": _CLASS_METRIC,
     "telemetry.queue.stats": _CLASS_METRIC,
+    "telemetry.export.probe": _CLASS_LOG,
     # Generic catchalls stay out of OTel emission; module.debug.failure remains
     # a log record so runtime failure diagnostics are still visible.
     "metric": _CLASS_EXCLUDED,
@@ -187,6 +190,52 @@ class OpenTelemetryTraceExporter:
         if self._export_queue is None:
             return 0
         return self._export_queue.delete_pending_invocation(invocation_id)
+
+    def probe(
+        self,
+        event: TelemetryEvent,
+        timeout_seconds: float,
+    ) -> TelemetryExportProbeResult:
+        if self._sink is None:
+            return TelemetryExportProbeResult(True, "rejected", "not_run")
+        started = time.monotonic()
+        attributes = {
+            "openminion.event_type": str(event.event_type),
+            "openminion.telemetry.probe": True,
+            "openminion.payload.criticality": "diagnostic",
+            "openminion.payload.protocol": str(event.data.get("protocol") or ""),
+        }
+        projection = log_projection_for_event(event, attributes=attributes)
+        if projection is None:
+            return TelemetryExportProbeResult(True, "rejected", "not_run")
+        try:
+            self._sink.emit_log(
+                trace_key=_trace_key_for_event(event),
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                record_type=projection.record_type,
+                event_name=projection.event_name,
+                severity=projection.severity,
+                body=projection.body,
+                attributes=projection.attributes,
+                timestamp_ns=_timestamp_ns(event.timestamp),
+            )
+            remaining = timeout_seconds - (time.monotonic() - started)
+            if remaining <= 0:
+                return TelemetryExportProbeResult(True, "timeout", "not_run")
+            flushed = self._sink.force_flush(remaining)
+        except TimeoutError:
+            return TelemetryExportProbeResult(True, "timeout", "not_run")
+        except Exception:  # noqa: BLE001
+            return TelemetryExportProbeResult(True, "failed", "not_run")
+        if not flushed:
+            return TelemetryExportProbeResult(True, "accepted", "failed")
+        return TelemetryExportProbeResult(
+            True,
+            "accepted",
+            "completed",
+            recording_sink=isinstance(self._sink, RecordingOTELTraceSink),
+        )
 
     def _export_now(
         self,

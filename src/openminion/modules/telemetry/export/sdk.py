@@ -70,6 +70,8 @@ class OTELTraceSink(Protocol):
 
     def close(self) -> None: ...
 
+    def force_flush(self, timeout_seconds: float) -> bool: ...
+
 
 @dataclass(frozen=True)
 class ExportedOTELRecord:
@@ -223,6 +225,10 @@ class RecordingOTELTraceSink:
 
     def close(self) -> None:
         return
+
+    def force_flush(self, timeout_seconds: float) -> bool:
+        del timeout_seconds
+        return True
 
 
 class OpenTelemetrySDKSink:
@@ -403,6 +409,18 @@ class OpenTelemetrySDKSink:
             self._logger_provider.force_flush()
             self._logger_provider.shutdown()
         self._span_contexts.clear()
+
+    def force_flush(self, timeout_seconds: float) -> bool:
+        timeout_millis = max(1, int(timeout_seconds * 1000))
+        providers = (
+            self._trace_provider,
+            self._metric_provider,
+            self._logger_provider,
+        )
+        for provider in providers:
+            if provider is not None and provider.force_flush(timeout_millis) is False:
+                return False
+        return True
 
     def _metric_instrument(
         self,

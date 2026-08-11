@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,11 @@ from openminion.modules.telemetry.schemas import (
     TELEMETRY_EVENT_SCHEMA_V1,
     TelemetryEvent,
 )
-from .base import TelemetryStore
+from .base import (
+    TelemetryEventConflictError,
+    TelemetryEventPageRow,
+    TelemetryStore,
+)
 from .migrations import list_migrations
 
 
@@ -72,6 +77,20 @@ def _create_events_schema(
         "CREATE INDEX IF NOT EXISTS idx_events_execution_time "
         "ON events(execution_id, timestamp)"
     )
+    for name, columns in (
+        (
+            "idx_events_type_time_invocation_id",
+            "event_type, timestamp, invocation_id, id",
+        ),
+        ("idx_events_invocation_time_id", "invocation_id, timestamp, id"),
+        (
+            "idx_events_session_turn_invocation_id",
+            "session_id, turn_id, invocation_id, id",
+        ),
+    ):
+        record_store.execute_count(
+            f"CREATE INDEX IF NOT EXISTS {name} ON events({columns})"
+        )
 
 
 def _table_columns(record_store: RecordStore, table_name: str) -> set[str]:
@@ -114,24 +133,68 @@ class _TelemetryStoreMixin(TelemetryStore):
     def _module_package(self) -> str:
         return __package__
 
-    def insert_event(self, event: TelemetryEvent) -> None:
-        self._record_store.insert(
-            "events",
-            {
-                "session_id": event.session_id,
-                "turn_id": event.turn_id,
-                "event_type": event.event_type,
-                "timestamp": float(event.timestamp),
-                "schema_version": event.schema_version,
-                "event_id": event.event_id,
-                "trace_key": event.trace_key,
-                "invocation_id": event.invocation_id,
-                "execution_id": event.execution_id,
-                "agent_id": event.agent_id,
-                "mode": event.mode,
-                "data": json.dumps(event.data),
-            },
+    @staticmethod
+    def _event_row(event: TelemetryEvent) -> dict[str, Any]:
+        return {
+            "session_id": event.session_id,
+            "turn_id": event.turn_id,
+            "event_type": event.event_type,
+            "timestamp": float(event.timestamp),
+            "schema_version": event.schema_version,
+            "event_id": event.event_id,
+            "trace_key": event.trace_key,
+            "invocation_id": event.invocation_id,
+            "execution_id": event.execution_id,
+            "agent_id": event.agent_id,
+            "mode": event.mode,
+            "data": json.dumps(event.data),
+        }
+
+    @staticmethod
+    def _duplicate_facts(event: TelemetryEvent) -> tuple[Any, ...]:
+        data = dict(event.data)
+        if event.event_type.startswith("agent.invocation."):
+            data.pop("_telemetry_policy", None)
+        return (
+            event.session_id,
+            event.turn_id,
+            event.event_type,
+            float(event.timestamp).hex(),
+            event.mode,
+            event.trace_key,
+            event.invocation_id,
+            event.execution_id,
+            event.agent_id,
+            data,
         )
+
+    def insert_event(self, event: TelemetryEvent) -> None:
+        self._record_store.insert("events", self._event_row(event))
+
+    def insert_event_if_absent(self, event: TelemetryEvent) -> bool:
+        event_id = str(event.event_id or "").strip()
+        if not event_id:
+            raise ValueError("event_id must be non-empty")
+        if self._record_store.insert_if_absent(
+            "events",
+            self._event_row(event),
+            conflict_columns=("event_id",),
+        ):
+            return True
+        rows = self._record_store.query_rows(
+            "events",
+            where={"event_id": event_id},
+            limit=2,
+        )
+        if len(rows) != 1:
+            raise RuntimeError(f"event_id lookup returned {len(rows)} rows")
+        if self._duplicate_facts(self._row_to_event(rows[0])) != self._duplicate_facts(
+            event
+        ):
+            raise TelemetryEventConflictError(
+                f"event_id {event_id!r} already owns different structural facts"
+            )
+        return False
 
     @staticmethod
     def _row_to_event(row: dict[str, Any]) -> TelemetryEvent:
@@ -171,6 +234,103 @@ class _TelemetryStoreMixin(TelemetryStore):
     def fetch_events(self) -> list[TelemetryEvent]:
         return self._fetch_events({})
 
+    def event_high_water(self, *, invocation_id: str | None = None) -> int:
+        query = "SELECT COALESCE(MAX(id), 0) AS high_water FROM events"
+        params: list[Any] = []
+        if invocation_id:
+            query += " WHERE invocation_id = ?"
+            params.append(invocation_id)
+        row = self._record_store.query_dicts(query, params)[0]
+        return int(row["high_water"] or 0)
+
+    def fetch_event_page(
+        self,
+        *,
+        high_water: int,
+        limit: int,
+        before_timestamp: float | None = None,
+        before_id: int | None = None,
+        invocation_id: str | None = None,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+        event_types: tuple[str, ...] = (),
+    ) -> list[TelemetryEventPageRow]:
+        safe_limit = int(limit)
+        if safe_limit < 1 or safe_limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        clauses = ["id <= ?"]
+        params: list[Any] = [max(0, int(high_water))]
+        for column, value in (
+            ("invocation_id", invocation_id),
+            ("session_id", session_id),
+            ("turn_id", turn_id),
+        ):
+            if value:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        if event_types:
+            clauses.append(
+                "event_type IN (" + ", ".join("?" for _ in event_types) + ")"
+            )
+            params.extend(event_types)
+        if before_timestamp is not None:
+            if before_id is None:
+                raise ValueError("before_id is required with before_timestamp")
+            clauses.append("(timestamp < ? OR (timestamp = ? AND id < ?))")
+            params.extend((before_timestamp, before_timestamp, int(before_id)))
+        query = (
+            "SELECT id, session_id, turn_id, event_type, "
+            "timestamp AS raw_timestamp, "
+            "CAST(timestamp AS DOUBLE PRECISION) AS timestamp, schema_version, "
+            "event_id, trace_key, invocation_id, execution_id, agent_id, mode, data "
+            "FROM events WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY timestamp DESC, id DESC LIMIT ?"
+        )
+        params.append(safe_limit)
+        return [
+            TelemetryEventPageRow(
+                row_id=int(row["id"]),
+                event=self._row_to_event(row),
+                timestamp_valid=isinstance(row["raw_timestamp"], (int, float))
+                and not isinstance(row["raw_timestamp"], bool)
+                and math.isfinite(float(row["raw_timestamp"])),
+            )
+            for row in self._record_store.query_dicts(query, params)
+        ]
+
+    def find_turn_invocation_ids(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        high_water: int | None = None,
+        limit: int = 2,
+    ) -> list[str]:
+        safe_limit = max(1, min(int(limit), 1000))
+        clauses = [
+            "session_id = ?",
+            "turn_id = ?",
+            "invocation_id IS NOT NULL",
+        ]
+        params: list[Any] = [session_id, turn_id]
+        if high_water is not None:
+            clauses.append("id <= ?")
+            params.append(max(0, int(high_water)))
+        params.append(safe_limit)
+        rows = self._record_store.query_dicts(
+            f"""
+            SELECT invocation_id, MAX(timestamp) AS latest_timestamp, MAX(id) AS latest_id
+            FROM events
+            WHERE {" AND ".join(clauses)}
+            GROUP BY invocation_id
+            ORDER BY latest_timestamp DESC, latest_id DESC
+            LIMIT ?
+            """,
+            params,
+        )
+        return [str(row["invocation_id"]) for row in rows]
+
     def delete_invocation_events(self, invocation_id: str) -> int:
         return int(
             self._record_store.delete_rows("events", {"invocation_id": invocation_id})
@@ -186,8 +346,14 @@ class SQLiteTelemetryStore(BaseModuleSQLiteStore, _TelemetryStoreMixin):
         *,
         record_store: RecordStore | None = None,
         wal: bool = True,
+        read_only: bool = False,
     ) -> None:
-        super().__init__(sqlite_path, wal=wal, record_store=record_store)
+        super().__init__(
+            sqlite_path,
+            wal=wal,
+            record_store=record_store,
+            read_only=read_only,
+        )
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -203,8 +369,8 @@ class SQLiteTelemetryStore(BaseModuleSQLiteStore, _TelemetryStoreMixin):
 class PostgresTelemetryStore(BaseModuleStore, _TelemetryStoreMixin):
     """Postgres-backed telemetry store."""
 
-    def __init__(self, *, record_store: RecordStore) -> None:
-        super().__init__(record_store=record_store)
+    def __init__(self, *, record_store: RecordStore, read_only: bool = False) -> None:
+        super().__init__(record_store=record_store, initialize=not read_only)
 
     def _init_schema(self) -> None:
         with self._lock:
@@ -221,4 +387,8 @@ class PostgresTelemetryStore(BaseModuleStore, _TelemetryStoreMixin):
         return __package__
 
 
-__all__ = ["PostgresTelemetryStore", "SQLiteTelemetryStore"]
+__all__ = [
+    "PostgresTelemetryStore",
+    "SQLiteTelemetryStore",
+    "TelemetryEventConflictError",
+]

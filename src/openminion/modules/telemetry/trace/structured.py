@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
@@ -11,6 +12,24 @@ from .layout import (
     write_protected_trace_file,
 )
 from .metadata import apply_content_policy
+
+
+@dataclass(frozen=True)
+class TraceArtifactPublication:
+    paths: tuple[str, ...] = ()
+    complete: bool = True
+
+    def merge(self, other: "TraceArtifactPublication") -> "TraceArtifactPublication":
+        return TraceArtifactPublication(
+            paths=tuple(sorted(set(self.paths) | set(other.paths))),
+            complete=self.complete and other.complete,
+        )
+
+    def event_fields(self, *, final: bool) -> dict[str, Any]:
+        return {
+            "trace_artifact_paths": list(self.paths),
+            "trace_artifacts_complete": self.complete if final else False,
+        }
 
 
 def trace_requests_enabled(
@@ -161,6 +180,7 @@ def _merge_dicts(base: Mapping[str, Any], patch: Mapping[str, Any]) -> dict[str,
 
 
 __all__ = [
+    "TraceArtifactPublication",
     "trace_requests_enabled",
     "trace_context_payload",
     "write_structured_trace",

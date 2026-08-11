@@ -38,7 +38,7 @@ from openminion.services.gateway.turn.runtime import (
 from openminion.modules.policy import SecurityPolicyEngine
 from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
 from openminion.modules.storage.runtime.retrieval_service import RetrievalService
-from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.modules.storage.runtime.session_store import EventRecord, SessionStore
 
 _BRAIN_INTEGRATION_MODE_AUTHORITATIVE = "contextctl_authoritative"
 _BRAIN_INTEGRATION_MODE_LEGACY_ALIAS = "ctxctl_authoritative"
@@ -126,6 +126,7 @@ class GatewayService:
             memory_capsule_cache=self._memory_capsule_cache,
             memory_dynamic_retrieval_enabled=self._memory_dynamic_retrieval_enabled,
             emit_run_state=self._emit_run_state,
+            emit_invocation_lifecycle=self._agent.emit_invocation_lifecycle_sync,
         )
 
     def flush_memory_followups(self, *, session_id: str | None = None) -> None:
@@ -545,9 +546,9 @@ class GatewayService:
         current_step: str,
         payload: Optional[dict[str, Any]] = None,
         session_turn_fence_token: int | None = None,
-    ) -> None:
+    ) -> EventRecord | None:
         try:
-            append_run_state_event(
+            return append_run_state_event(
                 self._sessions,
                 session_id=session_id,
                 run_id=run_id,
@@ -564,3 +565,4 @@ class GatewayService:
                 state,
                 exc,
             )
+            return None

@@ -116,7 +116,23 @@ def test_telemetryctl_trace_list_and_show(
         == 0
     )
     shown = json.loads(capsys.readouterr().out)
-    assert shown["content"] == {"trace": {"trace_id": "trace-1"}}
+    assert "content" not in shown
+
+    assert (
+        main(
+            [
+                "--home-root",
+                str(tmp_path / "home"),
+                "trace",
+                "show",
+                "llm/agent-a/turn-session/step01-call01-structured.json",
+                "--raw",
+            ]
+        )
+        == 0
+    )
+    raw = json.loads(capsys.readouterr().out)
+    assert raw["content"] == {"trace": {"trace_id": "trace-1"}}
 
 
 def test_telemetryctl_trace_show_rejects_paths_outside_trace_root(
@@ -125,8 +141,32 @@ def test_telemetryctl_trace_show_rejects_paths_outside_trace_root(
 ) -> None:
     monkeypatch.setenv("OPENMINION_DATA_ROOT", str(tmp_path / "data"))
 
-    with pytest.raises(ValueError, match="trace path must stay under trace root"):
+    with pytest.raises(ValueError, match="non-symlinked trace artifact"):
         main(["--home-root", str(tmp_path / "home"), "trace", "show", "../secret.json"])
+
+
+def test_telemetryctl_trace_show_rejects_symlinked_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("OPENMINION_DATA_ROOT", str(data_root))
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    linked = data_root / "traces" / "llm" / "linked.json"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="non-symlinked trace artifact"):
+        main(
+            [
+                "--home-root",
+                str(tmp_path / "home"),
+                "trace",
+                "show",
+                "llm/linked.json",
+            ]
+        )
 
 
 def test_telemetryctl_invocation_list_show_and_graph_are_structural(
@@ -190,8 +230,11 @@ def test_telemetryctl_invocation_list_show_and_graph_are_structural(
     assert "events" not in graph
 
 
-def test_telemetryctl_invocation_rejects_non_uuid_identifier(tmp_path: Path) -> None:
-    with pytest.raises(ValueError):
+def test_telemetryctl_invocation_rejects_out_of_grammar_identifier(
+    capsys,
+    tmp_path: Path,
+) -> None:
+    assert (
         main(
             [
                 "invocation",
@@ -201,3 +244,6 @@ def test_telemetryctl_invocation_rejects_non_uuid_identifier(tmp_path: Path) -> 
                 str(tmp_path / "telemetry.db"),
             ]
         )
+        == 2
+    )
+    assert json.loads(capsys.readouterr().out)["error"]["code"] == "INVALID_ARGUMENT"

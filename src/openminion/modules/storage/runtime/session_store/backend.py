@@ -78,6 +78,25 @@ class RuntimeSessionStoreBackend:
             self._conn.commit()
         return int(cursor.rowcount or 0)
 
+    def insert(self, table: str, row: dict[str, Any]) -> int:
+        if self._record_store is not None:
+            return self._record_store.insert(table, row)
+        if self._conn is None:
+            raise RuntimeError("session store has no backing connection")
+        columns = list(row)
+        placeholders = ", ".join("?" for _ in columns)
+        quoted = ", ".join(f'"{column}"' for column in columns)
+        cursor = self._conn.execute(
+            f'INSERT INTO "{table}" ({quoted}) VALUES ({placeholders})',
+            tuple(row[column] for column in columns),
+        )
+        if self._raw_tx_depth == 0:
+            self._conn.commit()
+        inserted_id = int(cursor.lastrowid or 0)
+        if inserted_id <= 0:
+            raise RuntimeError(f"insert did not return a row ID for {table}")
+        return inserted_id
+
     def message_query(
         self,
         *,

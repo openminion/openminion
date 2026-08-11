@@ -7,6 +7,16 @@ from .schemas import TelemetryEvent, SessionTelemetry, CostSummary
 
 
 TELEMETRY_INTERFACE_VERSION = "v1"
+TELEMETRY_EXPORT_PROBE_TIMEOUT_SECONDS = 5.0
+
+
+@dataclass(frozen=True)
+class TelemetryExportProbeResult:
+    created: bool
+    transport: str
+    flush: str
+    cleanup: str = "completed"
+    recording_sink: bool = False
 
 
 def ensure_telemetry_interface_compatibility(actual_version: str) -> bool:
@@ -40,7 +50,9 @@ class TelemetryContract(Protocol):
 
     async def close(self) -> None: ...
 
-    async def record_event(self, event: TelemetryEvent) -> None: ...
+    async def record_event(self, event: TelemetryEvent) -> bool: ...
+
+    def record_event_sync(self, event: TelemetryEvent) -> bool: ...
 
     async def record_metric(
         self, name: str, value: float, tags: Optional[dict[str, str]] = ...
@@ -70,6 +82,12 @@ class TelemetryExporter(Protocol):
     def export(self, event: TelemetryEvent) -> bool: ...
 
     def delete_pending_invocation(self, invocation_id: str) -> int: ...
+
+    def probe(
+        self,
+        event: TelemetryEvent,
+        timeout_seconds: float,
+    ) -> TelemetryExportProbeResult: ...
 
     def close(self) -> None: ...
 
@@ -187,4 +205,30 @@ class TelemetryAdapterContract(Protocol):
         status: str | None = ...,
         error: Optional[dict[str, Any]] = ...,
         mode: str | None = ...,
-    ) -> None: ...
+        event_id: str | None = ...,
+        timestamp: float | None = ...,
+        trace_key: str | None = ...,
+        invocation_id: str | None = ...,
+        execution_id: str | None = ...,
+        agent_id: str | None = ...,
+    ) -> bool: ...
+
+    def emit_canonical_event_sync(
+        self,
+        session_id: str,
+        turn_id: str,
+        event_type: str,
+        payload: Optional[dict[str, Any]] = ...,
+        *,
+        trace_id: str | None = ...,
+        actor_type: str | None = ...,
+        status: str | None = ...,
+        error: Optional[dict[str, Any]] = ...,
+        mode: str | None = ...,
+        event_id: str | None = ...,
+        timestamp: float | None = ...,
+        trace_key: str | None = ...,
+        invocation_id: str | None = ...,
+        execution_id: str | None = ...,
+        agent_id: str | None = ...,
+    ) -> bool: ...

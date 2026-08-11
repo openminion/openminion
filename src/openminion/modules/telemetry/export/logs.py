@@ -21,6 +21,7 @@ _DIAGNOSTIC_EVENTS = frozenset(
         "module.debug.failure",
         "telemetry.export.failed",
         "telemetry.propagation.invalid",
+        "telemetry.export.probe",
     }
 )
 _NAMED_EVENT_TYPES = frozenset(
@@ -53,7 +54,11 @@ def log_projection_for_event(
             record_type="LogRecord",
             event_name=event_type,
             severity=(
-                "WARN" if event_type == "telemetry.propagation.invalid" else "ERROR"
+                "INFO"
+                if event_type == "telemetry.export.probe"
+                else "WARN"
+                if event_type == "telemetry.propagation.invalid"
+                else "ERROR"
             ),
             body=event_type,
             attributes=attributes,

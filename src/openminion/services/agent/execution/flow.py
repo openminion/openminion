@@ -11,7 +11,7 @@ from openminion.services.runtime.plugins.hooks import PluginContext as HookConte
 from ..context import build_context
 from ..context.history import _provider_tool_call_strategy
 from ..identity_binding import apply_execution_identity
-from ..telemetry import AgentExecutionTelemetry
+from openminion.modules.telemetry.execution_lifecycle import AgentExecutionTelemetry
 from .composition import build_service_port, build_turn_executor
 from .dependencies import ExecutorDeps
 from .response import finalize_turn_response, tool_calls_payload

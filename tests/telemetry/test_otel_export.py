@@ -4,6 +4,7 @@ import json
 from threading import Event
 
 from openminion.base.config import OTELExporterConfig
+from openminion.modules.telemetry.inspection import build_telemetry_debug_report
 from openminion.modules.telemetry.export.otel import (
     _OpenTelemetrySDKSink,
     OpenTelemetryTraceExporter,
@@ -545,6 +546,7 @@ def test_otel_04_every_catalog_event_resolves_to_a_valid_class() -> None:
         "agent.turn.completed",
         "agent.turn.failed",
         "llm.call.completed",
+        "llm.call.failed",
         "rlm.tick.completed",
         "tool.execution.completed",
         "tool.execution.failed",
@@ -932,3 +934,55 @@ def test_sdk_sink_emits_histogram_counter_and_gauge_metrics() -> None:
         ("add", 100.0, {"process_family": "runtime"}),
         ("add", 10.0, {"process_family": "runtime"}),
     ]
+
+
+def test_debug_export_health_distinguishes_live_and_out_of_process_queue() -> None:
+    config = OTELExporterConfig(
+        enabled=True,
+        endpoint="http://collector:4317",
+        protocol="grpc",
+        sample_rate=0.5,
+    )
+    outside = build_telemetry_debug_report(None, exporter_config=config)
+    assert outside.export_health.state == "unavailable"
+    assert outside.export_health.queue == {
+        "capacity": None,
+        "depth": None,
+        "drops": None,
+        "flush_failures": None,
+        "source": "no_runtime_connection",
+        "observed_at": None,
+        "freshness": "unavailable",
+    }
+
+    live = build_telemetry_debug_report(
+        None,
+        exporter_config=config,
+        live_queue_stats={
+            "queue_capacity": 32,
+            "queue_depth": 2,
+            "drops": 1,
+            "flush_failures": 0,
+        },
+    )
+    assert live.export_health.state == "error"
+    assert live.export_health.sampling_rate == 0.5
+    assert live.export_health.queue["source"] == "in_process"
+    assert live.export_health.queue["depth"] == 2
+    assert live.export_health.queue["drops"] == 1
+    assert live.export_health.queue["freshness"] == "live"
+    assert live.export_health.queue["observed_at"] is not None
+
+
+def test_debug_export_health_disabled_precedes_stale_unknown_protocol() -> None:
+    report = build_telemetry_debug_report(
+        None,
+        exporter_config=OTELExporterConfig(
+            enabled=False,
+            endpoint="stale",
+            protocol="unknown",
+        ),
+    )
+    assert report.export_health.state == "disabled"
+    assert report.export_health.protocol is None
+    assert "UNKNOWN_EXPORT_PROTOCOL" not in {item.code for item in report.diagnostics}

@@ -61,6 +61,9 @@ Operator notes:
 4. OTel export is provider-neutral. LangSmith, Helicone, Arize, Datadog,
    Jaeger, and similar collectors should integrate through their OTel
    ingestion path rather than via bespoke openminion adapters.
+5. See [Telemetry export quickstarts](../../../../docs/telemetry-export-quickstarts.md)
+   for Collector, Jaeger, Tempo, Langfuse, Phoenix, Logfire, and generic OTLP
+   setup with explicit proof and privacy boundaries.
 
 ## Operator inspection CLI
 
@@ -77,13 +80,18 @@ Useful commands:
    disposition (`span`, `metric`, `log`, or `excluded`).
 3. `telemetryctl trace list` lists recent LLM trace artifacts under
    `<data_root>/traces/llm/`.
-4. `telemetryctl trace show <relative-path>` prints one trace artifact while
-   enforcing that the path stays under the trace root.
+4. `telemetryctl trace show <relative-path>` prints structural file metadata
+   while enforcing a readable, non-symlinked path under the trace root. Use
+   the deliberate `--raw` flag to include artifact content; releases before
+   this summary-first change printed content by default.
 5. `telemetryctl invocation list` lists durable invocations and legacy gaps.
 6. `telemetryctl invocation show <invocation-id>` prints structural events,
    timing, token/cache/cost, policy, log, orphan, and propagation facts.
 7. `telemetryctl invocation graph <invocation-id>` prints finite execution
    segments and their links without prompt or reasoning interpretation.
+8. `telemetryctl debug latest|failed|invocation <id>` prints the shared
+   `openminion.telemetry_debug.v1` report used by the root and interactive
+   operator surfaces.
 
 These commands deliberately avoid content classification or response-quality
 judgment. Post-hoc eval/replay tooling may analyze captured traces separately,

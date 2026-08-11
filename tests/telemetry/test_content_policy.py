@@ -34,6 +34,10 @@ def test_default_policy_omits_content_and_prohibited_fields() -> None:
             "raw_source": "private source",
             "api_key": "secret",
             "headers": {"Authorization": "secret"},
+            "endpoint": "https://collector.invalid",
+            "hostname": "private-host",
+            "username": "private-user",
+            "process_id": 1234,
             "hidden_chain_of_thought": "never",
             "input_tokens": 12,
         },
@@ -49,6 +53,10 @@ def test_default_policy_omits_content_and_prohibited_fields() -> None:
     assert "raw_source" not in cleaned
     assert "api_key" not in cleaned
     assert "headers" not in cleaned
+    assert "endpoint" not in cleaned
+    assert "hostname" not in cleaned
+    assert "username" not in cleaned
+    assert "process_id" not in cleaned
     assert "hidden_chain_of_thought" not in cleaned
 
 

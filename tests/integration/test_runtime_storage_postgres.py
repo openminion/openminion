@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import concurrent.futures
+import json
 import os
 from pathlib import Path
 from urllib.parse import quote_plus
 import uuid
+from unittest.mock import patch
 
 import pytest
 
 from openminion.modules.storage.runtime.context import build_runtime_storage
 from openminion.modules.storage.runtime.idempotency_store import IdempotencyStore
 from openminion.modules.storage.runtime.session_store import SessionStore
+from openminion.modules.task.run import (
+    resolve_invocation_terminal,
+    resolve_thread_lifecycle,
+)
 
 pytestmark = pytest.mark.postgres
 
@@ -72,6 +79,125 @@ def test_build_runtime_storage_supports_postgres_backend(tmp_path: Path) -> None
         assert reserved is True
         assert record is not None
         assert record.status == "in_progress"
+
+        fixed_time = "2026-08-11T00:00:00+00:00"
+        with patch(
+            "openminion.modules.storage.runtime.session_store.lifecycle.utc_now_iso",
+            return_value=fixed_time,
+        ):
+            first_event = runtime_storage.sessions.append_event(
+                session_id=session.id,
+                event_type="run.queued",
+                payload={
+                    "run_id": "run-first",
+                    "state": "queued",
+                    "thread_id": "thread-first",
+                    "invocation_id": "invocation-first",
+                },
+            )
+            second_event = runtime_storage.sessions.append_event(
+                session_id=session.id,
+                event_type="run.queued",
+                payload={"run_id": "run-second", "state": "queued"},
+            )
+        assert first_event.id != second_event.id
+        assert first_event.payload["run_id"] == "run-first"
+        assert second_event.payload["run_id"] == "run-second"
+
+        runtime_storage.record_store.insert_many(
+            "events",
+            [
+                {
+                    "session_id": session.id,
+                    "event_type": "noise",
+                    "payload_json": json.dumps(
+                        {"index": index, "thread_id": "thread-first"}
+                    ),
+                    "created_at": fixed_time,
+                }
+                for index in range(2001)
+            ],
+        )
+        projection = resolve_thread_lifecycle(
+            runtime_storage.sessions,
+            session_id=session.id,
+            thread_id="thread-first",
+        )
+        assert projection.invocation_id == "invocation-first"
+        assert projection.invocation_source_event_id == first_event.id
+
+        runtime_storage.sessions.append_event(
+            session_id=session.id,
+            event_type="response.persisted",
+            payload={"run_id": "run-first", "thread_id": "thread-first"},
+        )
+        runtime_storage.sessions.append_event(
+            session_id=session.id,
+            event_type="response.delivered",
+            payload={"run_id": "run-first", "thread_id": "thread-first"},
+        )
+        terminal_source = runtime_storage.sessions.append_event(
+            session_id=session.id,
+            event_type="run.completed",
+            payload={
+                "run_id": "run-first",
+                "state": "completed",
+                "thread_id": "thread-first",
+            },
+        )
+        terminal = resolve_invocation_terminal(
+            runtime_storage.sessions,
+            session_id=session.id,
+            trigger_event=terminal_source,
+            thread_id="thread-first",
+        )
+        assert terminal is not None
+        assert terminal.invocation_id == "invocation-first"
+        assert terminal.resolved_state == "settled"
+        assert terminal.source_event_id == terminal_source.id
+
+        before_page = runtime_storage.sessions.list_events_before_id(
+            session_id=session.id,
+            before_id=second_event.id + 1,
+            limit=2,
+        )
+        assert [event.id for event in before_page] == [
+            second_event.id,
+            first_event.id,
+        ]
+
+        peer_storages = [
+            build_runtime_storage(
+                tmp_path / f"state/peer-{index}.db",
+                env={},
+                record_backend="record.postgres",
+                record_backend_options={"url": _schema_url(postgres_url, schema_name)},
+            )
+            for index in range(4)
+        ]
+        try:
+            with patch(
+                "openminion.modules.storage.runtime.session_store.lifecycle.utc_now_iso",
+                return_value=fixed_time,
+            ):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                    concurrent_rows = list(
+                        pool.map(
+                            lambda pair: pair[1].sessions.append_event(
+                                session_id=session.id,
+                                event_type="run.queued",
+                                payload={"run_id": f"parallel-{pair[0]}"},
+                            ),
+                            enumerate(peer_storages),
+                        )
+                    )
+            assert len({event.id for event in concurrent_rows}) == 4
+            assert {event.payload["run_id"] for event in concurrent_rows} == {
+                f"parallel-{index}" for index in range(4)
+            }
+        finally:
+            for peer_storage in peer_storages:
+                peer_storage.close()
     finally:
         try:
             runtime_storage.close()

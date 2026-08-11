@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from openminion.cli.presentation import styles
+from openminion.cli.interactive.commands import SlashCommandMixin
 from openminion.cli.theme import DARK
 from openminion.cli.interactive.app import FocusApp, _DemoFocusRuntime
 from openminion.cli.presentation.models import MessageKind
@@ -276,3 +278,25 @@ async def test_resume_filters_to_non_empty_sessions() -> None:
     assert "real-2" in ids
     assert "empty-1" not in ids
     assert "empty-2" not in ids
+
+
+class _TelemetrySlashHarness(SlashCommandMixin):
+    def __init__(self, data_root: Path) -> None:
+        self._runtime = SimpleNamespace(
+            api_runtime=SimpleNamespace(data_root=data_root)
+        )
+        self.messages: list[str] = []
+
+    def _push_system_body(self, body: str) -> None:
+        self.messages.append(body)
+
+
+def test_focus_telemetry_and_trace_errors_stay_local(tmp_path: Path) -> None:
+    harness = _TelemetrySlashHarness(tmp_path)
+
+    harness._handle_command("/telemetry invocation")
+    harness._handle_command("/trace list --limit 0")
+
+    assert harness.messages[0].startswith("usage: /telemetry")
+    assert harness.messages[1].startswith("usage: /trace")
+    assert list(tmp_path.iterdir()) == []

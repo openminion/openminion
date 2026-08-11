@@ -1,5 +1,7 @@
 import re
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from openminion.base.config.env import resolve_environment_config
@@ -79,8 +81,20 @@ def build_trace_file_path(
 def write_protected_trace_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.parent.chmod(0o700)
-    path.write_text(content, encoding="utf-8")
-    path.chmod(0o600)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(0o600)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _extract_agent_id(session_id: str) -> str:

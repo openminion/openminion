@@ -31,7 +31,7 @@ from openminion.services.security.tool_execution import (
     build_execution_boundary_policy_adapter,
 )
 from openminion.services.agent.identity_binding import issue_execution_identity
-from openminion.services.agent.telemetry import AgentExecutionTelemetry
+from openminion.modules.telemetry.execution_lifecycle import AgentExecutionTelemetry
 
 
 def _emit_prep_status(

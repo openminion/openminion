@@ -5,6 +5,7 @@ from collections.abc import Callable
 from openminion.base.channel import ChannelRegistry
 from openminion.modules.storage.runtime.session_store import SessionStore
 from openminion.services.agent import AgentService
+from openminion.services.agent.telemetry import InvocationLifecycleFact
 from openminion.services.context.session import SessionContextService
 from openminion.services.gateway.memory import MemoryFollowupQueue
 from openminion.services.gateway.security import GatewaySecurity
@@ -40,11 +41,13 @@ class GatewayTurnRunnerFlowMixin(
         memory_capsule_strategy: str,
         memory_capsule_cache: dict[str, str],
         memory_dynamic_retrieval_enabled: bool,
-        emit_run_state: Callable[..., None],
+        emit_run_state: Callable[..., Any],
         knowledge_graphs: Any | None = None,
         typed_terminal_resolver: Optional[
             Callable[..., Optional[tuple[Any, ...]]]
         ] = None,
+        emit_invocation_lifecycle: Callable[[InvocationLifecycleFact], bool]
+        | None = None,
     ) -> None:
         self._agent = agent
         self._agent_memory = agent_memory
@@ -66,6 +69,7 @@ class GatewayTurnRunnerFlowMixin(
             sessions=sessions,
             logger=logger,
             emit_run_state=emit_run_state,
+            emit_invocation_lifecycle=emit_invocation_lifecycle,
             typed_terminal_resolver=typed_terminal_resolver,
         )
 
@@ -86,8 +90,8 @@ class GatewayTurnRunnerFlowMixin(
         typed_terminal_resolver: Optional[
             Callable[..., Optional[tuple[Any, ...]]]
         ] = None,
-    ) -> None:
-        self._lifecycle_ops.emit_terminal_run_state(
+    ) -> Any:
+        return self._lifecycle_ops.emit_terminal_run_state(
             session_id=session_id,
             run_id=run_id,
             legacy_state=legacy_state,

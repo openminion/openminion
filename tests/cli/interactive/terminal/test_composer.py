@@ -455,6 +455,34 @@ def test_plain_text_key_does_not_force_slash_completion() -> None:
     assert calls == ["insert:m"]
 
 
+def test_backspace_reopens_slash_completion_menu() -> None:
+    c = TerminalComposer()
+    calls: list[str] = []
+
+    class _Document:
+        text_before_cursor = "/te"
+
+    class _Buffer:
+        document = _Document()
+
+        def delete_before_cursor(self, *, count: int) -> None:
+            calls.append(f"delete:{count}")
+            self.document.text_before_cursor = "/t"
+
+        def start_completion(self, *, select_first: bool) -> None:
+            calls.append(f"complete:{select_first}")
+
+    class _App:
+        current_buffer = _Buffer()
+
+    class _Event:
+        app = _App()
+
+    c._delete_before_cursor(_Event())
+
+    assert calls == ["delete:1", "complete:False"]
+
+
 @pytest.mark.asyncio
 async def test_read_line_resets_multiline_after_submit() -> None:
     c = TerminalComposer()
@@ -586,7 +614,7 @@ async def test_busy_animation_keeps_real_prompt_input_usable() -> None:
             animation=AnimationResolution(
                 AnimationSpec("unicode", "helix", ("◐", "◓"), 50),
                 source="flag",
-            )
+            ),
         )
         composer._session = PromptSession(
             input=pipe,

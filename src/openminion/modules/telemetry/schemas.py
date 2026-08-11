@@ -5,6 +5,25 @@ from typing import Any, Optional
 import time
 import uuid
 
+from .debug_schemas import (
+    TELEMETRY_CORRELATION_REPORT_SCHEMA_V1 as TELEMETRY_CORRELATION_REPORT_SCHEMA_V1,
+    TELEMETRY_DEBUG_SCHEMA_V1 as TELEMETRY_DEBUG_SCHEMA_V1,
+    TELEMETRY_EXPORT_SMOKE_SCHEMA_V1 as TELEMETRY_EXPORT_SMOKE_SCHEMA_V1,
+    TELEMETRY_RETENTION_PLAN_SCHEMA_V1 as TELEMETRY_RETENTION_PLAN_SCHEMA_V1,
+    TELEMETRY_TIMING_REPORT_SCHEMA_V1 as TELEMETRY_TIMING_REPORT_SCHEMA_V1,
+    TelemetryCorrelationReport as TelemetryCorrelationReport,
+    TelemetryDebugDiagnostic as TelemetryDebugDiagnostic,
+    TelemetryDebugError as TelemetryDebugError,
+    TelemetryDebugExportHealth as TelemetryDebugExportHealth,
+    TelemetryDebugInvocation as TelemetryDebugInvocation,
+    TelemetryDebugLinks as TelemetryDebugLinks,
+    TelemetryDebugReport as TelemetryDebugReport,
+    TelemetryDebugSelection as TelemetryDebugSelection,
+    TelemetryDebugUsage as TelemetryDebugUsage,
+    TelemetryExportSmokeReport as TelemetryExportSmokeReport,
+    TelemetryRetentionPlan as TelemetryRetentionPlan,
+    TelemetryTimingReport as TelemetryTimingReport,
+)
 
 TELEMETRY_EVENT_SCHEMA_V1 = "openminion.telemetry_event.v1"
 TELEMETRY_EVENT_SCHEMA_V2 = "openminion.telemetry_event.v2"

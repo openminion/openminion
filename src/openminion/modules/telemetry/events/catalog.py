@@ -69,6 +69,7 @@ TRAILER_FEEDBACK_PENDING = "trailer.feedback_pending"
 
 LLM_CACHE_METRICS = "llm.cache.metrics"
 LLM_CALL_COMPLETED = "llm.call.completed"
+LLM_CALL_FAILED = "llm.call.failed"
 LLM_CALL_STARTED = "llm.call.started"
 LLM_REQUEST_STARTED = "llm.request.started"
 LLM_CALL_LEGACY = "llm_call"
@@ -219,6 +220,7 @@ BUSINESS_OUTCOME_RECORDED = "business.outcome.recorded"
 TELEMETRY_PROPAGATION_INVALID = "telemetry.propagation.invalid"
 TELEMETRY_OPERATION_ORPHANED = "telemetry.operation.orphaned"
 TELEMETRY_EXPORT_FAILED = "telemetry.export.failed"
+TELEMETRY_EXPORT_PROBE = "telemetry.export.probe"
 TELEMETRY_RETENTION_DELETED = "telemetry.retention.deleted"
 
 
@@ -289,6 +291,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         TRAILER_FEEDBACK_PENDING,
         LLM_CACHE_METRICS,
         LLM_CALL_COMPLETED,
+        LLM_CALL_FAILED,
         LLM_CALL_STARTED,
         LLM_REQUEST_STARTED,
         LLM_CALL_LEGACY,
@@ -424,6 +427,7 @@ EVENT_TYPES: frozenset[str] = frozenset(
         TELEMETRY_PROPAGATION_INVALID,
         TELEMETRY_OPERATION_ORPHANED,
         TELEMETRY_EXPORT_FAILED,
+        TELEMETRY_EXPORT_PROBE,
         TELEMETRY_RETENTION_DELETED,
     }
 )
@@ -533,6 +537,7 @@ __all__ = [
     "TRAILER_FEEDBACK_PENDING",
     "LLM_CACHE_METRICS",
     "LLM_CALL_COMPLETED",
+    "LLM_CALL_FAILED",
     "LLM_CALL_STARTED",
     "LLM_REQUEST_STARTED",
     "LLM_CALL_LEGACY",

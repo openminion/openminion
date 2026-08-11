@@ -38,6 +38,10 @@ from openminion.cli.presentation.queue import (
     queue_listing,
 )
 from openminion.cli.presentation.slash_commands import rich_slash_command_registry
+from openminion.cli.presentation.telemetry import (
+    render_telemetry_slash,
+    render_trace_slash,
+)
 from openminion.cli.status.models import (
     build_memory_context_review,
     render_memory_context_review,
@@ -694,6 +698,12 @@ class SlashCommandMixin:
             f"dir        {self._working_dir}\n"
             f"transport  {self._runtime.transport}"
         )
+
+    def _slash_telemetry(self, args: str) -> None:
+        self._push_system_body(render_telemetry_slash(args, runtime=self._runtime))
+
+    def _slash_trace(self, args: str) -> None:
+        self._push_system_body(render_trace_slash(args, runtime=self._runtime))
 
     @staticmethod
     def _capture_cli_chat_ui_text(callback, /, *args, **kwargs) -> str:

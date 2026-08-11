@@ -11,8 +11,13 @@ from openminion.base.constants import OPENMINION_TRACE_REQUESTS_ENV
 from openminion.modules.llm.client_call import usage_payload_from_response_usage
 from openminion.modules.llm.providers.base import ProviderRequest, ProviderResponse
 from openminion.modules.telemetry.constants import TRACE_HOME_ROOT_METADATA_KEY
-from openminion.modules.telemetry.service import build_execution_traceparent
-from openminion.modules.telemetry.trace.structured import trace_context_payload
+from openminion.modules.telemetry.execution_lifecycle import (
+    InvocationLifecycleFact as InvocationLifecycleFact,
+)
+from openminion.modules.telemetry.trace.structured import (
+    TraceArtifactPublication,
+    trace_context_payload,
+)
 from openminion.modules.telemetry.trace.layout import (
     build_trace_file_path,
     resolve_trace_root,
@@ -198,9 +203,9 @@ def trace_provider_request(
     turn_id: str,
     inference_step: int,
     logger,
-) -> None:
+) -> TraceArtifactPublication:
     if not _trace_enabled():
-        return
+        return TraceArtifactPublication()
 
     trace_root = resolve_trace_root(home_root=home_root)
     payload = _provider_request_payload(
@@ -211,7 +216,7 @@ def trace_provider_request(
         turn_id=turn_id,
         inference_step=inference_step,
     )
-    trace_path, _ = build_trace_file_path(
+    trace_path, trace_relative = build_trace_file_path(
         trace_root,
         session_id=payload["session_id"],
         turn_id=payload["turn_id"],
@@ -219,7 +224,7 @@ def trace_provider_request(
         label=label,
         suffix=".json",
     )
-    raw_path, _ = build_trace_file_path(
+    raw_path, raw_relative = build_trace_file_path(
         trace_root,
         session_id=payload["session_id"],
         turn_id=payload["turn_id"],
@@ -248,18 +253,28 @@ def trace_provider_request(
     ]
     payload["structured_trace_filename"] = trace_context["structured_trace_filename"]
     payload = apply_content_policy(payload, allow_sensitive_content=True)
+    published: list[str] = []
+    complete = True
     try:
         write_protected_trace_file(
             trace_path,
             json.dumps(payload, indent=2, sort_keys=True),
         )
+        published.append(trace_relative)
         logger.debug("trace_request: wrote %s", trace_path)
-        raw_text = _provider_request_raw_text(provider_request)
-        if raw_text:
-            write_protected_trace_file(raw_path, raw_text + "\n")
-            logger.debug("trace_request: wrote %s", raw_path)
-    except Exception as exc:  # noqa: BLE001
+    except (OSError, TypeError, ValueError) as exc:
+        complete = False
         logger.warning("trace_request: failed to write trace: %s", exc)
+    raw_text = _provider_request_raw_text(provider_request)
+    if raw_text:
+        try:
+            write_protected_trace_file(raw_path, raw_text + "\n")
+            published.append(raw_relative)
+            logger.debug("trace_request: wrote %s", raw_path)
+        except (OSError, TypeError, ValueError) as exc:
+            complete = False
+            logger.warning("trace_request: failed to write raw trace: %s", exc)
+    return TraceArtifactPublication(tuple(sorted(published)), complete)
 
 
 def trace_provider_response(
@@ -272,9 +287,9 @@ def trace_provider_response(
     turn_id: str,
     inference_step: int,
     logger,
-) -> None:
+) -> TraceArtifactPublication:
     if not _trace_enabled():
-        return
+        return TraceArtifactPublication()
 
     trace_root = resolve_trace_root(home_root=home_root)
     payload = _provider_response_payload(
@@ -285,7 +300,7 @@ def trace_provider_response(
         turn_id=turn_id,
         inference_step=inference_step,
     )
-    trace_path, _ = build_trace_file_path(
+    trace_path, trace_relative = build_trace_file_path(
         trace_root,
         session_id=payload["session_id"],
         turn_id=payload["turn_id"],
@@ -314,12 +329,20 @@ def trace_provider_response(
     ]
     payload["structured_trace_filename"] = trace_context["structured_trace_filename"]
     payload = apply_content_policy(payload, allow_sensitive_content=True)
+    published: list[str] = []
+    complete = True
     try:
         write_protected_trace_file(
             trace_path,
             json.dumps(payload, indent=2, sort_keys=True, default=str),
         )
-        write_structured_trace(
+        published.append(trace_relative)
+        logger.debug("trace_response: wrote %s", trace_path)
+    except (OSError, TypeError, ValueError) as exc:
+        complete = False
+        logger.warning("trace_response: failed to write trace: %s", exc)
+    try:
+        structured_relative = write_structured_trace(
             trace_context=trace_context,
             patch={
                 "response": {
@@ -332,9 +355,12 @@ def trace_provider_response(
                 }
             },
         )
-        logger.debug("trace_response: wrote %s", trace_path)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("trace_response: failed to write trace: %s", exc)
+        if structured_relative:
+            published.append(structured_relative)
+    except (OSError, TypeError, ValueError) as exc:
+        complete = False
+        logger.warning("trace_response: failed to write structured trace: %s", exc)
+    return TraceArtifactPublication(tuple(sorted(published)), complete)
 
 
 merge_metadata = merge_trace_metadata
@@ -345,165 +371,6 @@ def _service_port_telemetryctl(service_port: Any) -> Any | None:
     return getattr(service, "_telemetryctl", None)
 
 
-class AgentExecutionTelemetry:
-    def __init__(self, service: Any, *, inbound: Any) -> None:
-        self._service = service
-        self._inbound = inbound
-        self._session_id = str(inbound.metadata.get("session_id") or "").strip()
-        self._turn_id = str(
-            inbound.metadata.get("turn_id")
-            or inbound.metadata.get("request_id")
-            or inbound.id
-        )
-        self._invocation_id = str(inbound.metadata.get("invocation_id") or "")
-        self._execution_id = str(inbound.metadata.get("execution_id") or "")
-        inbound.metadata["turn_id"] = self._turn_id
-        self._started_at = time.monotonic()
-        self._active = bool(
-            self._session_id and getattr(service, "_telemetryctl", None) is not None
-        )
-
-    async def start(self) -> None:
-        if not self._active:
-            return
-        traceparent = str(self._inbound.metadata.get("traceparent") or "")
-        if not traceparent and self._invocation_id and self._execution_id:
-            traceparent = build_execution_traceparent(
-                self._invocation_id,
-                self._execution_id,
-            )
-            self._inbound.metadata["traceparent"] = traceparent
-        self._service._bind_execution_telemetry(
-            session_id=self._session_id,
-            turn_id=self._turn_id,
-            invocation_id=self._invocation_id,
-            execution_id=self._execution_id,
-        )
-        for event_type, payload in (
-            (
-                "agent.execution.started",
-                {
-                    "execution_id": self._execution_id,
-                    "agent_name": self._service._identity_agent_id,
-                    "traceparent": traceparent,
-                    "tracestate": str(self._inbound.metadata.get("tracestate") or ""),
-                },
-            ),
-            ("agent.turn.started", {"turn_operation_id": self._turn_id}),
-            (
-                "agent.phase.started",
-                {"phase_id": f"{self._turn_id}:act", "phase": "act"},
-            ),
-        ):
-            await self._emit(
-                event_type=event_type,
-                payload=payload,
-                status="started",
-            )
-        if self._inbound.metadata.get("trace_context_status") == "invalid":
-            await self._emit(
-                event_type="telemetry.propagation.invalid",
-                payload={"reason_code": "malformed_traceparent"},
-                status="warning",
-            )
-
-    async def finish(self, response: Any) -> Any:
-        if not self._active:
-            return response
-        duration_ms = self._duration_ms()
-        for event_type, payload in (
-            (
-                "agent.phase.completed",
-                {
-                    "phase_id": f"{self._turn_id}:act",
-                    "phase": "act",
-                    "duration_ms": duration_ms,
-                },
-            ),
-            (
-                "agent.turn.completed",
-                {"turn_operation_id": self._turn_id, "duration_ms": duration_ms},
-            ),
-            (
-                "agent.execution.completed",
-                {
-                    "execution_id": self._execution_id,
-                    "duration_ms": duration_ms,
-                },
-            ),
-        ):
-            await self._emit(
-                event_type=event_type,
-                payload=payload,
-                status="completed",
-            )
-        self._unbind()
-        return response
-
-    async def fail(self, exc: BaseException) -> None:
-        if not self._active:
-            return
-        duration_ms = self._duration_ms()
-        error = {"type": type(exc).__name__}
-        for event_type, payload in (
-            (
-                "agent.phase.failed",
-                {
-                    "phase_id": f"{self._turn_id}:act",
-                    "phase": "act",
-                    "duration_ms": duration_ms,
-                    "error": error,
-                },
-            ),
-            (
-                "agent.turn.failed",
-                {
-                    "turn_operation_id": self._turn_id,
-                    "duration_ms": duration_ms,
-                    "error": error,
-                },
-            ),
-            (
-                "agent.execution.failed",
-                {
-                    "execution_id": self._execution_id,
-                    "duration_ms": duration_ms,
-                    "error": error,
-                },
-            ),
-        ):
-            await self._emit(
-                event_type=event_type,
-                payload=payload,
-                status="failed",
-            )
-        self._unbind()
-
-    async def _emit(
-        self,
-        *,
-        event_type: str,
-        payload: dict[str, Any],
-        status: str,
-    ) -> None:
-        await self._service._emit_agent_event(
-            session_id=self._session_id,
-            turn_id=self._turn_id,
-            event_type=event_type,
-            payload=payload,
-            status=status,
-        )
-
-    def _duration_ms(self) -> float:
-        return (time.monotonic() - self._started_at) * 1000
-
-    def _unbind(self) -> None:
-        self._service._unbind_execution_telemetry(
-            session_id=self._session_id,
-            turn_id=self._turn_id,
-        )
-
-
 async def generate_with_provider_call_telemetry(
     *,
     service_port: Any,
@@ -512,12 +379,18 @@ async def generate_with_provider_call_telemetry(
     turn_id: str,
     provider_name: str,
     generate: Callable[[], Awaitable[ProviderResponse]],
+    trace_publication: Callable[[], TraceArtifactPublication] | None = None,
 ) -> ProviderResponse:
     telemetryctl = _service_port_telemetryctl(service_port)
     if telemetryctl is None or not session_id:
         return await generate()
     llm_call_id = str(uuid4())
     started_at = time.monotonic()
+    publication = (
+        trace_publication()
+        if trace_publication
+        else TraceArtifactPublication(complete=False)
+    )
     await telemetryctl.emit_canonical_event(
         session_id,
         turn_id,
@@ -527,6 +400,7 @@ async def generate_with_provider_call_telemetry(
             "model": str(getattr(request, "model", "") or ""),
             "provider_name": provider_name,
             "purpose": str(request.metadata.get("purpose") or "act"),
+            **publication.event_fields(final=False),
         },
         status="started",
     )
@@ -534,6 +408,11 @@ async def generate_with_provider_call_telemetry(
         response = await generate()
     finally:
         if exc := sys.exception():
+            publication = (
+                trace_publication()
+                if trace_publication
+                else TraceArtifactPublication(complete=False)
+            )
             await telemetryctl.emit_canonical_event(
                 session_id,
                 turn_id,
@@ -542,9 +421,15 @@ async def generate_with_provider_call_telemetry(
                     "llm_call_id": llm_call_id,
                     "provider_round_trip_ms": (time.monotonic() - started_at) * 1000,
                     "error": {"type": type(exc).__name__},
+                    **publication.event_fields(final=True),
                 },
                 status="failed",
             )
+    publication = (
+        trace_publication()
+        if trace_publication
+        else TraceArtifactPublication(complete=False)
+    )
     await telemetryctl.emit_canonical_event(
         session_id,
         turn_id,
@@ -557,7 +442,37 @@ async def generate_with_provider_call_telemetry(
                 getattr(response, "usage", None)
             ),
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
+            **publication.event_fields(final=True),
         },
         status="completed",
     )
     return response
+
+
+async def generate_with_provider_trace_telemetry(
+    *,
+    service_port: Any,
+    request: ProviderRequest,
+    session_id: str,
+    turn_id: str,
+    trace_args: dict[str, Any],
+) -> ProviderResponse:
+    publication = trace_provider_request(provider_request=request, **trace_args)
+
+    async def generate() -> ProviderResponse:
+        nonlocal publication
+        response = await service_port.generate_normalized(request)
+        publication = publication.merge(
+            trace_provider_response(provider_response=response, **trace_args)
+        )
+        return response
+
+    return await generate_with_provider_call_telemetry(
+        service_port=service_port,
+        request=request,
+        session_id=session_id,
+        turn_id=turn_id,
+        provider_name=str(trace_args["provider_name"]),
+        generate=generate,
+        trace_publication=lambda: publication,
+    )

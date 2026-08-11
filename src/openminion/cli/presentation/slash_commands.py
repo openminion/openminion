@@ -155,6 +155,18 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
         "_slash_status",
         "_slash_status",
     ),
+    SlashCommandMetadata(
+        "/telemetry",
+        "Show local telemetry diagnostics",
+        "_slash_telemetry",
+        "_slash_telemetry",
+    ),
+    SlashCommandMetadata(
+        "/trace",
+        "List or show local trace metadata",
+        "_slash_trace",
+        "_slash_trace",
+    ),
     SlashCommandMetadata("/debug", "Toggle debug pane", None, "_slash_debug"),
     SlashCommandMetadata(
         "/quiet", "Hide tool blocks for the session", "_slash_quiet", "_slash_quiet"
@@ -210,6 +222,8 @@ _BUSY_SAFE_SLASH_COMMANDS = frozenset(
         "/skills",
         "/status",
         "/tasks",
+        "/telemetry",
+        "/trace",
         "/verbose",
     }
 )

@@ -22,6 +22,7 @@ from openminion.services.runtime.run_status import (
     RUN_STATE_FAILED,
     RUN_TERMINAL_BLOCKED,
     RUN_TERMINAL_BUDGET_EXHAUSTED,
+    RUN_TERMINAL_CANCELLED,
     RUN_TERMINAL_COMPLETED,
     RUN_TERMINAL_FAILED,
     RUN_TERMINAL_NEEDS_HUMAN,
@@ -189,6 +190,7 @@ def test_every_failure_kind_resolves_to_a_terminal_state() -> None:
             RUN_TERMINAL_BLOCKED,
             RUN_TERMINAL_NEEDS_HUMAN,
             RUN_TERMINAL_BUDGET_EXHAUSTED,
+            RUN_TERMINAL_CANCELLED,
         }
 
 
@@ -200,7 +202,7 @@ def test_kind_to_terminal_mapping_is_canonical() -> None:
         "budget_exhausted": RUN_TERMINAL_BUDGET_EXHAUSTED,
         "blocker_unresolved": RUN_TERMINAL_BLOCKED,
         "capability_boundary": RUN_TERMINAL_NEEDS_HUMAN,
-        "operator_cancelled": RUN_TERMINAL_FAILED,
+        "operator_cancelled": RUN_TERMINAL_CANCELLED,
     }
     for kind, expected in mapping.items():
         terminal = derive_run_terminal_state(

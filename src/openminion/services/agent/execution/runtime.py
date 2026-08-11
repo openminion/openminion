@@ -16,11 +16,7 @@ from openminion.modules.tool.executor import (
 from openminion.modules.tool.exposure import apply_model_exposure
 from openminion.modules.policy import ToolBudgetState
 
-from ..telemetry import (
-    generate_with_provider_call_telemetry,
-    trace_provider_request,
-    trace_provider_response,
-)
+from ..telemetry import generate_with_provider_trace_telemetry
 from .policy import build_policy_adapter, filter_allowed_tool_calls
 from .ports import TurnFlowServicePort
 from .progress import execute_allowed_tool_calls, observe_tool_loop
@@ -74,17 +70,13 @@ class ExecutorRuntime:
             "inference_step": inference_steps,
             "logger": self._service_port.logger,
         }
-        trace_provider_request(provider_request=request, **trace_args)
-        response = await generate_with_provider_call_telemetry(
+        return await generate_with_provider_trace_telemetry(
             service_port=self._service_port,
             request=request,
             session_id=session_id,
             turn_id=turn_id,
-            provider_name=str(trace_args["provider_name"]),
-            generate=lambda: self._service_port.generate_normalized(request),
+            trace_args=trace_args,
         )
-        trace_provider_response(provider_response=response, **trace_args)
-        return response
 
     def _build_tool_execution_context(self) -> ToolExecutionContext:
         return self._resources.build_context()

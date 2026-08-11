@@ -10,6 +10,7 @@ from openminion.modules.task.run import (
     RUN_TERMINAL_BLOCKED,
     RUN_TERMINAL_BUDGET_EXHAUSTED,
     RUN_TERMINAL_COMPLETED,
+    RUN_TERMINAL_CANCELLED,
     RUN_TERMINAL_FAILED,
     RUN_TERMINAL_NEEDS_HUMAN,
     Run,
@@ -35,7 +36,7 @@ _FAILURE_KIND_TO_TERMINAL: dict[str, RunTerminalState] = {
     "budget_exhausted": RUN_TERMINAL_BUDGET_EXHAUSTED,
     "blocker_unresolved": RUN_TERMINAL_BLOCKED,
     "capability_boundary": RUN_TERMINAL_NEEDS_HUMAN,
-    "operator_cancelled": RUN_TERMINAL_FAILED,
+    "operator_cancelled": RUN_TERMINAL_CANCELLED,
 }
 
 

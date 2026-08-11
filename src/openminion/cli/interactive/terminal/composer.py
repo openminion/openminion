@@ -243,9 +243,8 @@ class TerminalComposer:
         for char in _SLASH_NAME_CHARS:
             kb.add(char)(self._insert_slash_name_char)
 
-        @kb.add("<bracketed-paste>")
-        def _(event):
-            self._handle_bracketed_paste(event)
+        kb.add("backspace")(self._delete_before_cursor)
+        kb.add("<bracketed-paste>")(self._handle_bracketed_paste)
 
         # optional Ctrl+L / Ctrl+O bindings.
         if callable(on_ctrl_l):
@@ -352,6 +351,12 @@ class TerminalComposer:
     def _insert_slash_name_char(self, event) -> None:
         buffer = event.app.current_buffer
         buffer.insert_text(str(getattr(event, "data", "") or ""))
+        if buffer.document.text_before_cursor.startswith("/"):
+            self._refresh_slash_completion(buffer)
+
+    def _delete_before_cursor(self, event) -> None:
+        buffer = event.app.current_buffer
+        buffer.delete_before_cursor(count=1)
         if buffer.document.text_before_cursor.startswith("/"):
             self._refresh_slash_completion(buffer)
 
