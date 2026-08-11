@@ -14,17 +14,9 @@ class SlashCommandParser(CommandParser):
         body = stripped[1:].strip()
         if not body:
             return None
-        parts = body.split()
-        head = parts[0].lower()
-        rest = parts[1:]
-
-        canonical = head
-        args = rest
-
-        if "." in head:
-            canonical = head
-        elif rest:
-            canonical = f"{head}.{rest[0].lower()}"
-            args = rest[1:]
+        head, *args = body.split()
+        canonical = head.lower()
+        if "." not in head and args:
+            canonical = f"{canonical}.{args.pop(0).lower()}"
 
         return ParsedCommand(canonical=canonical, original_text=stripped, args=args)

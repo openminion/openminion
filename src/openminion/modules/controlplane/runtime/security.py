@@ -106,9 +106,7 @@ class ScopeAuthorizer:
         return True, "ok"
 
     def required_scopes(self, command: ParsedCommand) -> tuple[str, ...]:
-        if command.canonical in _COMMAND_SCOPE_OVERRIDES:
-            return _COMMAND_SCOPE_OVERRIDES[command.canonical]
-        return self.default_scopes
+        return _COMMAND_SCOPE_OVERRIDES.get(command.canonical, self.default_scopes)
 
     def _touch_channel_subject(self, *, channel: str, subject_id: str) -> None:
         if self.store is None:
