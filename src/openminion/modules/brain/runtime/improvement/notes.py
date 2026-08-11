@@ -2,7 +2,7 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -177,7 +177,6 @@ class SelfImprovementEngine:
         activation_threshold: int = 2,
         auto_capture_tool_failures: bool = True,
     ) -> None:
-        # `max_applied_notes` and `min_token_overlap` constructor
         self._enabled = bool(enabled)
         self._notes_root = notes_root
         self._index_path = notes_root / _INDEX_FILENAME
@@ -193,7 +192,6 @@ class SelfImprovementEngine:
         else:
             storage_parent = resolve_database_path(config.storage.path).parent
             notes_root = (storage_parent / "notes").resolve()
-        # `config.self_improvement.max_applied_notes` and
         return cls(
             enabled=bool(config.self_improvement.enabled),
             notes_root=notes_root,
@@ -218,8 +216,6 @@ class SelfImprovementEngine:
     def is_review_first(self) -> bool:
         return self._application_mode == _APPLICATION_MODE_REVIEW_FIRST
 
-    # `build_guardrail_block` removed (LOSG forbids runtime
-
     def capture_tool_failures(
         self,
         *,
@@ -227,9 +223,11 @@ class SelfImprovementEngine:
         user_message: str,
         tool_results: Sequence[ToolExecutionResult],
     ) -> list[str]:
-        if not self._enabled or not self._auto_capture_tool_failures:
-            return []
-        if not tool_results:
+        if (
+            not self._enabled
+            or not self._auto_capture_tool_failures
+            or not tool_results
+        ):
             return []
 
         captured_signatures: list[str] = []
@@ -274,8 +272,6 @@ class SelfImprovementEngine:
                 build_agent_write_scope(note.agent_id),
                 normalized_agent_id,
             )
-            if not note.signature:
-                continue
             notes.append(note)
         notes.sort(key=lambda item: item.updated_at, reverse=True)
         return notes
@@ -315,9 +311,7 @@ class SelfImprovementEngine:
         for note in self.list_notes(agent_id=normalized_agent_id):
             if str(note.status or "").strip().lower() not in allowed_statuses:
                 continue
-            note_tags = {
-                str(item or "").strip() for item in note.tags if str(item).strip()
-            }
+            note_tags = set(note.tags)
             tool_match_count = len(tool_tags.intersection(note_tags))
             if tool_match_count <= 0:
                 continue
@@ -347,21 +341,10 @@ class SelfImprovementEngine:
         if payload is None:
             return False
         note = ImprovementNote.from_dict(payload)
-        now = _utc_now_iso()
-        updated = ImprovementNote(
-            agent_id=note.agent_id,
-            signature=note.signature,
+        updated = replace(
+            note,
             status=normalized_status,
-            source=note.source,
-            context=note.context,
-            guidance=note.guidance,
-            trigger_tokens=note.trigger_tokens,
-            tags=note.tags,
-            occurrence_count=note.occurrence_count,
-            apply_count=note.apply_count,
-            created_at=note.created_at,
-            updated_at=now,
-            last_applied_at=note.last_applied_at,
+            updated_at=_utc_now_iso(),
         )
         index[key] = updated.to_dict()
         self._write_index(index)
@@ -394,11 +377,9 @@ class SelfImprovementEngine:
                 and occurrence_count >= self._activation_threshold
             ):
                 status = _NOTE_STATUS_ACTIVE
-            updated = ImprovementNote(
-                agent_id=note.agent_id,
-                signature=note.signature,
+            updated = replace(
+                note,
                 status=status,
-                source=note.source,
                 context=_build_context_excerpt(
                     user_message=user_message, result=result
                 ),
@@ -411,10 +392,7 @@ class SelfImprovementEngine:
                 ),
                 tags=tuple(sorted(set(note.tags) | set(_build_tags(result)))),
                 occurrence_count=occurrence_count,
-                apply_count=note.apply_count,
-                created_at=note.created_at,
                 updated_at=now,
-                last_applied_at=note.last_applied_at,
             )
             index[key] = updated.to_dict()
             self._write_index(index)
@@ -446,8 +424,6 @@ class SelfImprovementEngine:
         self._write_index(index)
         self._write_markdown_note(created)
         return created
-
-    # `_record_applied` was removed. Its sole caller was
 
     def _read_index(self) -> dict[str, dict[str, object]]:
         if not self._index_path.exists():
@@ -553,22 +529,21 @@ def _failure_signature_for_tool_result(result: ToolExecutionResult) -> str:
 
 
 def _build_context_excerpt(*, user_message: str, result: ToolExecutionResult) -> str:
-    user_excerpt = str(user_message or "").strip()
-    if len(user_excerpt) > SELF_IMPROVEMENT_MAX_CONTEXT_CHARS:
-        user_excerpt = (
-            user_excerpt[:SELF_IMPROVEMENT_MAX_CONTEXT_CHARS].rstrip() + "..."
-        )
-    error_excerpt = str(result.error or "").strip()
-    if len(error_excerpt) > SELF_IMPROVEMENT_MAX_CONTEXT_CHARS:
-        error_excerpt = (
-            error_excerpt[:SELF_IMPROVEMENT_MAX_CONTEXT_CHARS].rstrip() + "..."
-        )
+    user_excerpt = _context_excerpt(user_message)
+    error_excerpt = _context_excerpt(result.error)
     return (
         f"user_message: {user_excerpt or 'n/a'}\n"
         f"tool_name: {result.tool_name}\n"
         f"error: {error_excerpt or 'n/a'}\n"
         f"verified: {str(result.verified).lower()}"
     )
+
+
+def _context_excerpt(value: object) -> str:
+    text = str(value or "").strip()
+    if len(text) <= SELF_IMPROVEMENT_MAX_CONTEXT_CHARS:
+        return text
+    return text[:SELF_IMPROVEMENT_MAX_CONTEXT_CHARS].rstrip() + "..."
 
 
 def _build_tags(result: ToolExecutionResult) -> Iterable[str]:

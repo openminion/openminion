@@ -71,11 +71,7 @@ def build_self_eval_submission(
 ) -> SelfEvalSubmission:
     """Construct one typed self-eval submission from structured inputs."""
 
-    rubric_obj = (
-        rubric
-        if isinstance(rubric, SelfEvalRubric)
-        else SelfEvalRubric.model_validate(rubric)
-    )
+    rubric_obj = SelfEvalRubric.model_validate(rubric)
     normalized_results: dict[SelfEvalCriterionId, bool] = {}
     for criterion_id in rubric_obj.criterion_ids:
         if criterion_id not in criterion_results:
@@ -96,25 +92,16 @@ def score_self_eval(
 ) -> SelfEvalResult:
     """Score a typed self-eval submission structurally."""
 
-    rubric_obj = (
-        rubric
-        if isinstance(rubric, SelfEvalRubric)
-        else SelfEvalRubric.model_validate(rubric)
-    )
-    submission_obj = (
-        submission
-        if isinstance(submission, SelfEvalSubmission)
-        else SelfEvalSubmission.model_validate(submission)
-    )
+    rubric_obj = SelfEvalRubric.model_validate(rubric)
+    submission_obj = SelfEvalSubmission.model_validate(submission)
     if submission_obj.rubric_id != rubric_obj.rubric_id:
         raise ValueError("submission.rubric_id must match rubric.rubric_id")
-    criterion_ids = list(rubric_obj.criterion_ids)
+    criterion_ids = rubric_obj.criterion_ids
     if not criterion_ids:
         raise ValueError("rubric.criterion_ids must be non-empty")
     passed_count = sum(
-        1
+        submission_obj.per_criterion_passed[criterion_id]
         for criterion_id in criterion_ids
-        if submission_obj.per_criterion_passed[criterion_id]
     )
     score = passed_count / len(criterion_ids)
     return SelfEvalResult(
@@ -134,11 +121,7 @@ def compare_self_eval_vs_external(
 ) -> SelfEvalReconciliationFact:
     """Produce a typed disagreement fact without overriding either side."""
 
-    self_result_obj = (
-        self_result
-        if isinstance(self_result, SelfEvalResult)
-        else SelfEvalResult.model_validate(self_result)
-    )
+    self_result_obj = SelfEvalResult.model_validate(self_result)
     if isinstance(external_report, Mapping):
         external_passed = bool(external_report.get("passed"))
         external_ref = str(

@@ -14,62 +14,45 @@ def evaluate_replay_bundle(
 ) -> LoopPolicyPromotionVerdict:
     """Compare baseline/challenger metrics and emit a typed verdict."""
 
-    bundle_obj = (
-        bundle
-        if isinstance(bundle, SelfImprovementReplayBundle)
-        else SelfImprovementReplayBundle.model_validate(bundle)
-    )
+    bundle_obj = SelfImprovementReplayBundle.model_validate(bundle)
     candidate = str(candidate_id or "").strip()
     evidence_refs = _supporting_evidence_refs(bundle_obj)
-    if len(evidence_refs) < int(min_external_signal_count or 0):
+    supporting_metrics = _supporting_metrics(bundle_obj, metric_name)
+
+    def hold(reason_code: str) -> LoopPolicyPromotionVerdict:
         return LoopPolicyPromotionVerdict(
             candidate_id=candidate,
             verdict="hold",
-            reason_code="insufficient_external_evidence",
-            supporting_metrics=_supporting_metrics(bundle_obj, metric_name),
-            evidence_refs=evidence_refs,
-        )
-    if candidate not in set(bundle_obj.candidate_ids):
-        return LoopPolicyPromotionVerdict(
-            candidate_id=candidate,
-            verdict="hold",
-            reason_code="candidate_not_in_bundle",
-            supporting_metrics=_supporting_metrics(bundle_obj, metric_name),
-            evidence_refs=evidence_refs,
-        )
-    if metric_name not in bundle_obj.baseline_metrics:
-        return LoopPolicyPromotionVerdict(
-            candidate_id=candidate,
-            verdict="hold",
-            reason_code="missing_baseline_metric",
-            supporting_metrics=_supporting_metrics(bundle_obj, metric_name),
-            evidence_refs=evidence_refs,
-        )
-    if metric_name not in bundle_obj.challenger_metrics:
-        return LoopPolicyPromotionVerdict(
-            candidate_id=candidate,
-            verdict="hold",
-            reason_code="missing_challenger_metric",
-            supporting_metrics=_supporting_metrics(bundle_obj, metric_name),
+            reason_code=reason_code,
+            supporting_metrics=supporting_metrics,
             evidence_refs=evidence_refs,
         )
 
+    if len(evidence_refs) < int(min_external_signal_count or 0):
+        return hold("insufficient_external_evidence")
+    if candidate not in bundle_obj.candidate_ids:
+        return hold("candidate_not_in_bundle")
+    if metric_name not in bundle_obj.baseline_metrics:
+        return hold("missing_baseline_metric")
+    if metric_name not in bundle_obj.challenger_metrics:
+        return hold("missing_challenger_metric")
+
     baseline = float(bundle_obj.baseline_metrics[metric_name])
     challenger = float(bundle_obj.challenger_metrics[metric_name])
-    verdict = "promote" if challenger > baseline else "rollback"
-    reason = (
-        "challenger_metric_improved"
-        if challenger > baseline
-        else "challenger_metric_regressed"
-    )
-    if challenger == baseline:
+    if challenger > baseline:
+        verdict = "promote"
+        reason = "challenger_metric_improved"
+    elif challenger < baseline:
+        verdict = "rollback"
+        reason = "challenger_metric_regressed"
+    else:
         verdict = "hold"
         reason = "challenger_metric_unchanged"
     return LoopPolicyPromotionVerdict(
         candidate_id=candidate,
         verdict=verdict,
         reason_code=reason,
-        supporting_metrics=_supporting_metrics(bundle_obj, metric_name),
+        supporting_metrics=supporting_metrics,
         evidence_refs=evidence_refs,
     )
 
