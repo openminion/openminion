@@ -135,7 +135,7 @@ def _skip_success_memory_item(
 
 
 def _success_memory_tags(item: Any) -> list[str]:
-    tags = list(item.tags or [])
+    tags = list(item.tags)
     if "success_path" not in tags:
         tags.append("success_path")
     return tags
@@ -147,7 +147,7 @@ def _success_memory_rationale(
     base_meta: Mapping[str, Any],
 ) -> str:
     return (
-        str(getattr(item, "rationale", "") or "").strip()
+        item.rationale.strip()
         or str(base_meta.get("source_thinking_rationale", "") or "").strip()
     )
 
@@ -158,13 +158,11 @@ def _success_memory_meta(
     base_meta: Mapping[str, Any],
     rationale: str,
 ) -> dict[str, Any]:
-    meta = dict(base_meta)
-    meta.update(
-        {
-            "source_kind": item.kind,
-            "source_success_path": True,
-        }
-    )
+    meta = {
+        **base_meta,
+        "source_kind": item.kind,
+        "source_success_path": True,
+    }
     if rationale:
         meta["rationale"] = rationale
     return meta
@@ -196,19 +194,18 @@ def _stage_success_memory_candidate(
         content=_success_memory_content(item, rationale=rationale),
         tags=_success_memory_tags(item),
         evidence_refs=[artifact.ref for artifact in item.evidence_refs],
-        confidence=float(item.confidence),
+        confidence=item.confidence,
         meta=_success_memory_meta(item, base_meta=base_meta, rationale=rationale),
     )
 
 
 def _improvement_governance_action(fix: Any) -> dict[str, str] | None:
-    action = str(getattr(fix, "action", "") or "").strip().lower()
-    if not action:
+    if fix.action is None:
         return None
     return {
-        "action": action,
+        "action": fix.action,
         "title": fix.title,
-        "target_command_id": str(getattr(fix, "target_command_id", "") or "").strip(),
+        "target_command_id": (fix.target_command_id or "").strip(),
     }
 
 
@@ -256,7 +253,7 @@ def _improvement_candidate_tags(fix: Any, *, record_type: str) -> list[str]:
         normalized_tag = f"candidate_kind:{fix.kind}"
         if normalized_tag not in tags:
             tags.append(normalized_tag)
-    suggestion = str(getattr(fix, "scope_suggestion", "") or "").strip()
+    suggestion = fix.scope_suggestion.strip()
     if suggestion and f"scope_suggestion:{suggestion}" not in tags:
         tags.append(f"scope_suggestion:{suggestion}")
     return tags
@@ -454,25 +451,22 @@ def apply_failure_memories(
     skipped_items: list[dict[str, Any]] = []
 
     for item in report.items:
-        tags = list(item.tags or [])
+        tags = list(item.tags)
         if "failure_path" not in tags:
             tags.append("failure_path")
-        meta = dict(base_meta)
-        meta.update(
-            {
-                "source_kind": item.kind,
-                "source_failure_path": True,
-                "source_negative_outcome": True,
-                STATE_KEY_SOURCE_OUTCOME: "failure",
-                "source_termination_reason": report.termination_reason,
-            }
-        )
+        meta = {
+            **base_meta,
+            "source_kind": item.kind,
+            "source_failure_path": True,
+            "source_negative_outcome": True,
+            STATE_KEY_SOURCE_OUTCOME: "failure",
+            "source_termination_reason": report.termination_reason,
+        }
         write_scope, _event = emit_write_decision(
             runner.profile.agent_id,
             caller_seam=_SEAM_APPLY_FAILURE,
         )
-        # CAMI-01b: replace the ad-hoc `f"{item.scope_suggestion}:{agent_id}"`
-        suggestion = str(getattr(item, "scope_suggestion", "") or "").strip()
+        suggestion = item.scope_suggestion.strip()
         if suggestion and f"scope_suggestion:{suggestion}" not in tags:
             tags.append(f"scope_suggestion:{suggestion}")
         candidate_id = runner.memory_api.stage_candidate(
@@ -482,7 +476,7 @@ def apply_failure_memories(
             content=item.content,
             tags=tags,
             evidence_refs=[artifact.ref for artifact in item.evidence_refs],
-            confidence=float(item.confidence),
+            confidence=item.confidence,
             meta=meta,
         )
         candidate_ids.append(candidate_id)
@@ -589,9 +583,7 @@ def stage_declared_goal(
             channel_name="memory.declared_goal",
         )
     )
-    title_suffix = (
-        structured.goal[:60].rstrip() if len(structured.goal) > 60 else structured.goal
-    )
+    title_suffix = structured.goal[:60].rstrip()
     text_parts = [
         f"goal_id={structured.goal_id or ''}",
         f"parent_goal_id={structured.parent_goal_id or ''}",
@@ -629,7 +621,6 @@ def stage_declared_goal(
             f"priority:{structured.priority}",
         ],
         evidence_refs=[],
-        # confidence at 0.6 — slightly below meta_rule_preference's
         confidence=0.6,
         meta={
             "source_declared_goal": True,
@@ -638,6 +629,16 @@ def stage_declared_goal(
     )
     state.memory_candidates.append(candidate_id)
     return {"candidate_id": candidate_id, "skipped_reason": None}
+
+
+def _state_record_fields(state: WorkingState) -> dict[str, Any]:
+    return {
+        "agent_id": state.agent_id,
+        "session_id": state.session_id,
+        "created_at": state.decision_context_recorded_at or "",
+        "turn_id": state.trace_id or "",
+        "turn_index": getattr(state, "turn_index", None),
+    }
 
 
 def stage_strategy_outcome(
@@ -679,13 +680,7 @@ def stage_strategy_outcome(
         "capability_category": normalized_capability,
         "intent_category": normalized_intent,
         "outcome_status": normalized_outcome,
-        "agent_id": str(getattr(state, "agent_id", "") or "").strip(),
-        "session_id": str(getattr(state, "session_id", "") or "").strip(),
-        "created_at": str(
-            getattr(state, "decision_context_recorded_at", "") or ""
-        ).strip(),
-        "turn_id": str(getattr(state, "trace_id", "") or "").strip(),
-        "turn_index": getattr(state, "turn_index", None),
+        **_state_record_fields(state),
         "termination_reason": str(
             dict(provenance_meta or {}).get("source_termination_reason") or ""
         ).strip(),
@@ -751,13 +746,12 @@ def stage_goal_revision(
         action_type=structured.action_type,
     )
     if not auth.allowed:
-        skipped_reason = f"policy_denied:{auth.reason}"
         return {
             "record_id": None,
-            "skipped_reason": skipped_reason,
+            "skipped_reason": f"policy_denied:{auth.reason}",
             "policy_verdict": auth.reason,
             "policy_allowed": False,
-            "requires_user_confirm": bool(auth.requires_user_confirm),
+            "requires_user_confirm": auth.requires_user_confirm,
         }
 
     text_parts = [
@@ -784,13 +778,7 @@ def stage_goal_revision(
         "priority": structured.priority,
         "action_type": structured.action_type,
         "suggested_schedule": structured.suggested_schedule,
-        "agent_id": str(getattr(state, "agent_id", "") or "").strip(),
-        "session_id": str(getattr(state, "session_id", "") or "").strip(),
-        "created_at": str(
-            getattr(state, "decision_context_recorded_at", "") or ""
-        ).strip(),
-        "turn_id": str(getattr(state, "trace_id", "") or "").strip(),
-        "turn_index": getattr(state, "turn_index", None),
+        **_state_record_fields(state),
         "policy_verdict": auth.reason,
         "policy_allowed": True,
         "requires_user_confirm": False,

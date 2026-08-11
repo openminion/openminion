@@ -78,22 +78,14 @@ def evaluate_staged_policy_transition(
 ) -> StagedPolicyTransitionResult:
     """Apply legal staged-policy lifecycle transitions with fail-closed gates."""
 
-    candidate_obj = (
-        candidate
-        if isinstance(candidate, StagedPolicyCandidate)
-        else StagedPolicyCandidate.model_validate(candidate)
-    )
-    request_obj = (
-        request
-        if isinstance(request, StagedPolicyTransitionRequest)
-        else StagedPolicyTransitionRequest.model_validate(request)
-    )
+    candidate_obj = StagedPolicyCandidate.model_validate(candidate)
+    request_obj = StagedPolicyTransitionRequest.model_validate(request)
     if not candidate_obj.provenance_refs:
         return _blocked(candidate_obj, "provenance_required")
     if request_obj.target_state == "accepted":
         return _accept(candidate_obj, request_obj)
     if request_obj.target_state == "rejected":
-        return _reviewed_terminal(candidate_obj, request_obj, "rejected")
+        return _reject(candidate_obj, request_obj)
     if request_obj.target_state == "active":
         return _activate(candidate_obj, request_obj)
     if request_obj.target_state == "ineffective":
@@ -201,21 +193,20 @@ def _roll_back(
     )
 
 
-def _reviewed_terminal(
+def _reject(
     candidate: StagedPolicyCandidate,
     request: StagedPolicyTransitionRequest,
-    state: Literal["rejected"],
 ) -> StagedPolicyTransitionResult:
     if not request.review_ref:
         return _blocked(candidate, "review_ref_required")
     return _allowed(
         candidate.model_copy(
             update={
-                "state": state,
+                "state": "rejected",
                 "review_refs": _append(candidate.review_refs, request.review_ref),
             }
         ),
-        request.reason_code or f"{state}_after_review",
+        request.reason_code or "rejected_after_review",
     )
 
 
@@ -243,7 +234,7 @@ def _blocked(
 
 def _append(values: list[str], value: str) -> list[str]:
     out = list(values)
-    value = str(value or "").strip()
+    value = value.strip()
     if value and value not in out:
         out.append(value)
     return out

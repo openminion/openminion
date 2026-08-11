@@ -117,7 +117,7 @@ def project_strategy_outcome_records_to_entries(
     window = dict(evidence_window or {})
 
     by_subject: dict[str, dict[str, Any]] = {}
-    for record in records or []:
+    for record in records:
         content = _record_content(record)
         if content is None:
             continue
@@ -192,7 +192,7 @@ def rank_candidates(
     }
     candidate_list = [
         candidate_id
-        for candidate_id in (str(cid or "").strip() for cid in (candidate_ids or []))
+        for candidate_id in (candidate_id.strip() for candidate_id in candidate_ids)
         if candidate_id
     ]
     policy_id_value = str(policy_id or "").strip()
@@ -200,22 +200,11 @@ def rank_candidates(
     decisions: list[RankingDecision] = []
     for candidate_id in candidate_list:
         entry = by_id.get(candidate_id)
-        if entry is None:
-            decisions.append(
-                RankingDecision(
-                    subject_kind="strategy",
-                    subject_id=candidate_id,
-                    supporting_entry_refs=[],
-                    policy_id=policy_id_value,
-                    produced_at=produced_at_value,
-                )
-            )
-            continue
         decisions.append(
             RankingDecision(
-                subject_kind=entry.subject_kind,
+                subject_kind=entry.subject_kind if entry is not None else "strategy",
                 subject_id=candidate_id,
-                supporting_entry_refs=[entry.subject_id],
+                supporting_entry_refs=[entry.subject_id] if entry is not None else [],
                 policy_id=policy_id_value,
                 produced_at=produced_at_value,
             )
