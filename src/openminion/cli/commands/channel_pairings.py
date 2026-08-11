@@ -194,9 +194,7 @@ def _optional_text(value: object | None) -> str | None:
 
 
 def _parse_scope_csv(raw: str | None) -> list[str]:
-    return [
-        scope.strip() for chunk in str(raw or "").split(",") if (scope := chunk.strip())
-    ]
+    return [scope for chunk in str(raw or "").split(",") if (scope := chunk.strip())]
 
 
 def _confirmed(args: argparse.Namespace) -> bool:
@@ -256,9 +254,6 @@ def _load_pairings_controlplane_config(config_path: str | None) -> ControlPlaneC
             home_root=roots.home_root,
             data_root=roots.data_root,
         )
-    return load_controlplane_config(config_path, env=_resolved_env_snapshot())
-
-
-def _resolved_env_snapshot() -> dict[str, str]:
-    snapshot = resolve_environment_config().snapshot()
-    return {str(key): str(value) for key, value in snapshot.items()}
+    return load_controlplane_config(
+        config_path, env=resolve_environment_config().snapshot()
+    )

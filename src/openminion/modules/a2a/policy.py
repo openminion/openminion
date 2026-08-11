@@ -78,8 +78,7 @@ class PolicyEngine:
 def _norm(value: object) -> str | None:
     if value is None:
         return None
-    text = str(value).strip()
-    return text or None
+    return str(value).strip() or None
 
 
 def _normalized_action(value: object) -> str:

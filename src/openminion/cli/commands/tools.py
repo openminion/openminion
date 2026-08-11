@@ -425,9 +425,7 @@ def _inproc_tool_run(
 ) -> dict:
     runtime = _runtime_from_args(args_or_config_path)
     try:
-        provider_spec = None
-        if callable(getattr(runtime.tools, "provider_spec_for_name", None)):
-            provider_spec = runtime.tools.provider_spec_for_name(tool_name)
+        provider_spec = runtime.tools.provider_spec_for_name(tool_name)
         if provider_spec is None:
             return {
                 "ok": False,
@@ -452,14 +450,7 @@ def _inproc_tool_run(
                 metadata={
                     "session_id": session_id,
                     "origin": "openminion.tools.inproc",
-                    "runtime_env": dict(
-                        getattr(
-                            getattr(runtime.config, "runtime", None),
-                            "env",
-                            {},
-                        )
-                        or {}
-                    ),
+                    "runtime_env": dict(runtime.config.runtime.env or {}),
                     **build_runtime_tool_routing_metadata(runtime.config.runtime.tools),
                     **ToolSelectionService(
                         runtime.config.runtime.tool_selection,

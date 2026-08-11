@@ -189,8 +189,7 @@ def _register_builtin_agents(runtime: A2ARuntime) -> None:
         }
 
     def worker_handler(envelope: Envelope) -> dict[str, Any]:
-        params = envelope.params
-        seconds = float(params.get("seconds", 0)) if isinstance(params, dict) else 0.0
+        seconds = float(envelope.params.get("seconds", 0))
         if seconds > 0:
             time.sleep(min(seconds, 30.0))
         return {
@@ -272,17 +271,11 @@ def _optional(value: str) -> str | None:
 
 def _parse_since(value: str) -> int:
     raw = value.strip().lower()
-    if raw.endswith("ms"):
-        num = float(raw[:-2])
-        return int(num / 1000.0)
-    if raw.endswith("s"):
-        return int(float(raw[:-1]))
-    if raw.endswith("m"):
-        return int(float(raw[:-1]) * 60)
-    if raw.endswith("h"):
-        return int(float(raw[:-1]) * 3600)
-    if raw.endswith("d"):
-        return int(float(raw[:-1]) * 86_400)
+    for suffix, multiplier in (
+        ("ms", 0.001), ("s", 1), ("m", 60), ("h", 3600), ("d", 86_400)
+    ):
+        if raw.endswith(suffix):
+            return int(float(raw[: -len(suffix)]) * multiplier)
     return int(float(raw))
 
 

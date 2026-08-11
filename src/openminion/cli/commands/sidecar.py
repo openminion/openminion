@@ -129,7 +129,7 @@ def _build_manager(args: Any, config: Any, *, logger: logging.Logger) -> Sidecar
         agent_id=resolve_default_agent_id(config), include_admin=True
     )
     context = SecurityPolicyContext(channel="cli", target="sidecar")
-    manager = default_sidecar_manager(
+    return default_sidecar_manager(
         config_path=config_path,
         runtime_env=runtime_env,
         policy=policy,
@@ -137,7 +137,6 @@ def _build_manager(args: Any, config: Any, *, logger: logging.Logger) -> Sidecar
         context=context,
         logger=logger,
     )
-    return manager
 
 
 def _run_pinchtab_binary_command(
@@ -167,6 +166,8 @@ def _run_pinchtab_binary_command(
         runtime_env[PINCHTAB_ALLOW_EXTERNAL_ENV] = "1"
     config_path = str(getattr(args, "config", "") or "").strip() or None
     roots = resolve_services_roots(config_path=config_path, runtime_env=runtime_env)
+    if command == "install":
+        runtime_env[PINCHTAB_INSTALL_MODE_ENV] = "required"
     resolver = build_pinchtab_binary_resolver(
         data_root=roots.data_root,
         runtime_env=runtime_env,
@@ -175,14 +176,6 @@ def _run_pinchtab_binary_command(
         ),
     )
     if command == "install":
-        runtime_env[PINCHTAB_INSTALL_MODE_ENV] = "required"
-        resolver = build_pinchtab_binary_resolver(
-            data_root=roots.data_root,
-            runtime_env=runtime_env,
-            event_sink=lambda event, payload: logger.info(
-                "sidecar event=%s payload=%s", event, payload
-            ),
-        )
         result = resolver.resolve(allow_download=True).as_dict()
         payload = {"ok": True, "action": "pinchtab-install", "binary": result}
     else:
@@ -198,9 +191,10 @@ def _run_pinchtab_binary_command(
 def _collect_statuses(
     manager: SidecarManager, *, name: str | None
 ) -> list[dict[str, Any]]:
-    names = [name] if name else manager.list()
-    if name and name not in manager.list():
+    registered = manager.list()
+    if name and name not in registered:
         raise RuntimeError(f"Unknown sidecar: {name}")
+    names = [name] if name else registered
     spec_by_name = {spec.name: spec for spec in manager.specs()}
     env_owner = resolve_environment_config()
     statuses: list[dict[str, Any]] = []

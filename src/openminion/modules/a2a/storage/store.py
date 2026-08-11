@@ -260,9 +260,7 @@ class _StateStoreMixin(StateStore):
             """,
             (task_id,),
         )
-        if not rows:
-            return None
-        return _job_from_row(rows[0])
+        return _job_from_row(rows[0]) if rows else None
 
     def list_jobs(self, filter_by: dict | None = None) -> list[JobRecord]:
         filter_by = filter_by or {}
@@ -300,7 +298,7 @@ class _StateStoreMixin(StateStore):
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY created_at ASC"
 
-        limit = int(filter_by.get("limit", 500)) if filter_by else 500
+        limit = int(filter_by.get("limit", 500))
         sql += " LIMIT ?"
         values.append(max(1, min(limit, 5000)))
 
@@ -349,9 +347,7 @@ class _StateStoreMixin(StateStore):
             """,
             (scope, key),
         )
-        if not rows:
-            return None
-        return _idempotency_from_row(rows[0])
+        return _idempotency_from_row(rows[0]) if rows else None
 
 
 class SQLiteStateStore(_StateStoreMixin, BaseModuleSQLiteStore):
@@ -426,13 +422,11 @@ def _in_progress_idempotency(
 
 
 def _json(value: Any) -> str | None:
-    if value is None:
-        return None
-    return json.dumps(value, ensure_ascii=True)
+    return None if value is None else json.dumps(value, ensure_ascii=True)
 
 
 def _json_load(raw: Any, default: Any) -> Any:
-    if raw in {None, ""}:
+    if raw in (None, ""):
         return default
     try:
         return json.loads(str(raw))

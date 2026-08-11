@@ -147,19 +147,6 @@ def _get_postgres_engine(postgres_url: str) -> Any | None:
         return None
 
 
-def _redact_url(url: str) -> str:
-    try:
-        from urllib.parse import urlparse, urlunparse
-
-        parsed = urlparse(url)
-        if parsed.password:
-            netloc = parsed.netloc.replace(f":{parsed.password}@", ":***@")
-            return urlunparse(parsed._replace(netloc=netloc))
-        return url
-    except Exception:
-        return "<connection string>"
-
-
 def _get_validated_module_ids(
     backend_type: str, requested_module: str | None
 ) -> tuple[list[str], list[str]]:
@@ -329,35 +316,14 @@ def run_storage_migrate(args) -> None:
 
 def run_storage_verify(args) -> None:
     sqlite_path = str(getattr(args, "sqlite", None) or "")
-    postgres_url = str(getattr(args, "postgres_url", None) or "")
-    backend_type = (
-        "postgres"
-        if (getattr(args, "backend", None) == _BACKEND_POSTGRES or postgres_url)
-        else "sqlite"
-    )
+    backend_type, postgres_url = _resolve_backend_type(args)
     requested_module = getattr(args, "module", None)
     as_json = bool(getattr(args, "json", False))
 
     to_run, skipped = _get_validated_module_ids(backend_type, requested_module)
 
-    engine = None
-    if backend_type == _BACKEND_POSTGRES:
-        if not postgres_url:
-            raise SystemExit("--postgres-url is required for Postgres backend")
-        engine = _get_postgres_engine(postgres_url)
-
-    results = []
-
-    for module_id in skipped:
-        results.append(
-            {
-                "module_id": module_id,
-                "status": "skipped",
-                "reason": "not validated for Postgres",
-            }
-        )
-        if not as_json:
-            print(f"  skip  {module_id}: not validated for Postgres")
+    engine = _resolve_postgres_engine(backend_type, postgres_url)
+    results = _append_skipped_module_results(skipped, as_json=as_json)
 
     for module_id in to_run:
         runner = _make_runner(
@@ -383,11 +349,7 @@ def run_storage_verify(args) -> None:
                 print(f"  error {module_id}: {exc}")
         results.append(result)
 
-    if engine is not None:
-        try:
-            engine.dispose()
-        except Exception:
-            pass
+    _dispose_engine_safely(engine)
 
     if as_json:
         print_json_payload({"modules": results}, sort_keys=False)

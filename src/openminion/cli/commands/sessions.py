@@ -10,6 +10,14 @@ from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.session.schemas import ContinuationError
 
 
+def _load_runtime(args: Any) -> APIRuntime:
+    return APIRuntime.from_config_path(
+        getattr(args, "config", None),
+        home_root=getattr(args, "home_root", None),
+        data_root=getattr(args, "data_root", None),
+    )
+
+
 def run_sessions_continue(args) -> int:
     source_session_id = str(getattr(args, "source_session_id", "") or "").strip()
     target_session_id = str(getattr(args, "target_session", "") or "").strip()
@@ -23,11 +31,7 @@ def run_sessions_continue(args) -> int:
         )
         return 2
     try:
-        runtime = APIRuntime.from_config_path(
-            getattr(args, "config", None),
-            home_root=getattr(args, "home_root", None),
-            data_root=getattr(args, "data_root", None),
-        )
+        runtime = _load_runtime(args)
         from openminion.api.operations.session_continuations import (
             resolve_session_continuation_store,
         )
@@ -106,11 +110,7 @@ def run_sessions_list(args) -> int:
     output_json = bool(getattr(args, "output_json", False))
 
     try:
-        runtime = APIRuntime.from_config_path(
-            getattr(args, "config", None),
-            home_root=getattr(args, "home_root", None),
-            data_root=getattr(args, "data_root", None),
-        )
+        runtime = _load_runtime(args)
     except Exception as exc:
         print(f"openminion sessions: startup error — {exc}", file=sys.stderr)
         return 1
@@ -204,11 +204,7 @@ def run_sessions_delete(args) -> int:
             return 1
 
     try:
-        runtime = APIRuntime.from_config_path(
-            getattr(args, "config", None),
-            home_root=getattr(args, "home_root", None),
-            data_root=getattr(args, "data_root", None),
-        )
+        runtime = _load_runtime(args)
     except Exception as exc:
         print(f"openminion sessions: startup error — {exc}", file=sys.stderr)
         return 1

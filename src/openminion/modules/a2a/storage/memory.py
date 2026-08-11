@@ -123,9 +123,9 @@ class MemoryStateStore(StateStore):
             return [copy.deepcopy(item) for item in rows]
 
         out: list[JobRecord] = []
-        states = filter_by.get("states") if isinstance(filter_by, dict) else None
+        states = filter_by.get("states")
         state_set = set(states) if states else None
-        state = filter_by.get("state") if isinstance(filter_by, dict) else None
+        state = filter_by.get("state")
         for row in rows:
             if state and row.state != state:
                 continue
@@ -194,6 +194,4 @@ class MemoryAuditStore(AuditStore):
 
 
 def _as_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return str(value).strip()
+    return "" if value is None else str(value).strip()

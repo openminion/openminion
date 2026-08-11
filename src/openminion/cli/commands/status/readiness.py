@@ -248,11 +248,8 @@ def _policy_check(config: OpenMinionConfig | None) -> ReadinessCheck:
             message="Config did not load, so action policy readiness cannot be resolved.",
             safe_next_action="Run `openminion setup` or fix the selected config.",
         )
-    mode = str(config.action_policy.mode or "auto").strip() or "auto"
-    default_action = (
-        str(config.action_policy.default_action or "require_confirm").strip()
-        or "require_confirm"
-    )
+    mode = config.action_policy.mode or "auto"
+    default_action = config.action_policy.default_action or "require_confirm"
     return ReadinessCheck(
         id="policy",
         status="ready",

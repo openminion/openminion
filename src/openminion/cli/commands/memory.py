@@ -14,6 +14,16 @@ from openminion.cli.presentation.json_output import print_json_payload
 
 
 _DEFAULT_MIN_TOKEN_ESTIMATE = 1
+_NAMESPACE_FIELDS = (
+    "tenant_id",
+    "org_id",
+    "user_id",
+    "agent_id",
+    "session_id",
+    "conversation_id",
+    "project_id",
+    "graph_id",
+)
 
 
 @lru_cache(maxsize=1)
@@ -53,9 +63,7 @@ def _estimate_tokens(content: str) -> int:
 
 
 def _resolve_default_mode(class_name: str) -> str:
-    if class_name == "agent_identity":
-        return "read_only"
-    return "pinned"
+    return "read_only" if class_name == "agent_identity" else "pinned"
 
 
 def _parse_namespace_flags(args: argparse.Namespace) -> Any:
@@ -65,16 +73,7 @@ def _parse_namespace_flags(args: argparse.Namespace) -> Any:
     namespace from prose — operators must name the dimensions explicitly.
     """
     kwargs: dict[str, str] = {}
-    for kind in (
-        "tenant_id",
-        "org_id",
-        "user_id",
-        "agent_id",
-        "session_id",
-        "conversation_id",
-        "project_id",
-        "graph_id",
-    ):
+    for kind in _NAMESPACE_FIELDS:
         value = getattr(args, kind, None)
         if value:
             kwargs[kind] = str(value)
@@ -123,19 +122,7 @@ def _render_block(block: Any) -> dict[str, Any]:
 def run_memory_blocks_list(args: argparse.Namespace) -> int:
     store = _store_factory(args)
     namespaces: list[Any] | None = None
-    if any(
-        getattr(args, kind, None)
-        for kind in (
-            "tenant_id",
-            "org_id",
-            "user_id",
-            "agent_id",
-            "session_id",
-            "conversation_id",
-            "project_id",
-            "graph_id",
-        )
-    ):
+    if any(getattr(args, kind, None) for kind in _NAMESPACE_FIELDS):
         namespaces = [_parse_namespace_flags(args)]
     blocks = store.list_memory_blocks(namespaces=namespaces)
     payload = {

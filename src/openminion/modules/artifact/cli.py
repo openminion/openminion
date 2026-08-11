@@ -173,8 +173,7 @@ def _dispatch(ctl: ArtifactCtl, args: argparse.Namespace) -> None:
             "agent_id": args.agent,
             "mime": args.mime,
         }
-        rows = ctl.search(args.query, filters=filters)
-        rows = rows[: max(1, int(args.limit))]
+        rows = ctl.search(args.query, filters=filters)[: max(1, int(args.limit))]
         _print_json({"ok": True, "results": [row.to_dict() for row in rows]})
         return
 
@@ -252,15 +251,9 @@ def _parse_duration_to_days(raw: str) -> int:
     text = raw.strip().lower()
     if text.endswith("d"):
         return int(float(text[:-1]))
-    if text.endswith("h"):
-        hours = float(text[:-1])
-        return max(0, int(hours / 24.0))
-    if text.endswith("m"):
-        minutes = float(text[:-1])
-        return max(0, int(minutes / (24.0 * 60.0)))
-    if text.endswith("s"):
-        seconds = float(text[:-1])
-        return max(0, int(seconds / 86400.0))
+    for suffix, units_per_day in (("h", 24.0), ("m", 1440.0), ("s", 86400.0)):
+        if text.endswith(suffix):
+            return max(0, int(float(text[:-1]) / units_per_day))
     return int(float(text))
 
 

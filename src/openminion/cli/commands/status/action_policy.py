@@ -37,7 +37,7 @@ def _format_grant_payload(grant) -> dict:
 
 
 def _resolve_action_policy_for_status(
-    *, args, config, manager, agent_id: str | None, session_id: str
+    *, config, manager, agent_id: str | None, session_id: str
 ) -> tuple[Any, str, str, str | None]:
     storage_env = manager.env.snapshot()
     storage_env.setdefault("OPENMINION_HOME", str(manager.home_root))
@@ -170,7 +170,6 @@ def run_action_policy_status(args, *, config) -> int:
         config_source_level,
         session_mode_override,
     ) = _resolve_action_policy_for_status(
-        args=args,
         config=config,
         manager=manager,
         agent_id=agent_id,

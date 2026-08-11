@@ -30,7 +30,20 @@ EXEC_STATUS_APPROVAL_PENDING: Final[Literal["approval-pending"]] = "approval-pen
 EXEC_STATUS_DENIED: Final[Literal["denied"]] = "denied"
 EXEC_STATUS_TIMEOUT: Final[Literal["timeout"]] = "timeout"
 EXEC_SAFE_BINS_DEFAULT: frozenset[str] = frozenset(
-    {"cat", "head", "tail", "grep", "sed", "awk", "tr", "cut", "sort", "uniq", "wc"}
+    {
+        "awk",
+        "cat",
+        "cut",
+        "grep",
+        "head",
+        "sed",
+        "sort",
+        "tail",
+        "tr",
+        "uniq",
+        "wc",
+        "whoami",
+    }
 )
 EXEC_SAFE_BIN_TRUSTED_DIRS_DEFAULT: frozenset[str] = frozenset(
     {"/bin", "/usr/bin", "/usr/local/bin"}

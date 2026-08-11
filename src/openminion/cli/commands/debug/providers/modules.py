@@ -217,7 +217,6 @@ class OpenMinionSessionDebugProvider(_ModuleDebugProvider):
                 _ = store._conn.execute("SELECT 1").fetchone()
                 db_path = ":memory:"
             except Exception as exc:
-                init_ok = False
                 init_error = str(exc)
             finally:
                 if store:
@@ -337,14 +336,12 @@ class OpenMinionCompressDebugProvider(_ModuleDebugProvider):
             except Exception:
                 pass
 
-            registry = None
             init_ok = False
             init_error = None
             method_count = 0
             try:
-                registry = MethodRegistry()
                 init_ok = True
-                method_count = len(registry.list_methods())
+                method_count = len(MethodRegistry().list_methods())
             except Exception as exc:
                 init_error = str(exc)
 
@@ -466,7 +463,6 @@ class OpenMinionSkillDebugProvider(_ModuleDebugProvider):
                     "path_mode": path_mode,
                     "path_source": path_source,
                     "home_root": str(home_paths.home_root),
-                    "nl_ingest": self._get_nl_ingest_diagnostics(),
                     "fixture_metadata": fixture_summary,
                 },
             )
@@ -475,89 +471,6 @@ class OpenMinionSkillDebugProvider(_ModuleDebugProvider):
             return _module_import_error_payload("openminion-skill", exc)
         except Exception as exc:
             return _module_unexpected_error_payload("openminion-skill", exc)
-
-    def _get_nl_ingest_diagnostics(self) -> dict:
-        test_cases = [
-            ("path", "read /path/to/SKILL.md and learn it", "/path/to/SKILL.md"),
-            (
-                "url",
-                "learn this skill from https://example.com/SKILL.md",
-                "https://example.com/SKILL.md",
-            ),
-            (
-                "url_raw",
-                "load https://raw.githubusercontent.com/org/repo/main/skill.md",
-                "https://raw.githubusercontent.com/org/repo/main/skill.md",
-            ),
-        ]
-
-        diagnostics = {
-            "source_extraction_available": True,
-            "url_ingest_available": True,
-            "source_patterns": {
-                "url": [
-                    r"https?://[^\s]+\.md(?:\?[^\s]*)?",
-                ],
-                "path": [
-                    r"/[^\s]+\.md",
-                    r"[A-Za-z]:\\[^\s]+\.md",
-                    r"\.\.?/[^\s]+\.md",
-                ],
-            },
-            "test_extractions": [],
-            "error_codes": [
-                "INVALID_SCHEME",
-                "BLOCKED_HOST",
-                "INVALID_FILE_TYPE",
-                "FETCH_FAILED",
-                "INVALID_MARKDOWN",
-                "FETCH_EXCEPTION",
-                "INGEST_DISABLED",
-                "PATH_TRAVERSAL",
-                "PATH_NOT_ALLOWED",
-                "PATH_NOT_FOUND",
-            ],
-        }
-
-        for source_type, message, expected in test_cases:
-            extracted = self._test_extract_source(message)
-            diagnostics["test_extractions"].append(
-                {
-                    "type": source_type,
-                    "message": message,
-                    "expected": expected,
-                    "extracted": extracted.get("value") if extracted else None,
-                    "match": (extracted.get("value") == expected)
-                    if extracted
-                    else False,
-                }
-            )
-
-        return diagnostics
-
-    def _test_extract_source(self, message: str) -> dict | None:
-        import re
-
-        url_patterns = [
-            r"(https?://[^\s]+\.md(?:\?[^\s]*)?)",
-            r"(https?://[^\s]+/[^\s]*\.md(?:\?[^\s]*)?)",
-        ]
-        for pattern in url_patterns:
-            match = re.search(pattern, message, re.IGNORECASE)
-            if match:
-                return {"type": "url", "value": match.group(1)}
-
-        path_patterns = [
-            r"(/[^\s]+\.md)",
-            r"([A-Za-z]:\\[^\s]+\.md)",
-            r"(\.\.?/[^\s]+\.md)",
-        ]
-        for pattern in path_patterns:
-            match = re.search(pattern, message)
-            if match:
-                return {"type": "path", "value": match.group(1)}
-
-        return None
 
 
 class OpenMinionRegistryDebugProvider(_ModuleDebugProvider):

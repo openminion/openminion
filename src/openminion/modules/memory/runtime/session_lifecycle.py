@@ -829,6 +829,21 @@ class SessionLifecycleMixin:
         summary_section: list[str] | None = None
         if summary_preview:
             summary_section = [f"  Summary: {summary_preview}"]
+        other_recent_section = (
+            ["", "Other recent context:"] if len(eligible_entries) > 1 else None
+        )
+        if other_recent_section is not None:
+            for index in eligible_indices:
+                if index == preferred_index:
+                    continue
+                entry = entries[index]
+                label = self._truncate_session_summary_text(
+                    entry["title"] or "Session summary", max_chars=48
+                )
+                condensed = self._truncate_session_summary_text(
+                    entry["summary_text"] or label, max_chars=80
+                )
+                other_recent_section.append(f"  • {label} — {condensed or label}")
         prioritized_sections = (
             [
                 topic_section,
@@ -837,15 +852,17 @@ class SessionLifecycleMixin:
                 active_thread_section,
                 summary_section,
                 title_section,
+                other_recent_section,
             ]
             if current_session
             else [
-                title_section,
-                topic_section,
-                active_thread_section,
                 summary_section,
                 key_decision_section,
                 open_question_section,
+                other_recent_section,
+                title_section,
+                topic_section,
+                active_thread_section,
             ]
         )
         for section in prioritized_sections:
@@ -865,24 +882,6 @@ class SessionLifecycleMixin:
                     for item in prior_items[:3]
                 ]
             )
-        if len(eligible_entries) > 1:
-            remaining_entries = [
-                entry
-                for index, entry in enumerate(entries)
-                if index in eligible_indices and index != preferred_index
-            ]
-            other_lines = ["", "Other recent context:"]
-            for entry in remaining_entries:
-                label = self._truncate_session_summary_text(
-                    entry["title"] or "Session summary",
-                    max_chars=48,
-                )
-                condensed = self._truncate_session_summary_text(
-                    entry["summary_text"] or label,
-                    max_chars=80,
-                )
-                other_lines.append(f"  • {label} — {condensed or label}")
-            optional_sections.append(other_lines)
         omitted_sections = False
         for section in optional_sections:
             candidate = "\n".join(lines + section)

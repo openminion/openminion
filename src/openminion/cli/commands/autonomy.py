@@ -4,6 +4,7 @@ import argparse
 import json
 import shlex
 import subprocess
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -441,24 +442,14 @@ def _delegation_aggregation(
 ) -> dict[str, object] | None:
     if not delegation_results:
         return None
-    success_count = sum(
-        1 for result in delegation_results if result.status == "success"
-    )
-    failure_count = sum(
-        1 for result in delegation_results if result.status == "failure"
-    )
-    skipped_count = sum(
-        1 for result in delegation_results if result.status == "skipped"
-    )
-    canceled_count = sum(
-        1 for result in delegation_results if result.status == "canceled"
-    )
+    status_counts = Counter(result.status for result in delegation_results)
+    success_count = status_counts["success"]
     return {
         "total_children": len(delegation_results),
         "success_count": success_count,
-        "failure_count": failure_count,
-        "skipped_count": skipped_count,
-        "canceled_count": canceled_count,
+        "failure_count": status_counts["failure"],
+        "skipped_count": status_counts["skipped"],
+        "canceled_count": status_counts["canceled"],
         "completed_required": success_count == len(delegation_results),
         "source_policy": "structural_merge",
         "child_ids": [result.role for result in delegation_results],

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from types import SimpleNamespace
 
 from openminion.base.config.core import resolve_default_agent_id
 from openminion.base.types import Message
@@ -44,6 +45,7 @@ def _resolve_agent_profile_and_service(args, app):
         agent_profile = app.resolve_agent_profile(getattr(args, "agent_id", None))
         agent_service = app.resolve_agent_service(agent_profile.name)
         return agent_profile, agent_service
+    requested_agent = str(getattr(args, "agent_id", "") or "").strip()
     try:
         default_agent_id = resolve_default_agent_id(app.config)
         default_profile = app.config.agents[default_agent_id]
@@ -52,18 +54,17 @@ def _resolve_agent_profile_and_service(args, app):
         default_profile = None
     default_agent_name = str(getattr(default_profile, "name", "") or default_agent_id)
     default_channel = str(getattr(default_profile, "default_channel", "") or "console")
-    agent_profile = type(
-        "_CompatAgentProfile",
-        (),
-        {"name": default_agent_name, "default_channel": default_channel},
-    )()
-    agent_service = app.agent
-    return agent_profile, agent_service
+    return (
+        SimpleNamespace(
+            name=requested_agent or default_agent_name,
+            default_channel=default_channel,
+            provider=str(getattr(app.provider, "name", "echo")),
+        ),
+        app.agent,
+    )
 
 
-def _build_session_context_service(
-    app, *, session_archive_root
-) -> SessionContextService:
+def _build_session_context_service(app, *, session_archive_root) -> SessionContextService:
     runtime = app.config.runtime
     return SessionContextService(
         app.sessions,
@@ -330,10 +331,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     agent.add_argument(
         "--deliver", action="store_true", help="Deliver reply to channel backend"
     )
-    from openminion.cli.ux.verbosity import (
-        add_progress_flag,
-        add_verbosity_flag,
-    )
+    from openminion.cli.ux.verbosity import add_progress_flag, add_verbosity_flag
 
     add_verbosity_flag(agent)
     add_progress_flag(agent, include_aliases=True)

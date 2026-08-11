@@ -728,12 +728,6 @@ def _load_controlplane_config(config_path: str | None) -> ControlPlaneConfig:
     return load_controlplane_config(config_path, env=_env_snapshot())
 
 
-def _build_unified_telegram_runner(
-    config_path: str | None,
-) -> Any:
-    return _build_unified_telegram_runtime(config_path).runner
-
-
 def _build_unified_telegram_runtime(
     config_path: str | None,
 ) -> _ForegroundChannelRuntime:

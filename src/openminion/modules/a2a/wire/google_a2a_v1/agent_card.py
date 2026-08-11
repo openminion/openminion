@@ -78,12 +78,11 @@ class AgentCard:
             "defaultOutputModes": list(self.default_output_modes),
             "skills": [skill.to_jsonable() for skill in self.skills],
         }
-        for field_name, payload_key in (
-            ("provider_organization", "providerOrganization"),
-            ("provider_url", "providerUrl"),
-            ("documentation_url", "documentationUrl"),
+        for value, payload_key in (
+            (self.provider_organization, "providerOrganization"),
+            (self.provider_url, "providerUrl"),
+            (self.documentation_url, "documentationUrl"),
         ):
-            value = getattr(self, field_name)
             if value:
                 payload[payload_key] = value
         return payload

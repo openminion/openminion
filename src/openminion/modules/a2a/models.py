@@ -128,9 +128,7 @@ class A2AObservabilityContext:
             execution_id=str(raw.get("execution_id", "")),
             handoff_id=str(raw.get("handoff_id", "")),
             traceparent=str(raw.get("traceparent", "")),
-            tracestate=(
-                None if raw.get("tracestate") is None else str(raw["tracestate"])
-            ),
+            tracestate=_optional_string(raw, "tracestate"),
         )
 
 
@@ -160,7 +158,7 @@ class ArtifactRef:
             mime=str(raw.get("mime", "application/octet-stream")),
             sha256=str(raw.get("sha256", "")),
             size_bytes=int(raw.get("size_bytes", 0)),
-            label=(None if raw.get("label") is None else str(raw.get("label"))),
+            label=_optional_string(raw, "label"),
         )
 
 
@@ -244,14 +242,8 @@ class Envelope:
             trace_id=str(raw.get("trace_id", new_uuid())),
             ts=str(raw.get("ts", iso_now())),
             from_agent=str(raw.get("from_agent", "")),
-            to_agent=(
-                None if raw.get("to_agent") is None else str(raw.get("to_agent"))
-            ),
-            to_capability=(
-                None
-                if raw.get("to_capability") is None
-                else str(raw.get("to_capability"))
-            ),
+            to_agent=_optional_string(raw, "to_agent"),
+            to_capability=_optional_string(raw, "to_capability"),
             type=str(raw.get("type", "")),
             method=str(raw.get("method", "")),
             params=dict(raw.get("params", {})),
@@ -399,3 +391,8 @@ def _artifact_refs_from_raw(raw_items: Any) -> list[ArtifactRef]:
     if not isinstance(raw_items, list):
         return []
     return [ArtifactRef.from_dict(item) for item in raw_items if isinstance(item, dict)]
+
+
+def _optional_string(raw: dict[str, Any], key: str) -> str | None:
+    value = raw.get(key)
+    return None if value is None else str(value)

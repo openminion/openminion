@@ -196,7 +196,7 @@ def _run_runtime_bootstrap_probe(
             data_root=getattr(args, "data_root", None),
             run_profile_overrides=run_profile_overrides,
         )
-        selected_agent_service = app.resolve_agent_service(selected_agent.name)
+        app.resolve_agent_service(selected_agent.name)
         loaded_plugin_manifest_ids = app.plugins.manifest_ids()
         loaded_tool_names = [spec.name for spec in app.tools.provider_specs()]
         runtime_posture = app.runtime_posture(
@@ -208,7 +208,6 @@ def _run_runtime_bootstrap_probe(
             overrides=run_profile_overrides,
         )
 
-        del selected_agent_service
         return {
             "agent": selected_agent.name,
             "provider": provider_name,
@@ -560,15 +559,14 @@ def _build_skill_module_check() -> DoctorCheck:
                 status="ok",
                 message="openminion.modules.skill module is available",
             )
-        else:
-            from openminion.cli.commands.skill import _get_skill_error
+        from openminion.cli.commands.skill import _get_skill_error
 
-            return DoctorCheck(
-                id="skill.module.available",
-                status="warn",
-                message="openminion.modules.skill module is not available",
-                remediation=_get_skill_error(),
-            )
+        return DoctorCheck(
+            id="skill.module.available",
+            status="warn",
+            message="openminion.modules.skill module is not available",
+            remediation=_get_skill_error(),
+        )
     except Exception as exc:
         return DoctorCheck(
             id="skill.module.available",

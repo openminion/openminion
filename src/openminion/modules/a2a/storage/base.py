@@ -12,13 +12,11 @@ from openminion.modules.a2a.models import (
 def idempotency_slot_is_stale(updated_at: str, *, stale_after_sec: int) -> bool:
     """Return True when an in-progress idempotency slot is old enough to reclaim."""
     try:
-        stamped = datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
+        stamped = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except ValueError:
         return True
-    stamped = stamped.astimezone(timezone.utc)
-    return (datetime.now(timezone.utc) - stamped).total_seconds() > max(
-        1, int(stale_after_sec)
-    )
+    age = datetime.now(timezone.utc) - stamped.astimezone(timezone.utc)
+    return age.total_seconds() > max(1, stale_after_sec)
 
 
 class StateStore(Protocol):

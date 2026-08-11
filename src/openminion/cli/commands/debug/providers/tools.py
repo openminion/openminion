@@ -140,7 +140,6 @@ class OpenMinionReactionsDebugProvider(_ToolDebugProvider):
         try:
             from openminion.tools.reaction.plugin import TOOL_DESCRIPTOR
 
-            plugin_installed = True
             tools = TOOL_DESCRIPTOR.get("methods", [])
             version = TOOL_DESCRIPTOR.get("version", "unknown")
             capabilities = TOOL_DESCRIPTOR.get("capabilities", [])
@@ -152,7 +151,7 @@ class OpenMinionReactionsDebugProvider(_ToolDebugProvider):
                 wiring_source=WiringSource.REAL,
                 details={
                     "import_ok": True,
-                    "plugin_installed": plugin_installed,
+                    "plugin_installed": True,
                     "version": version,
                     "tools": tools,
                     "capabilities": capabilities,

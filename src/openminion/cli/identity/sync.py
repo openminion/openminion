@@ -36,16 +36,9 @@ def sync_cli_identity_profiles(
         )
 
     identity_root = _resolve_cli_identity_root(config=config, roots=roots)
-    if not identity_root.exists() or not identity_root.is_dir():
-        return CLIIdentitySyncSummary(
-            enabled=True,
-            identity_root=str(identity_root),
-            profile_files_count=0,
-            synced_profiles_count=0,
-            synced_profiles=(),
-        )
-
-    profile_paths = _discover_profile_yaml_paths(identity_root)
+    profile_paths = (
+        _discover_profile_yaml_paths(identity_root) if identity_root.is_dir() else []
+    )
     if not profile_paths:
         return CLIIdentitySyncSummary(
             enabled=True,

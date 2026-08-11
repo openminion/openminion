@@ -178,7 +178,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
         sql += " ORDER BY a.created_at DESC LIMIT ?"
         params.append(_bounded_limit(limit))
         rows = self._record_store.query_dicts(sql, params)
-        return [_artifact_from_row(row) for row in rows if row is not None]
+        return [_artifact_from_row(row) for row in rows]
 
     def search(
         self, query: str, filters: dict | None = None, limit: int = 100
@@ -189,9 +189,9 @@ class _ArtifactIndexMixin(ArtifactIndex):
         sql += " AND (a.original_name LIKE ? OR a.label LIKE ? OR a.mime LIKE ? OR a.meta_json LIKE ? OR a.sha256 LIKE ?)"
         params.extend([q, q, q, q, q])
         sql += " ORDER BY a.created_at DESC LIMIT ?"
-        params.append(_bounded_limit(limit, default=100, upper=5000))
+        params.append(_bounded_limit(limit, upper=5000))
         rows = self._record_store.query_dicts(sql, params)
-        return [_artifact_from_row(row) for row in rows if row is not None]
+        return [_artifact_from_row(row) for row in rows]
 
     def largest(
         self, limit: int = 50, filters: dict | None = None
@@ -201,7 +201,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
         sql += " ORDER BY a.size_bytes DESC, a.created_at DESC LIMIT ?"
         params.append(_bounded_limit(limit))
         rows = self._record_store.query_dicts(sql, params)
-        return [_artifact_from_row(row) for row in rows if row is not None]
+        return [_artifact_from_row(row) for row in rows]
 
     def upsert_view(self, view: ViewRecord) -> None:
         self._record_store.execute_count(
@@ -275,7 +275,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
             """,
             params,
         )
-        return [_view_from_row(row) for row in rows if row is not None]
+        return [_view_from_row(row) for row in rows]
 
     def alias_set(
         self,
@@ -329,7 +329,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
             """,
             params,
         )
-        return [_alias_from_row(row) for row in rows if row is not None]
+        return [_alias_from_row(row) for row in rows]
 
     def alias_delete(self, alias: str) -> None:
         self._record_store.execute_count(
@@ -414,13 +414,8 @@ class _ArtifactIndexMixin(ArtifactIndex):
             """,
             (cutoff_date,),
         )
-        out: list[str] = []
-        for row in rows:
-            sha = str(row["sha256"])
-            if sha in protected:
-                continue
-            out.append(sha)
-        return out
+        shas = (str(row["sha256"]) for row in rows)
+        return [sha for sha in shas if sha not in protected]
 
     def soft_delete_artifacts(self, shas: Iterable[str], deleted_at: str) -> int:
         rows = list({str(item) for item in shas if str(item).strip()})
@@ -463,7 +458,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
             """,
             (cutoff,),
         )
-        return [_view_from_row(row) for row in rows if row is not None]
+        return [_view_from_row(row) for row in rows]
 
     def hard_delete_artifact(self, sha256: str) -> int:
         return self._record_store.execute_count(
@@ -497,12 +492,10 @@ class _ArtifactIndexMixin(ArtifactIndex):
             """,
             (cutoff,),
         )
-        return [_artifact_from_row(row) for row in rows if row is not None]
+        return [_artifact_from_row(row) for row in rows]
 
     def all_artifacts(self, *, include_deleted: bool = False) -> list[ArtifactMeta]:
-        where = ""
-        if not include_deleted:
-            where = "WHERE deleted_at IS NULL"
+        where = "" if include_deleted else "WHERE deleted_at IS NULL"
         rows = self._record_store.query_dicts(
             f"""
             SELECT sha256, size_bytes, mime, created_at, original_name, original_path, label,
@@ -512,7 +505,7 @@ class _ArtifactIndexMixin(ArtifactIndex):
             ORDER BY created_at ASC
             """
         )
-        return [_artifact_from_row(row) for row in rows if row is not None]
+        return [_artifact_from_row(row) for row in rows]
 
     def _artifact_base_query(self, filters: dict[str, Any]) -> tuple[str, list[Any]]:
         where = ["1=1"]
@@ -569,9 +562,7 @@ class PostgresArtifactIndex(_ArtifactIndexMixin, BaseModuleStore):
         BaseModuleStore.__init__(self, record_store=record_store)
 
 
-def _artifact_from_row(row: Mapping[str, Any] | None) -> ArtifactMeta | None:
-    if row is None:
-        return None
+def _artifact_from_row(row: Mapping[str, Any]) -> ArtifactMeta:
     return ArtifactMeta(
         sha256=str(row["sha256"]),
         size_bytes=int(row["size_bytes"]),
@@ -593,9 +584,7 @@ def _artifact_from_row(row: Mapping[str, Any] | None) -> ArtifactMeta | None:
     )
 
 
-def _view_from_row(row: Mapping[str, Any] | None) -> ViewRecord | None:
-    if row is None:
-        return None
+def _view_from_row(row: Mapping[str, Any]) -> ViewRecord:
     return ViewRecord(
         raw_sha256=str(row["raw_sha256"]),
         view_type=str(row["view_type"]),
@@ -610,9 +599,7 @@ def _view_from_row(row: Mapping[str, Any] | None) -> ViewRecord | None:
     )
 
 
-def _alias_from_row(row: Mapping[str, Any] | None) -> AliasRecord | None:
-    if row is None:
-        return None
+def _alias_from_row(row: Mapping[str, Any]) -> AliasRecord:
     return AliasRecord(
         alias=str(row["alias"]),
         sha256=str(row["sha256"]),
@@ -623,26 +610,20 @@ def _alias_from_row(row: Mapping[str, Any] | None) -> AliasRecord | None:
 
 
 def _json(value: Any) -> str | None:
-    if value is None:
-        return None
-    return json.dumps(value, ensure_ascii=True, sort_keys=True)
+    return (
+        None if value is None else json.dumps(value, ensure_ascii=True, sort_keys=True)
+    )
 
 
 def _json_load(raw: Any) -> dict | None:
-    if raw in {None, ""}:
+    if raw in (None, ""):
         return None
     try:
         parsed = json.loads(str(raw))
     except json.JSONDecodeError:
         return None
-    if isinstance(parsed, dict):
-        return parsed
-    return {"value": parsed}
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
 
 
-def _bounded_limit(value: int, default: int = 50, upper: int = 1000) -> int:
-    try:
-        n = int(value)
-    except Exception:
-        n = default
-    return max(1, min(n, upper))
+def _bounded_limit(value: int, upper: int = 1000) -> int:
+    return max(1, min(int(value), upper))

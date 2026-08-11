@@ -5,36 +5,13 @@ import asyncio
 from time import perf_counter
 
 from openminion.base.types import Message
+from openminion.cli.commands.agent.runner import _resolve_agent_profile_and_service
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
 
 
 def run_agent_check(args, app) -> int:
-    if hasattr(app, "resolve_agent_profile") and hasattr(app, "resolve_agent_service"):
-        agent_profile = app.resolve_agent_profile(getattr(args, "agent_id", None))
-        agent_service = app.resolve_agent_service(agent_profile.name)
-    else:
-        requested_agent = str(getattr(args, "agent_id", "") or "").strip()
-        from openminion.base.config.core import resolve_default_agent_id as _rda
-
-        try:
-            _default_id = _rda(app.config)
-            _default_profile = app.config.agents.get(_default_id)
-        except Exception:
-            _default_profile = None
-        default_agent_name = str(getattr(_default_profile, "name", "openminion"))
-        default_channel = str(getattr(_default_profile, "default_channel", "console"))
-        default_provider = str(getattr(app.provider, "name", "echo"))
-        agent_profile = type(
-            "_CompatAgentProfile",
-            (),
-            {
-                "name": requested_agent or default_agent_name,
-                "default_channel": default_channel,
-                "provider": default_provider,
-            },
-        )()
-        agent_service = app.agent
+    agent_profile, agent_service = _resolve_agent_profile_and_service(args, app)
     channel = (args.channel or agent_profile.default_channel).strip()
     target = args.target
     message_text = args.message

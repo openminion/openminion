@@ -41,11 +41,7 @@ def run_identity_list() -> None:
     )
     print("-" * 90)
     for profile in profiles:
-        version = (
-            profile.model_dump().get("profile_version", "")[0:12]
-            if profile
-            else "unknown"
-        )
+        version = profile.profile_version[:12]
         print(
             f"{profile.agent_id:<20} {profile.display_name:<25} "
             f"{version:<20} {profile.updated_at}"
@@ -109,17 +105,14 @@ def run_identity_import_from_bundle(
 
     bundle = load_identity_bundle(resolved_agent_id, root=bundle_loader_root)
     if not bundle.ok:
-        for err in list(bundle.errors):
+        for err in bundle.errors:
             print(f"ERROR: {err}", file=sys.stderr)
         sys.exit(1)
 
     existing = ctl.get_profile(resolved_agent_id)
-    next_profile_revision = 1
-    if existing is not None:
-        try:
-            next_profile_revision = max(1, int(existing.profile_revision) + 1)
-        except (TypeError, ValueError):
-            next_profile_revision = 1
+    next_profile_revision = (
+        max(1, existing.profile_revision + 1) if existing is not None else 1
+    )
 
     documents = _bundle_documents_from_manifest(bundle)
     if not documents:
@@ -130,7 +123,7 @@ def run_identity_import_from_bundle(
 
     parsed_bundle = parse_bundle_documents(documents)
     defaulted_fields: list[str] = []
-    import_warnings = [str(value) for value in list(bundle.warnings)]
+    import_warnings = [str(value) for value in bundle.warnings]
     if not str(parsed_bundle.mission).strip():
         defaulted_fields.append("role.mission")
         import_warnings.append(
@@ -148,7 +141,7 @@ def run_identity_import_from_bundle(
         profile_revision=next_profile_revision,
         display_name=resolved_agent_id,
     )
-    meta = dict(getattr(profile, "meta", {}) or {})
+    meta = dict(profile.meta or {})
     meta["bundle_fingerprint"] = str(bundle.fingerprint)
     meta["bundle_imported"] = True
     meta["source"] = "bundle"
@@ -341,7 +334,7 @@ def run_identity_diff(agent_id: str, bundle_dir: str | None = None) -> None:
         root=(Path(bundle_dir).expanduser().resolve() if bundle_dir else None),
     )
     if not bundle.ok:
-        for err in list(bundle.errors):
+        for err in bundle.errors:
             print(f"ERROR: {err}", file=sys.stderr)
         sys.exit(1)
     disk_documents = _bundle_documents_from_manifest(bundle)
@@ -405,12 +398,8 @@ def run_identity_render(
         print("\n--- Rendering Stats ---")
         print(f"Purpose: {purpose}")
         print(f"Max Tokens: {max_tokens}")
-        print(
-            f"Used Tokens: {getattr(snippet.budget, 'used_tokens', 0) if snippet.budget else 0}"
-        )
-        print(
-            f"Profile Version: {getattr(snippet, 'profile_version', 'unknown')[:12] if hasattr(snippet, 'profile_version') else 'unknown'}"
-        )
+        print(f"Used Tokens: {snippet.budget.used_tokens}")
+        print(f"Profile Version: {snippet.profile_version[:12]}")
         print(f"Render Version: {snippet.render_version}")
         if snippet.included_fields:
             print(f"Included Fields: {', '.join(snippet.included_fields)}")
@@ -513,7 +502,7 @@ def _bundle_documents_from_manifest(bundle: IdentityBundle) -> list[BundleTextDo
 
 
 def _iter_bundle_documents(bundle: IdentityBundle) -> Iterable[IdentityDocument]:
-    for item in [bundle.agent, bundle.soul, *list(bundle.skills), *list(bundle.notes)]:
+    for item in [bundle.agent, bundle.soul, *bundle.skills, *bundle.notes]:
         if item is None:
             continue
         yield item
