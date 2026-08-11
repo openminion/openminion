@@ -134,8 +134,7 @@ def error_code_from_pydantic(error_type: str) -> ValidationErrorCode:
 
 
 def event_stage_name(event: TCRPStageEvent) -> str:
-    stage = getattr(event, "stage", "") or ""
-    return stage.value if isinstance(stage, TCRPStage) else str(stage)
+    return event.stage.value
 
 
 def event_payload(event: TCRPStageEvent) -> dict[str, Any]:

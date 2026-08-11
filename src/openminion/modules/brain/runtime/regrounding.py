@@ -15,7 +15,7 @@ class RegroundingPolicy:
     inject_after_compaction: bool = True
 
     def __post_init__(self) -> None:  # pragma: no cover - simple guard
-        if int(self.cadence_turns) < 1:
+        if self.cadence_turns < 1:
             raise ValueError(
                 "RegroundingPolicy.cadence_turns must be >= 1; "
                 f"got {self.cadence_turns!r}"
@@ -58,7 +58,6 @@ def should_inject_regrounding(
     if not policy.enabled and not forced:
         return RegroundingDecision(
             should_inject=False,
-            trigger=None,
             reason="regrounding_policy_disabled",
         )
     if forced:
@@ -72,23 +71,22 @@ def should_inject_regrounding(
             should_inject=True,
             trigger=RegroundingTrigger(
                 kind="post_compaction",
-                cadence_counter=int(cadence_counter),
+                cadence_counter=cadence_counter,
                 just_compacted=True,
             ),
             reason="post_compaction_inject",
         )
-    if int(cadence_counter) >= int(policy.cadence_turns):
+    if cadence_counter >= policy.cadence_turns:
         return RegroundingDecision(
             should_inject=True,
             trigger=RegroundingTrigger(
                 kind="cadence",
-                cadence_counter=int(cadence_counter),
+                cadence_counter=cadence_counter,
             ),
             reason="cadence_threshold_reached",
         )
     return RegroundingDecision(
         should_inject=False,
-        trigger=None,
         reason="cadence_threshold_not_reached",
     )
 
@@ -168,7 +166,7 @@ def evaluate_regrounding_tick(
         just_compacted=just_compacted,
         forced=forced,
     )
-    if decision.should_inject and decision.trigger is not None:
+    if decision.trigger is not None:
         inject = build_regrounding_inject(goal=goal, trigger=decision.trigger)
         return RegroundingTickResult(
             inject=inject,
@@ -178,7 +176,7 @@ def evaluate_regrounding_tick(
     return RegroundingTickResult(
         inject=None,
         decision=decision,
-        next_counter=int(cadence_counter) + 1,
+        next_counter=cadence_counter + 1,
     )
 
 

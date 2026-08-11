@@ -20,7 +20,7 @@ def consult_recall_decisions(
 ) -> list[RecallDecision]:
     """Resolve one recall decision per record."""
 
-    effective_now = now if now is not None else datetime.now(timezone.utc)
+    effective_now = now or datetime.now(timezone.utc)
     record_list = list(records or [])
     if not record_list:
         return [
@@ -66,8 +66,7 @@ def summarize_decisions(decisions: Sequence[RecallDecision]) -> dict[str, int]:
 
     histogram = {"memory": 0, "context": 0, "recompute": 0}
     for decision in decisions:
-        if decision.source in histogram:
-            histogram[decision.source] += 1
+        histogram[decision.source] += 1
     return histogram
 
 

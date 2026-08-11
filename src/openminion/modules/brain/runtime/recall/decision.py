@@ -57,29 +57,11 @@ def _read_record_id(record: Any) -> str:
     return str(getattr(record, "id", "") or "")
 
 
-def _record_age_seconds(record: Any, *, now: datetime) -> int | None:
-    """Return the age of the record's ``valid_to`` in seconds, if any."""
-
+def _record_valid_to(record: Any) -> datetime | None:
     valid_to_raw = getattr(record, "valid_to", None)
     if not valid_to_raw:
         return None
-    parsed = _parse_iso_to_aware(str(valid_to_raw))
-    if parsed is None:
-        return None
-    delta = now - parsed
-    return max(0, int(delta.total_seconds()))
-
-
-def _record_is_invalidated(record: Any, *, now: datetime) -> bool:
-    """Return whether the record is invalidated at ``now``."""
-
-    valid_to_raw = getattr(record, "valid_to", None)
-    if not valid_to_raw:
-        return False
-    parsed = _parse_iso_to_aware(str(valid_to_raw))
-    if parsed is None:
-        return False
-    return parsed <= now
+    return _parse_iso_to_aware(str(valid_to_raw))
 
 
 def _decision(
@@ -112,7 +94,7 @@ def resolve_recall_decision(
 ) -> RecallDecision:
     """Resolve the recall source for one candidate record."""
 
-    effective_now = now if now is not None else datetime.now(timezone.utc)
+    effective_now = now or datetime.now(timezone.utc)
     threshold = float(confidence_threshold)
     cap = (
         freshness_cap_seconds
@@ -133,10 +115,14 @@ def resolve_recall_decision(
 
     record_id = _read_record_id(record)
     confidence = _record_confidence(record)
-    age_seconds = _record_age_seconds(record, now=effective_now)
-    invalidated = _record_is_invalidated(record, now=effective_now)
+    valid_to = _record_valid_to(record)
+    age_seconds = (
+        max(0, int((effective_now - valid_to).total_seconds()))
+        if valid_to is not None
+        else None
+    )
 
-    if invalidated:
+    if valid_to is not None and valid_to <= effective_now:
         return _decision(
             source="recompute",
             threshold=threshold,

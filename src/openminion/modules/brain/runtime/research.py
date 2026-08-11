@@ -89,10 +89,10 @@ def build_research_step(
 ) -> ResearchStep:
     """Build a typed research step from structural inputs."""
     return ResearchStep(
-        step_id=str(step_id).strip(),
-        query=str(query).strip(),
-        scope=str(scope or "").strip(),
-        rationale=str(rationale or "").strip(),
+        step_id=step_id.strip(),
+        query=query.strip(),
+        scope=scope.strip(),
+        rationale=rationale.strip(),
     )
 
 
@@ -104,8 +104,8 @@ def build_citation(
 ) -> Citation:
     """Build a typed citation linking a finding to its evidence refs."""
     return Citation(
-        citation_id=str(citation_id).strip(),
-        finding_ref=str(finding_ref).strip(),
+        citation_id=citation_id.strip(),
+        finding_ref=finding_ref.strip(),
         evidence_refs=_clean_refs(evidence_refs),
     )
 
@@ -122,13 +122,14 @@ def verify_claim(
     supporting_list = _clean_refs(supporting_evidence_refs)
     contradicting_list = _clean_refs(contradicting_evidence_refs)
     kinds_by_ref = dict(evidence_kinds_by_ref or {})
+    policy = policy_id.strip()
 
     if contradicting_list:
         return ClaimVerificationResult(
             claim_id=claim.claim_id,
             status="contradicted",
             supporting_evidence_refs=supporting_list,
-            policy_id=str(policy_id or "").strip(),
+            policy_id=policy,
         )
 
     if not supporting_list:
@@ -136,32 +137,26 @@ def verify_claim(
             claim_id=claim.claim_id,
             status="unsupported",
             supporting_evidence_refs=[],
-            policy_id=str(policy_id or "").strip(),
+            policy_id=policy,
         )
 
-    required_kinds = {
-        k
-        for k in (str(item or "").strip() for item in claim.required_evidence_kinds)
-        if k
-    }
+    required_kinds = set(_clean_refs(claim.required_evidence_kinds))
     if required_kinds:
-        observed_kinds = {
-            str(kinds_by_ref.get(ref, "") or "").strip() for ref in supporting_list
-        }
+        observed_kinds = {kinds_by_ref.get(ref, "").strip() for ref in supporting_list}
         observed_kinds.discard("")
         if not required_kinds.issubset(observed_kinds):
             return ClaimVerificationResult(
                 claim_id=claim.claim_id,
                 status="indeterminate",
                 supporting_evidence_refs=supporting_list,
-                policy_id=str(policy_id or "").strip(),
+                policy_id=policy,
             )
 
     return ClaimVerificationResult(
         claim_id=claim.claim_id,
         status="supported",
         supporting_evidence_refs=supporting_list,
-        policy_id=str(policy_id or "").strip(),
+        policy_id=policy,
     )
 
 
@@ -178,8 +173,8 @@ def build_research_composition(
         plan=plan,
         citations=list(citations or []),
         verifications=list(verifications or []),
-        findings_count=max(0, int(findings_count or 0)),
-        evidence_refs_count=max(0, int(evidence_refs_count or 0)),
+        findings_count=max(0, findings_count),
+        evidence_refs_count=max(0, evidence_refs_count),
     )
 
 
