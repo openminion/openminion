@@ -54,7 +54,6 @@ ADAPTIVE_TERM_LLM_ERROR = "llm_error"
 ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY = "tool_failure_no_recovery"
 ADAPTIVE_TERM_DECOMPOSE_REQUESTED = "decompose_requested"
 ADAPTIVE_TERM_DECOMPOSE_INVALID = "decompose_invalid"
-_SEMANTIC_EMPTY_ARGUMENT_TOKENS = frozenset({"none", "null"})
 ADAPTIVE_TERM_CORRECTION_BUDGET_EXHAUSTED = "correction_budget_exhausted"
 ADAPTIVE_TERM_CIRCULAR_PATTERN = "circular_pattern"
 
@@ -586,11 +585,7 @@ def _normalize_arg_value(value: Any) -> Any:
     """Recursively normalize argument values for semantic comparison."""
     if isinstance(value, str):
         normalized = value.strip()
-        if not normalized:
-            return None
-        if normalized.lower() in _SEMANTIC_EMPTY_ARGUMENT_TOKENS:
-            return None
-        return normalized
+        return normalized or None
     if isinstance(value, dict):
         normalized_dict = {
             k: normalized

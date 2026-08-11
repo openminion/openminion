@@ -120,21 +120,6 @@ def _reject_invalid_answer_only_final_text(
                 "of a user-facing answer."
             ),
         )
-    if _looks_like_budget_execution_preface_draft(normalized_final_text):
-        loop_state.scratchpad["budget_answer_only_finalization_rejected_text"] = (
-            normalized_final_text
-        )
-        loop_state.termination_reason = ADAPTIVE_TERM_BUDGET_EXHAUSTED
-        return AdaptiveToolLoopOutcome(
-            profile_name=profile.profile_name,
-            mode_name=profile.mode_name,
-            termination_reason=ADAPTIVE_TERM_BUDGET_EXHAUSTED,
-            state=loop_state,
-            allowed_tools=allowed_tools,
-            error_message=(
-                "Answer-only budget finalization produced execution-preface draft text."
-            ),
-        )
     return None
 
 
@@ -198,12 +183,6 @@ def _recover_budget_finalization_status(
     _debit_llm_usage(loop_ctx, retry_response)
     loop_state.llm_calls += 1
     return _finalization_status_from_response(retry_response)
-
-
-def _looks_like_budget_execution_preface_draft(text: str) -> bool:
-    from .postprocess.rules import _looks_like_execution_preface_draft
-
-    return _looks_like_execution_preface_draft(text)
 
 
 def _looks_like_budget_raw_tool_payload_text(text: str) -> bool:

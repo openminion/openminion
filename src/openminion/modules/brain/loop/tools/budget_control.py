@@ -92,12 +92,7 @@ def _effective_cap(
 def _adaptive_budget_config(
     profile: AdaptiveToolLoopProfile,
 ) -> AdaptiveBudgetConfig | None:
-    raw = getattr(profile, "adaptive_budget_config", None)
-    if isinstance(raw, AdaptiveBudgetConfig):
-        return raw
-    if isinstance(raw, dict):
-        return AdaptiveBudgetConfig.model_validate(raw)
-    return None
+    return profile.adaptive_budget_config
 
 
 def _emit_budget_event(
