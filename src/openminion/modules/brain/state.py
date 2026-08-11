@@ -17,6 +17,7 @@ from .schemas import (
     WorkingState,
     iso_now,
 )
+from .schemas.state import _normalize_skill_ids
 from openminion.base.config.action_policy import (
     ACTION_POLICY_SESSION_OVERRIDE_KEY,
     normalize_action_policy_mode_override,
@@ -60,7 +61,7 @@ class MetaApplication:
 
 
 def _derive_llm_calls_max(runner: "BrainRunner") -> int:
-    ticks = max(1, int(getattr(runner.profile.budgets, "max_ticks_per_user_turn", 8)))
+    ticks = max(1, int(runner.profile.budgets.max_ticks_per_user_turn))
     return max(8, min(32, ticks))
 
 
@@ -73,23 +74,6 @@ _STRUCTURED_REPLAY_STATE_FIELDS = {
     "decision_feasibility_report",
     "intent_execution_states",
 }
-
-
-def _normalize_skill_id_list(values: object) -> list[str]:
-    if not isinstance(values, list):
-        return []
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in values:
-        skill_id = str(raw or "").strip()
-        if not skill_id:
-            continue
-        lowered = skill_id.lower()
-        if lowered in seen:
-            continue
-        seen.add(lowered)
-        normalized.append(skill_id)
-    return normalized
 
 
 def _state_payload_from_raw(raw: dict[str, object]) -> dict[str, object]:
@@ -139,19 +123,26 @@ def load_or_init_state(runner: "BrainRunner", session_id: str) -> WorkingState:
         ):
             state.session_action_policy_mode_override = session_mode_override
             state_changed = True
-        if has_session_skill_meta:
-            if state.session_skill_loaded != session_skill_loaded:
-                state.session_skill_loaded = list(session_skill_loaded)
-                state_changed = True
-            if state.session_skill_unloaded != session_skill_unloaded:
-                state.session_skill_unloaded = list(session_skill_unloaded)
-                state_changed = True
-            if state.skill_selection_mode != session_skill_mode:
-                state.skill_selection_mode = session_skill_mode
-                state_changed = True
-        if state_changed:
-            save_state(runner, state)
-        if _needs_structured_replay_backfill(raw_state=raw_state, state=state):
+        persisted_skill_state = (
+            state.session_skill_loaded,
+            state.session_skill_unloaded,
+            state.skill_selection_mode,
+        )
+        session_skill_state = (
+            session_skill_loaded,
+            session_skill_unloaded,
+            session_skill_mode,
+        )
+        if has_session_skill_meta and persisted_skill_state != session_skill_state:
+            (
+                state.session_skill_loaded,
+                state.session_skill_unloaded,
+                state.skill_selection_mode,
+            ) = session_skill_state
+            state_changed = True
+        if state_changed or _needs_structured_replay_backfill(
+            raw_state=raw_state, state=state
+        ):
             save_state(runner, state)
         if (
             state.mode == BrainMode.COMMAND
@@ -179,8 +170,8 @@ def load_or_init_state(runner: "BrainRunner", session_id: str) -> WorkingState:
         mode=runner.options.clarify_config.default_mode,
         policy=runner.options.clarify_config.default_policy,
         session_action_policy_mode_override=session_mode_override,
-        session_skill_loaded=list(session_skill_loaded),
-        session_skill_unloaded=list(session_skill_unloaded),
+        session_skill_loaded=session_skill_loaded,
+        session_skill_unloaded=session_skill_unloaded,
         skill_selection_mode=session_skill_mode,
     )
     _apply_pending_permission_overrides(runner, state)
@@ -192,8 +183,8 @@ def _apply_pending_permission_overrides(
     runner: "BrainRunner",
     state: WorkingState,
 ) -> bool:
-    before_mode = str(getattr(state, "permission_mode", "") or "")
-    before_overrides = dict(getattr(state, "permission_overrides", {}) or {})
+    before_mode = state.permission_mode
+    before_overrides = dict(state.permission_overrides)
     permission_mode = canonical_permission_mode(
         str(getattr(runner, "_pending_permission_mode", "default") or "default")
     )
@@ -205,9 +196,25 @@ def _apply_pending_permission_overrides(
         state.permission_overrides = canonical_permission_overrides(
             getattr(runner, "_pending_permission_overrides", {})
         )
-    return before_mode != str(
-        getattr(state, "permission_mode", "") or ""
-    ) or before_overrides != dict(getattr(state, "permission_overrides", {}) or {})
+    return (
+        before_mode != state.permission_mode
+        or before_overrides != state.permission_overrides
+    )
+
+
+def _session_meta(runner: "BrainRunner", session_id: str) -> dict[str, object]:
+    store = getattr(runner.session_api, "store", None)
+    get_session = getattr(store, "get_session", None)
+    if not callable(get_session):
+        return {}
+    try:
+        session = get_session(session_id)
+    except Exception:  # noqa: BLE001
+        return {}
+    if not isinstance(session, dict):
+        return {}
+    meta = session.get("meta")
+    return meta if isinstance(meta, dict) else {}
 
 
 def _session_action_policy_mode_override(
@@ -220,20 +227,8 @@ def _session_action_policy_mode_override(
     )
     if pending is not None:
         return pending
-    store = getattr(getattr(runner, "session_api", None), "store", None)
-    if store is None or not hasattr(store, "get_session"):
-        return None
-    try:
-        session = store.get_session(session_id)
-    except Exception:  # noqa: BLE001
-        return None
-    if not isinstance(session, dict):
-        return None
-    meta = session.get("meta", {})
-    if not isinstance(meta, dict):
-        return None
     return normalize_action_policy_mode_override(
-        meta.get(ACTION_POLICY_SESSION_OVERRIDE_KEY)
+        _session_meta(runner, session_id).get(ACTION_POLICY_SESSION_OVERRIDE_KEY)
     )
 
 
@@ -242,18 +237,7 @@ def _session_skill_override_state(
     *,
     session_id: str,
 ) -> tuple[list[str], list[str], str | None, bool]:
-    store = getattr(getattr(runner, "session_api", None), "store", None)
-    if store is None or not hasattr(store, "get_session"):
-        return [], [], None, False
-    try:
-        session = store.get_session(session_id)
-    except Exception:  # noqa: BLE001
-        return [], [], None, False
-    if not isinstance(session, dict):
-        return [], [], None, False
-    meta = session.get("meta", {})
-    if not isinstance(meta, dict):
-        return [], [], None, False
+    meta = _session_meta(runner, session_id)
     has_any = any(
         key in meta
         for key in (
@@ -263,8 +247,16 @@ def _session_skill_override_state(
         )
     )
     return (
-        _normalize_skill_id_list(meta.get("session_skill_loaded")),
-        _normalize_skill_id_list(meta.get("session_skill_unloaded")),
+        _normalize_skill_ids(
+            meta.get("session_skill_loaded")
+            if isinstance(meta.get("session_skill_loaded"), list)
+            else []
+        ),
+        _normalize_skill_ids(
+            meta.get("session_skill_unloaded")
+            if isinstance(meta.get("session_skill_unloaded"), list)
+            else []
+        ),
         (str(meta.get("skill_selection_mode", "") or "").strip().lower() or None),
         has_any,
     )
@@ -346,11 +338,9 @@ def stale_clarify_state_should_clear(
 ) -> bool:
     if not str(user_input or "").strip():
         return False
-    if not list(getattr(state, "unresolved_clarify_items", []) or []):
+    if not state.unresolved_clarify_items:
         return False
-    return is_internal_failure_reason_code(
-        str(getattr(state, "decision_reason_code", "") or "").strip()
-    )
+    return is_internal_failure_reason_code(state.decision_reason_code.strip())
 
 
 def clear_clarify_state(state: WorkingState) -> None:
@@ -389,15 +379,15 @@ def _log_active_skill_run(
     status: str,
     action_result=None,
 ) -> None:
-    skill_id = str(getattr(state, "active_skill_id", "") or "").strip()
-    version_hash = str(getattr(state, "active_skill_version_hash", "") or "").strip()
+    skill_id = str(state.active_skill_id or "").strip()
+    version_hash = str(state.active_skill_version_hash or "").strip()
     if not skill_id or not version_hash:
         state.active_skill_ids = []
         state.active_skill_id = None
         state.active_skill_version_hash = None
         return
 
-    used_for = _skill_used_for_from_phase(getattr(state, "phase", None))
+    used_for = _skill_used_for_from_phase(state.phase)
     outcome = _skill_outcome_from_result(status, action_result)
     evidence_refs = [
         str(getattr(ref, "ref", "") or "").strip()
@@ -446,7 +436,6 @@ def respond_structural_noop(
     )
     state.phase = "RESPOND"
     set_status_unchecked(state, status, reason="pae_idle_tick_noop")
-    # Deliberately skip:
     set_session_status(runner, state.session_id, status)
     save_state(runner, state)
     logger.emit(
@@ -458,10 +447,9 @@ def respond_structural_noop(
     return StepOutput(
         session_id=state.session_id,
         status=state.status,
-        message="",  # empty — no sentinel leaks into AgentResponse.text
+        message="",
         working_state=state,
         action_result=action_result,
-        # Explicit structural marker for downstream layers. More
         pae_idle_tick_noop=True,
     )
 
@@ -487,7 +475,7 @@ def respond(
     )
     preserve_clarify_phase = (
         str(status).strip().lower() == BRAIN_STATE_WAITING_USER
-        and str(getattr(state, "phase", "")).strip().upper() == "CLARIFY"
+        and str(state.phase or "").strip().upper() == "CLARIFY"
     )
     if not preserve_clarify_phase:
         state.phase = "RESPOND"
