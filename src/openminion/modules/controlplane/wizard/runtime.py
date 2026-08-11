@@ -250,9 +250,7 @@ class WizardExecutor:
     async def _confirm_result(
         self, wizard_id: str, session: WizardSession
     ) -> WizardResult:
-        completed_steps = len(
-            [k for k in session.draft_result if k.startswith("step_")]
-        )
+        completed_steps = sum(key.startswith("step_") for key in session.draft_result)
         if completed_steps < session.total_steps:
             return WizardResult(
                 success=True,

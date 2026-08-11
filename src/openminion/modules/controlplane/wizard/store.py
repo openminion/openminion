@@ -173,9 +173,6 @@ class InMemoryWizardStore(WizardStore):
     def __init__(self):
         self._sessions: dict[str, WizardSession] = {}
 
-    async def init(self):
-        return None
-
     async def _get_raw_session(self, wizard_id: str) -> Optional[WizardSession]:
         return self._sessions.get(wizard_id)
 
@@ -328,10 +325,6 @@ class SqliteWizardStore(WizardStore):
                 self._conn.execute(ddl)
             self._conn.commit()
 
-    async def init(self):
-        """Schema is created in __init__; this is a no-op for API parity."""
-        return None
-
     async def _get_raw_session(self, wizard_id: str) -> Optional[WizardSession]:
         with self._lock:
             cur = self._conn.execute(
@@ -382,8 +375,7 @@ class SqliteWizardStore(WizardStore):
                 (wizard_id,),
             )
             self._conn.commit()
-            deleted = cur.rowcount > 0
-        return deleted
+        return cur.rowcount > 0
 
     async def expire_overdue(self) -> int:
         """Flip ACTIVE rows whose timeout has elapsed to TIMEOUT.

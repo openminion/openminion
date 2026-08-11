@@ -18,9 +18,7 @@ def iso_ago(seconds: int) -> str:
 
 
 def json_dump(value: Any) -> str:
-    if value is None:
-        return "{}"
-    return json.dumps(value, ensure_ascii=True, sort_keys=True)
+    return json.dumps({} if value is None else value, ensure_ascii=True, sort_keys=True)
 
 
 def json_load(raw: str | None) -> dict[str, Any]:

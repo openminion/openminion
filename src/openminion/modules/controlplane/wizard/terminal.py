@@ -150,15 +150,11 @@ class TerminalInteractionChannel(InteractionChannel):
                 )
             indices.append(actual_idx)
 
-        first_selected = indices[0] if indices else None
-        if first_selected is not None:
-            return ChoiceResponse(
-                value=mapped_options[first_selected].value,
-                index=first_selected,
-                cancelled=False,
-            )
+        first_selected = indices[0]
         return ChoiceResponse(
-            value=line, index=None, cancelled=False, error="Invalid selection format"
+            value=mapped_options[first_selected].value,
+            index=first_selected,
+            cancelled=False,
         )
 
     async def choose(
@@ -193,8 +189,7 @@ class TerminalInteractionChannel(InteractionChannel):
             )
 
         try:
-            num = int(line)
-            actual_idx = num - 1
+            actual_idx = int(line) - 1
 
             if 0 <= actual_idx < len(mapped_options):
                 selected_option = mapped_options[actual_idx]
@@ -276,10 +271,8 @@ class TerminalInteractionChannel(InteractionChannel):
                 self._write(f"== {title} (DIFF) ==\n", flush=False)
 
             self._write("Changes made:\n", flush=False)
-            orig_lines = original.split("\n")
-            mod_lines = modified.split("\n")
-            orig_set = set(orig_lines)
-            mod_set = set(mod_lines)
+            orig_set = set(original.split("\n"))
+            mod_set = set(modified.split("\n"))
 
             removed = orig_set - mod_set
             added = mod_set - orig_set

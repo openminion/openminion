@@ -128,10 +128,7 @@ class TelegramInteractionChannel(InteractionChannel):
         try:
             option_texts = []
             for i, opt in enumerate(options):
-                if isinstance(opt, str):
-                    label = opt
-                else:
-                    label = opt.label
+                label = opt if isinstance(opt, str) else opt.label
                 option_texts.append(f"{i + 1}. {label}")
 
             full_message = f"{message}\n\n"
@@ -154,9 +151,7 @@ class TelegramInteractionChannel(InteractionChannel):
                 if 0 <= selected_index < len(options):
                     selected_item = options[selected_index]
                     selected_value = (
-                        selected_item.value
-                        if hasattr(selected_item, "value")
-                        else selected_item
+                        selected_item if isinstance(selected_item, str) else selected_item.value
                     )
                     return ChoiceResponse(
                         value=selected_value, index=selected_index, cancelled=False
@@ -214,11 +209,7 @@ class TelegramInteractionChannel(InteractionChannel):
         self, content: str, title: str | None = None, style: str | None = None
     ) -> MessageResponse:
         try:
-            formatted_content = content
-            if title:
-                formatted_content = f"*{title}*\n{content}"
-                # Convert * to bold markdown format
-
+            formatted_content = f"*{title}*\n{content}" if title else content
             await self._send_text(formatted_content)
             return MessageResponse(delivered=True)
         except Exception as e:
