@@ -5,7 +5,6 @@ from typing import Any, Iterable, Protocol, Sequence
 
 from ..errors import MethodError
 from ..schemas import CompressedBlock, CompressionPolicy, InputBlock
-from .extractive import ExtractiveCompressor
 
 METHOD_ID = "llmlingua2.v1"
 _VERSION = "v1.0"
@@ -78,7 +77,6 @@ class LLMLingua2Compressor:
         self._available_flag = available
         self._adapter_version = adapter_version
         self._resolved_backend: _LLMLingua2Backend | None = backend
-        self._extractor = ExtractiveCompressor()
 
     @property
     def method_id(self) -> str:
@@ -143,8 +141,6 @@ class LLMLingua2Compressor:
             fallback_used=False,
         )
 
-    # ------------------------------------------------------------------ internals
-
     def _method_meta(self) -> dict[str, str]:
         return {
             "method_id": METHOD_ID,
@@ -192,7 +188,6 @@ class LLMLingua2Compressor:
         for block in input_blocks:
             text = block.text or ""
             if not text.strip():
-                # Empty input → empty output; do not call the backend.
                 compressed.append(self._empty_compressed_block(block))
                 continue
             try:
@@ -206,9 +201,6 @@ class LLMLingua2Compressor:
                 warnings.append(
                     f"llmlingua2:block_compress_failed:{block.block_id}:{type(exc).__name__}"
                 )
-                # On per-block failure, preserve the block uncompressed
-                # rather than dropping it — losing data is worse than not
-                # compressing it. The warning is captured for telemetry.
                 compressed.append(self._passthrough_compressed_block(block))
                 continue
 
@@ -255,9 +247,6 @@ class LLMLingua2Compressor:
             unit_refs=[f"{block.block_id}:llmlingua2-passthrough"],
             compression_meta={"method_id": METHOD_ID, "passthrough": True},
         )
-
-
-# ----------------------------------------------------------- module helpers
 
 
 _INPUT_TO_COMPRESSED_TYPE_MAP: dict[str, str] = {

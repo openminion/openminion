@@ -33,14 +33,12 @@ class ExtractiveCompressor:
     ) -> ExtractiveResult:
         scored_units = build_scored_units(blocks, query)
         selected, dropped = self._select_units(scored_units, policy)
-        compressed_blocks = self._reconstruct(selected)
         return ExtractiveResult(
-            blocks=compressed_blocks,
+            blocks=self._reconstruct(selected),
             dropped_reason_stats=dropped,
             warnings=(),
         )
 
-    # Selection ------------------------------------------------------------
     def _select_units(
         self,
         units: Sequence[ScoredUnit],
@@ -61,22 +59,20 @@ class ExtractiveCompressor:
             selected.append(unit)
         return selected, dropped_reason_stats
 
-    # Reconstruction -------------------------------------------------------
     def _reconstruct(self, units: Sequence[ScoredUnit]) -> list[CompressedBlock]:
         grouped: dict[str, list[ScoredUnit]] = defaultdict(list)
         for unit in units:
             grouped[unit.block_id].append(unit)
         compressed: list[CompressedBlock] = []
-        for block_id in sorted(grouped.keys()):
+        for block_id in sorted(grouped):
             group = grouped[block_id]
             text = "\n".join(unit.text for unit in group)
-            refs = group[0].refs if group else []
             compressed.append(
                 CompressedBlock(
                     block_id=block_id,
                     type=group[0].block_type,
                     text=text,
-                    refs=list(refs),
+                    refs=list(group[0].refs),
                     unit_refs=[f"{unit.block_id}:{unit.unit_offset}" for unit in group],
                     compression_meta={
                         "method_id": METHOD_ID,
