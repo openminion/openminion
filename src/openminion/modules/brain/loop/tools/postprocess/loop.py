@@ -384,7 +384,6 @@ def finalize_iteration_state(
         loop_state=loop_state,
         signature=signature,
         ordered_tool_results=ordered_tool_results,
-        profile=profile,
     ):
         loop_state.direct_tool_requested_batch_satisfied = True
 

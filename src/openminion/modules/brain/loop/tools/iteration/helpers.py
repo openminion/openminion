@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import re
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from openminion.modules.brain.constants import (
@@ -15,9 +13,6 @@ from openminion.modules.brain.execution.intent_state import (
 )
 from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.llm.schemas import Message
-from openminion.modules.llm.providers.tool_calling.contracts import (
-    canonicalize_tool_name_for_runtime,
-)
 
 from ..contracts import (
     AdaptiveToolLoopContext,
@@ -36,8 +31,6 @@ if TYPE_CHECKING:
     from typing import Callable
 
 
-QUERY_YEAR_RE = re.compile(r"\b(20\d{2})\b")
-QUERY_WHITESPACE_RE = re.compile(r"\s+")
 _ANSWER_ONLY_FINALIZATION_KEYS = frozenset(
     {
         "budget_answer_only_finalization_forced",
@@ -58,88 +51,6 @@ _MUTATING_FILE_TOOLS = frozenset(
     }
 )
 _SYNTHESIS_TOOL_PREFIXES = ("web.", "browser.", "research.")
-
-
-def _explicit_calendar_years(text: Any) -> set[int]:
-    return {int(year) for year in QUERY_YEAR_RE.findall(str(text or ""))}
-
-
-def _stale_exact_date_search_context(
-    *,
-    user_input: str,
-    require_exact_date: bool,
-    tool_name: str,
-    tool_args: dict[str, Any],
-    current_year: int | None = None,
-) -> tuple[str, set[int], int] | None:
-    if not require_exact_date:
-        return None
-    if canonicalize_tool_name_for_runtime(tool_name) != "web.search":
-        return None
-    query = str((tool_args or {}).get("query", "") or "").strip()
-    if not query:
-        return None
-    query_years = _explicit_calendar_years(query)
-    if not query_years or _explicit_calendar_years(user_input):
-        return None
-    active_year = int(current_year or datetime.now(timezone.utc).year)
-    if active_year in query_years:
-        return None
-    return query, query_years, active_year
-
-
-def _stale_exact_date_query_reason(
-    *,
-    user_input: str,
-    require_exact_date: bool,
-    tool_name: str,
-    tool_args: dict[str, Any],
-    current_year: int | None = None,
-) -> str | None:
-    context = _stale_exact_date_search_context(
-        user_input=user_input,
-        require_exact_date=require_exact_date,
-        tool_name=tool_name,
-        tool_args=tool_args,
-        current_year=current_year,
-    )
-    if context is None:
-        return None
-    _query, query_years, active_year = context
-    rendered = ", ".join(str(year) for year in sorted(query_years))
-    return (
-        "This freshness-sensitive search query hard-codes calendar year "
-        f"{rendered}, which excludes the current typed year {active_year}. "
-        "Use current_datetime for exact-date framing unless the user explicitly "
-        "requested a historical year."
-    )
-
-
-def _repair_stale_exact_date_search_args(
-    *,
-    user_input: str,
-    require_exact_date: bool,
-    tool_name: str,
-    tool_args: dict[str, Any],
-    current_year: int | None = None,
-) -> dict[str, Any] | None:
-    context = _stale_exact_date_search_context(
-        user_input=user_input,
-        require_exact_date=require_exact_date,
-        tool_name=tool_name,
-        tool_args=tool_args,
-        current_year=current_year,
-    )
-    if context is None:
-        return None
-    query, _query_years, _active_year = context
-    repaired_query = QUERY_YEAR_RE.sub(" ", query)
-    repaired_query = QUERY_WHITESPACE_RE.sub(" ", repaired_query).strip(" ,;:-")
-    if not repaired_query or repaired_query == query:
-        return None
-    repaired_args = dict(tool_args or {})
-    repaired_args["query"] = repaired_query
-    return repaired_args
 
 
 def _requires_typed_finalization_contract(

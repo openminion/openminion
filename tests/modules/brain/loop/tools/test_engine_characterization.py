@@ -43,7 +43,6 @@ from openminion.modules.brain.loop.tools.engine import (
     _effective_cap,
     _eligible_duplicate_batch_execution_facts,
     _event_type_for_budget_stop,
-    _explicit_calendar_years,
     _finalization_status_payload,
     _general_profile_name,
     _goal_declaration_payload,
@@ -59,12 +58,10 @@ from openminion.modules.brain.loop.tools.engine import (
     _meta_rule_preference_payload,
     _pending_finalization_salvage_text,
     _pending_turn_context_payload,
-    _repair_stale_exact_date_search_args,
     _record_duplicate_batch_execution_facts,
     _requires_typed_finalization_contract,
     _session_work_summary_payload,
     _set_turn_progress,
-    _stale_exact_date_query_reason,
     _step_summaries_from_state,
     _subtasks_from_decompose_control,
     _task_plan_abandoned_payload,
@@ -269,135 +266,6 @@ def _failed_outcome(
     )
 
 
-# Pure-function characterization: date helpers
-
-
-class TestExplicitCalendarYears:
-    def test_empty_input_returns_empty_set(self) -> None:
-        assert _explicit_calendar_years("") == set()
-        assert _explicit_calendar_years(None) == set()
-        assert _explicit_calendar_years("   ") == set()
-
-    def test_extracts_single_year(self) -> None:
-        assert _explicit_calendar_years("hello 2024") == {2024}
-
-    def test_extracts_multiple_years_dedup(self) -> None:
-        assert _explicit_calendar_years("2024 vs 2025 and 2024") == {2024, 2025}
-
-    def test_ignores_non_year_digits(self) -> None:
-        # \b(20\d{2})\b — only century 20xx 4-digit numbers
-        assert _explicit_calendar_years("12345 and 1999") == set()
-
-    def test_handles_non_string_input(self) -> None:
-        assert _explicit_calendar_years(2024) == {2024}
-
-
-class TestStaleExactDateQueryReason:
-    def test_require_exact_date_false_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="anything",
-            require_exact_date=False,
-            tool_name="web.search",
-            tool_args={"query": "weather 2024"},
-        )
-        assert result is None
-
-    def test_non_websearch_tool_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="weather",
-            require_exact_date=True,
-            tool_name="file.read",
-            tool_args={"query": "weather 2024"},
-        )
-        assert result is None
-
-    def test_empty_query_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="weather",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": ""},
-        )
-        assert result is None
-
-    def test_query_without_years_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="hello",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "current weather"},
-        )
-        assert result is None
-
-    def test_user_input_has_year_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="what happened in 2023",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "events 2023"},
-            current_year=2026,
-        )
-        assert result is None
-
-    def test_query_year_matches_current_returns_none(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="what's new",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "news 2026"},
-            current_year=2026,
-        )
-        assert result is None
-
-    def test_stale_year_returns_explanation(self) -> None:
-        result = _stale_exact_date_query_reason(
-            user_input="who won",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "championship 2020"},
-            current_year=2026,
-        )
-        assert result is not None
-        assert "2020" in result
-        assert "2026" in result
-
-    def test_default_current_year_falls_back_to_datetime(self) -> None:
-        # Without explicit current_year, use system year — we won't assert exact
-        # output, only that the function returns None when query year == sys year.
-        from datetime import datetime, timezone
-
-        sys_year = datetime.now(timezone.utc).year
-        result = _stale_exact_date_query_reason(
-            user_input="news",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": f"news {sys_year}"},
-        )
-        assert result is None
-
-
-class TestRepairStaleExactDateSearchArgs:
-    def test_repairs_runtime_invented_stale_year(self) -> None:
-        result = _repair_stale_exact_date_search_args(
-            user_input="what's new",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "news 2025"},
-            current_year=2026,
-        )
-        assert result == {"query": "news"}
-
-    def test_returns_none_when_user_requested_historical_year(self) -> None:
-        result = _repair_stale_exact_date_search_args(
-            user_input="compare 2025 with today",
-            require_exact_date=True,
-            tool_name="web.search",
-            tool_args={"query": "news 2025"},
-            current_year=2026,
-        )
-        assert result is None
-
-
 _TASK_PLAN_STEP = {"step_id": "s1", "description": "do work"}
 _PAYLOAD_CASES: list[tuple[Any, str, dict[str, Any]]] = [
     (
@@ -585,24 +453,6 @@ class TestAdaptiveBudgetConfig:
         cfg = AdaptiveBudgetConfig(mode="autonomous", extend_by=4, idle_timeout_s=60)
         prof = _profile(allowed_tools=frozenset({"x"}), adaptive_budget_config=cfg)
         assert _adaptive_budget_config(prof) is cfg
-
-    def test_validates_dict(self) -> None:
-        # The profile is a frozen dataclass; construct with a raw dict
-        # to exercise the dict-validation branch in _adaptive_budget_config.
-        prof = AdaptiveToolLoopProfile(
-            profile_name="t",
-            mode_name="act_adaptive",
-            allowed_tools=frozenset({"x"}),
-            max_iterations=2,
-            adaptive_budget_config={
-                "mode": "autonomous",
-                "extend_by": 2,
-                "idle_timeout_s": 60,
-            },  # type: ignore[arg-type]
-        )
-        cfg = _adaptive_budget_config(prof)
-        assert cfg is not None
-        assert cfg.mode == "autonomous"
 
 
 # Loop state tool-result helpers
@@ -5311,9 +5161,7 @@ class TestFinalizeIterationCapExit:
                     provider="fake",
                     model="m",
                     output_text=leaked_text,
-                    assistant_messages=[
-                        Message(role="assistant", content=leaked_text)
-                    ],
+                    assistant_messages=[Message(role="assistant", content=leaked_text)],
                     finish_reason="stop",
                 ),
                 LLMResponse(
@@ -5393,7 +5241,7 @@ class TestFinalizeIterationCapExit:
             == "internal_failure_final_text"
         )
 
-    def test_force_finalization_rejects_execution_preface_draft(self) -> None:
+    def test_force_finalization_does_not_classify_answer_prose(self) -> None:
         prof = _profile(
             allowed_tools=frozenset({"x"}), profile_name="general_adaptive_v1"
         )
@@ -5430,12 +5278,11 @@ class TestFinalizeIterationCapExit:
         )
 
         assert result is not None
-        assert result.termination_reason == ADAPTIVE_TERM_BUDGET_EXHAUSTED
-        assert (
-            st_loop.scratchpad["budget_answer_only_finalization_rejected_text"]
-            == "<step1>Create files</step1>\n<step2>Read back one file to validate</step2>"
+        assert result.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+        assert result.final_text == (
+            "<step1>Create files</step1>\n<step2>Read back one file to validate</step2>"
         )
-        assert st_loop.scratchpad["budget_answer_only_restore_index"] == 1
+        assert "budget_answer_only_finalization_rejected_text" not in st_loop.scratchpad
 
     def test_force_finalization_rejects_raw_tool_markup(self) -> None:
         prof = _profile(
@@ -6092,7 +5939,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
         assert "validation:" in str(out.final_text or "").lower()
         assert "tool evidence:" in str(out.final_text or "").lower()
 
-    def test_falls_back_to_evidence_when_duplicate_closure_misses_labels(
+    def test_preserves_model_answer_without_runtime_label_scoring(
         self,
     ) -> None:
         signature = "sig-missing-labels"
@@ -6128,8 +5975,7 @@ class TestForceDuplicateBatchAnswerOnlyClosure:
 
         assert out is not None
         assert out.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-        assert "result:" in str(out.final_text or "").lower()
-        assert "validation:" in str(out.final_text or "").lower()
+        assert out.final_text == "I read the file successfully."
 
     def test_returns_none_on_provider_fallback_final_text(self) -> None:
         signature = "sig-provider-fallback"
@@ -6625,7 +6471,7 @@ def test_loop_decompose_mixed_first_round_retries_then_recovers() -> None:
     }
 
 
-def test_loop_freshness_exact_date_query_auto_repairs_before_tool_execution() -> None:
+def test_loop_preserves_model_authored_search_query() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -6652,7 +6498,6 @@ def test_loop_freshness_exact_date_query_auto_repairs_before_tool_execution() ->
         ]
     )
     state = _state()
-    # Inject freshness obligation
     state.freshness_obligations = SimpleNamespace(require_exact_date=True)
     loop_ctx = _LoopContext(
         state=state, outcomes=[_success_outcome("web.search", "ok")]
@@ -6668,8 +6513,8 @@ def test_loop_freshness_exact_date_query_auto_repairs_before_tool_execution() ->
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
     assert len(loop_ctx.commands) == 1
     assert getattr(loop_ctx.commands[0], "tool_name", "") == "web.search"
-    assert getattr(loop_ctx.commands[0], "args", {}).get("query") == "weather"
-    assert any(
+    assert getattr(loop_ctx.commands[0], "args", {}).get("query") == "weather 2018"
+    assert not any(
         status.get("mode_state") == "freshness_exact_date_query_autorepair"
         for status in loop_ctx.statuses
     )

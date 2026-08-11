@@ -30,7 +30,6 @@ from ..decompose import (
 from ..events import IterationToolCallRecord
 from ..dispatch import (
     _dispatch_tool_batches,
-    _handle_exact_date_requirements,
     _tool_request_result,
 )
 from ..evidence import _count_substantive_non_control_tool_results
@@ -731,29 +730,7 @@ def prepare_iteration_dispatch(
     on_tool_result: Any,
     append_tool_result_payload: Any,
     set_turn_progress: Any,
-    repair_stale_exact_date_search_args: Any,
-    stale_exact_date_query_reason: Any,
 ) -> LoopDispatchResult:
-    exact_date_result = _handle_exact_date_requirements(
-        loop_ctx,
-        profile=profile,
-        loop_state=loop_state,
-        tool_calls=tool_calls,
-        allowed_tools=allowed_tools,
-        public_mode_tag=public_mode_tag,
-        signature=signature,
-        iter_tool_records=iter_tool_records,
-        iter_llm_duration_ms=iter_llm_duration_ms,
-        iter_input_tokens=iter_input_tokens,
-        iter_output_tokens=iter_output_tokens,
-        on_tool_result=on_tool_result,
-        repair_stale_exact_date_search_args=repair_stale_exact_date_search_args,
-        stale_exact_date_query_reason=stale_exact_date_query_reason,
-        result_factory=LoopDispatchResult,
-    )
-    if exact_date_result is not None:
-        return exact_date_result
-
     decompose_result = _handle_decompose_calls(
         loop_ctx,
         profile=profile,

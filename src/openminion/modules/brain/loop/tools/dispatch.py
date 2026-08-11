@@ -6,21 +6,15 @@ from typing import Any
 
 from openminion.modules.brain.constants import BRAIN_ACTION_STATUS_FAILED
 from openminion.modules.brain.schemas import ActionError, ActionResult, new_uuid
-from openminion.modules.llm.schemas import Message
 
 from .contracts import (
-    ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
     AdaptiveToolLoopContext,
-    AdaptiveToolLoopOutcome,
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
-    canonical_tool_call_signature,
     profile_include_reflect,
 )
-from .events import IterationToolCallRecord
 from .parallel import execute_parallel_tool_batch
 from .shortlisting import TOOL_REQUEST_TOOL_NAME, with_tool_request_spec
-from .status import emit_adaptive_status
 from .telemetry import _accumulate_parallel_telemetry
 
 
@@ -91,139 +85,6 @@ def _tool_request_result(
         ),
         True,
     )
-
-
-def _handle_exact_date_requirements(
-    loop_ctx: AdaptiveToolLoopContext,
-    *,
-    profile: AdaptiveToolLoopProfile,
-    loop_state: AdaptiveToolLoopState,
-    tool_calls: list[Any],
-    allowed_tools: frozenset[str],
-    public_mode_tag: str,
-    signature: str,
-    iter_tool_records: list[IterationToolCallRecord],
-    iter_llm_duration_ms: int,
-    iter_input_tokens: int,
-    iter_output_tokens: int,
-    on_tool_result: Any,
-    repair_stale_exact_date_search_args: Any,
-    stale_exact_date_query_reason: Any,
-    result_factory: Any,
-) -> Any | None:
-    freshness_obligations = getattr(loop_ctx.state, "freshness_obligations", None)
-    require_exact_date = bool(
-        getattr(freshness_obligations, "require_exact_date", False)
-    )
-    user_input_for_exact_date = str(
-        getattr(loop_ctx, "user_input", "") or getattr(loop_ctx.state, "goal", "") or ""
-    ).strip()
-    for tool_call in tool_calls:
-        tool_name = str(getattr(tool_call, "name", "") or "").strip()
-        tool_args = dict(getattr(tool_call, "arguments", {}) or {})
-        freshness_reason = stale_exact_date_query_reason(
-            user_input=user_input_for_exact_date,
-            require_exact_date=require_exact_date,
-            tool_name=tool_name,
-            tool_args=tool_args,
-        )
-        if not freshness_reason:
-            continue
-        repaired_tool_args = repair_stale_exact_date_search_args(
-            user_input=user_input_for_exact_date,
-            require_exact_date=require_exact_date,
-            tool_name=tool_name,
-            tool_args=tool_args,
-        )
-        if repaired_tool_args is not None:
-            tool_call.arguments = repaired_tool_args
-            loop_state.messages.append(
-                Message(
-                    role="system",
-                    content=(
-                        f"{freshness_reason} Runtime removed the stale explicit "
-                        "year from this search because the user did not request "
-                        "a historical year. Prefer current_datetime or omit the "
-                        "year on future exact-date searches."
-                    ),
-                )
-            )
-            emit_adaptive_status(
-                loop_ctx,
-                profile=profile,
-                loop_state=loop_state,
-                detail_text=f"{public_mode_tag} exact-date query auto-repaired",
-                mode_state="freshness_exact_date_query_autorepair",
-                extra={"tool_name": tool_name},
-            )
-            continue
-        retry_signature = canonical_tool_call_signature(
-            {"name": tool_name, "arguments": tool_args}
-        )
-        seen_signatures = set(
-            loop_state.scratchpad.get("freshness_exact_date_rejected_signatures", [])
-            or []
-        )
-        if retry_signature in seen_signatures:
-            loop_state.termination_reason = ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY
-            emit_adaptive_status(
-                loop_ctx,
-                profile=profile,
-                loop_state=loop_state,
-                detail_text=f"{public_mode_tag} exact-date query mismatch",
-                mode_state="freshness_exact_date_query_rejected",
-                termination_reason=ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
-                extra={"tool_name": tool_name},
-            )
-            return result_factory(
-                tool_calls=tool_calls,
-                ordered_tool_results=[],
-                cached_indices=frozenset(),
-                iter_batch_parallel_count=0,
-                batch_had_progress=False,
-                continue_loop=False,
-                outcome=AdaptiveToolLoopOutcome(
-                    profile_name=profile.profile_name,
-                    mode_name=profile.mode_name,
-                    termination_reason=ADAPTIVE_TERM_TOOL_FAILURE_NO_RECOVERY,
-                    state=loop_state,
-                    allowed_tools=allowed_tools,
-                    error_message=freshness_reason,
-                    tool_name=tool_name,
-                ),
-            )
-        seen_signatures.add(retry_signature)
-        loop_state.scratchpad["freshness_exact_date_rejected_signatures"] = sorted(
-            seen_signatures
-        )
-        loop_state.messages.append(
-            Message(
-                role="system",
-                content=(
-                    f"{freshness_reason} Retry the search with a query whose "
-                    "explicit date framing is consistent with current_datetime, "
-                    "or omit the year if you do not need to pin it."
-                ),
-            )
-        )
-        emit_adaptive_status(
-            loop_ctx,
-            profile=profile,
-            loop_state=loop_state,
-            detail_text=f"{public_mode_tag} exact-date query mismatch",
-            mode_state="freshness_exact_date_query_retry",
-            extra={"tool_name": tool_name},
-        )
-        return result_factory(
-            tool_calls=tool_calls,
-            ordered_tool_results=[],
-            cached_indices=frozenset(),
-            iter_batch_parallel_count=0,
-            batch_had_progress=False,
-            continue_loop=True,
-            outcome=None,
-        )
-    return None
 
 
 def _dispatch_tool_batches(

@@ -53,9 +53,7 @@ class AdaptiveLoopRunnerClosureMixin:
         self,
         *,
         prepared: Any,
-        allowed_tool_calls: list[Any],
     ) -> AdaptiveToolLoopOutcome | None:
-        del allowed_tool_calls
         closure_outcome, closure_duration_ms, closure_tokens_used = (
             self._force_direct_tool_answer_only_closure(
                 loop_ctx=self.loop_ctx,

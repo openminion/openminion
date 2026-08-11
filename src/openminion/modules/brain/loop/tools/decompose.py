@@ -55,12 +55,10 @@ def _decompose_invalid_outcome(
     reason: str,
     message: str,
 ) -> AdaptiveToolLoopOutcome:
-    scratchpad = dict(loop_state.scratchpad or {})
-    scratchpad["adaptive.decompose_error"] = {
+    loop_state.scratchpad["adaptive.decompose_error"] = {
         "reason": reason,
         "message": message,
     }
-    loop_state.scratchpad = scratchpad
     loop_state.termination_reason = ADAPTIVE_TERM_DECOMPOSE_INVALID
     emit_adaptive_status(
         loop_ctx,
