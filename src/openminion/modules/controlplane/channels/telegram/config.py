@@ -360,16 +360,12 @@ def _telegram_modes(parts: dict[str, dict[str, Any]]) -> tuple[str, str, str, st
 
 
 def _allowed_updates(t_root: dict[str, Any], polling_raw: dict[str, Any]) -> list[str]:
-    allowed_updates = _as_list_str(t_root.get("allowedUpdates"))
-    if not allowed_updates:
-        allowed_updates = _as_list_str(polling_raw.get("allowed_updates"))
-    if not allowed_updates:
-        allowed_updates = _as_list_str(polling_raw.get("allowedUpdates"))
-    return [item for item in allowed_updates if item] or [
-        "message",
-        "edited_message",
-        "callback_query",
-    ]
+    return (
+        _as_list_str(t_root.get("allowedUpdates"))
+        or _as_list_str(polling_raw.get("allowed_updates"))
+        or _as_list_str(polling_raw.get("allowedUpdates"))
+        or ["message", "edited_message", "callback_query"]
+    )
 
 
 def _polling_config_from_raw(
@@ -691,10 +687,7 @@ def _resolve_secret(value: Any, *, env_map: dict[str, str]) -> str:
 
 
 def _resolve_secret_or_none(value: Any, *, env_map: dict[str, str]) -> str | None:
-    if value is None:
-        return None
-    resolved = _resolve_secret(value, env_map=env_map)
-    return resolved or None
+    return _resolve_secret(value, env_map=env_map) or None
 
 
 def _first_non_none(*values: Any) -> Any:

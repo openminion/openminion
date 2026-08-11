@@ -63,8 +63,7 @@ def render_approval_prompt(
     choices = _normalized_choices(request.get("choices")) or list(APPROVAL_CHOICES)
     reason = str(request.get("reason", "")).strip()
     approval_id = str(request.get("approval_id", "")).strip()
-    lines: list[str] = []
-    lines.append("Approval required to continue.")
+    lines = ["Approval required to continue."]
     if reason:
         lines.append(f"Reason: {reason}")
     if approval_id:
@@ -77,8 +76,6 @@ def render_approval_prompt(
 
 def parse_approval_decision(text: str | None) -> str | None:
     """Parse a Telegram user reply into a typed approval decision."""
-    if text is None:
-        return None
     if not isinstance(text, str):
         return None
     normalized = text.strip().lower()
