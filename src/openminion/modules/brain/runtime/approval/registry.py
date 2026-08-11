@@ -21,12 +21,6 @@ class ApprovalCriteriaRegistry:
         return self._criteria.keys()
 
 
-def _load_markdown_file(path: Path) -> str:
-    if not path.is_file():
-        return ""
-    return path.read_text(encoding="utf-8")
-
-
 def default_criteria_registry() -> ApprovalCriteriaRegistry:
     registry = ApprovalCriteriaRegistry()
     for tool_id, action, filename in (
@@ -35,12 +29,11 @@ def default_criteria_registry() -> ApprovalCriteriaRegistry:
         ("git", "stash_drop", "git_stash_drop.md"),
         ("git", "stash_clear", "git_stash_clear.md"),
     ):
-        text = _load_markdown_file(_CRITERIA_DIR / filename)
         registry.register(
             ApprovalCriteria(
                 tool_id=tool_id,
                 action=action,
-                criteria_text=text,
+                criteria_text=(_CRITERIA_DIR / filename).read_text(encoding="utf-8"),
                 metadata={"file": filename},
             )
         )
