@@ -290,6 +290,7 @@ def test_async_wake_child_task_and_learning_candidate_are_review_gated(
     assert resumed is not None
     assert resumed.active is True
     assert ledger.summary_for_run(resumed.run_id).evidence_refs == ("job:1",)
+    assert ledger.list_for_run(resumed.run_id)[-1].next_instruction == ""
 
     child_step = build_child_task_step(
         state=resumed,
