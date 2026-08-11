@@ -38,9 +38,7 @@ class Option:
     description: str | None = None
 
     def __str__(self) -> str:
-        if self.description:
-            return f"{self.label} - {self.description}"
-        return self.label
+        return f"{self.label} - {self.description}" if self.description else self.label
 
 
 class InteractionMode(Enum):
@@ -71,8 +69,6 @@ def resolve_interaction_mode(
 ) -> InteractionMode:
     """Resolve a channel name to the compatibility interaction mode enum."""
     normalized = str(channel_name or "").strip().lower()
-    if not normalized:
-        return default
     return _CHANNEL_MODE_COMPAT_MAP.get(normalized, default)
 
 

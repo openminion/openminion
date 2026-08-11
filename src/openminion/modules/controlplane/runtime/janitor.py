@@ -46,12 +46,11 @@ class ControlPlaneJanitor:
     dry_run: bool = False
 
     def run_once(self) -> ControlPlaneJanitorResult:
-        plans = _delete_plans(self.policy)
         deleted: dict[str, int] = {}
         expired = self._expire_overdue_wizards()
         if expired:
             deleted["cp_wizard_sessions_expired"] = expired
-        for table, sql, params in plans:
+        for table, sql, params in _delete_plans(self.policy):
             deleted[table] = self._count_or_delete(sql, params=params)
         result = ControlPlaneJanitorResult(deleted=deleted, dry_run=self.dry_run)
         emit_audit_event(
@@ -255,8 +254,7 @@ def _run_awaitable_sync(awaitable: Any) -> Any:
 
 
 def _count_sql_for_delete(delete_sql: str) -> str:
-    table = delete_sql.split(" FROM ", 1)[1].split(" WHERE ", 1)[0].strip()
-    where = delete_sql.split(" WHERE ", 1)[1]
+    table, where = delete_sql.split(" FROM ", 1)[1].split(" WHERE ", 1)
     return f"SELECT COUNT(*) AS count FROM {table} WHERE {where}"
 
 

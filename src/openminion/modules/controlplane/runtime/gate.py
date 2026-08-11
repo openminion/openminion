@@ -25,10 +25,7 @@ def assert_controlplane_lane(
     ingress: str,
     required_modules: tuple[str, ...] = (),
 ) -> None:
-    if not _MODULES_ONLY_CACHED:  # pragma: no cover - hardcoded True
-        return
-
-    if not required_modules:
+    if not _MODULES_ONLY_CACHED or not required_modules:  # pragma: no cover
         return
 
     failures: list[str] = []
