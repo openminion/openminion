@@ -4489,6 +4489,77 @@ class TestForceBudgetAnswerOnlyFinalization:
 
         assert _has_tool_evidence_for_answer_only(loop_ctx, st_loop) is True
 
+    def test_general_budget_closeout_requires_typed_status_after_tool_work(
+        self,
+    ) -> None:
+        prof = _profile(
+            allowed_tools=frozenset({"web.search"}),
+            profile_name="general_adaptive_v1",
+        )
+        st_loop = AdaptiveToolLoopState(
+            messages=[Message(role="user", content="Research both requested topics.")],
+            scratchpad={
+                "adaptive.tool_results": [
+                    {
+                        "tool_name": "web.search",
+                        "ok": True,
+                        "content": "First topic results",
+                        "data": {"results": ["first"]},
+                    }
+                ]
+            },
+            total_tool_calls=1,
+        )
+        state = _state()
+        state.goal = "Research both requested topics."
+        loop_ctx = _LoopContext(state=state)
+        runtime = _FakeRuntime(
+            responses=[
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="I will research the second topic next.",
+                    finish_reason="stop",
+                ),
+                LLMResponse(
+                    ok=True,
+                    provider="fake",
+                    model="m",
+                    output_text="",
+                    finalization_status={
+                        "status": "incomplete",
+                        "reasoning": "Only the first topic was researched.",
+                        "remaining_work": "Research the second topic.",
+                    },
+                    finish_reason="stop",
+                ),
+            ]
+        )
+
+        result = _force_budget_answer_only_finalization(
+            loop_ctx=loop_ctx,
+            profile=prof,
+            loop_state=st_loop,
+            runtime=runtime,
+            model="m",
+            max_output_tokens=100,
+            metadata=None,
+            allowed_tools=frozenset({"web.search"}),
+            public_mode_tag="act",
+        )
+
+        assert result is not None
+        assert result.termination_reason == ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
+        assert result.finalization_status is not None
+        assert result.finalization_status["remaining_work"] == (
+            "Research the second topic."
+        )
+        assert len(runtime.calls) == 2
+        assert "Append finalization_status" in str(
+            runtime.calls[0]["messages"][-1].content
+        )
+
     def test_budget_exhaustion_forces_answer_only_from_prior_tool_evidence(
         self,
     ) -> None:
@@ -6363,6 +6434,10 @@ def test_loop_profile_llm_cap_forces_answer_only_when_tool_work_exists() -> None
                 provider="fake",
                 model="m",
                 output_text="SOURCES\n- gathered\n\nCHANGES\n- applied\n\nTESTS\n- pass",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The tool result completed the request.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -6744,6 +6819,67 @@ def test_loop_tool_request_call_activates_inactive_tool() -> None:
         requestable_tool_specs=_tool_specs("extra.tool"),
     )
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+
+
+def test_loop_keeps_requested_tools_active_across_later_requests() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="r1",
+                        name="tool.request",
+                        arguments={"name": "extra.one"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="",
+                tool_calls=[
+                    ToolCall(
+                        id="r2",
+                        name="tool.request",
+                        arguments={"name": "extra.two"},
+                    )
+                ],
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                output_text="done after activation",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    outcome = run_adaptive_tool_loop(
+        _LoopContext(state=_state(), outcomes=[]),
+        profile=_profile(allowed_tools=frozenset({"file.read"})),
+        runtime=runtime,
+        model="m",
+        initial_messages=[Message(role="user", content="request two tools")],
+        tool_specs=_tool_specs("file.read"),
+        requestable_tool_specs=_tool_specs("extra.one", "extra.two"),
+    )
+
+    final_messages = runtime.calls[-1]["messages"]
+    inactive_directories = [
+        str(message.content)
+        for message in final_messages
+        if "[INACTIVE TOOL DIRECTORY]" in str(message.content)
+    ]
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert inactive_directories
+    assert "- extra.one:" not in inactive_directories[-1]
 
 
 def test_loop_provider_parallel_capacity_drives_dispatch() -> None:

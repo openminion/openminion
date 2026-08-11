@@ -7458,6 +7458,10 @@ def test_general_profile_forces_answer_only_finalization_after_tool_budget_denia
                 provider="fake",
                 model="fake-model",
                 output_text="Here are the top three snippet-backed stories.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The available evidence supports the summary.",
+                },
                 finish_reason="stop",
             ),
         ]
@@ -7549,6 +7553,10 @@ def test_general_profile_forces_answer_only_finalization_after_tool_call_cap() -
                 provider="fake",
                 model="fake-model",
                 output_text="Here are the top three snippet-backed stories.",
+                finalization_status={
+                    "status": "final_answer",
+                    "reasoning": "The available evidence supports the summary.",
+                },
                 finish_reason="stop",
             ),
         ]

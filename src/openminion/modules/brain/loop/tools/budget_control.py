@@ -53,6 +53,7 @@ from .contracts import (
     AdaptiveToolLoopProfile,
     AdaptiveToolLoopState,
 )
+from .direct_tool import _direct_tool_turn_active
 from .evidence import (
     _is_substantive_tool_name,
     _loop_tool_result_payloads,
@@ -261,6 +262,7 @@ def _max_steps_hint_from_state(loop_ctx: AdaptiveToolLoopContext) -> int | None:
 def _answer_only_finalization_contract_requested(
     loop_ctx: AdaptiveToolLoopContext,
     loop_state: AdaptiveToolLoopState,
+    profile: AdaptiveToolLoopProfile,
 ) -> bool:
     texts = [
         str(getattr(message, "content", "") or "")
@@ -275,7 +277,13 @@ def _answer_only_finalization_contract_requested(
                 str(getattr(state, "goal", "") or ""),
             ]
         )
-    return any(STATE_KEY_FINALIZATION_STATUS in text for text in texts)
+    if any(STATE_KEY_FINALIZATION_STATUS in text for text in texts):
+        return True
+    return (
+        _general_profile_name(profile)
+        and not _direct_tool_turn_active(loop_state)
+        and bool(_substantive_tool_results(loop_state))
+    )
 
 
 def _ensure_effective_cap_initialized(
@@ -564,6 +572,9 @@ def _force_budget_answer_only_finalization(
     public_mode_tag: str,
 ) -> AdaptiveToolLoopOutcome | None:
     has_tool_evidence = _has_tool_evidence_for_answer_only(loop_ctx, loop_state)
+    contract_requested = _answer_only_finalization_contract_requested(
+        loop_ctx, loop_state, profile
+    )
     if not _general_profile_name(profile) and not has_tool_evidence:
         return None
     if not _llm_budget_available_for_answer_only(
@@ -601,6 +612,13 @@ def _force_budget_answer_only_finalization(
                     ),
                 )
             )
+    finalization_instruction = (
+        " Append finalization_status with status=final_answer only if the answer "
+        "fully completes the original request; otherwise use status=incomplete "
+        "or status=blocked."
+        if contract_requested
+        else ""
+    )
     loop_state.messages.append(
         Message(
             role="system",
@@ -612,8 +630,8 @@ def _force_budget_answer_only_finalization(
                 "do not say you will continue, and preserve any explicit output "
                 "format, headings, citation requirements, and exact-date "
                 "requirements the user requested. If evidence is partial, say "
-                "that briefly and still answer. If the turn has a typed "
-                "finalization_status contract, preserve it."
+                "that briefly and still answer."
+                f"{finalization_instruction}"
             ),
         )
     )
@@ -724,9 +742,7 @@ def _force_budget_answer_only_finalization(
         final_text=final_text,
         finalization_status=finalization_status,
         has_tool_evidence=has_tool_evidence,
-        contract_requested=_answer_only_finalization_contract_requested(
-            loop_ctx, loop_state
-        ),
+        contract_requested=contract_requested,
     )
 
 

@@ -306,7 +306,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
     requestable_specs: list[Any]
     requestable_specs_by_name: dict[str, Any]
     active_tool_specs: list[Any]
-    active_tool_names: list[str]
+    active_tool_names: set[str]
     allowed_tools: frozenset[str]
     seeded_queue: list[Any]
     loop_state: AdaptiveToolLoopState
@@ -554,7 +554,7 @@ class _AdaptiveLoopRunner(AdaptiveLoopRunnerPostprocessMixin):
                 allowed_tools=self.allowed_tools,
                 public_mode_tag=self.public_mode_tag,
                 active_tool_specs=self.active_tool_specs,
-                active_tool_names=set(self.active_tool_names),
+                active_tool_names=self.active_tool_names,
                 requestable_specs=self.requestable_specs,
                 requestable_specs_by_name=self.requestable_specs_by_name,
                 tool_request_enabled=self.tool_request_enabled,
