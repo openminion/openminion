@@ -100,9 +100,9 @@ class GraphifyKnowledgeGraphSource:
         graph_path = _option_text(self._options, GRAPHIFY_OPTION_GRAPH_PATH)
         has_command = bool(_command_args(self._options))
         ok = bool(self._payload) or has_command
-        detail = "ready" if ok else "graph artifact missing and no command configured"
-        if self._load_error:
-            detail = self._load_error
+        detail = self._load_error or (
+            "ready" if ok else "graph artifact missing and no command configured"
+        )
         return KnowledgeGraphHealth(
             provider=self.name,
             layer=self.layer,
@@ -349,10 +349,9 @@ def _option_text(options: Mapping[str, Any], key: str) -> str:
 def _timeout_seconds(options: Mapping[str, Any]) -> float:
     raw = options.get(GRAPHIFY_OPTION_TIMEOUT_SECONDS, DEFAULT_GRAPHIFY_TIMEOUT_SECONDS)
     try:
-        parsed = float(raw)
+        return max(float(raw), 0.1)
     except (TypeError, ValueError):
         return DEFAULT_GRAPHIFY_TIMEOUT_SECONDS
-    return max(parsed, 0.1)
 
 
 def _command_args(options: Mapping[str, Any]) -> tuple[str, ...]:

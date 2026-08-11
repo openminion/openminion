@@ -396,10 +396,9 @@ def _pragmagraph_timeout_seconds(options: Mapping[str, Any]) -> float:
         PRAGMAGRAPH_OPTION_TIMEOUT_SECONDS, DEFAULT_GRAPHIFY_TIMEOUT_SECONDS
     )
     try:
-        parsed = float(raw)
+        return max(float(raw), 0.1)
     except (TypeError, ValueError):
         return DEFAULT_GRAPHIFY_TIMEOUT_SECONDS
-    return max(parsed, 0.1)
 
 
 def _pragmagraph_command_args(options: Mapping[str, Any]) -> tuple[str, ...]:
