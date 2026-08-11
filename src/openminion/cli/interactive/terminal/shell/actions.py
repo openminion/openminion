@@ -853,11 +853,17 @@ async def _run_shell_escape(
 def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
     """Print the terminal CLI greeter panel."""
     from openminion import __version__
-    from openminion.cli.presentation.header import shorten_working_dir
+    from openminion.cli.presentation.header import (
+        format_runtime_adapter,
+        format_runtime_provider,
+        shorten_working_dir,
+    )
     from rich.panel import Panel
 
     agent = str(getattr(runtime, "agent_id", "openminion") or "openminion")
     model = _runtime_label(runtime)
+    provider = format_runtime_provider(runtime)
+    adapter = format_runtime_adapter(runtime)
     cwd_label = shorten_working_dir(working_dir) or working_dir or "."
     body_lines = [
         Text.assemble(
@@ -874,22 +880,37 @@ def _push_greeter(console: Console, *, runtime: Any, working_dir: str) -> None:
             ("", ""),
         ),
         Text.assemble(
-            ("model:      ", _MUTED_STYLE),
+            ("provider:    ", _MUTED_STYLE),
+            (provider, _SYSTEM_STYLE),
+        ),
+        Text.assemble(
+            ("model:       ", _MUTED_STYLE),
             (model, _SYSTEM_STYLE),
         ),
-        Text.assemble(
-            ("directory:  ", _MUTED_STYLE),
-            (cwd_label, _SYSTEM_STYLE),
-        ),
-        Text.assemble(
-            ("agent:      ", _MUTED_STYLE),
-            (agent, _SYSTEM_STYLE),
-        ),
     ]
+    if adapter:
+        body_lines.append(
+            Text.assemble(
+                ("API adapter: ", _MUTED_STYLE),
+                (adapter, _SYSTEM_STYLE),
+            )
+        )
+    body_lines.extend(
+        [
+            Text.assemble(
+                ("directory:   ", _MUTED_STYLE),
+                (cwd_label, _SYSTEM_STYLE),
+            ),
+            Text.assemble(
+                ("agent:       ", _MUTED_STYLE),
+                (agent, _SYSTEM_STYLE),
+            ),
+        ]
+    )
     project_context = getattr(runtime, "project_context", None)
     if project_context is not None:
         context_bits = [
-            ("context:    ", _MUTED_STYLE),
+            ("context:     ", _MUTED_STYLE),
             (f"{project_context.display_name}", _SYSTEM_STYLE),
             ("  ", ""),
             (f"({project_context.size_bytes} bytes)", _MUTED_STYLE),

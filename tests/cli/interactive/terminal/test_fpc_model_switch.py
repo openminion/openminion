@@ -21,7 +21,13 @@ class _StubAPIRuntime:
         self.config = SimpleNamespace(
             providers=SimpleNamespace(
                 anthropic=SimpleNamespace(model=anthropic_model),
-                openai=SimpleNamespace(model=openai_model),
+                openai=SimpleNamespace(
+                    model=openai_model,
+                    provider_identity={
+                        "service_vendor": "nvidia",
+                        "transport_adapter": "openai_chat",
+                    },
+                ),
                 openrouter=SimpleNamespace(model="openai/gpt-4.1-mini"),
                 cerebras=SimpleNamespace(model="gpt-oss-120b"),
                 groq=SimpleNamespace(model="llama-3.1-70b"),
@@ -158,6 +164,26 @@ def test_provider_only_switch_inherits_provider_default_model() -> None:
     assert rt.model_name == "gpt-4.1-mini"
 
 
+def test_provider_identity_separates_service_and_transport_adapter() -> None:
+    rt = _make_runtime()
+    rt.switch_model("openai/google/gemma-4-31b-it")
+
+    assert rt.model_name == "google/gemma-4-31b-it"
+    assert rt.service_vendor_name == "nvidia"
+    assert rt.transport_adapter_name == "openai_chat"
+
+
+def test_provider_identity_uses_canonical_translation_when_not_configured() -> None:
+    rt = _make_runtime()
+    provider_cfg = rt._rt.config.providers.openai
+    provider_cfg.provider_identity = {}
+    provider_cfg.base_url = "https://api.minimax.io/v1"
+    rt.switch_model("openai/MiniMax-M2.7")
+
+    assert rt.service_vendor_name == "minimax"
+    assert rt.transport_adapter_name == "openai_chat"
+
+
 def test_switch_model_is_session_scoped() -> None:
     rt1 = _make_runtime()
     rt1.switch_model("openai")
@@ -173,7 +199,9 @@ def test_render_model_status_shows_current_and_table() -> None:
     console = Console(file=buf, force_terminal=False, width=120)
     _render_model_status(runtime=rt, console=console)
     out = buf.getvalue()
-    assert "current:" in out
+    assert "current model:" in out
+    assert "provider: anthropic" in out
+    assert "Config key" in out
     assert "anthropic" in out
     assert "openai" in out
     assert "Switch with" in out

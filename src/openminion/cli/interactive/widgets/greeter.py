@@ -6,7 +6,12 @@ from openminion.cli.constants import (
     OPENMINION_FOCUS_EXAMPLE_PROMPTS_ENV,
     OPENMINION_FOCUS_GREETING_ENV,
 )
-from openminion.cli.presentation.header import shorten_working_dir
+from openminion.cli.presentation.header import (
+    format_runtime_adapter,
+    format_runtime_label,
+    format_runtime_provider,
+    shorten_working_dir,
+)
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 
 
@@ -33,9 +38,11 @@ def build_greeter_message(
     )
     cwd_short = shorten_working_dir(str(working_dir or "")) or "."
     agent_name = str(getattr(runtime, "agent_id", "") or "").strip() or "(unbound)"
-    provider = str(getattr(runtime, "provider_name", "") or "").strip()
-    model = str(getattr(runtime, "model_name", "") or "").strip()
-    runtime_label = f"{provider}/{model}" if provider and model else model or "(no model)"
+    runtime_label = format_runtime_label(runtime)
+    if runtime_label == "—":
+        runtime_label = "(no model)"
+    provider = format_runtime_provider(runtime)
+    adapter = format_runtime_adapter(runtime)
     theme_label = str(theme_name or "").strip().lower() or "dark"
     raw_examples = str(env.get(OPENMINION_FOCUS_EXAMPLE_PROMPTS_ENV, "") or "").strip()
     if raw_examples:
@@ -49,6 +56,10 @@ def build_greeter_message(
         "How can I help today?",
         f"  {cwd_short} · {agent_name}/{runtime_label} · theme: {theme_label}",
     ]
+    connection = f"  provider: {provider}"
+    if adapter:
+        connection += f" · API adapter: {adapter}"
+    lines.append(connection)
     project_context = getattr(runtime, "project_context", None)
     if project_context is not None:
         lines.append(

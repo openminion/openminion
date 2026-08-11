@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from openminion.cli.presentation.header import format_runtime_label
+
 
 def _runtime_label(runtime: Any) -> str:
-    provider = str(getattr(runtime, "provider_name", "") or "").strip()
-    model = str(getattr(runtime, "model_name", "") or "").strip()
-    if provider and model:
-        return f"{provider}/{model}"
-    return model or provider or "—"
+    return format_runtime_label(runtime)

@@ -16,11 +16,15 @@ class _StubRuntime:
         agent_id: str = "test-agent",
         provider_name: str = "openai",
         model_name: str = "gpt-4",
+        service_vendor_name: str = "openai",
+        transport_adapter_name: str = "",
         project_context: ProjectContextInfo | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.provider_name = provider_name
         self.model_name = model_name
+        self.service_vendor_name = service_vendor_name
+        self.transport_adapter_name = transport_adapter_name
         self.project_context = project_context
 
 
@@ -50,7 +54,25 @@ def test_greeter_contains_agent_label_and_value() -> None:
 def test_greeter_contains_model_label_and_value() -> None:
     out = _capture_greeter()
     assert "model:" in out
-    assert "openai/gpt-4" in out
+    assert "gpt-4" in out
+    assert "openai/gpt-4" not in out
+
+
+def test_greeter_separates_model_service_and_api() -> None:
+    runtime = _StubRuntime(
+        model_name="google/gemma-4-31b-it",
+        service_vendor_name="nvidia",
+        transport_adapter_name="openai_chat",
+    )
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    _push_greeter(console, runtime=runtime, working_dir="/tmp/project")
+    out = buf.getvalue()
+
+    assert "provider:    nvidia" in out
+    assert "model:       google/gemma-4-31b-it" in out
+    assert "API adapter: OpenAI-compatible" in out
+    assert "openai/google/gemma-4-31b-it" not in out
 
 
 def test_greeter_contains_cwd() -> None:

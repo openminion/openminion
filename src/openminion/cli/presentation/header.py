@@ -63,11 +63,21 @@ def format_clock(now: datetime | None = None) -> str:
 
 
 def format_runtime_label(runtime: Any) -> str:
-    provider = str(getattr(runtime, "provider_name", "") or "").strip()
     model = str(getattr(runtime, "model_name", "") or "").strip()
-    if provider and model:
-        return f"{provider}/{model}"
-    return model or provider or "—"
+    return model or "—"
+
+
+def format_runtime_provider(runtime: Any) -> str:
+    service = str(getattr(runtime, "service_vendor_name", "") or "").strip()
+    provider = str(getattr(runtime, "provider_name", "") or "").strip()
+    return service or provider or "—"
+
+
+def format_runtime_adapter(runtime: Any) -> str:
+    adapter = str(getattr(runtime, "transport_adapter_name", "") or "").strip()
+    if adapter == "openai_chat":
+        return "OpenAI-compatible"
+    return adapter
 
 
 @dataclass
@@ -102,7 +112,9 @@ class RuntimeHeaderContext:
 __all__ = [
     "RuntimeHeaderContext",
     "format_clock",
+    "format_runtime_adapter",
     "format_runtime_label",
+    "format_runtime_provider",
     "shorten_session_id",
     "shorten_working_dir",
 ]

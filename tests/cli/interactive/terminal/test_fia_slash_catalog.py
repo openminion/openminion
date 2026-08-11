@@ -327,7 +327,7 @@ def test_prompt_loop_routes_output_slashes_through_transcript(
     )
 
     out = buf.getvalue()
-    assert "current: openai/MiniMax-M2.7" in out
+    assert "current model: MiniMax-M2.7" in out
     assert "Configured model" in out
     assert transcript._messages[-1].kind.value == "system"
 

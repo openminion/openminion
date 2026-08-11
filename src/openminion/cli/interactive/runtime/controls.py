@@ -19,6 +19,7 @@ from openminion.modules.memory.interfaces import (
     ListQueryOptions,
     RecordOrder,
 )
+from openminion.modules.llm.config import resolve_provider_identity_translation
 
 _PROVIDER_CONFIG_ALIASES = {
     "claude": "anthropic",
@@ -475,6 +476,39 @@ class RuntimeControlsMixin:
         _, model_name = self._provider_model_identity()
         return model_name
 
+    @property
+    def service_vendor_name(self) -> str:
+        provider_name, _ = self._provider_model_identity()
+        provider_identity = self._provider_identity(provider_name)
+        return str(provider_identity.get("service_vendor") or provider_name).strip()
+
+    @property
+    def transport_adapter_name(self) -> str:
+        provider_name, _ = self._provider_model_identity()
+        provider_identity = self._provider_identity(provider_name)
+        return str(provider_identity.get("transport_adapter") or "").strip()
+
+    def _provider_identity(self, provider_name: str) -> Mapping[str, Any]:
+        provider_cfg = self._provider_config(provider_name)
+        identity = getattr(provider_cfg, "provider_identity", None)
+        if isinstance(identity, Mapping) and identity:
+            return identity
+        return resolve_provider_identity_translation(
+            provider_name,
+            model=str(getattr(provider_cfg, "model", "") or "").strip(),
+            base_url=str(getattr(provider_cfg, "base_url", "") or "").strip(),
+        )
+
+    def _provider_config(self, provider_name: str) -> Any:
+        providers_cfg = getattr(getattr(self._rt, "config", None), "providers", None)
+        provider_key = str(provider_name or "").strip().lower()
+        provider_key = _PROVIDER_CONFIG_ALIASES.get(provider_key, provider_key)
+        return (
+            getattr(providers_cfg, provider_key, None)
+            if providers_cfg is not None and provider_key
+            else None
+        )
+
     def _provider_model_identity(self) -> tuple[str, str]:
         try:
             profile = self._rt.resolve_agent_profile(self.agent_id)
@@ -498,14 +532,7 @@ class RuntimeControlsMixin:
         if self._model_override_model:
             model_name = self._model_override_model
 
-        providers_cfg = getattr(getattr(self._rt, "config", None), "providers", None)
-        provider_key = provider_name.lower()
-        provider_key = _PROVIDER_CONFIG_ALIASES.get(provider_key, provider_key)
-        provider_cfg = (
-            getattr(providers_cfg, provider_key, None)
-            if providers_cfg is not None and provider_key
-            else None
-        )
+        provider_cfg = self._provider_config(provider_name)
         if not model_name:
             model_name = str(getattr(provider_cfg, "model", "") or "").strip()
         return provider_name, model_name

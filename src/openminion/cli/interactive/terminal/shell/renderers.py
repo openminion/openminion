@@ -6,6 +6,10 @@ from rich.console import Console
 from rich.text import Text
 
 from openminion.cli.status import format_token_usage_summary
+from openminion.cli.presentation.header import (
+    format_runtime_adapter,
+    format_runtime_provider,
+)
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
 from .labels import _runtime_label
@@ -68,6 +72,8 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
     """Render the current agent, model, session, cwd, and usage snapshot."""
     agent = str(getattr(runtime, "agent_id", "") or "—")
     model = _runtime_label(runtime)
+    provider = format_runtime_provider(runtime)
+    adapter = format_runtime_adapter(runtime)
     session_id = str(getattr(runtime, "session_id", "") or "—")
     usage_summary = ""
     snapshot_getter = getattr(runtime, "token_usage_snapshot", None)
@@ -78,7 +84,10 @@ def _render_status_block(*, runtime: Any, console: Console, working_dir: str) ->
             usage_summary = ""
     console.print(Text("Status:", style="bold"))
     console.print(Text(f"  agent: {agent}"))
+    console.print(Text(f"  provider: {provider}"))
     console.print(Text(f"  model: {model}"))
+    if adapter:
+        console.print(Text(f"  API adapter: {adapter}"))
     console.print(Text(f"  session: {session_id}", style=_MUTED_STYLE))
     console.print(Text(f"  cwd: {working_dir}", style=_MUTED_STYLE))
     if usage_summary:
@@ -134,20 +143,20 @@ def _render_model_status(*, runtime: Any, console: Console) -> None:
     except Exception as exc:
         console.print(Text(f"(/model: error — {exc})", style=_ERR_STYLE))
         return
-    provider_name = str(getattr(runtime, "provider_name", "") or "")
-    model_name = str(getattr(runtime, "model_name", "") or "")
-    header = (
-        f"current: {provider_name}/{model_name}"
-        if model_name
-        else (f"current: {provider_name or '(unset)'}")
-    )
-    console.print(Text(header, style="bold"))
+    model_name = _runtime_label(runtime)
+    provider = format_runtime_provider(runtime)
+    adapter = format_runtime_adapter(runtime)
+    console.print(Text(f"current model: {model_name}", style="bold"))
+    connection = f"provider: {provider}"
+    if adapter:
+        connection += f" · API adapter: {adapter}"
+    console.print(Text(connection, style=_MUTED_STYLE))
     if not rows:
         console.print(Text("(no providers configured)", style=_MUTED_ITALIC_STYLE))
         return
     table = Table(show_header=True, header_style="bold", expand=False)
     table.add_column("")
-    table.add_column("Provider", style=_INFO_STYLE)
+    table.add_column("Config key", style=_INFO_STYLE)
     table.add_column("Configured model")
     for name, configured_model, is_active in rows:
         marker = "◆" if is_active else " "
