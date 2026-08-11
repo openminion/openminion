@@ -15,8 +15,6 @@ from .schemas import CompressionPolicy, CompressionRequest
 
 
 def resolve_compress_provider_preference() -> str:
-    """Return the operator's compress-provider preference."""
-
     env = resolve_environment_config()
     raw = env.get(COMPRESS_PROVIDER_PREFERENCE_ENV, "").strip().lower()
     if raw in COMPRESS_PROVIDER_PREFERENCE_ALLOWED:
@@ -26,8 +24,6 @@ def resolve_compress_provider_preference() -> str:
 
 @dataclass(frozen=True)
 class MethodResolution:
-    """Result of resolving prepass/main/fallback methods."""
-
     prepass_method: str | None
     main_method: str
     fallback_method: str
@@ -38,8 +34,6 @@ class MethodResolution:
 
 
 class PolicyResolver:
-    """Deterministically resolve compressor methods per policy rules."""
-
     def __init__(
         self,
         registry: MethodRegistry,
@@ -76,18 +70,15 @@ class PolicyResolver:
             warnings=tuple(warnings),
         )
 
-    # Internal helpers -----------------------------------------------------
     def _resolve_prepass(
         self, policy: CompressionPolicy
     ) -> tuple[str | None, list[str]]:
-        warnings: list[str] = []
         method_id = policy.method_prepass
         if not method_id or method_id.lower() == "none":
-            return None, warnings
+            return None, []
         if not self._registry.is_prepass_available(method_id):
-            warnings.append(f"prepass_unavailable:{method_id}")
-            return None, warnings
-        return method_id, warnings
+            return None, [f"prepass_unavailable:{method_id}"]
+        return method_id, []
 
     def _resolve_main(
         self,
@@ -132,9 +123,9 @@ class PolicyResolver:
         return baseline, True, attempted, unavailable
 
     def _resolve_fallback(self, policy: CompressionPolicy) -> str:
-        fallback_candidate = (
-            policy.fallback_method_id or self._registry.baseline_method_id
+        candidate = policy.fallback_method_id or self._registry.baseline_method_id
+        return (
+            candidate
+            if self._registry.is_main_available(candidate)
+            else self._registry.baseline_method_id
         )
-        if self._registry.is_main_available(fallback_candidate):
-            return fallback_candidate
-        return self._registry.baseline_method_id
