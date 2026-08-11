@@ -33,8 +33,6 @@ def tool_inventory_lines(
     seen: set[str] = set()
     lines: list[str] = []
     for item in list(constraints.runtime_tool_schemas) + list(prompt_tool_schemas):
-        if not isinstance(item, dict):
-            continue
         name = str(item.get("name") or item.get("tool_name") or "").strip()
         if not name or name in seen:
             continue
@@ -141,7 +139,7 @@ def _mode_context_lines(
 
 
 def _gateway_block(runtime: _SegmentAssemblyRuntime, request: BuildPackRequest) -> str:
-    gateway_ctx = str(getattr(request, "gateway_system_context", "") or "").strip()
+    gateway_ctx = request.gateway_system_context.strip()
     if not gateway_ctx:
         return ""
     return runtime.fit_section(

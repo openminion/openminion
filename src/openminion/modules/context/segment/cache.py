@@ -1,9 +1,9 @@
 """Cache metadata helpers for context segments."""
 
-from typing import Any
+from ..schemas import ContextSegment
 
 
-def segment_cache_fields(bucket: str, content_hash: str) -> dict[str, Any]:
+def segment_cache_fields(bucket: str, content_hash: str) -> dict[str, object]:
     if bucket != "static_prefix" or not content_hash:
         return {"cache_key": "", "cache_invalidation_refs": []}
     return {
@@ -12,10 +12,8 @@ def segment_cache_fields(bucket: str, content_hash: str) -> dict[str, Any]:
     }
 
 
-def segment_render_cache_metadata(segment: Any) -> dict[str, Any]:
+def segment_render_cache_metadata(segment: ContextSegment) -> dict[str, object]:
     return {
-        "cache_key": str(getattr(segment, "cache_key", "") or ""),
-        "cache_invalidation_refs": list(
-            getattr(segment, "cache_invalidation_refs", []) or []
-        ),
+        "cache_key": segment.cache_key,
+        "cache_invalidation_refs": list(segment.cache_invalidation_refs),
     }
