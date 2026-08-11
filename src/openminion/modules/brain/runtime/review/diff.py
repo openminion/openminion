@@ -166,8 +166,6 @@ def _parse_diff_files(text: str) -> list[dict]:
                     "max_hunk_removed": 0,
                     "todo_lines": [],
                 }
-            else:
-                pass
             continue
         if _HUNK_HEADER_RE.match(raw):
             if current is not None:
@@ -198,16 +196,14 @@ def _parse_diff_files(text: str) -> list[dict]:
 
 
 def _is_test_path(path: str) -> bool:
-    return bool(_TEST_PATH_RE.search(path or ""))
+    return bool(_TEST_PATH_RE.search(path))
 
 
 def _is_doc_path(path: str) -> bool:
-    lower = (path or "").lower()
-    if lower.endswith((".md", ".rst", ".txt")):
-        return True
-    if "/docs/" in lower or lower.startswith("docs/"):
-        return True
-    return False
+    lower = path.lower()
+    return lower.endswith((".md", ".rst", ".txt")) or (
+        "/docs/" in lower or lower.startswith("docs/")
+    )
 
 
 _SEVERITY_RANK = {"ok": 0, "warn": 1, "block": 2}
