@@ -14,15 +14,11 @@ class CommandRegistryMemorySkillMixin:
         if self.memory_client is not None and hasattr(
             self.memory_client, "query_facts"
         ):
-            limit = 10
-            if command.args:
-                try:
-                    limit = max(1, int(command.args[0]))
-                except (TypeError, ValueError):
-                    limit = 10
-            query = ""
-            if len(command.args) > 1:
-                query = " ".join(command.args[1:]).strip()
+            try:
+                limit = max(1, int(command.args[0])) if command.args else 10
+            except (TypeError, ValueError):
+                limit = 10
+            query = " ".join(command.args[1:]).strip()
             try:
                 rows = self.memory_client.query_facts(
                     session_id=ctx.session_id,
@@ -240,12 +236,8 @@ class CommandRegistryMemorySkillMixin:
                 lines.append(f"  - {mod}: {msg} [at {timestamp}]")
 
         if not any(
-            [
-                module_info["built_in"],
-                module_info["loaded"],
-                module_info["shadowed"],
-                module_info["broken"],
-            ]
+            module_info[key]
+            for key in ("built_in", "loaded", "shadowed", "broken")
         ):
             lines.append("\nNo modules detected.")
 

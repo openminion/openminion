@@ -78,10 +78,8 @@ def payload_type(outbound: OutboundPayload) -> str:
 
 
 def _coerce_str(value: Any, *, default: str) -> str:
-    normalized = str(value or "").strip()
-    return normalized or default
+    return str(value or "").strip() or default
 
 
 def _optional_str(value: Any) -> str | None:
-    normalized = str(value or "").strip()
-    return normalized or None
+    return str(value or "").strip() or None
