@@ -175,15 +175,10 @@ def resolve_default_render_budget(
 ) -> int:
     from .runtime.renderer import normalize_purpose
 
-    normalized = normalize_purpose(str(purpose))
+    normalized = normalize_purpose(purpose)
     budgets = identity_cfg.rendering.default_budgets
-    budget = budgets.get(normalized)
-    if budget is not None and int(getattr(budget, "max_tokens", 0) or 0) > 0:
-        return int(budget.max_tokens)
-    fallback = budgets.get("act")
-    if fallback is not None and int(getattr(fallback, "max_tokens", 0) or 0) > 0:
-        return int(fallback.max_tokens)
-    return 180
+    budget = budgets.get(normalized) or budgets.get("act")
+    return budget.max_tokens if budget is not None else 180
 
 
 def resolve_path(raw_path: str | Path) -> Path:

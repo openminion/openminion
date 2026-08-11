@@ -35,7 +35,7 @@ class IdentityBundle:
 
     @property
     def ok(self) -> bool:
-        return len(self.errors) == 0
+        return not self.errors
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -65,21 +65,9 @@ def load_identity_bundle(
     warnings: list[str] = []
     documents: list[IdentityDocument] = []
 
-    if not bundle_root.exists():
-        errors.append(f"identity bundle root not found: {bundle_root}")
-        return _build_bundle(
-            agent_id=normalized_agent_id,
-            bundle_root=bundle_root,
-            agent_document=None,
-            soul_document=None,
-            skills=(),
-            notes=(),
-            errors=tuple(errors),
-            warnings=tuple(warnings),
-            documents=(),
-        )
     if not bundle_root.is_dir():
-        errors.append(f"identity bundle root is not a directory: {bundle_root}")
+        reason = "not found" if not bundle_root.exists() else "is not a directory"
+        errors.append(f"identity bundle root {reason}: {bundle_root}")
         return _build_bundle(
             agent_id=normalized_agent_id,
             bundle_root=bundle_root,
@@ -204,8 +192,6 @@ def _case_insensitive_child(root: Path, name: str) -> Path:
             if child.name.lower() == normalized_name:
                 return child
     except OSError:
-        return candidate
-    if candidate.exists():
         return candidate
     return candidate
 

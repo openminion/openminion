@@ -12,11 +12,10 @@ def _dedupe_text_list(items: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for raw in items:
-        text = str(raw).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        out.append(text)
+        text = raw.strip()
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
     return out
 
 
@@ -144,15 +143,12 @@ class AgentProfile(BaseModel):
     def _optional_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        text = value.strip()
-        return text or None
+        return value.strip() or None
 
     @field_validator("allowed_capabilities")
     @classmethod
     def _normalize_optional_caps(cls, value: list[str] | None) -> list[str] | None:
-        if value is None:
-            return None
-        return _dedupe_text_list(value)
+        return None if value is None else _dedupe_text_list(value)
 
 
 class RoleSpecInput(BaseModel):

@@ -2,7 +2,6 @@ from collections.abc import Callable
 import logging
 import sys
 from pathlib import Path
-from typing import List
 
 try:
     from openminion.base.version import OPENMINION_VERSION
@@ -67,7 +66,6 @@ def _load_identity_ctl_config() -> IdentityCtlConfig:
 
 
 def command_module() -> "IdentityCommandModule":
-    """Factory function to create the identity command module."""
     from openminion.base.generated_paths import resolve_generated_state_path
     from openminion.modules.identity.constants import DEFAULT_IDENTITY_DB_FILENAME
 
@@ -96,21 +94,17 @@ class IdentityCommandModule(CommandModule):
 
     @property
     def name(self) -> str:
-        """Module name."""
         return "identity"
 
     @property
     def version(self) -> str:
-        """Module version."""
         return OPENMINION_VERSION
 
     @property
     def description(self) -> str:
-        """Module description."""
         return "Identity profile management commands"
 
-    def get_commands(self) -> List[CommandSpec]:
-        """Return list of identity-related command specifications."""
+    def get_commands(self) -> list[CommandSpec]:
         return [
             self._command_spec(
                 "identity.list",
@@ -262,7 +256,6 @@ class IdentityCommandModule(CommandModule):
     def handle_list(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the identity list command."""
         try:
             profiles = self._identity_ctl.list_profiles()
             if not profiles:
@@ -270,9 +263,7 @@ class IdentityCommandModule(CommandModule):
                     ok=True, text="No identity profiles found.", data={"profiles": []}
                 )
 
-            lines = ["Identity Profiles:"]
-            for profile in profiles:
-                lines.append(f"  - {profile.agent_id}")
+            lines = ["Identity Profiles:", *(f"  - {p.agent_id}" for p in profiles)]
 
             return CommandResult(
                 ok=True,
@@ -289,7 +280,6 @@ class IdentityCommandModule(CommandModule):
     def handle_show(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the identity show command."""
         if not command.args:
             return CommandResult(ok=False, text="Usage: /identity.show <agent_id>")
 
@@ -327,7 +317,6 @@ class IdentityCommandModule(CommandModule):
     def handle_upsert(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the identity upsert command."""
         if not command.args:
             return CommandResult(
                 ok=False, text="Usage: /identity.upsert <agent_id> [json_data]"
@@ -370,20 +359,17 @@ class IdentityCommandModule(CommandModule):
                 profile_dict = profile.dict()
                 _deep_update(profile_dict, update_obj)
                 updated_profile = AgentProfile.model_validate(profile_dict)
-                self._identity_ctl.upsert_profile(updated_profile)
-                return CommandResult(
-                    ok=True,
-                    text=f"Profile for {agent_id} updated successfully.",
-                    data=updated_profile.dict(),
-                )
-            update_obj.setdefault("agent_id", agent_id)
-            update_obj.setdefault("display_name", agent_id)
-            new_profile = AgentProfile.model_validate(update_obj)
-            self._identity_ctl.upsert_profile(new_profile)
+                message = f"Profile for {agent_id} updated successfully."
+            else:
+                update_obj.setdefault("agent_id", agent_id)
+                update_obj.setdefault("display_name", agent_id)
+                updated_profile = AgentProfile.model_validate(update_obj)
+                message = f"New profile for {agent_id} created successfully."
+            self._identity_ctl.upsert_profile(updated_profile)
             return CommandResult(
                 ok=True,
-                text=f"New profile for {agent_id} created successfully.",
-                data=new_profile.dict(),
+                text=message,
+                data=updated_profile.dict(),
             )
         except json.JSONDecodeError as e:
             return CommandResult(
@@ -401,7 +387,6 @@ class IdentityCommandModule(CommandModule):
     def handle_delete(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the identity delete command."""
         if not command.args:
             return CommandResult(ok=False, text="Usage: /identity.delete <agent_id>")
 
@@ -428,7 +413,6 @@ class IdentityCommandModule(CommandModule):
     def handle_render(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the identity render command."""
         if len(command.args) < 2:
             return CommandResult(
                 ok=False, text="Usage: /identity.render <agent_id> <purpose>"
@@ -451,7 +435,7 @@ class IdentityCommandModule(CommandModule):
                 f"Identity Snippet for: {agent_id}",
                 f"Purpose: {purpose}",
                 f"Max Tokens: {max_tokens}",
-                f"Actual Tokens used: {snippet.budget.used_tokens if snippet.budget else 'N/A'}",
+                f"Actual Tokens used: {snippet.budget.used_tokens}",
                 "=" * 40,
                 snippet.text,
             ]
@@ -461,15 +445,10 @@ class IdentityCommandModule(CommandModule):
                 "purpose": purpose,
                 "requested_purpose": requested_purpose,
                 "text": snippet.text,
-                "snippet_render_version": getattr(snippet, "render_version", None),
+                "snippet_render_version": snippet.render_version,
+                "used_tokens": snippet.budget.used_tokens,
+                "max_tokens": max_tokens,
             }
-            if snippet.budget:
-                data.update(
-                    {
-                        "used_tokens": snippet.budget.used_tokens,
-                        "max_tokens": max_tokens,
-                    }
-                )
             return CommandResult(
                 ok=True,
                 text="\n".join(lines),
@@ -485,7 +464,6 @@ class IdentityCommandModule(CommandModule):
     def handle_set_tone(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the quick tone set command."""
         if len(command.args) < 2:
             return CommandResult(
                 ok=False, text="Usage: /identity.set.tone <agent_id> <tone>"
@@ -526,7 +504,6 @@ class IdentityCommandModule(CommandModule):
     def handle_set_verbosity(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the quick verbosity set command."""
         if len(command.args) < 2:
             return CommandResult(
                 ok=False, text="Usage: /identity.set.verbosity <agent_id> <verbosity>"
@@ -559,7 +536,6 @@ class IdentityCommandModule(CommandModule):
     def handle_set_mission(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the quick mission statement set command."""
         if len(command.args) < 2:
             return CommandResult(
                 ok=False, text="Usage: /identity.set.mission <agent_id> <mission_text>"
@@ -587,17 +563,14 @@ class IdentityCommandModule(CommandModule):
     def handle_create_interactive(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the interactive identity create command."""
         try:
-            ui = getattr(ctx, "ui", None)
-            if not ui:
+            if not ctx.ui:
                 return CommandResult(
                     ok=False,
                     text="Interactive wizard requires UI context. Use in a chat interface that supports wizards.",
                 )
 
-            wizard_session_id = getattr(ctx, "wizard_session_id", None)
-            if wizard_session_id:
+            if ctx.wizard_session_id:
                 return CommandResult(
                     ok=False,
                     text="Already in a wizard session. Complete or cancel that session before starting a new one.",
@@ -619,22 +592,19 @@ class IdentityCommandModule(CommandModule):
     def handle_edit_interactive(
         self, command: ParsedCommand, ctx: ResolvedContext
     ) -> CommandResult:
-        """Handle the interactive identity edit command."""
         if not command.args:
             return CommandResult(ok=False, text="Usage: /identity.edit <agent_id>")
 
         agent_id = command.args[0]
 
         try:
-            ui = getattr(ctx, "ui", None)
-            if not ui:
+            if not ctx.ui:
                 return CommandResult(
                     ok=False,
                     text="Interactive wizard requires UI context. Use in a chat interface that supports wizards.",
                 )
 
-            wizard_session_id = getattr(ctx, "wizard_session_id", None)
-            if wizard_session_id:
+            if ctx.wizard_session_id:
                 return CommandResult(
                     ok=False,
                     text="Already in a wizard session. Complete or cancel that session before starting a new one.",
