@@ -126,7 +126,7 @@ def resolve_skill_pipeline(
         catalog=catalog,
     )
     effective_catalog = catalog_state.effective_catalog
-    context_budget = _infer_context_budget(
+    context_budget = infer_context_budget_tier(
         intent=normalized_intent,
         session_snapshot=session_snapshot,
         effective_skill_count=len(effective_catalog),
@@ -368,6 +368,7 @@ def _effective_catalog(
         == SKILL_SELECTION_AUTO
     )
     default_auto = not configured_auto and not configured_skills
+    auto_enabled = session_auto or configured_auto or default_auto
 
     catalog_by_id = _catalog_by_id(catalog)
     if configured_catalog:
@@ -378,7 +379,7 @@ def _effective_catalog(
             if skill_id.lower() in allowed
         }
 
-    if session_auto or configured_auto or default_auto:
+    if auto_enabled:
         base_ids = list(catalog_by_id.keys())
     else:
         base_ids = [
@@ -394,11 +395,7 @@ def _effective_catalog(
             continue
         seen.add(lowered)
         effective_ids.append(skill_id)
-        sources[skill_id] = (
-            "config"
-            if not (session_auto or configured_auto or default_auto)
-            else "catalog"
-        )
+        sources[skill_id] = "catalog" if auto_enabled else "config"
     for skill_id in session_loaded:
         lowered = skill_id.lower()
         if lowered in seen or lowered in session_unloaded:
@@ -416,7 +413,7 @@ def _effective_catalog(
             if skill_id in catalog_by_id
         ],
         sources,
-        bool(session_auto or configured_auto or default_auto),
+        auto_enabled,
     )
 
 
@@ -479,8 +476,8 @@ def apply_skill_selection_to_state(
 def _direct_capacity(catalog: list[dict[str, Any]]) -> int:
     if not catalog:
         return 0
-    average_tokens = sum(_catalog_entry_tokens(entry) for entry in catalog) / max(
-        1, len(catalog)
+    average_tokens = sum(_catalog_entry_tokens(entry) for entry in catalog) / len(
+        catalog
     )
     return max(1, int(_DIRECT_PROMPT_BUDGET_TOKENS / max(12.0, average_tokens)))
 
@@ -676,19 +673,6 @@ def _can_use_direct_catalog(
     return len(catalog) == 1
 
 
-def _infer_context_budget(
-    *,
-    intent: str,
-    session_snapshot: dict[str, Any],
-    effective_skill_count: int,
-) -> str:
-    return infer_context_budget_tier(
-        intent=intent,
-        session_snapshot=session_snapshot,
-        effective_skill_count=effective_skill_count,
-    )
-
-
 def _slice_value(raw_slice: Any, key: str, default: Any) -> Any:
     if isinstance(raw_slice, dict):
         return raw_slice.get(key, default)
@@ -697,9 +681,7 @@ def _slice_value(raw_slice: Any, key: str, default: Any) -> Any:
 
 def _slice_list(raw_slice: Any, key: str) -> list[Any]:
     value = _slice_value(raw_slice, key, [])
-    if isinstance(value, list):
-        return value
-    return []
+    return value if isinstance(value, list) else []
 
 
 __all__ = [

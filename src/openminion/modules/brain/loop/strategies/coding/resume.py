@@ -1,5 +1,3 @@
-"""Resume-state helpers for the coding strategy handler."""
-
 from typing import Any
 
 from openminion.modules.brain.constants import (
@@ -100,7 +98,7 @@ class CodingResumeMixin:
         payload: dict[str, Any],
         checkpoint_id: str | None,
     ) -> dict[str, Any]:
-        prepared = dict(payload or {})
+        prepared = dict(payload)
         if self._should_increment_resume_count(ctx, checkpoint_id=checkpoint_id):
             prepared["resume_count"] = int(prepared.get("resume_count", 0) or 0) + 1
         else:
@@ -171,7 +169,7 @@ class CodingResumeMixin:
         self._resume_prepared = False
 
     def _apply_resume_input(self: Any, ctx: ExecutionContext) -> None:
-        text = str(ctx.user_input or "").strip()
+        text = (ctx.user_input or "").strip()
         if text:
             self._loop_state.messages.append(Message(role="user", content=text))
 
@@ -218,7 +216,7 @@ class CodingResumeMixin:
         if command is None or ctx.user_input is None:
             return None
         runner, _profile = _runner_and_profile_from_context(ctx)
-        user_reply = str(ctx.user_input or "")
+        user_reply = ctx.user_input
         reply = _parse_confirmation_response(runner, user_reply)
         session_grant = is_session_confirmation_response(user_reply)
         if reply == BRAIN_CONFIRM_RESPONSE_DENY:

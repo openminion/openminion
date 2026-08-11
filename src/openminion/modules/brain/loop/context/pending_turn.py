@@ -25,7 +25,7 @@ def _pending_turn_context_snapshot(
         return None, 0
     try:
         stale_turns = int(state_inline.get("pending_turn_context_stale_turns", 0) or 0)
-    except Exception:  # noqa: BLE001
+    except (TypeError, ValueError):
         stale_turns = 0
     return dict(raw), stale_turns
 
@@ -48,11 +48,9 @@ def pending_turn_context_for_prompt(
     state_inline: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     pending_turn_context, stale_turns = _pending_turn_context_snapshot(state_inline)
-    if pending_turn_context is None:
-        return None
-    if stale_turns > PENDING_TURN_CONTEXT_MAX_STALE_TURNS:
-        return None
-    return pending_turn_context
+    if stale_turns <= PENDING_TURN_CONTEXT_MAX_STALE_TURNS:
+        return pending_turn_context
+    return None
 
 
 def sync_pending_turn_context_from_decision(

@@ -306,7 +306,7 @@ def trim_submit_output_history(
         return history
     if not history:
         return history
-    return history[-2:] if purpose == "decide" else []
+    return history if purpose == "decide" else []
 
 
 def raw_response_model_name(raw_response: Any) -> str:

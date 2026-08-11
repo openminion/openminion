@@ -10,7 +10,6 @@ from .context import (
     _AdaptiveLoopContextAdapter,
     _adaptive_loop_metadata,
     _direct_tool_turn_context,
-    _explicit_tool_name_mentions,
     _sync_adaptive_intent_tracking,
 )
 from .modes import ActLoopMode, _public_act_label, _public_act_tag
@@ -59,7 +58,6 @@ __all__ = [
     "_build_error_result",
     "_current_active_plan",
     "_direct_tool_turn_context",
-    "_explicit_tool_name_mentions",
     "_extract_failure_memories_for_outcome",
     "_memory_consolidation_profile_overrides",
     "_postprocess_adaptive_response_trailers",

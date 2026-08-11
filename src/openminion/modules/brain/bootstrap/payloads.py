@@ -24,10 +24,6 @@ def _normalize_sub_intents(value: Any) -> list[str]:
     return []
 
 
-def _normalize_rationale(value: Any) -> str:
-    return "" if value is None else str(value).strip()
-
-
 def normalize_decision_payload(*, runner: "BrainRunner", raw: Any) -> Any:
     del runner
     if not isinstance(raw, dict):
@@ -38,7 +34,8 @@ def normalize_decision_payload(*, runner: "BrainRunner", raw: Any) -> Any:
     normalized.pop(STRUCTURED_FAILURE_KIND_KEY, None)
     normalized.pop(STRUCTURED_HAS_TOOL_CALLS_KEY, None)
     normalized["sub_intents"] = _normalize_sub_intents(normalized.get("sub_intents"))
-    normalized["rationale"] = _normalize_rationale(normalized.get("rationale"))
+    rationale = normalized.get("rationale")
+    normalized["rationale"] = "" if rationale is None else str(rationale).strip()
     return normalized
 
 

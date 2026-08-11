@@ -68,7 +68,7 @@ def _deserialize_structured_payload(value: Any) -> Any:
         return value
     try:
         return json.loads(candidate)
-    except Exception:
+    except json.JSONDecodeError:
         return value
 
 
@@ -382,8 +382,7 @@ def _normalize_decision_subtasks_payload(
 def _normalize_hidden_think_blocks(value: Any) -> Any:
     if not isinstance(value, str):
         return value
-    stripped = _HIDDEN_THINK_BLOCK_RE.sub("", value).strip()
-    return stripped
+    return _HIDDEN_THINK_BLOCK_RE.sub("", value).strip()
 
 
 def _normalize_decision_submit_output_payload(
@@ -548,7 +547,7 @@ def _normalize_plan_submit_output_payload(
     if isinstance(steps, str):
         try:
             parsed_steps = json.loads(steps)
-        except Exception:
+        except json.JSONDecodeError:
             parsed_steps = None
         if isinstance(parsed_steps, list):
             normalized["steps"] = parsed_steps

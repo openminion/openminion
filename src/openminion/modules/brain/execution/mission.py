@@ -375,7 +375,7 @@ def allocate_mission_turn_budget(
     runner: Any,
     state: WorkingState,
 ) -> None:
-    mission = getattr(state, "mission", None)
+    mission = state.mission
     if mission is None:
         return
     budget = mission.budget
@@ -394,15 +394,14 @@ def allocate_mission_turn_budget(
     budget.turns_started += 1
     state.budgets_remaining = allocated
     state.llm_calls_used = 0
-    state.llm_calls_max = min(
-        llm_calls_max_from_runner(runner),
-        int(budget.llm_calls_per_turn_max or 0) or llm_calls_max_from_runner(runner),
-    )
+    runner_limit = llm_calls_max_from_runner(runner)
+    configured_limit = int(budget.llm_calls_per_turn_max or 0) or runner_limit
+    state.llm_calls_max = min(runner_limit, configured_limit)
     mission.last_progress_at = iso_now()
 
 
 def sync_mission_budget_progress(state: WorkingState) -> None:
-    mission = getattr(state, "mission", None)
+    mission = state.mission
     if mission is None:
         return
     budget = mission.budget

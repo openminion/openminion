@@ -119,11 +119,9 @@ class RLMBridgeLLMClient:
                 elif hasattr(m, "role") and hasattr(m, "content"):
                     msgs.append(Message(role=m.role, content=m.content))
 
-            budget = (
-                request.get("budget", {})
-                if isinstance(request.get("budget"), dict)
-                else {}
-            )
+            budget = request.get("budget", {})
+            if not isinstance(budget, dict):
+                budget = {}
             model = request.get("model") or budget.get("model") or "default"
             max_tokens = budget.get("max_tokens", 2048)
 
@@ -137,7 +135,7 @@ class RLMBridgeLLMClient:
             resp = self._api.client.call(req)
 
             usage = {}
-            if hasattr(resp, "usage") and resp.usage:
+            if resp.usage:
                 usage = {
                     "input_tokens": resp.usage.input_tokens,
                     "output_tokens": resp.usage.output_tokens,
@@ -149,10 +147,9 @@ class RLMBridgeLLMClient:
                 }
 
             if not resp.ok:
-                error_msg = resp.error.message if resp.error else "LLM call failed"
                 return {
                     "status": "error",
-                    "text": error_msg,
+                    "text": resp.error.message if resp.error else "LLM call failed",
                     "json_output": None,
                     "usage": usage,
                 }

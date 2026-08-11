@@ -99,15 +99,15 @@ def _delegate_subtask_result(
         goal=payload.goal,
         status=status,
         mode_used=DELEGATE_MODE,
-        output=str(getattr(mapped_result, "message", "") or "").strip(),
+        output=(mapped_result.message or "").strip(),
         error=(
-            str(getattr(action_result.error, "message", "") or "").strip() or None
-            if status == "failed"
+            action_result.error.message.strip() or None
+            if status == "failed" and action_result.error
             else None
         ),
-        tokens_used=int(
-            getattr(getattr(action_result, "metrics", None), "tokens_used", 0) or 0
-        ),
+        tokens_used=(action_result.metrics.tokens_used or 0)
+        if action_result.metrics
+        else 0,
     )
 
 
@@ -134,20 +134,10 @@ def _empty_error_result(
     )
 
 
-def _delegate_result_text(action_result: ActionResult | None) -> str:
-    if action_result is None:
-        return ""
-    summary = str(getattr(action_result, "summary", "") or "").strip()
-    if summary:
-        return summary
-    outputs = getattr(action_result, "outputs", None)
-    if not isinstance(outputs, dict):
-        return ""
-    for key in ("body", "message", "summary", "answer", "result", "output"):
-        text = str(outputs.get(key, "") or "").strip()
-        if text:
-            return text
-    return ""
+def _has_delegate_result(action_result: ActionResult | None) -> bool:
+    return bool(
+        action_result and (action_result.summary.strip() or action_result.outputs)
+    )
 
 
 def _record_delegate_result_policy(
@@ -741,10 +731,10 @@ class DelegateMode:
         preparation: ModePreparation | None = None,
     ) -> ValidationResult | None:
         del preparation
-        last_result = getattr(ctx.state, "last_result", None)
+        last_result = ctx.state.last_result
         if last_result is None:
             return ValidationResult(passed=True)
-        if _delegate_result_text(last_result):
+        if _has_delegate_result(last_result):
             return ValidationResult(passed=True)
         return ValidationResult(
             passed=False,

@@ -416,7 +416,7 @@ def test_unified_entry_coding_control_routes_to_coding_profile(tmp_path: Path) -
     assert getattr(getattr(route, "execution_target", None), "kind", "") == "local"
 
 
-def test_unified_entry_file_write_seed_routes_to_coding_profile(
+def test_unified_entry_file_write_seed_keeps_model_selected_general_profile(
     tmp_path: Path,
 ) -> None:
     response = _tool_response(
@@ -434,15 +434,15 @@ def test_unified_entry_file_write_seed_routes_to_coding_profile(
     )
 
     assert decision.mode == "act"
-    assert decision.reason_code == "entry_coding_seed_tool_call"
+    assert decision.reason_code == "entry_tool_call"
     assert getattr(decision, "_entry_response", None) is response
     route = getattr(decision, "_pre_resolved_act_route", None)
     assert route is not None
-    assert getattr(route, "act_profile", "") == "coding"
-    assert getattr(route, "source", "") == "entry_mutation_seed_tool_call"
+    assert getattr(route, "act_profile", "") == "general"
+    assert getattr(route, "source", "") == "runtime_default_general"
 
 
-def test_unified_entry_readonly_seed_routes_explicit_file_artifact_to_coding(
+def test_unified_entry_readonly_seed_keeps_model_selected_general_profile(
     tmp_path: Path,
 ) -> None:
     response = _tool_response("file.list_dir", {"path": "."})
@@ -460,15 +460,15 @@ def test_unified_entry_readonly_seed_routes_explicit_file_artifact_to_coding(
     )
 
     assert decision.mode == "act"
-    assert decision.reason_code == "entry_coding_user_file_artifact_request"
+    assert decision.reason_code == "entry_tool_call"
     assert getattr(decision, "_entry_response", None) is response
     route = getattr(decision, "_pre_resolved_act_route", None)
     assert route is not None
-    assert getattr(route, "act_profile", "") == "coding"
-    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+    assert getattr(route, "act_profile", "") == "general"
+    assert getattr(route, "source", "") == "runtime_default_general"
 
 
-def test_unified_entry_file_tools_phrase_routes_file_artifact_to_coding(
+def test_unified_entry_file_tools_phrase_does_not_override_model_response(
     tmp_path: Path,
 ) -> None:
     response = _text_response("I'll create it.")
@@ -485,16 +485,12 @@ def test_unified_entry_file_tools_phrase_routes_file_artifact_to_coding(
         logger=fake_logger(),
     )
 
-    assert decision.mode == "act"
-    assert decision.reason_code == "entry_coding_user_file_artifact_request"
-    assert getattr(decision, "_entry_response", None) is None
-    route = getattr(decision, "_pre_resolved_act_route", None)
-    assert route is not None
-    assert getattr(route, "act_profile", "") == "coding"
-    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+    assert decision.mode == "respond"
+    assert decision.reason_code == "entry_text_response"
+    assert decision.answer == "I'll create it."
 
 
-def test_unified_entry_tool_request_for_file_artifact_does_not_seed_coding(
+def test_unified_entry_tool_request_keeps_model_selected_general_profile(
     tmp_path: Path,
 ) -> None:
     response = _tool_response("tool.request", {"name": "file.write"})
@@ -512,12 +508,12 @@ def test_unified_entry_tool_request_for_file_artifact_does_not_seed_coding(
     )
 
     assert decision.mode == "act"
-    assert decision.reason_code == "entry_coding_user_file_artifact_request"
-    assert getattr(decision, "_entry_response", None) is None
+    assert decision.reason_code == "entry_tool_call"
+    assert getattr(decision, "_entry_response", None) is response
     route = getattr(decision, "_pre_resolved_act_route", None)
     assert route is not None
-    assert getattr(route, "act_profile", "") == "coding"
-    assert getattr(route, "source", "") == "entry_user_file_artifact_request"
+    assert getattr(route, "act_profile", "") == "general"
+    assert getattr(route, "source", "") == "runtime_default_general"
 
 
 def test_entry_decompose_with_one_subtask_routes_to_orchestrate(

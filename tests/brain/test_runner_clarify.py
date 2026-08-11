@@ -657,7 +657,7 @@ class TestRunnerClarify(unittest.TestCase):
     @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")
     @patch("openminion.modules.brain.runner.BrainRunner._save_state")
     @patch("openminion.modules.brain.runner.BrainRunner._decide")
-    def test_llm_clarify_question_without_sidecar_still_stores_minimal_context(
+    def test_llm_clarify_question_without_sidecar_does_not_infer_context(
         self, mock_decide, mock_save, mock_load
     ):
         state = WorkingState(
@@ -675,21 +675,7 @@ class TestRunnerClarify(unittest.TestCase):
         )
 
         self.assertEqual(first.status, "waiting_user")
-        self.assertIsNotNone(state.pending_llm_clarify_context)
-        self.assertEqual(
-            state.pending_llm_clarify_context.original_user_input,
-            "what's weather?",
-        )
-        self.assertEqual(state.pending_llm_clarify_context.inferred_goal, "")
-        self.assertEqual(state.pending_llm_clarify_context.known_context, {})
-        self.assertEqual(
-            state.pending_llm_clarify_context.unresolved_question,
-            question,
-        )
-        self.assertEqual(
-            state.pending_llm_clarify_context.clarify_question,
-            question,
-        )
+        self.assertIsNone(state.pending_llm_clarify_context)
 
         self.context_api.build.reset_mock()
         self.runner._build_context(
@@ -701,16 +687,9 @@ class TestRunnerClarify(unittest.TestCase):
         )
 
         kwargs = self.context_api.build.call_args.kwargs
-        self.assertEqual(
-            kwargs["hints"]["pending_conversational_clarification"],
-            {
-                "original_user_input": "what's weather?",
-                "inferred_goal": "",
-                "known_context": {},
-                "unresolved_question": question,
-                "clarify_question": question,
-                "user_reply": "china",
-            },
+        self.assertNotIn(
+            "pending_conversational_clarification",
+            kwargs["hints"],
         )
 
     @patch("openminion.modules.brain.runner.BrainRunner._load_or_init_state")

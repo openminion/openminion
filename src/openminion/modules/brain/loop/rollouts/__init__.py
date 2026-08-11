@@ -1,5 +1,3 @@
-"""PRV parallel-rollout substrate for verifiable substeps."""
-
 from openminion.modules.brain.loop.rollouts.config import ParallelRolloutConfig
 from openminion.modules.brain.loop.rollouts.interfaces import (
     RolloutScorer,

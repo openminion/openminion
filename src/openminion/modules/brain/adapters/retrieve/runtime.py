@@ -5,8 +5,6 @@ from openminion.modules.retrieve.runtime.retrieve import RetrieveCtl
 
 
 class RetrievectlAdapter:
-    """Adapter for retrieval operations wrapping RetrieveCtl."""
-
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
     def __init__(self, service: RetrieveCtl) -> None:
@@ -18,9 +16,7 @@ class RetrievectlAdapter:
         session_id: str,
         turn_id: str,
     ) -> None:
-        setter = getattr(self._svc, "set_telemetry_context", None)
-        if callable(setter):
-            setter(session_id=session_id, turn_id=turn_id)
+        self._svc.set_telemetry_context(session_id=session_id, turn_id=turn_id)
 
     def retrieve(self, query: str, *, top_k: int = 10, **kwargs) -> list[dict]:
         return self._svc.retrieve(query=query, k=kwargs.pop("k", top_k), **kwargs)

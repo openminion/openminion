@@ -72,10 +72,7 @@ def is_route_enabled(profile: Any | None, mode_name: str) -> bool:
 
 
 def get_route_descriptor(mode_name: str) -> DecisionRouteDescriptor | None:
-    normalized = str(mode_name or "").strip()
-    if not normalized:
-        return None
-    return _DESCRIPTORS.get(normalized)
+    return _DESCRIPTORS.get(str(mode_name or "").strip())
 
 
 def registered_routes() -> list[str]:

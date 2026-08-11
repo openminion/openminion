@@ -247,7 +247,6 @@ def extract_response_text(response: Any) -> str:
 
 
 def detect_entry_path(response: Any) -> EntryPathDetection:
-    """Detect the typed entry path from provider response structure."""
     tool_calls = list(getattr(response, "tool_calls", []) or [])
     tool_call_names = tuple(
         str(getattr(call, "name", "") or "").strip() for call in tool_calls
@@ -275,8 +274,6 @@ def detect_entry_path(response: Any) -> EntryPathDetection:
             clarify_question = str(arguments.get("question", "") or "").strip()
         if not clarify_question:
             clarify_question = response_text
-        if not clarify_question:
-            clarify_question = "Please clarify your request."
         return EntryPathDetection(
             path="clarify",
             response_text=response_text,

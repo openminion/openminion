@@ -23,12 +23,12 @@ from openminion.modules.tool import (
     DEFAULT_POLICY,
     Policy,
     RuntimeContext,
+    ToolExecutionContext,
     ToolRegistry,
     ToolSpec,
     build_runtime_repositories,
     create_run_root,
     new_run_id,
-    preferred_artifact_ref,
     resolve_binding_for_call,
 )
 from openminion.modules.tool.adapters import AllowAllSafetyAdapter, LocalPolicyAdapter
@@ -96,8 +96,6 @@ except ImportError:
 
 
 class ToolAdapter:
-    """Adapter for executing OS tools using openminion-tool."""
-
     contract_version = BRAIN_ADAPTER_INTERFACE_VERSION
 
     def __init__(
@@ -141,20 +139,17 @@ class ToolAdapter:
             self.policy
         )
         policy_raw = getattr(self.policy, "raw", None)
-        if isinstance(policy_raw, Mapping):
+        if isinstance(policy_raw, dict):
             workspace_value = str(policy_raw.get("workspace_root", "") or "").strip()
             if policy_from_none or not workspace_value:
                 policy_raw["workspace_root"] = str(self.workspace_root)
             policy_raw["agent_id"] = self.agent_id
             context_metadata = policy_raw.get("context_metadata")
-            if isinstance(context_metadata, Mapping):
-                if not isinstance(context_metadata, dict):
-                    context_metadata = dict(context_metadata)
-                    policy_raw["context_metadata"] = context_metadata
-                context_metadata.setdefault("agent_id", self.agent_id)
-            else:
-                context_metadata = {"agent_id": self.agent_id}
-                policy_raw["context_metadata"] = context_metadata
+            context_metadata = (
+                dict(context_metadata) if isinstance(context_metadata, Mapping) else {}
+            )
+            policy_raw["context_metadata"] = context_metadata
+            context_metadata.setdefault("agent_id", self.agent_id)
             context_metadata.setdefault(
                 "allow_background_write_authorization",
                 str(self.allow_background_write_authorization).lower(),
@@ -278,7 +273,7 @@ class ToolAdapter:
         if extra_adapter is None:
             return base_adapter
 
-        class _CompositePolicyAdapter(PolicyAdapter):
+        class _CompositePolicyAdapter:
             def __init__(self, adapters: list[PolicyAdapter]):
                 self._adapters = adapters
 
@@ -377,10 +372,9 @@ class ToolAdapter:
                 code="NOT_FOUND",
                 message=f"Tool '{tool_name}' is not registered.",
             )
-        if runtime_tool is not None:
-            if isinstance(runtime_tool, ToolSpec):
-                spec = runtime_tool
-                runtime_tool = None
+        if isinstance(runtime_tool, ToolSpec):
+            spec = runtime_tool
+            runtime_tool = None
 
         policy_for_run = self.policy
         workspace_override = self._registered_workspace_override(requested_workspace)
@@ -419,19 +413,12 @@ class ToolAdapter:
                     tools_cfg["allow_exact"] = [*allow_exact, tool_name]
             policy_for_run = Policy(raw=policy_raw)
         policy_raw = getattr(policy_for_run, "raw", None)
-        if isinstance(policy_raw, Mapping):
+        if isinstance(policy_raw, dict):
             policy_raw["agent_id"] = self.agent_id
             _merge_orchestration_context_metadata(policy_raw, orchestration_metadata)
-            context_metadata = policy_raw.get("context_metadata")
-            if isinstance(context_metadata, Mapping):
-                if not isinstance(context_metadata, dict):
-                    context_metadata = dict(context_metadata)
-                    policy_raw["context_metadata"] = context_metadata
-                context_metadata.setdefault("agent_id", self.agent_id)
-            else:
-                context_metadata = {"agent_id": self.agent_id}
-                policy_raw["context_metadata"] = context_metadata
-            if isinstance(replay_confirmation_metadata, Mapping):
+            context_metadata = policy_raw["context_metadata"]
+            context_metadata.setdefault("agent_id", self.agent_id)
+            if replay_confirmation_metadata:
                 context_metadata.update(
                     {
                         key: value
@@ -474,15 +461,11 @@ class ToolAdapter:
             )
 
         try:
-            args_model = getattr(spec, "args_model", None)
-            if args_model is None:
-                validated_args = dict(args) if isinstance(args, Mapping) else {}
-            elif args_model is dict:
-                validated_args = dict(args) if isinstance(args, Mapping) else {}
-            elif hasattr(args_model, "model_validate"):
+            args_model = spec.args_model
+            if hasattr(args_model, "model_validate"):
                 validated_args = args_model.model_validate(args).model_dump()
             else:
-                validated_args = dict(args) if isinstance(args, Mapping) else {}
+                validated_args = dict(args)
         except Exception as exc:
             return _error_envelope(
                 status=BRAIN_STATE_ERROR,
@@ -571,12 +554,7 @@ class ToolAdapter:
                 "file.copy",
                 "file.move",
             }
-        elif (
-            replay_confirmed
-            or watch_write_authorization_requested
-            and permission_mode == "bypass"
-            or background_write_authorized
-        ):
+        elif replay_confirmed or background_write_authorized:
             auto_confirm = True
         elif tool_name == "exec.run":
             auto_confirm = is_read_only_exec_command(
@@ -791,11 +769,7 @@ class ToolAdapter:
             else BRAIN_STATE_ERROR
         )
         summary = _derive_toolspec_summary(data, status=status, tool_name=spec.name)
-        artifact_refs = [
-            {"ref": ref, "role": "output"}
-            for artifact in context.artifacts
-            if (ref := preferred_artifact_ref(artifact))
-        ]
+        artifact_refs = _normalized_artifact_refs(context.artifacts)
         result = {
             "status": status,
             "summary": summary,
@@ -841,20 +815,8 @@ class ToolAdapter:
         orchestration_metadata: Mapping[str, Any] | None = None,
         replay_confirmation_metadata: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        try:
-            from openminion.modules.tool import ToolExecutionContext
-        except ImportError as exc:
-            return _error_envelope(
-                status=BRAIN_STATE_ERROR,
-                summary="Tool runtime unavailable",
-                code="EXEC_ERROR",
-                message=str(exc),
-                latency_ms=int((time.monotonic() - start_time) * 1000),
-            )
-
         effective_policy = policy or self.policy
         context = self._runtime_tool_context(
-            context_type=ToolExecutionContext,
             policy=effective_policy,
             session_id=session_id,
             trace_id=trace_id,
@@ -946,13 +908,12 @@ class ToolAdapter:
     def _runtime_tool_context(
         self,
         *,
-        context_type: Any,
         policy: Policy,
         session_id: str,
         trace_id: str,
         orchestration_metadata: Mapping[str, Any] | None,
         replay_confirmation_metadata: Mapping[str, str] | None,
-    ) -> Any:
+    ) -> ToolExecutionContext:
         policy_raw = getattr(policy, "raw", {}) or {}
         raw_metadata = policy_raw.get("context_metadata")
         metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
@@ -977,7 +938,7 @@ class ToolAdapter:
                     if str(value or "").strip()
                 }
             )
-        return context_type(
+        return ToolExecutionContext(
             channel="console",
             target=session_id or "session",
             session_id=session_id,

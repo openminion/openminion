@@ -1,19 +1,21 @@
 import hashlib
 import re
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from openminion.modules.brain.interfaces import BRAIN_ADAPTER_INTERFACE_VERSION
 from openminion.modules.memory.models import (
+    ArtifactRef,
     MemoryCandidate,
+    MemoryPatchResult,
     MemoryRecord,
     _SCOPE_PATTERN,
-    ArtifactRef,
 )
 from openminion.modules.memory.storage.base import (
     ListQueryOptions,
     SearchQueryOptions,
 )
-from openminion.modules.memory.models import MemoryPatchResult
 
 _FACT_PREFIX_RE = re.compile(r"^\s*(?:remember|fact)\s*:\s*(.+)$", flags=re.IGNORECASE)
 
@@ -64,21 +66,16 @@ class MemctlAdapter:
         agent_id: str,
         max_highlights: int = 5,
     ) -> dict[str, Any]:
-        """MRIR-02: Get bounded memory runtime snapshot for introspection.
-
-        Returns a dict with counts, highlights, and degraded markers.
-        """
         from openminion.modules.memory.diagnostics.introspection import (
             build_memory_snapshot,
         )
 
-        snapshot = build_memory_snapshot(
+        return build_memory_snapshot(
             store=self.store,
             session_id=session_id,
             agent_id=agent_id,
             max_highlights=max_highlights,
-        )
-        return snapshot.model_dump(mode="json")
+        ).model_dump(mode="json")
 
     def _normalize_scope(self, scope: str) -> str:
         if _SCOPE_PATTERN.match(str(scope or "")):
@@ -88,18 +85,16 @@ class MemctlAdapter:
     def _build_artifact_refs(
         self, evidence_refs: list[str] | None
     ) -> list[ArtifactRef]:
-        parsed_evidence: list[ArtifactRef] = []
-        for ref in evidence_refs or []:
-            parsed_evidence.append(
-                ArtifactRef(
-                    ref=str(ref),
-                    mime="application/octet-stream",
-                    sha256="unknown",
-                    size_bytes=0,
-                    label=f"evidence-{ref}",
-                )
+        return [
+            ArtifactRef(
+                ref=str(ref),
+                mime="application/octet-stream",
+                sha256="unknown",
+                size_bytes=0,
+                label=f"evidence-{ref}",
             )
-        return parsed_evidence
+            for ref in evidence_refs or []
+        ]
 
     def _record_text(self, record: Any) -> str:
         content = getattr(record, "content", "")
@@ -221,7 +216,6 @@ class MemctlAdapter:
         ]
 
     def get_procedure(self, *, procedure_id: str) -> Any | None:
-        """Return the typed `MemoryProcedure` from the backing store, or"""
         if not callable(self._procedure_api):
             return None
         try:
@@ -393,7 +387,7 @@ class MemctlAdapter:
     ) -> MemoryPatchResult:
         del channel, target, assistant_message
         facts_added = 0
-        for raw_line in str(user_message or "").splitlines():
+        for raw_line in user_message.splitlines():
             match = _FACT_PREFIX_RE.match(raw_line.strip())
             if match is None:
                 continue
@@ -449,13 +443,10 @@ class MemctlAdapter:
                 )
             )
 
-        import uuid
-        from datetime import datetime, timezone
-
         record = MemoryRecord(
             id=f"mem_{uuid.uuid4().hex[:12]}",
-            scope=scope,  # type: ignore[arg-type]
-            type=record_type,  # type: ignore[arg-type]
+            scope=scope,
+            type=record_type,
             title=title,
             content=content,
             tags=tags or [],
@@ -492,13 +483,11 @@ class MemctlAdapter:
                 )
             )
 
-        import uuid
-
         candidate = MemoryCandidate(
             candidate_id=f"cand_{uuid.uuid4().hex[:12]}",
             session_id=scope.split(":", 1)[-1] if ":" in scope else scope,
-            proposed_scope=scope,  # type: ignore[arg-type]
-            type=record_type,  # type: ignore[arg-type]
+            proposed_scope=scope,
+            type=record_type,
             title=title,
             content=content,
             tags=tags or [],
@@ -559,9 +548,7 @@ class MemctlAdapter:
             )
         except Exception:  # noqa: BLE001 — best-effort lookup
             return None
-        if result is None:
-            return None
-        return str(result)
+        return str(result) if result is not None else None
 
     def reinforce_candidate(self, *, candidate_id: str) -> Any:
         if not callable(self._reinforce_candidate_api):

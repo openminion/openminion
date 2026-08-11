@@ -1,7 +1,7 @@
 from typing import Any
 
+from .environment import context_feature_flags
 from .modes import mode_is_local, raise_if_strict
-from .environment import context_feature_flags, env_bool
 
 
 def create_context_adapter(
@@ -34,8 +34,7 @@ def create_context_adapter(
             BridgeCompressClient,
         )
 
-        feature_flags = context_feature_flags(env_bool=env_bool)
-
+        feature_flags = context_feature_flags()
         service = ContextCtlService(
             identityctl=BridgeIdentityClient(
                 backing_store=session_store,

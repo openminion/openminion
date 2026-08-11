@@ -36,15 +36,14 @@ def resolve_skill_hints(
         "skill_capacity": result.capacity,
     }
     if result.selected_refs:
-        primary = result.primary_ref
-        if primary is not None:
-            hints.update(
-                {
-                    "skill_id": primary.skill_id,
-                    "primary_skill_id": primary.skill_id,
-                    "skill_version_hash": primary.version_hash,
-                }
-            )
+        primary = result.selected_refs[0]
+        hints.update(
+            {
+                "skill_id": primary.skill_id,
+                "primary_skill_id": primary.skill_id,
+                "skill_version_hash": primary.version_hash,
+            }
+        )
         hints["resolved_skill_ids"] = [ref.skill_id for ref in result.selected_refs]
         hints["skill_refs"] = [
             {

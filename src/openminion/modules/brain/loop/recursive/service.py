@@ -15,15 +15,13 @@ from .schemas import RLMConfig
 
 
 class RLMService:
-    """Recursive LLM wrapper with retrieval gating and selective augmentation."""
-
     contract_version = RLM_CONTRACT_VERSION
 
     def __init__(
         self,
         *,
         sessctl: SessionClient,
-        contextctl: ContextClient | None = None,
+        contextctl: ContextClient,
         llmctl: LLMClient,
         artifactctl: ArtifactClient | None = None,
         memctl: MemoryClient | None = None,
@@ -33,10 +31,6 @@ class RLMService:
         config: RLMConfig | dict[str, Any] | None = None,
     ) -> None:
         self._sessctl = sessctl
-        if contextctl is None:
-            raise TypeError(
-                "RLMService.__init__() missing required argument: 'contextctl'"
-            )
         self._contextctl = contextctl
         self._llmctl = llmctl
         self._artifactctl = artifactctl

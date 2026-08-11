@@ -139,6 +139,68 @@ def test_phase2_cross_session_handoff_with_real_sqlite(tmp_path: Path) -> None:
         connection.close()
 
 
+def test_cross_session_handoff_keeps_immediately_previous_session(
+    tmp_path: Path,
+) -> None:
+    state_db = tmp_path / "state" / "openminion.db"
+    memory_db = tmp_path / "state" / "memory.db"
+    migrate_database(state_db)
+    connection = connect_database(state_db)
+    sessions = SessionStore(connection)
+    session_context = SessionContextService(
+        sessions,
+        keep_recent_messages=1,
+        max_compact_per_turn=100,
+    )
+    memory_service = MemoryService(store=SQLiteMemoryStore(memory_db))
+    adapter = MemoryServiceGatewayAdapter(
+        memory_service,
+        agent_id="phase2-agent",
+        session_context=session_context,
+        session_summary_max_chars=200,
+        session_handoff_max_summaries=5,
+    )
+
+    try:
+        older_session = sessions.resolve_session(
+            agent_id="phase2-agent",
+            channel="console",
+            target="older",
+        )
+        sessions.append_message(
+            session_id=older_session.id,
+            role="inbound",
+            body="Did I provide a server address before?",
+        )
+        session_context.on_session_close(session_id=older_session.id)
+
+        previous_session = sessions.resolve_session(
+            agent_id="phase2-agent",
+            channel="console",
+            target="previous",
+        )
+        sessions.append_message(
+            session_id=previous_session.id,
+            role="inbound",
+            body="SSH to 192.0.2.44 as the deploy user.",
+        )
+        session_context.on_session_close(session_id=previous_session.id)
+
+        fresh_session = sessions.resolve_session(
+            agent_id="phase2-agent",
+            channel="console",
+            target="fresh-continuity",
+        )
+        rendered, _ = adapter.build_context_with_metadata(
+            session_id=fresh_session.id,
+            user_message="Did I give you the server address before?",
+        )
+
+        assert "192.0.2.44" in rendered
+    finally:
+        connection.close()
+
+
 def test_cross_session_semantic_recall_surfaces_relevant_structured_summary(
     tmp_path: Path,
 ) -> None:

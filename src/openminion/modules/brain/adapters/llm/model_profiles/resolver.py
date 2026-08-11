@@ -27,9 +27,6 @@ def resolve_capability_profile(
 def build_overrides_from_config(
     raw: dict[str, dict[str, Any]],
 ) -> tuple[ModelCapabilityProfile, ...]:
-    if not isinstance(raw, dict):
-        return ()
-
     default_by_id = {profile.profile_id: profile for profile in _DEFAULT_PROFILES}
     built: list[ModelCapabilityProfile] = []
     for profile_id, payload in raw.items():
@@ -70,7 +67,7 @@ def build_overrides_from_config(
                     **normalized,
                 )
             )
-        except Exception as exc:
+        except (TypeError, ValueError) as exc:
             logger.warning(
                 "model_capability_overrides[%s]: invalid override skipped (%s)",
                 normalized_profile_id,
@@ -163,7 +160,7 @@ def _normalize_override_payload(
             normalized["max_structured_retries"] = max(
                 1, int(normalized.get("max_structured_retries") or 1)
             )
-        except Exception:
+        except (TypeError, ValueError):
             logger.warning(
                 "model_capability_overrides[%s]: invalid max_structured_retries",
                 profile_id,

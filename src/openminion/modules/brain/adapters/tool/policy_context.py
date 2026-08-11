@@ -1,5 +1,3 @@
-"""Policy-context helpers for the brain tool adapter."""
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -12,24 +10,16 @@ _REACTIONS_DEFAULT_POLICIES = frozenset({"allow", "deny", "confirm"})
 
 def _ensure_mutable_mapping(owner: dict[str, Any], key: str) -> dict[str, Any]:
     current = owner.get(key)
-    if isinstance(current, dict):
-        return current
-    replacement: dict[str, Any] = {}
-    if isinstance(current, Mapping):
-        replacement.update(dict(current))
-    owner[key] = replacement
-    return replacement
+    if not isinstance(current, dict):
+        current = dict(current) if isinstance(current, Mapping) else {}
+        owner[key] = current
+    return current
 
 
 def _ensure_mutable_str_list(owner: dict[str, Any], key: str) -> list[str]:
     current = owner.get(key)
-    if isinstance(current, list):
-        out = [str(item).strip() for item in current if str(item).strip()]
-        owner[key] = out
-        return out
-    replacement: list[str] = []
-    if isinstance(current, (tuple, set, frozenset)):
-        replacement = [str(item).strip() for item in current if str(item).strip()]
+    items = current if isinstance(current, (list, tuple, set, frozenset)) else ()
+    replacement = [str(item).strip() for item in items if str(item).strip()]
     owner[key] = replacement
     return replacement
 

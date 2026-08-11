@@ -5,7 +5,6 @@ IDLE_TICK_JOB_NAME_PREFIX = "pae.idle_tick"
 
 
 def idle_tick_job_id(*, agent_id: str, session_id: str, plan_id: str) -> str:
-    """Derive the deterministic cron job id for an agent/session/plan triple."""
     h = hashlib.sha256(
         f"{agent_id}|{session_id}|{plan_id}".encode("utf-8")
     ).hexdigest()[:24]
@@ -13,7 +12,6 @@ def idle_tick_job_id(*, agent_id: str, session_id: str, plan_id: str) -> str:
 
 
 def _resolve_pae_config(runner: Any) -> Any | None:
-    """Resolve the PAE config from profile-first, runtime-fallback."""
     profile_cfg = getattr(
         getattr(runner, "profile", None),
         "proactive_autonomous_entrypoint",
@@ -188,7 +186,6 @@ def maybe_schedule_idle_tick(
     plan_id: str,
     trace_id: str | None = None,
 ) -> dict[str, Any]:
-    """Schedule a session-scoped idle-tick cron job."""
     agent = str(agent_id or "").strip()
     session = str(session_id or "").strip()
     plan = str(plan_id or "").strip()
@@ -270,7 +267,6 @@ def cancel_idle_tick(
     reason: str = "plan_terminal",
     trace_id: str | None = None,
 ) -> dict[str, Any]:
-    """Cancel the session-scoped idle-tick cron job."""
     result: dict[str, Any] = {
         "cancelled": False,
         "job_id": "",
@@ -311,7 +307,6 @@ def cancel_idle_tick(
 
 
 def last_user_message_timestamp(*, session_api: Any, session_id: str) -> str | None:
-    """Return the ISO timestamp of the most recent user turn, or None."""
     if not session_api or not session_id:
         return None
     lister = getattr(session_api, "list_events", None)
@@ -323,19 +318,13 @@ def last_user_message_timestamp(*, session_api: Any, session_id: str) -> str | N
         return None
     if not isinstance(events, list):
         return None
-    latest: str | None = None
-    for event in events:
-        if not isinstance(event, dict):
-            continue
-        event_type = str(event.get("event_type") or "").strip()
-        if event_type != "turn.user":
-            continue
-        ts = str(event.get("timestamp") or "").strip()
-        if not ts:
-            continue
-        if latest is None or ts > latest:
-            latest = ts
-    return latest
+    timestamps = (
+        str(event.get("timestamp") or "").strip()
+        for event in events
+        if isinstance(event, dict)
+        and str(event.get("event_type") or "").strip() == "turn.user"
+    )
+    return max(filter(None, timestamps), default=None)
 
 
 def is_user_active(
@@ -345,7 +334,6 @@ def is_user_active(
     grace_seconds: int,
     now_iso: str | None = None,
 ) -> bool:
-    """Return whether the session had a recent user turn inside the grace window."""
     if grace_seconds <= 0:
         return False
     last = last_user_message_timestamp(session_api=session_api, session_id=session_id)
@@ -355,7 +343,6 @@ def is_user_active(
 
     def _parse(iso: str) -> datetime | None:
         try:
-            # Support both "...Z" and "...+00:00".
             if iso.endswith("Z"):
                 iso = iso[:-1] + "+00:00"
             return datetime.fromisoformat(iso).astimezone(timezone.utc)

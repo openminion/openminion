@@ -27,6 +27,18 @@ from tests.brain.runner_test_support import (
 )
 
 
+class _PostActionFixtureLLM(LocalLLMAdapter):
+    def call_structured(self, **kwargs):
+        if kwargs["schema"].__name__ == "PostActionJudgment":
+            return {
+                "outcome": "advance",
+                "reason": "fixture_action_succeeded",
+                "user_message": None,
+                "confidence": 0.9,
+            }
+        return super().call_structured(**kwargs)
+
+
 class RunnerMetaTests(unittest.TestCase):
     def test_meta_events_are_emitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -424,7 +436,7 @@ class RunnerMetaTests(unittest.TestCase):
                 profile=_profile(),
                 session_api=session,
                 context_api=LocalContextAdapter(session_store=session),
-                llm_api=LocalLLMAdapter(),
+                llm_api=_PostActionFixtureLLM(),
                 tool_api=LocalToolAdapter(),
                 a2a_api=LocalA2AAdapter(),
                 memory_api=LocalMemoryAdapter(root / "memory"),

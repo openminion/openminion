@@ -86,10 +86,7 @@ from openminion.modules.brain.loop.tools.postprocess.rules import (
     _looks_like_unexecutable_tool_payload_text,
 )
 from openminion.modules.brain.loop.tools.messages import action_result_to_tool_message
-from openminion.modules.brain.loop.tools.no_tool import (
-    AdaptiveLoopRunnerNoToolMixin,
-    _retry_snippet_only_file_artifact_answer,
-)
+from openminion.modules.brain.loop.tools.no_tool import AdaptiveLoopRunnerNoToolMixin
 from openminion.modules.brain.loop.tools.iteration.termination import (
     finalize_iteration_cap_exit,
 )
@@ -1196,58 +1193,6 @@ class TestBuildToolFailureRecoveryMessage:
         assert "path and content as strings" in msg.content
         assert "Do not repeat the same invalid call" in msg.content
 
-    def test_failed_file_write_final_answer_gets_repair_retry(self) -> None:
-        class RetryRunner:
-            def __init__(self) -> None:
-                self.loop_state = AdaptiveToolLoopState(
-                    messages=[
-                        Message(
-                            role="user",
-                            content=(
-                                "Build a tiny Python CLI project with tests and README. "
-                                "Use file.write for files and do not only show code."
-                            ),
-                        )
-                    ],
-                    scratchpad={
-                        "adaptive.tool_results": [
-                            {
-                                "tool_name": "file.write",
-                                "ok": False,
-                                "error": "Invalid tool arguments",
-                                "data": {
-                                    "error_code": "TOOL_ARG_VALIDATION_FAILED",
-                                },
-                            }
-                        ]
-                    },
-                )
-                self.retry_message = ""
-                self.discarded = ""
-
-            def _retry_with_system_message(
-                self,
-                message: str,
-                *,
-                discard_assistant_text: str | None = None,
-            ) -> tuple[bool, None]:
-                self.retry_message = message
-                self.discarded = str(discard_assistant_text or "")
-                return True, None
-
-        runner = RetryRunner()
-
-        result = _retry_snippet_only_file_artifact_answer(
-            runner,
-            normalized_final_text="Invalid tool arguments",
-        )
-
-        assert result == (True, None)
-        assert runner.loop_state.scratchpad["failed_file_mutation_retry_used"] is True
-        assert "previous file mutation tool call failed" in runner.retry_message
-        assert "path and content as strings" in runner.retry_message
-        assert runner.discarded == "Invalid tool arguments"
-
     def test_exec_run_policy_denied_array_command_gets_string_guidance(self) -> None:
         ar = ActionResult(
             command_id="x",
@@ -1474,10 +1419,6 @@ class TestToolRequestResult:
 
 
 class TestMemoryConsolidationContext:
-    def test_none_when_state_missing_module_state(self) -> None:
-        ctx = SimpleNamespace(state=SimpleNamespace(module_state=None))
-        assert _memory_consolidation_context(ctx) is None
-
     def test_none_when_consolidation_disabled(self) -> None:
         ctx = SimpleNamespace(
             state=SimpleNamespace(
@@ -1500,10 +1441,6 @@ class TestMemoryConsolidationContext:
 
 
 class TestDelegatedChildContext:
-    def test_none_when_missing_module_state(self) -> None:
-        ctx = SimpleNamespace(state=SimpleNamespace(module_state=None))
-        assert _delegated_child_context(ctx) is None
-
     def test_none_when_disabled(self) -> None:
         ctx = SimpleNamespace(
             state=SimpleNamespace(module_state={"delegation": {"enabled": False}})
@@ -1776,7 +1713,7 @@ def test_loop_ignores_execution_preface_output_text_when_tools_present() -> None
     ] == ["verified and complete"]
 
 
-def test_loop_retries_status_payload_after_substantive_tool_work() -> None:
+def test_loop_accepts_model_authored_status_shaped_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1823,19 +1760,14 @@ def test_loop_retries_status_payload_after_substantive_tool_work() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert (
-        outcome.final_text
-        == "SOURCES\n- source\n\nCHANGES\n- updated\n\nTESTS\n- passed"
+    assert outcome.final_text == (
+        '{"active_form":"Verifying task completion",'
+        '"confidence":"high","reasoning":"done"}'
     )
-    assert len(runtime.calls) == 3
-    retry_messages = runtime.calls[2]["messages"]
-    assert any(
-        msg.role == "system" and "structured status payload" in msg.content
-        for msg in retry_messages
-    )
+    assert len(runtime.calls) == 2
 
 
-def test_loop_retries_continuing_preface_after_substantive_tool_work() -> None:
+def test_loop_accepts_model_authored_continuation_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1882,16 +1814,14 @@ def test_loop_retries_continuing_preface_after_substantive_tool_work() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text == "Files changed and validation result: passed."
-    assert len(runtime.calls) == 3
-    retry_messages = runtime.calls[2]["messages"]
-    assert any(
-        msg.role == "system" and "pre-tool draft" in msg.content
-        for msg in retry_messages
+    assert outcome.final_text == (
+        "The directory is confirmed empty. Continuing — write design "
+        "doc, all package files, and tests in parallel now."
     )
+    assert len(runtime.calls) == 2
 
 
-def test_loop_retries_fix_and_rerun_preface_after_validation_failure() -> None:
+def test_loop_accepts_model_authored_fix_and_rerun_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -1938,18 +1868,14 @@ def test_loop_retries_fix_and_rerun_preface_after_validation_failure() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert (
-        outcome.final_text == "Design, implementation, and validation result: passed."
+    assert outcome.final_text == (
+        "Validation produced exit code 2. Let me read the source files "
+        "to find and fix the bug, then rerun."
     )
-    assert len(runtime.calls) == 3
-    retry_messages = runtime.calls[2]["messages"]
-    assert any(
-        msg.role == "system" and "pre-tool draft" in msg.content
-        for msg in retry_messages
-    )
+    assert len(runtime.calls) == 2
 
 
-def test_loop_retries_long_file_plan_without_file_creation() -> None:
+def test_loop_accepts_model_authored_file_plan_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2002,13 +1928,8 @@ def test_loop_retries_long_file_plan_without_file_creation() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text == "Files changed and validation result: passed."
-    assert len(runtime.calls) == 3
-    retry_messages = runtime.calls[2]["messages"]
-    assert any(
-        msg.role == "system" and "pre-tool draft" in msg.content
-        for msg in retry_messages
-    )
+    assert str(outcome.final_text or "").startswith("Goal: Build a minimal Python CLI.")
+    assert len(runtime.calls) == 2
 
 
 def test_loop_iteration_cap_terminates_with_cap_reason() -> None:
@@ -2235,7 +2156,7 @@ def test_loop_tool_failure_then_recovery() -> None:
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
 
 
-def test_loop_missing_markers_after_failed_tool_retry_uses_attempt_fallback() -> None:
+def test_loop_does_not_invent_requested_markers_after_failed_tool() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2292,15 +2213,10 @@ def test_loop_missing_markers_after_failed_tool_retry_uses_attempt_fallback() ->
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    final_text = str(outcome.final_text or "").lower()
-    assert "next steps:" in final_text
-    assert "tool evidence:" in final_text
-    assert "web.search: failed" in final_text
-    assert bool(
-        outcome.state.scratchpad.get(
-            "missing_requested_closeout_markers_used_attempt_fallback"
-        )
+    assert outcome.final_text == (
+        "I found partial evidence but could not finish cleanly."
     )
+    assert len(runtime.calls) == 2
 
 
 def test_loop_seed_response_skips_first_llm_call() -> None:

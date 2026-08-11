@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from openminion.modules.brain.constants import STATE_KEY_MODULE_STATE
 from openminion.modules.brain.execution.child_tasks import SubtaskSpec
 from openminion.modules.brain.execution.loop_contracts import ExecutionContext
 from openminion.modules.brain.loop.services import runner_from_context
@@ -35,10 +34,7 @@ _MISSING = object()
 
 
 def _module_bucket(state: WorkingState) -> dict[str, Any]:
-    module_state = getattr(state, STATE_KEY_MODULE_STATE, None)
-    if not isinstance(module_state, dict):
-        module_state = {}
-        setattr(state, STATE_KEY_MODULE_STATE, module_state)
+    module_state = state.module_state
     bucket = module_state.get(_MODULE_STATE_KEY)
     if not isinstance(bucket, dict):
         bucket = {"version": 1, "children": [], "conflicts": []}
@@ -236,7 +232,7 @@ def allocate_child_worktree(
     subtask: SubtaskSpec,
     child_state: WorkingState,
 ) -> ChildWorktreeLease | None:
-    inputs = subtask.inputs if isinstance(subtask.inputs, dict) else {}
+    inputs = subtask.inputs
     if not bool(inputs.get("code_bearing") or inputs.get("worktree_required")):
         return None
     workspace_root = str(inputs.get("workspace_root") or "").strip()
@@ -368,7 +364,7 @@ def accept_child_worktree_artifact(
 ) -> dict[str, Any]:
     """Apply a stored child bundle to the parent checkout after safety checks."""
     repo = Path(repo_root).expanduser().resolve(strict=True)
-    artifact = record.get("artifact") if isinstance(record, dict) else {}
+    artifact = record.get("artifact")
     if not isinstance(artifact, dict) or artifact.get("status") != "stored":
         return {"ok": False, "status": "missing_artifact"}
     base_revision = str(record.get("base_revision") or "").strip()
@@ -405,7 +401,7 @@ def accept_child_worktree_artifact(
 def reject_child_worktree_artifact(
     *, record: dict[str, Any], artifactctl: Any | None = None
 ) -> dict[str, Any]:
-    artifact = record.get("artifact") if isinstance(record, dict) else {}
+    artifact = record.get("artifact")
     if isinstance(artifact, dict) and artifactctl is not None:
         owner_id = str(artifact.get("owner_id") or "")
         for key in ("bundle_ref", "manifest_ref"):

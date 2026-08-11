@@ -220,9 +220,7 @@ class RedisCheckpointStore:
 
 
 def build_checkpoint_store(spec: str) -> CheckpointStore:
-    """Factory: ``memory``, ``postgres://...``, ``redis://...``."""
-
-    normalized = (spec or "").strip()
+    normalized = spec.strip()
     if not normalized or normalized == "memory":
         return InMemoryCheckpointStore()
     if normalized.startswith(("postgres://", "postgresql://")):

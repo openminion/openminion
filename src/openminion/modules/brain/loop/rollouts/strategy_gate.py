@@ -1,5 +1,3 @@
-"""Allowlist gate for parallel-eligible step kinds."""
-
 from typing import Iterable
 
 
@@ -17,11 +15,9 @@ def is_step_eligible_for_parallel_rollout(
     *,
     operator_allowlist: Iterable[str] | None = None,
 ) -> bool:
-    """Return whether a step kind is eligible for parallel rollout."""
-
-    kind = str(step_kind or "").strip()
+    kind = step_kind.strip()
     if kind not in PARALLEL_ROLLOUT_ELIGIBLE_STEP_KINDS:
         return False
     if operator_allowlist is None:
         return True
-    return kind in {str(k or "").strip() for k in operator_allowlist if k}
+    return kind in {item.strip() for item in operator_allowlist}

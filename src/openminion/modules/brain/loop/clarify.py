@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from ..constants import (
     BRAIN_ACTION_STATUS_NEEDS_USER,
@@ -12,7 +12,7 @@ from ..state import clear_clarify_state, stale_clarify_state_should_clear
 from ..schemas import (
     ActionResult,
     AskUserCommand,
-    ClarifyContext,
+    ClarifyRequest,
     Decision,
     StepOutput,
     WorkingState,
@@ -56,7 +56,7 @@ def clarify(
         user_input
         and str(user_input).strip()
         and not state.unresolved_clarify_items
-        and getattr(state, "pending_llm_clarify_context", None) is not None
+        and state.pending_llm_clarify_context is not None
     ):
         logger.emit(
             "brain.clarify.context_consumed",
@@ -109,13 +109,9 @@ def _handle_unanswered_clarify_items(
     logger: CanonicalEventLogger,
     policy: str,
 ) -> bool:
-    readiness_state = str(
-        getattr(getattr(state, "request_readiness", None), "state", "") or ""
-    ).strip()
+    readiness_state = state.request_readiness.state if state.request_readiness else ""
     if (
-        bool(
-            getattr(getattr(runner, "options", None), "request_handoff_enabled", False)
-        )
+        bool(getattr(runner.options, "request_handoff_enabled", False))
         and readiness_state == "needs_user"
     ):
         transition(state, "clarify_requested", logger=logger)
@@ -152,7 +148,7 @@ def clear_llm_clarify_context(
     reason: str,
     user_reply: str | None = None,
 ) -> None:
-    if getattr(state, "pending_llm_clarify_context", None) is None:
+    if state.pending_llm_clarify_context is None:
         return
     payload = _llm_clarify_event_payload(state, reason=reason, user_reply=user_reply)
     state.pending_llm_clarify_context = None
@@ -167,40 +163,27 @@ def clear_llm_clarify_context(
 def sync_llm_clarify_context_from_decision(
     *,
     state: WorkingState,
-    decision: Decision | object | None,
+    decision: Decision | None,
     user_input: str | None,
     logger: CanonicalEventLogger,
 ) -> None:
-    existing = getattr(state, "pending_llm_clarify_context", None)
+    existing = state.pending_llm_clarify_context
     has_new_input = bool(str(user_input or "").strip())
-    decision_mode = str(getattr(decision, "route", "") or "").strip()
-    respond_kind = str(getattr(decision, "respond_kind", "") or "").strip()
-    replacement = getattr(decision, "clarify_context", None)
-    fallback = _fallback_llm_clarify_context(
-        state=state,
-        decision=decision,
-        user_input=user_input,
-    )
+    decision_mode = str(decision.route if decision else "").strip()
+    respond_kind = str(decision.respond_kind if decision else "").strip()
+    replacement = decision.clarify_context if decision else None
 
     if (
         decision_mode == "respond"
         and respond_kind == "clarify"
-        and (replacement is not None or fallback is not None)
+        and replacement is not None
     ):
-        state.pending_llm_clarify_context = (
-            replacement.model_copy(deep=True)
-            if replacement is not None
-            else fallback.model_copy(deep=True)
-        )
+        state.pending_llm_clarify_context = replacement.model_copy(deep=True)
         logger.emit(
             "brain.clarify.context_stored",
             _llm_clarify_event_payload(
                 state,
-                reason=(
-                    "decision_sidecar"
-                    if replacement is not None
-                    else "decision_question_fallback"
-                ),
+                reason="decision_sidecar",
                 user_reply=user_input,
             ),
             trace_id=state.trace_id,
@@ -216,69 +199,29 @@ def sync_llm_clarify_context_from_decision(
         )
 
 
-def _fallback_llm_clarify_context(
-    *,
-    state: WorkingState,
-    decision: Decision | object | None,
-    user_input: str | None,
-) -> ClarifyContext | None:
-    decision_mode = str(getattr(decision, "route", "") or "").strip()
-    respond_kind = str(getattr(decision, "respond_kind", "") or "").strip()
-    if decision_mode != "respond" or respond_kind != "clarify":
-        return None
-
-    question = str(getattr(decision, "question", "") or "").strip()
-    if not question:
-        return None
-
-    existing = getattr(state, "pending_llm_clarify_context", None)
-    original_user_input = ""
-    inferred_goal = ""
-    known_context: dict[str, str] = {}
-    if existing is not None:
-        original_user_input = str(
-            getattr(existing, "original_user_input", "") or ""
-        ).strip()
-        inferred_goal = str(getattr(existing, "inferred_goal", "") or "").strip()
-        known_context = dict(getattr(existing, "known_context", {}) or {})
-
-    if not original_user_input:
-        original_user_input = str(user_input or "").strip()
-    if not original_user_input:
-        return None
-
-    return ClarifyContext(
-        original_user_input=original_user_input,
-        inferred_goal=inferred_goal,
-        known_context=known_context,
-        unresolved_question=question,
-        clarify_question=question,
-    )
-
-
 def _llm_clarify_event_payload(
     state: WorkingState,
     *,
     reason: str,
     user_reply: str | None = None,
 ) -> dict[str, object]:
-    pending = getattr(state, "pending_llm_clarify_context", None)
-    known_context = getattr(pending, "known_context", {}) if pending is not None else {}
+    pending = state.pending_llm_clarify_context
+    known_context = pending.known_context if pending else {}
     return {
         "reason": str(reason or "").strip() or "unknown",
         "has_pending_context": pending is not None,
         "original_user_input": str(
-            getattr(pending, "original_user_input", "") or ""
+            pending.original_user_input if pending else ""
         ).strip(),
-        "inferred_goal": str(getattr(pending, "inferred_goal", "") or "").strip(),
+        "inferred_goal": str(pending.inferred_goal if pending else "").strip(),
         "known_context_keys": sorted(
             str(key).strip()
             for key in dict(known_context or {}).keys()
             if str(key).strip()
         ),
-        "clarify_question": str(getattr(pending, "clarify_question", "") or "").strip(),
+        "clarify_question": str(pending.clarify_question if pending else "").strip(),
         "unresolved_question": str(
-            getattr(pending, "unresolved_question", "") or ""
+            pending.unresolved_question if pending else ""
         ).strip(),
         "user_reply": str(user_reply or "").strip(),
     }
@@ -300,8 +243,8 @@ def process_clarification_response(
     state: WorkingState,
     user_input: str,
     logger: CanonicalEventLogger,
-    clarify_request,
-):
+    clarify_request: ClarifyRequest,
+) -> StepOutput:
     if not state.unresolved_clarify_items and clarify_request.questions:
         state.unresolved_clarify_items = list(clarify_request.questions)
         state.pending_clarify_items = list(state.unresolved_clarify_items)
@@ -335,9 +278,9 @@ def enter_clarify_mode(
     runner: "BrainRunner",
     *,
     state: WorkingState,
-    clarify_request,
+    clarify_request: ClarifyRequest,
     logger: CanonicalEventLogger,
-):
+) -> StepOutput:
     logger.emit(
         "brain.clarify.requested",
         {
@@ -375,14 +318,17 @@ def enter_clarify_mode(
         if clarify_request.questions:
             state.clarify_resume_cursor = clarify_request.questions[0].id
 
-        return _runner_delegate(
-            "_respond_with_meta",
-            runner,
-            state=state,
-            logger=logger,
-            message=question_text,
-            status=BRAIN_STATE_WAITING_USER,
-            action_result=result,
+        return cast(
+            StepOutput,
+            _runner_delegate(
+                "_respond_with_meta",
+                runner,
+                state=state,
+                logger=logger,
+                message=question_text,
+                status=BRAIN_STATE_WAITING_USER,
+                action_result=result,
+            ),
         )
 
     default_msg = "Additional information needed before proceeding."
@@ -392,12 +338,15 @@ def enter_clarify_mode(
         summary=default_msg,
     )
 
-    return _runner_delegate(
-        "_respond_with_meta",
-        runner,
-        state=state,
-        logger=logger,
-        message=default_msg,
-        status=BRAIN_STATE_WAITING_USER,
-        action_result=result,
+    return cast(
+        StepOutput,
+        _runner_delegate(
+            "_respond_with_meta",
+            runner,
+            state=state,
+            logger=logger,
+            message=default_msg,
+            status=BRAIN_STATE_WAITING_USER,
+            action_result=result,
+        ),
     )

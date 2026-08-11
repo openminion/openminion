@@ -17,12 +17,7 @@ class BridgeSessionClient:
         self._store = backing_store
 
     def _sanitize_context_text(self, value: str, *, is_error: bool = False) -> str:
-        text = str(value or "").strip()
-        if not text:
-            return ""
-        if is_error:
-            return ""
-        return text
+        return "" if is_error else value.strip()
 
     def update_summary(
         self,

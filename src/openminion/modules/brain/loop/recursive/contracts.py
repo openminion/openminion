@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 
+from openminion.modules.brain.interfaces import BrainRuntimeError
+
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from .schemas import (
         MetaDirective,
@@ -15,7 +17,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 
 
 RLM_CONTRACT_VERSION = "v1"
-RLM_INTERFACE_VERSION = "v1"
+RLM_INTERFACE_VERSION = RLM_CONTRACT_VERSION
 
 
 @runtime_checkable
@@ -190,8 +192,6 @@ class SkillClient(Protocol):
 
 
 class RLMServiceInterface(Protocol):
-    """Recursive loop service interface contract."""
-
     contract_version: ClassVar[str] = RLM_INTERFACE_VERSION
 
     def __init__(
@@ -244,7 +244,6 @@ class RLMServiceInterface(Protocol):
 def ensure_rlm_compatibility(
     rlm_service: Any, strict: bool = True
 ) -> tuple[bool, list[str]]:
-    """Validate RLM service implements the required interface."""
     errors = []
 
     if not hasattr(rlm_service, "contract_version"):
@@ -258,20 +257,12 @@ def ensure_rlm_compatibility(
     required_methods = ["generate", "refresh_working_memory", "retrieve", "expand"]
 
     for method in required_methods:
-        if not hasattr(rlm_service, method) or not callable(
-            getattr(rlm_service, method)
-        ):
+        if not callable(getattr(rlm_service, method, None)):
             errors.append(f"Missing required method: {method}")
 
     if errors:
         if strict:
-
-            class RlmError(Exception):
-                def __init__(self, code, message):
-                    self.code = code
-                    self.message = message
-
-            raise RlmError(
+            raise BrainRuntimeError(
                 "RLM_SERVICE_INTERFACE_VIOLATION", f"RLM service incompatible: {errors}"
             )
         return False, errors

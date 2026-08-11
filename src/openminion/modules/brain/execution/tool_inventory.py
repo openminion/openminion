@@ -1,23 +1,5 @@
 from typing import TYPE_CHECKING
 
-from openminion.modules.tool.contracts.model_ids import (
-    MODEL_BROWSER,
-    MODEL_EXEC_KILL,
-    MODEL_EXEC_LIST,
-    MODEL_EXEC_POLL,
-    MODEL_EXEC_RUN,
-    MODEL_FILE_FIND,
-    MODEL_FILE_LIST_DIR,
-    MODEL_FILE_READ,
-    MODEL_FILE_WRITE,
-    MODEL_HOST_METRICS,
-    MODEL_LOCATION,
-    MODEL_TIME,
-    MODEL_WEATHER,
-    MODEL_WEB_FETCH,
-    MODEL_WEB_SEARCH,
-)
-
 from ..schemas import WorkingState
 from ..tool_catalog import RunnerToolCatalog
 
@@ -32,28 +14,7 @@ def build_tool_inventory_response(
 ) -> str:
     del state
     lines: list[str] = ["**Available Tools and Skills**"]
-    tools_list: list[str] = sorted(RunnerToolCatalog(runner).list_tool_names())
-
-    if not tools_list:
-        tools_list = sorted(
-            [
-                MODEL_FILE_WRITE,
-                MODEL_FILE_READ,
-                MODEL_FILE_LIST_DIR,
-                MODEL_FILE_FIND,
-                MODEL_EXEC_RUN,
-                MODEL_EXEC_POLL,
-                MODEL_EXEC_KILL,
-                MODEL_EXEC_LIST,
-                MODEL_WEB_SEARCH,
-                MODEL_WEB_FETCH,
-                MODEL_WEATHER,
-                MODEL_TIME,
-                MODEL_LOCATION,
-                MODEL_HOST_METRICS,
-                MODEL_BROWSER,
-            ]
-        )
+    tools_list = sorted(RunnerToolCatalog(runner).list_tool_names())
 
     lines.append(f"\n**Tools ({len(tools_list)} available):**")
     for tool in tools_list[:12]:
@@ -68,7 +29,7 @@ def build_tool_inventory_response(
             skills = list_skills({})
             skill_count = len(skills) if isinstance(skills, list) else 0
     except Exception:
-        pass
+        skill_count = 0
 
     if skill_count > 0:
         lines.append(f"\n**Skills ({skill_count} available):**")

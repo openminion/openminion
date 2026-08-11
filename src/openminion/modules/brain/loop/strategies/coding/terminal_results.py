@@ -22,7 +22,6 @@ from openminion.modules.brain.loop.tools.postprocess.evidence_closeout import (
 from openminion.modules.brain.schemas.base import new_uuid
 from openminion.modules.brain.schemas.state.action import ActionResult
 
-from .closeout_salvage import salvage_reserved_closeout_from_existing_evidence
 from .contracts import CODING_TERM_VERIFY_CAP_EXCEEDED
 
 BuildBlockedResult = Callable[[str, str], ActionResult]
@@ -48,13 +47,6 @@ def _emit_loop_status(
         terminal=terminal,
         payload=payload,
     )
-
-
-def _salvaged_or_mutating_final_text(runner: Any, interruption_detail: str) -> str:
-    return salvage_reserved_closeout_from_existing_evidence(
-        runner,
-        interruption_detail=interruption_detail,
-    ) or _mutating_file_evidence_final_text(runner)
 
 
 def _exit_continue(
@@ -98,23 +90,6 @@ def _exit_autonomous_blocked(
     build_blocked_result: BuildBlockedResult,
 ) -> ExecutionResult:
     loop = runner._loop_state
-    salvaged_final_text = salvage_reserved_closeout_from_existing_evidence(
-        runner,
-        interruption_detail=(
-            "The reserved answer-only closeout was interrupted by a repeated "
-            "verification failure, so this summary is derived from the existing "
-            "coding evidence."
-        ),
-    )
-    if salvaged_final_text is not None:
-        return _exit_final_text(
-            runner,
-            ctx,
-            loop,
-            salvaged_final_text,
-            allowed_tools,
-            build_blocked_result=build_blocked_result,
-        )
     reason_text = {
         "blocked_cap": "self-correction cap reached",
         "blocked_novel_failure": "same verification failure repeated",
@@ -213,11 +188,7 @@ def _exit_budget_exhausted(
     *,
     build_blocked_result: BuildBlockedResult,
 ) -> ExecutionResult:
-    fallback_text = _salvaged_or_mutating_final_text(
-        runner,
-        "The reserved answer-only closeout was interrupted by budget exhaustion, "
-        "so this summary is derived from the existing coding evidence.",
-    )
+    fallback_text = _mutating_file_evidence_final_text(runner)
     if fallback_text:
         return _exit_final_text(
             runner,
@@ -255,12 +226,7 @@ def _exit_blocked_with_closure(
     allowed_tools: frozenset[str],
     build_blocked_result: BuildBlockedResult,
 ) -> ExecutionResult:
-    fallback_text = _salvaged_or_mutating_final_text(
-        runner,
-        "The reserved answer-only closeout was interrupted before the model could "
-        "finish the summary, so this answer is derived from the existing coding "
-        "evidence.",
-    )
+    fallback_text = _mutating_file_evidence_final_text(runner)
     if fallback_text:
         return _exit_final_text(
             runner,

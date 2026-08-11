@@ -6,8 +6,7 @@ from openminion.modules.llm.providers.diagnostics import (
 )
 
 
-def _internal_failure_answer(*, detail: str = "") -> str:
-    del detail
+def _internal_failure_answer() -> str:
     return (
         "I hit an internal decision error before I could continue safely on this turn."
     )
@@ -113,9 +112,7 @@ def _render_provider_error_detail(raw: Any) -> str:
     if parsed_message:
         return parsed_message
     compact = " ".join(token.split())
-    if len(compact) > 180:
-        return compact[:177] + "..."
-    return compact
+    return compact[:177] + "..." if len(compact) > 180 else compact
 
 
 def _extract_embedded_provider_message(raw: str) -> str:

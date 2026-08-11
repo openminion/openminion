@@ -1,15 +1,7 @@
 from typing import Any
 
 from openminion.base.time import utc_now_iso as _iso_now_utc
-from openminion.modules.brain.loop.failures import _internal_failure_answer
 
-_RESEARCH_PLACEHOLDER_PREFIX = "Research iteration "
-_RUNTIME_BUDGET_ONLY_MESSAGES = (
-    "[act] budget exhausted before a final answer.",
-    "[act] reached the adaptive iteration cap without a final answer.",
-    "[act] repeated identical tool calls detected without reaching a final answer.",
-    "[act] repeated the same tool pattern without reaching a final answer.",
-)
 _TEMPORAL_FACT_DATE_KEYS = (
     "published_at",
     "query_time",
@@ -21,34 +13,6 @@ _TEMPORAL_FACT_RESULT_KEYS = ("published_at", "date", "evidence_date")
 
 def normalized_text(value: Any) -> str:
     return str(value or "").strip()
-
-
-def _is_placeholder_text(text: str) -> bool:
-    normalized = normalized_text(text)
-    if not normalized:
-        return True
-    return normalized.startswith(_RESEARCH_PLACEHOLDER_PREFIX)
-
-
-def _is_budget_only_message(text: str) -> bool:
-    normalized = normalized_text(text)
-    if not normalized:
-        return False
-    return any(
-        normalized == item or normalized.startswith(f"{item} ")
-        for item in _RUNTIME_BUDGET_ONLY_MESSAGES
-    )
-
-
-def usable_child_result_text(text: str) -> str:
-    normalized = normalized_text(text)
-    if not normalized:
-        return ""
-    if normalized == _internal_failure_answer():
-        return ""
-    if _is_budget_only_message(normalized):
-        return ""
-    return normalized
 
 
 def _dedup_preserve_order(values: list[str]) -> list[str]:
@@ -160,8 +124,6 @@ def meaningful_partial_texts(findings: list[dict[str, Any]]) -> list[str]:
         text
         for finding in findings
         if (text := normalized_text(finding.get("content")))
-        and not _is_placeholder_text(text)
-        and not _is_budget_only_message(text)
     ]
 
 
@@ -176,7 +138,7 @@ def _usable_tool_result_snippets(tool_results: list[dict[str, Any]]) -> str:
         if not bool(item.get("ok")):
             continue
         content = normalized_text(item.get("content"))
-        if not content or _is_budget_only_message(content):
+        if not content:
             continue
         snippets.append(content[:500])
     return "\n\n".join(snippets).strip()

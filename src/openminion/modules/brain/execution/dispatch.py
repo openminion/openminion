@@ -31,6 +31,22 @@ class DirectExecutionOwner:
     execute_fn: Callable[[ExecutionContext], ExecutionResult]
 
 
+def _execution_owner(
+    *, mode_name: str, ctx: ExecutionContext, handler: Any
+) -> DirectExecutionOwner:
+    return DirectExecutionOwner(
+        mode_name=mode_name,
+        ctx=ctx,
+        prepare_fn=getattr(handler, "prepare", None)
+        if bool(getattr(handler, "has_prepare", False))
+        else None,
+        validate_fn=getattr(handler, "validate", None)
+        if bool(getattr(handler, "has_validate", False))
+        else None,
+        execute_fn=getattr(handler, "execute"),
+    )
+
+
 def _decision_route_name(decision: Any) -> str:
     return str(getattr(decision, "route", getattr(decision, "mode", "")) or "").strip()
 
@@ -93,35 +109,19 @@ def _build_owner(
         logger=logger,
         suppress_lifecycle_exit_statuses=suppress_lifecycle_exit_statuses,
     )
-    prepare_fn = (
-        getattr(configured, "prepare", None)
-        if bool(getattr(configured, "has_prepare", False))
-        else None
-    )
-    validate_fn = (
-        getattr(configured, "validate", None)
-        if bool(getattr(configured, "has_validate", False))
-        else None
-    )
-    execute_fn = getattr(configured, "execute")
-    return DirectExecutionOwner(
+    return _execution_owner(
         mode_name=resolved_mode_name,
         ctx=ctx,
-        prepare_fn=prepare_fn,
-        validate_fn=validate_fn,
-        execute_fn=execute_fn,
+        handler=configured,
     )
 
 
 def _respond_execute(ctx: ExecutionContext) -> ExecutionResult:
     respond_kind = str(getattr(ctx.decision, "respond_kind", "") or "").strip()
     reason_code = str(getattr(ctx.decision, "reason_code", "") or "").strip()
-    # structural no-op path. When idle-tick enforcement coerces
     if reason_code == "pae_idle_tick_noop":
         from ..state import respond_structural_noop
 
-        # `ExecutionContext._services` is a `RunnerExecutionServices`
-        # whose `.runner` is the `BrainRunner` instance.
         services = getattr(ctx, "_services", None)
         runner = getattr(services, "runner", None)
         return ExecutionResult.from_step_output(
@@ -365,9 +365,7 @@ def maybe_resume_task_backed_direct(
     logger: Any,
     preferred_task_id: str | None = None,
 ) -> ExecutionResult | None:
-    if state.plan is not None and 0 <= int(getattr(state, "cursor", 0) or 0) < len(
-        state.plan.steps
-    ):
+    if state.plan is not None and state.cursor < len(state.plan.steps):
         return None
     if str(user_input or "").strip() and not is_resume_like_input(user_input):
         return None
@@ -438,16 +436,10 @@ def maybe_resume_task_backed_direct(
             handler.resume(ctx, checkpoint_id) if checkpoint_id else {}
         )
         return _dispatch_owner(
-            DirectExecutionOwner(
+            _execution_owner(
                 mode_name=mode_name,
                 ctx=ctx,
-                prepare_fn=getattr(handler, "prepare", None)
-                if bool(getattr(handler, "has_prepare", False))
-                else None,
-                validate_fn=getattr(handler, "validate", None)
-                if bool(getattr(handler, "has_validate", False))
-                else None,
-                execute_fn=getattr(handler, "execute"),
+                handler=handler,
             )
         )
     return None

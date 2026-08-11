@@ -76,19 +76,17 @@ class CodingVerificationMixin:
         command: Any,
         action_result: ActionResult,
     ) -> None:
-        if not isinstance(command, ToolCommand):
-            return
-        if (
+        if not isinstance(command, ToolCommand) or (
             str(command.tool_name or "").strip().lower()
             not in self._VERIFIER_CANDIDATE_TOOLS
         ):
             return
-        self._loop_state.scratchpad["coding.last_verifier_candidate"] = (
-            serialize_verifier_candidate(command=command, action_result=action_result)
+        payload = serialize_verifier_candidate(
+            command=command,
+            action_result=action_result,
         )
-        self._last_verifier_candidate_payload = dict(
-            self._loop_state.scratchpad["coding.last_verifier_candidate"]
-        )
+        self._loop_state.scratchpad["coding.last_verifier_candidate"] = payload
+        self._last_verifier_candidate_payload = dict(payload)
 
     def _resolve_verifier_goal(
         self: Any,
@@ -389,8 +387,9 @@ class CodingVerificationMixin:
         return False
 
     def _coding_plan_requires_file_change(self: Any) -> bool:
+        plan_requires_change = getattr(self._coding_plan, "requires_file_change", False)
         return bool(
-            getattr(self._coding_plan, "requires_file_change", False)
+            plan_requires_change
             or self._loop_state.scratchpad.get("coding.requires_file_change")
         )
 

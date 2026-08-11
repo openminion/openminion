@@ -25,10 +25,7 @@ _EXPORT_MAP = {
     ),
 }
 
-_MODULE_EXPORTS = {
-    "normalize": ".normalize",
-    "request": ".request",
-}
+_MODULE_EXPORTS = {"normalize": ".normalize", "request": ".request"}
 
 
 def __getattr__(name: str) -> Any:
@@ -39,9 +36,9 @@ def __getattr__(name: str) -> Any:
         value = getattr(module, attr_name)
         globals()[name] = value
         return value
-    module_name = _MODULE_EXPORTS.get(name)
-    if module_name is not None:
-        module = import_module(module_name, __name__)
+    module_export = _MODULE_EXPORTS.get(name)
+    if module_export is not None:
+        module = import_module(module_export, __name__)
         globals()[name] = module
         return module
     raise AttributeError(name)

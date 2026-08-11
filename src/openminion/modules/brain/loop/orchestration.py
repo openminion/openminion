@@ -27,7 +27,6 @@ from openminion.modules.brain.loop.tools.runtime import (
 )
 from openminion.modules.brain.tools.parser import normalize_tool_name_for_brain
 from openminion.modules.brain.constants import (
-    BRAIN_ACT_PROFILE_CODING,
     BRAIN_DECISION_ROUTE_ACT,
 )
 from openminion.modules.brain.diagnostics.events import CanonicalEventLogger
@@ -49,12 +48,9 @@ from .entry_routing import (
     _bypass_decision_for_route,
     _entry_coding_decision,
     _entry_decompose_decision,
-    _entry_mutation_seed_should_route_to_coding,
     _entry_query_text,
     _entry_research_decision,
-    _entry_user_file_artifact_coding_decision_if_needed,
     _is_empty_entry_response,
-    _local_route,
     _provisional_entry_route,
     _response_usage_payload,
     _should_bypass_unified_entry,
@@ -169,16 +165,6 @@ def _entry_response_bytes(response: Any) -> int:
             ],
             "finish_reason": str(getattr(response, "finish_reason", "") or ""),
         }
-    )
-
-
-def _entry_response_only_requests_tool_directory(response: Any) -> bool:
-    tool_calls = list(getattr(response, "tool_calls", []) or [])
-    if not tool_calls:
-        return False
-    return all(
-        str(getattr(call, "name", "") or "").strip() == "tool.request"
-        for call in tool_calls
     )
 
 
@@ -446,17 +432,14 @@ def decide(
             confidence=1.0,
             reason_code=str(getattr(budget_stop, "value", budget_stop) or "").strip()
             or "tick_budget_exhausted",
-            answer=_internal_failure_answer(
-                detail=str(getattr(budget_stop, "value", budget_stop) or "").strip()
-                or "tick_budget_exhausted"
-            ),
+            answer=_internal_failure_answer(),
         )
 
     if state.llm_calls_used >= state.llm_calls_max:
         return _respond_decision(
             confidence=1.0,
             reason_code="llm_call_budget_exceeded",
-            answer=_internal_failure_answer(detail="llm_call_budget_exceeded"),
+            answer=_internal_failure_answer(),
         )
 
     provisional_route = _provisional_entry_route(
@@ -641,7 +624,7 @@ def decide(
         return _respond_decision(
             confidence=0.3,
             reason_code="entry_runtime_unavailable",
-            answer=_internal_failure_answer(detail="entry_runtime_unavailable"),
+            answer=_internal_failure_answer(),
         )
 
     response = None
@@ -794,14 +777,14 @@ def decide(
         return _respond_decision(
             confidence=0.5,
             reason_code="llm_empty_response",
-            answer=_internal_failure_answer(detail="llm_empty_response"),
+            answer=_internal_failure_answer(),
         )
 
     if response is None or last_detection is None:
         return _respond_decision(
             confidence=0.5,
             reason_code="entry_missing_response",
-            answer=_internal_failure_answer(detail="entry_missing_response"),
+            answer=_internal_failure_answer(),
         )
 
     _apply_entry_freshness(
@@ -912,13 +895,6 @@ def decide(
         return decision
 
     if last_detection.path == "respond":
-        file_artifact_decision = _entry_user_file_artifact_coding_decision_if_needed(
-            state=state,
-            user_input=user_input,
-            provisional_route=provisional_route,
-        )
-        if file_artifact_decision is not None:
-            return file_artifact_decision
         decision = _respond_decision(
             confidence=0.5,
             reason_code="entry_text_response",
@@ -974,26 +950,5 @@ def decide(
         return decompose_decision
     decision = ActDecision(confidence=0.5, reason_code="entry_tool_call")
     decision._entry_response = response
-    if _entry_mutation_seed_should_route_to_coding(
-        response=response,
-        provisional_route=provisional_route,
-    ):
-        decision.reason_code = "entry_coding_seed_tool_call"
-        decision.act_profile = BRAIN_ACT_PROFILE_CODING
-        decision._pre_resolved_act_route = _local_route(
-            act_profile=BRAIN_ACT_PROFILE_CODING,
-            source="entry_mutation_seed_tool_call",
-        )
-        return decision
-    file_artifact_decision = _entry_user_file_artifact_coding_decision_if_needed(
-        state=state,
-        user_input=user_input,
-        provisional_route=provisional_route,
-        entry_response=(
-            None if _entry_response_only_requests_tool_directory(response) else response
-        ),
-    )
-    if file_artifact_decision is not None:
-        return file_artifact_decision
     decision._pre_resolved_act_route = provisional_route
     return decision

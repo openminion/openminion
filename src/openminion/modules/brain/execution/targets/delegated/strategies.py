@@ -114,18 +114,6 @@ def _is_available_state(state: str) -> bool:
     return normalized in {"available", "healthy", "online", "ready", "unknown"}
 
 
-def _best_delegate_message(*, summary: str, outputs: dict[str, Any] | None) -> str:
-    if summary:
-        return summary
-    normalized_outputs = dict(outputs or {})
-    for key in ("answer", "message", "summary", "result", "output"):
-        value = normalized_outputs.get(key)
-        text = _normalized_text(value)
-        if text:
-            return text
-    return ""
-
-
 def _normalized_error_details(raw: Any) -> dict[str, Any]:
     return dict(raw) if isinstance(raw, dict) else {}
 
@@ -151,6 +139,43 @@ def _delegation_context_payload(
 def _runner_task_manager(ctx) -> Any | None:
     runner = runner_from_context(ctx)
     return getattr(runner, "task_manager", None) if runner is not None else None
+
+
+def _delegate_command(
+    *,
+    ctx: Any,
+    payload: DelegatePayload,
+    resolved_agent_id: str,
+    delegation_context: ChildContext,
+    idempotency_key: str,
+    expect_async: bool,
+) -> AgentCommand:
+    params: dict[str, Any] = {
+        "goal": payload.goal,
+        "summary": delegation_context.summary,
+        "constraints": list(delegation_context.constraints or []),
+    }
+    if delegation_context.active_skill_id:
+        params["active_skill_id"] = delegation_context.active_skill_id
+    if payload.target_capability:
+        params["target_capability"] = payload.target_capability
+    parent_context = _delegation_context_payload(
+        delegation_context,
+        fallback=payload.delegation_context,
+    )
+    if parent_context is not None:
+        params["delegation_context"] = parent_context
+    return AgentCommand(
+        title=f"delegate to {resolved_agent_id}: {payload.goal[:60]}",
+        target_agent_id=resolved_agent_id,
+        method="delegate",
+        params=params,
+        inputs={"user_input": ctx.user_input or payload.goal},
+        success_criteria={"status": "success"},
+        idempotency_key=idempotency_key,
+        timeout_ms=payload.timeout_ms,
+        expect_async=expect_async,
+    )
 
 
 def _transition_linked_task(
@@ -207,31 +232,12 @@ class SyncCommandStrategy(DelegationStrategy):
         delegation_context: ChildContext,
         idempotency_key: str,
     ) -> DelegationExecution:
-        params: dict[str, Any] = {
-            "goal": payload.goal,
-            "summary": delegation_context.summary,
-            "constraints": list(delegation_context.constraints or []),
-        }
-        if delegation_context.active_skill_id:
-            params["active_skill_id"] = delegation_context.active_skill_id
-        if payload.target_capability:
-            params["target_capability"] = payload.target_capability
-        parent_context = _delegation_context_payload(
-            delegation_context,
-            fallback=payload.delegation_context,
-        )
-        if parent_context is not None:
-            params["delegation_context"] = parent_context
-
-        command = AgentCommand(
-            title=f"delegate to {resolved_agent_id}: {payload.goal[:60]}",
-            target_agent_id=resolved_agent_id,
-            method="delegate",
-            params=params,
-            inputs={"user_input": ctx.user_input or payload.goal},
-            success_criteria={"status": "success"},
+        command = _delegate_command(
+            ctx=ctx,
+            payload=payload,
+            resolved_agent_id=resolved_agent_id,
+            delegation_context=delegation_context,
             idempotency_key=idempotency_key,
-            timeout_ms=payload.timeout_ms,
             expect_async=False,
         )
         action_result, job = ctx.act_command(command=command)
@@ -266,31 +272,12 @@ class AsyncJobStrategy(DelegationStrategy):
         delegation_context: ChildContext,
         idempotency_key: str,
     ) -> DelegationExecution:
-        params: dict[str, Any] = {
-            "goal": payload.goal,
-            "summary": delegation_context.summary,
-            "constraints": list(delegation_context.constraints or []),
-        }
-        if delegation_context.active_skill_id:
-            params["active_skill_id"] = delegation_context.active_skill_id
-        if payload.target_capability:
-            params["target_capability"] = payload.target_capability
-        parent_context = _delegation_context_payload(
-            delegation_context,
-            fallback=payload.delegation_context,
-        )
-        if parent_context is not None:
-            params["delegation_context"] = parent_context
-
-        command = AgentCommand(
-            title=f"delegate to {resolved_agent_id}: {payload.goal[:60]}",
-            target_agent_id=resolved_agent_id,
-            method="delegate",
-            params=params,
-            inputs={"user_input": ctx.user_input or payload.goal},
-            success_criteria={"status": "success"},
+        command = _delegate_command(
+            ctx=ctx,
+            payload=payload,
+            resolved_agent_id=resolved_agent_id,
+            delegation_context=delegation_context,
             idempotency_key=idempotency_key,
-            timeout_ms=payload.timeout_ms,
             expect_async=True,
         )
         action_result, job = ctx.act_command(command=command)
@@ -379,10 +366,7 @@ class DirectStatusMapper(A2AStatusMapper):
         normalized_status = _normalized_text(job_status).lower()
         normalized_outputs = dict(outputs or {})
         normalized_error = dict(error or {})
-        message = _best_delegate_message(
-            summary=summary,
-            outputs=normalized_outputs,
-        )
+        message = _normalized_text(summary)
         if normalized_status == "pending":
             return ExecutionResult(
                 status="pending",
@@ -492,7 +476,7 @@ class PollingResumeStrategy:
             session_id=ctx.state.session_id,
             trace_id=str(getattr(ctx.state, "trace_id", "") or ""),
         )
-        normalized = dict(raw or {}) if isinstance(raw, dict) else {}
+        normalized = raw if isinstance(raw, dict) else {}
         return self._status_mapper.map_job_status(
             ctx=ctx,
             payload=payload,
@@ -618,7 +602,7 @@ class TaskManagerTaskTracker(DelegationTaskTracker):
         normalized = _normalized_text(task_id)
         if not normalized:
             return
-        manager = getattr(self, "_manager", None)
+        manager = self._manager
         if manager is None:
             return
         _transition_linked_task(manager, task_id=normalized, state_name="DONE")
@@ -627,7 +611,7 @@ class TaskManagerTaskTracker(DelegationTaskTracker):
         normalized = _normalized_text(task_id)
         if not normalized:
             return
-        manager = getattr(self, "_manager", None)
+        manager = self._manager
         if manager is None:
             return
         _transition_linked_task(
@@ -641,7 +625,7 @@ class TaskManagerTaskTracker(DelegationTaskTracker):
         normalized = _normalized_text(task_id)
         if not normalized:
             return
-        manager = getattr(self, "_manager", None)
+        manager = self._manager
         if manager is None:
             return
         _transition_linked_task(manager, task_id=normalized, state_name="CANCELLED")
@@ -716,10 +700,7 @@ class DefaultAsyncCancellationPolicy(AsyncCancellationPolicy):
 
 class SimpleA2ABudgetPolicy(BudgetPolicy):
     def check_budget(self, *, state: WorkingState) -> bool:
-        return (
-            int(getattr(getattr(state, "budgets_remaining", None), "a2a_calls", 0) or 0)
-            > 0
-        )
+        return state.budgets_remaining.a2a_calls > 0
 
     def deduct(self, *, state: WorkingState) -> None:
         del state

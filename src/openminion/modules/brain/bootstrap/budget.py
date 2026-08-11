@@ -10,7 +10,6 @@ from openminion.modules.brain.schemas import Decision, WorkingState
 from openminion.modules.brain.tools.schema import tool_schema_stub
 from .context import (
     _compact_decide_mode_descriptions,
-    _drop_example_style_overrides,
     _rebuild_decide_context_with_hints,
 )
 from .recovery import _respond_decision
@@ -54,17 +53,13 @@ def trim_decide_context_to_budget(
     if isinstance(runtime_schemas, list) and runtime_schemas:
         compact_schemas = [tool_schema_stub(item) for item in runtime_schemas]
         hints["runtime_tool_schemas"] = compact_schemas
-        context = _runner_delegate(
-            "_build_context",
+        context, compact_estimate = _rebuild_decide_context_with_hints(
             runner,
             state=state,
-            purpose="decide",
-            budget={"max_tokens": budget_max_tokens},
-            hints=hints,
             logger=logger,
-        )
-        compact_estimate = _runner_delegate(
-            "_estimate_tokens", runner, model=model, context=context
+            model=model,
+            budget_max_tokens=budget_max_tokens,
+            hints=hints,
         )
         logger.emit(
             "llm.context.trimmed",
@@ -88,20 +83,13 @@ def trim_decide_context_to_budget(
             )
             if shortlisted_schemas:
                 hints["runtime_tool_schemas"] = shortlisted_schemas
-                context = _runner_delegate(
-                    "_build_context",
+                context, shortlisted_estimate = _rebuild_decide_context_with_hints(
                     runner,
                     state=state,
-                    purpose="decide",
-                    budget={"max_tokens": budget_max_tokens},
-                    hints=hints,
                     logger=logger,
-                )
-                shortlisted_estimate = _runner_delegate(
-                    "_estimate_tokens",
-                    runner,
                     model=model,
-                    context=context,
+                    budget_max_tokens=budget_max_tokens,
+                    hints=hints,
                 )
                 logger.emit(
                     "llm.context.trimmed",
@@ -121,17 +109,13 @@ def trim_decide_context_to_budget(
         runtime_schemas = hints.get("runtime_tool_schemas")
         if isinstance(runtime_schemas, list) and runtime_schemas:
             hints.pop("runtime_tool_schemas", None)
-            context = _runner_delegate(
-                "_build_context",
+            context, no_tool_estimate = _rebuild_decide_context_with_hints(
                 runner,
                 state=state,
-                purpose="decide",
-                budget={"max_tokens": budget_max_tokens},
-                hints=hints,
                 logger=logger,
-            )
-            no_tool_estimate = _runner_delegate(
-                "_estimate_tokens", runner, model=model, context=context
+                model=model,
+                budget_max_tokens=budget_max_tokens,
+                hints=hints,
             )
             logger.emit(
                 "llm.context.trimmed",
@@ -156,6 +140,7 @@ def trim_decide_context_to_budget(
                 runner,
                 state=state,
                 logger=logger,
+                model=model,
                 budget_max_tokens=budget_max_tokens,
                 hints=hints,
             )
@@ -173,30 +158,6 @@ def trim_decide_context_to_budget(
             estimate = compact_mode_estimate
 
     if estimate > state.budgets_remaining.tokens:
-        compact_style = _drop_example_style_overrides(hints.get("style_overrides"))
-        if compact_style is not None:
-            hints["style_overrides"] = compact_style
-            context, style_estimate = _rebuild_decide_context_with_hints(
-                runner,
-                state=state,
-                logger=logger,
-                budget_max_tokens=budget_max_tokens,
-                hints=hints,
-            )
-            logger.emit(
-                "llm.context.trimmed",
-                {
-                    "purpose": "decide",
-                    "strategy": "style_overrides_examples_removed",
-                    "estimate_before": estimate,
-                    "estimate_after": style_estimate,
-                    "style_override_count": len(compact_style),
-                },
-                trace_id=state.trace_id,
-            )
-            estimate = style_estimate
-
-    if estimate > state.budgets_remaining.tokens:
         style_overrides = hints.get("style_overrides")
         if isinstance(style_overrides, dict) and style_overrides:
             hints.pop("style_overrides", None)
@@ -204,6 +165,7 @@ def trim_decide_context_to_budget(
                 runner,
                 state=state,
                 logger=logger,
+                model=model,
                 budget_max_tokens=budget_max_tokens,
                 hints=hints,
             )

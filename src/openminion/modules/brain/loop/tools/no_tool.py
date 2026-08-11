@@ -5,44 +5,31 @@ from __future__ import annotations
 from typing import Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
-from openminion.modules.brain.schemas import FinalizationStatus
 from openminion.modules.llm.schemas import Message
 
 from .contracts import (
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
-    ADAPTIVE_TERM_LLM_ERROR,
     ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
     AdaptiveToolLoopOutcome,
 )
-from .budget_control import _is_internal_failure_final_text
 from .direct_tool import (
     _direct_tool_turn_active,
     _remaining_direct_tool_name_sequence,
 )
 from .postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
-    _final_text_parrots_policy_denial,
-    _looks_like_execution_preface_draft,
-    _looks_like_pre_tool_draft_echo,
-    _looks_like_structured_final_answer,
-    _looks_like_structured_status_payload,
     _looks_like_unexecutable_tool_payload_text,
     _raw_tool_payload_retry_allowed,
 )
 from .postprocess.evidence_closeout import (
     MUTATING_FILE_CLOSEOUT_KEY,
-    missing_requested_closeout_markers,
     mutating_file_evidence_fallback_text,
-    requested_validation_without_exec_run,
-    requested_closeout_markers,
     tool_evidence_closeout_text,
 )
 from .iteration.helpers import (
-    _MUTATING_FILE_TOOLS,
     _count_substantive_non_control_tool_results,
     _requires_typed_finalization_contract,
 )
-from .evidence import _loop_tool_result_payloads
 from .iteration.termination import build_no_tool_outcome
 from .response_payloads import (
     _FINALIZATION_STATUS_SALVAGE_GUIDANCE,
@@ -67,131 +54,6 @@ from .response_payloads import (
 )
 from .runtime import _extract_visible_response_text
 from .status import emit_adaptive_status
-
-
-def _final_text_from_successful_tool_evidence(loop_state: Any) -> str:
-    return tool_evidence_closeout_text(
-        loop_state,
-        reason="the tool-backed work reached a finalization guard.",
-    )
-
-
-def _evidence_fallback_for_draft_final_text(loop_state: Any) -> str:
-    fallback_final_text = _final_text_from_successful_tool_evidence(loop_state)
-    if not fallback_final_text:
-        return ""
-    loop_state.scratchpad["pre_tool_draft_echo_used_evidence_fallback"] = True
-    return fallback_final_text
-
-
-def _retry_missing_requested_markers_after_tool_results(
-    runner: Any,
-    *,
-    normalized_final_text: str,
-) -> tuple[bool, None] | None:
-    if _count_substantive_non_control_tool_results(runner.loop_state) <= 0:
-        return None
-    missing = missing_requested_closeout_markers(
-        runner.loop_state,
-        normalized_final_text,
-    )
-    if not missing:
-        return None
-    scratchpad = runner.loop_state.scratchpad
-    if bool(scratchpad.get("missing_requested_closeout_markers_retry_used", False)):
-        return None
-    scratchpad["missing_requested_closeout_markers_retry_used"] = True
-    rendered = ", ".join(f"{marker}:" for marker in missing)
-    return runner._retry_with_system_message(
-        "Your previous reply omitted requested final-output labels after "
-        f"successful tool results. Return the final answer now with these labels: "
-        f"{rendered}. Do not call more tools unless the evidence is genuinely "
-        "insufficient.",
-        discard_assistant_text=normalized_final_text,
-    )
-
-
-def _fallback_missing_requested_markers_after_retry(
-    runner: Any,
-    *,
-    normalized_final_text: str,
-) -> str:
-    if not bool(
-        runner.loop_state.scratchpad.get(
-            "missing_requested_closeout_markers_retry_used",
-            False,
-        )
-    ):
-        return ""
-    if not missing_requested_closeout_markers(
-        runner.loop_state,
-        normalized_final_text,
-    ):
-        return ""
-    fallback = tool_evidence_closeout_text(
-        runner.loop_state,
-        reason=(
-            "the model omitted requested final-output labels after successful "
-            "tool results, so preserved evidence is returned."
-        ),
-    )
-    if fallback:
-        runner.loop_state.scratchpad[
-            "missing_requested_closeout_markers_used_evidence_fallback"
-        ] = True
-        return fallback
-    fallback = _tool_attempt_evidence_closeout_text(
-        runner.loop_state,
-        reason=(
-            "the model omitted requested final-output labels after tool attempts, "
-            "so available tool evidence is returned truthfully."
-        ),
-    )
-    if fallback:
-        runner.loop_state.scratchpad[
-            "missing_requested_closeout_markers_used_attempt_fallback"
-        ] = True
-    return fallback
-
-
-def _tool_attempt_evidence_closeout_text(loop_state: Any, *, reason: str) -> str:
-    if _count_substantive_non_control_tool_results(loop_state) <= 0:
-        return ""
-    requested = requested_closeout_markers(loop_state)
-    lines: list[str] = []
-    for marker in requested:
-        if marker in {"follow-ups", "next steps"}:
-            lines.append(
-                f"{marker}: retry with a narrower query or alternate evidence "
-                "source if stronger proof is still needed."
-            )
-        elif marker in {"validation", "validation result"}:
-            lines.append(
-                f"{marker}: no successful validation evidence was captured before "
-                "closeout; available tool attempts are listed below."
-            )
-        elif marker in {"files", "files changed"}:
-            lines.append(
-                f"{marker}: no successful file artifact evidence was captured "
-                "before closeout."
-            )
-        else:
-            lines.append(
-                f"{marker}: not captured before closeout; available tool attempt "
-                "evidence is reported below."
-            )
-    if not lines:
-        lines.append(f"result: {reason}")
-    lines.append("tool evidence:")
-    for item in _loop_tool_result_payloads(loop_state)[-5:]:
-        tool_name = str(item.get("tool_name") or "tool").strip() or "tool"
-        status = "success" if bool(item.get("ok")) else "failed"
-        summary = str(item.get("content") or item.get("error") or "").strip()
-        data = item.get("data")
-        if not summary and isinstance(data, dict):
-            summary = str(data.get("summary") or data.get("error") or "").strip()
-        lines.append(f"- {tool_name}: {status}; {summary or 'no summary captured'}")
-    return "\n".join(lines)
 
 
 def _retry_empty_final_after_tool_results(
@@ -263,135 +125,6 @@ def _retry_empty_typed_finalization_after_tool_results(
     )
 
 
-def _fallback_missing_typed_finalization_after_tool_results(
-    runner: Any,
-    *,
-    requires_finalization_status: bool,
-    finalization_status: Any,
-) -> str:
-    if not requires_finalization_status or finalization_status is not None:
-        return ""
-    if _count_substantive_non_control_tool_results(runner.loop_state) <= 0:
-        return ""
-    if not bool(
-        runner.loop_state.scratchpad.get("typed_finalization_status_retry_used", False)
-    ):
-        return ""
-    fallback = tool_evidence_closeout_text(
-        runner.loop_state,
-        reason=(
-            "the model omitted the required typed finalization contract after "
-            "successful tool results, so preserved evidence is returned."
-        ),
-    )
-    if fallback:
-        runner.loop_state.scratchpad[
-            "typed_finalization_contract_used_evidence_fallback"
-        ] = True
-    return fallback
-
-
-def _typed_finalization_fallback_status(
-    runner: Any,
-    *,
-    requires_finalization_status: bool,
-    finalization_status: Any,
-) -> tuple[str, FinalizationStatus] | None:
-    fallback = _fallback_missing_typed_finalization_after_tool_results(
-        runner,
-        requires_finalization_status=requires_finalization_status,
-        finalization_status=finalization_status,
-    )
-    if not fallback:
-        return None
-    return fallback, FinalizationStatus(
-        status="final_answer",
-        reasoning=(
-            "Synthesized final answer from successful tool evidence after the "
-            "model omitted typed finalization."
-        ),
-    )
-
-
-def _finalization_status_from_tool_evidence(
-    runner: Any,
-    *,
-    requires_finalization_status: bool,
-    finalization_status: Any,
-    final_text: Any,
-) -> Any:
-    if not requires_finalization_status or finalization_status is not None:
-        return finalization_status
-    if (
-        _looks_like_structured_final_answer(str(final_text or ""))
-        and _count_substantive_non_control_tool_results(runner.loop_state) > 0
-    ):
-        return FinalizationStatus(
-            status="final_answer",
-            reasoning=(
-                "Accepted structured final answer when the typed finalization trailer "
-                "was omitted."
-            ),
-        )
-    evidence_fallback_used = any(
-        bool(runner.loop_state.scratchpad.get(key, False))
-        for key in (
-            "pre_tool_draft_echo_used_evidence_fallback",
-            "raw_tool_payload_used_evidence_fallback",
-            "missing_requested_closeout_markers_used_evidence_fallback",
-            "typed_finalization_contract_used_evidence_fallback",
-        )
-    )
-    if evidence_fallback_used and str(final_text or "").strip():
-        return FinalizationStatus(
-            status="final_answer",
-            reasoning="Synthesized final answer from successful tool evidence.",
-        )
-    return finalization_status
-
-
-def _retry_or_fail_internal_failure_final_text(
-    runner: Any,
-    *,
-    normalized_final_text: str,
-) -> tuple[bool, AdaptiveToolLoopOutcome | None] | None:
-    if not (
-        normalized_final_text
-        and _is_internal_failure_final_text(normalized_final_text)
-        and _count_substantive_non_control_tool_results(runner.loop_state) > 0
-    ):
-        return None
-    retry_key = "provider_fallback_final_answer_retry_used"
-    if not bool(runner.loop_state.scratchpad.get(retry_key, False)):
-        runner.loop_state.scratchpad[retry_key] = True
-        return runner._retry_with_system_message(
-            "Your previous reply was a provider recovery/fallback message, "
-            "not the actual final answer. Use the completed tool results "
-            "already in context and return the final user-facing answer "
-            "now. Do not say the response was empty or ask the user to "
-            "retry unless you still lack evidence after using the existing "
-            "tool results.",
-            discard_assistant_text=normalized_final_text,
-        )
-    runner.loop_state.termination_reason = ADAPTIVE_TERM_LLM_ERROR
-    emit_adaptive_status(
-        runner.loop_ctx,
-        profile=runner.profile,
-        loop_state=runner.loop_state,
-        detail_text=f"{runner.public_mode_tag} provider fallback final answer",
-        mode_state="llm_error",
-        termination_reason=ADAPTIVE_TERM_LLM_ERROR,
-    )
-    return False, AdaptiveToolLoopOutcome(
-        profile_name=runner.profile.profile_name,
-        mode_name=runner.profile.mode_name,
-        termination_reason=ADAPTIVE_TERM_LLM_ERROR,
-        state=runner.loop_state,
-        allowed_tools=runner.allowed_tools,
-        error_message="Model returned provider recovery text instead of a real final answer.",
-    )
-
-
 def _requested_direct_tool_not_executed_outcome(
     runner: Any,
 ) -> tuple[bool, AdaptiveToolLoopOutcome | None]:
@@ -415,128 +148,6 @@ def _requested_direct_tool_not_executed_outcome(
             "it succeeded."
         ),
     )
-
-
-def _user_requested_file_artifact_tooling(loop_state: Any) -> bool:
-    user_text = "\n".join(
-        str(getattr(message, "content", "") or "")
-        for message in list(getattr(loop_state, "messages", []) or [])
-        if str(getattr(message, "role", "") or "").strip().lower() == "user"
-    ).lower()
-    if not user_text:
-        return False
-    explicit_tooling = "file.write" in user_text or "do not only show code" in user_text
-    artifact_intent = any(
-        token in user_text
-        for token in (
-            "build",
-            "create",
-            "implement",
-            "write",
-            "project",
-            "module",
-            "readme",
-            "files",
-        )
-    )
-    return explicit_tooling and artifact_intent
-
-
-def _has_file_mutation_attempt(loop_state: Any, *, ok: bool | None = None) -> bool:
-    return any(
-        (ok is None or bool(item.get("ok")) is ok)
-        and str(item.get("tool_name", "") or "").strip() in _MUTATING_FILE_TOOLS
-        for item in _loop_tool_result_payloads(loop_state)
-    )
-
-
-def _successful_file_mutation_paths(loop_state: Any) -> tuple[str, ...]:
-    paths: list[str] = []
-    for item in _loop_tool_result_payloads(loop_state):
-        if not bool(item.get("ok")):
-            continue
-        if str(item.get("tool_name", "") or "").strip() not in _MUTATING_FILE_TOOLS:
-            continue
-        data = item.get("data")
-        raw_path = data.get("path") if isinstance(data, dict) else item.get("path")
-        path = str(raw_path or "").strip()
-        if path and path not in paths:
-            paths.append(path)
-    return tuple(paths)
-
-
-def _missing_requested_file_artifact_labels(loop_state: Any) -> tuple[str, ...]:
-    user_text = "\n".join(
-        str(getattr(message, "content", "") or "")
-        for message in list(getattr(loop_state, "messages", []) or [])
-        if str(getattr(message, "role", "") or "").strip().lower() == "user"
-    ).lower()
-    if not user_text:
-        return ()
-    paths = tuple(
-        path.lower().rsplit("/", 1)[-1]
-        for path in _successful_file_mutation_paths(loop_state)
-    )
-    missing: list[str] = []
-    if "readme" in user_text and not any(path.startswith("readme") for path in paths):
-        missing.append("README")
-    if "test" in user_text and not any(
-        path.startswith("test") or path.endswith("_test.py") for path in paths
-    ):
-        missing.append("test file")
-    return tuple(missing)
-
-
-def _retry_snippet_only_file_artifact_answer(
-    runner: Any,
-    *,
-    normalized_final_text: str,
-) -> tuple[bool, AdaptiveToolLoopOutcome | None] | None:
-    if not _user_requested_file_artifact_tooling(runner.loop_state):
-        return None
-    missing_artifacts = _missing_requested_file_artifact_labels(runner.loop_state)
-    if _has_file_mutation_attempt(runner.loop_state, ok=True) and not missing_artifacts:
-        return None
-    if _has_file_mutation_attempt(runner.loop_state):
-        if _has_file_mutation_attempt(runner.loop_state, ok=False) and not bool(
-            runner.loop_state.scratchpad.get("failed_file_mutation_retry_used", False)
-        ):
-            runner.loop_state.scratchpad["failed_file_mutation_retry_used"] = True
-            missing = ", ".join(missing_artifacts)
-            return runner._retry_with_system_message(
-                "The previous file mutation tool call failed. "
-                f"{f'Missing requested artifacts: {missing}. ' if missing else ''}"
-                "Retry with corrected file.write or code.patch arguments. For "
-                "file.write, pass path and content as strings. Do not stop with "
-                "the tool error as the final answer.",
-                discard_assistant_text=normalized_final_text,
-            )
-        if missing_artifacts and normalized_final_text:
-            retry_key = "missing_requested_file_artifacts_retry_used"
-            if not bool(runner.loop_state.scratchpad.get(retry_key, False)):
-                runner.loop_state.scratchpad[retry_key] = True
-                missing = ", ".join(missing_artifacts)
-                return runner._retry_with_system_message(
-                    "The user requested file artifacts that are not backed by "
-                    f"successful file-write evidence yet: {missing}. Use file.write "
-                    "for the missing artifacts now, then run any requested "
-                    "validation before the final answer.",
-                    discard_assistant_text=normalized_final_text,
-                )
-        return _requested_direct_tool_not_executed_outcome(runner)
-    if not normalized_final_text:
-        return None
-    retry_key = "snippet_only_file_artifact_retry_used"
-    if not bool(runner.loop_state.scratchpad.get(retry_key, False)):
-        runner.loop_state.scratchpad[retry_key] = True
-        return runner._retry_with_system_message(
-            "Your previous reply described file contents instead of creating the "
-            "requested file artifacts. Use file.write for the required files now. "
-            "Do not only show code snippets, and do not claim files exist until "
-            "the file.write tool succeeds.",
-            discard_assistant_text=normalized_final_text,
-        )
-    return _requested_direct_tool_not_executed_outcome(runner)
 
 
 def _retry_confident_complete_without_answer(
@@ -625,21 +236,6 @@ class AdaptiveLoopRunnerNoToolMixin:
             and _looks_like_unexecutable_tool_payload_text(normalized_final_text)
         ):
             return None
-        if requested_validation_without_exec_run(self.loop_state) and (
-            _raw_tool_payload_retry_allowed(
-                self.loop_state,
-                text=normalized_final_text,
-            )
-        ):
-            return self._retry_with_system_message(
-                "Your previous reply emitted raw tool markup, a raw tool-result "
-                "JSON envelope, or an unexecutable tool envelope, but the user "
-                "requested validation and no successful exec.run result has been "
-                "captured yet. Call exec.run with the requested validation command "
-                "now, then return the final plain-text answer from the actual "
-                "tool result.",
-                discard_assistant_text=normalized_final_text,
-            )
         fallback_text = tool_evidence_closeout_text(
             self.loop_state,
             reason=(
@@ -647,12 +243,6 @@ class AdaptiveLoopRunnerNoToolMixin:
                 "results, so preserved evidence is returned."
             ),
         )
-        if fallback_text and missing_requested_closeout_markers(
-            self.loop_state,
-            normalized_final_text,
-        ):
-            self.loop_state.scratchpad["raw_tool_payload_used_evidence_fallback"] = True
-            return fallback_text
         if _raw_tool_payload_retry_allowed(
             self.loop_state,
             text=normalized_final_text,
@@ -690,12 +280,6 @@ class AdaptiveLoopRunnerNoToolMixin:
         salvage_text = payloads["salvage_text"]
         confident_complete = payloads["confident_complete"]
         normalized_final_text = str(final_text or "").strip()
-        internal_failure_retry = _retry_or_fail_internal_failure_final_text(
-            self,
-            normalized_final_text=normalized_final_text,
-        )
-        if internal_failure_retry is not None:
-            return internal_failure_retry
         raw_payload_repair = self._repair_raw_tool_payload_final_text(
             normalized_final_text
         )
@@ -704,95 +288,6 @@ class AdaptiveLoopRunnerNoToolMixin:
         if raw_payload_repair:
             final_text = raw_payload_repair
             normalized_final_text = raw_payload_repair
-        snippet_only_retry = _retry_snippet_only_file_artifact_answer(
-            self,
-            normalized_final_text=normalized_final_text,
-        )
-        if snippet_only_retry is not None:
-            return snippet_only_retry
-        if (
-            normalized_final_text
-            and requested_validation_without_exec_run(self.loop_state)
-            and not bool(
-                self.loop_state.scratchpad.get(
-                    "requested_validation_missing_exec_run_retry_used", False
-                )
-            )
-        ):
-            self.loop_state.scratchpad[
-                "requested_validation_missing_exec_run_retry_used"
-            ] = True
-            return self._retry_with_system_message(
-                "The user requested validation, but this turn has no successful "
-                "exec.run validation result yet. Do not claim validation passed. "
-                "Call exec.run with the requested validation command now, then "
-                "return the final answer from the actual tool result.",
-                discard_assistant_text=normalized_final_text,
-            )
-        if (
-            normalized_final_text
-            and _looks_like_structured_status_payload(normalized_final_text)
-            and _count_substantive_non_control_tool_results(self.loop_state) > 0
-            and not bool(
-                self.loop_state.scratchpad.get(
-                    "structured_status_final_answer_retry_used", False
-                )
-            )
-        ):
-            self.loop_state.scratchpad["structured_status_final_answer_retry_used"] = (
-                True
-            )
-            return self._retry_with_system_message(
-                "Your previous reply was a structured status payload, not the "
-                "user-facing final answer. Return the final answer text now. "
-                "Preserve any exact final-answer format, headings, section "
-                "titles, and ordering the user requested.",
-                discard_assistant_text=normalized_final_text,
-            )
-        draft_like_final_text = bool(
-            normalized_final_text
-            and (
-                _looks_like_pre_tool_draft_echo(
-                    self.loop_state,
-                    text=normalized_final_text,
-                )
-                or _looks_like_execution_preface_draft(normalized_final_text)
-            )
-            and _count_substantive_non_control_tool_results(self.loop_state) > 0
-        )
-        if draft_like_final_text and not bool(
-            self.loop_state.scratchpad.get("pre_tool_draft_echo_retry_used", False)
-        ):
-            self.loop_state.scratchpad["pre_tool_draft_echo_retry_used"] = True
-            return self._retry_with_system_message(
-                "Your previous reply repeated the pre-tool draft instead of the "
-                "final answer. Use the completed tool results already in context "
-                "and return the actual final user-facing answer now. Do not "
-                "repeat planning or execution-preface text like 'Now executing'. "
-                "If the turn requires typed finalization, append the required "
-                "finalization_status trailer after the answer.",
-                discard_assistant_text=normalized_final_text,
-            )
-        if draft_like_final_text:
-            fallback_final_text = _evidence_fallback_for_draft_final_text(
-                self.loop_state
-            )
-            if fallback_final_text:
-                final_text = fallback_final_text
-                normalized_final_text = fallback_final_text
-        missing_marker_retry = _retry_missing_requested_markers_after_tool_results(
-            self,
-            normalized_final_text=normalized_final_text,
-        )
-        if missing_marker_retry is not None:
-            return missing_marker_retry
-        missing_marker_fallback = _fallback_missing_requested_markers_after_retry(
-            self,
-            normalized_final_text=normalized_final_text,
-        )
-        if missing_marker_fallback:
-            final_text = missing_marker_fallback
-            normalized_final_text = missing_marker_fallback
         if (
             normalized_final_text
             and _count_substantive_non_control_tool_results(self.loop_state) > 0
@@ -812,24 +307,6 @@ class AdaptiveLoopRunnerNoToolMixin:
                 "already contain that URL. Continue with the missing tool calls or "
                 "return a truthful incomplete/blocked answer from the evidence you "
                 "actually gathered.",
-                discard_assistant_text=normalized_final_text,
-            )
-        if (
-            normalized_final_text
-            and _final_text_parrots_policy_denial(
-                self.loop_state,
-                text=normalized_final_text,
-            )
-            and not bool(
-                self.loop_state.scratchpad.get("policy_denial_parrot_retry_used", False)
-            )
-        ):
-            self.loop_state.scratchpad["policy_denial_parrot_retry_used"] = True
-            return self._retry_with_system_message(
-                "Your previous reply only repeated the exec.run policy denial. Do "
-                "not stop there. Apply the suggested policy fix from the tool "
-                "result, run the allowed direct verification command next, and then "
-                "finish the task from actual tool results.",
                 discard_assistant_text=normalized_final_text,
             )
         if _direct_tool_turn_active(self.loop_state) and not bool(
@@ -885,12 +362,6 @@ class AdaptiveLoopRunnerNoToolMixin:
         )
         if empty_final_retry is not None:
             return empty_final_retry
-        finalization_status = _finalization_status_from_tool_evidence(
-            self,
-            requires_finalization_status=requires_finalization_status,
-            finalization_status=finalization_status,
-            final_text=final_text,
-        )
         if (
             requires_finalization_status
             and finalization_status is None
@@ -954,13 +425,6 @@ class AdaptiveLoopRunnerNoToolMixin:
         )
         if empty_typed_retry is not None:
             return empty_typed_retry
-        typed_fallback = _typed_finalization_fallback_status(
-            self,
-            requires_finalization_status=requires_finalization_status,
-            finalization_status=finalization_status,
-        )
-        if typed_fallback is not None:
-            final_text, finalization_status = typed_fallback
         if requires_finalization_status and finalization_status is None:
             self.loop_state.termination_reason = (
                 ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING

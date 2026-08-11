@@ -79,7 +79,6 @@ class IllegalTransitionError(RuntimeError):
 
 
 def allowed_events(status: str) -> list[str]:
-    """Return sorted list of event names legal from *status*."""
     return sorted(ev for (st, ev) in TRANSITIONS if st == status)
 
 
@@ -89,7 +88,6 @@ def transition(
     *,
     logger: "CanonicalEventLogger | None" = None,
 ) -> None:
-    """Perform a guarded runtime status transition."""
     key = (state.status, event)
     if key not in TRANSITIONS:
         targets_for_event = {
@@ -104,7 +102,7 @@ def transition(
         )
     old = state.status
     state.status = TRANSITIONS[key]
-    if logger is not None and callable(getattr(logger, "emit", None)):
+    if logger is not None:
         logger.emit(
             "brain.state.transition",
             {
@@ -121,5 +119,4 @@ def set_status_unchecked(
     *,
     reason: str = "",
 ) -> None:
-    """Set status without transition guard."""
     state.status = status

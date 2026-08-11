@@ -33,7 +33,6 @@ from openminion.modules.brain.loop.adaptive import (
     _append_partial_success,
     _current_active_plan,
     _direct_tool_turn_context,
-    _explicit_tool_name_mentions,
     _memory_consolidation_profile_overrides,
     _progress_payload_is_active,
     _single_failed_tool_result_action,
@@ -449,13 +448,6 @@ def test_helper_branches_and_task_plan_validation_paths() -> None:
     assert _active_step_ids({"steps": "bad"}) == set()
     assert _append_partial_success(message="", summary="partial") == "partial"
     assert _append_partial_success(message="base", summary="") == "base"
-    assert _explicit_tool_name_mentions("file.read, file.read, weather and ???")[
-        :2
-    ] == (
-        "file.read",
-        "weather",
-    )
-
     session_api = _FakeSessionAPI(
         active_plan={"plan_id": "p1", "steps": [{"step_id": "s1"}]},
         raise_type_error_once=True,
@@ -660,106 +652,31 @@ def test_direct_tool_turn_context_covers_seed_parse_mention_and_entry_paths(
     seed_response = SimpleNamespace(
         tool_calls=[ToolCall(name="time", arguments={"timezone": "UTC"})]
     )
-    assert (
-        _direct_tool_turn_context(
-            ctx=_ctx(user_input="please call time"),
-            seed_response=seed_response,
+    for user_text in (
+        "please call time",
+        "tool time",
+        "tool web.search then web.fetch",
+        "Your first tool batch must call web.fetch and file.write.",
+    ):
+        assert (
+            _direct_tool_turn_context(
+                ctx=_ctx(user_input=user_text),
+                seed_response=seed_response,
+            )
+            is None
         )
-        is None
-    )
-    assert _direct_tool_turn_context(
-        ctx=_ctx(user_input="tool time"),
-        seed_response=seed_response,
-    ).requested_tool_names == ("time",)
-
-    sequence_ctx = _ctx(
-        user_input=(
-            "tool `web.search`, then `web.fetch`, then `web.fetch` with the "
-            "official URLs."
-        )
-    )
-    sequence_entry = _direct_tool_turn_context(ctx=sequence_ctx, seed_response=None)
-    assert sequence_entry.requested_tool_names == (
-        "web.search",
-        "web.fetch",
-        "web.fetch",
-    )
-    assert sequence_entry.match_by_name_only is True
-
-    plain_sequence_ctx = _ctx(
-        user_input=(
-            "tool exactly one web.search, then web.fetch, then web.fetch "
-            "with the official URLs."
-        )
-    )
-    plain_sequence_entry = _direct_tool_turn_context(
-        ctx=plain_sequence_ctx,
-        seed_response=None,
-    )
-    assert plain_sequence_entry.requested_tool_names == (
-        "web.search",
-        "web.fetch",
-        "web.fetch",
-    )
-    assert plain_sequence_entry.match_by_name_only is True
-
-    exact_batch_ctx = _ctx(
-        user_input=(
-            "Your first tool batch must contain exactly three tool calls: "
-            "one web.fetch call, one file.write call for pyproject.toml, and "
-            "one file.write call for README.md. Do not call file.read before "
-            "these writes."
-        )
-    )
-    exact_batch_entry = _direct_tool_turn_context(
-        ctx=exact_batch_ctx,
-        seed_response=None,
-    )
-    assert exact_batch_entry.requested_tool_names == (
-        "web.fetch",
-        "file.write",
-        "file.write",
-    )
-    assert exact_batch_entry.match_by_name_only is True
-
-    plan_sequence_ctx = _ctx(
-        user_input=(
-            'tool the `plan` tool with action="declare" and then call the '
-            '`plan` tool again with action="complete".'
-        )
-    )
-    plan_sequence_entry = _direct_tool_turn_context(
-        ctx=plan_sequence_ctx,
-        seed_response=None,
-    )
-    assert plan_sequence_entry.requested_tool_names == ("plan",)
-    assert plan_sequence_entry.match_by_name_only is True
-
-    mention_ctx = _ctx(user_input="please use file.read")
-    assert _direct_tool_turn_context(ctx=mention_ctx, seed_response=None) is None
-    explicit_mention_ctx = _ctx(user_input="tool file.read")
-    assert _direct_tool_turn_context(
-        ctx=explicit_mention_ctx, seed_response=None
-    ).match_by_name_only
-
-    plain_weather_ctx = _ctx(user_input="hey what's weather today?")
-    plain_weather_seed = SimpleNamespace(
-        tool_calls=[ToolCall(name="weather", arguments={"location": "san francisco"})]
-    )
-    assert (
-        _direct_tool_turn_context(
-            ctx=plain_weather_ctx,
-            seed_response=plain_weather_seed,
-        )
-        is None
-    )
 
     entry_ctx = _ctx(
         decision=SimpleNamespace(reason_code="entry_tool_call"),
         user_input="",
     )
-    entry = _direct_tool_turn_context(ctx=entry_ctx, seed_response=seed_response)
-    assert entry is None
+    assert (
+        _direct_tool_turn_context(
+            ctx=entry_ctx,
+            seed_response=seed_response,
+        )
+        is None
+    )
 
     explicit_seeded_ctx = _ctx(
         decision=SimpleNamespace(

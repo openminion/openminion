@@ -1,5 +1,3 @@
-"""Filesystem isolation for parallel rollouts."""
-
 from __future__ import annotations
 
 import shutil
@@ -14,8 +12,6 @@ from typing import Iterator
 
 @dataclass
 class TempdirIsolator:
-    """Allocate empty temporary directories for non-code rollouts."""
-
     run_id: str = ""
     _created: list[Path] = field(default_factory=list)
 
@@ -25,8 +21,7 @@ class TempdirIsolator:
 
     def allocate(self, n: int) -> list[Path]:
         dirs = [
-            Path(tempfile.mkdtemp(prefix=f"rollout-{self.run_id}-"))
-            for _ in range(int(n))
+            Path(tempfile.mkdtemp(prefix=f"rollout-{self.run_id}-")) for _ in range(n)
         ]
         self._created.extend(dirs)
         return dirs
@@ -56,8 +51,6 @@ class TempdirIsolator:
 
 @dataclass
 class WorktreeIsolator:
-    """Create detached Git worktrees for code-bearing rollouts."""
-
     parent_root: Path
     revision: str = "HEAD"
     run_id: str = ""
@@ -87,7 +80,7 @@ class WorktreeIsolator:
 
     def allocate(self, n: int) -> list[Path]:
         worktrees: list[Path] = []
-        for index in range(int(n)):
+        for index in range(n):
             path = Path(tempfile.gettempdir()) / (
                 f"openminion-worktree-{self.run_id}-{index}-{uuid.uuid4().hex[:8]}"
             )

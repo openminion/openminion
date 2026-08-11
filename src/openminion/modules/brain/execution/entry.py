@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 from typing import Any
 
-from ..constants import (
-    BRAIN_DECISION_ROUTE_ACT,
-)
+from pydantic import ValidationError
+
+from ..constants import BRAIN_DECISION_ROUTE_ACT
 from ..diagnostics.events import CanonicalEventLogger
 from ..schemas.decisions import GoalDeclaration, GoalRevision, MetaRulePreference
 from ..schemas.readiness import (
@@ -44,13 +44,13 @@ class ExecutionEntryRequest:
 
 
 def _copied_seeded_commands(commands: list[Any]) -> list[Any]:
-    return [command.model_copy(deep=True) for command in list(commands or [])]
+    return [command.model_copy(deep=True) for command in commands]
 
 
 def _seeded_sub_intent_ids(commands: list[Any]) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
-    for command in list(commands or []):
+    for command in commands:
         for raw_intent_id in list(getattr(command, "sub_intent_ids", []) or []):
             intent_id = str(raw_intent_id or "").strip()
             if not intent_id or intent_id in seen:
@@ -71,24 +71,21 @@ def _sync_typed_decision_signals(
     if summary_text:
         state.session_work_summary = summary_text
 
+    if getattr(runner, "memory_api", None) is None:
+        return
     preference = getattr(decision, "meta_rule_preference", None)
-    if preference is not None and getattr(runner, "memory_api", None) is not None:
+    if preference is not None:
         stage_meta_rule_preference(
             runner,
             state=state,
             preference=MetaRulePreference.model_validate(preference),
         )
 
-    # stage `declared_goal` candidate from the single-decision
     goal = getattr(decision, "goal_declaration", None)
-    if goal is not None and getattr(runner, "memory_api", None) is not None:
+    if goal is not None:
         try:
-            staged = (
-                goal
-                if isinstance(goal, GoalDeclaration)
-                else GoalDeclaration.model_validate(goal)
-            )
-        except Exception:
+            staged = GoalDeclaration.model_validate(goal)
+        except ValidationError:
             staged = None
         if staged is not None:
             stage_declared_goal(
@@ -97,14 +94,10 @@ def _sync_typed_decision_signals(
                 goal=staged,
             )
     revision = getattr(decision, "goal_revision", None)
-    if revision is not None and getattr(runner, "memory_api", None) is not None:
+    if revision is not None:
         try:
-            staged_revision = (
-                revision
-                if isinstance(revision, GoalRevision)
-                else GoalRevision.model_validate(revision)
-            )
-        except Exception:
+            staged_revision = GoalRevision.model_validate(revision)
+        except ValidationError:
             staged_revision = None
         if staged_revision is not None:
             stage_goal_revision(
@@ -201,12 +194,12 @@ def _validate_decision_readiness(
 
 
 def _iter_decision_commands(decision: Any) -> list[tuple[str, Any]]:
-    commands: list[tuple[str, Any]] = []
-    for index, command in enumerate(
-        list(getattr(decision, "_seeded_commands", []) or [])
-    ):
-        commands.append((f"_seeded_commands[{index}]", command))
-    return commands
+    return [
+        (f"_seeded_commands[{index}]", command)
+        for index, command in enumerate(
+            list(getattr(decision, "_seeded_commands", []) or [])
+        )
+    ]
 
 
 def _clarification_contextual_readiness_failure(

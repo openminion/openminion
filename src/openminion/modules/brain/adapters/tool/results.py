@@ -1,5 +1,3 @@
-"""Result shaping helpers for the brain tool adapter."""
-
 import json
 from collections.abc import Mapping
 from typing import Any
@@ -39,11 +37,9 @@ def _derive_toolspec_summary(
                 token = _normalized_summary_token(mapping.get(key))
                 if token:
                     return token
-        synth_source: Any = None
-        if isinstance(data_field, Mapping) and data_field:
-            synth_source = data_field
-        elif isinstance(payload, Mapping) and payload:
-            synth_source = payload
+        synth_source = (
+            data_field if isinstance(data_field, Mapping) and data_field else payload
+        )
         if synth_source:
             try:
                 synthesized = _normalized_summary_token(

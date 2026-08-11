@@ -66,8 +66,8 @@ def test_all_inline_promoter_never_promotes() -> None:
         promoter.promote(SubtaskSpec(goal="x"), "parent-1", SimpleNamespace())
 
 
-def test_heuristic_promoter_uses_mode_and_goal_length() -> None:
-    promoter = HeuristicPromoter(goal_length_threshold=20)
+def test_heuristic_promoter_uses_explicit_suggested_mode() -> None:
+    promoter = HeuristicPromoter()
     assert (
         promoter.should_promote(
             SubtaskSpec(
@@ -92,7 +92,7 @@ def test_heuristic_promoter_uses_mode_and_goal_length() -> None:
     )
     assert (
         promoter.should_promote(SubtaskSpec(goal="x" * 25, suggested_mode="act"))
-        is True
+        is False
     )
 
 

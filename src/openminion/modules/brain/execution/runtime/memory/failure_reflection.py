@@ -25,7 +25,6 @@ class FailureReflectionData:
     command_ids: list[str]
     tool_names: list[str]
     args_signatures: list[str]
-    tool_results: list[dict[str, Any]]
     error_code: str
     llm_call_id: str
     model: str
@@ -47,16 +46,15 @@ def build_failure_reflection(
         termination_reason=termination_reason,
     )
     if skip_reason is not None:
-        status_kwargs = (
-            {"status": "warning"} if skip_reason != "missing_termination_reason" else {}
-        )
         return emit_skipped(
             logger=logger,
             event="brain.failure_memory.skipped",
             state=state,
             reason=skip_reason,
             refs=strategy_outcome_refs,
-            **status_kwargs,
+            status=(
+                "info" if skip_reason == "missing_termination_reason" else "warning"
+            ),
         )
     normalized_reason = str(termination_reason or "").strip().lower()
     snapshot = dict(outcome_snapshot or {})
@@ -94,7 +92,6 @@ def build_failure_reflection(
         command_ids=command_ids,
         tool_names=tool_names,
         args_signatures=args_signatures,
-        tool_results=tool_results,
         error_code=error_code,
         llm_call_id=llm_call_id,
         model=model,

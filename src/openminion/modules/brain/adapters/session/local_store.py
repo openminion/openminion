@@ -205,9 +205,7 @@ class LocalSessionStore:
             "slice_version": f"local:{slice_version}",
             "summary_short": summary_short,
             "recent_turns": recent_turns,
-            "open_tasks": list(active_state.get("open_questions", []))
-            if isinstance(active_state, dict)
-            else [],
+            "open_tasks": list(active_state.get("open_questions", [])),
             STATE_KEY_ACTIVE: active_state,
             "recent_tool_events": [],
             "prompt_context_id": None,

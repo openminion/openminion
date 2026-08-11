@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 from .shared import BRAIN_ADAPTER_INTERFACE_VERSION, _lazy_resolve_service
 
@@ -18,11 +18,8 @@ class BridgeCompressClient:
             factory=self._build_compress_service,
         )
 
-    def _build_compress_service(self, imported: tuple[str, Any]) -> Any | None:
-        kind, service_cls = imported
-        if kind == "compaction":
-            return service_cls(sessctl=self._store)
-        return service_cls()
+    def _build_compress_service(self, service_cls: Any) -> Any:
+        return service_cls(sessctl=self._store)
 
     def get_snapshot(
         self,
@@ -35,33 +32,24 @@ class BridgeCompressClient:
         if compress_svc is None:
             return None
         try:
-            if hasattr(compress_svc, "get_snapshot"):
-                return compress_svc.get_snapshot(
+            return cast(
+                str | None,
+                compress_svc.get_snapshot(
                     session_id=session_id,
                     agent_id=agent_id,
                     mode_name=mode_name,
-                )
-            if hasattr(compress_svc, "get_summary"):
-                summary = compress_svc.get_summary(session_id=session_id)
-                return str(summary) if summary else None
-            if hasattr(compress_svc, "store") and hasattr(compress_svc.store, "get"):
-                data = compress_svc.store.get(f"session:{session_id}:summary")
-                return str(data) if data else None
-            return None
+                ),
+            )
         except Exception:
             return None
 
 
-def _import_compress_dependencies() -> tuple[str, Any] | None:
+def _import_compress_dependencies() -> Any | None:
     try:
         from openminion.modules.context.compress.compaction import CompactionService
-    except Exception:
-        try:
-            from openminion.modules.context.compress.service import CompressionService
-        except Exception:
-            return None
-        return ("compression", CompressionService)
-    return ("compaction", CompactionService)
+    except ImportError:
+        return None
+    return CompactionService
 
 
 __all__ = ["BridgeCompressClient"]

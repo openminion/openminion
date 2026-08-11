@@ -19,6 +19,10 @@ from ..status import emit_adaptive_status
 from ..telemetry import _emit_iteration_event
 
 
+def _model_payload(value: Any) -> dict[str, Any] | None:
+    return value.model_dump(mode="json") if value is not None else None
+
+
 def _iteration_cap_evidence_fallback(
     *,
     profile: Any,
@@ -210,14 +214,7 @@ def build_no_tool_outcome(
     tokens_used: int,
     finalizer: Any,
 ) -> AdaptiveToolLoopOutcome:
-    if finalization_status is not None:
-        if finalization_status.status == "blocked":
-            termination_reason = ADAPTIVE_TERM_FINALIZATION_BLOCKED
-        elif finalization_status.status == "incomplete":
-            termination_reason = ADAPTIVE_TERM_FINALIZATION_INCOMPLETE
-        else:
-            termination_reason = ADAPTIVE_TERM_FINAL_TEXT
-    else:
+    if finalization_status is None:
         termination_reason = (
             ADAPTIVE_TERM_CONFIDENT_COMPLETE
             if (
@@ -227,6 +224,11 @@ def build_no_tool_outcome(
             )
             else ADAPTIVE_TERM_FINAL_TEXT
         )
+    else:
+        termination_reason = {
+            "blocked": ADAPTIVE_TERM_FINALIZATION_BLOCKED,
+            "incomplete": ADAPTIVE_TERM_FINALIZATION_INCOMPLETE,
+        }.get(finalization_status.status, ADAPTIVE_TERM_FINAL_TEXT)
     loop_state.termination_reason = termination_reason
     _emit_iteration_event(
         loop_ctx=loop_ctx,
@@ -243,26 +245,14 @@ def build_no_tool_outcome(
         state=loop_state,
         allowed_tools=allowed_tools,
         final_text=final_text,
-        pending_turn_context=(
-            pending_turn_context.model_dump(mode="json")
-            if pending_turn_context is not None
-            else None
-        ),
+        pending_turn_context=_model_payload(pending_turn_context),
         confident_complete_reasoning=(
             confident_complete.reasoning
             if confident_complete is not None and confident_complete.complete
             else None
         ),
-        finalization_status=(
-            finalization_status.model_dump(mode="json")
-            if finalization_status is not None
-            else None
-        ),
-        meta_rule_preference=(
-            meta_rule_preference.model_dump(mode="json")
-            if meta_rule_preference is not None
-            else None
-        ),
+        finalization_status=_model_payload(finalization_status),
+        meta_rule_preference=_model_payload(meta_rule_preference),
         memory_consolidation_decisions=(
             [item.model_dump(mode="json") for item in memory_consolidation.decisions]
             if memory_consolidation is not None
@@ -271,50 +261,16 @@ def build_no_tool_outcome(
         session_work_summary=(
             session_work_summary.summary if session_work_summary is not None else None
         ),
-        goal_declaration=(
-            goal_declaration.model_dump(mode="json")
-            if goal_declaration is not None
-            else None
-        ),
-        goal_revision=(
-            goal_revision.model_dump(mode="json") if goal_revision is not None else None
-        ),
-        delegation_context=(
-            delegation_context.model_dump(mode="json")
-            if delegation_context is not None
-            else None
-        ),
-        delegation_result_summary=(
-            delegation_result_summary.model_dump(mode="json")
-            if delegation_result_summary is not None
-            else None
-        ),
-        task_plan=task_plan.model_dump(mode="json") if task_plan is not None else None,
-        task_plan_step_completed=(
-            task_plan_step_completed.model_dump(mode="json")
-            if task_plan_step_completed is not None
-            else None
-        ),
-        task_plan_step_blocked=(
-            task_plan_step_blocked.model_dump(mode="json")
-            if task_plan_step_blocked is not None
-            else None
-        ),
-        task_plan_revision=(
-            task_plan_revision.model_dump(mode="json")
-            if task_plan_revision is not None
-            else None
-        ),
-        task_plan_abandoned=(
-            task_plan_abandoned.model_dump(mode="json")
-            if task_plan_abandoned is not None
-            else None
-        ),
-        task_plan_completed=(
-            task_plan_completed.model_dump(mode="json")
-            if task_plan_completed is not None
-            else None
-        ),
+        goal_declaration=_model_payload(goal_declaration),
+        goal_revision=_model_payload(goal_revision),
+        delegation_context=_model_payload(delegation_context),
+        delegation_result_summary=_model_payload(delegation_result_summary),
+        task_plan=_model_payload(task_plan),
+        task_plan_step_completed=_model_payload(task_plan_step_completed),
+        task_plan_step_blocked=_model_payload(task_plan_step_blocked),
+        task_plan_revision=_model_payload(task_plan_revision),
+        task_plan_abandoned=_model_payload(task_plan_abandoned),
+        task_plan_completed=_model_payload(task_plan_completed),
         watch_condition_met=(
             watch_outcome.condition_met if watch_outcome is not None else None
         ),
@@ -329,8 +285,9 @@ def build_no_tool_outcome(
             avg_iterations=float(loop_state.iteration),
             success=True,
         )
+        template_payload = new_template.to_dict()
         stored_templates = list(loop_state.scratchpad.get("loop_templates", []))
-        stored_templates.append(new_template.to_dict())
-        loop_state.scratchpad["loop_template"] = new_template.to_dict()
+        stored_templates.append(template_payload)
+        loop_state.scratchpad["loop_template"] = template_payload
         loop_state.scratchpad["loop_templates"] = stored_templates
     return outcome

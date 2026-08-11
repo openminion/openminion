@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from openminion.modules.brain.schemas import Goal
 
@@ -85,7 +85,7 @@ class CodingPlan(BaseModel):
         if include_verify:
             phases.append(CodingPhase(name="verify"))
         return cls(
-            goal=str(goal or "").strip() or "Complete the coding task.",
+            goal=goal.strip() or "Complete the coding task.",
             phases=phases,
             current_phase="implement",
             requires_file_change=requires_file_change,
@@ -107,7 +107,7 @@ class CodingPlan(BaseModel):
     def advance_to_next_phase(self, *, output: str = "") -> bool:
         next_name = self.next_phase_name()
         current_phase = self.current_phase_entry()
-        current_phase.output = str(output or "").strip()
+        current_phase.output = output.strip()
         current_phase.status = "done"
         if next_name is None:
             return False
@@ -120,18 +120,17 @@ class CodingPlan(BaseModel):
         return True
 
     def record_open_issue(self, issue: str) -> None:
-        text = str(issue or "").strip()
-        if text:
+        if text := issue.strip():
             self.open_issues.append(text)
 
     def conflicting_subtask_pairs(self) -> list[tuple[int, int]]:
         pairs: list[tuple[int, int]] = []
         for left_index, left in enumerate(self.subtasks):
-            left_paths = {Path(item) for item in left.target_files if str(item).strip()}
+            left_paths = {Path(item) for item in left.target_files if item.strip()}
             for right_index in range(left_index + 1, len(self.subtasks)):
                 right = self.subtasks[right_index]
                 right_paths = {
-                    Path(item) for item in right.target_files if str(item).strip()
+                    Path(item) for item in right.target_files if item.strip()
                 }
                 if any(
                     left_path == right_path
@@ -153,6 +152,6 @@ def coding_plan_from_payload(payload: Any, *, goal: str) -> CodingPlan:
     if isinstance(payload, dict):
         try:
             return CodingPlan.model_validate(payload)
-        except Exception:
+        except ValidationError:
             return CodingPlan.fallback(goal)
     return CodingPlan.fallback(goal)

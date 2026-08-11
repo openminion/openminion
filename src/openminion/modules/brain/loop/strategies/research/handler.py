@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from openminion.base.time import utc_now_iso as _iso_now_utc
 import traceback
@@ -33,7 +33,6 @@ from openminion.modules.brain.diagnostics.transitions import (
 )
 from openminion.modules.brain.schemas import (
     BudgetCounters,
-    Plan,
     ResearchConvergenceConfig,
     ResearchConvergenceCounters,
     ResearchConvergenceSignal,
@@ -69,11 +68,9 @@ from .findings import (
     build_pause_partial_answer as _build_pause_partial_answer,
     evidence_dates_from_action_result as _evidence_dates_from_action_result,
     evidence_dates_from_working_state as _evidence_dates_from_working_state,
-    meaningful_partial_texts as _meaningful_partial_texts,
     normalized_text as _normalized_text,
     render_temporal_fact_lines as _render_temporal_fact_lines_impl,
     usable_child_action_result_text as _usable_child_action_result_text,
-    usable_child_result_text as _usable_child_result_text,
     usable_child_working_state_text as _usable_child_working_state_text,
 )
 from .schemas import ResearchFinding
@@ -421,7 +418,6 @@ class ResearchMode(SimpleCheckpointMixin):
         findings: list[dict[str, Any]] = list(self._findings)
         resume_count = self._resume_count
         started_index = self._next_iteration
-        convergence_hint = ""
         max_iterations = self._max_research_iterations
 
         for iteration in range(started_index, max_iterations):
@@ -448,9 +444,9 @@ class ResearchMode(SimpleCheckpointMixin):
                 iteration=iteration,
                 query=query,
                 findings_so_far=findings,
-                convergence_hint=convergence_hint,
             )
-            findings.append(finding.model_dump(mode="python"))
+            if finding.content:
+                findings.append(finding.model_dump(mode="python"))
             self._findings = list(findings)
             self._next_iteration = iteration + 1
             self._resume_count = resume_count
@@ -509,7 +505,6 @@ class ResearchMode(SimpleCheckpointMixin):
             convergence = self._check_convergence(ctx, query=query, findings=findings)
             if convergence.converged:
                 break
-            convergence_hint = ""
 
         return self._synthesize_and_finalize(
             ctx,
@@ -519,12 +514,7 @@ class ResearchMode(SimpleCheckpointMixin):
         )
 
     def _query_from_context(self, ctx: ExecutionContext) -> str:
-        return (
-            _normalized_text(getattr(ctx.decision, "research_query", "") or "")
-            or _normalized_text(getattr(ctx.decision, "objective", "") or "")
-            or _normalized_text(getattr(ctx.state, "goal", "") or "")
-            or _normalized_text(ctx.user_input or "")
-        )
+        return _normalized_text(getattr(ctx.decision, "research_query", "") or "")
 
     def _scope_from_context(self, ctx: ExecutionContext) -> str:
         return _normalized_text(getattr(ctx.decision, "research_scope", "") or "")
@@ -535,7 +525,6 @@ class ResearchMode(SimpleCheckpointMixin):
         query: str,
         scope: str,
         findings: list[dict[str, Any]],
-        convergence_hint: str,
         iteration: int,
     ) -> str:
         parts = [*_render_temporal_fact_lines(findings), f"Research objective: {query}"]
@@ -551,12 +540,10 @@ class ResearchMode(SimpleCheckpointMixin):
                 parts.append(
                     f"Prior findings (latest {len(summary_parts)}): {' | '.join(summary_parts)}"
                 )
-        if convergence_hint:
-            parts.append(f"Focus this search on: {convergence_hint}")
         parts.append(f"Iteration: {iteration + 1}")
         return "\n".join(parts)
 
-    def _fallback_decision_for_research(self, goal: str) -> Any:
+    def _build_child_decision(self, goal: str) -> Any:
         from openminion.modules.brain.schemas import ActDecision
 
         return ActDecision(
@@ -574,19 +561,17 @@ class ResearchMode(SimpleCheckpointMixin):
         iteration: int,
         query: str,
         findings_so_far: list[dict[str, Any]],
-        convergence_hint: str,
     ) -> ResearchFinding:
         child_goal = self._build_iteration_goal(
             query=query,
             scope=self._scope_from_context(ctx),
             findings=findings_so_far,
-            convergence_hint=convergence_hint,
             iteration=iteration,
         )
 
         runner = runner_from_context(ctx)
         content = ""
-        mode_used = "plan"
+        mode_used = "act"
         evidence_dates: list[str] = []
 
         if runner is not None:
@@ -597,7 +582,7 @@ class ResearchMode(SimpleCheckpointMixin):
                     goal=child_goal,
                 )
                 with _non_recursive_child_profile(runner):
-                    decision = self._fallback_decision_for_research(child_goal)
+                    decision = self._build_child_decision(child_goal)
                     mode_used = str(
                         getattr(decision, "route", getattr(decision, "mode", ""))
                         or "act"
@@ -610,39 +595,6 @@ class ResearchMode(SimpleCheckpointMixin):
                         logger=ctx.logger,
                         depth=1,
                     )
-                    try:
-                        ctx.logger.emit(
-                            "brain.research.child_execution_result",
-                            {
-                                "iteration": int(iteration),
-                                "child_mode": mode_used,
-                                "status": str(getattr(result, "status", "") or ""),
-                                "message": _normalized_text(
-                                    getattr(result, "message", "") or ""
-                                )[:1000],
-                                "action_status": str(
-                                    getattr(
-                                        getattr(result, "action_result", None),
-                                        "status",
-                                        "",
-                                    )
-                                    or ""
-                                ),
-                                "action_summary": _normalized_text(
-                                    getattr(
-                                        getattr(result, "action_result", None),
-                                        "summary",
-                                        "",
-                                    )
-                                    or ""
-                                )[:1000],
-                            },
-                            trace_id=str(
-                                getattr(ctx.state, "trace_id", "") or ""
-                            ).strip(),
-                        )
-                    except Exception:
-                        pass
                     result_status = (
                         str(getattr(result, "status", "") or "").strip().lower()
                     )
@@ -654,22 +606,22 @@ class ResearchMode(SimpleCheckpointMixin):
                             evidence_dates = _evidence_dates_from_working_state(
                                 getattr(result, STATE_KEY_WORKING, None)
                             )
-                        candidate_content = _usable_child_result_text(
-                            getattr(result, "message", "") or ""
+                        candidate_content = _usable_child_action_result_text(
+                            getattr(result, "action_result", None)
                         )
-                        if not candidate_content:
-                            candidate_content = _usable_child_action_result_text(
-                                getattr(result, "action_result", None)
-                            )
                         if not candidate_content:
                             candidate_content = _usable_child_working_state_text(
                                 getattr(result, STATE_KEY_WORKING, None)
+                            )
+                        if not candidate_content and result_status == BRAIN_STATE_DONE:
+                            candidate_content = _normalized_text(
+                                getattr(result, "message", "") or ""
                             )
                         if candidate_content:
                             content = candidate_content
             except Exception as exc:
                 trace_id = str(getattr(ctx.state, "trace_id", "") or "").strip()
-                try:
+                with suppress(Exception):
                     ctx.logger.emit(
                         "brain.research.child_execution_failed",
                         {
@@ -686,22 +638,12 @@ class ResearchMode(SimpleCheckpointMixin):
                             "message": str(exc),
                         },
                     )
-                except Exception:
-                    pass
-
-        if not content:
-            try:
-                plan = ctx.plan(user_input=child_goal)
-                content = self._content_from_plan(plan, query=query)
-                mode_used = "plan"
-            except Exception:
-                content = f"Research iteration {iteration + 1} for '{query}'."
 
         return ResearchFinding(
             iteration=iteration,
             source_tool=mode_used,
             source_query=child_goal,
-            content=content or f"Research iteration {iteration + 1} complete.",
+            content=content,
             evidence_dates=evidence_dates,
         )
 
@@ -756,21 +698,6 @@ class ResearchMode(SimpleCheckpointMixin):
             tokens=_split(int(budgets.tokens)),
             time_ms=_split(int(budgets.time_ms)),
         )
-
-    def _content_from_plan(self, plan: Plan | None, *, query: str) -> str:
-        if plan is None:
-            return ""
-        step_titles = [
-            _normalized_text(getattr(step, "title", "") or getattr(step, "kind", ""))
-            for step in getattr(plan, "steps", []) or []
-            if _normalized_text(getattr(step, "title", "") or getattr(step, "kind", ""))
-        ]
-        if step_titles:
-            return f"Found: {', '.join(step_titles[:5])}."
-        objective = _normalized_text(getattr(plan, "objective", "") or "")
-        if objective:
-            return objective
-        return f"Research iteration complete for '{query}'."
 
     def _check_convergence(
         self,
@@ -890,26 +817,8 @@ class ResearchMode(SimpleCheckpointMixin):
         synthesis = ""
         if plan is not None:
             synthesis = _normalized_text(getattr(plan, "objective", "") or "")
-            step_titles = [
-                _normalized_text(
-                    getattr(step, "title", "") or getattr(step, "kind", "")
-                )
-                for step in getattr(plan, "steps", []) or []
-                if _normalized_text(
-                    getattr(step, "title", "") or getattr(step, "kind", "")
-                )
-            ]
-            if step_titles and not synthesis:
-                synthesis = " ".join(step_titles)
-
         if not synthesis:
-            synthesis = f"Research complete for '{query}'."
-            if findings:
-                partial_texts = _meaningful_partial_texts(findings)
-                if partial_texts:
-                    synthesis = f"Research complete for '{query}': {' '.join(partial_texts[:3])}"
-                else:
-                    synthesis = self._build_no_synthesis_closeout(query=query)
+            synthesis = self._build_no_synthesis_closeout(query=query)
         return synthesis
 
     def _build_no_synthesis_closeout(self, *, query: str) -> str:
@@ -973,7 +882,7 @@ class ResearchMode(SimpleCheckpointMixin):
         interval = initial.interval
         if interval is None:
             return
-        try:
+        with suppress(Exception):
             schedule_backoff_resume(
                 task_manager=task_manager,
                 task_id=task_id,
@@ -985,8 +894,6 @@ class ResearchMode(SimpleCheckpointMixin):
                 attempt_count=0,
                 first_scheduled_at=datetime.now(timezone.utc).isoformat(),
             )
-        except Exception:
-            return
 
     def _pause_after_phase(self, ctx: ExecutionContext, *, index: int) -> bool:
         budgets = getattr(ctx.state, "budgets_remaining", None)

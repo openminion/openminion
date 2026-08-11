@@ -1,5 +1,3 @@
-"""Rollout scoring implementations."""
-
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
@@ -22,8 +20,6 @@ def _clamp_unit(x: float) -> float:
 
 @dataclass
 class StubRolloutScorer:
-    """Deterministic stub scorer for tests."""
-
     scorer_fn: Callable[[RolloutResult, RolloutPlan], float]
 
     def score(self, result: RolloutResult, plan: RolloutPlan) -> float:
@@ -32,10 +28,7 @@ class StubRolloutScorer:
 
 @dataclass
 class LLMRolloutScorer:
-    """LLM-backed scorer that parses a unit-clamped score."""
-
     client: _SmallModelClient
-    model_name: str = "claude-haiku-3.5"
     timeout_seconds: int = 3
 
     def score(self, result: RolloutResult, plan: RolloutPlan) -> float:

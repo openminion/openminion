@@ -54,19 +54,15 @@ class BridgeSkillClient:
                 k=k,
                 status_filter=status_filter,
             )
-            return (
-                [
-                    {
-                        "skill_id": m.skill_id,
-                        "skill_name": getattr(m, "skill_name", ""),
-                        "version_hash": getattr(m, "version_hash", ""),
-                        "score": getattr(m, "score", 0.0),
-                    }
-                    for m in matches
-                ]
-                if matches
-                else []
-            )
+            return [
+                {
+                    "skill_id": match.skill_id,
+                    "skill_name": getattr(match, "skill_name", ""),
+                    "version_hash": getattr(match, "version_hash", ""),
+                    "score": getattr(match, "score", 0.0),
+                }
+                for match in matches
+            ]
         except Exception:
             return []
 
@@ -115,34 +111,23 @@ class BridgeSkillClient:
         skill_svc = self._resolve_skillctl()
         if skill_svc is None:
             return ("", "")
-        request_variants = (
-            {
-                "skill_id": skill_id,
-                "version_hash": version_hash,
-                "purpose": purpose,
-                "max_tokens": max_tokens,
-                "mode_name": mode_name,
-            },
-            {
-                "skill_id": skill_id,
-                "version_hash": version_hash,
-                "purpose": purpose,
-                "mode_name": mode_name,
-            },
-        )
-        for render_kwargs in request_variants:
-            try:
-                text, hash_val = skill_svc.render_snippet(**render_kwargs)
-                return str(text), str(hash_val)
-            except Exception:
-                continue
-        return ("", "")
+        try:
+            text, hash_val = skill_svc.render_snippet(
+                skill_id=skill_id,
+                version_hash=version_hash,
+                purpose=purpose,
+                max_tokens=max_tokens,
+                mode_name=mode_name,
+            )
+            return str(text), str(hash_val)
+        except Exception:
+            return ("", "")
 
 
 def _import_skill_service() -> Any | None:
     try:
         from openminion.modules.skill.runtime.skill import Skill
-    except Exception:
+    except ImportError:
         return None
     return Skill
 

@@ -275,8 +275,9 @@ def tool_schemas() -> dict[str, dict[str, Any]]:
     return {
         "exec.run": {
             "description": (
-                "Run one direct shell command in workspace scope with optional "
-                "PTY/background sessioning; shell pipes, redirections, chaining, "
+                "Run one direct shell command in workspace scope, including "
+                "commands through the system SSH client, with optional "
+                "PTY/background sessioning. Shell pipes, redirections, chaining, "
                 "and fallback operators are not supported. For toolchain checks, "
                 "use direct discovery such as `command -v nasm`, then a separate "
                 "direct version check such as `nasm --version`."

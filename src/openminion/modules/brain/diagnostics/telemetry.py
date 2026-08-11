@@ -34,29 +34,23 @@ def emit_request_readiness_operation(
     readiness: object | None,
     status: str = "ok",
 ) -> None:
-    if readiness is None:
-        emit_brain_operation(
-            telemetryctl=telemetryctl,
-            session_id=session_id,
-            turn_id=turn_id,
-            operation="request_readiness",
-            status=status,
-            extra={"present": False},
+    extra: dict[str, object] = {"present": readiness is not None}
+    if readiness is not None:
+        extra.update(
+            {
+                "posture": str(getattr(readiness, "posture", "") or "").strip(),
+                "requested_outcome": str(
+                    getattr(readiness, "requested_outcome", "") or ""
+                ).strip(),
+                "state": str(getattr(readiness, "state", "") or "").strip(),
+                "assumption_count": len(getattr(readiness, "assumptions", []) or []),
+            }
         )
-        return
     emit_brain_operation(
         telemetryctl=telemetryctl,
         session_id=session_id,
         turn_id=turn_id,
         operation="request_readiness",
         status=status,
-        extra={
-            "present": True,
-            "posture": str(getattr(readiness, "posture", "") or "").strip(),
-            "requested_outcome": str(
-                getattr(readiness, "requested_outcome", "") or ""
-            ).strip(),
-            "state": str(getattr(readiness, "state", "") or "").strip(),
-            "assumption_count": len(list(getattr(readiness, "assumptions", []) or [])),
-        },
+        extra=extra,
     )

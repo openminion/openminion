@@ -190,8 +190,6 @@ def _recover_seed_command_from_response(
         return None
     tool_call = tool_calls[0]
     tool_name = str(getattr(tool_call, "name", "") or "").strip()
-    if not tool_name:
-        return None
     arguments = getattr(tool_call, "arguments", None)
     if not isinstance(arguments, dict):
         return None

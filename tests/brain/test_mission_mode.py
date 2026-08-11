@@ -409,10 +409,7 @@ def test_active_mission_ordinary_input_fails_closed_and_fork_pauses() -> None:
         assert forked.working_state.mission is not None
         assert forked.working_state.mission.status == "paused"
         if forked.status == "waiting_user":
-            assert (
-                "could not safely determine the next step"
-                in str(forked.message or "").lower()
-            )
+            assert forked.message == "closure_gate_missing_llm_or_context"
         event_types = {
             event.get("type") for event in session.list_events("s-mission-guard")
         }
@@ -549,13 +546,13 @@ def test_async_resume_returns_to_active_mission_without_auto_completion() -> Non
         assert output.status == "waiting_user"
         assert state.mission is not None
         assert state.mission.status == "active"
-        assert state.mission.latest_judgment is not None
-        assert state.mission.latest_judgment.outcome == "continue"
+        assert state.mission.latest_judgment is None
+        assert output.message == "closure_gate_missing_llm_or_context"
         event_types = {
             event.get("type") for event in session.list_events("s-mission-resume")
         }
         assert "brain.mission.async_resumed" in event_types
-        assert "brain.mission_judge.completed" in event_types
+        assert "brain.closure_gate.missing_context" in event_types
 
 
 def test_run_until_idle_pauses_mission_when_pending_handle_is_missing() -> None:
@@ -1112,6 +1109,60 @@ def test_turn_closure_continues_when_closure_schema_is_invalid() -> None:
         assert judgment.satisfied is False
         assert judgment.next_action == "continue"
         assert judgment.reason == "closure_gate_invalid_structured_output"
+
+
+def test_turn_closure_does_not_infer_success_after_judge_failure() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        runner, session = _build_runner(
+            Path(tmp),
+            llm_api=_MissionJudgeLLM(
+                mission_payload={"outcome": "continue", "reason": "unused"},
+                closure_payload={
+                    "satisfied": True,
+                    "reason": "complete",
+                    "next_action": "close",
+                    "final_answer": "done",
+                }
+            ),
+            context_api=_ContextAPI(),
+        )
+        state = runner._load_or_init_state("s-closure-fail-closed")
+        state.status = "done"
+        state.goal = "Run one explicit command."
+        state.decision_reason_code = "explicit_tool_command"
+        state.plan = Plan(
+            objective=state.goal,
+            steps=[_echo_command()],
+            stop_conditions=[],
+            assumptions=[],
+            risk_summary="",
+            success_criteria={},
+        )
+        logger = CanonicalEventLogger(
+            session_api=session,
+            session_id=state.session_id,
+            agent_id=runner.profile.agent_id,
+        )
+
+        with patch(
+            "openminion.modules.brain.execution.runtime.closure.evaluator._apply_closure_guards",
+            side_effect=ValueError("guard failed"),
+        ):
+            judgment = runner._evaluate_turn_closure(
+                state=state,
+                action_result=ActionResult(
+                    command_id="cmd-explicit",
+                    status="success",
+                    summary="command succeeded",
+                ),
+                logger=logger,
+                completion_reason="explicit_command_completed",
+            )
+
+        assert judgment.satisfied is False
+        assert judgment.next_action == "replan"
+        assert judgment.final_answer is None
+        assert judgment.reason == "closure_gate_failed_fallback_replan"
 
 
 def test_turn_closure_continues_when_freshness_evidence_missing_but_budget_remains() -> (

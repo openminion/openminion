@@ -35,6 +35,7 @@ from ..schemas import (
     ArtifactRef,
     Command,
     JobHandle,
+    ToolCommand,
 )
 from ..tools.parser import normalize_tool_name_for_brain
 
@@ -80,23 +81,22 @@ def validate_tool_args(
     state=None,
 ) -> dict[str, Any] | None:
     del runner
-    if command.kind != BRAIN_COMMAND_KIND_TOOL:
+    if not isinstance(command, ToolCommand):
         return None
 
-    family = tool_family_for_argument_repair(getattr(command, "tool_name", ""))
+    family = tool_family_for_argument_repair(command.tool_name)
     if family is None:
         return None
 
     missing = list(
         missing_simple_required_fields(
-            tool_name=str(getattr(command, "tool_name", "") or ""),
-            arguments=getattr(command, "args", {}) or {},
+            tool_name=command.tool_name,
+            arguments=command.args,
         )
     )
     if not missing:
         return None
 
-    missing_csv = ", ".join(missing)
     if family == MODEL_WEB_SEARCH:
         return {
             "message": (
@@ -108,7 +108,7 @@ def validate_tool_args(
             "source": "bounded_argument_repair",
         }
     return {
-        "message": f"Missing required tool arguments: {missing_csv}",
+        "message": f"Missing required tool arguments: {', '.join(missing)}",
         "missing": missing,
         "reason_code": "tool_arg_validation_failed",
         "suggestion": "",
@@ -151,8 +151,11 @@ def normalize_execution_result(
 
     artifacts = _normalize_artifact_refs(raw.get("artifact_refs"))
     error_obj = _normalize_action_error(raw_error=raw.get("error"), provider=provider)
-    metrics = _normalize_action_metrics(
-        raw_metrics=raw.get("metrics"), provider=provider
+    metrics = _validate_optional_payload(
+        raw.get("metrics"),
+        model=ActionMetrics,
+        provider=provider,
+        channel_name="action_metrics",
     )
 
     action_result = ActionResult(
@@ -209,9 +212,9 @@ def _normalize_artifact_refs(raw_artifacts: Any) -> list[ArtifactRef]:
         if isinstance(item, str):
             artifacts.append(ArtifactRef(ref=item))
             continue
-        if not isinstance(item, dict) or not item.get("ref"):
+        if not isinstance(item, dict):
             continue
-        ref = str(item.get("ref", "")).strip()
+        ref = str(item.get("ref") or "").strip()
         if not ref:
             continue
         label = item.get("label")
@@ -240,17 +243,6 @@ def _normalize_action_error(*, raw_error: Any, provider: str) -> ActionError | N
         model=ActionError,
         provider=provider,
         channel_name="action_error",
-    )
-
-
-def _normalize_action_metrics(
-    *, raw_metrics: Any, provider: str
-) -> ActionMetrics | None:
-    return _validate_optional_payload(
-        raw_metrics,
-        model=ActionMetrics,
-        provider=provider,
-        channel_name="action_metrics",
     )
 
 

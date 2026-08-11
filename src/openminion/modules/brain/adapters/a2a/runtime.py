@@ -27,18 +27,6 @@ from openminion.base.config.env import EnvironmentConfig, resolve_environment_co
 from openminion.modules.brain.schemas import DelegationContext, DelegationResultSummary
 
 
-def _delegate_result_summary(
-    payload: dict[str, Any],
-    *,
-    fallback: str,
-) -> str:
-    for key in ("body", "message", "summary", "answer", "result", "output"):
-        text = str(payload.get(key) or "").strip()
-        if text:
-            return text
-    return fallback
-
-
 def _typed_delegation_result_summary(value: Any) -> dict[str, Any] | None:
     raw = value
     if isinstance(value, str):
@@ -66,10 +54,8 @@ def _call_response_payload(
         normalized_data = data if isinstance(data, dict) else {}
         return {
             "status": BRAIN_ACTION_STATUS_SUCCESS,
-            "summary": _delegate_result_summary(
-                normalized_data,
-                fallback=f"A2A call completed: {response.from_agent}.{response.method}",
-            ),
+            "summary": str(normalized_data.get("summary") or "").strip()
+            or f"A2A call completed: {response.from_agent}.{response.method}",
             "outputs": normalized_data,
             "artifact_refs": [],
             "memory_refs": [],
@@ -578,28 +564,9 @@ def _delegation_context_block(params: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _sanitized_delegate_summary(*, goal: str, summary: str) -> str:
-    normalized_goal = str(goal or "").strip()
-    lines: list[str] = []
-    for raw_line in str(summary or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.lower().startswith("parent goal:"):
-            continue
-        lines.append(line)
-    normalized_summary = "\n".join(lines).strip()
-    if normalized_goal and normalized_summary == normalized_goal:
-        return ""
-    return normalized_summary
-
-
 def _delegate_message_from_payload(params: dict[str, Any]) -> str:
     goal = str(params.get("goal", "") or "").strip()
-    summary = _sanitized_delegate_summary(
-        goal=goal,
-        summary=str(params.get("summary", "") or "").strip(),
-    )
+    summary = str(params.get("summary", "") or "").strip()
     constraints = _normalized_constraints(params.get("constraints"))
     parts: list[str] = []
     if goal:

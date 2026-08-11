@@ -84,9 +84,6 @@ class LocalLLMAdapter:
                 "new_preference": None,
             }
 
-        if schema.__name__ == "PostActionJudgment":
-            return _mock_post_action_judgment(context)
-
         if schema.__name__ == "ClosureJudgment":
             return _mock_closure_judgment(context)
 
@@ -239,15 +236,12 @@ class LocalLLMAdapter:
                 ],
             }
 
-        try:
-            return schema().model_dump(mode="json")
-        except Exception:
-            return {}
+        return schema().model_dump(mode="json")
 
     def call(self, request: LLMRequest) -> LLMResponse:
-        model_name = str(request.model or "local")
+        model_name = request.model or "local"
         user_input = _extract_user_input_from_messages(request.messages)
-        metadata = dict(getattr(request, "metadata", {}) or {})
+        metadata = request.metadata
         capability_category = str(metadata.get("capability_category", "") or "").strip()
         forced_tools = metadata.get("forced_tools")
         tool_specs = list(request.tools or [])
@@ -303,20 +297,19 @@ class LocalLLMAdapter:
                 },
             },
         )
-        if isinstance(decision, dict):
+        if decision is not None:
+            decision_mode = str(decision.get("mode", "") or "").strip()
+            respond_kind = str(decision.get("respond_kind", "") or "").strip()
             if (
-                str(decision.get("mode", "") or "").strip() == "respond"
-                and str(decision.get("respond_kind", "") or "").strip() == "clarify"
+                decision_mode == "respond"
+                and respond_kind == "clarify"
                 and "clarify" in available_tool_names
             ):
                 return _clarify_tool_response(
                     model=model_name,
                     question=str(decision.get("question", "") or "").strip(),
                 )
-            if (
-                str(decision.get("mode", "") or "").strip() == "respond"
-                and str(decision.get("respond_kind", "") or "").strip() == "answer"
-            ):
+            if decision_mode == "respond" and respond_kind == "answer":
                 return _llm_response(
                     model=model_name,
                     output_text=str(decision.get("answer", "") or "").strip(),
@@ -367,24 +360,24 @@ def _extract_mock_user_input(context: dict[str, Any]) -> str:
 
 
 def _extract_user_input_from_messages(messages: list[Message]) -> str:
-    for message in reversed(list(messages or [])):
-        if str(getattr(message, "role", "") or "").strip().lower() != "user":
+    for message in reversed(messages):
+        if message.role.strip().lower() != "user":
             continue
-        content = str(getattr(message, "content", "") or "").strip()
+        content = message.content.strip()
         if content:
             return content
     return ""
 
 
 def _last_tool_message(messages: list[Message]) -> Message | None:
-    for message in reversed(list(messages or [])):
-        if str(getattr(message, "role", "") or "").strip().lower() == "tool":
+    for message in reversed(messages):
+        if message.role.strip().lower() == "tool":
             return message
     return None
 
 
 def _mock_followup_from_tool_message(message: Message) -> str:
-    payload_text = str(getattr(message, "content", "") or "").strip()
+    payload_text = message.content.strip()
     if not payload_text:
         return "Done."
     try:
@@ -465,7 +458,7 @@ def _clarify_tool_response(*, model: str, question: str) -> LLMResponse:
 def _clarify_question_for_tool(tool_name: str) -> str:
     return {
         "file.read": "What path should I read?",
-    }.get(str(tool_name or "").strip().lower(), "")
+    }.get(tool_name.strip().lower(), "")
 
 
 def _context_hints(context: dict[str, Any]) -> dict[str, Any]:
@@ -491,7 +484,7 @@ def _mock_tool_command_from_user_input(user_input: str) -> dict[str, Any] | None
     parts = user_input.strip().split(maxsplit=2)
     if len(parts) < 2 or parts[0].lower() != "tool":
         return None
-    tool_name = str(parts[1] or "").strip()
+    tool_name = parts[1].strip()
     if not tool_name:
         return None
     args: dict[str, Any] = {}
@@ -518,9 +511,9 @@ def _mock_tool_command_from_user_input(user_input: str) -> dict[str, Any] | None
 def _mock_decision_from_context(
     user_input: str, context: dict[str, Any]
 ) -> dict[str, Any] | None:
-    normalized = str(user_input or "").strip()
+    normalized = user_input.strip()
     lower = normalized.lower()
-    hints = context.get("hints", {}) if isinstance(context.get("hints"), dict) else {}
+    hints = _context_hints(context)
     if not lower:
         return _mock_targeted_tool_decision_from_hints(
             hints=hints,
@@ -582,18 +575,14 @@ def _mock_targeted_tool_decision_from_hints(
 def _mock_targeted_tool_decision(
     *, tool_name: str, user_input: str, reason_code: str
 ) -> dict[str, Any]:
-    normalized_tool = str(tool_name or "").strip().lower()
-    normalized_input = str(user_input or "").strip().lower()
+    normalized_tool = tool_name.strip().lower()
+    normalized_input = user_input.strip().lower()
     clarify_question = _clarify_question_for_tool(normalized_tool)
     if clarify_question and not normalized_input.startswith("tool "):
         return {
             "route": "respond",
             "confidence": 0.8,
-            "reason_code": (
-                "mock_file_read_needs_path"
-                if normalized_tool == "file.read"
-                else "mock_weather_needs_location"
-            ),
+            "reason_code": "mock_file_read_needs_path",
             "respond_kind": "clarify",
             "question": clarify_question,
         }
@@ -608,7 +597,7 @@ def _mock_targeted_tool_decision(
 
 
 def _mock_plan_from_user_input(user_input: str) -> dict[str, Any] | None:
-    normalized = str(user_input or "").strip()
+    normalized = user_input.strip()
     lower = normalized.lower()
     if not lower.startswith("plan tool "):
         return None
@@ -625,51 +614,8 @@ def _mock_plan_from_user_input(user_input: str) -> dict[str, Any] | None:
     }
 
 
-def _mock_post_action_judgment(context: dict[str, Any]) -> dict[str, Any]:
-    hints = context.get("hints", {}) if isinstance(context.get("hints"), dict) else {}
-    runtime_facts = (
-        hints.get("post_action_runtime_facts", {})
-        if isinstance(hints.get("post_action_runtime_facts"), dict)
-        else {}
-    )
-    action_result = (
-        runtime_facts.get("action_result", {})
-        if isinstance(runtime_facts.get("action_result"), dict)
-        else {}
-    )
-    status = str(action_result.get("status", "") or "").strip().lower()
-    summary = str(action_result.get("summary", "") or "").strip()
-    if status == "success":
-        return {
-            "outcome": "advance",
-            "reason": summary or "mock_action_succeeded",
-            "user_message": None,
-            "confidence": 0.9,
-        }
-    if status == "retry":
-        return {
-            "outcome": "retry",
-            "reason": summary or "mock_retry_requested",
-            "user_message": None,
-            "confidence": 0.8,
-        }
-    if status == "needs_user":
-        return {
-            "outcome": "ask_user",
-            "reason": summary or "mock_needs_user",
-            "user_message": summary or "I need your input before I continue.",
-            "confidence": 0.8,
-        }
-    return {
-        "outcome": "ask_user",
-        "reason": summary or "mock_action_failed",
-        "user_message": summary or "I hit a problem and need your guidance.",
-        "confidence": 0.75,
-    }
-
-
 def _mock_closure_judgment(context: dict[str, Any]) -> dict[str, Any]:
-    hints = context.get("hints", {}) if isinstance(context.get("hints"), dict) else {}
+    hints = _context_hints(context)
     summary = str(hints.get("closure_action_summary", "") or "").strip()
     reason = str(hints.get("closure_candidate_reason", "") or "").strip() or summary
     final_answer = summary or "Done."
@@ -692,7 +638,7 @@ def _extract_skill_selection_catalog(context: dict[str, Any]) -> list[str]:
         content = str(message.get("content", "") or "")
         for match in _PREROUTING_SKILL_LINE_RE.finditer(content):
             skill_id = str(match.group("skill_id") or "").strip()
-            if skill_id and skill_id != "(none":
+            if skill_id:
                 catalog.append(skill_id)
     return catalog
 
@@ -709,7 +655,7 @@ def _select_mock_skill_id(user_message: str, skill_catalog: list[str]) -> str | 
 
 
 def _summarize_mock_intent(user_message: str) -> str:
-    compact = " ".join(str(user_message or "").strip().split())
+    compact = " ".join(user_message.strip().split())
     if len(compact) <= 80:
         return compact
     return compact[:77].rstrip() + "..."

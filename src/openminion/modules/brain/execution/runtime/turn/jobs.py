@@ -65,7 +65,9 @@ def reconcile_pending_jobs(
             message_status=job.status,
         )
     state.pending_jobs = state.pending_jobs[1:]
-    summary, outputs = _job_result_payload(polled)
+    summary = str(polled.get("summary", "") or "").strip()
+    raw_outputs = polled.get("outputs")
+    outputs = raw_outputs if isinstance(raw_outputs, dict) else {}
     if raw_status in {"success", "completed", "done"}:
         return _handle_completed_job(
             runner=runner,
@@ -134,12 +136,6 @@ def _mark_job_still_pending(
         if raw_status == BRAIN_JOB_STATUS_RUNNING
         else BRAIN_JOB_STATUS_PENDING
     )
-
-
-def _job_result_payload(polled: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    summary = str(polled.get("summary", "") or "").strip()
-    outputs = polled.get("outputs") if isinstance(polled.get("outputs"), dict) else {}
-    return summary, outputs
 
 
 def _handle_completed_job(

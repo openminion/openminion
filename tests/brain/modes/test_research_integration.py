@@ -294,8 +294,8 @@ def test_research_mode_runs_all_iterations_and_completes() -> None:
         result = mode.execute(ctx)
 
         assert result.status == "done"
-        # 3 iterations (child plan) + 1 synthesis plan call = 4.
-        assert len(services.plan_calls) == 4
+        # Failed child iterations are not repaired into synthetic plan findings.
+        assert len(services.plan_calls) == 1
         task_id = str(ctx.state.task_backed_task_id)
         assert task_id
         checkpoints = task_manager.list_checkpoints(task_id)
@@ -322,8 +322,8 @@ def test_research_mode_resume_continues_from_latest_checkpoint() -> None:
         paused = mode.execute(ctx)
 
         assert paused.status == "waiting_user"
-        # Exactly 1 iteration ran before pause.
-        assert len(services.plan_calls) == 1
+        # No fallback plan call fabricates a finding before the pause.
+        assert services.plan_calls == []
         checkpoint_id = str(ctx.state.task_backed_checkpoint_id or "")
         assert checkpoint_id.endswith("-cursor-1")
 
@@ -342,8 +342,7 @@ def test_research_mode_resume_continues_from_latest_checkpoint() -> None:
         resumed = mode.execute(resumed_ctx)
 
         assert resumed.status == "done"
-        # 2 remaining iterations + 1 synthesis = 3 plan calls.
-        assert len(resumed_services.plan_calls) == 3
+        assert len(resumed_services.plan_calls) == 1
         loaded = task_manager.get_task(str(ctx.state.task_backed_task_id))
         assert loaded is not None
         assert loaded.state == TaskLifecycleState.DONE
@@ -353,8 +352,9 @@ def test_research_mode_resume_continues_from_latest_checkpoint() -> None:
 # Regression: cancel preserves findings
 
 
-def test_research_mode_cancel_preserves_partial_results_and_checkpoint() -> None:
-    """Cancel after pause preserves findings and transitions task to cancelled."""
+def test_research_mode_cancel_preserves_checkpoint_without_fabricating_findings() -> (
+    None
+):
     with tempfile.TemporaryDirectory() as tmp:
         task_manager = TaskManager.for_lifecycle_db(db_path=Path(tmp) / "tasks.db")
         ctx, services = _ctx(task_manager, state=_state(ticks=1))
@@ -365,7 +365,7 @@ def test_research_mode_cancel_preserves_partial_results_and_checkpoint() -> None
 
         assert paused.status == "waiting_user"
         assert cancelled.status == "stopped"
-        assert "Partial findings" in str(cancelled.message or "")
+        assert cancelled.message == "User cancelled the research."
         loaded = task_manager.get_task(str(ctx.state.task_backed_task_id))
         assert loaded is not None
         assert loaded.state == TaskLifecycleState.CANCELLED

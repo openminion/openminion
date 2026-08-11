@@ -292,7 +292,7 @@ def test_general_adaptive_profile_allows_decompose_control_tool() -> None:
     }
 
 
-def test_general_adaptive_honors_explicit_control_tool_opt_out() -> None:
+def test_general_adaptive_does_not_infer_tool_scope_from_user_prose() -> None:
     llm_client = _FakeLLMClient()
     executor = _FakeCommandExecutor()
     ctx, _services = _ctx(llm_client, executor)
@@ -329,20 +329,14 @@ def test_general_adaptive_honors_explicit_control_tool_opt_out() -> None:
     assert result.status == "done"
     profile = captured["profile"]
     assert getattr(profile, "profile_name", "") == "general_adaptive_v1"
-    assert bool(getattr(profile, "allow_plan_tool", True)) is False
+    assert bool(getattr(profile, "allow_plan_tool", False)) is True
     profile_tools = set(getattr(profile, "allowed_tools", frozenset()))
     tool_names = {
         str(getattr(spec, "name", "") or "").strip()
         for spec in list(captured["tool_specs"] or [])
     }
-    assert "decompose" not in profile_tools
-    assert not any(tool.startswith("plan.") for tool in profile_tools)
-    assert "tool.list" not in profile_tools
-    assert not any(tool.startswith("git.") for tool in profile_tools)
-    assert "decompose" not in tool_names
-    assert not any(tool.startswith("plan.") for tool in tool_names)
-    assert "tool.list" not in tool_names
-    assert not any(tool.startswith("git.") for tool in tool_names)
+    assert "decompose" in profile_tools
+    assert "decompose" in tool_names
     assert "file.list_dir" in tool_names
     assert "web.search" in tool_names
 
@@ -1008,9 +1002,7 @@ def test_act_adaptive_finalization_contract_missing_surfaces_single_failed_tool_
     assert result.action_result.error.details["tool_name"] == "file.read"
 
 
-def test_act_adaptive_finalization_contract_missing_closes_recoverable_web_failure() -> (
-    None
-):
+def test_act_adaptive_finalization_contract_missing_preserves_web_failure() -> None:
     llm_client = _FakeLLMClient(responses=[])
     executor = _FakeCommandExecutor()
     services = _FakeServices(
@@ -1055,10 +1047,12 @@ def test_act_adaptive_finalization_contract_missing_closes_recoverable_web_failu
         ),
     )
 
-    assert result.status == "done"
-    assert "tradeoffs:" in result.message
+    assert result.status == "error"
+    assert result.message == "Upstream returned HTTP 404"
     assert result.action_result is not None
-    assert result.action_result.status == "success"
+    assert result.action_result.status == "failed"
+    assert result.action_result.error is not None
+    assert result.action_result.error.code == "UPSTREAM_ERROR"
 
 
 def test_act_adaptive_finalization_contract_missing_closes_from_successful_tool_evidence() -> (
@@ -2472,7 +2466,7 @@ def test_act_adaptive_seeded_confirmation_replay_verification_close_uses_final_a
     assert str(result.action_result.summary).startswith("tests passed")
 
 
-def test_act_adaptive_seeded_entry_tool_close_disposition_reopens_autonomous() -> None:
+def test_act_adaptive_seeded_entry_tool_honors_close_disposition() -> None:
     class _AdvanceWithStateExecutor(_FakeCommandExecutor):
         def advance_after_action(
             self,
@@ -2482,13 +2476,8 @@ def test_act_adaptive_seeded_entry_tool_close_disposition_reopens_autonomous() -
             force_replan: bool = False,
             logger=None,
         ) -> None:
-            advance_after_action(
-                SimpleNamespace(),
-                state=state,
-                action_result=action_result,
-                force_replan=force_replan,
-                logger=logger,
-            )
+            del action_result, force_replan, logger
+            state.status = "done"
 
     executor = _AdvanceWithStateExecutor(
         outcomes=[
@@ -2525,17 +2514,11 @@ def test_act_adaptive_seeded_entry_tool_close_disposition_reopens_autonomous() -
 
     result = ActLoopMode().execute(ctx)
 
-    assert result.status == "active"
-    assert result.working_state.status == "active"
-    assert result.message is None
-    assert "Continue the original task: inspect workspace and summarize" in str(
-        ctx.state.post_action_user_message or ""
-    )
+    assert result.status == "done"
+    assert result.message == "Let me run pytest now."
 
 
-def test_act_adaptive_seeded_entry_mutation_batch_continues_without_closure_judge() -> (
-    None
-):
+def test_act_adaptive_seeded_entry_mutation_batch_uses_closure_judge() -> None:
     class _AdvanceWithStateExecutor(_FakeCommandExecutor):
         def advance_after_action(
             self,
@@ -2545,19 +2528,8 @@ def test_act_adaptive_seeded_entry_mutation_batch_continues_without_closure_judg
             force_replan: bool = False,
             logger=None,
         ) -> None:
-            advance_after_action(
-                SimpleNamespace(),
-                state=state,
-                action_result=action_result,
-                force_replan=force_replan,
-                logger=logger,
-            )
-
-    class _ClosureShouldNotRunServices(_FakeServices):
-        def evaluate_turn_closure(self, **kwargs) -> ClosureJudgment:
-            raise AssertionError(
-                "closure judge should not run for obvious partial work"
-            )
+            del action_result, force_replan, logger
+            state.status = "done"
 
     executor = _AdvanceWithStateExecutor(
         outcomes=[
@@ -2572,7 +2544,7 @@ def test_act_adaptive_seeded_entry_mutation_batch_continues_without_closure_judg
             ),
         ]
     )
-    services = _ClosureShouldNotRunServices()
+    services = _FakeServices()
     ctx, _ = _ctx(_FakeLLMClient(), executor, services=services)
     ctx.decision.reason_code = "entry_tool_call"
     ctx.state.last_user_input = (
@@ -2590,26 +2562,10 @@ def test_act_adaptive_seeded_entry_mutation_batch_continues_without_closure_judg
 
     result = ActLoopMode().execute(ctx)
 
-    assert result.status == "active"
-    assert result.working_state.status == "active"
-    assert "Continue the original task" in str(ctx.state.post_action_user_message or "")
+    assert result.status == "done"
 
 
-def test_act_adaptive_unexecutable_detector_rejects_tool_transcript_prose() -> None:
-    assert not ActLoopMode()._seeded_final_text_is_unexecutable_tool_envelope(
-        'Tool used: file.read\nPath: /tmp/demo/pyproject.toml\n{"status": "ok"}'
-    )
-
-
-def test_act_adaptive_unexecutable_detector_rejects_file_write_args() -> None:
-    assert ActLoopMode()._seeded_final_text_is_unexecutable_tool_envelope(
-        '{"path": "/tmp/demo/pyproject.toml", "content": "[project]\\nname = \\"x\\""}'
-    )
-
-
-def test_act_adaptive_seeded_entry_tool_unexecutable_final_text_reopens_autonomous() -> (
-    None
-):
+def test_act_adaptive_seeded_entry_tool_defers_final_text_to_closure_contract() -> None:
     def _fake_run_adaptive_tool_loop(*args, **kwargs):
         del args
         finalizer = kwargs["finalizer"]
@@ -2662,19 +2618,9 @@ def test_act_adaptive_seeded_entry_tool_unexecutable_final_text_reopens_autonomo
     ):
         result = ActLoopMode().execute(ctx)
 
-    assert result.status == "active"
-    assert result.working_state.status == "active"
-    assert result.message is None
-    assert "raw or unexecutable tool markup" in str(
-        ctx.state.post_action_user_message or ""
-    )
-    assert "call the next required native tool now" in str(
-        ctx.state.post_action_user_message or ""
-    )
-    assert "Continue the original task: Research sources" in str(
-        ctx.state.post_action_user_message or ""
-    )
-    assert ctx.state.module_state["seeded_final_text_autonomous_retry"] == {"count": 1}
+    assert result.status == "done"
+    assert result.message == "Looks done."
+    assert "seeded_final_text_autonomous_retry" not in ctx.state.module_state
 
 
 def test_act_adaptive_uses_closure_gate_final_answer_when_closing() -> None:
@@ -3209,7 +3155,7 @@ def test_act_adaptive_seeded_confirmation_replay_ask_user_stays_autonomous() -> 
     assert "Continue from the current task state" in str(
         ctx.state.post_action_user_message or ""
     )
-    assert "Recent progress created or updated files" in str(
+    assert "Recent progress created or updated files" not in str(
         ctx.state.post_action_user_message or ""
     )
 

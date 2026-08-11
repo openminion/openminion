@@ -145,20 +145,11 @@ def _maybe_block_recursive_turn(
 
 def _turn_settings(runner: "BrainRunner", state: WorkingState) -> dict[str, Any]:
     meta_cfg = getattr(runner.options, "metactl_config", None)
-    verification_mode = (
-        "none"
-        if meta_cfg is None
-        else str(
-            getattr(
-                meta_cfg,
-                "high_risk_verification_mode",
-                getattr(meta_cfg, "verification_mode", "none"),
-            )
-        )
-    )
     return {
         "retry_count": state.replans_used,
-        "verification_mode": verification_mode,
+        "verification_mode": (
+            "none" if meta_cfg is None else str(meta_cfg.high_risk_verification_mode)
+        ),
         "budget_tier": "normal",
         "invariants": [],
     }
@@ -203,7 +194,7 @@ def _build_recursive_action_result(
     memory_refs = _store_recursive_write_intents(
         runner=runner, state=state, logger=logger, result=result
     )
-    artifact_refs = [event.get("ref", "") for event in result.get("evidence_refs", [])]
+    artifact_refs = [event["ref"] for event in result.get("evidence_refs", [])]
     return ActionResult(
         command_id="rlm_turn",
         status=BRAIN_ACTION_STATUS_SUCCESS
@@ -229,8 +220,8 @@ def _store_recursive_write_intents(
             memory_id = runner.memory_api.store(
                 session_id=state.session_id,
                 agent_id=state.agent_id,
-                text=intent.get("content", ""),
-                record_type=intent.get("intent_type", "fact"),
+                text=intent["content"],
+                record_type=intent["intent_type"],
                 ttl_days=30,
             )
             if memory_id:
@@ -253,7 +244,7 @@ def _finalize_recursive_result(
     action_result: ActionResult,
 ) -> str:
     if state.status != BRAIN_STATE_DONE:
-        return result.get("final_text") or "Completed recursive turn."
+        return result.get("final_text") or "Recursive turn stopped before closure."
     judgment = _runner_delegate(
         "_evaluate_turn_closure",
         runner,

@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 from typing import Any
 
 from openminion.modules.brain.constants import BRAIN_INTERNAL_MODE_ACT_CODING
@@ -96,18 +97,18 @@ def _child_budget_payload(
     budget = ctx.state.budgets_remaining
     budget_parts = max(1, total_subtasks) + 1
     return {
-        "ticks": max(1, int(budget.ticks or 0) // budget_parts),
-        "tool_calls": max(1, int(budget.tool_calls or 0) // budget_parts),
-        "a2a_calls": max(0, int(budget.a2a_calls or 0) // budget_parts),
-        "tokens": max(1, int(budget.tokens or 0) // budget_parts),
-        "time_ms": max(1, int(budget.time_ms or 0) // budget_parts),
+        "ticks": max(1, budget.ticks // budget_parts),
+        "tool_calls": max(1, budget.tool_calls // budget_parts),
+        "a2a_calls": max(0, budget.a2a_calls // budget_parts),
+        "tokens": max(1, budget.tokens // budget_parts),
+        "time_ms": max(1, budget.time_ms // budget_parts),
     }
 
 
 def _parent_subtask_budget_exhausted(runner: Any, ctx: ExecutionContext) -> bool:
     del runner
     budget = ctx.state.budgets_remaining
-    return int(budget.ticks or 0) <= 0 or int(budget.tokens or 0) <= 0
+    return budget.ticks <= 0 or budget.tokens <= 0
 
 
 def _debit_parent_budget_for_subtask(
@@ -118,17 +119,17 @@ def _debit_parent_budget_for_subtask(
 ) -> None:
     del runner
     budget = ctx.state.budgets_remaining
-    budget.ticks = max(0, int(budget.ticks or 0) - int(child_budget["ticks"]))
+    budget.ticks = max(0, budget.ticks - child_budget["ticks"])
     budget.tool_calls = max(
         0,
-        int(budget.tool_calls or 0) - int(child_budget["tool_calls"]),
+        budget.tool_calls - child_budget["tool_calls"],
     )
     budget.a2a_calls = max(
         0,
-        int(budget.a2a_calls or 0) - int(child_budget["a2a_calls"]),
+        budget.a2a_calls - child_budget["a2a_calls"],
     )
-    budget.tokens = max(0, int(budget.tokens or 0) - int(child_budget["tokens"]))
-    budget.time_ms = max(0, int(budget.time_ms or 0) - int(child_budget["time_ms"]))
+    budget.tokens = max(0, budget.tokens - child_budget["tokens"])
+    budget.time_ms = max(0, budget.time_ms - child_budget["time_ms"])
 
 
 def _invoke_coding_subtask(
@@ -161,16 +162,17 @@ def _invoke_coding_subtask(
     child_state.llm_calls_used = 0
     child_state.last_result = None
     child_state.pending_jobs = []
-    decision = type("CodingChildDecision", (), {})()
-    decision.route = BRAIN_INTERNAL_MODE_ACT_CODING
-    decision.reason_code = "coding_subtask"
-    decision.confidence = 1.0
-    decision.objective = subtask.goal
-    decision.sub_intents = []
-    decision.rationale = ""
-    decision.question = None
-    decision.answer = None
-    decision.success_criteria = {"target_files": list(subtask.target_files)}
+    decision = SimpleNamespace(
+        route=BRAIN_INTERNAL_MODE_ACT_CODING,
+        reason_code="coding_subtask",
+        confidence=1.0,
+        objective=subtask.goal,
+        sub_intents=[],
+        rationale="",
+        question=None,
+        answer=None,
+        success_criteria={"target_files": list(subtask.target_files)},
+    )
     result = invoke_decision_direct(
         runner_obj,
         state=child_state,
@@ -180,9 +182,7 @@ def _invoke_coding_subtask(
         depth=1,
     )
     runner._coding_plan.subtasks[subtask_index] = subtask.model_copy(
-        update={
-            "status": "done" if str(result.status or "").strip() == "done" else "failed"
-        }
+        update={"status": "done" if result.status == "done" else "failed"}
     )
     return result
 
@@ -205,11 +205,7 @@ def _append_subtask_synthesis(
         )
         lines.append(f"- {subtask.goal} [{subtask.status}]: {summary or 'no summary'}")
         action_result = result.action_result
-        if (
-            action_result is not None
-            and isinstance(getattr(action_result, "outputs", None), dict)
-            and action_result.outputs.get("diff")
-        ):
+        if action_result is not None and action_result.outputs.get("diff"):
             lines.append(str(action_result.outputs.get("diff") or ""))
         if subtask.status == "failed":
             runner._coding_plan.record_open_issue(

@@ -1,16 +1,12 @@
-"""PRV operator-tunable config."""
-
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class ParallelRolloutConfig:
-    """Operator-tunable parallel-rollout config."""
-
     enabled: bool = False
     n_rollouts: int = 3
     max_parallelism: int = 3
-    eligible_step_kinds: tuple[str, ...] = field(default_factory=tuple)
+    eligible_step_kinds: tuple[str, ...] = ()
     timeout_seconds: int = 30
 
     def __post_init__(self) -> None:  # pragma: no cover - simple guards

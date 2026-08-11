@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from openminion.modules.tool.contracts.display_names import (
     display_name_for_tool_name,
@@ -142,32 +142,16 @@ def coerce_phase_status(status: PhaseStatus | Mapping[str, Any] | None) -> Phase
     if isinstance(status, Mapping):
         try:
             return PhaseStatus.model_validate(dict(status))
-        except Exception:
+        except ValidationError:
             trace_id = str(status.get("trace_id", "") or "phase-status").strip()
             label = str(status.get("label", "") or "").strip() or "Working..."
-            status_key = str(status.get("status_key", "") or "").strip()
-            if status_key not in {
-                "clarifying",
-                "analyzing",
-                "planning",
-                "awaiting_plan_review",
-                "awaiting_confirmation",
-                "executing",
-                "replanning",
-                "reviewing",
-                "verifying",
-                "evaluating_completion",
-                "saving_context",
-                "waiting_for_user",
-                "completed",
-                "blocked",
-                "error",
-                "working",
-            }:
-                status_key = "working"
+            raw_status_key = str(status.get("status_key", "") or "").strip()
+            status_key = (
+                raw_status_key if raw_status_key in _STATUS_LABELS else "working"
+            )
             return PhaseStatus(
                 trace_id=trace_id or "phase-status",
-                status_key=status_key,  # type: ignore[arg-type]
+                status_key=status_key,
                 label=label,
                 route=str(status.get("route", "") or status.get("mode", "") or "")
                 .strip()
@@ -211,7 +195,6 @@ def format_phase_status_text(
     *,
     fallback_label: str = "Working...",
 ) -> str:
-    """Compose the CLI / display status-line text from a `PhaseStatus`."""
     phase_status = coerce_phase_status(status)
     label = str(phase_status.label or "").strip() or fallback_label
     if phase_status.terminal and phase_status.status_key == "completed":
@@ -236,7 +219,6 @@ def format_phase_status_text(
 
 
 def _inject_phase_slot(progress_text: str, phase_slot: str) -> str:
-    """Insert the phase slot after `LLM N/M` when present."""
     if not progress_text:
         return phase_slot
     if not phase_slot:
@@ -248,14 +230,10 @@ def _inject_phase_slot(progress_text: str, phase_slot: str) -> str:
 
 
 def _inline_status_detail_text(value: Any) -> str:
-    """Collapse multiline status detail into a single shell-safe summary."""
-
     raw = str(value or "").strip()
     if not raw:
         return ""
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
-    if not lines:
-        return ""
     primary = " ".join(lines[0].split())
     if len(lines) == 1:
         return primary
@@ -497,8 +475,6 @@ def normalize_phase_status(
     mode_step_index: int | None = None,
     mode_step_total: int | None = None,
 ) -> PhaseStatus:
-    """Normalize internal brain/runtime phase surfaces into PhaseStatus."""
-
     normalized_phase = str(source_phase or "").strip().upper()
     normalized_event = str(source_event or "").strip()
     normalized_runtime_status = str(runtime_status or "").strip().lower()
@@ -551,7 +527,6 @@ def normalize_phase_status(
         normalized_total_output_tokens_used,
         normalized_total_tokens_used,
     ) = _token_usage_values(payload)
-    normalized_token_usage_estimated = bool(payload.get("token_usage_estimated", False))
     normalized_tool_name, normalized_progress_phase = _tool_progress_values(payload)
 
     return PhaseStatus(
@@ -572,7 +547,7 @@ def normalize_phase_status(
         total_input_tokens_used=normalized_total_input_tokens_used,
         total_output_tokens_used=normalized_total_output_tokens_used,
         total_tokens_used=normalized_total_tokens_used,
-        token_usage_estimated=normalized_token_usage_estimated,
+        token_usage_estimated=bool(payload.get("token_usage_estimated", False)),
         tool_name=normalized_tool_name,
         progress_phase=normalized_progress_phase,
         detail_code=detail_code,

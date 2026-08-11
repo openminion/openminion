@@ -34,7 +34,6 @@ from ..schemas import (
     to_structured_sub_intents,
 )
 
-_INTENT_COMPLETED_STATUSES = {"succeeded"}
 _RAW_INTENT_EXECUTION_STATE_MAX_ITEMS = 5
 _CONTINUATION_DECISION_REASON_CODES = {
     "resume_existing_plan",
@@ -49,7 +48,8 @@ def succeeded_intent_ids(
     return [
         str(item.intent_id or "").strip()
         for item in list(intent_execution_states or [])
-        if str(getattr(item, "status", "") or "").strip() in _INTENT_COMPLETED_STATUSES
+        if str(getattr(item, "status", "") or "").strip()
+        == BRAIN_EXECUTION_OUTCOME_SUCCEEDED
         and str(item.intent_id or "").strip()
     ]
 
@@ -61,7 +61,7 @@ def remaining_intent_ids(
         str(item.intent_id or "").strip()
         for item in list(intent_execution_states or [])
         if str(getattr(item, "status", "") or "").strip()
-        not in _INTENT_COMPLETED_STATUSES
+        != BRAIN_EXECUTION_OUTCOME_SUCCEEDED
         and str(item.intent_id or "").strip()
     ]
 
@@ -99,13 +99,14 @@ def build_partial_success_summary(
     completed = [
         item
         for item in states
-        if str(getattr(item, "status", "") or "").strip() in _INTENT_COMPLETED_STATUSES
+        if str(getattr(item, "status", "") or "").strip()
+        == BRAIN_EXECUTION_OUTCOME_SUCCEEDED
     ]
     incomplete = [
         item
         for item in states
         if str(getattr(item, "status", "") or "").strip()
-        not in _INTENT_COMPLETED_STATUSES
+        != BRAIN_EXECUTION_OUTCOME_SUCCEEDED
     ]
     if not incomplete:
         return None
@@ -304,14 +305,16 @@ def record_decision_metadata(
         state.intent_execution_states = []
 
 
-def _plan_steps_for_intent(plan: Plan | None, *, intent_id: str) -> list[int]:
+def _has_future_intent_step(
+    plan: Plan | None, *, intent_id: str, current_step_index: int
+) -> bool:
     if plan is None:
-        return []
-    matches: list[int] = []
-    for index, step in enumerate(plan.steps):
-        if intent_id in normalize_sub_intent_ids(getattr(step, "sub_intent_ids", [])):
-            matches.append(index)
-    return matches
+        return False
+    return any(
+        index > current_step_index
+        and intent_id in normalize_sub_intent_ids(getattr(step, "sub_intent_ids", []))
+        for index, step in enumerate(plan.steps)
+    )
 
 
 def _outcome_for_success(
@@ -320,16 +323,13 @@ def _outcome_for_success(
     current_step_index: int,
     intent_id: str,
 ) -> str:
-    future_steps = [
-        index
-        for index in _plan_steps_for_intent(
-            getattr(state, "plan", None), intent_id=intent_id
-        )
-        if index > current_step_index
-    ]
     return (
         BRAIN_EXECUTION_OUTCOME_IN_PROGRESS
-        if future_steps
+        if _has_future_intent_step(
+            state.plan,
+            intent_id=intent_id,
+            current_step_index=current_step_index,
+        )
         else BRAIN_EXECUTION_OUTCOME_SUCCEEDED
     )
 
@@ -359,17 +359,13 @@ def _resolve_execution_outcome(
         status == BRAIN_ACTION_STATUS_FAILED
         and runner.options.failure_strategy == "skip"
     ):
-        future_steps = [
-            index
-            for index in _plan_steps_for_intent(
-                getattr(state, "plan", None),
-                intent_id=intent_id,
-            )
-            if index > current_step_index
-        ]
         return (
             BRAIN_EXECUTION_OUTCOME_IN_PROGRESS
-            if future_steps
+            if _has_future_intent_step(
+                state.plan,
+                intent_id=intent_id,
+                current_step_index=current_step_index,
+            )
             else BRAIN_EXECUTION_OUTCOME_SKIPPED
         )
     if status in {BRAIN_ACTION_STATUS_FAILED, BRAIN_ACTION_STATUS_TIMEOUT}:

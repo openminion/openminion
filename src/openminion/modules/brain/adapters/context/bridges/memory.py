@@ -28,14 +28,14 @@ _CALLER_SEAM_SESSION_START = "brain.adapters.context.bridges.memory.session_star
 def _optional_memory_storage_types() -> tuple[Any, tuple[Any, Any] | None]:
     try:
         from openminion.modules.memory.storage.base import SearchQueryOptions
-    except Exception:
+    except ImportError:
         search_query_options = None
     else:
         search_query_options = SearchQueryOptions
 
     try:
         from openminion.modules.memory.storage.base import ListQueryOptions, RecordOrder
-    except Exception:
+    except ImportError:
         list_dependencies = None
     else:
         list_dependencies = (ListQueryOptions, RecordOrder)
@@ -161,7 +161,7 @@ class BridgeMemoryClient:
     def _memory_card_meta(self, item: Any, *, record_type: str) -> dict[str, Any]:
         meta = dict(getattr(item, "meta", {}) or {})
         content = getattr(item, "content", {}) or {}
-        if str(record_type).strip().lower() in {
+        if record_type.strip().lower() in {
             "decision",
             "improvement_note",
             "strategy_outcome",
@@ -252,27 +252,18 @@ class BridgeMemoryClient:
 
     def _render_record_text(self, item: Any, *, record_type: str) -> str:
         content = getattr(item, "content", {}) or {}
-        if str(record_type).strip().lower() == "decision" and isinstance(content, dict):
+        normalized_type = record_type.strip().lower()
+        if normalized_type == "decision" and isinstance(content, dict):
             return self._render_decision_record_text(content)
-        if str(record_type).strip().lower() == "improvement_note" and isinstance(
-            content, dict
-        ):
+        if normalized_type == "improvement_note" and isinstance(content, dict):
             return self._render_improvement_note_text(content)
-        if str(record_type).strip().lower() == "strategy_outcome" and isinstance(
-            content, dict
-        ):
+        if normalized_type == "strategy_outcome" and isinstance(content, dict):
             return self._render_strategy_outcome_text(content)
-        if str(
-            record_type
-        ).strip().lower() == "post_completion_critique" and isinstance(content, dict):
+        if normalized_type == "post_completion_critique" and isinstance(content, dict):
             return self._render_post_completion_critique_text(content)
-        if str(record_type).strip().lower() == "goal_revision" and isinstance(
-            content, dict
-        ):
+        if normalized_type == "goal_revision" and isinstance(content, dict):
             return self._render_goal_revision_text(content)
-        if str(record_type).strip().lower() != "session_summary" or not isinstance(
-            content, dict
-        ):
+        if normalized_type != "session_summary" or not isinstance(content, dict):
             return _extract_text_from_record(item)
         summary_text = str(content.get("summary_text", "") or "").strip()
         decisions = _normalized_string_list(content.get("decisions", []))
@@ -295,14 +286,14 @@ class BridgeMemoryClient:
 
     def _ranked_memory_cards(self, results: list[Any]) -> list[MemoryCard]:
         explicit_scores_present = any(
-            getattr(item, "score", None) is not None for item in list(results or [])
+            getattr(item, "score", None) is not None for item in results
         )
         try:
             from openminion.modules.memory.models import MemoryRecord
             from openminion.modules.memory.runtime.scorer import score_records
 
             ranked_pairs: list[tuple[MemoryRecord, float]] = []
-            for item in results or []:
+            for item in results:
                 text = _extract_text_from_record(item).strip()
                 if not text:
                     continue
@@ -334,7 +325,7 @@ class BridgeMemoryClient:
 
         sort_order = {record_id: idx for idx, record_id in enumerate(ranked_ids)}
         mapped: list[MemoryCard] = []
-        for item in results or []:
+        for item in results:
             card = self._memory_card_from_record(item)
             if card is None:
                 continue
@@ -361,9 +352,9 @@ class BridgeMemoryClient:
         recent_tool_families: list[str],
     ) -> str:
         tokens: list[str] = []
+        seen: set[str] = set()
 
         def _append(values: list[str]) -> None:
-            seen = {item for item in tokens}
             for value in values:
                 token = str(value or "").strip()
                 if not token or token in seen:
@@ -371,19 +362,14 @@ class BridgeMemoryClient:
                 tokens.append(token)
                 seen.add(token)
 
-        latest_user_tokens = [
-            token
-            for token in str(latest_user_message or "").strip().split()
-            if token.strip()
-        ]
-        _append(latest_user_tokens)
+        _append(latest_user_message.strip().split())
         _append(intent_ids)
         _append(intent_statuses)
         if active_skill_id:
             _append([active_skill_id])
         _append(resolved_skill_ids)
-        if int(plan_cursor or 0) > 0:
-            _append([f"cursor-{int(plan_cursor)}"])
+        if plan_cursor > 0:
+            _append([f"cursor-{plan_cursor}"])
         _append(plan_step_ids)
         _append(recent_tool_families)
         return " ".join(tokens).strip()
@@ -394,7 +380,7 @@ class BridgeMemoryClient:
             return None
         try:
             parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except Exception:
+        except ValueError:
             return None
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=timezone.utc)
@@ -441,7 +427,7 @@ class BridgeMemoryClient:
         )
         try:
             turn_index = max(0, int(turn_raw or 0))
-        except Exception:
+        except (TypeError, ValueError):
             turn_index = 0
         record_id = str(
             getattr(item, "record_id", "") or getattr(item, "id", "") or ""
@@ -571,10 +557,8 @@ class BridgeMemoryClient:
             records = list_records(
                 list_query_options_cls(
                     scopes=self._session_start_recall_scopes(agent_id=agent_id),
-                    types=[
-                        str(item).strip() for item in record_types if str(item).strip()
-                    ],
-                    limit=max(1, int(limit or 1)),
+                    types=_normalized_string_list(record_types),
+                    limit=max(1, limit),
                     order_by=record_order_cls.UPDATED_AT_DESC,
                 )
             )
@@ -593,7 +577,7 @@ class BridgeMemoryClient:
         mode_name: str | None = None,
     ) -> list[MemoryCard]:
         del session_id, mode_name
-        if int(turn_index or 0) != 0:
+        if turn_index != 0:
             return []
         memory_ctl = self._resolve_memoryctl()
         if memory_ctl is None:
@@ -608,12 +592,10 @@ class BridgeMemoryClient:
                         query=normalized_query,
                         scopes=scopes,
                         types=list(_SESSION_START_RECALL_TYPES),
-                        limit=max(1, int(limit or 1)),
+                        limit=max(1, limit),
                     )
                 )
-                records = list(searched or [])
-                if not records:
-                    records = None
+                records = list(searched or []) or None
             except Exception:
                 records = None
         if records is None:
@@ -628,7 +610,7 @@ class BridgeMemoryClient:
                     list_query_options_cls(
                         scopes=scopes,
                         types=list(_SESSION_START_RECALL_TYPES),
-                        limit=max(1, int(limit or 1)),
+                        limit=max(1, limit),
                         order_by=record_order_cls.UPDATED_AT_DESC,
                     )
                 )
@@ -663,17 +645,17 @@ class BridgeMemoryClient:
         mode_name: str | None = None,
     ) -> list[MemoryCard]:
         del mode_name
-        if int(turn_index or 0) <= 0 or SearchQueryOptions is None:
+        if turn_index <= 0 or SearchQueryOptions is None:
             return []
         query = self._build_mid_session_recall_query(
             latest_user_message=latest_user_message,
-            intent_ids=list(intent_ids or []),
-            intent_statuses=list(intent_statuses or []),
+            intent_ids=intent_ids,
+            intent_statuses=intent_statuses,
             active_skill_id=active_skill_id,
-            resolved_skill_ids=list(resolved_skill_ids or []),
-            plan_cursor=int(plan_cursor or 0),
-            plan_step_ids=list(plan_step_ids or []),
-            recent_tool_families=list(recent_tool_families or []),
+            resolved_skill_ids=resolved_skill_ids,
+            plan_cursor=plan_cursor,
+            plan_step_ids=plan_step_ids,
+            recent_tool_families=recent_tool_families,
         )
         if not query:
             return []
@@ -688,12 +670,12 @@ class BridgeMemoryClient:
                         session_id=session_id,
                         agent_id=agent_id,
                     ),
-                    limit=max(1, int(limit or 1)),
+                    limit=max(1, limit),
                 )
             )
         except Exception:
             return []
-        return self._ranked_memory_cards(results or [])[: max(1, int(limit or 1))]
+        return self._ranked_memory_cards(results or [])[: max(1, limit)]
 
     def recall_recent_session_artifacts(
         self,
@@ -719,15 +701,15 @@ class BridgeMemoryClient:
                 list_query_options_cls(
                     scopes=self._session_start_recall_scopes(agent_id=agent_id),
                     types=["artifact_digest"],
-                    limit=max(8, max(1, int(max_results or 1)) * 4),
+                    limit=max(8, max(1, max_results) * 4),
                     order_by=record_order_cls.UPDATED_AT_DESC,
                 )
             )
         except Exception:
             return []
         cutoff: datetime | None = None
-        if int(max_session_age or 0) > 0:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=int(max_session_age))
+        if max_session_age > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max_session_age)
         refs: list[RecentSessionArtifactRef] = []
         seen_record_ids: set[str] = set()
         for item in records or []:
@@ -742,7 +724,7 @@ class BridgeMemoryClient:
                 continue
             seen_record_ids.add(ref.record_id)
             refs.append(ref)
-            if len(refs) >= max(1, int(max_results or 1)):
+            if len(refs) >= max(1, max_results):
                 break
         return refs
 
@@ -769,7 +751,7 @@ def _import_memory_dependencies() -> tuple[Any, Any] | None:
     try:
         from openminion.modules.memory.service import MemoryService
         from openminion.modules.memory.storage.sqlite.store import SQLiteMemoryStore
-    except Exception:
+    except ImportError:
         return None
     return MemoryService, SQLiteMemoryStore
 
