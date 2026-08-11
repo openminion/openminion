@@ -142,6 +142,5 @@ def open_pairing_admin(config: ControlPlaneConfig) -> ControlPlanePairingAdmin:
 
 def _public_pairing(row: dict[str, Any] | None) -> dict[str, Any]:
     safe = dict(row or {})
-    if "scopes" not in safe:
-        safe["scopes"] = []
+    safe.setdefault("scopes", [])
     return {field: safe.get(field) for field in _PAIRING_FIELDS}
