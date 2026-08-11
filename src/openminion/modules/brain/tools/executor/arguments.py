@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING, Any
 
 from ...constants import BRAIN_COMMAND_KIND_TOOL
 from ...schemas import Command
-from ..parser import normalize_tool_name_for_brain
+from ...tool_catalog import RunnerToolCatalog
+from ...tool_catalog.runtime import _schema_payload as _spec_like_payload
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...runner import BrainRunner
@@ -27,19 +28,6 @@ _JSON_SCHEMA_TOP_LEVEL_KEYS = frozenset(
 )
 
 
-def _spec_like_payload(entry: Any) -> dict[str, Any] | None:
-    if isinstance(entry, dict):
-        return dict(entry)
-    name = str(getattr(entry, "name", "") or "").strip()
-    parameters = getattr(entry, "parameters", None)
-    if not name:
-        return None
-    return {
-        "name": name,
-        "parameters": dict(parameters) if isinstance(parameters, dict) else parameters,
-    }
-
-
 def _parameter_keys_from_spec_payload(spec_payload: dict[str, Any] | None) -> set[str]:
     if not isinstance(spec_payload, dict):
         return set()
@@ -59,41 +47,7 @@ def resolve_tool_spec_payload(
     *,
     tool_name: str,
 ) -> dict[str, Any] | None:
-    normalized_name = normalize_tool_name_for_brain(tool_name)
-    candidate_names = [
-        item
-        for item in [str(tool_name or "").strip(), str(normalized_name or "").strip()]
-        if item
-    ]
-    tool_api = getattr(runner, "tool_api", None)
-    list_tools = getattr(tool_api, "list_tools", None)
-    if callable(list_tools):
-        try:
-            for entry in list(list_tools() or []):
-                payload = _spec_like_payload(entry)
-                if payload is None:
-                    continue
-                if str(payload.get("name", "") or "").strip() in candidate_names:
-                    return payload
-        except (AttributeError, KeyError, TypeError, ValueError):
-            pass
-    registry = getattr(tool_api, "registry", None)
-    getter = getattr(registry, "get", None)
-    if callable(getter):
-        for candidate in candidate_names:
-            try:
-                payload = _spec_like_payload(getter(candidate))
-            except (AttributeError, KeyError, TypeError, ValueError):
-                payload = None
-            if payload is not None:
-                return payload
-    tools_dict = getattr(registry, "_tools", None)
-    if isinstance(tools_dict, dict):
-        for candidate in candidate_names:
-            payload = _spec_like_payload(tools_dict.get(candidate))
-            if payload is not None:
-                return payload
-    return None
+    return RunnerToolCatalog(runner).get_tool_schema(tool_name)
 
 
 def sanitize_tool_command_args(

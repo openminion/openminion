@@ -102,16 +102,11 @@ def _capabilities_for_tool(
     tool_name: str | None,
 ) -> tuple[str, ...]:
     name = str(tool_name or "").strip().lower()
-    if not name:
-        return ()
     return mapping.get(name, ())
 
 
 def browser_capabilities_for_op(op: str | None) -> tuple[str, ...]:
-    op_name = str(op or "").strip().lower()
-    if not op_name:
-        return ()
-    return BROWSER_OP_CAPABILITIES.get(op_name, ())
+    return _capabilities_for_tool(BROWSER_OP_CAPABILITIES, op)
 
 
 def file_capabilities_for_tool(tool_name: str | None) -> tuple[str, ...]:
@@ -143,10 +138,7 @@ def host_capabilities_for_tool(tool_name: str | None) -> tuple[str, ...]:
 
 
 def is_known_capability_signal(value: str | None) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return False
-    return text in KNOWN_CAPABILITY_SIGNALS
+    return str(value or "").strip() in KNOWN_CAPABILITY_SIGNALS
 
 
 def _normalize_browser_op_from_command(command: Command) -> str | None:

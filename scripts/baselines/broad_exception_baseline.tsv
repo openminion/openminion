@@ -158,9 +158,8 @@ src/openminion/modules/brain/schemas/plan.py	1	0	current broad-handler baseline;
 src/openminion/modules/brain/schemas/routing.py	2	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/schemas/state/working.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/state.py	5	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/tool_catalog/runtime.py	6	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/brain/tool_catalog/runtime.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/tools/action_dispatch.py	6	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/tools/executor/agent.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/tools/executor/think.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/tools/executor/tool.py	6	3	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/tools/lifecycle.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

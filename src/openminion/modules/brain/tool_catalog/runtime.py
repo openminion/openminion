@@ -13,14 +13,36 @@ def _tool_name_from_item(item: Any) -> str:
     return str(getattr(item, "name", item) or "").strip()
 
 
+def _schema_payload(item: Any) -> dict[str, Any] | None:
+    if isinstance(item, dict):
+        payload = dict(item)
+    else:
+        name = _tool_name_from_item(item)
+        if not name:
+            return None
+        parameters = getattr(item, "parameters", None)
+        payload = {
+            "name": name,
+            "parameters": dict(parameters)
+            if isinstance(parameters, dict)
+            else parameters,
+        }
+    return payload if _tool_name_from_item(payload) else None
+
+
 def _schema_entries(items: Any) -> list[dict[str, Any]]:
     if not isinstance(items, list):
         return []
-    return [
-        dict(item)
-        for item in items
-        if isinstance(item, dict) and str(item.get("name", "") or "").strip()
-    ]
+    return [payload for item in items if (payload := _schema_payload(item)) is not None]
+
+
+def _call_optional(callback: Any, *args: Any) -> Any:
+    if not callable(callback):
+        return None
+    try:
+        return callback(*args)
+    except Exception:
+        return None
 
 
 def _extend_names_from_registry_source(names: set[str], source: Any) -> None:
@@ -46,24 +68,15 @@ class RunnerToolCatalog:
         names: set[str] = set()
         collector = getattr(self.runner, "_collect_runtime_tool_schemas", None)
         if callable(collector):
-            try:
-                for item in _schema_entries(collector() or []):
-                    tool_name = str(item.get("name", "") or "").strip()
-                    if tool_name:
-                        names.add(tool_name)
-            except Exception:
-                pass
+            _extend_names_from_registry_source(
+                names,
+                _schema_entries(_call_optional(collector) or []),
+            )
         tool_api = getattr(self.runner, "tool_api", None)
-        if tool_api is not None and hasattr(tool_api, "list_tools"):
-            try:
-                raw_tools = tool_api.list_tools()
-            except Exception:
-                raw_tools = []
-            if isinstance(raw_tools, list):
-                for item in raw_tools:
-                    tool_name = _tool_name_from_item(item)
-                    if tool_name:
-                        names.add(tool_name)
+        _extend_names_from_registry_source(
+            names,
+            _call_optional(getattr(tool_api, "list_tools", None)),
+        )
         registry = getattr(tool_api, "registry", None) if tool_api else None
         if registry is not None:
             for source in (
@@ -71,31 +84,20 @@ class RunnerToolCatalog:
                 getattr(registry, "tools", None),
             ):
                 _extend_names_from_registry_source(names, source)
-            list_fn = getattr(registry, "list", None)
-            if callable(list_fn):
-                try:
-                    listed = list_fn()
-                except Exception:
-                    listed = None
-                _extend_names_from_registry_source(names, listed)
+            _extend_names_from_registry_source(
+                names,
+                _call_optional(getattr(registry, "list", None)),
+            )
         return names
 
     def list_tool_schemas(self) -> list[dict[str, Any]]:
         collector = getattr(self.runner, "_collect_runtime_tool_schemas", None)
         if callable(collector):
-            try:
-                payload = collector() or []
-            except Exception:
-                payload = []
-            return _schema_entries(payload)
+            return _schema_entries(_call_optional(collector) or [])
         tool_api = getattr(self.runner, "tool_api", None)
-        if tool_api is not None and hasattr(tool_api, "list_tools"):
-            try:
-                raw_tools = tool_api.list_tools() or []
-            except Exception:
-                raw_tools = []
-            return _schema_entries(raw_tools)
-        return []
+        return _schema_entries(
+            _call_optional(getattr(tool_api, "list_tools", None)) or []
+        )
 
     def get_tool_schema(self, name: str) -> dict[str, Any] | None:
         token = str(name or "").strip()
@@ -103,28 +105,25 @@ class RunnerToolCatalog:
             return None
         normalized = normalize_tool_name_for_brain(token) or token
         candidates = {token, normalized}
-        for entry in self.list_tool_schemas():
-            entry_name = str(entry.get("name", "") or "").strip()
+        for schema in self.list_tool_schemas():
+            entry_name = str(schema.get("name", "") or "").strip()
             if entry_name and entry_name in candidates:
-                return entry
+                return schema
         tool_api = getattr(self.runner, "tool_api", None)
         registry = getattr(tool_api, "registry", None) if tool_api else None
-        getter = getattr(registry, "get", None) if registry else None
-        if callable(getter):
+        if callable(getattr(registry, "get", None)):
             for candidate in candidates:
-                try:
-                    entry = getter(candidate)
-                except Exception:
-                    entry = None
-                if isinstance(entry, dict) and str(entry.get("name", "") or "").strip():
-                    return dict(entry)
-                if entry is not None:
-                    entry_name = str(getattr(entry, "name", "") or "").strip()
-                    if entry_name:
-                        return {
-                            "name": entry_name,
-                            "parameters": getattr(entry, "parameters", None),
-                        }
+                payload = _schema_payload(
+                    _call_optional(getattr(registry, "get", None), candidate)
+                )
+                if payload is not None:
+                    return payload
+        tools = getattr(registry, "_tools", None)
+        if isinstance(tools, dict):
+            for candidate in candidates:
+                payload = _schema_payload(tools.get(candidate))
+                if payload is not None:
+                    return payload
         return None
 
 
