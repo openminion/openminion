@@ -27,13 +27,11 @@ def compose_pivot_authorization(
 ) -> PivotAuthorization:
     """Pure structural composer for ``PivotAuthorization``."""
 
-    if not watchdog_trigger.fired or not pivot_policy_allows:
-        return PivotAuthorization(
-            authorized=False,
-            trigger_kind=None,
-            pivot_policy_allows=pivot_policy_allows,
-        )
-    first_kind = watchdog_trigger.kinds[0] if watchdog_trigger.kinds else None
+    first_kind = (
+        watchdog_trigger.kinds[0]
+        if watchdog_trigger.fired and pivot_policy_allows and watchdog_trigger.kinds
+        else None
+    )
     return PivotAuthorization(
         authorized=first_kind is not None,
         trigger_kind=first_kind,
@@ -152,14 +150,11 @@ def compose_research_convergence_signal(
         axis_no_new_evidence = True
 
     verifier_family_consulted = bool(counters.verifier_family_counts)
-    axis_verifier_family = False
-    if verifier_family_consulted:
-        axis_verifier_family = any(
-            int(count) > 0 for count in counters.verifier_family_counts.values()
-        )
+    axis_verifier_family = any(
+        count > 0 for count in counters.verifier_family_counts.values()
+    )
 
-    required_satisfied = axis_finding and axis_coverage and axis_no_new_evidence
-    converged = bool(required_satisfied)
+    converged = axis_finding and axis_coverage and axis_no_new_evidence
 
     reasons: list[str] = []
     if axis_finding and threshold_finding > 0:

@@ -183,12 +183,9 @@ def _evaluate_reversibility_axis(
 ) -> tuple[bool, ToolReversibility | None]:
     """Structural evaluator for the reversibility axis."""
 
-    if not config.triggering_levels:
-        return False, None
-    if input_.action_reversibility is None:
-        return False, None
-    if input_.action_reversibility in config.triggering_levels:
-        return True, input_.action_reversibility
+    level = input_.action_reversibility
+    if level is not None and level in config.triggering_levels:
+        return True, level
     return False, None
 
 
@@ -222,8 +219,6 @@ def _evaluate_factual_prerequisite_axis(
 ) -> tuple[bool, tuple[FactualPrerequisiteReason, ...]]:
     """Structural evaluator for the factual-prerequisite axis."""
 
-    if not config.enabled_reasons:
-        return False, tuple()
     enabled = set(config.enabled_reasons)
     fired: list[FactualPrerequisiteReason] = [
         reason for reason in input_.missing_reasons if reason in enabled
