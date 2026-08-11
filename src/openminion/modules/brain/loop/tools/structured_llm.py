@@ -18,8 +18,6 @@ def _strip_code_fences(text: str) -> str:
     if not cleaned.startswith("```"):
         return cleaned
     parts = cleaned.split("```")
-    if len(parts) < 2:
-        return cleaned
     fenced = parts[1]
     if fenced.startswith("json"):
         fenced = fenced[4:]

@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from openminion.base.errors import ErrorInfo, error_info_from_mapping
 from openminion.modules.brain.constants import (
     BRAIN_ACTION_STATUS_FAILURES,
     BRAIN_ACTION_STATUS_NEEDS_USER,
     BRAIN_ACTION_STATUS_SUCCESS,
 )
+from openminion.modules.brain.schemas import ActionResult
 from openminion.modules.llm.schemas import Message
 
 from .contracts import (
@@ -36,26 +38,22 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     )
 
 
-def _policy_denial_details(action_result: Any) -> dict[str, Any] | None:
-    error_obj = getattr(action_result, "error", None)
-    error_code = str(getattr(error_obj, "code", "") or "").strip().upper()
-    details = getattr(error_obj, "details", None)
-    outputs = getattr(action_result, "outputs", None)
-    nested_error = outputs.get("error") if isinstance(outputs, dict) else None
-    if error_code != "POLICY_DENIED" and isinstance(nested_error, dict):
-        error_code = str(nested_error.get("code", "") or "").strip().upper()
-    if not isinstance(details, dict) and isinstance(nested_error, dict):
-        nested_details = nested_error.get("details")
-        if isinstance(nested_details, dict):
-            details = nested_details
-    if error_code != "POLICY_DENIED":
+def _action_error_info(action_result: ActionResult) -> ErrorInfo | None:
+    error = action_result.error
+    if error is None and not isinstance(action_result.outputs.get("error"), dict):
         return None
-    if not isinstance(details, dict):
-        return None
-    return details
+    payload = error.model_dump() if error is not None else action_result.outputs
+    return error_info_from_mapping(payload)
 
 
-def _policy_denial_recovery_message(action_result: Any) -> str | None:
+def _policy_denial_details(action_result: ActionResult) -> dict[str, Any] | None:
+    error = _action_error_info(action_result)
+    if error is None or error.code.upper() != "POLICY_DENIED":
+        return None
+    return error.details
+
+
+def _policy_denial_recovery_message(action_result: ActionResult) -> str | None:
     details = _policy_denial_details(action_result)
     if details is None:
         return None
@@ -71,58 +69,36 @@ def _policy_denial_recovery_message(action_result: Any) -> str | None:
     )
 
 
-def _invalid_workdir_recovery_message(action_result: Any) -> str | None:
-    error_obj = getattr(action_result, "error", None)
-    error_code = str(getattr(error_obj, "code", "") or "").strip().upper()
-    details = getattr(error_obj, "details", None)
-    message = str(getattr(error_obj, "message", "") or "").strip()
-    outputs = getattr(action_result, "outputs", None)
-    nested_error = outputs.get("error") if isinstance(outputs, dict) else None
-    if error_code != "INVALID_ARGUMENT" and isinstance(nested_error, dict):
-        error_code = str(nested_error.get("code", "") or "").strip().upper()
-    if not message and isinstance(nested_error, dict):
-        message = str(nested_error.get("message", "") or "").strip()
-    if not isinstance(details, dict) and isinstance(nested_error, dict):
-        nested_details = nested_error.get("details")
-        if isinstance(nested_details, dict):
-            details = nested_details
-    if error_code != "INVALID_ARGUMENT" or not isinstance(details, dict):
+def _invalid_workdir_recovery_message(action_result: ActionResult) -> str | None:
+    error = _action_error_info(action_result)
+    if error is None or error.code.upper() != "INVALID_ARGUMENT":
         return None
-    workdir = str(details.get("workdir", "") or "").strip()
-    if not workdir or "workdir" not in message.lower():
+    workdir = str(error.details.get("workdir", "") or "").strip()
+    if not workdir or "workdir" not in error.message.lower():
         return None
     return build_seeded_invalid_workdir_recovery_message()
 
 
-def _confirmed_tool_failure_recovery_message(action_result: Any) -> str | None:
-    status = str(getattr(action_result, "status", "") or "").strip()
-    if status == BRAIN_ACTION_STATUS_SUCCESS:
+def _confirmed_tool_failure_recovery_message(
+    action_result: ActionResult,
+) -> str | None:
+    if action_result.status == BRAIN_ACTION_STATUS_SUCCESS:
         return None
-    error_obj = getattr(action_result, "error", None)
-    error_code = str(getattr(error_obj, "code", "") or "").strip()
-    error_message = str(getattr(error_obj, "message", "") or "").strip()
-    summary = str(getattr(action_result, "summary", "") or "").strip()
-    outputs = getattr(action_result, "outputs", None)
-    if isinstance(outputs, dict):
-        if not error_code:
-            nested_error = outputs.get("error")
-            if isinstance(nested_error, dict):
-                error_code = str(nested_error.get("code", "") or "").strip()
-                error_message = str(nested_error.get("message", "") or "").strip()
-        stderr_preview = str(
-            outputs.get("stderr_preview") or outputs.get("stderr") or ""
-        ).strip()
-        stdout_preview = str(
-            outputs.get("stdout_preview") or outputs.get("stdout") or ""
-        ).strip()
-    else:
-        stderr_preview = ""
-        stdout_preview = ""
+    error = _action_error_info(action_result)
+    error_code = error.code if error is not None else ""
+    error_message = error.message if error is not None else ""
+    outputs = action_result.outputs
+    stderr_preview = str(
+        outputs.get("stderr_preview") or outputs.get("stderr") or ""
+    ).strip()
+    stdout_preview = str(
+        outputs.get("stdout_preview") or outputs.get("stdout") or ""
+    ).strip()
     details = [
         item
         for item in (
             f"code={error_code}" if error_code else "",
-            f"summary={summary}" if summary else "",
+            f"summary={action_result.summary}" if action_result.summary else "",
             f"message={error_message}" if error_message else "",
             f"stderr={stderr_preview}" if stderr_preview else "",
             f"stdout={stdout_preview}" if stdout_preview else "",
@@ -139,7 +115,7 @@ def _confirmed_tool_failure_recovery_message(action_result: Any) -> str | None:
     )
 
 
-def _seeded_failure_recovery_message(action_result: Any) -> str | None:
+def _seeded_failure_recovery_message(action_result: ActionResult) -> str | None:
     return (
         _policy_denial_recovery_message(action_result)
         or _invalid_workdir_recovery_message(action_result)

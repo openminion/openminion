@@ -58,11 +58,7 @@ class LoopSnapshot:
             profile_name=data["profile_name"],
             model=data["model"],
             allowed_tools=frozenset(data.get("allowed_tools", [])),
-            tool_results=[
-                item
-                for item in list(data.get("tool_results", []) or [])
-                if isinstance(item, dict)
-            ],
+            tool_results=list(data.get("tool_results", [])),
         )
 
     def to_json(self) -> str:
