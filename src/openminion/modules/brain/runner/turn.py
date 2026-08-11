@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..runtime import tokens
@@ -30,14 +31,13 @@ from ..constants import (
 )
 from ..tools.parser import normalize_tool_name_for_brain
 
-from ..config import ClarifyConfig
 from ..execution.mission import (
     apply_turn_reset_policy,
     llm_calls_max_from_runner,
     reset_policy_for,
 )
 from ..loop.tools.confirmation import is_session_confirmation_response
-from ..schemas import BrainMode, ClarifyPolicy, Command, Decision, WorkingState
+from ..schemas import Command, Decision, WorkingState
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..diagnostics.events import CanonicalEventLogger
@@ -82,8 +82,6 @@ def interpret(
 
     if not is_confirmation_turn:
         state.last_user_input = stripped
-
-    if not is_confirmation_turn:
         route_action = ""
         if reset_policy_name in {
             "mission_start",
@@ -98,17 +96,7 @@ def interpret(
             is_confirmation_turn=False,
         )
         if reset_policy_name is not None and reset_policy_name != policy.name:
-            policy = type(policy)(
-                name=str(reset_policy_name),
-                overwrite_goal=policy.overwrite_goal,
-                clear_step_outputs=policy.clear_step_outputs,
-                clear_adaptive_state=policy.clear_adaptive_state,
-                reset_failure_counters=policy.reset_failure_counters,
-                reset_checkpoint_cursor=policy.reset_checkpoint_cursor,
-                reset_llm_calls=policy.reset_llm_calls,
-                refresh_budgets=policy.refresh_budgets,
-                clear_open_questions=policy.clear_open_questions,
-            )
+            policy = replace(policy, name=str(reset_policy_name))
         apply_turn_reset_policy(
             state=state,
             policy=policy,
@@ -129,33 +117,6 @@ def interpret(
     )
 
 
-def should_ask(
-    *,
-    mode: BrainMode,
-    policy: ClarifyPolicy,
-    confidence: float,
-    config: ClarifyConfig,
-) -> bool:
-    if mode == BrainMode.BATCH:
-        return False
-
-    if policy == ClarifyPolicy.ALWAYS_ASK:
-        return True
-    if policy == ClarifyPolicy.ASSUME_DEFAULTS:
-        return False
-
-    if mode == BrainMode.COMMAND:
-        threshold = 0.95
-    elif mode == BrainMode.GUIDED:
-        threshold = config.ask_threshold
-    elif mode == BrainMode.AUTONOMOUS:
-        threshold = 0.4
-    else:
-        threshold = config.ask_threshold
-
-    return confidence < threshold
-
-
 def autonomous_requires_confirmation(
     *,
     state: WorkingState | None = None,
@@ -167,14 +128,7 @@ def autonomous_requires_confirmation(
     if state.cursor >= len(state.plan.steps):
         return False
     command = state.plan.steps[state.cursor]
-    return str(getattr(command, "risk_level", "low") or "low").strip().lower() == "high"
-
-
-def memory_policy_snapshot(*, options: Any) -> dict[str, Any]:
-    snapshot = getattr(options, "memory_policy_snapshot", {}) or {}
-    if isinstance(snapshot, dict):
-        return dict(snapshot)
-    return {}
+    return command.risk_level == "high"
 
 
 _TIME_SENSITIVE_TOOL_CAPABILITY = "time_sensitive"
@@ -197,11 +151,8 @@ def _capability_tokens(raw_capabilities: Any) -> set[str]:
 def is_time_sensitive_tool_command(runner: "BrainRunner", *, command: Command) -> bool:
     if command.kind != "tool":
         return False
-    tool_name = getattr(command, "tool_name", "")
-    if not tool_name:
-        return False
     candidate_names: list[str] = []
-    raw_name = str(tool_name or "").strip()
+    raw_name = command.tool_name.strip()
     if raw_name:
         candidate_names.append(raw_name)
     normalized = normalize_tool_name_for_brain(raw_name)
@@ -250,73 +201,18 @@ def is_time_sensitive_tool_command(runner: "BrainRunner", *, command: Command) -
 
 
 def direct_response(*, user_input: str | None, decision: Decision) -> str:
-    if decision.answer:
-        return decision.answer
-    if decision.question:
-        return decision.question
-    if user_input:
-        return "I'm here. What can I help you with?"
-    return "I'm here. What should we work on next?"
+    del user_input
+    return decision.answer or decision.question or ""
 
 
 def idempotency_key(*, session_id: str, trace_id: str, text: str) -> str:
     del trace_id
-    # Explicit `tool ...` / `agent ...` commands should remain idempotent across
     digest = hashlib.sha256(f"{session_id}:{text}".encode("utf-8")).hexdigest()
     return digest[:32]
 
 
 def now_ms() -> int:
     return int(time.monotonic() * 1000)
-
-
-def build_memory_policy_snapshot_response(*, snapshot: dict[str, Any]) -> str:
-    source = str(snapshot.get("policy_source", "runtime.config") or "runtime.config")
-    version = str(
-        snapshot.get("policy_version", "memory_policy_snapshot.v1")
-        or "memory_policy_snapshot.v1"
-    )
-    memory_enabled = bool(snapshot.get("memory_enabled", False))
-    capsule_strategy = str(
-        snapshot.get("capsule_strategy", "dynamic_turn") or "dynamic_turn"
-    )
-    refresh_policy = str(
-        snapshot.get("refresh_policy", "refresh_each_turn") or "refresh_each_turn"
-    )
-    retention_days = int(snapshot.get("retention_days", 30) or 30)
-    posture = str(
-        snapshot.get("session_vs_cross_session", "session_plus_cross_session")
-        or "session_plus_cross_session"
-    )
-    dynamic = bool(snapshot.get("dynamic_retrieval_enabled", True))
-    provider = str(snapshot.get("memory_provider", "memory_v2") or "memory_v2")
-    return (
-        "Memory policy snapshot:\n"
-        f"- source: {source}\n"
-        f"- version: {version}\n"
-        f"- memory_enabled: {str(memory_enabled).lower()}\n"
-        f"- memory_provider: {provider}\n"
-        f"- capsule_strategy: {capsule_strategy}\n"
-        f"- refresh_policy: {refresh_policy}\n"
-        f"- dynamic_retrieval_enabled: {str(dynamic).lower()}\n"
-        f"- retention_days: {retention_days}\n"
-        f"- session_vs_cross_session: {posture}"
-    )
-
-
-def build_memory_policy_unavailable_response(*, snapshot: dict[str, Any]) -> str:
-    source = str(snapshot.get("policy_source", "runtime.config") or "runtime.config")
-    version = str(
-        snapshot.get("policy_version", "memory_policy_snapshot.v1")
-        or "memory_policy_snapshot.v1"
-    )
-    reason = str(
-        snapshot.get("policy_error", "policy_unavailable") or "policy_unavailable"
-    )
-    return (
-        "MEMORY_POLICY: policy_unavailable "
-        f"(source={source} version={version} reason={reason})"
-    )
 
 
 def command_has_side_effects(
@@ -329,7 +225,7 @@ def command_has_side_effects(
     if command.kind != BRAIN_COMMAND_KIND_TOOL:
         return False
 
-    raw_tool_name = str(getattr(command, "tool_name", "")).strip().lower()
+    raw_tool_name = command.tool_name.strip().lower()
     tool_name = (
         (normalize_tool_name_for_brain(raw_tool_name) or raw_tool_name).strip().lower()
     )
@@ -349,15 +245,11 @@ def command_has_side_effects(
         return False
 
     if tool_name == "exec.run":
-        args = getattr(command, "args", {}) or {}
-        if isinstance(args, dict):
-            raw_command = str(args.get("command", "")).strip()
-            if is_read_only_exec_command(
-                raw_command,
-                shell_family=resolve_shell_family(),
-            ):
-                return False
-        return True
+        raw_command = str(command.args.get("command", "")).strip()
+        return not is_read_only_exec_command(
+            raw_command,
+            shell_family=resolve_shell_family(),
+        )
 
     return True
 

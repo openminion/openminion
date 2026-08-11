@@ -26,12 +26,11 @@ def try_resume(
     logger,
     session_id: str,
 ):
-    pending_delegate_job_id = str(getattr(state, "delegation_job_id", "") or "").strip()
+    pending_delegate_job_id = str(state.delegation_job_id or "").strip()
     if (
         state.status == BRAIN_STATE_JOB_PENDING
         and pending_delegate_job_id
-        and str(getattr(state, "active_mode_name", "") or "").strip()
-        == BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED
+        and state.active_mode_name == BRAIN_INTERNAL_MODE_EXECUTION_TARGET_DELEGATED
     ):
         if user_input is not None and user_input.strip():
             state.trace_id = trace_id or new_uuid()
@@ -62,9 +61,9 @@ def try_resume(
             return reconciled
 
     cron_resume_selection = resolve_cron_resume_selection(
-        task_manager=getattr(runner, "task_manager", None),
-        task_id_hint=getattr(state, "resume_task_id_hint", None),
-        cron_job_id_hint=getattr(state, "resume_cron_job_id_hint", None),
+        task_manager=runner.task_manager,
+        task_id_hint=state.resume_task_id_hint,
+        cron_job_id_hint=state.resume_cron_job_id_hint,
     )
     resumable_task_result = maybe_resume_task_backed_direct(
         runner,

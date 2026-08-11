@@ -42,8 +42,7 @@ from .context import (
 
 
 def _is_adaptive_budget_extension(command) -> bool:
-    inputs = getattr(command, "inputs", None)
-    return isinstance(inputs, dict) and bool(inputs.get("adaptive_budget_extension"))
+    return bool(command.inputs.get("adaptive_budget_extension"))
 
 
 def _process_adaptive_budget_extension_reply(
@@ -103,9 +102,7 @@ def _process_adaptive_budget_extension_reply(
         )
 
     if confirmation_reply == "affirm":
-        approved = approve_pending_extension(state=state)
-        if approved is None:
-            approved = {}
+        approved = approve_pending_extension(state=state) or {}
         state.pending_confirmation_command = None
         _clear_pending_confirmation_metadata(state)
         clear_post_action_user_message(state=state)
@@ -207,9 +204,7 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
         if confirmation_reply == "affirm" or session_grant:
             confirmed = state.pending_confirmation_command.model_copy(deep=True)
             state.pending_confirmation_command = None
-            prior_reason_code = str(
-                getattr(state, "decision_reason_code", "") or ""
-            ).strip()
+            prior_reason_code = state.decision_reason_code.strip()
             explicit_direct_tool_replay = is_explicit_direct_tool_reason(
                 prior_reason_code
             )
@@ -222,11 +217,7 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
             for replay_command in replay_commands:
                 if session_grant:
                     apply_session_confirmation_grant(state, replay_command)
-                replay_inputs = (
-                    dict(replay_command.inputs)
-                    if isinstance(getattr(replay_command, "inputs", None), dict)
-                    else {}
-                )
+                replay_inputs = dict(replay_command.inputs)
                 grant_id, grant_supported = _grant_once_from_confirmation(
                     runner,
                     state=state,
@@ -294,8 +285,8 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
             replay_decision = ActDecision(
                 confidence=1.0,
                 reason_code=replay_reason_code,
-                sub_intents=list(getattr(state, "decision_sub_intents", []) or []),
-                rationale=str(getattr(state, "decision_rationale", "") or "").strip(),
+                sub_intents=list(state.decision_sub_intents),
+                rationale=state.decision_rationale.strip(),
             )
             replay_decision._seeded_commands = [
                 command.model_copy(deep=True) for command in replay_plan_commands
@@ -325,7 +316,7 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
             )
         elif confirmation_reply == "deny":
             denied_command = None
-            denied_cursor = int(getattr(state, "cursor", 0) or 0)
+            denied_cursor = state.cursor
             denied_total_steps = 1
             if state.plan is not None and 0 <= state.cursor < len(state.plan.steps):
                 denied_command = state.plan.steps[state.cursor]
@@ -341,9 +332,7 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
                 {
                     "cursor": denied_cursor,
                     "reason": "user_denied_confirmation",
-                    "command_id": str(
-                        getattr(denied_command, "command_id", "") or ""
-                    ).strip(),
+                    "command_id": denied_command.command_id if denied_command else "",
                 },
                 trace_id=state.trace_id,
             )
@@ -378,7 +367,7 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
             apply_post_action_judgment(
                 state=state,
                 judgment=judgment,
-                step_key=str(getattr(denied_command, "command_id", "") or "").strip(),
+                step_key=denied_command.command_id if denied_command else "",
                 total_steps=denied_total_steps,
                 max_retries_per_step=int(
                     getattr(runner.options, "max_retries_per_step", 0) or 0
@@ -453,9 +442,7 @@ def process(*, runner, state, logger, tick_ctx: TickRunContext):
                     state=state,
                     logger=logger,
                     message=(
-                        str(
-                            getattr(state, "post_action_user_message", "") or ""
-                        ).strip()
+                        state.post_action_user_message.strip()
                         or "Understood. I stopped after that denied confirmation."
                     ),
                     status=state.status,

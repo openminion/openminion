@@ -5,31 +5,26 @@ from ..constants import (
 )
 from ..schemas import StepOutput, WorkingState
 
+_WAITING_MESSAGES = {
+    BRAIN_STATE_WAITING_USER: "Waiting for user input.",
+    BRAIN_STATE_JOB_PENDING: "Async job is still pending.",
+    BRAIN_STATE_STOPPED: "Execution is stopped.",
+}
+
 
 def guard_waiting_state(
     *, state: WorkingState, user_input: str | None
 ) -> StepOutput | None:
     if user_input:
         return None
-    if state.status == BRAIN_STATE_WAITING_USER:
-        return StepOutput(
+    message = _WAITING_MESSAGES.get(state.status)
+    return (
+        StepOutput(
             session_id=state.session_id,
             status=state.status,
-            message="Waiting for user input.",
+            message=message,
             working_state=state,
         )
-    if state.status == BRAIN_STATE_JOB_PENDING:
-        return StepOutput(
-            session_id=state.session_id,
-            status=state.status,
-            message="Async job is still pending.",
-            working_state=state,
-        )
-    if state.status == BRAIN_STATE_STOPPED:
-        return StepOutput(
-            session_id=state.session_id,
-            status=state.status,
-            message="Execution is stopped.",
-            working_state=state,
-        )
-    return None
+        if message
+        else None
+    )

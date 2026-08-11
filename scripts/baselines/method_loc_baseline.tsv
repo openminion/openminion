@@ -40,11 +40,11 @@ src/openminion/modules/brain/meta/metrics.py	build_meta_metrics	152	current over
 src/openminion/modules/brain/retry.py	build_structured_retry_message	187	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/retry.py	call_structured_with_retry	165	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/lifecycle.py	run_until_idle	141	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/runner/tick/confirmation.py	_process_adaptive_budget_extension_reply	117	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/runner/tick/confirmation.py	process	284	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/runner/tick/confirmation.py	_process_adaptive_budget_extension_reply	115	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/runner/tick/confirmation.py	process	274	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/input_processing.py	handle_pending_replay	181	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runner/tick/input_processing.py	process_user_input	153	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
-src/openminion/modules/brain/runner/tick/mission_routing.py	handle	276	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
+src/openminion/modules/brain/runner/tick/mission_routing.py	handle	234	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/runtime/context.py	build_context	145	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/tools/action_dispatch.py	execute_action_dispatch	494	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes
 src/openminion/modules/brain/tools/parser/base.py	normalize_command_payload	139	current over-threshold method baseline; ratchet downward via LCPA/HRDS precision lanes

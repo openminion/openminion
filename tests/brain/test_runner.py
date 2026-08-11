@@ -109,9 +109,7 @@ class RunnerTests(unittest.TestCase):
             "Tool inventory",
         )
 
-    def test_direct_response_uses_conversational_fallback_for_empty_respond_answer(
-        self,
-    ) -> None:
+    def test_direct_response_does_not_invent_empty_respond_answer(self) -> None:
         runner = BrainRunner(profile=_profile(), session_api=MagicMock())
         decision = SimpleNamespace(
             confidence=0.9,
@@ -123,7 +121,7 @@ class RunnerTests(unittest.TestCase):
 
         self.assertEqual(
             runner._direct_response(user_input="hi", decision=decision),
-            "I'm here. What can I help you with?",
+            "",
         )
 
     def test_step_respond_decision_completes_done_not_waiting_user(self) -> None:

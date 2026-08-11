@@ -20,8 +20,25 @@ from ...schemas import iso_now
 from .context import TickRunContext, _runner_delegate
 
 
+def _append_original_turn(*, runner, tick_ctx: TickRunContext) -> None:
+    runner.session_api.append_turn(
+        tick_ctx.session_id,
+        "user",
+        str(tick_ctx.original_user_input or ""),
+        meta={"ts": iso_now()},
+    )
+
+
+def _set_reset_policy(*, state, tick_ctx: TickRunContext, route_action: str) -> None:
+    policy_name = reset_policy_for(route_action=route_action).name
+    tick_ctx.forced_reset_policy_name = policy_name
+    state.mission.latest_reset_policy = policy_name
+
+
 def handle(*, runner, state, logger, tick_ctx: TickRunContext):
     mission_route = tick_ctx.mission_route
+    if mission_route is None:
+        raise RuntimeError("mission route must be resolved before routing")
     if tick_ctx.has_new_user_input and mission_route.action == "start":
         state.mission = build_mission_state(
             runner=runner,
@@ -31,10 +48,9 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
         allocate_mission_turn_budget(runner=runner, state=state)
         state.goal = state.mission.objective
         state.mission.latest_route_action = mission_route.action
-        tick_ctx.forced_reset_policy_name = reset_policy_for(
-            route_action=mission_route.action
-        ).name
-        state.mission.latest_reset_policy = tick_ctx.forced_reset_policy_name
+        _set_reset_policy(
+            state=state, tick_ctx=tick_ctx, route_action=mission_route.action
+        )
         logger.emit(
             "brain.mission.started",
             {
@@ -56,12 +72,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             },
             trace_id=state.trace_id,
         )
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            str(tick_ctx.original_user_input or ""),
-            meta={"ts": iso_now()},
-        )
+        _append_original_turn(runner=runner, tick_ctx=tick_ctx)
         tick_ctx.skip_initial_append = True
         tick_ctx.user_input = state.mission.objective
     elif state.mission is not None and mission_route.action == "revise":
@@ -71,10 +82,9 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
         )
         allocate_mission_turn_budget(runner=runner, state=state)
         update_mission_task(runner=runner, mission=state.mission)
-        tick_ctx.forced_reset_policy_name = reset_policy_for(
-            route_action=mission_route.action
-        ).name
-        state.mission.latest_reset_policy = tick_ctx.forced_reset_policy_name
+        _set_reset_policy(
+            state=state, tick_ctx=tick_ctx, route_action=mission_route.action
+        )
         logger.emit(
             "brain.mission.revised",
             {
@@ -84,22 +94,16 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             },
             trace_id=state.trace_id,
         )
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            str(tick_ctx.original_user_input or ""),
-            meta={"ts": iso_now()},
-        )
+        _append_original_turn(runner=runner, tick_ctx=tick_ctx)
         tick_ctx.skip_initial_append = True
         tick_ctx.user_input = state.mission.objective
     elif state.mission is not None and mission_route.action == "continue":
         allocate_mission_turn_budget(runner=runner, state=state)
         state.goal = state.mission.objective
         state.mission.latest_route_action = mission_route.action
-        tick_ctx.forced_reset_policy_name = reset_policy_for(
-            route_action=mission_route.action
-        ).name
-        state.mission.latest_reset_policy = tick_ctx.forced_reset_policy_name
+        _set_reset_policy(
+            state=state, tick_ctx=tick_ctx, route_action=mission_route.action
+        )
         logger.emit(
             "brain.mission.continued",
             {
@@ -109,12 +113,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             },
             trace_id=state.trace_id,
         )
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            str(tick_ctx.original_user_input or ""),
-            meta={"ts": iso_now()},
-        )
+        _append_original_turn(runner=runner, tick_ctx=tick_ctx)
         _runner_delegate(
             "_interpret",
             runner,
@@ -132,10 +131,9 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
         state.goal = state.mission.objective
         state.mission.latest_route_action = mission_route.action
         state.mission.latest_reason = "mission finish requested"
-        tick_ctx.forced_reset_policy_name = reset_policy_for(
-            route_action=mission_route.action
-        ).name
-        state.mission.latest_reset_policy = tick_ctx.forced_reset_policy_name
+        _set_reset_policy(
+            state=state, tick_ctx=tick_ctx, route_action=mission_route.action
+        )
         logger.emit(
             "brain.mission.finish_requested",
             {
@@ -144,12 +142,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             },
             trace_id=state.trace_id,
         )
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            str(tick_ctx.original_user_input or ""),
-            meta={"ts": iso_now()},
-        )
+        _append_original_turn(runner=runner, tick_ctx=tick_ctx)
         _runner_delegate(
             "_interpret",
             runner,
@@ -163,12 +156,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
         tick_ctx.skip_initial_interpret = True
         tick_ctx.user_input = None
     elif state.mission is not None and mission_route.action == "pause":
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            str(tick_ctx.original_user_input or ""),
-            meta={"ts": iso_now()},
-        )
+        _append_original_turn(runner=runner, tick_ctx=tick_ctx)
         set_mission_status(
             mission=state.mission,
             status=MissionStatus.PAUSED,
@@ -198,12 +186,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             status=BRAIN_STATE_WAITING_USER,
         )
     elif state.mission is not None and mission_route.action == "cancel":
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            str(tick_ctx.original_user_input or ""),
-            meta={"ts": iso_now()},
-        )
+        _append_original_turn(runner=runner, tick_ctx=tick_ctx)
         set_mission_status(
             mission=state.mission,
             status=MissionStatus.CANCELLED,
@@ -234,12 +217,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             status=BRAIN_STATE_STOPPED,
         )
     elif state.mission is not None and mission_route.action == "fork":
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            str(tick_ctx.original_user_input or ""),
-            meta={"ts": iso_now()},
-        )
+        _append_original_turn(runner=runner, tick_ctx=tick_ctx)
         if not str(mission_route.ordinary_input or "").strip():
             return _runner_delegate(
                 "_respond_with_meta",
@@ -266,9 +244,9 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
             },
             trace_id=state.trace_id,
         )
-        tick_ctx.forced_reset_policy_name = reset_policy_for(
-            route_action=mission_route.action
-        ).name
+        _set_reset_policy(
+            state=state, tick_ctx=tick_ctx, route_action=mission_route.action
+        )
         tick_ctx.skip_initial_append = True
         tick_ctx.user_input = mission_route.ordinary_input
 
@@ -277,12 +255,7 @@ def handle(*, runner, state, logger, tick_ctx: TickRunContext):
         and mission_is_active(state)
         and mission_route.action == "ordinary"
     ):
-        runner.session_api.append_turn(
-            tick_ctx.session_id,
-            "user",
-            str(tick_ctx.original_user_input or ""),
-            meta={"ts": iso_now()},
-        )
+        _append_original_turn(runner=runner, tick_ctx=tick_ctx)
         return _runner_delegate(
             "_respond_with_meta",
             runner,

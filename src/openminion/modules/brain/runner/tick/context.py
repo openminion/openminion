@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from types import SimpleNamespace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ...constants import (
     BRAIN_CONFIRM_RESPONSE_AFFIRM,
     BRAIN_CONFIRM_RESPONSE_DENY,
     BRAIN_CONFIRM_RESPONSE_UNCLEAR,
-    BRAIN_DECISION_ROUTE_ACT,
 )
 from ...diagnostics.events import CanonicalEventLogger
 from ...schemas import BudgetStopReason
@@ -48,7 +46,7 @@ def _grant_once_from_confirmation(
         "session_id": state.session_id,
         "trace_id": state.trace_id,
         "constraints": state.constraints,
-        "mode_name": getattr(state, "active_mode_name", None),
+        "mode_name": state.active_mode_name,
     }
     try:
         grant_id = str(
@@ -114,84 +112,42 @@ def _clear_pending_confirmation_metadata(state: Any) -> None:
 
 def _store_pending_confirmation_metadata(state: Any) -> None:
     """Persist current decision metadata into the pending-confirmation slots."""
-    state.pending_confirmation_sub_intents = list(
-        getattr(state, "decision_sub_intents", []) or []
+    state.pending_confirmation_sub_intents = list(state.decision_sub_intents)
+    state.pending_confirmation_sub_intent_refs = list(state.decision_sub_intent_refs)
+    state.pending_confirmation_goal = str(state.goal or "").strip() or None
+    state.pending_confirmation_last_user_input = state.last_user_input.strip()
+    state.pending_confirmation_rationale = state.decision_rationale.strip()
+    state.pending_confirmation_success_criteria = dict(state.decision_success_criteria)
+    state.pending_confirmation_feasibility_state = dict(
+        state.decision_feasibility_state
     )
-    state.pending_confirmation_sub_intent_refs = list(
-        getattr(state, "decision_sub_intent_refs", []) or []
-    )
-    state.pending_confirmation_goal = (
-        str(getattr(state, "goal", "") or "").strip() or None
-    )
-    state.pending_confirmation_last_user_input = str(
-        getattr(state, "last_user_input", "") or ""
-    ).strip()
-    state.pending_confirmation_rationale = str(
-        getattr(state, "decision_rationale", "") or ""
-    ).strip()
-    criteria = getattr(state, "decision_success_criteria", {})
-    state.pending_confirmation_success_criteria = (
-        dict(criteria) if isinstance(criteria, dict) else {}
-    )
-    feasibility_state = getattr(state, "decision_feasibility_state", {})
-    state.pending_confirmation_feasibility_state = (
-        dict(feasibility_state) if isinstance(feasibility_state, dict) else {}
-    )
-    state.pending_confirmation_feasibility_report = getattr(
-        state,
-        "decision_feasibility_report",
-        None,
-    )
+    state.pending_confirmation_feasibility_report = state.decision_feasibility_report
 
 
 def _apply_pending_confirmation_metadata_for_replay(state: Any) -> None:
-    pending_goal = str(getattr(state, "pending_confirmation_goal", "") or "").strip()
+    pending_goal = str(state.pending_confirmation_goal or "").strip()
     if pending_goal:
         state.goal = pending_goal
-    pending_last_user_input = str(
-        getattr(state, "pending_confirmation_last_user_input", "") or ""
-    ).strip()
+    pending_last_user_input = state.pending_confirmation_last_user_input.strip()
     if pending_last_user_input:
         state.last_user_input = pending_last_user_input
-    state.decision_sub_intents = list(
-        getattr(state, "pending_confirmation_sub_intents", []) or []
-    )
-    state.decision_sub_intent_refs = list(
-        getattr(state, "pending_confirmation_sub_intent_refs", []) or []
-    )
-    state.decision_rationale = str(
-        getattr(state, "pending_confirmation_rationale", "") or ""
-    ).strip()
-    pending_criteria = getattr(state, "pending_confirmation_success_criteria", {})
-    if isinstance(pending_criteria, dict) and pending_criteria:
+    state.decision_sub_intents = list(state.pending_confirmation_sub_intents)
+    state.decision_sub_intent_refs = list(state.pending_confirmation_sub_intent_refs)
+    state.decision_rationale = state.pending_confirmation_rationale.strip()
+    pending_criteria = state.pending_confirmation_success_criteria
+    if pending_criteria:
         state.decision_success_criteria = dict(pending_criteria)
     else:
-        plan = getattr(state, "plan", None)
-        plan_criteria = getattr(plan, "success_criteria", None)
         state.decision_success_criteria = (
-            dict(plan_criteria) if isinstance(plan_criteria, dict) else {}
+            dict(state.plan.success_criteria) if state.plan is not None else {}
         )
-    pending_feasibility = getattr(state, "pending_confirmation_feasibility_state", {})
-    state.decision_feasibility_state = (
-        dict(pending_feasibility) if isinstance(pending_feasibility, dict) else {}
+    state.decision_feasibility_state = dict(
+        state.pending_confirmation_feasibility_state
     )
     from ...execution.feasibility import extract_feasibility_report
 
     state.decision_feasibility_report = extract_feasibility_report(
         state.decision_feasibility_state
-    )
-
-
-def _default_decision() -> Any:
-    return SimpleNamespace(
-        mode=BRAIN_DECISION_ROUTE_ACT,
-        reason_code="",
-        confidence=0.5,
-        sub_intents=[],
-        rationale="",
-        _seeded_commands=[],
-        question=None,
-        answer=None,
     )
 
 
@@ -212,7 +168,7 @@ class TickRunContext:
     mask_pending_confirmation_in_output: bool = False
     masked_resume_cursor: int | None = None
     forced_reset_policy_name: str | None = None
-    decision: Any = field(default_factory=_default_decision)
+    decision: Any | None = None
 
 
 def build_tick_run_context(

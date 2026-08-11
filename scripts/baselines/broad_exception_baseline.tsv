@@ -148,7 +148,6 @@ src/openminion/modules/brain/runner/coordinator.py	5	1	current broad-handler bas
 src/openminion/modules/brain/runner/lifecycle.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/runner/tick/context.py	3	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/runner/tick/input_processing.py	1	1	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/brain/runner/tick/orchestrator.py	2	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/runner/turn.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/runtime/approval/llm.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/brain/runtime/mrdd/hook.py	7	5	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
