@@ -39,8 +39,6 @@ def parse_slash_payload(
 
 
 def inbound_from_slash(envelope: SlackSlashCommandEnvelope) -> InboundMessage:
-    text = normalize_slash_command_text(envelope.command, envelope.text)
-    chat_key = slack_session_scope_key(envelope.team_id, envelope.channel_id, None)
     metadata = {
         "team_id": envelope.team_id,
         "channel_id": envelope.channel_id,
@@ -52,8 +50,8 @@ def inbound_from_slash(envelope: SlackSlashCommandEnvelope) -> InboundMessage:
     return canonicalize_inbound_message(
         InboundMessage(
             user_key=f"slack:{envelope.team_id}:user:{envelope.user_id}",
-            chat_key=chat_key,
-            text=text,
+            chat_key=slack_session_scope_key(envelope.team_id, envelope.channel_id, None),
+            text=normalize_slash_command_text(envelope.command, envelope.text),
             channel=CHANNEL_ID,
             chat_id=envelope.channel_id,
             user_id=envelope.user_id,
