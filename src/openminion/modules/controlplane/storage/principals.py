@@ -483,26 +483,17 @@ class PrincipalsStore:
         if not chan or not sub:
             return False
         assignments = ["last_seen_at = ?"]
-        legacy_assignments = ["last_seen_at = ?"]
         params: list[Any] = [_iso_now()]
-        legacy_params: list[Any] = [params[0]]
         if status is not None:
             assignments.append("status = ?")
             params.append(str(status))
-            legacy_assignments.append("status = ?")
-            legacy_params.append(str(status))
         if scopes is not None:
             assignments.append("scopes_json = ?")
             params.append(_scopes_json(scopes))
-            legacy_assignments.append("scopes_json = ?")
-            legacy_params.append(_scopes_json(scopes))
         if note is not None:
             assignments.append("note = ?")
             params.append(note)
-            legacy_assignments.append("note = ?")
-            legacy_params.append(note)
         params.extend([chan, sub])
-        legacy_params.extend([chan, sub])
         with self._rs.transaction():
             changed = self._rs.execute_count(
                 f"""
@@ -515,10 +506,10 @@ class PrincipalsStore:
             self._rs.execute_count(
                 f"""
                 UPDATE cp_pairings
-                SET {", ".join(legacy_assignments)}
+                SET {", ".join(assignments)}
                 WHERE channel = ? AND chat_id = ?
                 """,
-                tuple(legacy_params),
+                tuple(params),
             )
         return changed > 0
 
