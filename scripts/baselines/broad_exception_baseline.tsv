@@ -169,7 +169,7 @@ src/openminion/modules/context/compress/service.py	1	0	current broad-handler bas
 src/openminion/modules/context/knowledge/adapters/pragmagraph.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/context/knowledge/service.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/context/retrieval/bundle.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
-src/openminion/modules/context/retrieval/materials.py	3	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
+src/openminion/modules/context/retrieval/materials.py	2	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/context/service.py	4	2	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/context/state/projection.py	1	0	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition
 src/openminion/modules/context/telemetry.py	6	4	current broad-handler baseline; ratchet by narrowing or typed-boundary-keep disposition

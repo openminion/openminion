@@ -11,18 +11,20 @@ def _structural_values(values: Any) -> set[str]:
     }
 
 
+def _normalized_value(overlay: dict[str, Any], key: str) -> str:
+    return str(overlay.get(key) or "").strip().lower()
+
+
 def request_decision_match_fields(request: BuildPackRequest) -> dict[str, Any]:
     overlay = dict(request.live_state_overlay or {})
     return {
-        "reason_code": str(overlay.get("decision_reason_code") or "").strip().lower(),
+        "reason_code": _normalized_value(overlay, "decision_reason_code"),
         "sub_intents": _structural_values(overlay.get("decision_sub_intents")),
-        "act_profile": str(overlay.get("working_act_profile") or "").strip().lower(),
-        "execution_target_kind": str(overlay.get("working_execution_target_kind") or "")
-        .strip()
-        .lower(),
-        "target_agent_id": str(overlay.get("delegation_target_agent_id") or "")
-        .strip()
-        .lower(),
+        "act_profile": _normalized_value(overlay, "working_act_profile"),
+        "execution_target_kind": _normalized_value(
+            overlay, "working_execution_target_kind"
+        ),
+        "target_agent_id": _normalized_value(overlay, "delegation_target_agent_id"),
     }
 
 
@@ -37,17 +39,13 @@ def request_improvement_note_match_fields(request: BuildPackRequest) -> dict[str
 def request_strategy_outcome_match_fields(request: BuildPackRequest) -> dict[str, Any]:
     overlay = dict(request.live_state_overlay or {})
     return {
-        "strategy_id": str(overlay.get("strategy_outcome_strategy_id") or "")
-        .strip()
-        .lower(),
-        "capability_category": str(
-            overlay.get("strategy_outcome_capability_category") or ""
-        )
-        .strip()
-        .lower(),
-        "intent_category": str(overlay.get("strategy_outcome_intent_category") or "")
-        .strip()
-        .lower(),
+        "strategy_id": _normalized_value(overlay, "strategy_outcome_strategy_id"),
+        "capability_category": _normalized_value(
+            overlay, "strategy_outcome_capability_category"
+        ),
+        "intent_category": _normalized_value(
+            overlay, "strategy_outcome_intent_category"
+        ),
     }
 
 
@@ -62,7 +60,5 @@ def request_post_completion_critique_match_fields(
         "sub_intents": _structural_values(
             overlay.get("post_completion_critique_sub_intents")
         ),
-        "route_chosen": str(overlay.get("post_completion_critique_route") or "")
-        .strip()
-        .lower(),
+        "route_chosen": _normalized_value(overlay, "post_completion_critique_route"),
     }

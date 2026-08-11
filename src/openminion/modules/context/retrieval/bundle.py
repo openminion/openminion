@@ -170,23 +170,18 @@ def collect_retrieval_bundle(
         request=request,
         session_slice=session_slice,
     )
-    capped_decision_memory: list[MemoryCard] = []
-    capped_improvement_notes: list[MemoryCard] = []
-    capped_strategy_outcomes: list[MemoryCard] = []
-    capped_post_completion_critiques: list[MemoryCard] = []
-    if request.purpose == "decide":
-        (
-            capped_decision_memory,
-            capped_improvement_notes,
-            capped_strategy_outcomes,
-            capped_post_completion_critiques,
-        ) = _rank_decide_memory_cards(
-            request=request,
-            decision_memory_cards=decision_memory_cards,
-            improvement_note_cards=improvement_note_cards,
-            strategy_outcome_cards=strategy_outcome_cards,
-            post_completion_critique_cards=post_completion_critique_cards,
-        )
+    (
+        capped_decision_memory,
+        capped_improvement_notes,
+        capped_strategy_outcomes,
+        capped_post_completion_critiques,
+    ) = _rank_decide_memory_cards(
+        request=request,
+        decision_memory_cards=decision_memory_cards,
+        improvement_note_cards=improvement_note_cards,
+        strategy_outcome_cards=strategy_outcome_cards,
+        post_completion_critique_cards=post_completion_critique_cards,
+    )
     capped_memory = _cap_general_memory(
         valid_memory_cards,
         mode_name=mode_name,
@@ -275,6 +270,8 @@ def _rank_decide_memory_cards(
     strategy_outcome_cards: list[MemoryCard],
     post_completion_critique_cards: list[MemoryCard],
 ) -> tuple[list[MemoryCard], list[MemoryCard], list[MemoryCard], list[MemoryCard]]:
+    if request.purpose != "decide":
+        return [], [], [], []
     return (
         _rank_decision_memory_cards(decision_memory_cards, request=request)[
             :DECISION_MEMORY_LIMIT

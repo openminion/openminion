@@ -80,18 +80,15 @@ def _rank_improvement_note_cards(
     request: BuildPackRequest,
 ) -> list[MemoryCard]:
     request_fields = _request_improvement_note_match_fields(request)
-    ranked = list(cards)
-    ranked.sort(key=lambda card: str(card.record_id or ""))
-    ranked.sort(key=lambda card: _card_meta_timestamp(card, "updated_at"), reverse=True)
-    ranked.sort(
-        key=lambda card: _improvement_note_match_score(card, request_fields)[1],
+    ranked = sorted(cards, key=lambda card: str(card.record_id or ""))
+    return sorted(
+        ranked,
+        key=lambda card: (
+            *_improvement_note_match_score(card, request_fields),
+            _card_meta_timestamp(card, "updated_at"),
+        ),
         reverse=True,
     )
-    ranked.sort(
-        key=lambda card: _improvement_note_match_score(card, request_fields)[0],
-        reverse=True,
-    )
-    return ranked
 
 
 def _strategy_outcome_match_score(
@@ -113,14 +110,15 @@ def _rank_strategy_outcome_cards(
     request: BuildPackRequest,
 ) -> list[MemoryCard]:
     request_fields = _request_strategy_outcome_match_fields(request)
-    ranked = list(cards)
-    ranked.sort(key=lambda card: str(card.record_id or ""))
-    ranked.sort(key=lambda card: _card_meta_timestamp(card, "created_at"), reverse=True)
-    ranked.sort(
-        key=lambda card: _strategy_outcome_match_score(card, request_fields),
+    ranked = sorted(cards, key=lambda card: str(card.record_id or ""))
+    return sorted(
+        ranked,
+        key=lambda card: (
+            _strategy_outcome_match_score(card, request_fields),
+            _card_meta_timestamp(card, "created_at"),
+        ),
         reverse=True,
     )
-    return ranked
 
 
 def _post_completion_critique_match_score(
@@ -149,14 +147,15 @@ def _rank_post_completion_critique_cards(
     request: BuildPackRequest,
 ) -> list[MemoryCard]:
     request_fields = _request_post_completion_critique_match_fields(request)
-    ranked = list(cards)
-    ranked.sort(key=lambda card: str(card.record_id or ""))
-    ranked.sort(key=lambda card: _card_meta_timestamp(card, "created_at"), reverse=True)
-    ranked.sort(
-        key=lambda card: _post_completion_critique_match_score(card, request_fields),
+    ranked = sorted(cards, key=lambda card: str(card.record_id or ""))
+    return sorted(
+        ranked,
+        key=lambda card: (
+            _post_completion_critique_match_score(card, request_fields),
+            _card_meta_timestamp(card, "created_at"),
+        ),
         reverse=True,
     )
-    return ranked
 
 
 def _retrieval_item_value(item: Any, key: str, default: Any = None) -> Any:
@@ -167,9 +166,9 @@ def _retrieval_item_value(item: Any, key: str, default: Any = None) -> Any:
 
 def _retrieval_item_tags(item: Any) -> set[str]:
     return {
-        str(item or "").strip().lower()
-        for item in list(_retrieval_item_value(item, "tags", []) or [])
-        if str(item or "").strip()
+        str(tag or "").strip().lower()
+        for tag in list(_retrieval_item_value(item, "tags", []) or [])
+        if str(tag or "").strip()
     }
 
 
