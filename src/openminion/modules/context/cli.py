@@ -120,15 +120,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "build":
-            home_root = str(getattr(args, "home_root", "") or "").strip()
-            data_root = str(getattr(args, "data_root", "") or "").strip()
+            home_root = str(args.home_root or "").strip()
+            data_root = str(args.data_root or "").strip()
             apply_home_data_root_env(home_root=home_root, data_root=data_root)
             env_owner = resolve_environment_config()
 
-            sessctl_db_raw = str(getattr(args, "sessctl_db", "") or "").strip()
+            sessctl_db_raw = str(args.sessctl_db or "").strip()
             if not sessctl_db_raw:
-                standalone_mode = is_module_standalone_mode(env_owner)
-                if standalone_mode:
+                if is_module_standalone_mode(env_owner):
                     sessctl_db_raw = str(
                         (Path.home() / DEFAULT_STANDALONE_SESSION_DB_SUBPATH).resolve()
                     )
@@ -145,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
             args.sessctl_db = sessctl_db_raw
 
-            if not getattr(args, "identity_db", None):
+            if not args.identity_db:
                 home_root = resolve_home_root()
                 resolved_data_root = resolve_data_root(
                     home_root,
@@ -164,14 +163,13 @@ def main(argv: list[str] | None = None) -> int:
             if not isinstance(constraints, dict):
                 raise ValueError("constraints-json must decode to an object")
 
-            identity_client = None
             identity_service = None
             try:
                 identity_client, identity_service = _build_identity_client(args)
                 builder = ContextPackBuilder(
                     args.sessctl_db,
                     identity_client=identity_client,
-                    log_identity_events=not bool(args.disable_identity_event_log),
+                    log_identity_events=not args.disable_identity_event_log,
                 )
                 pack = builder.build(
                     BuildOptions(
@@ -184,19 +182,16 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 )
             finally:
-                if identity_service is not None and hasattr(identity_service, "close"):
+                if identity_service is not None:
                     identity_service.close()
             if args.format == "contextpack":
-                print_json_payload(pack)
-                return 0
-            if args.format == "openai":
-                print_json_payload(render_openai(pack, model=args.model))
-                return 0
-            if args.format == "anthropic":
-                print_json_payload(render_anthropic(pack, model=args.model))
-                return 0
-            parser.error(f"unsupported format: {args.format}")
-            return 2
+                output = pack
+            elif args.format == "openai":
+                output = render_openai(pack, model=args.model)
+            else:
+                output = render_anthropic(pack, model=args.model)
+            print_json_payload(output)
+            return 0
 
         parser.error(f"unsupported command: {args.command}")
         return 2

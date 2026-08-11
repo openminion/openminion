@@ -26,11 +26,9 @@ def _env_value(
 
 
 def _env_mapping(env: ModuleEnv | None) -> dict[str, str]:
-    if env is None:
-        return {}
     if isinstance(env, EnvironmentConfig):
         return env.snapshot()
-    return dict(env)
+    return dict(env or {})
 
 
 def is_module_standalone_mode(
@@ -54,9 +52,14 @@ def resolve_module_home_root(
     raw = _env_value(env, home_env_name, "")
     if raw:
         return Path(raw).expanduser().resolve(strict=False)
-    if fallback_to_cwd:
-        return Path.cwd().resolve(strict=False)
-    return None
+    return Path.cwd().resolve(strict=False) if fallback_to_cwd else None
+
+
+def _resolve_data_root_candidate(value: str, home_root: Path | None) -> Path:
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = (home_root or Path.cwd().resolve(strict=False)) / candidate
+    return candidate.resolve(strict=False)
 
 
 def resolve_module_data_root(
@@ -69,11 +72,7 @@ def resolve_module_data_root(
 ) -> Path | None:
     raw_override = str(data_root or "").strip()
     if raw_override:
-        candidate = Path(raw_override).expanduser()
-        if not candidate.is_absolute():
-            base_root = home_root or Path.cwd().resolve(strict=False)
-            candidate = base_root / candidate
-        return candidate.resolve(strict=False)
+        return _resolve_data_root_candidate(raw_override, home_root)
 
     env_map = _env_mapping(env)
     env_root = _env_value(env, data_root_env_name, "")
@@ -85,11 +84,7 @@ def resolve_module_data_root(
             if resolved_env_home != resolved_home:
                 env_root = ""
     if env_root:
-        candidate = Path(env_root).expanduser()
-        if not candidate.is_absolute():
-            base_root = home_root or Path.cwd().resolve(strict=False)
-            candidate = base_root / candidate
-        return candidate.resolve(strict=False)
+        return _resolve_data_root_candidate(env_root, home_root)
 
     if home_root is not None:
         return resolve_data_root(home_root, data_root=None, env=env_map)

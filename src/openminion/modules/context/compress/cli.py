@@ -27,12 +27,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    home_root = str(getattr(args, "home_root", "") or "").strip()
-    data_root = str(getattr(args, "data_root", "") or "").strip()
+    home_root = str(args.home_root or "").strip()
+    data_root = str(args.data_root or "").strip()
     apply_home_data_root_env(home_root=home_root, data_root=data_root)
-
-    if args.command != "storage":
-        raise SystemExit("compressctl only supports storage operations in V1")
 
     db_path = resolve_module_cli_db_path(args, DEFAULT_INTEGRATED_SQLITE_SUBPATH)
     return run_module_storage_command(
