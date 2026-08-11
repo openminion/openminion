@@ -2601,7 +2601,7 @@ def test_loop_general_adaptive_profile_finalization_final_answer() -> None:
     assert outcome.finalization_status is not None
 
 
-def test_loop_salvages_substantive_final_answer_when_trailer_retry_fails() -> None:
+def test_loop_fails_closed_when_typed_trailer_retries_fail() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2651,9 +2651,8 @@ def test_loop_salvages_substantive_final_answer_when_trailer_retry_fails() -> No
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert outcome.final_text.startswith("SOURCES")
-    assert outcome.finalization_status is not None
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    assert outcome.finalization_status is None
 
 
 def test_loop_salvages_assistant_message_final_answer_when_output_text_is_blank() -> (
@@ -2722,7 +2721,7 @@ def test_loop_salvages_assistant_message_final_answer_when_output_text_is_blank(
     assert outcome.finalization_status is not None
 
 
-def test_loop_salvages_structured_final_answer_without_trailer_on_first_try() -> None:
+def test_loop_does_not_infer_finalization_from_answer_shape() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -2783,10 +2782,8 @@ def test_loop_salvages_structured_final_answer_without_trailer_on_first_try() ->
         tool_specs=_tool_specs("web.search", "web.fetch"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "**PLAN**" in str(outcome.final_text or "")
-    assert outcome.finalization_status is not None
-    assert outcome.finalization_status["status"] == "final_answer"
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    assert outcome.finalization_status is None
 
 
 def test_loop_confident_complete_signals_confident_completion() -> None:
@@ -6499,7 +6496,7 @@ def test_loop_circular_pattern_terminates() -> None:
     }
 
 
-def test_changed_tool_arguments_do_not_trigger_circular_pattern_fallback() -> None:
+def test_changed_tool_arguments_preserve_model_authored_final_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -6557,7 +6554,10 @@ def test_changed_tool_arguments_do_not_trigger_circular_pattern_fallback() -> No
         tool_specs=_tool_specs("file.read"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_LLM_ERROR
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
+    assert outcome.final_text == (
+        "I hit an internal decision error before I could continue safely on this turn."
+    )
     assert not outcome.state.scratchpad.get("circular_pattern_used_evidence_fallback")
 
 
@@ -7015,7 +7015,7 @@ def test_loop_retries_when_final_answer_is_execution_preface_draft() -> None:
     assert "SOURCES" in str(outcome.final_text or "")
 
 
-def test_loop_retries_snippet_only_answer_when_file_artifacts_were_requested() -> None:
+def test_loop_does_not_infer_file_artifact_intent_from_user_prose() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7108,14 +7108,11 @@ def test_loop_retries_snippet_only_answer_when_file_artifacts_were_requested() -
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert [command.tool_name for command in loop_ctx.commands] == [
-        "file.list_dir",
-        "file.write",
-    ]
-    assert bool(outcome.state.scratchpad.get("snippet_only_file_artifact_retry_used"))
+    assert [command.tool_name for command in loop_ctx.commands] == ["file.list_dir"]
+    assert str(outcome.final_text or "").startswith("implementation:")
 
 
-def test_loop_retries_prose_closeout_when_file_artifacts_were_not_created() -> None:
+def test_loop_accepts_model_authored_file_closeout_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7193,11 +7190,11 @@ def test_loop_retries_prose_closeout_when_file_artifacts_were_not_created() -> N
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert [command.tool_name for command in loop_ctx.commands] == ["file.write"]
-    assert bool(outcome.state.scratchpad.get("snippet_only_file_artifact_retry_used"))
+    assert loop_ctx.commands == []
+    assert str(outcome.final_text or "").startswith("design: simple CLI")
 
 
-def test_loop_retries_closeout_when_requested_test_file_is_missing() -> None:
+def test_loop_does_not_guess_missing_test_artifact_from_filenames() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7314,14 +7311,11 @@ def test_loop_retries_closeout_when_requested_test_file_is_missing() -> None:
     assert [command.tool_name for command in loop_ctx.commands] == [
         "file.write",
         "exec.run",
-        "file.write",
     ]
-    assert bool(
-        outcome.state.scratchpad.get("missing_requested_file_artifacts_retry_used")
-    )
+    assert outcome.final_text == "result: module complete"
 
 
-def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> None:
+def test_loop_accepts_model_authored_execution_preface_text() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7377,11 +7371,8 @@ def test_loop_falls_back_to_tool_evidence_after_repeated_execution_preface() -> 
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "tool evidence:" in str(outcome.final_text or "").lower()
-    assert "file.read" in str(outcome.final_text or "")
-    assert "core module content present" in str(outcome.final_text or "")
-    assert bool(
-        outcome.state.scratchpad.get("pre_tool_draft_echo_used_evidence_fallback")
+    assert outcome.final_text == (
+        "I'll read back the core module file to verify the expected content is present."
     )
 
 
