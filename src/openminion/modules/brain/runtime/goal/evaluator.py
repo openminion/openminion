@@ -32,13 +32,10 @@ class GoalTurnResult(_StrictGoalModel):
     @classmethod
     def _normalize_refs(cls, value: object) -> tuple[str, ...]:
         if value is None:
-            values: tuple[object, ...] = ()
-        elif isinstance(value, str):
-            values = (value,)
-        elif isinstance(value, list | tuple | set):
-            values = tuple(value)
-        else:
-            values = (value,)
+            return ()
+        values = (value,) if isinstance(value, str) else value
+        if not isinstance(values, list | tuple | set):
+            raise ValueError("references must be a sequence")
         return tuple(str(item).strip() for item in values if str(item).strip())
 
 

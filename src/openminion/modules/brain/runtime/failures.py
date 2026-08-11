@@ -1,5 +1,6 @@
 """Aggregate typed failure facts into structural recurrence buckets."""
 
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
@@ -77,18 +78,18 @@ def _emission_mapping(emission: Any) -> Mapping[str, Any] | None:
         value = getattr(emission, attr, None)
         if isinstance(value, Mapping):
             return value
-    synthesized: dict[str, Any] = {}
-    for attr in (
-        "reason_code",
-        "context_kind",
-        "recorded_at",
-        "trace_id",
-        "session_id",
-        "outcome_status",
-    ):
-        value = getattr(emission, attr, None)
-        if value is not None:
-            synthesized[attr] = value
+    synthesized = {
+        attr: value
+        for attr in (
+            "reason_code",
+            "context_kind",
+            "recorded_at",
+            "trace_id",
+            "session_id",
+            "outcome_status",
+        )
+        if (value := getattr(emission, attr, None)) is not None
+    }
     return synthesized if synthesized else None
 
 
@@ -133,36 +134,22 @@ def aggregate_failure_patterns(
 ) -> FailurePatternReadout:
     """Aggregate typed failure facts into recurrence buckets."""
     materialized = list(facts)
-    by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    by_key: defaultdict[tuple[SeamId, str], list[TypedFailureFact]] = defaultdict(list)
     for fact in materialized:
-        key = (fact.seam_id, fact.reason_code)
-        agg = by_key.setdefault(
-            key,
-            {
-                "recurrence_count": 0,
-                "sessions": set(),
-                "traces": set(),
-                "timestamps": [],
-            },
-        )
-        agg["recurrence_count"] += 1
-        if fact.session_id:
-            agg["sessions"].add(fact.session_id)
-        if fact.trace_id:
-            agg["traces"].add(fact.trace_id)
-        if fact.recorded_at:
-            agg["timestamps"].append(fact.recorded_at)
+        by_key[(fact.seam_id, fact.reason_code)].append(fact)
 
     rows: list[FailurePatternBucket] = []
-    for (seam_id, reason_code), agg in by_key.items():
-        timestamps = sorted(agg["timestamps"])
+    for (seam_id, reason_code), group in by_key.items():
+        timestamps = sorted(fact.recorded_at for fact in group if fact.recorded_at)
         rows.append(
             FailurePatternBucket(
-                seam_id=seam_id,  # type: ignore[arg-type]
+                seam_id=seam_id,
                 reason_code=reason_code,
-                recurrence_count=int(agg["recurrence_count"]),
-                distinct_sessions=len(agg["sessions"]),
-                distinct_traces=len(agg["traces"]),
+                recurrence_count=len(group),
+                distinct_sessions=len(
+                    {fact.session_id for fact in group if fact.session_id}
+                ),
+                distinct_traces=len({fact.trace_id for fact in group if fact.trace_id}),
                 earliest_recorded_at=timestamps[0] if timestamps else "",
                 latest_recorded_at=timestamps[-1] if timestamps else "",
             )

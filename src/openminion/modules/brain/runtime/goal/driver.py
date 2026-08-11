@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,10 +41,7 @@ class GoalContinuationDriver:
         caps: GoalRunCaps | None = None,
         verifier: Verifier | None = None,
     ) -> GoalRunState:
-        if session_id in self._active_sessions:
-            raise RuntimeError(f"goal continuation already active: {session_id}")
-        self._active_sessions.add(session_id)
-        try:
+        with self._claim_session(session_id):
             state = self.controller.start_goal_run(
                 session_id=session_id,
                 goal_id=goal_id,
@@ -54,8 +52,6 @@ class GoalContinuationDriver:
                 turn_runner=turn_runner,
                 verifier=verifier,
             )
-        finally:
-            self._active_sessions.discard(session_id)
 
     def resume_until_stop(
         self,
@@ -64,17 +60,22 @@ class GoalContinuationDriver:
         turn_runner: TurnRunner,
         verifier: Verifier | None = None,
     ) -> GoalRunState:
-        if state.session_id in self._active_sessions:
-            raise RuntimeError(f"goal continuation already active: {state.session_id}")
-        self._active_sessions.add(state.session_id)
-        try:
+        with self._claim_session(state.session_id):
             return self._continue_active_run(
                 state=state,
                 turn_runner=turn_runner,
                 verifier=verifier,
             )
+
+    @contextmanager
+    def _claim_session(self, session_id: str) -> Iterator[None]:
+        if session_id in self._active_sessions:
+            raise RuntimeError(f"goal continuation already active: {session_id}")
+        self._active_sessions.add(session_id)
+        try:
+            yield
         finally:
-            self._active_sessions.discard(state.session_id)
+            self._active_sessions.discard(session_id)
 
     def _continue_active_run(
         self,
@@ -83,32 +84,31 @@ class GoalContinuationDriver:
         turn_runner: TurnRunner,
         verifier: Verifier | None,
     ) -> GoalRunState:
-        current = state
-        while current.active:
-            goal = self._goal(current.goal_id)
-            summary = self.ledger.summary_for_run(current.run_id)
-            card = build_goal_context_card(goal=goal, state=current, summary=summary)
+        while state.active:
+            goal = self._goal(state.goal_id)
+            summary = self.ledger.summary_for_run(state.run_id)
+            card = build_goal_context_card(goal=goal, state=state, summary=summary)
             prompt = render_goal_context_card(card)
             started_at_ms = goal_now_ms()
             result = turn_runner(prompt)
-            verification = verifier(goal, current, result) if verifier else None
+            verification = verifier(goal, state, result) if verifier else None
             evaluation = self.evaluator.evaluate(
                 GoalLiveEvaluationInput(
-                    goal_id=current.goal_id,
+                    goal_id=state.goal_id,
                     turn_result=result,
                     verification=verification,
                 )
             )
-            updated, decision = self.controller.record_evaluation(current, evaluation)
+            state, decision = self.controller.record_evaluation(state, evaluation)
             self.ledger.append(
                 GoalRunStep(
-                    run_id=updated.run_id,
-                    session_id=updated.session_id,
-                    goal_id=updated.goal_id,
-                    turn_index=updated.turn_count,
+                    run_id=state.run_id,
+                    session_id=state.session_id,
+                    goal_id=state.goal_id,
+                    turn_index=state.turn_count,
                     started_at_ms=started_at_ms,
                     ended_at_ms=goal_now_ms(),
-                    prompt_ref=f"goal-card:{updated.run_id}:{updated.turn_count}",
+                    prompt_ref=f"goal-card:{state.run_id}:{state.turn_count}",
                     action_summary=result.reason,
                     tool_evidence_refs=result.evidence_refs,
                     verification_summary=_verification_summary(verification),
@@ -117,14 +117,13 @@ class GoalContinuationDriver:
                     evaluator_reason=evaluation.reason,
                     next_instruction=evaluation.next_instruction,
                     error_refs=result.error_refs,
-                    autonomy_run_id=updated.run_id,
-                    proof_ref=updated.proof_packet_ref or "",
+                    autonomy_run_id=state.run_id,
+                    proof_ref=state.proof_packet_ref or "",
                 )
             )
-            current = updated
             if not decision.should_continue:
-                return current
-        return current
+                return state
+        return state
 
     def _goal(self, goal_id: str) -> Goal:
         goal = self.goal_store.get(goal_id)
@@ -180,7 +179,6 @@ def build_child_task_step(
         evaluator_outcome="continue",
         mission_status=MissionStatus.ACTIVE,
         evaluator_reason="child_task_summary_ingested",
-        next_instruction="continue parent goal with child evidence",
     )
 
 
