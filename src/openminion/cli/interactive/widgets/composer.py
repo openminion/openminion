@@ -154,8 +154,7 @@ class FocusComposer(Widget):
             pass
         try:
             ed = self.query_one("#focus-editor", TextArea)
-            if hasattr(ed, "placeholder"):
-                ed.placeholder = new_placeholder
+            ed.placeholder = new_placeholder
         except (QueryError, AttributeError):
             pass
 
@@ -212,19 +211,12 @@ class FocusComposer(Widget):
                 self.toggle_multiline()
                 return
             value = single.value or ""
-            cursor = max(
-                0,
-                min(
-                    int(getattr(single, "cursor_position", len(value)) or 0), len(value)
-                ),
-            )
+            cursor = max(0, min(single.cursor_position, len(value)))
             single.value = value[:cursor] + "\n" + value[cursor:]
-            if not self._multiline:
-                self.toggle_multiline()
+            self.toggle_multiline()
             try:
                 editor = self.query_one("#focus-editor", TextArea)
-                if hasattr(editor, "move_cursor"):
-                    editor.move_cursor((1, 0))
+                editor.move_cursor((1, 0))
             except (QueryError, AttributeError):
                 pass
             return
@@ -232,13 +224,7 @@ class FocusComposer(Widget):
             editor = self.query_one("#focus-editor", TextArea)
         except (QueryError, AttributeError):
             return
-        if hasattr(editor, "insert"):
-            try:
-                editor.insert("\n")
-                return
-            except (QueryError, AttributeError):
-                pass
-        editor.text = (editor.text or "") + "\n"
+        editor.insert("\n")
 
     def compose(self) -> ComposeResult:
         yield Label("❯", id="focus-prompt")
@@ -267,17 +253,14 @@ class FocusComposer(Widget):
             single = self.query_one("#focus-input", Input)
         except (QueryError, AttributeError):
             return
-        stripped = value.rstrip()
-        if stripped.endswith("\\"):
-            stripped = stripped[:-1].rstrip()
+        stripped = value.rstrip()[:-1].rstrip()
         single.value = stripped
         if not self._multiline:
             self.toggle_multiline()
         try:
             editor = self.query_one("#focus-editor", TextArea)
             editor.text = stripped + "\n"
-            if hasattr(editor, "move_cursor"):
-                editor.move_cursor((1, 0))
+            editor.move_cursor((1, 0))
         except (QueryError, AttributeError):
             pass
 
@@ -301,25 +284,17 @@ class FocusComposer(Widget):
         except (QueryError, AttributeError):
             return
         original = single.value or ""
-        try:
-            cursor = int(single.cursor_position)
-        except (QueryError, AttributeError):
-            cursor = len(original)
-        cursor = max(0, min(cursor, len(original)))
+        cursor = max(0, min(single.cursor_position, len(original)))
         with_newline = original[:cursor] + "\n" + original[cursor:]
         single.value = with_newline
         if not self._multiline:
             self.toggle_multiline()
         try:
             editor = self.query_one("#focus-editor", TextArea)
-            if hasattr(editor, "move_cursor"):
-                editor.move_cursor((1, 0))
+            editor.move_cursor((1, 0))
         except (QueryError, AttributeError):
             pass
-        try:
-            event.stop()
-        except (QueryError, AttributeError):
-            pass
+        event.stop()
 
     def on_paste(self, event) -> None:
         """Auto-promote multiline pastes into the editor surface."""
@@ -343,10 +318,7 @@ class FocusComposer(Widget):
             editor.text = text
         except (QueryError, AttributeError):
             pass
-        try:
-            event.stop()
-        except (QueryError, AttributeError):
-            pass
+        event.stop()
 
     def on_focus_composer_editor_submitted(
         self, event: _FocusComposerEditorSubmitted
@@ -356,9 +328,7 @@ class FocusComposer(Widget):
 
     def _dispatch(self, text: str) -> None:
         body = (text or "").rstrip("\n")
-        if not body.strip():
-            return
-        if self._disabled:
+        if not body.strip() or self._disabled:
             return
         if not self._history or self._history[-1] != body:
             self._history.append(body)

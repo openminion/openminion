@@ -231,7 +231,7 @@ class FocusScreen(
                     ChatMessage(
                         kind=MessageKind.ERROR,
                         sender="error",
-                        body=self._append_error_hint(str(exc)),
+                        body=str(exc),
                     )
                 ]
             )
@@ -467,7 +467,7 @@ class FocusScreen(
                 ChatMessage(
                     kind=MessageKind.ERROR,
                     sender="error",
-                    body=self._append_error_hint(str(exc)),
+                    body=str(exc),
                 )
             )
         finally:
@@ -501,25 +501,6 @@ class FocusScreen(
             if run_next:
                 self._start_next_queued_turn(expected_queue_id=expected_queue_id)
 
-    _ERROR_HINT_PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
-        (
-            ("api key", "unauthorized", "401"),
-            "→ Run `openminion config init` to set credentials.",
-        ),
-        (
-            ("connection", "network", "timeout"),
-            "→ Check your network or retry; transient failures are common.",
-        ),
-        (
-            ("permission denied", "eacces"),
-            "→ Verify file permissions in the working directory.",
-        ),
-        (
-            ("not found", "enoent"),
-            "→ Confirm the path or session id exists.",
-        ),
-    )
-
     def _drop_empty_streaming_turn(self, chat: FocusTranscript, turn) -> None:
         """Prune an assistant streaming turn that produced no visible text."""
         widget = getattr(turn, "_widget", None)
@@ -528,20 +509,6 @@ class FocusScreen(
         message_id = getattr(getattr(widget, "_message", None), "msg_id", "")
         if message_id:
             chat.drop_message(message_id)
-
-    @classmethod
-    def _append_error_hint(cls, body: str) -> str:
-        """Append a short actionable hint to eligible error text."""
-        text = str(body or "")
-        if not text.strip():
-            return text
-        if text.count("\n") + 1 >= 3:
-            return text
-        haystack = text.lower()
-        for patterns, hint in cls._ERROR_HINT_PATTERNS:
-            if any(pattern in haystack for pattern in patterns):
-                return f"{text}\n{hint}"
-        return text
 
     def _on_turn_complete(self, elapsed_seconds: float) -> None:
         """Record completion timing and write the optional long-completion bell."""

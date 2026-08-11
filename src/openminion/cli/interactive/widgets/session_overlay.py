@@ -36,8 +36,7 @@ class SessionOverlay(ModalScreen[str | None]):
         session = self._sessions[highlighted]
         self.dismiss(str(getattr(session, "id", "") or ""))
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        del event
+    def on_option_list_option_selected(self, _event: OptionList.OptionSelected) -> None:
         self.action_select_session()
 
     @staticmethod

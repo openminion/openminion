@@ -29,22 +29,17 @@ def _mcp_runtime_tool_names(
     return names
 
 
-def _mcp_runtime_prompt_count(
+def _mcp_runtime_auxiliary_counts(
     tool_specs: Mapping[str, Any],
     *,
     server_name: str,
-) -> int:
-    prefix = f"mcp.{server_name}.prompt."
-    return sum(1 for name in tool_specs if name.startswith(prefix))
-
-
-def _mcp_runtime_resource_count(
-    tool_specs: Mapping[str, Any],
-    *,
-    server_name: str,
-) -> int:
-    prefix = f"mcp.{server_name}.resource."
-    return sum(1 for name in tool_specs if name.startswith(prefix))
+) -> tuple[int, int]:
+    prompt_prefix = f"mcp.{server_name}.prompt."
+    resource_prefix = f"mcp.{server_name}.resource."
+    return (
+        sum(1 for name in tool_specs if name.startswith(prompt_prefix)),
+        sum(1 for name in tool_specs if name.startswith(resource_prefix)),
+    )
 
 
 class RuntimeMCPMixin:
@@ -69,10 +64,7 @@ class RuntimeMCPMixin:
             server_name = str(getattr(server, "name", "") or "").strip()
             transport = str(getattr(server, "transport", "") or "stdio").strip()
             tool_names = _mcp_runtime_tool_names(tool_specs, server_name=server_name)
-            prompt_count = _mcp_runtime_prompt_count(
-                tool_specs, server_name=server_name
-            )
-            resource_count = _mcp_runtime_resource_count(
+            prompt_count, resource_count = _mcp_runtime_auxiliary_counts(
                 tool_specs, server_name=server_name
             )
             resource_template_count = 0

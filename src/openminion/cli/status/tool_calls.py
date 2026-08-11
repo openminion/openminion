@@ -10,7 +10,6 @@ MARKER_OK = "●"
 MARKER_FAIL = "✗"
 MARKER_RUNNING = "⏳"
 
-_ARGS_PREVIEW_MAX = 120
 _COMMAND_PREVIEW_MAX = 80
 _QUERY_PREVIEW_MAX = 80
 _FALLBACK_PREVIEW_MAX = 80
@@ -103,11 +102,7 @@ def format_tool_args_preview(tool_name: str, args: Mapping[str, Any] | None) -> 
         )
     except (TypeError, ValueError):
         compact = str(args_dict)
-    truncated = _truncate_middle(compact, _COMMAND_PREVIEW_MAX)
-
-    if len(truncated) > _ARGS_PREVIEW_MAX:
-        truncated = truncated[: _ARGS_PREVIEW_MAX - 1] + "…"
-    return truncated
+    return _truncate_middle(compact, _COMMAND_PREVIEW_MAX)
 
 
 def format_tool_provenance_marker(
@@ -173,8 +168,7 @@ def _format_duration(duration_ms: int | None) -> str:
         return ""
     if ms < 1000:
         return f"{ms}ms"
-    seconds = ms / 1000.0
-    return f"{seconds:.1f}s"
+    return f"{ms / 1000.0:.1f}s"
 
 
 def _quote(value: str) -> str:
@@ -209,7 +203,7 @@ def _truncate_middle(value: str, max_len: int) -> str:
     keep = max_len - 1
     head = keep // 2
     tail = keep - head
-    return f"{text[:head]}…{text[-tail:]}" if tail > 0 else f"{text[:head]}…"
+    return f"{text[:head]}…{text[-tail:]}"
 
 
 def _short_provider_id(runtime_tool_name: str) -> str:

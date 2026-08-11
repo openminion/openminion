@@ -77,14 +77,6 @@ _DIFF_RENDER_TOOL_NAMES = frozenset({"Edit", "Write"})
 _HUNK_HEADER_RE = re.compile(r"^@@\s+-\d+(,\d+)?\s+\+\d+(,\d+)?\s+@@")
 
 
-def _format_response_time(elapsed_seconds: float) -> str:
-    seconds = int(max(0.0, float(elapsed_seconds)))
-    if seconds < 60:
-        return f"{seconds}s"
-    minutes, seconds = divmod(seconds, 60)
-    return f"{minutes}m{seconds:02d}s"
-
-
 class TerminalTurnHandle:
     def __init__(
         self,
@@ -109,7 +101,6 @@ class TerminalTurnHandle:
         self._refresh_stop = Event()
         self._refresh_thread: Thread | None = None
         self._inline_status_mode = False
-        self._inline_status_visible = False
         self._terminal_writer: Callable[[Callable[[], None]], Any] | None = None
         self._prompt_safe_mode = False
         self._last_token_refresh_at = 0.0
@@ -126,10 +117,6 @@ class TerminalTurnHandle:
 
     def _refresh_live(self) -> None:
         if self._prompt_safe_mode:
-            self._refresh_prompt_safe_status()
-            return
-        if self._inline_status_mode:
-            self._refresh_inline_status()
             return
         if self._live is None:
             return
@@ -176,8 +163,6 @@ class TerminalTurnHandle:
         self._spinner = Spinner(self._started_at, plain=self._plain)
         self._refresh_stop.clear()
         self._prompt_safe_mode = self._terminal_writer is not None
-        self._inline_status_mode = False
-        self._inline_status_visible = False
         # Focus mode owns live status through the prompt toolbar. Other terminal
         # flows use Rich Live; avoid the old raw-ANSI inline writer because it
         # leaks escape bytes into prompt/PTY buffers.
@@ -225,14 +210,7 @@ class TerminalTurnHandle:
 
     def append_renderable(self, renderable: Any) -> None:
         if self._prompt_safe_mode:
-            self._clear_prompt_safe_status()
             self._write_render(lambda: self._console.print(renderable))
-            self._refresh_prompt_safe_status()
-            return
-        if self._inline_status_mode:
-            self._clear_inline_status()
-            self._write_render(lambda: self._console.print(renderable))
-            self._refresh_inline_status()
             return
         if self._live is not None:
             self._live.stop()
@@ -250,7 +228,6 @@ class TerminalTurnHandle:
         is_bounded_fallback = elapsed <= _BOUNDED_FALLBACK_THRESHOLD_S
         self._refresh_stop.set()
         if self._prompt_safe_mode:
-            self._clear_prompt_safe_status()
             final_renderable = self._render_final_body(elapsed_seconds=elapsed)
             if final_renderable is not None:
 
@@ -264,12 +241,7 @@ class TerminalTurnHandle:
                 self._refresh_thread = None
             self._completed = True
             return
-        if self._inline_status_mode:
-            self._clear_inline_status()
-            final_renderable = self._render_final_body(elapsed_seconds=elapsed)
-            if final_renderable is not None:
-                self._write_render(lambda: self._console.print(final_renderable))
-        elif self._live is not None:
+        if self._live is not None:
             final_renderable = self._render_final_body(elapsed_seconds=elapsed)
             if is_bounded_fallback:
                 self._live.update(
@@ -297,60 +269,11 @@ class TerminalTurnHandle:
     def _refresh_prompt_safe_status(self) -> None:
         return
 
-    def _clear_prompt_safe_status(self) -> None:
-        return
-
-    def _refresh_inline_status(self) -> None:
-        if self._completed:
-            return
-        line = self._inline_status_line()
-        if not line:
-            return
-        file = getattr(self._console, "file", None)
-        if file is None:
-            return
-        file.write(f"\r\033[2K{line}")
-        file.flush()
-        self._inline_status_visible = True
-
-    def _clear_inline_status(self) -> None:
-        if not self._inline_status_visible:
-            return
-        file = getattr(self._console, "file", None)
-        if file is None:
-            return
-        file.write("\r\033[2K")
-        file.flush()
-        self._inline_status_visible = False
-
-    def _inline_status_line(self) -> str:
-        if self._spinner is None:
-            return ""
-        now = time.monotonic()
-        status_label = str(self._status_label or "").strip()
-        if self._active_tool is not None:
-            tool_event = ToolEvent(
-                tool_name=str(self._active_tool.get("tool_name", "") or "tool"),
-                args=dict(self._active_tool.get("args") or {}),
-                content="",
-                full_content="",
-            )
-            status_label = f"Running {_verb_form_title(tool_event)}"
-        elif not status_label:
-            status_label = (
-                THINKING_VERB
-                if self._in_thinking_frame
-                else self._spinner.current_verb(now) or THINKING_VERB
-            )
-        spinner_frame = self._spinner.current_frame(now) or "✻"
-        elapsed_label = self._spinner.elapsed_label(now)
-        return f"{spinner_frame} {status_label} · {elapsed_label} · {_LIVE_STATUS_HINT}"
-
     def _response_time_row(self, elapsed_seconds: float | None) -> Text | None:
         if not self._show_response_time or elapsed_seconds is None:
             return None
         return Text(
-            f"Done in {_format_response_time(elapsed_seconds)}",
+            f"Done in {format_elapsed_label(elapsed_seconds)}",
             style="dim italic",
         )
 

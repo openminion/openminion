@@ -356,7 +356,9 @@ def test_progress_callback_updates_prompt_toolbar_status_during_interactive_turn
     runtime = _ProgressRuntime()
     status_line = TerminalStatusLine()
     turn_status_history: list[str] = []
+    activity_history: list[str] = []
     invalidations: list[str] = []
+    status_line.set_activity_callback(activity_history.append)
     original_set_state = status_line.set_state
 
     def _spy_set_state(**segments):
@@ -378,6 +380,7 @@ def test_progress_callback_updates_prompt_toolbar_status_during_interactive_turn
 
     assert any("Working" in label for label in turn_status_history)
     assert any("Loading session history" in label for label in turn_status_history)
+    assert "analyzing" in activity_history
     assert invalidations
     assert status_line.state == "idle"
     assert status_line.usage_summary == ""

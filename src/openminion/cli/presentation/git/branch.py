@@ -14,10 +14,7 @@ def detect_branch(working_dir: str | Path) -> str | None:
     raw = str(working_dir or "").strip()
     if not raw:
         return None
-    try:
-        path = Path(raw).expanduser()
-    except (TypeError, ValueError):
-        return None
+    path = Path(raw).expanduser()
     if not path.exists() or not path.is_dir():
         return None
     if shutil.which("git") is None:

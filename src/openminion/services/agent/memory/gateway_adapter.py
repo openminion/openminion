@@ -18,7 +18,11 @@ from openminion.modules.memory.errors import (
     MemoryQueryUnavailableError,
     StoreReadError,
 )
-from openminion.modules.memory.interfaces import ListQueryOptions, SearchQueryOptions
+from openminion.modules.memory.interfaces import (
+    CandidateListOptions,
+    ListQueryOptions,
+    SearchQueryOptions,
+)
 from openminion.modules.memory.models import MemoryPatchResult
 from openminion.modules.memory.diagnostics.operability import (
     configured_trace_file_path,
@@ -420,6 +424,23 @@ class MemoryServiceGatewayAdapter(
         except (RuntimeError, ValueError, TypeError, OSError) as exc:
             raise StoreReadError(f"memory search query failed: {exc}") from exc
 
+    def list_candidates(
+        self, *, session_id: str | None = None, limit: int | None = 50
+    ) -> list[Any]:
+        try:
+            return list(
+                self._service.candidate_list(
+                    CandidateListOptions(
+                        session_id=str(session_id or "").strip() or None,
+                        limit=limit,
+                    )
+                )
+            )
+        except MemctlError:
+            raise
+        except (RuntimeError, ValueError, TypeError, OSError) as exc:
+            raise StoreReadError(f"memory candidate list query failed: {exc}") from exc
+
     def derive_patch_id(
         self,
         *,
@@ -530,6 +551,12 @@ class DisabledMemoryGatewayAdapter:
 
     def search_records(self, options: SearchQueryOptions) -> list[Any]:
         del options
+        raise MemoryQueryUnavailableError("durable memory queries are disabled")
+
+    def list_candidates(
+        self, *, session_id: str | None = None, limit: int | None = 50
+    ) -> list[Any]:
+        del session_id, limit
         raise MemoryQueryUnavailableError("durable memory queries are disabled")
 
     def derive_patch_id(

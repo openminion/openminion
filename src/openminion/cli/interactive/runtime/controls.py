@@ -13,6 +13,12 @@ from openminion.base.config.runtime.profile import (
     next_permission_mode,
 )
 from openminion.cli.status import TokenUsageTotals
+from openminion.modules.memory.errors import MemctlError
+from openminion.modules.memory.interfaces import (
+    CandidateListOptions,
+    ListQueryOptions,
+    RecordOrder,
+)
 
 _PROVIDER_CONFIG_ALIASES = {
     "claude": "anthropic",
@@ -246,42 +252,63 @@ class RuntimeControlsMixin:
         return output[0][:80] if output else ""
 
     def list_memory_records(self) -> list[dict[str, Any]]:
-        provider = getattr(self, "_memory_provider", None)
+        provider = self._memory_query_provider()
         if provider is not None and callable(getattr(provider, "list_records", None)):
             try:
-                return list(provider.list_records(limit=50) or [])
-            except Exception:
+                options = ListQueryOptions(
+                    scopes=self._memory_report_scopes(),
+                    limit=200,
+                    order_by=RecordOrder.UPDATED_AT_DESC,
+                )
+                return list(provider.list_records(options) or [])
+            except (MemctlError, RuntimeError, ValueError, TypeError, OSError):
                 return []
         return []
 
     def list_memory_candidates(self) -> list[dict[str, Any]]:
-        provider = getattr(self, "_memory_provider", None)
-        if provider is not None and callable(
-            getattr(provider, "list_candidates", None)
-        ):
+        provider = self._memory_query_provider()
+        lister = getattr(provider, "list_candidates", None)
+        if provider is not None and callable(lister):
             try:
-                return list(provider.list_candidates() or [])
-            except Exception:
+                return list(lister(session_id=self.session_id, limit=50) or [])
+            except (MemctlError, RuntimeError, ValueError, TypeError, OSError):
+                return []
+        service = getattr(provider, "_service", None)
+        candidate_lister = getattr(service, "candidate_list", None)
+        if callable(candidate_lister):
+            try:
+                return list(
+                    candidate_lister(
+                        CandidateListOptions(session_id=self.session_id, limit=50)
+                    )
+                    or []
+                )
+            except (MemctlError, RuntimeError, ValueError, TypeError, OSError):
                 return []
         return []
 
     def memory_report(self) -> str:
-        promoted = self.list_memory_records()
+        from openminion.cli.presentation.visible_parity import format_memory_report
+
+        records = self.list_memory_records()
         candidates = self.list_memory_candidates()
-        if not promoted and not candidates:
-            return "(no memory)"
-        lines = [
-            "Memory:",
-            f"  promoted   {len(promoted)}",
-            f"  candidates {len(candidates)}",
-        ]
-        for row in promoted[:8]:
-            title = str(
-                row.get("title") or row.get("content_preview") or row.get("id") or ""
-            ).strip()
-            if title:
-                lines.append(f"  - {title[:96]}")
-        return "\n".join(lines)
+        return format_memory_report(records, candidates, session_id=self.session_id)
+
+    def _memory_query_provider(self) -> Any:
+        provider = getattr(self, "_memory_provider", None)
+        if provider is not None:
+            return provider
+        return getattr(self._rt, "memory_queries", None)
+
+    def _memory_report_scopes(self) -> list[str]:
+        scopes: list[str] = []
+        if self.is_bound and self.session_id:
+            scopes.append(f"session:{self.session_id}")
+        agent_id = str(getattr(self, "agent_id", "") or "").strip()
+        if agent_id:
+            scopes.append(f"agent:{agent_id}")
+        scopes.append("global:system")
+        return scopes
 
     def list_skill_rows(self) -> list[dict[str, Any]]:
         config = getattr(self._rt, "config", None)
@@ -318,28 +345,87 @@ class RuntimeControlsMixin:
     def undo_last_turn(self) -> dict[str, Any]:
         if not self.is_bound or not self.session_id:
             return {"ok": False, "message": "(no undoable action)"}
-        turns = list(self._rt.sessions.list_turns(self.session_id, limit=500) or [])
+        turns = self._undo_source_turns()
         if len(turns) <= 1:
             return {"ok": False, "message": "(no undoable action)"}
         cut = len(turns)
-        while cut > 0 and str(turns[cut - 1].get("role", "")).lower() != "user":
+        while cut > 0 and self._undo_role(turns[cut - 1]) != "user":
             cut -= 1
         if cut <= 0:
             return {"ok": False, "message": "(no undoable action)"}
         kept = turns[: cut - 1]
         old_session = self.session_id
         new_session = self.create_new_session()
-        for turn in kept:
-            role = str(turn.get("role", "") or "").strip().lower()
-            text = str(turn.get("content") or turn.get("text") or "")
-            if role in {"user", "assistant", "system", "tool"} and text:
-                self._rt.sessions.append_turn(new_session, role, text)
+        self._append_undo_records(new_session, kept)
         self.bind_session(new_session)
         return {
             "ok": True,
             "message": f"rewound latest turn into {new_session} (from {old_session})",
             "session_id": new_session,
         }
+
+    def _undo_source_turns(self) -> list[Any]:
+        legacy_lister = getattr(self._rt.sessions, "list_turns", None)
+        if callable(legacy_lister):
+            try:
+                return list(legacy_lister(self.session_id, limit=500) or [])
+            except TypeError:
+                return list(legacy_lister(self.session_id) or [])
+        message_lister = getattr(self._rt.sessions, "list_messages", None)
+        if not callable(message_lister):
+            return []
+        try:
+            return list(message_lister(session_id=self.session_id, limit=500) or [])
+        except TypeError:
+            return list(message_lister(self.session_id, limit=500) or [])
+
+    def _append_undo_records(self, session_id: str, records: list[Any]) -> None:
+        message_appender = getattr(self._rt.sessions, "append_message", None)
+        turn_appender = getattr(self._rt.sessions, "append_turn", None)
+        for record in records:
+            role = self._undo_role(record)
+            text = self._undo_text(record)
+            if role not in {"user", "assistant", "system", "tool"} or not text:
+                continue
+            if callable(message_appender):
+                message_appender(
+                    session_id=session_id,
+                    conversation_id=self._undo_attr(record, "conversation_id"),
+                    thread_id=self._undo_attr(record, "thread_id"),
+                    attach_id=self._undo_attr(record, "attach_id"),
+                    role=role,
+                    body=text,
+                    metadata=self._undo_metadata(record),
+                )
+            elif callable(turn_appender):
+                turn_appender(session_id, role, text)
+
+    def _undo_role(self, record: Any) -> str:
+        raw = self._undo_attr(record, "role").strip().lower()
+        if raw == "inbound":
+            return "user"
+        if raw in {"outbound", "agent"}:
+            return "assistant"
+        return raw
+
+    def _undo_text(self, record: Any) -> str:
+        return (
+            self._undo_attr(record, "content")
+            or self._undo_attr(record, "text")
+            or self._undo_attr(record, "body")
+        )
+
+    def _undo_metadata(self, record: Any) -> dict[str, Any]:
+        if isinstance(record, Mapping):
+            metadata = record.get("metadata") or record.get("meta") or {}
+        else:
+            metadata = getattr(record, "metadata", {}) or getattr(record, "meta", {})
+        return dict(metadata) if isinstance(metadata, Mapping) else {}
+
+    def _undo_attr(self, record: Any, name: str) -> str:
+        if isinstance(record, Mapping):
+            return str(record.get(name, "") or "")
+        return str(getattr(record, name, "") or "")
 
     def compact_history(self) -> dict[str, Any]:
         if not self.is_bound or not self.session_id:
@@ -390,8 +476,6 @@ class RuntimeControlsMixin:
         return model_name
 
     def _provider_model_identity(self) -> tuple[str, str]:
-        provider_name = ""
-        model_name = ""
         try:
             profile = self._rt.resolve_agent_profile(self.agent_id)
         except (AttributeError, TypeError, ValueError):
@@ -415,10 +499,8 @@ class RuntimeControlsMixin:
             model_name = self._model_override_model
 
         providers_cfg = getattr(getattr(self._rt, "config", None), "providers", None)
-        provider_key = _PROVIDER_CONFIG_ALIASES.get(
-            str(provider_name or "").strip().lower(),
-            str(provider_name or "").strip().lower(),
-        )
+        provider_key = provider_name.lower()
+        provider_key = _PROVIDER_CONFIG_ALIASES.get(provider_key, provider_key)
         provider_cfg = (
             getattr(providers_cfg, provider_key, None)
             if providers_cfg is not None and provider_key

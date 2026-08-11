@@ -94,8 +94,7 @@ class ThinkingIndicator(Widget):
             self.elapsed_text = ""
             self.view_model = None
 
-    def watch_status_label(self, label: str) -> None:
-        del label
+    def watch_status_label(self, _label: str) -> None:
         self._refresh_label()
 
     def watch_elapsed_text(self, _text: str) -> None:

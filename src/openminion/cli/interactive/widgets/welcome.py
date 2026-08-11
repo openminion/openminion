@@ -17,12 +17,7 @@ def build_welcome_message(
     agent_name = str(getattr(runtime, "agent_id", "") or "").strip() or "(unbound)"
     provider = str(getattr(runtime, "provider_name", "") or "").strip()
     model = str(getattr(runtime, "model_name", "") or "").strip()
-    if provider and model:
-        runtime_label = f"{provider}/{model}"
-    elif model:
-        runtime_label = model
-    else:
-        runtime_label = "(no model)"
+    runtime_label = f"{provider}/{model}" if provider and model else model or "(no model)"
     theme_label = str(theme_name or "").strip().lower() or "dark"
 
     lines = [

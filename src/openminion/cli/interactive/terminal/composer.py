@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 import logging
+import time
 from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import ANSI, FormattedText
+from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout.containers import Window
@@ -17,6 +18,11 @@ from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
+from openminion.cli.presentation.animation import default_animation_registry
+from openminion.cli.presentation.animation.models import (
+    AnimationResolution,
+    AnimationSpec,
+)
 from openminion.cli.ux.input_normalization import normalize_multiline_input_text
 
 
@@ -28,13 +34,36 @@ _PROMPT_BUSY = "❯ "
 _COMPLETION_MENU_ROWS = 10
 _PLACEHOLDER_IDLE = "Ask anything · @ to mention a file · / for commands"
 _PLACEHOLDER_BUSY = "Type to queue while the current turn runs · Esc interrupts"
+_SLASH_NAME_CHARS = tuple("abcdefghijklmnopqrstuvwxyz0123456789-_")
+_PHASE_ANIMATIONS = {
+    "clarifying": "focusbeam",
+    "analyzing": "braillewave",
+    "planning": "assemble",
+    "awaiting_plan_review": "slowbreath",
+    "awaiting_confirmation": "pulse",
+    "executing": "gearspin",
+    "replanning": "dna",
+    "reviewing": "orbitnodes",
+    "verifying": "scanline",
+    "evaluating_completion": "fillsweep",
+    "saving_context": "cascade",
+    "waiting_for_user": "breathe",
+    "blocked": "warningpulse",
+    "error": "warningpulse",
+    "working": "sparkle",
+}
 _FOCUS_PROMPT_STYLE = Style.from_dict(
     {
         "bottom-toolbar": "noreverse bg:#111827 #8b949e",
         "bottom-toolbar.text": "noreverse bg:#111827 #8b949e",
+        "busy-indicator": "#fbbf24",
         "placeholder": "italic #6b7280",
     }
 )
+
+
+def _completion_menu_is_open() -> bool:
+    return get_app().current_buffer.complete_state is not None
 
 
 def _call_safely(callback: object) -> None:
@@ -160,12 +189,15 @@ class TerminalComposer:
         *,
         slash_commands: Iterable[str] | Mapping[str, str] = (),
         bottom_toolbar: object = None,
+        active_status: Callable[[], str] | None = None,
         history_file: str | None = None,
         on_ctrl_l: object = None,
         on_ctrl_o: object = None,
         on_shift_tab: object = None,
         on_escape: Callable[[], None] | None = None,
         working_dir: str | None = None,
+        animation: AnimationResolution | None = None,
+        progress: str = "full",
     ) -> None:
         self._on_escape = on_escape
         try:
@@ -178,8 +210,21 @@ class TerminalComposer:
         self._is_resumed = False
         self._disabled = False
         self._busy = False
+        self._busy_started_at = 0.0
+        self._animation_registry = default_animation_registry()
+        if animation is None:
+            animation = self._animation_registry.resolve(
+                "openminion",
+                "braille",
+                source="default",
+            )
+        self._semantic_animation = animation.source == "default"
+        self._activity_animation = ""
+        self._set_animation(animation.spec)
+        self._progress = progress
         self._multiline = False
         self._bottom_toolbar = bottom_toolbar
+        self._active_status = active_status
         self._working_dir = working_dir
         kb = KeyBindings()
 
@@ -194,6 +239,9 @@ class TerminalComposer:
         @kb.add("/")
         def _(event):
             self._insert_slash(event)
+
+        for char in _SLASH_NAME_CHARS:
+            kb.add(char)(self._insert_slash_name_char)
 
         @kb.add("<bracketed-paste>")
         def _(event):
@@ -231,7 +279,7 @@ class TerminalComposer:
             history=history,
             key_bindings=kb,
             enable_history_search=True,
-            mouse_support=True,
+            mouse_support=Condition(_completion_menu_is_open),
             reserve_space_for_menu=_COMPLETION_MENU_ROWS,
             style=_FOCUS_PROMPT_STYLE,
         )
@@ -244,7 +292,35 @@ class TerminalComposer:
         self._disabled = bool(disabled)
 
     def set_busy(self, busy: bool) -> None:
-        self._busy = bool(busy)
+        is_busy = bool(busy)
+        if is_busy and not self._busy:
+            self._busy_started_at = time.monotonic()
+            self.set_activity("working")
+        self._busy = is_busy
+        self._session.app.erase_when_done = is_busy
+        self.invalidate()
+
+    def set_activity(self, status_key: str) -> None:
+        if not self._semantic_animation:
+            return
+        animation_name = _PHASE_ANIMATIONS.get(status_key, "sparkle")
+        if animation_name == self._activity_animation:
+            return
+        resolution = self._animation_registry.resolve(
+            "unicode",
+            animation_name,
+            source="phase",
+            discover=True,
+            allow_fallback=True,
+        )
+        self._activity_animation = animation_name
+        self._set_animation(resolution.spec)
+        self._busy_started_at = time.monotonic()
+        self.invalidate()
+
+    def _set_animation(self, animation: AnimationSpec) -> None:
+        self._animation_frames: tuple[str, ...] = animation.frames
+        self._animation_interval_ms: int = animation.interval_ms
 
     def focus_input(self) -> None:
         pass
@@ -271,6 +347,15 @@ class TerminalComposer:
     def _insert_slash(self, event) -> None:
         buffer = event.app.current_buffer
         buffer.insert_text("/")
+        self._refresh_slash_completion(buffer)
+
+    def _insert_slash_name_char(self, event) -> None:
+        buffer = event.app.current_buffer
+        buffer.insert_text(str(getattr(event, "data", "") or ""))
+        if buffer.document.text_before_cursor.startswith("/"):
+            self._refresh_slash_completion(buffer)
+
+    def _refresh_slash_completion(self, buffer) -> None:
         try:
             buffer.start_completion(select_first=False)
         except Exception:
@@ -306,17 +391,17 @@ class TerminalComposer:
         """Read one line from the user."""
         if self._disabled:
             raise RuntimeError("composer disabled — refuse to read input")
-        prompt = self._prompt_text()
         # Historical guard: patch_stdout(raw=True)
         with patch_stdout():
             try:
                 text = await self._session.prompt_async(
-                    FormattedText([("ansicyan", prompt)]),
+                    self._formatted_prompt,
                     completer=self._completer,
                     complete_while_typing=True,
                     multiline=Condition(lambda: self._multiline),
                     bottom_toolbar=self._formatted_bottom_toolbar,
                     placeholder=self._formatted_placeholder,
+                    refresh_interval=self._prompt_refresh_interval(),
                 )
             finally:
                 self._multiline = False
@@ -345,6 +430,38 @@ class TerminalComposer:
                 )
             ]
         )
+
+    def _formatted_prompt(self) -> FormattedText:
+        frame = self._busy_frame(time.monotonic())
+        status = (
+            self._active_status()
+            if self._busy
+            and self._progress != "off"
+            and self._active_status is not None
+            else ""
+        )
+        prompt = list(to_formatted_text(ANSI(status))) if status else []
+        if frame:
+            prompt.append(("class:busy-indicator", f" {frame}"))
+        if status or frame:
+            prompt.append(("", "\n\n"))
+        prompt.append(("ansicyan", self._prompt_text()))
+        return FormattedText(prompt)
+
+    def _busy_frame(self, now: float) -> str:
+        if not self._busy or self._progress == "off":
+            return ""
+        if self._progress == "minimal":
+            return "•"
+        elapsed_ms = (now - self._busy_started_at) * 1_000
+        frame_count = len(self._animation_frames)
+        frame_index = int(elapsed_ms / self._animation_interval_ms) % frame_count
+        return self._animation_frames[frame_index]
+
+    def _prompt_refresh_interval(self) -> float | None:
+        if self._busy and self._progress == "full":
+            return self._animation_interval_ms / 1_000
+        return None
 
     def _prompt_text(self) -> str:
         if self._disabled:

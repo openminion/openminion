@@ -152,6 +152,9 @@ class TerminalTranscript:
             self._maybe_print_hidden_tool_summary()
             self._maybe_print_collapsed_tool_summary()
 
+    def render_user_input(self, body: str) -> None:
+        self._write_render(lambda: self._console.print(render_user_text(body)))
+
     def _maybe_print_hidden_tool_summary(self) -> None:
         if self._hidden_tool_count <= 0:
             return
@@ -181,8 +184,6 @@ class TerminalTranscript:
         self._collapsed_tool_results.clear()
 
     def _format_collapsed_tool_examples(self) -> str:
-        if not self._collapsed_tool_results:
-            return ""
         parts: list[str] = []
         for label, count in self._collapsed_tool_results.most_common(3):
             parts.append(f"{label} ×{count}")
@@ -474,13 +475,9 @@ class TerminalTranscript:
     def push_activity_event(self, event: Any) -> None:
         from openminion.cli.status.activity_ledger import (
             KIND_APPROVAL,
-            KIND_BACKGROUND,
             KIND_BUDGET,
             KIND_ERROR,
-            KIND_PLAN,
             KIND_SEARCH,
-            KIND_STATUS,
-            KIND_SUMMARY,
             KIND_TOOL,
             STATE_COMPLETED,
             STATE_DENIED,
@@ -507,8 +504,6 @@ class TerminalTranscript:
                 style = token_rich_style(StyleToken.WARNING)
         elif kind == KIND_BUDGET:
             style = token_rich_style(StyleToken.MUTED)
-        elif kind in {KIND_PLAN, KIND_BACKGROUND, KIND_STATUS, KIND_SUMMARY}:
-            style = token_rich_style(StyleToken.SYSTEM)
         else:
             style = token_rich_style(StyleToken.SYSTEM)
         renderable = Text(line, style=style or "")
@@ -584,11 +579,9 @@ def _tool_arg_preview(args: dict[str, Any]) -> str:
     for key in ("cmd", "command", "path", "file", "query", "pattern", "url"):
         if key in args:
             return _short_preview(args[key])
-    try:
-        _key, value = next(iter(args.items()))
-    except StopIteration:
+    if not args:
         return ""
-    return _short_preview(value)
+    return _short_preview(next(iter(args.values())))
 
 
 def _short_preview(value: Any, *, limit: int = 48) -> str:

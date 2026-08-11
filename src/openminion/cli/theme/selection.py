@@ -23,24 +23,21 @@ _THEME_DIR_NAME = "cli"
 
 
 def available_theme_names() -> list[str]:
-    return sorted(SHIPPED_THEMES.keys())
+    return sorted(SHIPPED_THEMES)
 
 
 def lookup_theme(name: str | None) -> Theme | None:
     if not name:
         return None
-    key = name.strip().lower()
-    return SHIPPED_THEMES.get(key)
+    return SHIPPED_THEMES.get(name.strip().lower())
 
 
 def persisted_theme_path(data_root: Path) -> Path:
-    return Path(data_root) / _THEME_DIR_NAME / PERSISTED_THEME_FILENAME
+    return data_root / _THEME_DIR_NAME / PERSISTED_THEME_FILENAME
 
 
 def read_persisted_theme(data_root: Path) -> str | None:
     path = persisted_theme_path(data_root)
-    if not path.exists():
-        return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -71,9 +68,8 @@ def resolve_theme(
     data_root: Path | None = None,
     env_value: str | None = None,
 ) -> Theme:
-    resolved_env_value = env_value
-    if resolved_env_value is None:
-        resolved_env_value = (
+    if env_value is None:
+        env_value = (
             resolve_environment_config()
             .get(OPENMINION_THEME_VARIANT_ENV, "")
             .strip()
@@ -83,7 +79,7 @@ def resolve_theme(
     candidates: list[str | None] = [
         cli_flag,
         session_override,
-        resolved_env_value,
+        env_value,
     ]
     if data_root is not None:
         candidates.append(read_persisted_theme(data_root))

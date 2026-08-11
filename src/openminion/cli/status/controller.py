@@ -97,11 +97,10 @@ class PhaseStatusController:
     def refresh_view_with_live_elapsed(
         self, view: PhaseStatusViewModel
     ) -> PhaseStatusViewModel:
-        """Return a copy of ``view`` with `elapsed_text` set from the"""
+        """Return a copy of ``view`` with the current elapsed text."""
         elapsed = self.snapshot_elapsed_text()
         if elapsed is None:
             return view
-        # Frozen dataclass — rebuild via field copy.
         from dataclasses import replace
 
         return replace(view, elapsed_text=elapsed)
@@ -123,7 +122,6 @@ class PhaseStatusController:
             "error",
         }
         show_spinner = not terminal or status_key in _SHOW_SPINNER_TERMINAL_KEYS
-        # Elapsed is a live render concern (spinner ticks update it between
         return PhaseStatusViewModel(
             status_key=status_key,
             primary_text=primary,

@@ -35,8 +35,7 @@ def render_body(text: str, *, markdown_allowed: bool = True) -> object:
 
 
 def render_user_text(text: str) -> Text:
-    body = Text()
-    body.append("> ", style=_USER_PREFIX_STYLE)
+    body = Text("> ", style=_USER_PREFIX_STYLE)
     body.append(str(text or ""))
     return body
 

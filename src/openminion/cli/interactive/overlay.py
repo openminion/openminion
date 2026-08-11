@@ -3,8 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from textual import events
-from textual.css.query import QueryError
-
 from .tokens import active_at_token
 
 
@@ -59,10 +57,7 @@ class FocusOverlayInteractionMixin:
         else:
             return False
         event.stop()
-        try:
-            event.prevent_default()
-        except (QueryError, AttributeError):
-            pass
+        event.prevent_default()
         return True
 
     def on_key(self, event: events.Key) -> None:

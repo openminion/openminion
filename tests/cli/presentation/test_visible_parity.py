@@ -64,9 +64,51 @@ def test_render_context_report_includes_grid_and_inventory() -> None:
 def test_render_memory_report_uses_runtime_rows() -> None:
     body = render_memory_report(_Runtime())
 
-    assert "promoted   1" in body
-    assert "candidates 1" in body
+    assert "records     1" in body
+    assert "candidates  1" in body
     assert "Project preference" in body
+
+
+def test_render_memory_report_structures_current_session_summary() -> None:
+    runtime = _Runtime()
+    runtime.session_id = "session-1"
+    runtime.list_memory_records = lambda: [
+        {
+            "type": "session_summary",
+            "key": "session_summary:session-1",
+            "title": "- user: first question",
+            "content": {
+                "summary_text": (
+                    "- user: first question\n"
+                    "- assistant: first answer\n"
+                    "- user: second question"
+                )
+            },
+            "scope": "agent:agent-1",
+            "updated_at": "2026-08-11T08:47:22+00:00",
+        },
+        {
+            "type": "session_summary",
+            "key": "session_summary:older",
+            "title": "- user: hi",
+            "scope": "agent:agent-1",
+        },
+        {
+            "type": "user_preference",
+            "title": "Concise answers",
+            "scope": "agent:agent-1",
+        },
+    ]
+
+    body = render_memory_report(runtime)
+
+    assert "Current session summary:" in body
+    assert "- first question" in body
+    assert "- second question" in body
+    assert "Previous session summaries: 1" in body
+    assert "Recent records:" in body
+    assert "user preference · agent" in body
+    assert "assistant: first answer" not in body
 
 
 def test_render_skills_report_uses_runtime_rows() -> None:

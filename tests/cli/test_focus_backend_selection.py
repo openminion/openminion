@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from openminion.cli.commands.interactive import _resolve_interactive_backend
+from openminion.cli.presentation.animation import AnimationResolution, AnimationSpec
 
 
 def _args(**overrides) -> SimpleNamespace:
@@ -137,6 +138,50 @@ def test_terminal_focus_starts_fresh_unless_session_is_requested(monkeypatch) ->
             "session_id": "focus-existing",
         },
     ]
+
+
+def test_terminal_focus_receives_selected_activity_animation(monkeypatch) -> None:
+    from openminion.cli.commands import interactive as interactive_cmd
+
+    animation = AnimationSpec("unicode", "helix", ("◐", "◓"), 100)
+    resolution = AnimationResolution(animation, source="cli")
+    launch_kwargs: list[dict[str, object]] = []
+
+    class _Runtime:
+        def __init__(self, _runtime, **_kwargs) -> None:
+            return None
+
+        def create_new_session(self) -> str:
+            return "focus-new"
+
+    monkeypatch.setattr(
+        "openminion.cli.interactive.runtime.OpenMinionRuntime", _Runtime
+    )
+    monkeypatch.setattr(
+        "openminion.cli.presentation.animation.resolve_focus_animation",
+        lambda _args: resolution,
+    )
+    monkeypatch.setattr(
+        "openminion.cli.interactive.terminal.run_terminal_focus",
+        lambda *_args, **kwargs: launch_kwargs.append(kwargs) or 0,
+    )
+
+    interactive_cmd._launch_terminal_focus(
+        SimpleNamespace(
+            agent=None,
+            session=None,
+            no_context=True,
+            plain_spinner=False,
+            progress="full",
+            verbosity="normal",
+            no_update_check=True,
+        ),
+        object(),
+        working_dir="/tmp/project",
+    )
+
+    assert launch_kwargs[0]["animation"] is resolution
+    assert launch_kwargs[0]["progress"] == "full"
 
 
 def test_rich_without_tty_emits_helpful_error(monkeypatch, capsys) -> None:

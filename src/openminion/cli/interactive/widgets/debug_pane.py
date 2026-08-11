@@ -19,10 +19,7 @@ class FocusDebugPane(Widget):
         yield Static("", id="focus-debug-content")
 
     def toggle(self) -> None:
-        if self.has_class("--hidden"):
-            self.remove_class("--hidden")
-        else:
-            self.add_class("--hidden")
+        self.toggle_class("--hidden")
 
     def set_payload(self, payload: dict[str, Any]) -> None:
         self._payload = dict(payload or {})

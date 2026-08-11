@@ -194,6 +194,47 @@ SLASH_COMMANDS: tuple[SlashCommandMetadata, ...] = (
     ),
 )
 
+_BUSY_SAFE_SLASH_COMMANDS = frozenset(
+    {
+        "/",
+        "/context",
+        "/cost",
+        "/details",
+        "/editor",
+        "/export",
+        "/help",
+        "/mcp",
+        "/memory",
+        "/normal",
+        "/quiet",
+        "/skills",
+        "/status",
+        "/tasks",
+        "/verbose",
+    }
+)
+_BUSY_SAFE_BARE_SLASH_COMMANDS = frozenset(
+    {
+        "/agents",
+        "/browser",
+        "/effort",
+        "/model",
+        "/permissions",
+        "/statusline",
+        "/tools",
+    }
+)
+
+
+def slash_command_runs_while_busy(text: str) -> bool:
+    parts = str(text or "").strip().split(maxsplit=1)
+    if not parts:
+        return False
+    command = parts[0]
+    return command in _BUSY_SAFE_SLASH_COMMANDS or (
+        command in _BUSY_SAFE_BARE_SLASH_COMMANDS and len(parts) == 1
+    )
+
 
 def terminal_slash_commands() -> tuple[str, ...]:
     names: list[str] = []
@@ -208,12 +249,11 @@ def terminal_slash_commands() -> tuple[str, ...]:
 
 
 def rich_slash_command_registry() -> list[tuple[tuple[str, ...], str, str]]:
-    rows: list[tuple[tuple[str, ...], str, str]] = []
-    for command in SLASH_COMMANDS:
-        if command.rich_handler is None:
-            continue
-        rows.append((command.names, command.description, command.rich_handler))
-    return rows
+    return [
+        (command.names, command.description, command.rich_handler)
+        for command in SLASH_COMMANDS
+        if command.rich_handler is not None
+    ]
 
 
 def slash_help_rows(*, terminal_only: bool = False) -> tuple[tuple[str, str], ...]:
@@ -231,6 +271,7 @@ __all__ = [
     "SLASH_COMMANDS",
     "SlashCommandMetadata",
     "rich_slash_command_registry",
+    "slash_command_runs_while_busy",
     "slash_help_rows",
     "terminal_slash_commands",
 ]

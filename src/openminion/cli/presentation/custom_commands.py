@@ -74,10 +74,7 @@ def render_command(
         key = match.group(1)
         if key == "ARGUMENTS":
             return arg_string
-        try:
-            idx = int(key) - 1
-        except ValueError:
-            return match.group(0)
+        idx = int(key) - 1
         if 0 <= idx < len(args):
             return args[idx]
         return ""

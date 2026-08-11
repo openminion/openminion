@@ -4,13 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from openminion.modules.runtime.project_instructions import (
-    PROJECT_INSTRUCTION_FILENAMES,
     PROJECT_INSTRUCTION_MAX_BYTES,
     ProjectInstructionTarget,
     resolve_project_instruction_target,
 )
 
-_PROJECT_CONTEXT_FILENAMES = PROJECT_INSTRUCTION_FILENAMES
 _PROJECT_CONTEXT_MAX_BYTES = PROJECT_INSTRUCTION_MAX_BYTES
 
 
@@ -43,11 +41,8 @@ def resolve_project_context(
 
 
 def find_project_context_target_root(working_dir: str | Path | None) -> Path:
-    info = resolve_project_context(working_dir)
-    if info is not None:
-        return info.path.parent
     target = resolve_project_instruction_target(working_dir)
-    return target.project_root
+    return target.path.parent if target.exists else target.project_root
 
 
 def build_project_context_metadata(
@@ -111,28 +106,6 @@ def write_init_template(
         encoding="utf-8",
     )
     return target_path
-
-
-def _read_project_context(path: Path, *, max_bytes: int) -> ProjectContextInfo:
-    raw = path.read_text(encoding="utf-8", errors="replace")
-    size_bytes = len(raw.encode("utf-8"))
-    content = raw
-    truncated = False
-    if size_bytes > max_bytes:
-        head_budget = max_bytes // 2
-        tail_budget = max_bytes - head_budget
-        encoded = raw.encode("utf-8", errors="replace")
-        head = encoded[:head_budget].decode("utf-8", errors="ignore").rstrip()
-        tail = encoded[-tail_budget:].decode("utf-8", errors="ignore").lstrip()
-        content = f"{head}\n\n[... project context truncated ...]\n\n{tail}".strip()
-        truncated = True
-    return ProjectContextInfo(
-        path=path,
-        source_name=path.name,
-        size_bytes=size_bytes,
-        content=content,
-        truncated=truncated,
-    )
 
 
 def _context_info_from_target(target: ProjectInstructionTarget) -> ProjectContextInfo:

@@ -27,10 +27,7 @@ def active_at_token(text: str, cursor: int) -> AtToken | None:
     while start > 0 and not text[start - 1].isspace():
         start -= 1
 
-    if start >= cursor_clamped:
-        return None
-
-    if text[start] != "@":
+    if start >= cursor_clamped or text[start] != "@":
         return None
 
     return AtToken(
@@ -46,9 +43,7 @@ def cursor_offset_for_text_area(text: str, line: int, col: int) -> int:
         return 0
     lines = text.split("\n")
     line_clamped = max(0, min(line, len(lines) - 1))
-    offset = 0
-    for i in range(line_clamped):
-        offset += len(lines[i]) + 1
+    offset = sum(len(value) + 1 for value in lines[:line_clamped])
     col_clamped = max(0, min(col, len(lines[line_clamped])))
     return offset + col_clamped
 

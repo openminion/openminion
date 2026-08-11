@@ -19,6 +19,8 @@ except ImportError:  # pragma: no cover - POSIX-only terminal interrupt support.
 from rich.console import Console
 from rich.text import Text
 from openminion.base.config.env import resolve_environment_config
+from openminion.cli.presentation.animation import AnimationResolution
+from openminion.cli.presentation.clipboard import copy_to_clipboard as _copy_to_clipboard
 from openminion.cli.presentation.models import ChatMessage, MessageKind
 from openminion.cli.presentation.queue import (
     is_queue_command,
@@ -42,8 +44,15 @@ from .startup import (
     cancel_startup_notice as _cancel_startup_notice,
     schedule_startup_notice as _schedule_startup_notice,
 )
+from .session_paths import (
+    discover_custom_commands_for as _discover_custom_commands_for,
+    focus_history_path as _focus_history_path,
+)
+from .slash_output import (
+    PROMPT_SAFE_OUTPUT_SLASHES,
+    handle_prompt_safe_output_slash,
+)
 from .actions import (
-    _copy_to_clipboard,
     _handle_slash,
     _push_greeter,
     _run_shell_escape,
@@ -61,17 +70,12 @@ from .renderers import (
 )
 from openminion.cli.presentation.styles import StyleToken
 from openminion.cli.presentation.markers import token_rich_style
-from openminion.cli.presentation.slash_commands import slash_help_rows
+from openminion.cli.presentation.slash_commands import (
+    slash_command_runs_while_busy,
+    slash_help_rows,
+)
 from openminion.cli.presentation.visible_parity import statusline_label
 
-__all__ = [
-    "_render_cost_snapshot",
-    "_render_mcp_status",
-    "_render_model_status",
-    "_render_sessions_list",
-    "_render_status_block",
-    "_render_tools_list",
-]
 _LOGGER = logging.getLogger(__name__)
 _ERR_STYLE = token_rich_style(StyleToken.ERROR)
 _INFO_STYLE = token_rich_style(StyleToken.INFO)
@@ -98,39 +102,6 @@ async def _confirm_terminal_exit(
     if not should_exit:
         console.print(Text("(exit cancelled)", style=_MUTED_ITALIC_STYLE))
     return should_exit
-
-
-def _discover_custom_commands_for(*, runtime: Any, working_dir: str) -> dict[str, Any]:
-    """Scan project and user-global dirs for custom slash commands."""
-    from openminion.cli.presentation.custom_commands import (
-        discover_custom_commands,
-    )
-
-    project_dir = (
-        Path(working_dir) / ".openminion" / "commands" if working_dir else None
-    )
-    user_dir: Path | None = None
-    data_root = getattr(getattr(runtime, "api_runtime", runtime), "data_root", None)
-    if data_root is not None:
-        try:
-            user_dir = Path(str(data_root)) / "commands"
-        except (OSError, RuntimeError, TypeError, ValueError):
-            user_dir = None
-    try:
-        return discover_custom_commands(project_dir=project_dir, user_dir=user_dir)
-    except (OSError, RuntimeError, ValueError):
-        return {}
-
-
-def _focus_history_path(runtime: Any) -> str | None:
-    api_runtime = getattr(runtime, "api_runtime", None)
-    data_root = getattr(api_runtime, "data_root", None)
-    raw = str(data_root or "").strip()
-    if not raw:
-        return None
-    history_dir = Path(raw).expanduser().resolve(strict=False) / "cli"
-    history_dir.mkdir(parents=True, exist_ok=True)
-    return str(history_dir / "terminal_history")
 
 
 def _show_response_time_enabled(env: Any | None = None) -> bool:
@@ -204,9 +175,10 @@ def run_terminal_focus(
     session: str | None = None,
     plain_spinner: bool = False,
     verbosity: str = "normal",
+    progress: str = "full",
+    animation: AnimationResolution | None = None,
     startup_notice: Callable[[], str] | None = None,
 ) -> int:
-    """Synchronous entry point. Wraps the async loop."""
     try:
         return run_async_compat(
             _run_terminal_focus_async(
@@ -216,6 +188,8 @@ def run_terminal_focus(
                 session=session,
                 plain_spinner=plain_spinner,
                 verbosity=verbosity,
+                progress=progress,
+                animation=animation,
                 startup_notice=startup_notice,
             )
         )
@@ -272,6 +246,18 @@ async def _handle_slash_input(
     slash_arg = parts[1] if len(parts) > 1 else ""
 
     if cmd_name in _SLASH_COMMANDS:
+        if cmd_name in PROMPT_SAFE_OUTPUT_SLASHES:
+            return await handle_prompt_safe_output_slash(
+                text,
+                slash_handler=_handle_slash,
+                runtime=runtime,
+                console=console,
+                transcript=transcript,
+                overlay=overlay,
+                status_line=status_line,
+                working_dir=working_dir,
+                approval_callback=approval_callback,
+            )
         return await _handle_slash(
             text,
             runtime=runtime,
@@ -473,12 +459,25 @@ class _TerminalFocusLoop:
             <= _PROMPT_REPLAY_DEDUP_WINDOW_SECONDS
         ):
             return
+        self.transcript.render_user_input(text)
         if text in ("/exit", "/quit"):
             self.exit_after_turn = True
             self._push_system_message("Exit requested after the current turn finishes.")
             return
         if is_queue_command(text):
             await self.handle_queue_command(text)
+            return
+        if text.startswith("/") and slash_command_runs_while_busy(text):
+            await _handle_slash_input(
+                text,
+                runtime=self.runtime,
+                console=self.console,
+                transcript=self.transcript,
+                overlay=self.overlay,
+                status_line=self.status_line,
+                working_dir=self.working_dir,
+                custom_commands=self.custom_commands,
+            )
             return
         if text.startswith("/") or text.startswith("!"):
             self._push_system_message(
@@ -529,12 +528,7 @@ class _TerminalFocusLoop:
         if self.exit_after_turn:
             self.console.print(Text("(exit)", style=_MUTED_STYLE))
             return 0
-        if run_next and self.pending_turns:
-            next_text = self.pending_turns.popleft()
-            self._push_system_message(queue_run_next_notice(next_text))
-            self.refresh_status_line()
-            await self.start_turn(next_text)
-        elif self.pending_turns and not self.queue_auto_drain_paused:
+        if self.pending_turns and (run_next or not self.queue_auto_drain_paused):
             next_text = self.pending_turns.popleft()
             self._push_system_message(queue_run_next_notice(next_text))
             self.refresh_status_line()
@@ -666,6 +660,8 @@ async def _run_terminal_focus_async(
     session: str | None,
     plain_spinner: bool = False,
     verbosity: str = "normal",
+    progress: str = "full",
+    animation: AnimationResolution | None = None,
     startup_notice: Callable[[], str] | None = None,
 ) -> int:
     console = Console()
@@ -708,15 +704,19 @@ async def _run_terminal_focus_async(
     composer = TerminalComposer(
         slash_commands=catalog,
         bottom_toolbar=status_line.bottom_toolbar,
+        active_status=status_line.active_status,
         history_file=_focus_history_path(runtime),
         on_ctrl_l=handle_ctrl_l,
         on_ctrl_o=handle_ctrl_o,
         on_shift_tab=handle_shift_tab,
         on_escape=lambda: None,
         working_dir=working_dir,
+        animation=animation,
+        progress=progress,
     )
     if callable(invalidate := getattr(composer, "invalidate", None)):
         status_line.set_refresh_callback(invalidate)
+        status_line.set_activity_callback(composer.set_activity)
     transcript.set_terminal_writer(
         build_prompt_safe_terminal_writer(
             console=console,
@@ -822,14 +822,13 @@ def _build_turn_progress_callback(
     status_line: TerminalStatusLine | None = None,
     invalidate_prompt: Callable[[], None] | None = None,
 ):
-    """Build the progress callback passed to ``runtime.send_message``."""
-
-    def _set_turn_status(label: str) -> None:
+    def _set_turn_status(label: str, status_key: str = "working") -> None:
         _progress.apply_turn_progress_status(
             handle=handle,
             status_line=status_line,
             invalidate_prompt=invalidate_prompt,
             label=label,
+            status_key=status_key,
         )
 
     def _handle_progress(payload: dict[str, Any]) -> None:
@@ -837,12 +836,12 @@ def _build_turn_progress_callback(
         if kind == "tool_started":
             transcript.handle_tool_started(payload)
             label = _progress.tool_progress_status_label(payload, verb="Running")
-            _set_turn_status(label)
+            _set_turn_status(label, "executing")
             return
         if kind == "tool_completed":
             transcript.handle_tool_completed(payload)
             label = _progress.tool_progress_status_label(payload, verb="Ran")
-            _set_turn_status(label)
+            _set_turn_status(label, "reviewing")
             return
         if payload and _route_durable_activity_event(transcript, payload):
             return
@@ -854,14 +853,12 @@ def _build_turn_progress_callback(
             if view is None:
                 return
             label = str(getattr(view, "primary_text", "") or "")
-            _set_turn_status(label)
+            _set_turn_status(label, view.status_key)
 
     return _handle_progress
 
 
 def _finalize_turn_status_line(runtime: Any, status_line: TerminalStatusLine) -> None:
-    """Clear transient turn progress without mutating the persistent footer row."""
-
     status_line.set_state(
         state="idle",
         permission_mode=_runtime_permission_mode(runtime),

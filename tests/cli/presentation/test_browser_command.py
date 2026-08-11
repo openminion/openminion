@@ -28,7 +28,7 @@ def test_render_browser_status_uses_provider_and_sidecar_status(monkeypatch) -> 
     monkeypatch.setattr(
         browser_ui,
         "default_sidecar_manager",
-        lambda: SimpleNamespace(status=lambda _name: {"ready": True}),
+        lambda **_kwargs: SimpleNamespace(status=lambda _name: {"ready": True}),
     )
 
     body = browser_ui.render_browser_command("status")
@@ -60,7 +60,7 @@ def test_browser_stop_reuses_sidecar_manager(monkeypatch) -> None:
     monkeypatch.setattr(
         browser_ui,
         "default_sidecar_manager",
-        lambda: SimpleNamespace(
+        lambda **_kwargs: SimpleNamespace(
             stop=lambda *, name, kill: (
                 stop_calls.append((name, kill)) or {"stopped": True}
             )

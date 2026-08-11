@@ -1,29 +1,28 @@
 from __future__ import annotations
 
-
 def copy_to_clipboard(text: str) -> bool:
-    import platform
-    import shutil
     import subprocess
 
-    system = platform.system()
-    try:
-        if system == "Darwin" and shutil.which("pbcopy"):
-            subprocess.run(["pbcopy"], input=text.encode(), check=True, timeout=2)
+    payload = text.encode("utf-8", errors="replace")
+    for command in (
+        ("pbcopy",),
+        ("wl-copy",),
+        ("xclip", "-selection", "clipboard"),
+        ("xsel", "--clipboard", "--input"),
+        ("clip.exe",),
+    ):
+        try:
+            completed = subprocess.run(
+                command,
+                input=payload,
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+        except Exception:
+            continue
+        if completed.returncode == 0:
             return True
-        if system == "Linux":
-            for command in (
-                ("xclip", "-selection", "clipboard"),
-                ("xsel", "--clipboard", "--input"),
-            ):
-                if shutil.which(command[0]):
-                    subprocess.run(command, input=text.encode(), check=True, timeout=2)
-                    return True
-        if system == "Windows" and shutil.which("clip"):
-            subprocess.run(["clip"], input=text.encode(), check=True, timeout=2)
-            return True
-    except (OSError, subprocess.SubprocessError):
-        pass
     return False
 
 

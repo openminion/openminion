@@ -151,13 +151,12 @@ class RuntimeMessageMixin:
             or ""
         ).strip()
         if direct_name:
+            content = self._tool_result(metadata) or ""
             return ToolEvent(
                 tool_name=direct_name,
                 args=self._tool_args_from_payload(metadata),
-                content=self._tool_result(metadata) or "",
-                content_type=self._infer_content_type(
-                    self._tool_result(metadata) or ""
-                ),
+                content=content,
+                content_type=self._infer_content_type(content),
                 call_id=str(
                     metadata.get("call_id") or metadata.get("id") or ""
                 ).strip(),
@@ -254,11 +253,7 @@ class RuntimeMessageMixin:
             decoded = [decoded]
         if not isinstance(decoded, list):
             return []
-        results: list[dict[str, Any]] = []
-        for item in decoded:
-            if isinstance(item, Mapping):
-                results.append(dict(item))
-        return results
+        return [dict(item) for item in decoded if isinstance(item, Mapping)]
 
     def _display_path(self, value: str) -> str:
         raw = str(value or "").strip()

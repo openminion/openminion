@@ -181,30 +181,24 @@ def build_token_usage_snapshot(
     turn_elapsed_seconds: float | None,
     updated_at_monotonic: float | None,
 ) -> TokenUsageSnapshot:
+    turn = turn or TokenUsageTotals()
+    session = session or TokenUsageTotals()
     return TokenUsageSnapshot(
-        turn_prompt_tokens=getattr(turn, "prompt_tokens", None),
-        turn_completion_tokens=getattr(turn, "completion_tokens", None),
-        turn_total_tokens=getattr(turn, "total_tokens", None),
-        session_prompt_tokens=getattr(session, "prompt_tokens", None),
-        session_completion_tokens=getattr(session, "completion_tokens", None),
-        session_total_tokens=getattr(session, "total_tokens", None),
+        turn_prompt_tokens=turn.prompt_tokens,
+        turn_completion_tokens=turn.completion_tokens,
+        turn_total_tokens=turn.total_tokens,
+        session_prompt_tokens=session.prompt_tokens,
+        session_completion_tokens=session.completion_tokens,
+        session_total_tokens=session.total_tokens,
         context_used_tokens=context_used_tokens,
         context_limit_tokens=context_limit_tokens,
-        has_live_deltas=bool(has_live_deltas),
+        has_live_deltas=has_live_deltas,
         turn_elapsed_seconds=turn_elapsed_seconds,
         updated_at_monotonic=updated_at_monotonic,
-        turn_cached_tokens=getattr(turn, "cached_tokens", None),
-        session_cached_tokens=getattr(session, "cached_tokens", None),
-        turn_max_single_call_prompt_tokens=getattr(
-            turn,
-            "max_single_call_prompt_tokens",
-            None,
-        ),
-        turn_max_single_call_total_tokens=getattr(
-            turn,
-            "max_single_call_total_tokens",
-            None,
-        ),
+        turn_cached_tokens=turn.cached_tokens,
+        session_cached_tokens=session.cached_tokens,
+        turn_max_single_call_prompt_tokens=turn.max_single_call_prompt_tokens,
+        turn_max_single_call_total_tokens=turn.max_single_call_total_tokens,
     )
 
 
@@ -329,8 +323,7 @@ def format_context_window(snapshot: TokenUsageSnapshot | None) -> str:
 def _displayable_usage_value(value: int | None) -> int | None:
     if value is None:
         return None
-    normalized = max(0, int(value))
-    return None if normalized == 0 else normalized
+    return max(0, int(value)) or None
 
 
 def _has_meaningful_usage_facts(snapshot: TokenUsageSnapshot) -> bool:

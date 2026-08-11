@@ -61,18 +61,12 @@ class SlashCommandMixin:
         cmd = parts[0]
         args = parts[1] if len(parts) > 1 else ""
         for aliases, _description, handler_name in self._slash_command_registry:
-            if cmd in aliases or normalized in aliases:
+            if cmd in aliases:
                 handler = getattr(self, handler_name, None)
                 if callable(handler):
                     handler(args)
                 return
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=f"Unknown command: {normalized}",
-            )
-        )
+        self._push_system_body(f"Unknown command: {normalized}")
 
     def _slash_new(self, _args: str) -> None:
         self.action_new_session()
@@ -85,15 +79,11 @@ class SlashCommandMixin:
 
     def _slash_tools(self, args: str) -> None:
         text = "/tools" if not str(args or "").strip() else f"/tools {args.strip()}"
-        body = self._tools_command_body(text)
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
-        )
+        self._push_system_body(self._tools_command_body(text))
 
     def _slash_browser(self, args: str) -> None:
-        body = render_browser_command(args, working_dir=str(self._working_dir))
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
+        self._push_system_body(
+            render_browser_command(args, working_dir=str(self._working_dir))
         )
 
     def _tools_command_body(self, text: str) -> str:
@@ -172,9 +162,7 @@ class SlashCommandMixin:
                 body = str(body_getter() or "").strip() or "No MCP data available."
             except Exception as exc:
                 body = f"MCP status failed: {exc}"
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
-        )
+        self._push_system_body(body)
 
     def _slash_context_review(self, args: str) -> None:
         options = self._parse_context_review_args(args)
@@ -194,10 +182,7 @@ class SlashCommandMixin:
             calibration_path=options["calibration"],
             artifacts_dir=options["artifacts_dir"],
         )
-        body = render_memory_context_review(review)
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
-        )
+        self._push_system_body(render_memory_context_review(review))
 
     def _slash_sessions(self, _args: str) -> None:
         self.action_show_sessions()
@@ -228,7 +213,6 @@ class SlashCommandMixin:
     def _slash_theme(self, args: str) -> None:
         from openminion.cli.presentation.theme import handle_theme
 
-        chat = self.query_one(FocusTranscript)
         line = "/theme" if not str(args or "").strip() else f"/theme {args.strip()}"
         body = self._capture_cli_chat_ui_text(
             handle_theme,
@@ -237,13 +221,7 @@ class SlashCommandMixin:
             theme_applier=self.app.apply_theme,
             active_theme_name_getter=lambda: self.app.active_theme.name,
         )
-        chat.push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=body or "Theme information unavailable.",
-            )
-        )
+        self._push_system_body(body or "Theme information unavailable.")
 
     def _slash_animation(self, args: str) -> None:
         parts = str(args or "").strip().split()
@@ -391,13 +369,7 @@ class SlashCommandMixin:
         except (QueryError, AttributeError):
             pass
         try:
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=f"verbosity → {level}",
-                )
-            )
+            self._push_system_body(f"verbosity → {level}")
         except (QueryError, AttributeError):
             pass
 
@@ -540,9 +512,7 @@ class SlashCommandMixin:
 
     def _push_permissions_message(self, body: str) -> None:
         try:
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
-            )
+            self._push_system_body(body)
         except (QueryError, AttributeError):
             pass
 
@@ -551,26 +521,20 @@ class SlashCommandMixin:
 
         from openminion.cli.presentation.git.diff import render_git_diff
 
-        chat = self.query_one(FocusTranscript)
         try:
             result = render_git_diff(self._working_dir, args)
         except ValueError as exc:
             body = f"/diff: {exc}"
         else:
             body = result.display_body
-        chat.push_message(
-            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=body)
-        )
+        self._push_system_body(body)
 
     def _slash_review(self, args: str) -> None:
         """Run the existing review.diff analyzer on current or supplied diff."""
 
         from openminion.cli.presentation.review import run_review_workflow
 
-        result = run_review_workflow(self._working_dir, args)
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(kind=MessageKind.SYSTEM, sender="system", body=result.body)
-        )
+        self._push_system_body(run_review_workflow(self._working_dir, args).body)
 
     def _cycle_permission_mode_from_ui(self) -> str:
         cycler = getattr(self._runtime, "cycle_permission_mode", None)
@@ -581,12 +545,7 @@ class SlashCommandMixin:
         return mode
 
     def action_cycle_permission_mode(self) -> None:
-        opener = getattr(self, "_open_permissions_overlay", None)
-        if callable(opener):
-            if not opener():
-                return
-        else:
-            self._cycle_permission_mode_from_ui()
+        if not self._open_permissions_overlay():
             return
         mode = format_permission_status_label(
             permission_mode=getattr(self._runtime, "permission_mode", "default"),
@@ -609,24 +568,14 @@ class SlashCommandMixin:
         """Compact conversation history (if the runtime supports it)."""
         compact_fn = getattr(self._runtime, "compact_history", None)
         if not callable(compact_fn):
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body="Compaction is not supported by the current runtime.",
-                )
+            self._push_system_body(
+                "Compaction is not supported by the current runtime."
             )
             return
         try:
             result = compact_fn()
         except Exception as exc:
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=f"Compaction failed: {exc}",
-                )
-            )
+            self._push_system_body(f"Compaction failed: {exc}")
             return
         self._load_history()
         suffix = ""
@@ -636,13 +585,7 @@ class SlashCommandMixin:
             )
             if new_total is not None:
                 suffix = f" — session tokens now {new_total}"
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=f"Conversation compacted{suffix}.",
-            )
-        )
+        self._push_system_body(f"Conversation compacted{suffix}.")
 
     def _slash_queue(self, args: str) -> None:
         owner = cast(Any, self)
@@ -708,15 +651,9 @@ class SlashCommandMixin:
             s for s in sessions if int(getattr(s, "message_count", 0) or 0) > 0
         ]
         if not non_empty:
-            self.query_one(FocusTranscript).push_message(
-                ChatMessage(
-                    kind=MessageKind.SYSTEM,
-                    sender="system",
-                    body=(
-                        "No prior sessions with messages found in this "
-                        "directory. Use `/new` to start one."
-                    ),
-                )
+            self._push_system_body(
+                "No prior sessions with messages found in this "
+                "directory. Use `/new` to start one."
             )
             return
         self._open_session_picker(non_empty)
@@ -749,19 +686,13 @@ class SlashCommandMixin:
             self.action_show_sessions()
 
     def _slash_status(self, _args: str) -> None:
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=(
-                    f"agent      {self._runtime.agent_id}\n"
-                    f"provider   {self._runtime_provider_name()}\n"
-                    f"model      {self._runtime_model_name()}\n"
-                    f"session    {self._runtime.session_id}\n"
-                    f"dir        {self._working_dir}\n"
-                    f"transport  {self._runtime.transport}"
-                ),
-            )
+        self._push_system_body(
+            f"agent      {self._runtime.agent_id}\n"
+            f"provider   {self._runtime_provider_name()}\n"
+            f"model      {self._runtime_model_name()}\n"
+            f"session    {self._runtime.session_id}\n"
+            f"dir        {self._working_dir}\n"
+            f"transport  {self._runtime.transport}"
         )
 
     @staticmethod
@@ -861,10 +792,4 @@ class SlashCommandMixin:
             rows.append(f"  {primary:<11}— {description}{extra}")
         body = "Slash commands:\n" + "\n".join(rows)
         body += "\n\nKeys: Ctrl+P palette  Ctrl+F search  Ctrl+N new  Ctrl+T tools"
-        self.query_one(FocusTranscript).push_message(
-            ChatMessage(
-                kind=MessageKind.SYSTEM,
-                sender="system",
-                body=body,
-            )
-        )
+        self._push_system_body(body)

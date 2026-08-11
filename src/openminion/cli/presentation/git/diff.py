@@ -57,7 +57,7 @@ def render_git_diff(working_dir: str | Path, args: str = "") -> GitDiffResult:
     command = build_git_diff_command(args)
     try:
         cwd = Path(str(working_dir or "")).expanduser().resolve(strict=False)
-    except (TypeError, ValueError):
+    except (OSError, RuntimeError):
         cwd = Path.cwd()
     if not cwd.exists() or not cwd.is_dir():
         return GitDiffResult(
@@ -91,15 +91,14 @@ def render_git_diff(working_dir: str | Path, args: str = "") -> GitDiffResult:
         )
 
     duration_ms = int((time.perf_counter() - started) * 1000)
-    stdout = (result.stdout or "").rstrip()
-    stderr = (result.stderr or "").strip()
-    if stdout:
+    if stdout := result.stdout.rstrip():
         return GitDiffResult(
             command=tuple(command),
             output=stdout,
-            exit_code=int(result.returncode or 0),
+            exit_code=result.returncode,
             duration_ms=duration_ms,
         )
+    stderr = result.stderr.strip()
     if (
         result.returncode != 0
         and stderr
@@ -108,7 +107,7 @@ def render_git_diff(working_dir: str | Path, args: str = "") -> GitDiffResult:
         return GitDiffResult(
             command=tuple(command),
             message=f"(diff unavailable: {stderr})",
-            exit_code=int(result.returncode or 1),
+            exit_code=result.returncode,
             duration_ms=duration_ms,
         )
     return GitDiffResult(

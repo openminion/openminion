@@ -6,6 +6,7 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Label
 
+from openminion.cli.interactive.terminal.spinner import format_elapsed_label
 from openminion.cli.presentation.permissions import format_permission_status_label
 
 _IDLE_HINTS = "^P palette   ^K clear   ^F search   ^D debug   ^T tools   Esc exit"
@@ -28,6 +29,14 @@ _CONTEXT_DANGER_GLYPH = "⛔"
 TOKENS_SEVERITY_NORMAL = "normal"
 TOKENS_SEVERITY_WARN = "warn"
 TOKENS_SEVERITY_DANGER = "danger"
+
+_REFRESH_REACTIVES = tuple(
+    """
+    state elapsed_seconds tool_name usage_summary model_label cwd_label branch_label
+    tokens_label cost_label permission_mode action_policy_mode custom_label
+    goal_loop_label agent_label queued_count input_state tokens_severity
+    """.split()
+)
 
 
 def classify_context_severity(
@@ -77,6 +86,11 @@ class FocusStatusLine(Widget):
 
     def compose(self) -> ComposeResult:
         yield Label(_IDLE_HINTS, id="focus-status-hints")
+
+    def on_mount(self) -> None:
+        for name in _REFRESH_REACTIVES:
+            self.watch(self, name, self._refresh, init=False)
+        self._refresh()
 
     def set_state(
         self,
@@ -150,57 +164,6 @@ class FocusStatusLine(Widget):
                 sev = TOKENS_SEVERITY_NORMAL
             self.tokens_severity = sev
 
-    def watch_state(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_elapsed_seconds(self, _value: float) -> None:
-        self._refresh()
-
-    def watch_tool_name(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_usage_summary(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_model_label(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_cwd_label(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_branch_label(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_tokens_label(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_cost_label(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_permission_mode(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_action_policy_mode(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_custom_label(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_goal_loop_label(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_agent_label(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_queued_count(self, _value: int) -> None:
-        self._refresh()
-
-    def watch_input_state(self, _value: str) -> None:
-        self._refresh()
-
-    def watch_tokens_severity(self, _value: str) -> None:
-        self._refresh()
-
     def _refresh(self) -> None:
         try:
             label = self.query_one("#focus-status-hints", Label)
@@ -209,7 +172,7 @@ class FocusStatusLine(Widget):
         label.update(self._text())
 
     def _text(self) -> str:
-        elapsed = self._format_elapsed(self.elapsed_seconds)
+        elapsed = format_elapsed_label(self.elapsed_seconds)
         if self.state == "initializing":
             return "● starting session"
         if self.state == "tool":
@@ -269,12 +232,3 @@ class FocusStatusLine(Widget):
         if self.goal_loop_label:
             segments.append(self.goal_loop_label)
         return segments
-
-    @staticmethod
-    def _format_elapsed(seconds: float) -> str:
-        if seconds <= 0:
-            return "0s"
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        minutes, rem = divmod(int(seconds), 60)
-        return f"{minutes}m{rem:02d}s"

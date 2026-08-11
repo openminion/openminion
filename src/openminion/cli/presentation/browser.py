@@ -31,7 +31,7 @@ def browser_command_payload(
         return _execute_browser_tool(payload, working_dir)
     if action == "stop":
         if _is_truthy(options.get("sidecar", "1")):
-            result = default_sidecar_manager().stop(
+            result = _default_browser_sidecar_manager().stop(
                 name="pinchtab",
                 kill=_is_truthy(options.get("kill", "0")),
             )
@@ -88,13 +88,17 @@ def render_browser_command(args: str, *, working_dir: str | None = None) -> str:
 
 
 def _browser_status_payload() -> dict[str, Any]:
-    sidecar = default_sidecar_manager().status("pinchtab")
+    sidecar = _default_browser_sidecar_manager().status("pinchtab")
     return {
         "ok": True,
         "action": "status",
         "providers": provider_registry().list_provider_ids(),
         "sidecar": sidecar,
     }
+
+
+def _default_browser_sidecar_manager() -> Any:
+    return default_sidecar_manager(config_path=None, runtime_env=None)
 
 
 def _execute_browser_tool(

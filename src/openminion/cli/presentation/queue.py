@@ -27,8 +27,7 @@ def queue_listing(entries: Sequence[str]) -> str:
     lines = ["Queued messages:"]
     for index, text in enumerate(entries, start=1):
         lines.append(f"  {index}. {queue_text_preview(text)}")
-    lines.append("")
-    lines.append("Use `/queue drop <index>`, `/queue clear`, or `/queue run-next`.")
+    lines.extend(("", "Use `/queue drop <index>`, `/queue clear`, or `/queue run-next`."))
     return "\n".join(lines)
 
 

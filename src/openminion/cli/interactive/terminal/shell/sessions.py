@@ -62,9 +62,7 @@ def resume_session(
     except Exception as exc:
         console.print(Text(f"(could not list sessions: {exc})", style=_ERR_STYLE))
         return
-    non_empty = [
-        item for item in sessions if int(getattr(item, "message_count", 0) or 0) > 0
-    ]
+    non_empty = [item for item in sessions if _session_message_count(item) > 0]
     if not non_empty:
         console.print(
             Text(
@@ -85,3 +83,17 @@ def resume_session(
         return
     transcript.set_messages(history)
     console.print(Text(f"(resumed session: {chosen_id})", style=_MUTED_ITALIC_STYLE))
+
+
+def _session_message_count(item: Any) -> int:
+    if isinstance(item, dict):
+        value = item.get("message_count")
+        meta = item.get("meta")
+        if value is None and isinstance(meta, dict):
+            value = meta.get("message_count")
+    else:
+        value = getattr(item, "message_count", 0)
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0

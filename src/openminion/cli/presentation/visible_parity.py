@@ -33,43 +33,144 @@ def render_context_report(runtime: Any) -> str:
 
 
 def render_memory_report(runtime: Any) -> str:
-    reporter = getattr(runtime, "memory_report", None)
-    if callable(reporter):
-        try:
-            body = str(reporter() or "").strip()
-            if body:
-                return body
-        except Exception as exc:
-            return f"/memory: {exc}"
+    if report := _runtime_report(runtime, "memory_report", "/memory"):
+        return report
     rows = _safe_call(getattr(runtime, "list_memory_records", None)) or []
     candidates = _safe_call(getattr(runtime, "list_memory_candidates", None)) or []
-    if not rows and not candidates:
-        return "(no memory)"
+    return format_memory_report(
+        rows,
+        candidates,
+        session_id=str(getattr(runtime, "session_id", "") or ""),
+    )
+
+
+def format_memory_report(
+    rows: list[Any], candidates: list[Any], *, session_id: str = ""
+) -> str:
+    records = list(rows or [])
+    pending = list(candidates or [])
     lines = [
         "Memory:",
-        f"  promoted   {len(rows)}",
-        f"  candidates {len(candidates)}",
+        f"  records     {len(records)}",
+        f"  candidates  {len(pending)}",
     ]
-    for row in list(rows)[:8]:
-        title = (
-            _row_value(row, "title")
-            or _row_value(row, "content_preview")
-            or _row_value(row, "id")
+    if not records and not pending:
+        lines.extend(("", "No persisted memory for this session or agent."))
+        return "\n".join(lines)
+
+    type_counts: dict[str, int] = {}
+    summaries: list[Any] = []
+    other_records: list[Any] = []
+    for row in records:
+        record_type = _memory_text(row, "type") or "record"
+        type_counts[record_type] = type_counts.get(record_type, 0) + 1
+        if record_type == "session_summary":
+            summaries.append(row)
+        else:
+            other_records.append(row)
+
+    lines.extend(("", "By type:"))
+    for record_type, count in sorted(
+        type_counts.items(), key=lambda item: (-item[1], item[0])
+    ):
+        lines.append(f"  {_memory_type_label(record_type):<18} {count}")
+
+    current_summary = next(
+        (
+            row
+            for row in summaries
+            if _memory_text(row, "key") == f"session_summary:{session_id}"
+        ),
+        None,
+    )
+    if current_summary is not None:
+        lines.extend(("", "Current session summary:"))
+        questions = _summary_user_questions(current_summary)
+        if questions:
+            lines.extend(f"  - {question[:120]}" for question in questions[-5:])
+        else:
+            lines.append(f"  - {_memory_record_title(current_summary)}")
+        if updated_at := _memory_text(current_summary, "updated_at"):
+            lines.append(f"  updated {updated_at.replace('T', ' ')[:19]} UTC")
+
+    if other_records:
+        lines.extend(("", "Recent records:"))
+        for row in other_records[:6]:
+            lines.append(f"  - {_memory_record_title(row)}")
+            record_type = _memory_type_label(_memory_text(row, "type") or "record")
+            scope = _memory_scope_label(_memory_text(row, "scope"))
+            lines.append(f"    {record_type} · {scope}")
+
+    previous_summary_count = len(summaries) - int(current_summary is not None)
+    if previous_summary_count:
+        lines.extend(("", f"Previous session summaries: {previous_summary_count}"))
+
+    if pending:
+        lines.extend(("", "Pending candidates:"))
+        for row in pending[:5]:
+            lines.append(f"  - {_memory_record_title(row)}")
+
+    lines.extend(
+        (
+            "",
+            "The current turn is added after it finishes. Full question history stays in the session transcript.",
         )
-        if title:
-            lines.append(f"  - {str(title)[:96]}")
+    )
     return "\n".join(lines)
 
 
+def _memory_value(row: Any, key: str) -> Any:
+    if isinstance(row, dict):
+        return row.get(key)
+    return getattr(row, key, None)
+
+
+def _memory_text(row: Any, key: str) -> str:
+    return str(_memory_value(row, key) or "").strip()
+
+
+def _memory_record_title(row: Any) -> str:
+    title = (
+        _memory_text(row, "title")
+        or _memory_text(row, "content_preview")
+        or _memory_text(row, "candidate_id")
+        or _memory_text(row, "id")
+        or "Untitled record"
+    )
+    first_line = next((line.strip() for line in title.splitlines() if line.strip()), title)
+    return first_line.removeprefix("- ")[:120]
+
+
+def _summary_user_questions(row: Any) -> list[str]:
+    content = _memory_value(row, "content")
+    summary_text = (
+        str(content.get("summary_text", "") or "")
+        if isinstance(content, dict)
+        else ""
+    )
+    source = summary_text or _memory_text(row, "title")
+    questions: list[str] = []
+    for line in source.splitlines():
+        normalized = line.strip().removeprefix("- ").strip()
+        role, separator, text = normalized.partition(":")
+        if separator and role.strip().lower() == "user" and text.strip():
+            question = text.strip()
+            if question not in questions:
+                questions.append(question)
+    return questions
+
+
+def _memory_type_label(record_type: str) -> str:
+    return str(record_type or "record").replace("_", " ")
+
+
+def _memory_scope_label(scope: str) -> str:
+    return str(scope or "unknown").partition(":")[0] or "unknown"
+
+
 def render_skills_report(runtime: Any) -> str:
-    reporter = getattr(runtime, "skills_report", None)
-    if callable(reporter):
-        try:
-            body = str(reporter() or "").strip()
-            if body:
-                return body
-        except Exception as exc:
-            return f"/skills: {exc}"
+    if report := _runtime_report(runtime, "skills_report", "/skills"):
+        return report
     rows = _safe_call(getattr(runtime, "list_skill_rows", None)) or []
     if not rows:
         return "(no skills)"
@@ -168,8 +269,8 @@ def handle_statusline_command(runtime: Any, arg: str) -> str:
         return "(/statusline: runtime does not expose set_statusline_command)"
     preset = STATUSLINE_PRESETS.get(value.lower())
     if preset is not None:
-        result = setter(preset)
-        return f"statusline → {value.lower() if result or value else 'default'}"
+        setter(preset)
+        return f"statusline → {value.lower()}"
     return f"statusline → {setter(value)}"
 
 
@@ -229,6 +330,16 @@ def _safe_call(callback: Any) -> Any:
         return None
 
 
+def _runtime_report(runtime: Any, attribute: str, command: str) -> str | None:
+    reporter = getattr(runtime, attribute, None)
+    if not callable(reporter):
+        return None
+    try:
+        return str(reporter() or "").strip() or None
+    except Exception as exc:
+        return f"{command}: {exc}"
+
+
 def _row_value(row: Any, key: str) -> Any:
     if isinstance(row, dict):
         return row.get(key)
@@ -265,6 +376,7 @@ __all__ = [
     "handle_effort_command",
     "handle_statusline_command",
     "handle_undo_command",
+    "format_memory_report",
     "render_context_report",
     "render_memory_report",
     "render_skills_report",

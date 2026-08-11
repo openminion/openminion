@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Protocol, runtime_checkable
 
-from sophiagraph.query import ListQueryOptions, SearchQueryOptions
+from sophiagraph.query import (
+    CandidateListOptions,
+    ListQueryOptions,
+    RecordOrder,
+    SearchQueryOptions,
+)
 
 from .contracts import (
     MEMORY_CONTRACT_VERSION,
@@ -97,3 +102,15 @@ def ensure_memory_compatibility(
         return False, errors
 
     return True, []
+
+
+__all__ = [
+    "CandidateListOptions",
+    "ListQueryOptions",
+    "MemoryNamespaceQueryInterface",
+    "MemoryServiceInterface",
+    "MemoryServiceInterfaceError",
+    "RecordOrder",
+    "SearchQueryOptions",
+    "ensure_memory_compatibility",
+]

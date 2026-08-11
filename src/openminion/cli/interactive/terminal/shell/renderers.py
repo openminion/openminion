@@ -49,11 +49,11 @@ def _render_sessions_list(*, runtime: Any, console: Console) -> None:
         marker = "◆" if active else " "
         sid = str(getattr(item, "id", "") or "")
         label = str(getattr(item, "label", "") or sid[:12] or "—")
-        meta = getattr(item, "meta", None) or {}
-        updated = (
-            str(meta.get("updated_at", "") or "")[:19] if isinstance(meta, dict) else ""
-        )
-        channel = str(meta.get("channel", "") or "") if isinstance(meta, dict) else ""
+        meta = getattr(item, "meta", None)
+        updated = channel = ""
+        if isinstance(meta, dict):
+            updated = str(meta.get("updated_at", "") or "")[:19]
+            channel = str(meta.get("channel", "") or "")
         table.add_row(
             Text(marker, style=_INFO_BOLD_STYLE if active else ""),
             sid,
@@ -234,11 +234,8 @@ def _switch_theme(name: str, *, console: Console) -> None:
         )
         return
     set_active_theme(SHIPPED_THEMES[key])
-    new_muted_italic = (
-        f"italic {token_rich_style(StyleToken.MUTED)}"
-        if token_rich_style(StyleToken.MUTED)
-        else "italic"
-    )
+    muted = token_rich_style(StyleToken.MUTED)
+    new_muted_italic = f"italic {muted}" if muted else "italic"
     console.print(
         Text(
             f"(theme: switched to {key} — session-scoped)",

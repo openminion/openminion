@@ -9,10 +9,6 @@ from typing import Any
 
 def shorten_session_id(session_id: str, *, length: int = 8) -> str:
     value = str(session_id or "").strip()
-    if not value:
-        return ""
-    if len(value) <= length:
-        return value
     return value[:length]
 
 
