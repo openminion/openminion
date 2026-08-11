@@ -32,7 +32,6 @@ from .child_execution import (
     build_child_state,
     execute_child_goal,
     normalized_text,
-    plan_objective_fallback,
     split_budget_evenly,
 )
 
@@ -219,15 +218,6 @@ class RefineMode(CheckpointMixin, WorkflowMode):
             self._termination_reason = "passed_gate"
             return StepJudgment(disposition="close")
 
-        if len(self._round_history) >= 2:
-            prev = self._round_history[-2]
-            if rnd.remaining_issues == prev.remaining_issues:
-                self._termination_reason = "stall"
-                return StepJudgment(
-                    disposition="close",
-                    metadata={"stall_detected": True},
-                )
-
         pause_result = self._pause_after_round(ctx, completed_rounds=step.index + 1)
         if pause_result is not None:
             return StepJudgment(disposition="continue", mode_result=pause_result)
@@ -255,18 +245,10 @@ class RefineMode(CheckpointMixin, WorkflowMode):
         ]
 
     def _target_from_context(self, ctx: ExecutionContext) -> str:
-        return (
-            normalized_text(getattr(ctx.decision, "refine_target", "") or "")
-            or normalized_text(getattr(ctx.decision, "objective", "") or "")
-            or normalized_text(getattr(ctx.state, "goal", "") or "")
-            or normalized_text(ctx.user_input or "")
-        )
+        return normalized_text(getattr(ctx.decision, "refine_target", ""))
 
     def _criteria_from_context(self, ctx: ExecutionContext) -> list[str]:
-        raw = getattr(ctx.decision, "refine_criteria", None)
-        if isinstance(raw, list):
-            return [str(c) for c in raw if str(c).strip()]
-        return []
+        return [str(item) for item in getattr(ctx.decision, "refine_criteria", [])]
 
     def _dispatch_child(self, ctx: ExecutionContext, *, child_goal: str) -> str:
         child_state = build_child_state(
@@ -274,17 +256,11 @@ class RefineMode(CheckpointMixin, WorkflowMode):
             child_budget=self._iteration_budget(ctx),
             goal=child_goal,
         )
-        content = execute_child_goal(
+        return execute_child_goal(
             ctx,
             child_goal=child_goal,
             child_state=child_state,
             blocked_mode_name=REFINE_MODE,
-            fallback_reason_code="refine_recursion_fallback",
-        )
-        return content or plan_objective_fallback(
-            ctx,
-            child_goal=child_goal,
-            default=f"Improvement applied to {self._target_from_context(ctx)!r}.",
         )
 
     def _iteration_budget(self, ctx: ExecutionContext) -> BudgetCounters:
@@ -367,12 +343,6 @@ class RefineMode(CheckpointMixin, WorkflowMode):
         final = self._round_history[-1]
         if final.passed_gate:
             lines.append("Quality gate passed.")
-        elif self._termination_reason == "stall":
-            lines.append(
-                "Refinement stalled: remaining issues repeated across consecutive rounds."
-            )
-            if final.remaining_issues:
-                lines.append(f"Outstanding issues: {', '.join(final.remaining_issues)}")
         elif final.remaining_issues:
             lines.append(
                 f"Iteration cap reached. Outstanding issues: "

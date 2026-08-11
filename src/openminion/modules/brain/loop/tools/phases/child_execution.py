@@ -4,20 +4,12 @@ from typing import Any
 
 from openminion.modules.brain.execution.dispatch import invoke_decision_direct
 from openminion.modules.brain.loop.services import runner_from_context
-from openminion.modules.brain.schemas import ActDecision, BudgetCounters, WorkingState
+from openminion.modules.brain.schemas import BudgetCounters, WorkingState
 from openminion.modules.brain.diagnostics.transitions import set_status_unchecked
 
 
 def normalized_text(value: Any) -> str:
     return str(value or "").strip()
-
-
-def plan_objective_fallback(ctx: Any, *, child_goal: str, default: str) -> str:
-    try:
-        plan = ctx.plan(user_input=child_goal)
-    except Exception:
-        return default
-    return normalized_text(getattr(plan, "objective", "") or "") or default
 
 
 def split_budget_evenly(*, budgets: BudgetCounters, divisor: int) -> BudgetCounters:
@@ -70,7 +62,6 @@ def execute_child_goal(
     child_goal: str,
     child_state: WorkingState,
     blocked_mode_name: str,
-    fallback_reason_code: str,
     depth: int = 1,
 ) -> str:
     runner = runner_from_context(ctx)
@@ -87,18 +78,11 @@ def execute_child_goal(
             user_input=child_goal,
             logger=ctx.logger,
         )
-        if (
-            normalized_text(
-                getattr(decision, "route", getattr(decision, "mode", "")) or ""
-            )
-            == blocked_mode_name
-        ):
-            decision = ActDecision(
-                confidence=0.7,
-                reason_code=fallback_reason_code,
-                sub_intents=[child_goal],
-                rationale=child_goal,
-            )
+        route = normalized_text(
+            getattr(decision, "route", getattr(decision, "mode", ""))
+        )
+        if route == blocked_mode_name:
+            return ""
         result = invoke_decision_direct(
             runner,
             state=child_state,

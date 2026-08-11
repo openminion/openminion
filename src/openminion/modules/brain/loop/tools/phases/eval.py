@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from openminion.modules.brain.checkpoint import SimpleCheckpointMixin
 from openminion.modules.brain.constants import (
@@ -26,47 +26,10 @@ from .child_execution import (
     build_child_state,
     execute_child_goal,
     normalized_text,
-    plan_objective_fallback,
     split_budget_evenly,
 )
 
 EVAL_MODE = BRAIN_INTERNAL_MODE_LOOP_PHASE_EVAL
-
-_VERDICT_ALIASES = {
-    "ok": "pass",
-    "okay": "pass",
-    "pass": "pass",
-    "passed": "pass",
-    "success": "pass",
-    "succeeded": "pass",
-    "true": "pass",
-    "yes": "pass",
-    "fail": "fail",
-    "failed": "fail",
-    "failure": "fail",
-    "error": "fail",
-    "errors": "fail",
-    "false": "fail",
-    "no": "fail",
-    "partial": "partial",
-    "partially": "partial",
-    "mixed": "partial",
-    "warn": "partial",
-    "warning": "partial",
-    "warnings": "partial",
-    "unknown": "partial",
-    "unclear": "partial",
-    "inconclusive": "partial",
-    "na": "partial",
-    "n/a": "partial",
-    "acceptable-partial": "partial",
-    "acceptable_partial": "partial",
-}
-
-
-def _normalize_verdict(value: object) -> str:
-    text = str(value or "").strip().lower().replace("_", "-")
-    return _VERDICT_ALIASES.get(text, "partial")
 
 
 class EvalPayload(BaseModel):
@@ -81,14 +44,9 @@ class EvalCriterion(BaseModel):
 
     name: str = Field(..., min_length=1)
     description: str = ""
-    verdict: str = Field(...)
+    verdict: Literal["pass", "fail", "partial"]
     evidence: str = ""
     notes: str = ""
-
-    @field_validator("verdict", mode="before")
-    @classmethod
-    def _normalize_criterion_verdict(cls, value: object) -> str:
-        return _normalize_verdict(value)
 
 
 class EvalJudgment(BaseModel):
@@ -96,14 +54,9 @@ class EvalJudgment(BaseModel):
 
     target: str
     criteria: list[EvalCriterion] = Field(default_factory=list)
-    overall_verdict: str = Field(default="partial")
+    overall_verdict: Literal["pass", "fail", "partial"] = "partial"
     summary: str = ""
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-
-    @field_validator("overall_verdict", mode="before")
-    @classmethod
-    def _normalize_overall_verdict(cls, value: object) -> str:
-        return _normalize_verdict(value)
 
 
 class _EvalJudgmentPayload(BaseModel):
@@ -111,7 +64,7 @@ class _EvalJudgmentPayload(BaseModel):
 
     target: str = ""
     criteria: list[EvalCriterion] = Field(default_factory=list)
-    overall_verdict: str = "partial"
+    overall_verdict: Literal["pass", "fail", "partial"] = "partial"
     summary: str = ""
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
@@ -149,7 +102,7 @@ class EvalMode(SimpleCheckpointMixin):
     }
 
     def __init__(self) -> None:
-        self._cached_evidence = ""
+        self._cached_evidence: str | None = None
 
     def prepare(
         self,
@@ -197,8 +150,10 @@ class EvalMode(SimpleCheckpointMixin):
         }
         if resume_state:
             self.restore_state(resume_state)
-        evidence = self._cached_evidence or self._gather_evidence(
-            ctx, target=target, criteria=criteria
+        evidence = (
+            self._cached_evidence
+            if self._cached_evidence is not None
+            else self._gather_evidence(ctx, target=target, criteria=criteria)
         )
         self._cached_evidence = evidence
         self._save_checkpoint(ctx, cursor=1)
@@ -225,24 +180,16 @@ class EvalMode(SimpleCheckpointMixin):
         )
 
     def snapshot_state(self) -> dict[str, Any]:
-        return {"evidence": self._cached_evidence}
+        return {"evidence": self._cached_evidence or ""}
 
     def restore_state(self, payload: dict[str, Any]) -> None:
         self._cached_evidence = normalized_text(dict(payload or {}).get("evidence"))
 
     def _target_from_context(self, ctx: ExecutionContext) -> str:
-        return (
-            normalized_text(getattr(ctx.decision, "eval_target", "") or "")
-            or normalized_text(getattr(ctx.decision, "objective", "") or "")
-            or normalized_text(getattr(ctx.state, "goal", "") or "")
-            or normalized_text(ctx.user_input or "")
-        )
+        return normalized_text(getattr(ctx.decision, "eval_target", ""))
 
     def _criteria_from_context(self, ctx: ExecutionContext) -> list[str]:
-        raw = getattr(ctx.decision, "eval_criteria", None)
-        if isinstance(raw, list):
-            return [str(c) for c in raw if str(c).strip()]
-        return []
+        return [str(item) for item in getattr(ctx.decision, "eval_criteria", [])]
 
     def _gather_evidence(
         self,
@@ -262,17 +209,11 @@ class EvalMode(SimpleCheckpointMixin):
             child_budget=self._evidence_budget(ctx),
             goal=child_goal,
         )
-        content = execute_child_goal(
+        return execute_child_goal(
             ctx,
             child_goal=child_goal,
             child_state=child_state,
             blocked_mode_name=EVAL_MODE,
-            fallback_reason_code="eval_evidence_fallback",
-        )
-        return content or plan_objective_fallback(
-            ctx,
-            child_goal=child_goal,
-            default=f"Evidence gathered for {target!r}.",
         )
 
     def _evidence_budget(self, ctx: ExecutionContext) -> BudgetCounters:

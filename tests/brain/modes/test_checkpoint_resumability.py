@@ -349,7 +349,7 @@ def test_refine_mode_pauses_and_resumes_from_checkpoint() -> None:
         paused = mode.execute(first_ctx)
 
         assert paused.status == "waiting_user"
-        assert len(first_services.plan_calls) == 1
+        assert first_services.plan_calls == []
         checkpoint_id = str(first_ctx.state.task_backed_checkpoint_id or "")
         assert checkpoint_id.endswith("-cursor-1")
         assert isinstance(mode, TaskBackedModeContract)
@@ -380,7 +380,7 @@ def test_refine_mode_pauses_and_resumes_from_checkpoint() -> None:
         finished = mode.execute(resumed_ctx)
 
         assert finished.status == "done"
-        assert len(resumed_services.plan_calls) == 1
+        assert resumed_services.plan_calls == []
         task = task_manager.get_task(str(resumed_ctx.state.task_backed_task_id))
         assert task is not None
         assert task.state == TaskLifecycleState.DONE
@@ -806,7 +806,7 @@ def test_eval_mode_resumes_from_cached_evidence_and_skips_regather() -> None:
         paused = mode.execute(first_ctx)
 
         assert paused.status == "waiting_user"
-        assert len(first_services.plan_calls) == 1
+        assert first_services.plan_calls == []
         checkpoint_id = str(first_ctx.state.task_backed_checkpoint_id or "")
         assert checkpoint_id.endswith("-cursor-1")
         assert isinstance(mode, TaskBackedModeContract)

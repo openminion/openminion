@@ -346,34 +346,10 @@ def test_target_from_observe_target_field() -> None:
     assert mode._target_from_context(ctx) == "http://status.example.com"
 
 
-def test_target_falls_back_to_objective() -> None:
+def test_target_does_not_fall_back_to_other_prose() -> None:
     ctx, _ = _ctx(observe_target="", objective="objective-target")
     mode = ObserveMode()
-    assert mode._target_from_context(ctx) == "objective-target"
-
-
-def test_target_falls_back_to_state_goal() -> None:
-    working_state = _state(goal="state-goal-target")
-    ctx, _ = _ctx(
-        state=working_state,
-        observe_target="",
-        objective="",
-        user_input="",
-    )
-    mode = ObserveMode()
-    assert mode._target_from_context(ctx) == "state-goal-target"
-
-
-def test_target_falls_back_to_user_input() -> None:
-    working_state = _state(goal="")
-    ctx, _ = _ctx(
-        state=working_state,
-        observe_target="",
-        objective="",
-        user_input="user-input-target",
-    )
-    mode = ObserveMode()
-    assert mode._target_from_context(ctx) == "user-input-target"
+    assert mode._target_from_context(ctx) == ""
 
 
 def test_missing_target_fails_validate() -> None:
@@ -479,9 +455,9 @@ def test_execute_step_first_iteration_does_not_sleep(
     result = mode.execute_step(
         ctx, WorkflowStep(value="observe_check_1", index=0, total=2)
     )
-    assert result.metadata["check_output"] == "mock check output"
+    assert result.metadata["check_output"] == ""
     assert sleeps == []
-    assert len(services.plan_calls) == 1
+    assert services.plan_calls == []
 
 
 def test_execute_step_subsequent_iterations_sleep(
@@ -546,12 +522,9 @@ def test_execute_step_recursive_observe_blocked(
         lambda *args, **kwargs: SimpleNamespace(mode=OBSERVE_MODE),
     )
 
-    seen: dict[str, Any] = {}
-
     def _invoke(self, *, state, decision, user_input, logger, depth=0):
         del self, state, user_input, logger, depth
-        seen["mode"] = decision.mode
-        return SimpleNamespace(message="child check output")
+        raise AssertionError("recursive child route must fail closed")
 
     monkeypatch.setattr(
         "openminion.modules.brain.loop.tools.phases.child_execution.invoke_decision_direct",
@@ -560,8 +533,7 @@ def test_execute_step_recursive_observe_blocked(
     result = mode.execute_step(
         ctx, WorkflowStep(value="observe_check_1", index=0, total=2)
     )
-    assert seen["mode"] == "act"
-    assert result.metadata["check_output"] == "child check output"
+    assert result.metadata["check_output"] == ""
 
 
 # Judge step

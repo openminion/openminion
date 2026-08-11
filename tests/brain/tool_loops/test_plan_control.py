@@ -154,7 +154,7 @@ def test_plan_control_declare_records_task_plan_event() -> None:
     assert session_api.events[0]["kwargs"]["actor_type"] == "agent"
 
 
-def test_plan_control_declare_accepts_stringified_steps_and_boolean() -> None:
+def test_plan_control_declare_rejects_stringified_steps() -> None:
     session_api = _FakeSessionAPI()
     result = handle_plan_tool_call(
         loop_ctx=_Ctx(session_api=session_api),
@@ -170,10 +170,10 @@ def test_plan_control_declare_accepts_stringified_steps_and_boolean() -> None:
         },
     )
 
-    assert result.status == "success"
-    assert session_api.events[0]["event_type"] == "task_plan.declared"
-    assert session_api.events[0]["payload"]["plan"]["steps"][0]["step_id"] == "entry"
-    assert result.outputs["plan.continue_plan_autonomously"] is True
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.code == "PLAN_VALIDATION_FAILED"
+    assert session_api.events[-1]["event_type"] == "task_plan.invalid_trailer"
 
 
 def test_plan_control_declare_falls_back_to_plan_id_when_objective_missing() -> None:

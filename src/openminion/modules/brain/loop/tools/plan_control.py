@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from openminion.modules.brain.schemas.state import ActionResult
@@ -237,7 +236,6 @@ def handle_plan_tool_call(
     loop_ctx: Any,
     arguments: dict[str, Any],
 ) -> ActionResult:
-    arguments = _normalize_plan_tool_arguments(arguments)
     action = str(arguments.get("action", "") or "").strip()
     if action not in PLAN_TOOL_ACTIONS:
         return _failed_result(
@@ -289,41 +287,6 @@ def handle_plan_tool_call(
         code="PLAN_ACTION_UNHANDLED",
         summary=f"Plan action was not handled: {action}",
     )
-
-
-def _normalize_plan_tool_arguments(arguments: dict[str, Any] | None) -> dict[str, Any]:
-    raw = dict(arguments or {})
-    normalized = dict(raw)
-    if "continue_plan_autonomously" in normalized:
-        normalized["continue_plan_autonomously"] = _coerce_stringified_bool(
-            normalized.get("continue_plan_autonomously")
-        )
-    for key in ("steps", "revised_steps"):
-        if key in normalized:
-            normalized[key] = _coerce_stringified_json_value(normalized.get(key))
-    return normalized
-
-
-def _coerce_stringified_bool(value: Any) -> Any:
-    if isinstance(value, str):
-        token = value.strip().lower()
-        if token == "true":
-            return True
-        if token == "false":
-            return False
-    return value
-
-
-def _coerce_stringified_json_value(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    token = value.strip()
-    if not token or token[0] not in "[{":
-        return value
-    try:
-        return json.loads(token)
-    except json.JSONDecodeError:
-        return value
 
 
 def _handle_declare(*, loop_ctx: Any, arguments: dict[str, Any]) -> ActionResult:

@@ -37,7 +37,6 @@ from .child_execution import (
     build_child_state,
     execute_child_goal,
     normalized_text,
-    plan_objective_fallback,
     split_budget_evenly,
 )
 
@@ -286,12 +285,7 @@ class ObserveMode(CheckpointMixin, WorkflowMode):
         self._elapsed_seconds = float(state.get("elapsed_seconds", 0.0) or 0.0)
 
     def _target_from_context(self, ctx: ExecutionContext) -> str:
-        return (
-            normalized_text(getattr(ctx.decision, "observe_target", "") or "")
-            or normalized_text(getattr(ctx.decision, "objective", "") or "")
-            or normalized_text(getattr(ctx.state, "goal", "") or "")
-            or normalized_text(ctx.user_input or "")
-        )
+        return normalized_text(getattr(ctx.decision, "observe_target", ""))
 
     def _condition_from_context(self, ctx: ExecutionContext) -> str:
         return normalized_text(getattr(ctx.decision, "observe_condition", "") or "")
@@ -334,17 +328,11 @@ class ObserveMode(CheckpointMixin, WorkflowMode):
             child_budget=self._check_budget(ctx),
             goal=child_goal,
         )
-        content = execute_child_goal(
+        return execute_child_goal(
             ctx,
             child_goal=child_goal,
             child_state=child_state,
             blocked_mode_name=OBSERVE_MODE,
-            fallback_reason_code="observe_recursion_fallback",
-        )
-        return content or plan_objective_fallback(
-            ctx,
-            child_goal=child_goal,
-            default=f"Observed {self._target!r}.",
         )
 
     def _check_budget(self, ctx: ExecutionContext) -> BudgetCounters:
