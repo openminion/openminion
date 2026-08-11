@@ -25,7 +25,6 @@ class AuthEvaluator:
         return command_canonical in _ADMIN_COMMANDS
 
     def check(self, user_key: str, command_canonical: str) -> tuple[bool, str]:
-        if self.is_admin_command(command_canonical):
-            if not self.is_admin(user_key):
-                return False, f"command '{command_canonical}' requires admin role"
+        if self.is_admin_command(command_canonical) and not self.is_admin(user_key):
+            return False, f"command '{command_canonical}' requires admin role"
         return True, "ok"

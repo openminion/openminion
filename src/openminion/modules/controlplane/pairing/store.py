@@ -18,8 +18,7 @@ def now_ts() -> int:
 
 
 def token_hash(token: str, *, pepper: str | None) -> str:
-    material = f"{pepper or ''}{token}".encode("utf-8")
-    return hashlib.sha256(material).hexdigest()
+    return hashlib.sha256(f"{pepper or ''}{token}".encode("utf-8")).hexdigest()
 
 
 def scopes_json(scopes: list[str] | tuple[str, ...] | None) -> str:
