@@ -71,36 +71,35 @@ def run_until_idle(
         trigger_mode = RUN_TRIGGER_USER_INPUT
     if trigger_mode == RUN_TRIGGER_PLAN_CONTINUATION:
         user_input = None
-        _emit_plan_continuation_started(
+        _emit_run_trigger_started(
             runner=runner,
             session_id=session_id,
             trace_id=trace_id,
+            event="brain.autonomous_continuation.started",
+            trigger=RUN_TRIGGER_PLAN_CONTINUATION,
         )
     elif trigger_mode == RUN_TRIGGER_IDLE_TICK:
         user_input = None
-        _emit_idle_tick_started(
+        _emit_run_trigger_started(
             runner=runner,
             session_id=session_id,
             trace_id=trace_id,
+            event="brain.idle_tick.started",
+            trigger=RUN_TRIGGER_IDLE_TICK,
         )
 
     max_iterations = max(
         1, int(getattr(runner.options, "plan_max_iterations", 64) or 64)
     )
-    iterations = 0
-    next_input = user_input
-    first_trace = trace_id
     runner._pending_run_trigger = trigger_mode
     last = runner.step(
         session_id=session_id,
-        user_input=next_input,
-        trace_id=first_trace,
+        user_input=user_input,
+        trace_id=trace_id,
         forced_tools=forced_tools,
         capability_category=capability_category,
     )
-    iterations += 1
-    next_input = None
-    first_trace = None
+    iterations = 1
 
     while last.status in BRAIN_ACTIVE_STATES:
         if iterations >= max_iterations:
@@ -131,8 +130,9 @@ def run_until_idle(
                     "ticks_remaining": last.working_state.budgets_remaining.ticks,
                 },
             )
-        if last.status == BRAIN_STATE_JOB_PENDING and not getattr(
-            last.working_state, "pending_jobs", []
+        if (
+            last.status == BRAIN_STATE_JOB_PENDING
+            and not last.working_state.pending_jobs
         ):
             if (
                 mission_is_active(last.working_state)
@@ -143,8 +143,7 @@ def run_until_idle(
                     status=MissionStatus.PAUSED,
                     reason="mission paused because async state had no pending jobs to poll",
                     route_action=str(
-                        getattr(last.working_state.mission, "latest_route_action", "")
-                        or ""
+                        last.working_state.mission.latest_route_action or ""
                     ),
                 )
                 CanonicalEventLogger(
@@ -161,12 +160,7 @@ def run_until_idle(
                             "to poll"
                         ),
                         "route_action": str(
-                            getattr(
-                                last.working_state.mission,
-                                "latest_route_action",
-                                "",
-                            )
-                            or ""
+                            last.working_state.mission.latest_route_action or ""
                         ),
                     },
                     trace_id=last.working_state.trace_id,
@@ -182,12 +176,8 @@ def run_until_idle(
                     details={"iterations": iterations},
                 )
             break
-        previous_status = str(last.status)
-        last = runner.step(
-            session_id=session_id,
-            user_input=next_input,
-            trace_id=first_trace,
-        )
+        previous_status = last.status
+        last = runner.step(session_id=session_id)
         iterations += 1
         if (
             previous_status == BRAIN_STATE_JOB_PENDING
@@ -202,54 +192,27 @@ def run_until_idle(
                     status=MissionStatus.AWAITING_ASYNC,
                     reason="mission is still waiting on async work",
                     route_action=str(
-                        getattr(last.working_state.mission, "latest_route_action", "")
-                        or ""
+                        last.working_state.mission.latest_route_action or ""
                     ),
                 )
             break
     return last
 
 
-def _emit_plan_continuation_started(
+def _emit_run_trigger_started(
     *,
     runner: "BrainRunner",
     session_id: str,
     trace_id: str | None,
+    event: str,
+    trigger: str,
 ) -> None:
-    """CTGP-02: telemetry marker for plan-continuation entry."""
     try:
-        logger = CanonicalEventLogger(
+        CanonicalEventLogger(
             session_api=runner.session_api,
             session_id=session_id,
             agent_id=runner.profile.agent_id,
-        )
-        logger.emit(
-            "brain.autonomous_continuation.started",
-            {"trigger": RUN_TRIGGER_PLAN_CONTINUATION},
-            trace_id=trace_id,
-        )
-    except Exception:  # noqa: BLE001 — telemetry is best-effort
-        return
-
-
-def _emit_idle_tick_started(
-    *,
-    runner: "BrainRunner",
-    session_id: str,
-    trace_id: str | None,
-) -> None:
-    """PAE-03: telemetry marker for idle-tick entry."""
-    try:
-        logger = CanonicalEventLogger(
-            session_api=runner.session_api,
-            session_id=session_id,
-            agent_id=runner.profile.agent_id,
-        )
-        logger.emit(
-            "brain.idle_tick.started",
-            {"trigger": RUN_TRIGGER_IDLE_TICK},
-            trace_id=trace_id,
-        )
+        ).emit(event, {"trigger": trigger}, trace_id=trace_id)
     except Exception:  # noqa: BLE001 — telemetry is best-effort
         return
 
@@ -270,8 +233,8 @@ def _terminate_loop(
     )
     payload: dict[str, int | str] = {
         "status_before": str(last.status),
-        "cursor": int(getattr(state, "cursor", 0) or 0),
-        "ticks_remaining": int(getattr(state.budgets_remaining, "ticks", 0) or 0),
+        "cursor": state.cursor,
+        "ticks_remaining": state.budgets_remaining.ticks,
     }
     if details:
         payload.update(details)

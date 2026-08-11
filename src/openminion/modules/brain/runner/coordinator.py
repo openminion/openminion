@@ -39,7 +39,6 @@ from ..config import RunnerOptions
 from ..execution.public_taxonomy import public_surface_payload_for_state
 from ..state import MetaApplication
 from ..diagnostics.telemetry import emit_brain_operation
-from openminion.base.constants import STATE_KEY_WORKING
 
 
 class BrainRunner:
@@ -137,10 +136,8 @@ class BrainRunner:
         result: StepOutput,
         entrypoint: str,
     ) -> None:
-        state = getattr(result, STATE_KEY_WORKING, None)
-        if state is None:
-            return
-        trace_id = str(getattr(state, "trace_id", "") or self._trace_id or "").strip()
+        state = result.working_state
+        trace_id = str(state.trace_id or self._trace_id or "").strip()
         try:
             events = list(self.session_api.list_events(session_id))
         except Exception:
@@ -167,23 +164,16 @@ class BrainRunner:
 
         payload = {
             "entrypoint": entrypoint,
-            "status": str(getattr(result, "status", "") or "").strip().lower(),
+            "status": str(result.status).strip().lower(),
             "mode_name": public_mode_name,
-            "workflow_name": str(
-                getattr(state, "active_workflow_name", "") or ""
-            ).strip()
-            or None,
-            "workflow_kind": str(
-                getattr(state, "active_workflow_kind", "") or ""
-            ).strip()
-            or None,
-            "final_command_id": str(getattr(state, "last_command_id", "") or "").strip()
-            or None,
+            "workflow_name": str(state.active_workflow_name or "").strip() or None,
+            "workflow_kind": str(state.active_workflow_kind or "").strip() or None,
+            "final_command_id": str(state.last_command_id or "").strip() or None,
             "tool_request_count": _count("tool.request"),
             "tool_completed_count": _count("tool.completed"),
             "a2a_request_count": _count("a2a.request"),
             "a2a_completed_count": _count("a2a.completed"),
-            "step_output_count": len(list(getattr(state, "step_outputs", []) or [])),
+            "step_output_count": len(state.step_outputs),
         }
         payload.update(
             {
@@ -208,8 +198,7 @@ class BrainRunner:
                 importance=3,
                 redaction="none",
                 status="ok"
-                if str(getattr(result, "status", "") or "").strip().lower()
-                not in {"error", "failed"}
+                if str(result.status).strip().lower() not in {"error", "failed"}
                 else "error",
             )
         except Exception:
@@ -270,13 +259,9 @@ class BrainRunner:
                 trigger=trigger,
             )
             turn_id = (
-                str(
-                    getattr(getattr(result, STATE_KEY_WORKING, None), "trace_id", "")
-                    or ""
-                ).strip()
-                or effective_trace_id
+                str(result.working_state.trace_id or "").strip() or effective_trace_id
             )
-            result_status = str(getattr(result, "status", "") or "").strip().lower()
+            result_status = str(result.status).strip().lower()
             self._emit_brain_operation(
                 session_id=session_id,
                 turn_id=turn_id,
@@ -337,15 +322,10 @@ class BrainRunner:
             )
             if not self._telemetry_turn_active:
                 turn_id = (
-                    str(
-                        getattr(
-                            getattr(result, STATE_KEY_WORKING, None), "trace_id", ""
-                        )
-                        or ""
-                    ).strip()
+                    str(result.working_state.trace_id or "").strip()
                     or effective_trace_id
                 )
-                result_status = str(getattr(result, "status", "") or "").strip().lower()
+                result_status = str(result.status).strip().lower()
                 self._emit_brain_operation(
                     session_id=session_id,
                     turn_id=turn_id,
@@ -385,7 +365,7 @@ class BrainRunner:
         callback = self._progress_callback
         if not callable(callback):
             return
-        trace_id = str(getattr(state, "trace_id", "") or self._trace_id or "").strip()
+        trace_id = str(state.trace_id or self._trace_id or "").strip()
         if not trace_id:
             trace_id = new_uuid()
         try:
