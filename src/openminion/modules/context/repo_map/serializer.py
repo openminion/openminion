@@ -37,8 +37,6 @@ def serialize_repo_map(
             doc = f"  # {sym.docstring_first_line}" if sym.docstring_first_line else ""
             indent = "  " * (1 + len(sym.parent_chain))
             line = f"{indent}{sig}{doc}".rstrip()
-            if not line.strip():
-                continue
             est = _estimate_tokens(line)
             if running_tokens + est > token_budget:
                 lines.append("  [truncated]")

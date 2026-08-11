@@ -12,47 +12,34 @@ from openminion.modules.context.repo_map.schemas import (
 )
 
 
-_PYTHON_SUFFIX = ".py"
-
-
-def _signature(node: ast.AST) -> str:
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        args = ", ".join(arg.arg for arg in node.args.args)
-        return f"{node.name}({args})"
+def _signature(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+) -> str:
     if isinstance(node, ast.ClassDef):
-        bases = ", ".join(_safe_repr(b) for b in node.bases)
+        bases = ", ".join(ast.unparse(base) for base in node.bases)
         return f"class {node.name}" + (f"({bases})" if bases else "")
-    return ""
+    args = ", ".join(arg.arg for arg in node.args.args)
+    return f"{node.name}({args})"
 
 
-def _safe_repr(node: ast.AST) -> str:
-    try:
-        return ast.unparse(node)
-    except Exception:
-        return getattr(node, "id", "")
-
-
-def _docstring_first_line(node: ast.AST) -> str:
-    doc = (
-        ast.get_docstring(node)
-        if isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Module)
-        )
-        else None
-    )
+def _docstring_first_line(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Module,
+) -> str:
+    doc = ast.get_docstring(node)
     if not doc:
         return ""
     return doc.splitlines()[0].strip()[:140]
 
 
-def _kind_for(node: ast.AST, parent_chain: tuple[str, ...]) -> SymbolKind:
+def _kind_for(
+    node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef,
+    parent_chain: tuple[str, ...],
+) -> SymbolKind:
     if isinstance(node, ast.ClassDef):
         return "class"
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        if parent_chain and parent_chain[-1].startswith("class:"):
-            return "method"
-        return "function"
-    return "module"
+    if parent_chain and parent_chain[-1].startswith("class:"):
+        return "method"
+    return "function"
 
 
 def _walk_module(path: str, tree: ast.Module) -> list[RepoSymbol]:
@@ -103,15 +90,13 @@ class AstRepoMapBuilder:
     def parse(self, root: Path) -> RepoMap:
         root = Path(root)
         symbols: list[RepoSymbol] = []
-        for file in sorted(root.rglob(f"*{_PYTHON_SUFFIX}")):
+        for file in sorted(root.rglob("*.py")):
             try:
                 source = file.read_text(encoding="utf-8")
                 tree = ast.parse(source, filename=str(file))
             except (OSError, SyntaxError):
                 continue
-            relpath = (
-                str(file.relative_to(root)) if file.is_relative_to(root) else str(file)
-            )
+            relpath = str(file.relative_to(root))
             symbols.extend(_walk_module(relpath, tree))
         return RepoMap(
             root=str(root),

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from openminion.modules.context.repo_map.cache import RepoMapCache
 from openminion.modules.context.repo_map.config import RepoMapConfig
+from openminion.modules.context.repo_map.interfaces import RepoMapBuilder
 from openminion.modules.context.repo_map.parser import AstRepoMapBuilder
 from openminion.modules.context.repo_map.ranker import rank_symbols
 from openminion.modules.context.repo_map.serializer import serialize_repo_map
@@ -20,7 +21,7 @@ def build_repo_map_section(
     config: RepoMapConfig,
     profile: str = "",
     cache: RepoMapCache | None = None,
-    builder: AstRepoMapBuilder | None = None,
+    builder: RepoMapBuilder | None = None,
     top_k: int | None = None,
 ) -> str:
     """Return the `[REPO MAP] ...` section, or `""` when disabled / gated."""
@@ -38,9 +39,7 @@ def build_repo_map_section(
     )
     ranked = rank_symbols(repo_map, top_k=top_k)
     body = serialize_repo_map(ranked, token_budget=config.token_budget)
-    if not body:
-        return ""
-    return "[REPO MAP]\n" + body
+    return "[REPO MAP]\n" + body if body else ""
 
 
 __all__ = ["build_repo_map_section"]
