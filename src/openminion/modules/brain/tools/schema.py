@@ -21,10 +21,7 @@ def _normalize_execution_tool_name(raw_name: str) -> str | None:
 
 
 def collect_runtime_tool_schemas(runner: "BrainRunner") -> list[dict[str, Any]]:
-    tool_api = getattr(runner, "tool_api", None)
-    if tool_api is None or not hasattr(tool_api, "registry"):
-        return []
-    registry = getattr(tool_api, "registry", None)
+    registry = getattr(getattr(runner, "tool_api", None), "registry", None)
     if registry is None:
         return []
     return _TOOL_SCHEMA_SERVICE.collect_execution_tool_schemas(

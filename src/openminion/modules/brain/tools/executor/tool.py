@@ -81,10 +81,7 @@ def _prepare_outcome_disposition(command: Command) -> str:
 
 
 def _tool_family(tool_name: str) -> str:
-    normalized = str(tool_name or "").strip().lower()
-    if "." in normalized:
-        return normalized.split(".", 1)[0]
-    return normalized
+    return str(tool_name or "").strip().lower().partition(".")[0]
 
 
 def _tool_outcome_from_result(
@@ -98,15 +95,15 @@ def _tool_outcome_from_result(
     if action_result is None:
         return None
     status = str(getattr(action_result, "status", "") or "").strip().lower()
-    if status == str(BRAIN_ACTION_STATUS_SUCCESS):
+    if status == BRAIN_ACTION_STATUS_SUCCESS:
         return "success"
-    if status == str(BRAIN_ACTION_STATUS_FAILED):
+    if status == BRAIN_ACTION_STATUS_FAILED:
         return "failure"
-    if status == str(BRAIN_ACTION_STATUS_TIMEOUT):
+    if status == BRAIN_ACTION_STATUS_TIMEOUT:
         return "timeout"
     if status in {
-        str(BRAIN_ACTION_STATUS_NEEDS_USER),
-        str(BRAIN_ACTION_STATUS_BLOCKED),
+        BRAIN_ACTION_STATUS_NEEDS_USER,
+        BRAIN_ACTION_STATUS_BLOCKED,
     }:
         return "policy_denied"
     return None
@@ -240,9 +237,7 @@ def _staged_tool_outcome(
 def _tool_outcome_staged_command_ids(module_state: dict[str, Any]) -> set[str]:
     return {
         str(item).strip()
-        for item in list(
-            module_state.get(_TOOL_OUTCOME_STAGED_COMMAND_IDS_KEY, []) or []
-        )
+        for item in module_state.get(_TOOL_OUTCOME_STAGED_COMMAND_IDS_KEY, []) or []
         if str(item).strip()
     }
 
@@ -269,9 +264,9 @@ def _tool_outcome_error_code(action_result: ActionResult | None) -> str:
 
 def _tool_outcome_artifact_refs(action_result: ActionResult | None) -> list[str]:
     return [
-        str(getattr(ref, "ref", "") or "").strip()
+        value
         for ref in list(getattr(action_result, "artifact_refs", []) or [])
-        if str(getattr(ref, "ref", "") or "").strip()
+        if (value := str(getattr(ref, "ref", "") or "").strip())
     ]
 
 
@@ -915,23 +910,17 @@ def finalize_tool_result(
             if normalized.error
             else None,
         )
-        # producer-side dict-shape `tool_completed` bridge —
-        # paired with the `tool_started` emission in `prepare_tool_dispatch`.
         _emit_tool_progress = getattr(runner, "_emit_tool_progress_event", None)
         if callable(_emit_tool_progress):
             try:
-                _duration_ms = None
-                _timing = getattr(raw_result, "timing", None)
-                if isinstance(_timing, dict):
-                    _duration_ms = _timing.get("duration_ms")
                 _emit_tool_progress(
                     kind="tool_completed",
-                    tool_name=str(getattr(prepared_dispatch, "tool_name", "") or ""),
-                    args=dict(getattr(prepared_dispatch, "validated_args", {}) or {}),
-                    call_id=str(getattr(prepared_dispatch, "command_id", "") or ""),
-                    duration_ms=_duration_ms,
+                    tool_name=prepared_dispatch.tool_name,
+                    args=prepared_dispatch.validated_args,
+                    call_id=prepared_dispatch.command_id,
+                    duration_ms=raw_result.timing.get("duration_ms"),
                     ok=(normalized.status == BRAIN_ACTION_STATUS_SUCCESS),
-                    content=str(getattr(normalized, "summary", "") or ""),
+                    content=normalized.summary,
                 )
             except Exception:
                 pass

@@ -28,8 +28,6 @@ def execute_think(
     command: Command,
     logger: CanonicalEventLogger,
 ) -> tuple[ActionResult, JobHandle | None]:
-    """Execute a ``ThinkCommand`` via a structured LLM call."""
-
     if state.llm_calls_used >= state.llm_calls_max:
         return (
             runner._budget_blocked_result(
@@ -120,9 +118,8 @@ def _think_hints(
 
 
 def _think_response_text(raw: object) -> str:
-    if isinstance(raw, dict):
-        return str(raw.get("response") or "").strip()
-    return str(raw or "").strip()
+    value = raw.get("response") if isinstance(raw, dict) else raw
+    return str(value or "").strip()
 
 
 def _think_success_result(*, command: Command, text: str) -> ActionResult:

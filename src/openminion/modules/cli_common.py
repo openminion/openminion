@@ -25,33 +25,18 @@ def _normalize_optional_path(value: Path | str | None) -> str | None:
 
 def add_common_module_root_args(parser: argparse.ArgumentParser) -> None:
     """Add the standard `--home-root` and `--data-root` argparse args."""
-    parser.add_argument(
-        "--home-root",
-        default=None,
-        help=HOME_ROOT_OPTION_HELP,
-    )
-    parser.add_argument(
-        "--data-root",
-        default=None,
-        help=DATA_ROOT_OPTION_HELP,
-    )
+    parser.add_argument("--home-root", default=None, help=HOME_ROOT_OPTION_HELP)
+    parser.add_argument("--data-root", default=None, help=DATA_ROOT_OPTION_HELP)
 
 
 def has_tty() -> bool:
-    stdin_tty = bool(getattr(sys.stdin, "isatty", lambda: False)())
-    stdout_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
-    return stdin_tty and stdout_tty
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def resolve_module_cli_db_path(
     args: argparse.Namespace,
     sqlite_subpath: str | Path,
 ) -> Path:
-    """Canonical helper for resolving the module SQLite db path from CLI args.
-
-    Checks args.db first (explicit override), then falls back to
-    OPENMINION_DATA_ROOT env / home root resolution.
-    """
     if getattr(args, "db", None):
         return Path(str(args.db)).expanduser().resolve(strict=False)
     home_root = resolve_home_root()

@@ -36,32 +36,21 @@ LIFECYCLE_EVENT_TYPES: frozenset[str] = frozenset(
 
 @dataclass
 class LifecycleEvent:
-    """Structured payload passed to every `LifecycleHook` callable.
-
-    Fields are default-safe so producers at different firing sites
-    (tool dispatch vs session lifecycle vs error paths) can build
-    events without contorting around fields the seam doesn't carry.
-    """
+    """Structured payload passed to every lifecycle hook."""
 
     event_type: str
     timestamp_ms: int = 0
     trace_id: str = ""
     session_id: str = ""
     agent_id: str = ""
-    # Tool-lifecycle event fields (default-safe absent on
-    # session/error events).
     tool_name: str = ""
     tool_args: dict[str, Any] = field(default_factory=dict)
     tool_call_id: str = ""
     tool_ok: bool | None = None
     tool_duration_ms: int | None = None
     tool_content: str = ""
-    # Error-event field.
     error_message: str = ""
-    # Subagent-stop event field.
     subagent_id: str = ""
-    # Source payload escape hatch — hooks needing fields not yet
-    # in the structured surface can read the raw producer payload.
     source_payload: dict[str, Any] = field(default_factory=dict)
 
 
@@ -78,12 +67,6 @@ class LifecycleHookRegistry:
         }
 
     def register(self, event_type: str, hook: LifecycleHook) -> None:
-        """Register a lifecycle hook for a specific event type.
-
-        Unknown event types raise `ValueError` — the
-        `LIFECYCLE_EVENT_TYPES` set is closed; new event types
-        require a spec amendment.
-        """
         if event_type not in LIFECYCLE_EVENT_TYPES:
             raise ValueError(
                 f"unknown lifecycle event type: {event_type!r}; "
@@ -110,13 +93,7 @@ class LifecycleHookRegistry:
         event: "LifecycleEvent",
         context: LifecycleContext,
     ) -> None:
-        """Fire an event to all hooks registered for its type.
-
-        Hook failures are logged without breaking dispatch or session lifecycle.
-        """
         event_type = str(event.event_type or "").strip()
-        if not event_type:
-            return
         bucket = self._hooks.get(event_type)
         if not bucket:
             return
@@ -131,17 +108,11 @@ class LifecycleHookRegistry:
                 )
 
     def count(self, event_type: str = "") -> int:
-        """Return the number of registered hooks (total or per
-        event type). Useful for tests + diagnostics.
-        """
         if event_type:
             return len(self._hooks.get(event_type, ()))
         return sum(len(bucket) for bucket in self._hooks.values())
 
     def reset(self) -> None:
-        """Clear all registered hooks. Useful in tests to ensure
-        per-test hook isolation.
-        """
         for bucket in self._hooks.values():
             bucket.clear()
 
@@ -151,13 +122,6 @@ _settings_lifecycle_registrations: set[tuple[str, tuple[str, ...]]] = set()
 
 
 def get_default_lifecycle_registry() -> LifecycleHookRegistry:
-    """Return the process-wide default lifecycle registry.
-
-    Lazy-initialized so import-time side effects stay minimal.
-    Producer-side firing sites use this accessor; consumers
-    register hooks via
-    `get_default_lifecycle_registry().register(...)`.
-    """
     global _default_lifecycle_registry
     if _default_lifecycle_registry is None:
         _default_lifecycle_registry = LifecycleHookRegistry()
@@ -165,9 +129,6 @@ def get_default_lifecycle_registry() -> LifecycleHookRegistry:
 
 
 def reset_default_lifecycle_registry() -> None:
-    """Clear the default lifecycle registry. Test isolation only —
-    do not call from production code.
-    """
     global _default_lifecycle_registry
     _default_lifecycle_registry = None
     _settings_lifecycle_registrations.clear()
@@ -285,15 +246,10 @@ def _resolve_hook_context_for_lifecycle(
     config: OpenMinionConfig | None = None,
     logger: logging.Logger | None = None,
 ) -> LifecycleContext:
-    """Build a `LifecycleContext` for lifecycle firing.
-
-    Default-safe: when callers don't have a `LifecycleContext` in scope
-    (e.g. tool dispatch deep inside the brain runner), we accept
-    optional overrides.
-    """
-    if logger is None:
-        logger = logging.getLogger("openminion.lifecycle_hook")
-    return LifecycleContext(config=config, logger=logger)
+    return LifecycleContext(
+        config=config,
+        logger=logger or logging.getLogger("openminion.lifecycle_hook"),
+    )
 
 
 def fire_lifecycle_event(
@@ -302,13 +258,6 @@ def fire_lifecycle_event(
     config: OpenMinionConfig | None = None,
     logger: logging.Logger | None = None,
 ) -> None:
-    """Producer-side helper: fire a lifecycle event to the default
-    registry.
-
-    Default-safe — when no hooks are registered, this is a fast
-    no-op. Producer sites can call this unconditionally without
-    checking registry state. Hooks observe events without changing outcomes.
-    """
     registry = get_default_lifecycle_registry()
     if registry.count() == 0:
         return

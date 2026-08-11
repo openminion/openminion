@@ -38,8 +38,6 @@ _UNKNOWN_SIGNAL_SOURCE = "unknown"
 
 @dataclass
 class TrailerPostprocessResult:
-    """Structural summary of the trailer events recorded for a turn."""
-
     expected_lanes: list[str] = field(default_factory=list)
     emitted_lanes: list[str] = field(default_factory=list)
     route: str = ""
@@ -64,8 +62,8 @@ class TrailerPostprocessService:
         route: str = "",
         request_metadata: dict[str, Any] | None = None,
     ) -> TrailerPostprocessResult:
-        """Emit expected/emitted trailer measurements for a completed turn."""
         append_event = self._resolve_append_event(session_api)
+        route = str(route or "").strip()
         expected_lanes = self._extract_expected_lanes(request_metadata)
         if response is not None:
             emitted_lanes = self._scan_emitted_lanes_from_response(response)
@@ -90,10 +88,7 @@ class TrailerPostprocessService:
                     agent_id=agent_id,
                     trace_id=trace_id,
                     event_type="trailer.expected",
-                    payload={
-                        "lanes": list(expected_lanes),
-                        "route": str(route or "").strip(),
-                    },
+                    payload={"lanes": list(expected_lanes), "route": route},
                 )
             self._emit_event(
                 append_event,
@@ -103,7 +98,7 @@ class TrailerPostprocessService:
                 event_type="trailer.emitted",
                 payload={
                     "lanes": list(emitted_lanes),
-                    "route": str(route or "").strip(),
+                    "route": route,
                     "sources": emitted_sources,
                 },
             )
@@ -111,7 +106,7 @@ class TrailerPostprocessService:
             if expected_lanes and missing_lanes:
                 feedback_payload = self._build_missing_trailer_feedback(
                     missing_lanes=missing_lanes,
-                    route=str(route or "").strip(),
+                    route=route,
                 )
                 self._emit_event(
                     append_event,
@@ -126,7 +121,7 @@ class TrailerPostprocessService:
         return TrailerPostprocessResult(
             expected_lanes=list(expected_lanes),
             emitted_lanes=list(emitted_lanes),
-            route=str(route or "").strip(),
+            route=route,
             feedback_pending=feedback_pending,
         )
 
@@ -234,7 +229,7 @@ class TrailerPostprocessService:
         return sources_by_lane
 
     def _scan_emitted_lanes_from_payloads(self, payloads: dict[str, Any]) -> list[str]:
-        if not isinstance(payloads, dict) or not payloads:
+        if not payloads:
             return []
         emitted: list[str] = []
         for lane, fields in _LANE_RESPONSE_FIELDS.items():
