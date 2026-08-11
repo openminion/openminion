@@ -1,6 +1,7 @@
 """Durable task-run facts and projections."""
 
 from .constants import RUN_STATUS_DEFAULT_SCAN_LIMIT
+from .status import Run, RunEvent, RunStatus, RunSummary, RunTerminalState
 from .status import (
     ATTACH_ROLE_OBSERVER,
     ATTACH_ROLE_WRITER,
@@ -32,12 +33,7 @@ from .status import (
     THREAD_STATE_FAILED,
     THREAD_STATE_RESPONSE_UNDELIVERED,
     THREAD_STATE_SETTLED,
-    Run,
     RunCheckpoint,
-    RunEvent,
-    RunStatus,
-    RunSummary,
-    RunTerminalState,
     ThreadLifecycleProjection,
     ThreadRoutingDecision,
     append_lifecycle_event,
