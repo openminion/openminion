@@ -2782,7 +2782,7 @@ def test_loop_does_not_infer_finalization_from_answer_shape() -> None:
         tool_specs=_tool_specs("web.search", "web.fetch"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    assert outcome.termination_reason == ADAPTIVE_TERM_LLM_ERROR
     assert outcome.finalization_status is None
 
 
@@ -7015,7 +7015,7 @@ def test_loop_retries_when_final_answer_is_execution_preface_draft() -> None:
     assert "SOURCES" in str(outcome.final_text or "")
 
 
-def test_loop_does_not_infer_file_artifact_intent_from_user_prose() -> None:
+def test_loop_retains_postprocess_file_artifact_retry_until_owner_cleanup() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7108,8 +7108,10 @@ def test_loop_does_not_infer_file_artifact_intent_from_user_prose() -> None:
     )
 
     assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert [command.tool_name for command in loop_ctx.commands] == ["file.list_dir"]
-    assert str(outcome.final_text or "").startswith("implementation:")
+    assert [command.tool_name for command in loop_ctx.commands] == [
+        "file.list_dir",
+        "file.write",
+    ]
 
 
 def test_loop_accepts_model_authored_file_closeout_text() -> None:
@@ -7376,74 +7378,6 @@ def test_loop_accepts_model_authored_execution_preface_text() -> None:
     )
 
 
-def test_loop_falls_back_when_long_closeout_ends_with_unfinished_starting_tail() -> (
-    None
-):
-    draft = (
-        "Design Comparison:\n\n"
-        "| Aspect | Design A | Design B |\n"
-        "|--------|----------|----------|\n"
-        "| Parser approach | regex | string splitting |\n"
-        "| Complexity | medium | low |\n\n"
-        "Selection: Design B because it is simpler.\n\n"
-        "Implementation plan:\n"
-        "- `section_summary.py` - Core module\n"
-        "- `cli.py` - CLI entry\n"
-        "- `test_section_summary.py` - Unit tests\n"
-        "- `README.md` - Documentation\n\n"
-        "Starting with the core module:"
-    )
-    runtime = _FakeRuntime(
-        responses=[
-            LLMResponse(ok=True, provider="fake", model="m", output_text=draft),
-            LLMResponse(ok=True, provider="fake", model="m", output_text=draft),
-        ]
-    )
-    initial_state = AdaptiveToolLoopState(
-        scratchpad={
-            "adaptive.tool_results": [
-                {
-                    "tool_name": "file.write",
-                    "ok": True,
-                    "content": "wrote section_summary.py",
-                    "data": {"path": "section_summary.py"},
-                }
-            ]
-        }
-    )
-    outcome = run_adaptive_tool_loop(
-        _LoopContext(state=_state()),
-        profile=_profile(
-            allowed_tools=frozenset({"file.write"}),
-            max_iterations=4,
-        ),
-        runtime=runtime,
-        model="m",
-        initial_messages=[
-            Message(
-                role="user",
-                content=(
-                    "Use file.write for files. Finish with `design:`, `files:`, "
-                    "`validation:`, and `follow-ups:`."
-                ),
-            )
-        ],
-        initial_state=initial_state,
-        tool_specs=_tool_specs("file.write"),
-    )
-
-    final_text = str(outcome.final_text or "").lower()
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "design:" in final_text
-    assert "files:" in final_text
-    assert "validation:" in final_text
-    assert "follow-ups:" in final_text
-    assert "section_summary.py" in final_text
-    assert bool(
-        outcome.state.scratchpad.get("pre_tool_draft_echo_used_evidence_fallback")
-    )
-
-
 def test_loop_retries_empty_finalization_after_successful_tool_evidence() -> None:
     runtime = _FakeRuntime(
         responses=[
@@ -7526,9 +7460,7 @@ def test_loop_retries_empty_finalization_after_successful_tool_evidence() -> Non
     )
 
 
-def test_loop_falls_back_to_evidence_when_typed_finalization_contract_is_missing() -> (
-    None
-):
+def test_loop_fails_closed_when_typed_finalization_contract_is_missing() -> None:
     runtime = _FakeRuntime(
         responses=[
             LLMResponse(
@@ -7605,14 +7537,8 @@ def test_loop_falls_back_to_evidence_when_typed_finalization_contract_is_missing
         tool_specs=_tool_specs("web.search"),
     )
 
-    assert outcome.termination_reason == ADAPTIVE_TERM_FINAL_TEXT
-    assert "result:" in str(outcome.final_text or "").lower()
-    assert "web.search" in str(outcome.final_text or "")
-    assert bool(
-        outcome.state.scratchpad.get(
-            "typed_finalization_contract_used_evidence_fallback"
-        )
-    )
+    assert outcome.termination_reason == ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING
+    assert outcome.finalization_status is None
 
 
 def test_execution_preface_draft_detects_future_tense_tool_batch() -> None:
@@ -7670,7 +7596,7 @@ def test_unexecutable_tool_payload_detects_embedded_json_after_prose() -> None:
     )
 
 
-def test_raw_tool_result_array_with_missing_labels_uses_evidence_closeout() -> None:
+def test_raw_tool_result_array_retries_without_interpreting_requested_labels() -> None:
     runner = _NoToolRepairHarness()
     runner.loop_state = AdaptiveToolLoopState(
         messages=[
@@ -7702,17 +7628,12 @@ def test_raw_tool_result_array_with_missing_labels_uses_evidence_closeout() -> N
         "} ]"
     )
 
-    repaired_text = runner._repair_raw_tool_payload_final_text(raw_payload_text)
+    result = runner._repair_raw_tool_payload_final_text(raw_payload_text)
 
-    assert isinstance(repaired_text, str)
-    final_text = repaired_text.lower()
-    assert "design:" in final_text
-    assert "files:" in final_text
-    assert "validation:" in final_text
-    assert "follow-ups:" in final_text
-    assert "section_summary.py" in final_text
-    assert bool(
-        runner.loop_state.scratchpad.get("raw_tool_payload_used_evidence_fallback")
+    assert result == (True, None)
+    assert "raw tool markup" in runner.loop_state.messages[-1].content
+    assert not runner.loop_state.scratchpad.get(
+        "raw_tool_payload_used_evidence_fallback"
     )
 
 
