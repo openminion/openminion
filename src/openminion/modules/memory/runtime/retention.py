@@ -32,22 +32,16 @@ class RuntimeMemoryRetentionPolicy:
     patch_retention_count: int = 200
 
     def __post_init__(self) -> None:
-        if self.log_retention_days <= 0:
-            raise InvalidArgumentError(
-                "log_retention_days must be positive",
-                details={
-                    "field": "log_retention_days",
-                    "value": self.log_retention_days,
-                },
-            )
-        if self.patch_retention_count <= 0:
-            raise InvalidArgumentError(
-                "patch_retention_count must be positive",
-                details={
-                    "field": "patch_retention_count",
-                    "value": self.patch_retention_count,
-                },
-            )
+        values = (
+            ("log_retention_days", self.log_retention_days),
+            ("patch_retention_count", self.patch_retention_count),
+        )
+        for field_name, value in values:
+            if value <= 0:
+                raise InvalidArgumentError(
+                    f"{field_name} must be positive",
+                    details={"field": field_name, "value": value},
+                )
 
 
 @dataclass(frozen=True)

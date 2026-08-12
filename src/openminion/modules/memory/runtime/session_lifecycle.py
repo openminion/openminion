@@ -76,21 +76,6 @@ class SessionLifecycleMixin:
                 return dict(metadata)
         return {}
 
-    def _plan_snapshot_incomplete_reason(
-        self,
-        *,
-        brain_status: str,
-        termination_reason: str,
-        has_incomplete_intents: bool,
-    ) -> str:
-        normalized_reason = str(termination_reason or "").strip().lower()
-        if normalized_reason in self._PLAN_SNAPSHOT_ALLOWED_REASONS:
-            return normalized_reason
-        normalized_status = str(brain_status or "").strip().lower()
-        if normalized_status == "done" and has_incomplete_intents:
-            return "session_ended"
-        return "session_ended"
-
     def _plan_snapshot_content(
         self,
         *,
@@ -157,10 +142,11 @@ class SessionLifecycleMixin:
         last_work_summary = str(
             state_inline.get("session_work_summary", "") or ""
         ).strip()
-        incomplete_reason = self._plan_snapshot_incomplete_reason(
-            brain_status=brain_status,
-            termination_reason=termination_reason,
-            has_incomplete_intents=bool(incomplete_intents),
+        normalized_reason = str(termination_reason or "").strip().lower()
+        incomplete_reason = (
+            normalized_reason
+            if normalized_reason in self._PLAN_SNAPSHOT_ALLOWED_REASONS
+            else "session_ended"
         )
         payload: dict[str, Any] = {
             "plan_steps": plan_steps,
@@ -253,10 +239,6 @@ class SessionLifecycleMixin:
             },
         )
         return candidate_id
-
-    def _extract_topic_keywords(self, rolling_summary: str) -> list[str]:
-        del rolling_summary
-        return []
 
     def _normalize_summary_items(
         self,

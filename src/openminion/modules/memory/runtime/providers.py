@@ -13,20 +13,13 @@ def create_memory_provider_registry() -> ModuleRegistry[MemoryProviderFactory]:
     registry = ModuleRegistry[MemoryProviderFactory](expected_contract_version="v1")
     from openminion.modules.memory.smoke import EphemeralMemorySmokeProvider
 
-    registry.register(
-        "smoke",
-        lambda config: EphemeralMemorySmokeProvider(
+    def factory(config: dict[str, Any]) -> Any:
+        return EphemeralMemorySmokeProvider(
             agent_id=str(config.get("agent_id", "openminion"))
-        ),
-        contract_version="v1",
-    )
-    registry.register(
-        "hello_world",
-        lambda config: EphemeralMemorySmokeProvider(
-            agent_id=str(config.get("agent_id", "openminion"))
-        ),
-        contract_version="v1",
-    )
+        )
+
+    for provider_id in ("smoke", "hello_world"):
+        registry.register(provider_id, factory, contract_version="v1")
 
     return registry
 
