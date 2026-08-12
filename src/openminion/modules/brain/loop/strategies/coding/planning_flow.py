@@ -14,6 +14,9 @@ from openminion.modules.brain.execution.loop_contracts import (
     ExecutionResult,
 )
 from openminion.modules.brain.loop.tools import build_loop_thinking_metadata
+from openminion.modules.brain.loop.tools.structured_llm import (
+    structured_mode_response,
+)
 from openminion.modules.llm.schemas import LLMResponse, Message
 
 from .llm import DefaultCodingLLMRuntime
@@ -39,12 +42,19 @@ class CodingPlanningMixin:
             ).strip()
             or "Complete the coding task."
         )
+        plan = structured_mode_response(
+            ctx,
+            prompt=f"{build_coding_plan_system_prompt()}\n\nCoding goal:\n{goal}",
+            schema=CodingPlan,
+            purpose="plan",
+            max_tokens=2000,
+        )
+        if isinstance(plan, CodingPlan):
+            self._apply_plan_to_scratchpad(plan)
+            return plan, None
         response = runtime.complete(
             messages=[
-                Message(
-                    role="system",
-                    content=build_coding_plan_system_prompt(),
-                ),
+                Message(role="system", content=build_coding_plan_system_prompt()),
                 Message(role="user", content=goal),
             ],
             tools=[],
@@ -52,14 +62,14 @@ class CodingPlanningMixin:
             tool_choice="auto",
             metadata=build_loop_thinking_metadata(ctx, purpose="plan"),
         )
-        plan = self._plan_from_response(response=response)
-        if plan is not None:
-            self._apply_plan_to_scratchpad(plan)
-            return plan, None
+        fallback_plan = self._plan_from_response(response=response)
+        if fallback_plan is not None:
+            self._apply_plan_to_scratchpad(fallback_plan)
+            return fallback_plan, None
         if response.ok and response.tool_calls:
-            tool_plan = CodingPlan.fallback(goal)
-            self._apply_plan_to_scratchpad(tool_plan)
-            return tool_plan, response
+            fallback_plan = CodingPlan.fallback(goal)
+            self._apply_plan_to_scratchpad(fallback_plan)
+            return fallback_plan, response
         message = "Coding planner did not return a valid CodingPlan."
         return ExecutionResult(
             status=BRAIN_STATE_ERROR,
@@ -73,16 +83,10 @@ class CodingPlanningMixin:
         *,
         response: LLMResponse,
     ) -> CodingPlan | None:
-        if not response.ok:
-            return None
-        if response.tool_calls:
-            return None
-        raw_text = response.output_text.strip()
-        if not raw_text:
+        if not response.ok or response.tool_calls:
             return None
         try:
-            payload = json.loads(raw_text)
-            return CodingPlan.model_validate(payload)
+            return CodingPlan.model_validate(json.loads(response.output_text.strip()))
         except (json.JSONDecodeError, ValidationError):
             return None
 
@@ -131,6 +135,7 @@ class CodingPlanningMixin:
     def _append_phase_instruction(self: Any) -> None:
         if self._coding_plan is None:
             return
+        self._reset_loop_for_continuation()
         phase = self._coding_plan.current_phase_entry()
         if phase.name == "verify":
             instruction = (
@@ -166,3 +171,7 @@ class CodingPlanningMixin:
                 content=instruction,
             )
         )
+
+    def _reset_loop_for_continuation(self: Any) -> None:
+        self._loop_state.termination_reason = ""
+        self._loop_state.seen_signatures = []

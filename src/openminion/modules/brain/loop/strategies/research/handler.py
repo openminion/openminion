@@ -26,6 +26,7 @@ from openminion.modules.brain.config import (
     RESEARCH_CHECKPOINT_INTERVAL,
     RESEARCH_MAX_ITERATIONS,
     RESEARCH_MAX_RESUME_COUNT,
+    RESEARCH_SYNTHESIS_MAX_TOKENS,
 )
 from openminion.modules.brain.diagnostics.transitions import (
     set_status_unchecked,
@@ -54,6 +55,9 @@ from openminion.modules.brain.runtime.budget.strategy import (
     resolve_research_budget_settings,
 )
 from openminion.modules.brain.loop.services import runner_from_context
+from openminion.modules.brain.loop.tools.structured_llm import (
+    structured_mode_response,
+)
 from openminion.modules.brain.checkpoint.contracts import TaskProgress
 from openminion.modules.brain.runner.resume import (
     ExponentialBackoffResumePolicy,
@@ -73,7 +77,7 @@ from .findings import (
     usable_child_action_result_text as _usable_child_action_result_text,
     usable_child_working_state_text as _usable_child_working_state_text,
 )
-from .schemas import ResearchFinding
+from .schemas import ResearchFinding, ResearchSynthesis
 from openminion.modules.brain.constants import STATE_KEY_TASK_BACKED_RESUME
 from openminion.base.constants import STATE_KEY_WORKING
 
@@ -598,27 +602,24 @@ class ResearchMode(SimpleCheckpointMixin):
                     result_status = (
                         str(getattr(result, "status", "") or "").strip().lower()
                     )
-                    if result_status in {BRAIN_STATE_DONE, BRAIN_STATE_WAITING_USER}:
-                        evidence_dates = _evidence_dates_from_action_result(
-                            getattr(result, "action_result", None)
+                    action_result = getattr(result, "action_result", None)
+                    working_state = getattr(result, STATE_KEY_WORKING, None)
+                    evidence_dates = _evidence_dates_from_action_result(action_result)
+                    if not evidence_dates:
+                        evidence_dates = _evidence_dates_from_working_state(
+                            working_state
                         )
-                        if not evidence_dates:
-                            evidence_dates = _evidence_dates_from_working_state(
-                                getattr(result, STATE_KEY_WORKING, None)
-                            )
-                        candidate_content = _usable_child_action_result_text(
-                            getattr(result, "action_result", None)
+                    candidate_content = _usable_child_action_result_text(action_result)
+                    if not candidate_content:
+                        candidate_content = _usable_child_working_state_text(
+                            working_state
                         )
-                        if not candidate_content:
-                            candidate_content = _usable_child_working_state_text(
-                                getattr(result, STATE_KEY_WORKING, None)
-                            )
-                        if not candidate_content and result_status == BRAIN_STATE_DONE:
-                            candidate_content = _normalized_text(
-                                getattr(result, "message", "") or ""
-                            )
-                        if candidate_content:
-                            content = candidate_content
+                    if not candidate_content and result_status == BRAIN_STATE_DONE:
+                        candidate_content = _normalized_text(
+                            getattr(result, "message", "") or ""
+                        )
+                    if candidate_content:
+                        content = candidate_content
             except Exception as exc:
                 trace_id = str(getattr(ctx.state, "trace_id", "") or "").strip()
                 with suppress(Exception):
@@ -748,12 +749,30 @@ class ResearchMode(SimpleCheckpointMixin):
         query: str,
         findings: list[dict[str, Any]],
     ) -> ExecutionResult:
-        synthesis = self._build_synthesis_text(
+        synthesis = self._build_synthesis(
             ctx,
             query=query,
             findings=findings,
-            allow_llm_synthesis=True,
         )
+        if synthesis is None:
+            self._pause_incomplete_research(ctx, task_id=task_id)
+            return ExecutionResult.from_step_output(
+                ctx.respond(
+                    message=self._build_no_synthesis_closeout(query=query),
+                    status=BRAIN_STATE_WAITING_USER,
+                )
+            )
+
+        answer = synthesis.answer.strip()
+        if synthesis.status != "complete":
+            remaining_work = synthesis.remaining_work.strip()
+            if remaining_work:
+                answer = f"{answer}\n\nRemaining work: {remaining_work}"
+            self._pause_incomplete_research(ctx, task_id=task_id)
+            return ExecutionResult.from_step_output(
+                ctx.respond(message=answer, status=BRAIN_STATE_WAITING_USER)
+            )
+
         transition(ctx.state, "task_completed", logger=ctx.logger)
         ctx.state.task_backed_resume_state = {}
         if task_id:
@@ -785,17 +804,18 @@ class ResearchMode(SimpleCheckpointMixin):
                 ctx.transition_task(task_id=task_id, to_state="done")
 
         return ExecutionResult.from_step_output(
-            ctx.respond(message=synthesis, status=BRAIN_STATE_DONE)
+            ctx.respond(message=answer, status=BRAIN_STATE_DONE)
         )
 
-    def _build_synthesis_text(
+    def _build_synthesis(
         self,
-        ctx: ExecutionContext | None,
+        ctx: ExecutionContext,
         *,
         query: str,
         findings: list[dict[str, Any]],
-        allow_llm_synthesis: bool,
-    ) -> str:
+    ) -> ResearchSynthesis | None:
+        if not findings:
+            return None
         synthesis_prompt = (
             "\n".join(_render_temporal_fact_lines(findings))
             + "\n"
@@ -805,21 +825,30 @@ class ResearchMode(SimpleCheckpointMixin):
                 f"- Iteration {f.get('iteration', '?')}: {_normalized_text(f.get('content', ''))[:400]}"
                 for f in findings
             )
-            + "\n\nSynthesize these findings into a comprehensive, coherent answer."
+            + "\n\nSynthesize these findings into a comprehensive, coherent answer. "
+            "Use only the supplied evidence, preserve any exact labels or output "
+            "shape requested in the research query, and report incomplete or "
+            "blocked status when the evidence cannot support a complete answer."
         )
-        plan = None
-        if allow_llm_synthesis and ctx is not None:
-            try:
-                plan = ctx.plan(user_input=synthesis_prompt)
-            except Exception:
-                plan = None
+        structured = structured_mode_response(
+            ctx,
+            prompt=synthesis_prompt,
+            schema=ResearchSynthesis,
+            purpose="summarize",
+            max_tokens=RESEARCH_SYNTHESIS_MAX_TOKENS,
+        )
+        return structured if isinstance(structured, ResearchSynthesis) else None
 
-        synthesis = ""
-        if plan is not None:
-            synthesis = _normalized_text(getattr(plan, "objective", "") or "")
-        if not synthesis:
-            synthesis = self._build_no_synthesis_closeout(query=query)
-        return synthesis
+    def _pause_incomplete_research(
+        self,
+        ctx: ExecutionContext,
+        *,
+        task_id: str,
+    ) -> None:
+        self._save_checkpoint(ctx, cursor=self._next_iteration)
+        if task_id:
+            ctx.transition_task(task_id=task_id, to_state="paused")
+        transition(ctx.state, "checkpoint_reached", logger=ctx.logger)
 
     def _build_no_synthesis_closeout(self, *, query: str) -> str:
         return (

@@ -351,6 +351,24 @@ class RecordStoreSQLite(RecordStore):
         with self._lock:
             self._conn.close()
 
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Keep one SQLite transaction owned by one caller until it closes."""
+        with self._instrument_query("BEGIN", None), self._lock:
+            outermost = not self._in_tx
+            if outermost:
+                self.begin()
+            completed = False
+            try:
+                yield
+                completed = True
+            finally:
+                if outermost:
+                    if completed:
+                        self.commit()
+                    else:
+                        self.rollback()
+
     def begin(self) -> None:
         with self._lock:
             if self._in_tx:

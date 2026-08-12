@@ -838,13 +838,13 @@ class SessionLifecycleMixin:
             ]
             if current_session
             else [
+                active_thread_section,
                 summary_section,
                 key_decision_section,
                 open_question_section,
-                other_recent_section,
                 title_section,
                 topic_section,
-                active_thread_section,
+                other_recent_section,
             ]
         )
         for section in prioritized_sections:

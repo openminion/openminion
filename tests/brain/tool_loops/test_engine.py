@@ -76,6 +76,7 @@ def test_finalization_guidance_preserves_user_requested_answer_format() -> None:
     assert "do not replace a requested format with a generic completion summary" in (
         _FINALIZATION_STATUS_GUIDANCE
     )
+    assert "<finalization_status>" in _FINALIZATION_STATUS_GUIDANCE
 
 
 @dataclass
@@ -5482,8 +5483,11 @@ def test_engine_salvages_typed_finalization_with_status_only_follow_up() -> None
         "remaining_work": "",
         "blocking_reason": "",
     }
-    assert runtime.calls[-1]["tool_choice"] == "none"
-    assert runtime.calls[-1]["tools"] == []
+    assert runtime.calls[-1]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_output"},
+    }
+    assert runtime.calls[-1]["tools"][0].name == "submit_output"
     salvage_messages = [
         str(message.content)
         for message in runtime.calls[-1]["messages"]

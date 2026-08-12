@@ -57,9 +57,7 @@ def build_tool_request_spec() -> ToolSpec:
         name=TOOL_REQUEST_TOOL_NAME,
         description=(
             "Activate one inactive tool schema for this adaptive loop. Use an exact "
-            "tool name from the inactive tool directory. Use this before asking a "
-            "clarifying question when an inactive tool can investigate the missing "
-            "information."
+            "tool name from the inactive tool directory."
         ),
         input_schema={
             "type": "object",

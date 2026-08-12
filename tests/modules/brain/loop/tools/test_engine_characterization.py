@@ -79,6 +79,10 @@ from openminion.modules.brain.loop.tools.engine import (
 from openminion.modules.brain.loop.tools.duplicate_batch import (
     _reset_duplicate_batch_tracking,
 )
+from openminion.modules.brain.loop.tools.budget_finalization import (
+    _finalization_status_from_response,
+    _recover_finalized_answer,
+)
 from openminion.modules.brain.loop.tools.postprocess.rules import (
     _final_answer_references_unbacked_source_urls,
     _looks_like_unexecutable_tool_payload_text,
@@ -365,6 +369,71 @@ def test_payload_extractor_invalid_dict_returns_none(
     except Exception:  # pragma: no cover — defensive
         pytest.fail("extractor leaked an exception")
     assert result is None or result is not None  # branch executed either way
+
+
+def test_finalization_status_accepts_forced_submit_output_call() -> None:
+    response = LLMResponse(
+        ok=True,
+        provider="fake",
+        model="m",
+        tool_calls=[
+            ToolCall(
+                name="submit_output",
+                arguments={
+                    "status": "final_answer",
+                    "reasoning": "The prior answer completed the request.",
+                },
+            )
+        ],
+    )
+
+    assert _finalization_status_from_response(response) == {
+        "status": "final_answer",
+        "reasoning": "The prior answer completed the request.",
+        "remaining_work": "",
+        "blocking_reason": "",
+    }
+
+
+def test_structured_final_answer_recovery_preserves_answer_and_status() -> None:
+    runtime = _FakeRuntime(
+        responses=[
+            LLMResponse(
+                ok=True,
+                provider="fake",
+                model="m",
+                tool_calls=[
+                    ToolCall(
+                        name="submit_output",
+                        arguments={
+                            "final_answer": "tradeoffs: concise\nrecommendation: ship",
+                            "status": "final_answer",
+                            "reasoning": "The evidence supports the answer.",
+                        },
+                    )
+                ],
+            )
+        ]
+    )
+    loop_ctx = _LoopContext(state=_state())
+
+    result = _recover_finalized_answer(
+        loop_ctx=loop_ctx,
+        profile=_profile(
+            profile_name="general_adaptive_v1", allowed_tools=frozenset()
+        ),
+        loop_state=AdaptiveToolLoopState(messages=[]),
+        runtime=runtime,
+        model="m",
+        max_output_tokens=500,
+        metadata=None,
+        public_mode_tag="act",
+    )
+
+    assert result is not None
+    assert result.final_answer.startswith("tradeoffs:")
+    assert result.status == "final_answer"
+    assert runtime.calls[0]["tools"][0].name == "submit_output"
 
 
 # Pure: small predicates / helpers
@@ -1298,6 +1367,22 @@ class TestLooksLikeUnexecutableToolPayloadText:
             "<execute_command> python3 wc_cli.py sample.txt </execute_command>\n"
             "<read_file> wordcount_summary.txt </read_file>"
         )
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_detects_file_read_pseudo_xml_without_guessing_an_alias(self) -> None:
+        text = (
+            "I'll verify the file now.\n\n"
+            "<file_read>\n<path>word_count_cli.py</path>\n</file_read>"
+        )
+
+        assert _looks_like_unexecutable_tool_payload_text(text) is True
+
+    def test_detects_tool_request_xml_without_executing_it(self) -> None:
+        text = (
+            "I'll activate file tools.\n\n"
+            "<tool_request><name>file.read</name></tool_request>"
+        )
+
         assert _looks_like_unexecutable_tool_payload_text(text) is True
 
     def test_detects_plaintext_tool_calls_array(self) -> None:
@@ -5344,7 +5429,11 @@ class TestFinalizeIterationCapExit:
             "blocking_reason": "",
         }
         assert len(runtime.calls) == 2
-        assert runtime.calls[1]["tool_choice"] == "none"
+        assert runtime.calls[1]["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "submit_output"},
+        }
+        assert runtime.calls[1]["tools"][0].name == "submit_output"
         retry_messages = runtime.calls[1]["messages"]
         assert retry_messages[-2].role == "assistant"
         assert retry_messages[-2].content == result.final_text
@@ -5352,6 +5441,7 @@ class TestFinalizeIterationCapExit:
         assert "Return only the structured finalization_status signal" in (
             retry_messages[-1].content
         )
+        assert "<finalization_status>" in retry_messages[-1].content
 
     def test_force_finalization_recovers_status_from_retry_trailer_text(
         self,
@@ -7446,9 +7536,13 @@ def test_loop_retries_empty_finalization_after_successful_tool_evidence() -> Non
     assert bool(
         outcome.state.scratchpad.get("empty_final_after_tool_results_retry_used")
     )
-    assert bool(
+    assert not bool(
         outcome.state.scratchpad.get("empty_final_after_tool_results_final_retry_used")
     )
+    assert runtime.calls[2]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_output"},
+    }
 
 
 def test_loop_fails_closed_when_typed_finalization_contract_is_missing() -> None:

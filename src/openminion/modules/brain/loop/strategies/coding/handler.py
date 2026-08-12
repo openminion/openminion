@@ -391,7 +391,7 @@ class CodingProfileRunner(
     ) -> tuple[list[Any], Any | None] | ExecutionResult:
         tool_specs = _build_tool_specs(CODING_ALLOWED_TOOLS, ctx=ctx)
         self._init_checkpoint(ctx)
-        seed_response: Any | None = getattr(ctx.decision, "_entry_response", None)
+        seed_response: Any | None = None
         resume_state = {
             key: value
             for key, value in dict(
@@ -433,28 +433,14 @@ class CodingProfileRunner(
                 self._loop_state.messages.append(
                     Message(role="user", content=ctx.user_input)
                 )
-            if seed_response is not None:
-                goal = (
-                    str(
-                        ctx.user_input
-                        or ctx.state.goal
-                        or getattr(ctx.decision, "objective", "")
-                        or ""
-                    ).strip()
-                    or "Complete the coding task."
-                )
-                self._coding_plan = CodingPlan.fallback(goal)
-                self._apply_plan_to_scratchpad(self._coding_plan)
-                seed_response = None
-            else:
-                initialized = self._initialize_plan(
-                    ctx,
-                    runtime=runtime,
-                    model=model,
-                )
-                if isinstance(initialized, ExecutionResult):
-                    return initialized
-                self._coding_plan, seed_response = initialized
+            initialized = self._initialize_plan(
+                ctx,
+                runtime=runtime,
+                model=model,
+            )
+            if isinstance(initialized, ExecutionResult):
+                return initialized
+            self._coding_plan, seed_response = initialized
             self._sync_coding_context(ctx)
             self._sync_coding_module_state(ctx)
         seeded_replay_result = self._consume_seeded_confirmation_replay(ctx)

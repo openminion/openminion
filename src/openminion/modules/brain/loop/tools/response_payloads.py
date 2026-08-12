@@ -24,6 +24,9 @@ from openminion.modules.context.schemas import (
     TaskPlanStepCompleted,
     TaskPlanTerminalSignal,
 )
+from openminion.modules.brain.loop.constants import (
+    FINALIZATION_STATUS_TRAILER_GUIDANCE,
+)
 
 from .contracts import AdaptiveToolLoopState
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
@@ -47,13 +50,15 @@ _FINALIZATION_STATUS_GUIDANCE = (
     "Always include the user-facing answer text before the finalization_status "
     "signal. Preserve any user-specified final-answer format, headings, section "
     "titles, ordering, or exact-response constraints; do not replace a requested "
-    "format with a generic completion summary."
+    "format with a generic completion summary. "
+    f"{FINALIZATION_STATUS_TRAILER_GUIDANCE}"
 )
 _FINALIZATION_STATUS_SALVAGE_GUIDANCE = (
     "You already produced the full user-facing answer above. Do not repeat or "
     "expand it. Return only the structured finalization_status signal now. Do "
     "not call tools. Set status=final_answer only if the prior answer fully "
-    "completed the request. Use status=incomplete or status=blocked otherwise."
+    "completed the request. Use status=incomplete or status=blocked otherwise. "
+    f"{FINALIZATION_STATUS_TRAILER_GUIDANCE}"
 )
 _PENDING_TURN_CONTEXT_GUIDANCE = (
     "When your final user-facing answer offers, proposes, or suggests a concrete "

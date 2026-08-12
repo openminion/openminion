@@ -62,6 +62,7 @@ _RAW_ENVELOPE_RE = re.compile(
 )
 _RAW_TOOL_MARKUP_RE = re.compile(
     r"<minimax:tool_call>|</minimax:tool_call>|<tool_call>|</tool_call>|"
+    r"<tool_request>|</tool_request>|"
     r"<functioncall>|</functioncall>|"
     r"<invoke\s+name=|</invoke>|\[tool_call\]|\[/tool_call\]|<tool_code>|</tool_code>|"
     r"<tool\s+name=|</tool>|<param(?:eter)?\s+name=|</param(?:eter)?>",
@@ -69,6 +70,7 @@ _RAW_TOOL_MARKUP_RE = re.compile(
 )
 _RAW_XML_TOOL_WRAPPER_RE = re.compile(
     r"<minimax:tool_call>|</minimax:tool_call>|<tool_call>|</tool_call>|"
+    r"<tool_request>|</tool_request>|"
     r"<functioncall>|</functioncall>|"
     r"<invoke\s+name=|</invoke>|"
     r"<tool\s+name=|</tool>|<param(?:eter)?\s+name=|</param(?:eter)?>",

@@ -17,6 +17,7 @@ from openminion.modules.brain.loop.constants import (
     BUDGET_ANSWER_ONLY_TEXT_LIMIT,
     BUDGET_ANSWER_ONLY_TOOL_NAME_LIMIT,
     BUDGET_ANSWER_ONLY_TOOL_RESULT_LIMIT,
+    FINALIZATION_STATUS_TRAILER_GUIDANCE,
 )
 from openminion.modules.brain.schemas import (
     AdaptiveBudgetConfig,
@@ -611,6 +612,7 @@ def _force_budget_answer_only_finalization(
         " Append finalization_status with status=final_answer only if the answer "
         "fully completes the original request; otherwise use status=incomplete "
         "or status=blocked."
+        f" {FINALIZATION_STATUS_TRAILER_GUIDANCE}"
         if contract_requested
         else ""
     )

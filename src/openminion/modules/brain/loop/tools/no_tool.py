@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 from openminion.base.constants import STATE_KEY_FINALIZATION_STATUS
+from openminion.modules.brain.schemas import FinalizationStatus
 from openminion.modules.llm.schemas import Message
 
 from .contracts import (
     ADAPTIVE_TERM_FINALIZATION_CONTRACT_MISSING,
     ADAPTIVE_TERM_REQUESTED_TOOL_NOT_EXECUTED,
     AdaptiveToolLoopOutcome,
+)
+from .budget_finalization import (
+    _recover_budget_finalization_status,
+    _recover_finalized_answer,
 )
 from .direct_tool import (
     _direct_tool_turn_active,
@@ -32,7 +37,6 @@ from .iteration.helpers import (
 )
 from .iteration.termination import build_no_tool_outcome
 from .response_payloads import (
-    _FINALIZATION_STATUS_SALVAGE_GUIDANCE,
     _confident_complete_payload,
     _delegation_context_payload,
     _delegation_result_summary_payload,
@@ -228,6 +232,31 @@ class AdaptiveLoopRunnerNoToolMixin:
         self.loop_state.messages.append(Message(role="system", content=message))
         return True, None
 
+    def _recovered_finalization_outcome(
+        self,
+        *,
+        prepared: Any,
+        payloads: dict[str, Any],
+        final_text: str,
+        finalization_status: dict[str, Any],
+    ) -> tuple[bool, AdaptiveToolLoopOutcome]:
+        outcome_payloads = dict(payloads)
+        outcome_payloads.pop("salvage_text", None)
+        outcome_payloads["final_text"] = final_text
+        outcome_payloads[STATE_KEY_FINALIZATION_STATUS] = (
+            FinalizationStatus.model_validate(finalization_status)
+        )
+        return False, build_no_tool_outcome(
+            self.loop_ctx,
+            profile=self.profile,
+            loop_state=self.loop_state,
+            allowed_tools=self.allowed_tools,
+            llm_duration_ms=prepared.iter_llm_duration_ms,
+            tokens_used=prepared.iter_input_tokens + prepared.iter_output_tokens,
+            finalizer=self.finalizer,
+            **outcome_payloads,
+        )
+
     def _repair_raw_tool_payload_final_text(
         self, normalized_final_text: str
     ) -> tuple[bool, AdaptiveToolLoopOutcome | None] | str | None:
@@ -354,6 +383,32 @@ class AdaptiveLoopRunnerNoToolMixin:
             getattr(self.loop_state, "direct_tool_requested_batch_satisfied", False)
         ):
             return _requested_direct_tool_not_executed_outcome(self)
+        if (
+            requires_finalization_status
+            and finalization_status is None
+            and not normalized_final_text
+            and _count_substantive_non_control_tool_results(self.loop_state) > 0
+        ):
+            recovered_answer = _recover_finalized_answer(
+                loop_ctx=self.loop_ctx,
+                profile=self.profile,
+                loop_state=self.loop_state,
+                runtime=self.runtime,
+                model=self.model,
+                max_output_tokens=self.max_output_tokens,
+                metadata=self.metadata,
+                public_mode_tag=self.public_mode_tag,
+            )
+            if recovered_answer is not None:
+                recovered_status = recovered_answer.model_dump(
+                    mode="python", exclude={"final_answer"}
+                )
+                return self._recovered_finalization_outcome(
+                    prepared=prepared,
+                    payloads=payloads,
+                    final_text=recovered_answer.final_answer,
+                    finalization_status=recovered_status,
+                )
         empty_final_retry = _retry_empty_final_after_tool_results(
             self,
             finalization_status=finalization_status,
@@ -392,13 +447,24 @@ class AdaptiveLoopRunnerNoToolMixin:
                 )
             )
         ):
-            self.loop_state.scratchpad["typed_finalization_status_salvage_text"] = (
-                final_text
+            recovered_status = _recover_budget_finalization_status(
+                loop_ctx=self.loop_ctx,
+                profile=self.profile,
+                loop_state=self.loop_state,
+                runtime=self.runtime,
+                model=self.model,
+                max_output_tokens=self.max_output_tokens,
+                metadata=self.metadata,
+                final_text=normalized_final_text,
+                public_mode_tag=self.public_mode_tag,
             )
-            self.loop_state.messages.append(
-                Message(role="system", content=_FINALIZATION_STATUS_SALVAGE_GUIDANCE)
-            )
-            return True, None
+            if recovered_status is not None:
+                return self._recovered_finalization_outcome(
+                    prepared=prepared,
+                    payloads=payloads,
+                    final_text=normalized_final_text,
+                    finalization_status=recovered_status,
+                )
         if (
             requires_finalization_status
             and finalization_status is not None

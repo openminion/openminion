@@ -5,6 +5,10 @@ _CODING_PLAN_SYSTEM_INTRO = (
     "must create, edit, or patch workspace files; leave it false only for "
     "explicitly read-only analysis. Use phases in order explore -> plan -> "
     "implement -> verify, or return a single implement phase."
+    " Treat explicit user constraints on the first tool, forbidden tools, path "
+    "scope, and operation order as hard plan constraints. When the user says to "
+    "begin with a file write and not inspect first, start in implement, set "
+    "requires_file_change true, and make that exact write the first step."
 )
 
 _CODING_PLAN_VERIFIER_GUIDANCE = (

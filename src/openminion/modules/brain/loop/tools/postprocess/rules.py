@@ -32,8 +32,8 @@ _PLAINTEXT_TOOL_FUNCTION_CALL_RE = re.compile(
     r"\.[A-Za-z0-9_]+\s*\(",
 )
 _PSEUDO_TOOL_TAG_RE = re.compile(
-    r"(?is)<\s*/?\s*(?:create_file|write_file|read_file|execute_command|"
-    r"file\.write|file_write|exec\.run|code\.patch)\b",
+    r"(?is)<\s*/?\s*(?:create_file|write_file|read_file|file_read|"
+    r"execute_command|file\.write|file_write|exec\.run|code\.patch)\b",
 )
 _PLAINTEXT_TOOL_CALLS_ARRAY_RE = re.compile(
     r"(?is)\btool_calls?\b\s*[:=]?\s*\[.*\b"

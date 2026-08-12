@@ -25,6 +25,12 @@ _INCOMPLETE_TURN_MARKERS = (
     "without reaching a final answer",
 )
 
+_FAILED_FINAL_ANSWER_MARKERS = (
+    "did not produce a usable synthesized answer",
+    "ended without the required typed finalization_status contract",
+    "required typed finalization_status contract",
+)
+
 
 def visible_text(text: str) -> str:
     return _ANSI_RE.sub("", text)
@@ -80,6 +86,14 @@ def assert_expected_markers(
     transcript: str, prompt: str, markers: tuple[str, ...]
 ) -> None:
     output = turn_output_text(transcript, prompt).lower()
+    done_matches = list(_DONE_RE.finditer(output))
+    if done_matches:
+        output = output[: done_matches[-1].start()]
+    answer_index = output.rfind("⏺")
+    if answer_index >= 0:
+        output = output[answer_index + 1 :]
+    for failure_marker in _FAILED_FINAL_ANSWER_MARKERS:
+        assert failure_marker not in output, failure_marker
     for marker in markers:
         alternatives = tuple(
             part.strip().lower() for part in marker.split("|") if part.strip()

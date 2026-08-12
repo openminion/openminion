@@ -382,6 +382,7 @@ class CodingVerificationMixin:
             "blocked_cap",
             CODING_TERM_VERIFY_CAP_EXCEEDED,
         }:
+            self._reset_loop_for_continuation()
             self._loop_state.messages.append(Message(role="user", content=instruction))
         self._emit_phase_status(ctx)
         return False

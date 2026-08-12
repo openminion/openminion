@@ -187,33 +187,8 @@ class ContextBuildersMixin:
         except Exception:
             pass
         summary_scope = f"agent:{self._agent_id}"
-        all_summaries = self._service.list(
-            ListQueryOptions(
-                scopes=[summary_scope],
-                types=["session_summary"],
-                limit=None,
-                order_by=RecordOrder.UPDATED_AT_DESC,
-            )
-        )
-        all_summaries = [
-            record
-            for record in all_summaries
-            if not self._is_current_session_summary_record(
-                record,
-                session_id=session_id,
-            )
-        ]
-        all_summaries.sort(
-            key=lambda record: str(
-                getattr(record, "created_at", None)
-                or getattr(record, "updated_at", None)
-                or ""
-            ),
-            reverse=True,
-        )
-        recent_summaries = all_summaries[: self._session_handoff_max_summaries]
         if len(query_text) >= 10:
-            matched_summaries = self._service.search(
+            recent_summaries = self._service.search(
                 SearchQueryOptions(
                     query=query_text,
                     scopes=[summary_scope],
@@ -221,28 +196,23 @@ class ContextBuildersMixin:
                     limit=self._session_handoff_max_summaries,
                 )
             )
-            recent_summaries = [
-                record
-                for record in matched_summaries
-                if not self._is_current_session_summary_record(
-                    record,
-                    session_id=session_id,
+        else:
+            recent_summaries = self._service.list(
+                ListQueryOptions(
+                    scopes=[summary_scope],
+                    types=["session_summary"],
+                    limit=self._session_handoff_max_summaries,
+                    order_by=RecordOrder.UPDATED_AT_DESC,
                 )
-            ][: self._session_handoff_max_summaries]
-            previous_summary = all_summaries[0] if all_summaries else None
-            if previous_summary is not None:
-                previous_id = str(getattr(previous_summary, "id", "") or "")
-                matched_ids = {
-                    str(getattr(record, "id", "") or "") for record in recent_summaries
-                }
-                if previous_id not in matched_ids:
-                    recent_summaries.insert(
-                        min(1, len(recent_summaries)),
-                        previous_summary,
-                    )
-                    recent_summaries = recent_summaries[
-                        : self._session_handoff_max_summaries
-                    ]
+            )
+        recent_summaries = [
+            record
+            for record in recent_summaries
+            if not self._is_current_session_summary_record(
+                record,
+                session_id=session_id,
+            )
+        ]
         self._preamble_shown[session_id] = True
         return first_turn, recent_summaries
 
