@@ -245,21 +245,20 @@ class SQLiteMemoryStore(MemoryStore):
                 ),
             )
 
-            if record.entities:
-                for entity in record.entities:
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO memory_entities (entity, record_id, scope, type, created_at)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (
-                            entity,
-                            record.id,
-                            record.scope,
-                            record.type,
-                            record.created_at,
-                        ),
-                    )
+            for entity in record.entities:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO memory_entities (entity, record_id, scope, type, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        entity,
+                        record.id,
+                        record.scope,
+                        record.type,
+                        record.created_at,
+                    ),
+                )
 
         if not record.is_deleted:
             self._add_artifact_refs(owner_id=record.id, ref_values=record.evidence_refs)
@@ -272,10 +271,9 @@ class SQLiteMemoryStore(MemoryStore):
 
     def get(self, record_id: str) -> MemoryRecord | None:
         with self._connect() as conn:
-            cursor = conn.execute(
+            row = conn.execute(
                 "SELECT * FROM memory_records WHERE id = ?", (record_id,)
-            )
-            row = cursor.fetchone()
+            ).fetchone()
             if not row:
                 return None
             return self._create_record_from_row(row)
@@ -378,7 +376,6 @@ class SQLiteMemoryStore(MemoryStore):
 
     def tombstone(self, scope: str, type: MemoryType, key: str) -> None:
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        tombstoned: list[MemoryRecord] = []
         with self._connect() as conn:
             cursor = conn.execute(
                 """
@@ -510,46 +507,45 @@ class SQLiteMemoryStore(MemoryStore):
         meta: dict[str, Any] | None = None,
     ) -> MemoryTierTransition:
         transition_id = uuid.uuid4().hex
-        with self._write_lock:
-            with self._connect() as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                try:
-                    row = self._get_required_record(conn, record_id)
-                    from_tier = str(row["tier"] or "working")
-                    if from_tier == str(to_tier):
-                        raise InvalidArgumentError("from_tier and to_tier must differ")
-                    conn.execute(
-                        """
+        with self._write_lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._get_required_record(conn, record_id)
+                from_tier = str(row["tier"] or "working")
+                if from_tier == str(to_tier):
+                    raise InvalidArgumentError("from_tier and to_tier must differ")
+                conn.execute(
+                    """
                         UPDATE memory_records
                            SET tier = ?, updated_at = ?
                          WHERE id = ?
                         """,
-                        (to_tier, transition_at, record_id),
-                    )
-                    conn.execute(
-                        """
+                    (to_tier, transition_at, record_id),
+                )
+                conn.execute(
+                    """
                         INSERT INTO memory_tier_transitions(
                             transition_id, record_id, scope, record_type, from_tier,
                             to_tier, transition_reason, transition_at, access_count, meta_json
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (
-                            transition_id,
-                            record_id,
-                            row["scope"],
-                            row["type"],
-                            from_tier,
-                            to_tier,
-                            transition_reason,
-                            transition_at,
-                            int(row["access_count"] or 0),
-                            json.dumps(meta or {}, sort_keys=True),
-                        ),
-                    )
-                    conn.execute("COMMIT")
-                except Exception:
-                    conn.execute("ROLLBACK")
-                    raise
+                    (
+                        transition_id,
+                        record_id,
+                        row["scope"],
+                        row["type"],
+                        from_tier,
+                        to_tier,
+                        transition_reason,
+                        transition_at,
+                        int(row["access_count"] or 0),
+                        json.dumps(meta or {}, sort_keys=True),
+                    ),
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -598,36 +594,31 @@ class SQLiteMemoryStore(MemoryStore):
             ]
 
     def put_tier_transition(self, transition: MemoryTierTransition) -> str:
-        import json
-
-        with self._write_lock:
-            with self._connect() as conn:
-                self._get_required_record(conn, transition.record_id)
-                conn.execute(
-                    """
+        with self._write_lock, self._connect() as conn:
+            self._get_required_record(conn, transition.record_id)
+            conn.execute(
+                """
                     INSERT OR REPLACE INTO memory_tier_transitions(
                         transition_id, record_id, scope, record_type, from_tier,
                         to_tier, transition_reason, transition_at, access_count, meta_json
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (
-                        transition.transition_id,
-                        transition.record_id,
-                        transition.scope,
-                        transition.record_type,
-                        transition.from_tier,
-                        transition.to_tier,
-                        transition.transition_reason,
-                        transition.transition_at,
-                        int(transition.access_count or 0),
-                        json.dumps(transition.meta or {}, sort_keys=True),
-                    ),
-                )
+                (
+                    transition.transition_id,
+                    transition.record_id,
+                    transition.scope,
+                    transition.record_type,
+                    transition.from_tier,
+                    transition.to_tier,
+                    transition.transition_reason,
+                    transition.transition_at,
+                    int(transition.access_count or 0),
+                    json.dumps(transition.meta or {}, sort_keys=True),
+                ),
+            )
         return transition.transition_id
 
     def put_relation(self, relation: MemoryRelation) -> str:
-        import json
-
         with self._write_lock, self._connect() as conn:
             self._get_required_record(conn, relation.source_record_id)
             self._get_required_record(conn, relation.target_record_id)

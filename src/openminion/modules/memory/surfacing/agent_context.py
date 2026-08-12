@@ -233,8 +233,7 @@ class ContextBuildersMixin:
             if previous_summary is not None:
                 previous_id = str(getattr(previous_summary, "id", "") or "")
                 matched_ids = {
-                    str(getattr(record, "id", "") or "")
-                    for record in recent_summaries
+                    str(getattr(record, "id", "") or "") for record in recent_summaries
                 }
                 if previous_id not in matched_ids:
                     recent_summaries.insert(
@@ -555,7 +554,6 @@ class ContextBuildersMixin:
                 )
                 else "false"
             )
-            # the query-prose `_record_candidate_retrieval_hits`
             self._touch_records(
                 recent_summaries
                 + agent_records
