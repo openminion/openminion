@@ -66,7 +66,7 @@ class CortensorProvider:
             model=model,
             base_url=base_url,
             metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
         configured_api_mode = str(config.get("api_mode", "auto"))
         api_mode = self._resolve_api_mode(
@@ -137,8 +137,7 @@ class CortensorProvider:
                     exc.code in {"EMPTY_PAYLOAD", "EMPTY_URN_CONTENT"}
                     and attempt < empty_result_max_attempts
                 ):
-                    should_retry = api_mode == "openai_chat"
-                    if should_retry:
+                    if api_mode == "openai_chat":
                         last_error = exc
                         telemetry_attempt = attempt
                         telemetry_empty_reason = exc.code
@@ -268,7 +267,7 @@ class CortensorProvider:
                 ),
             ),
             trace_metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, Mapping) else None,
+            env=config.get("__env__"),
         )
 
     def _complete_via_completion_mode(
@@ -303,7 +302,7 @@ class CortensorProvider:
         )
         failures: list[str] = []
         url = self._resolve_completion_url(base_url)
-        for round_index in range(1, max(1, int(session_retry_rounds)) + 1):
+        for round_index in range(1, session_retry_rounds + 1):
             for session_id in candidates:
                 payload = self._build_completion_payload(
                     request=request,
@@ -331,15 +330,13 @@ class CortensorProvider:
                         result_wait_attempts=result_wait_attempts,
                         result_wait_interval_seconds=result_wait_interval_seconds,
                         trace_metadata=request.metadata,
-                        env=config.get("__env__")
-                        if isinstance(config, Mapping)
-                        else None,
+                        env=config.get("__env__"),
                     )
                 except LLMCtlError as exc:
                     failures.append(f"session_id={session_id}: {exc.message}")
                     if exc.code in {"AUTH_ERROR", "INVALID_ARGUMENT"}:
                         raise
-            has_more_rounds = round_index < int(session_retry_rounds)
+            has_more_rounds = round_index < session_retry_rounds
             if has_more_rounds and result_wait_interval_seconds > 0:
                 time.sleep(result_wait_interval_seconds)
         raise LLMCtlError(
@@ -359,7 +356,7 @@ class CortensorProvider:
         trace_metadata: dict[str, Any] | None = None,
         env: Mapping[str, object] | None = None,
     ) -> dict[str, Any]:
-        max_attempts = max(1, int(result_wait_attempts))
+        max_attempts = result_wait_attempts
         attempt = 1
         while attempt <= max_attempts:
             try:
@@ -374,7 +371,7 @@ class CortensorProvider:
                 )
             except LLMCtlError as exc:
                 retryable = exc.code in {"TIMEOUT", "RATE_LIMITED"}
-                if attempt < int(max_attempts) and retryable:
+                if attempt < max_attempts and retryable:
                     time.sleep(result_wait_interval_seconds)
                     attempt += 1
                     continue
@@ -383,9 +380,9 @@ class CortensorProvider:
             retry_reason = self._extract_retryable_reason(response_payload)
             if retry_reason == "offchain_result_pending":
                 max_attempts = max(
-                    max_attempts, int(self._OFFCHAIN_RESULT_MIN_WAIT_ATTEMPTS)
+                    max_attempts, self._OFFCHAIN_RESULT_MIN_WAIT_ATTEMPTS
                 )
-            if retry_reason and attempt < int(max_attempts):
+            if retry_reason and attempt < max_attempts:
                 time.sleep(result_wait_interval_seconds)
                 attempt += 1
                 continue
@@ -397,9 +394,9 @@ class CortensorProvider:
             if not self._response_has_text_or_tool_calls(response_payload):
                 if self._looks_like_offchain_result_pending(response_payload):
                     max_attempts = max(
-                        max_attempts, int(self._OFFCHAIN_RESULT_MIN_WAIT_ATTEMPTS)
+                        max_attempts, self._OFFCHAIN_RESULT_MIN_WAIT_ATTEMPTS
                     )
-                if attempt < int(max_attempts):
+                if attempt < max_attempts:
                     time.sleep(result_wait_interval_seconds)
                     attempt += 1
                     continue
@@ -591,12 +588,8 @@ class CortensorProvider:
 
         current_user = ""
         history_messages = messages
-        if messages and messages[-1][0] == "user":
-            current_user = messages[-1][1]
-            history_messages = messages[:-1]
-        else:
-            current_user = messages[-1][1]
-            history_messages = messages[:-1]
+        current_user = messages[-1][1]
+        history_messages = messages[:-1]
 
         system_chunks = [
             content
@@ -652,7 +645,7 @@ class CortensorProvider:
             explicit_max_tokens if explicit_max_tokens > 0 else configured_max_tokens
         )
 
-        min_tokens = int(self._DEFAULT_MAX_TOKENS_FLOOR)
+        min_tokens = self._DEFAULT_MAX_TOKENS_FLOOR
         input_estimate = self._resolve_positive_int(
             request.metadata.get("input_tokens_estimate"), default_value=0
         )
@@ -661,7 +654,7 @@ class CortensorProvider:
         elif input_estimate >= 8000:
             min_tokens = max(min_tokens, 6144)
 
-        return max(int(resolved), int(min_tokens))
+        return max(resolved, min_tokens)
 
     def _resolve_session_candidates(
         self, *, request: LLMRequest, config: dict[str, Any]
@@ -671,11 +664,10 @@ class CortensorProvider:
 
         def _append(values: list[int]) -> None:
             for item in values:
-                parsed = int(item)
-                if parsed <= 0 or parsed in seen:
+                if item <= 0 or item in seen:
                     continue
-                seen.add(parsed)
-                results.append(parsed)
+                seen.add(item)
+                results.append(item)
 
         metadata_session_id = self._resolve_positive_int(
             request.metadata.get("session_id"), default_value=0
@@ -798,13 +790,13 @@ class CortensorProvider:
         completion_timeout_seconds: int,
         timeout_buffer_seconds: int,
     ) -> int:
-        timeout_seconds = int(base_timeout_seconds)
+        timeout_seconds = base_timeout_seconds
         if api_mode == "cortensor_completion":
-            buffer_seconds = max(0, int(timeout_buffer_seconds))
+            buffer_seconds = max(0, timeout_buffer_seconds)
             timeout_seconds = max(
-                timeout_seconds, int(completion_timeout_seconds) + buffer_seconds
+                timeout_seconds, completion_timeout_seconds + buffer_seconds
             )
-        return max(1, int(timeout_seconds))
+        return max(1, timeout_seconds)
 
     def _resolve_api_mode(self, *, configured_mode: str, base_url: str) -> str:
         normalized = (configured_mode or "").strip().lower()
@@ -864,9 +856,9 @@ class CortensorProvider:
         try:
             parsed = int(raw_value)
         except (TypeError, ValueError):
-            return int(default_value)
+            return default_value
         if parsed <= 0:
-            return int(default_value)
+            return default_value
         return parsed
 
     def _resolve_non_negative_float(
@@ -875,10 +867,10 @@ class CortensorProvider:
         try:
             parsed = float(raw_value)
         except (TypeError, ValueError):
-            return float(default_value)
+            return default_value
         if parsed < 0:
-            return float(default_value)
-        return float(parsed)
+            return default_value
+        return parsed
 
     def _parse_positive_int_list(self, raw_value: Any) -> list[int]:
         parsed_values: list[int] = []
