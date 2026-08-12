@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -18,10 +18,10 @@ class ProviderAdapterResult(BaseModel):
     thinking: list[dict[str, Any]] = Field(default_factory=list)
     usage: UsageInfo = Field(default_factory=UsageInfo)
     latency_ms: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     finish_reason: str = ""
-    provider_raw: Optional[dict[str, Any]] = None
-    error: Optional[ResponseError] = None
+    provider_raw: dict[str, Any] | None = None
+    error: ResponseError | None = None
     telemetry: dict[str, Any] = Field(default_factory=dict)
     normalization_meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -40,7 +40,7 @@ def _coerce_positive_float(value: Any) -> float | None:
 def _extract_cache_telemetry_from_provider_raw(
     provider_raw: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    if not isinstance(provider_raw, dict):
+    if provider_raw is None:
         return {}
 
     payload: dict[str, Any] = {}
@@ -58,11 +58,11 @@ def _extract_cache_telemetry_from_provider_raw(
 
 
 def _normalize_response_telemetry(response: LLMResponse) -> LLMResponse:
-    telemetry = dict(response.telemetry or {})
     cache_telemetry = _extract_cache_telemetry_from_provider_raw(response.provider_raw)
     if not cache_telemetry:
         return response
 
+    telemetry = dict(response.telemetry)
     telemetry.setdefault("cache_hit", cache_telemetry.get("cache_hit"))
     if "cached_tokens" in cache_telemetry and "cached_tokens" not in telemetry:
         telemetry["cached_tokens"] = cache_telemetry["cached_tokens"]
@@ -70,7 +70,7 @@ def _normalize_response_telemetry(response: LLMResponse) -> LLMResponse:
 
 
 def adapter_result_to_llm_response(result: ProviderAdapterResult) -> LLMResponse:
-    assistant_messages = list(result.assistant_messages or [])
+    assistant_messages = list(result.assistant_messages)
     if result.output_text and not assistant_messages:
         assistant_messages = [Message(role="assistant", content=result.output_text)]
 
@@ -78,15 +78,15 @@ def adapter_result_to_llm_response(result: ProviderAdapterResult) -> LLMResponse
     if usage.total_tokens is None:
         usage = usage.model_copy(
             update={
-                "total_tokens": int(usage.input_tokens or 0)
-                + int(usage.output_tokens or 0),
+                "total_tokens": (usage.input_tokens or 0)
+                + (usage.output_tokens or 0),
                 "total_source": "derived",
             }
         )
     elif usage.total_source is None:
         usage = usage.model_copy(update={"total_source": "provider"})
 
-    telemetry = dict(result.telemetry or {})
+    telemetry = dict(result.telemetry)
     if result.normalization_meta:
         telemetry.setdefault("normalization", dict(result.normalization_meta))
 
@@ -97,12 +97,12 @@ def adapter_result_to_llm_response(result: ProviderAdapterResult) -> LLMResponse
             model=result.model,
             output_text=result.output_text,
             assistant_messages=assistant_messages,
-            tool_calls=list(result.tool_calls or []),
-            thinking=[dict(item) for item in list(result.thinking or [])],
+            tool_calls=list(result.tool_calls),
+            thinking=[dict(item) for item in result.thinking],
             usage=usage,
-            latency_ms=max(0, int(result.latency_ms)),
+            latency_ms=max(0, result.latency_ms),
             cost_usd=result.cost_usd,
-            finish_reason=str(result.finish_reason or ""),
+            finish_reason=result.finish_reason,
             provider_raw=result.provider_raw,
             error=result.error,
             telemetry=telemetry,
@@ -115,10 +115,8 @@ def coerce_provider_output(payload: ProviderOutput) -> LLMResponse:
         return _normalize_response_telemetry(payload)
     if isinstance(payload, ProviderAdapterResult):
         return adapter_result_to_llm_response(payload)
-    if isinstance(payload, dict):
-        try:
-            return _normalize_response_telemetry(LLMResponse.model_validate(payload))
-        except ValidationError:
-            adapted = ProviderAdapterResult.model_validate(payload)
-            return adapter_result_to_llm_response(adapted)
-    return _normalize_response_telemetry(LLMResponse.model_validate(payload))
+    try:
+        return _normalize_response_telemetry(LLMResponse.model_validate(payload))
+    except ValidationError:
+        adapted = ProviderAdapterResult.model_validate(payload)
+        return adapter_result_to_llm_response(adapted)

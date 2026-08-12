@@ -61,10 +61,7 @@ def profile_capability_facts(
 def request_capability_requirements(
     request: RuntimeLLMRequest,
 ) -> tuple[ProviderCapabilityName, ...]:
-    required: list[ProviderCapabilityName] = []
-    for capability in request.required_capabilities:
-        if capability not in required:
-            required.append(capability)
+    required = list(dict.fromkeys(request.required_capabilities))
     if request.output_schema is not None and "json" not in required:
         required.append("json")
     return tuple(required)
@@ -97,18 +94,15 @@ def capability_error_details(
 def provider_capability_matrix(
     catalog: LLMCatalogConfig,
 ) -> tuple[ProviderCapabilityRow, ...]:
-    rows: list[ProviderCapabilityRow] = []
-    for profile in catalog.profiles:
-        facts = profile_capability_facts(profile)
-        rows.append(
-            ProviderCapabilityRow(
-                profile_id=profile.id,
-                provider=profile.provider,
-                model=profile.model,
-                **facts,
-            )
+    return tuple(
+        ProviderCapabilityRow(
+            profile_id=profile.id,
+            provider=profile.provider,
+            model=profile.model,
+            **profile_capability_facts(profile),
         )
-    return tuple(rows)
+        for profile in catalog.profiles
+    )
 
 
 __all__ = [

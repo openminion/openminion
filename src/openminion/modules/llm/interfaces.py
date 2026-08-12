@@ -18,15 +18,8 @@ class LLMResponseCompatible(Protocol):
 
 
 def llm_response_contracts_strict(*, default: bool = False) -> bool:
-    raw = (
-        resolve_environment_config()
-        .get(STRICT_LLM_RESPONSE_CONTRACTS_ENV, "")
-        .strip()
-        .lower()
-    )
-    if not raw:
-        return bool(default)
-    return raw in {"1", "true", "yes", "on"}
+    raw = resolve_environment_config().get(STRICT_LLM_RESPONSE_CONTRACTS_ENV, "")
+    return default if not raw else raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def ensure_llm_response_compatibility(
@@ -36,7 +29,7 @@ def ensure_llm_response_compatibility(
     expected_version: str = LLM_RESPONSE_INTERFACE_VERSION,
     strict: bool | None = None,
 ) -> bool:
-    strict_mode = llm_response_contracts_strict() if strict is None else bool(strict)
+    strict_mode = llm_response_contracts_strict() if strict is None else strict
     actual = getattr(component, "contract_version", None)
     if isinstance(actual, str) and actual.strip() == expected_version:
         return True

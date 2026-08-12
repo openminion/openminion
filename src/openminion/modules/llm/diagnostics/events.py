@@ -52,25 +52,21 @@ def emit_llm_operation(
     error_code: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> bool:
-    normalized = str(operation or "").strip().lower()
+    normalized = operation.strip().lower()
     if normalized not in _ALLOWED_OPERATIONS:
         return False
 
-    payload_extra: dict[str, Any] = {}
-    provider_name = str(provider or "").strip()
-    if provider_name:
-        payload_extra["provider"] = provider_name
-    model_name = str(model or "").strip()
-    if model_name:
-        payload_extra["model"] = model_name
+    payload_extra = {
+        key: value
+        for key, value in {
+            "provider": provider.strip(),
+            "model": model.strip(),
+            "error_code": (error_code or "").strip().upper(),
+        }.items()
+        if value
+    }
     if attempt is not None:
-        try:
-            payload_extra["attempt"] = int(attempt)
-        except (TypeError, ValueError):
-            pass
-    error_name = str(error_code or "").strip().upper()
-    if error_name:
-        payload_extra["error_code"] = error_name
+        payload_extra["attempt"] = attempt
     if extra:
         payload_extra.update(extra)
 
@@ -106,12 +102,12 @@ def emit_tool_envelope_recovery_event(
 ) -> bool:
     """Emit safe tool-envelope recovery telemetry without raw model content."""
 
-    normalized_session_id = str(session_id or "").strip()
-    normalized_turn_id = str(turn_id or "").strip()
+    normalized_session_id = session_id.strip()
+    normalized_turn_id = turn_id.strip()
     if not normalized_session_id or not normalized_turn_id:
         return False
 
-    normalized_outcome = str(outcome or "").strip().lower()
+    normalized_outcome = outcome.strip().lower()
     if normalized_outcome == "retry":
         event_type = TOOL_ENVELOPE_REPAIR_RETRY
         status = "retry"
@@ -134,14 +130,11 @@ def emit_tool_envelope_recovery_event(
         "source": source,
         "error_code": error_code,
     }.items():
-        normalized_value = str(value or "").strip()
+        normalized_value = value.strip()
         if normalized_value:
             payload[key] = normalized_value
     if attempt is not None:
-        try:
-            payload["attempt"] = int(attempt)
-        except (TypeError, ValueError):
-            pass
+        payload["attempt"] = attempt
 
     return emit_module_telemetry(
         telemetryctl,
