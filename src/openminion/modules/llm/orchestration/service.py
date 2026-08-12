@@ -30,7 +30,7 @@ from .coercion import (
 )
 from .capabilities import capability_error_details
 from .config import load_catalog_config, resolve_route
-from .disagreement import aggregate_usage, compute_disagreement
+from .disagreement import aggregate_usage
 from .schemas import (
     AgentLLMBudgets,
     AgentLLMPolicy,
@@ -145,11 +145,7 @@ class LLMOrchestrator:
     def call(
         self, request: Union[RuntimeLLMRequest, Dict[str, Any]], profile_id: str
     ) -> CandidateResponse:
-        req = (
-            request
-            if isinstance(request, RuntimeLLMRequest)
-            else RuntimeLLMRequest.model_validate(request)
-        )
+        req = RuntimeLLMRequest.model_validate(request)
         self._emit_event(
             "llm.request.started",
             {
@@ -171,16 +167,8 @@ class LLMOrchestrator:
         providers: List[str],
         strategy: Union[EnsembleTemplate, Dict[str, Any]],
     ) -> EnsembleResult:
-        req = (
-            request
-            if isinstance(request, RuntimeLLMRequest)
-            else RuntimeLLMRequest.model_validate(request)
-        )
-        resolved_strategy = (
-            strategy
-            if isinstance(strategy, EnsembleTemplate)
-            else EnsembleTemplate.model_validate(strategy)
-        )
+        req = RuntimeLLMRequest.model_validate(request)
+        resolved_strategy = EnsembleTemplate.model_validate(strategy)
         provider_ids = list(providers or resolved_strategy.providers)
         if not provider_ids:
             raise LLMCtlError("INVALID_ARGUMENT", "call_parallel requires provider ids")
@@ -196,7 +184,7 @@ class LLMOrchestrator:
             },
         )
 
-        provider_ids = self._expand_self_consistency(provider_ids, resolved_strategy)
+        provider_ids = expand_self_consistency(provider_ids, resolved_strategy)
         indexed_candidates = list(enumerate(provider_ids))
         per_candidate_timeout_ms = _first_positive_int(
             req.budget.timeout_ms,
@@ -398,13 +386,15 @@ class LLMOrchestrator:
             request_id=request.request_id,
             mode=strategy.mode,
             candidates=candidates,
-            selection=self._select_candidate(
+            selection=select_candidate(
                 request=request,
                 candidates=candidates,
                 strategy=strategy,
+                judge=self.judge,
+                heuristic_selector=heuristic_selection,
             ),
-            disagreement=self._compute_disagreement(candidates, strategy.disagreement),
-            usage_total=self._aggregate_usage(candidates),
+            disagreement=None,
+            usage_total=aggregate_usage(candidates),
         )
 
     def _store_ensemble_report_if_enabled(
@@ -427,16 +417,8 @@ class LLMOrchestrator:
         request: Union[RuntimeLLMRequest, Dict[str, Any]],
         agent_policy: Union[AgentLLMPolicy, Dict[str, Any]],
     ) -> Union[CandidateResponse, EnsembleResult]:
-        req = (
-            request
-            if isinstance(request, RuntimeLLMRequest)
-            else RuntimeLLMRequest.model_validate(request)
-        )
-        policy = (
-            agent_policy
-            if isinstance(agent_policy, AgentLLMPolicy)
-            else AgentLLMPolicy.model_validate(agent_policy)
-        )
+        req = RuntimeLLMRequest.model_validate(request)
+        policy = AgentLLMPolicy.model_validate(agent_policy)
         req = req.model_copy(
             update={
                 "purpose": purpose,
@@ -444,8 +426,16 @@ class LLMOrchestrator:
             }
         )
         route = resolve_route(policy, purpose)
-        self._enforce_route_access(route, policy)
-        req = self._apply_budget_clamps(req, policy.budgets)
+        enforce_route_access(
+            route,
+            policy,
+            route_profile_ids=self._route_profile_ids,
+        )
+        req = apply_budget_clamps(
+            req,
+            policy.budgets,
+            max_tokens_per_call_hard=self.catalog.limits.max_tokens_per_call_hard,
+        )
 
         fallback = policy.fallbacks.get(purpose)
         if isinstance(route, SingleRoute):
@@ -454,9 +444,22 @@ class LLMOrchestrator:
                 return result
             return await self._apply_fallback_single(req, result, fallback)
 
-        strategy = self._resolve_ensemble_strategy(route)
-        providers = self._resolve_ensemble_provider_ids(route, strategy)
-        strategy = self._apply_ensemble_budget_clamps(strategy, route, policy.budgets)
+        strategy = resolve_ensemble_strategy(
+            route=route,
+            ensembles=self._ensembles,
+            defaults=self.catalog.defaults,
+        )
+        providers = resolve_ensemble_provider_ids(
+            route,
+            strategy,
+            resolve_profile=self._get_profile,
+        )
+        strategy = apply_ensemble_budget_clamps(
+            strategy,
+            route,
+            policy.budgets,
+            max_parallel_global=self.catalog.limits.max_parallel_global,
+        )
         ensemble = await self.call_parallel(req, providers=providers, strategy=strategy)
         if any(
             item.status == LLM_CANDIDATE_STATUS_SUCCESS for item in ensemble.candidates
@@ -529,7 +532,7 @@ class LLMOrchestrator:
                             risk_flags=None,
                         )
 
-        return self._heuristic_selection(candidates)
+        return heuristic_selection(candidates)
 
     def _call_candidate_sync(
         self, request: RuntimeLLMRequest, profile_id: str, candidate_id: str
@@ -729,57 +732,6 @@ class LLMOrchestrator:
             metadata=metadata,
         )
 
-    def _select_candidate(
-        self,
-        *,
-        request: RuntimeLLMRequest,
-        candidates: List[CandidateResponse],
-        strategy: EnsembleTemplate,
-    ) -> Optional[SelectionResult]:
-        return select_candidate(
-            request=request,
-            candidates=candidates,
-            strategy=strategy,
-            judge=self.judge,
-            heuristic_selector=self._heuristic_selection,
-        )
-
-    def _heuristic_selection(
-        self, candidates: List[CandidateResponse]
-    ) -> SelectionResult:
-        return heuristic_selection(candidates)
-
-    def _compute_disagreement(
-        self,
-        candidates: List[CandidateResponse],
-        config: Optional[DisagreementConfig],
-    ) -> Optional[DisagreementReport]:
-        return compute_disagreement(candidates, config)
-
-    def _aggregate_usage(self, candidates: List[CandidateResponse]) -> UsageTotal:
-        return aggregate_usage(candidates)
-
-    def _resolve_ensemble_strategy(self, route: EnsembleRoute) -> EnsembleTemplate:
-        return resolve_ensemble_strategy(
-            route=route,
-            ensembles=self._ensembles,
-            defaults=self.catalog.defaults,
-        )
-
-    def _resolve_ensemble_provider_ids(
-        self, route: EnsembleRoute, strategy: EnsembleTemplate
-    ) -> List[str]:
-        return resolve_ensemble_provider_ids(
-            route,
-            strategy,
-            resolve_profile=self._get_profile,
-        )
-
-    def _expand_self_consistency(
-        self, providers: List[str], strategy: EnsembleTemplate
-    ) -> List[str]:
-        return expand_self_consistency(providers, strategy)
-
     async def _apply_fallback_single(
         self,
         request: RuntimeLLMRequest,
@@ -831,7 +783,7 @@ class LLMOrchestrator:
                             risk_flags=["fallback"],
                         ),
                         disagreement=None,
-                        usage_total=self._aggregate_usage([candidate]),
+                        usage_total=aggregate_usage([candidate]),
                     )
             return original
 
@@ -850,40 +802,11 @@ class LLMOrchestrator:
                 return candidate_result
         return original
 
-    def _enforce_route_access(self, route: LLMRoute, policy: AgentLLMPolicy) -> None:
-        enforce_route_access(
-            route,
-            policy,
-            route_profile_ids=self._route_profile_ids,
-        )
-
     def _route_profile_ids(self, route: LLMRoute) -> List[str]:
         return route_profile_ids(
             route,
             ensembles=self._ensembles,
             resolve_profile=self._get_profile,
-        )
-
-    def _apply_budget_clamps(
-        self, request: RuntimeLLMRequest, budgets: AgentLLMBudgets
-    ) -> RuntimeLLMRequest:
-        return apply_budget_clamps(
-            request,
-            budgets,
-            max_tokens_per_call_hard=self.catalog.limits.max_tokens_per_call_hard,
-        )
-
-    def _apply_ensemble_budget_clamps(
-        self,
-        strategy: EnsembleTemplate,
-        route: EnsembleRoute,
-        budgets: AgentLLMBudgets,
-    ) -> EnsembleTemplate:
-        return apply_ensemble_budget_clamps(
-            strategy,
-            route,
-            budgets,
-            max_parallel_global=self.catalog.limits.max_parallel_global,
         )
 
     def _candidate_error(

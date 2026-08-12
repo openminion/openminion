@@ -107,15 +107,13 @@ class AnthropicProvider:
                 details={"retryable": True},
             )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        assistant_messages = []
-        if text or tool_calls:
-            raw_tool_uses = [
-                dict(item)
-                for item in response_payload.get("content", [])
-                if isinstance(item, dict) and item.get("type") == "tool_use"
-            ]
-            meta = {"anthropic_tool_uses": raw_tool_uses} if raw_tool_uses else {}
-            assistant_messages = [Message(role="assistant", content=text, meta=meta)]
+        raw_tool_uses = [
+            dict(item)
+            for item in response_payload.get("content", [])
+            if isinstance(item, dict) and item.get("type") == "tool_use"
+        ]
+        meta = {"anthropic_tool_uses": raw_tool_uses} if raw_tool_uses else {}
+        assistant_messages = [Message(role="assistant", content=text, meta=meta)]
         normalization_meta = {
             "adapter": "anthropic",
             "behavior_profile_id": behavior_profile_id,
@@ -158,9 +156,9 @@ class AnthropicProvider:
             status: ToolCallStatus = "error" if is_malformed else "parsed"
             calls.append(
                 ToolCall(
-                    id=str(item.get("id", "") or "").strip() or None,
+                    id=str(item.get("id") or "").strip() or None,
                     name=remap_provider_tool_call_name(
-                        str(item.get("name", "") or "").strip(),
+                        str(item.get("name") or "").strip(),
                         external_to_canonical=external_to_canonical,
                     ),
                     arguments=raw_input if isinstance(raw_input, dict) else {},
@@ -230,7 +228,7 @@ class AnthropicProvider:
             model=model,
             base_url=base_url,
             metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
 
         tool_call_strategy = str(config.get("tool_call_strategy", "off"))
@@ -291,7 +289,7 @@ class AnthropicProvider:
             timeout_seconds=_resolve_timeout_seconds(config, metadata=request.metadata),
             provider_name=self.name,
             trace_metadata=request.metadata,
-            env=config.get("__env__") if isinstance(config, dict) else None,
+            env=config.get("__env__"),
         )
 
         return self._response_from_payload(
@@ -339,7 +337,7 @@ class AnthropicProvider:
                 ),
                 provider_name=self.name,
                 trace_metadata=request.metadata,
-                env=config.get("__env__") if isinstance(config, dict) else None,
+                env=config.get("__env__"),
             ):
                 if line.startswith("event:"):
                     stream_event_type = line[len("event:") :].strip() or "message"

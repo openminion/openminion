@@ -78,12 +78,12 @@ def _anthropic_content(
     message: Message, *, enable_vision_input: bool, supports_vision_input: bool
 ) -> str | list[dict[str, Any]]:
     if not message.content_parts:
-        return str(message.content or "").strip()
+        return message.content.strip()
 
     parts: list[dict[str, Any]] = []
     for item in message.content_parts:
         if isinstance(item, TextContentPart):
-            text = str(item.text or "").strip()
+            text = item.text.strip()
             if text:
                 parts.append({"type": "text", "text": text})
             continue
@@ -114,7 +114,7 @@ def _append_anthropic_tool_result(
     message: Message,
     content: str | list[dict[str, Any]],
 ) -> bool:
-    meta = dict(getattr(message, "meta", {}) or {})
+    meta = dict(message.meta)
     tool_use_id = str(meta.get("tool_call_id", "") or "").strip()
     if not tool_use_id:
         return False
@@ -156,9 +156,8 @@ def _append_anthropic_system_message(
     text_blocks = _anthropic_system_text_blocks(content)
     if enable_prompt_cache:
         for block in text_blocks:
-            if cache_system_prompt and isinstance(message.cache_control, dict):
-                if cache_control := dict(message.cache_control):
-                    block["cache_control"] = cache_control
+            if cache_system_prompt and message.cache_control:
+                block["cache_control"] = dict(message.cache_control)
             system_blocks.append(block)
         return
     rendered = [
@@ -200,9 +199,7 @@ def _messages_anthropic(
             supports_vision_input=supports_vision_input,
         )
         if msg.role == "assistant":
-            tool_use_blocks = _anthropic_tool_use_blocks(
-                dict(getattr(msg, "meta", {}) or {})
-            )
+            tool_use_blocks = _anthropic_tool_use_blocks(msg.meta)
             if tool_use_blocks:
                 content_blocks = (
                     [{"type": "text", "text": content}]
