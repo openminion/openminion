@@ -15,10 +15,8 @@ class SQLiteIdentityRepository:
     repository_contract_version = IDENTITY_REPOSITORY_INTERFACE_VERSION
 
     def __init__(self, *, sqlite_path: str | Path) -> None:
-        self.sqlite_path = Path(sqlite_path).expanduser().resolve(strict=False)
-        self._ctl = IdentityCtl(
-            store=SQLiteIdentityStore(sqlite_path=str(self.sqlite_path))
-        )
+        path = Path(sqlite_path).expanduser().resolve(strict=False)
+        self._ctl = IdentityCtl(store=SQLiteIdentityStore(sqlite_path=path))
 
     def get_profile(self, agent_id: str) -> Any | None:
         return self._ctl.get_profile(agent_id)

@@ -1,13 +1,12 @@
+import asyncio
 import json
 import sys
 from pathlib import Path
-import asyncio
 from typing import Any, Optional, cast
 
 import typer
 
 from .constants import DEFAULT_CONFIG_FILENAME, LLM_CANDIDATE_STATUS_SUCCESS
-from .runtime.client import LLMCTL, parse_call_payload
 from .errors import LLMCtlError
 from .orchestration import (
     AgentLLMPolicy,
@@ -18,6 +17,7 @@ from .orchestration import (
     load_catalog_config,
     resolve_route,
 )
+from .runtime.client import LLMCTL, parse_call_payload
 
 try:
     import yaml
@@ -46,10 +46,7 @@ def _write_stdout(text: str = "") -> None:
 
 
 def _print_obj(obj: dict[str, Any], json_out: bool) -> None:
-    if json_out:
-        _write_stdout(json.dumps(obj, indent=2, ensure_ascii=True))
-        return
-    if yaml is None:
+    if json_out or yaml is None:
         _write_stdout(json.dumps(obj, indent=2, ensure_ascii=True))
         return
     sys.stdout.write(yaml.safe_dump(obj, sort_keys=False))
@@ -77,8 +74,7 @@ def _load_structured_file(path: Path) -> dict[str, Any]:
 
 
 def _load_agent_policy(path: Path) -> AgentLLMPolicy:
-    data = _load_structured_file(path)
-    return cast(AgentLLMPolicy, AgentLLMPolicy.model_validate(data))
+    return AgentLLMPolicy.model_validate(_load_structured_file(path))
 
 
 def _result_ok(result: Any) -> bool:
@@ -88,9 +84,8 @@ def _result_ok(result: Any) -> bool:
         selection = result.selection
         if selection is None:
             return False
-        winner_id = selection.winner_candidate_id
         return any(
-            candidate.candidate_id == winner_id
+            candidate.candidate_id == selection.winner_candidate_id
             and candidate.status == LLM_CANDIDATE_STATUS_SUCCESS
             for candidate in result.candidates
         )
@@ -152,10 +147,7 @@ def ensemble_call(
         )
     except LLMCtlError as exc:
         _cli_error(exc, json_out)
-    payload = (
-        result.model_dump(mode="json") if hasattr(result, "model_dump") else result
-    )
-    _print_obj(payload, json_out)
+    _print_obj(result.model_dump(mode="json"), json_out)
     raise typer.Exit(code=0 if _result_ok(result) else 1)
 
 
@@ -189,7 +181,7 @@ def agents_list(
     json_out: bool = typer.Option(True, "--json/--no-json"),
 ) -> None:
     llmctl = _runtime(config)
-    names = sorted(llmctl.config.agents.keys())
+    names = sorted(llmctl.config.agents)
     _print_obj({"agents": names}, json_out)
 
 
@@ -223,15 +215,16 @@ def prompt(
     llmctl = _runtime(config)
     client = llmctl.client(agent)
 
-    overrides: dict[str, Any] = {}
-    if provider is not None:
-        overrides["provider"] = provider
-    if model is not None:
-        overrides["model"] = model
-    if temperature is not None:
-        overrides["temperature"] = temperature
-    if max_output_tokens is not None:
-        overrides["max_output_tokens"] = max_output_tokens
+    overrides = {
+        key: value
+        for key, value in (
+            ("provider", provider),
+            ("model", model),
+            ("temperature", temperature),
+            ("max_output_tokens", max_output_tokens),
+        )
+        if value is not None
+    }
 
     response = client.complete(
         messages=cast(list[Any], [{"role": "user", "content": prompt_text}]),

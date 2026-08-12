@@ -307,9 +307,10 @@ def load_config(
             )
         config = LLMCTLConfig.model_validate(parsed)
 
-    fixed_agents: dict[str, AgentProfile] = {}
-    for name, profile in config.agents.items():
-        fixed_agents[name] = profile.model_copy(update={"name": profile.name or name})
+    fixed_agents = {
+        name: profile.model_copy(update={"name": profile.name or name})
+        for name, profile in config.agents.items()
+    }
 
     return config.model_copy(update={"agents": fixed_agents})
 
@@ -346,11 +347,8 @@ def resolve_provider_config(
 
 
 def _read_env_value(key: str, *, env: Mapping[str, Any] | None = None) -> str:
-    if env is not None:
-        value = env.get(key)
-        return str(value or "").strip()
-    resolved = resolve_environment_config()
-    return str(resolved.get(key, "") or "").strip()
+    source = env if env is not None else resolve_environment_config()
+    return str(source.get(key, "") or "").strip()
 
 
 def _resolve_openai_service_vendor(base_url: str) -> str:

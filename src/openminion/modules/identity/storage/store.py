@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from collections.abc import Mapping
 
 from openminion.modules.identity.models import AgentProfile
@@ -155,7 +154,7 @@ class _IdentityStoreMixin(IdentityStore):
             {
                 str(key): str(value)
                 for key, value in raw_sections.items()
-                if isinstance(key, str) and isinstance(value, str) and value.strip()
+                if isinstance(value, str) and value.strip()
             }
             if isinstance(raw_sections, dict)
             else {}
@@ -207,8 +206,8 @@ class _IdentityStoreMixin(IdentityStore):
             (
                 cache_key,
                 snippet_text,
-                int(used_tokens),
-                int(used_chars),
+                used_tokens,
+                used_chars,
                 json.dumps(sections or {}, ensure_ascii=True, sort_keys=True),
                 json.dumps(included_fields, ensure_ascii=True),
                 json.dumps(omitted_fields, ensure_ascii=True),
@@ -228,15 +227,6 @@ class _IdentityStoreMixin(IdentityStore):
 
 
 class SQLiteIdentityStore(BaseModuleSQLiteStore, _IdentityStoreMixin):
-    def __init__(
-        self,
-        sqlite_path: str | Path,
-        *,
-        record_store: RecordStore | None = None,
-        wal: bool = True,
-    ) -> None:
-        super().__init__(sqlite_path, wal=wal, record_store=record_store)
-
     def _init_schema(self) -> None:
         with self._lock:
             _create_identity_schema(self._record_store)
@@ -249,9 +239,6 @@ class SQLiteIdentityStore(BaseModuleSQLiteStore, _IdentityStoreMixin):
 
 
 class PostgresIdentityStore(BaseModuleStore, _IdentityStoreMixin):
-    def __init__(self, *, record_store: RecordStore) -> None:
-        super().__init__(record_store=record_store)
-
     def _init_schema(self) -> None:
         with self._lock:
             _create_identity_schema(self._record_store)
