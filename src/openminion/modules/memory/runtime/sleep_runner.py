@@ -84,7 +84,6 @@ class SleepRunner:
         promoted = 0
         pruned = 0
         errors: list[str] = []
-        budget_exhausted = False
 
         candidates = list(self.candidate_source.iter_candidates())
         # Dedupe runs across the full candidate list first (cheap).
@@ -94,7 +93,7 @@ class SleepRunner:
             errors.append(f"dedupe:{exc}")
             deduped = 0
 
-        budget = max(1, int(self.config.max_candidates_per_run))
+        budget = self.config.max_candidates_per_run
         budget_exhausted = len(candidates) > budget
         for candidate in candidates[:budget]:
             try:
@@ -103,7 +102,7 @@ class SleepRunner:
             except (TypeError, ValueError):
                 errors.append("candidate_field_read_error")
                 continue
-            if utility < float(self.config.prune_utility_threshold):
+            if utility < self.config.prune_utility_threshold:
                 try:
                     if self.pruner.prune(candidate):
                         pruned += 1
@@ -176,8 +175,8 @@ def build_cron_payload(config: SleepRunnerConfig) -> dict[str, Any]:
         "session_target": "main",
         "event_text": CRON_EVENT_TEXT_SLEEP_RUN_ONCE,
         "metadata": {
-            "max_candidates_per_run": int(config.max_candidates_per_run),
-            "prune_utility_threshold": float(config.prune_utility_threshold),
+            "max_candidates_per_run": config.max_candidates_per_run,
+            "prune_utility_threshold": config.prune_utility_threshold,
         },
     }
 

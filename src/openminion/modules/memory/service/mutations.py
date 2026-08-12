@@ -335,10 +335,7 @@ class MemoryServiceMutationMixin:
         return self._candidate_helper().reinforce_record(record_id=record_id)
 
     def promote_candidate(self, candidate_id: str, target_scope: str) -> MemoryRecord:
-        return self._candidate_helper().promote_candidate(
-            candidate_id,
-            target_scope,
-        )
+        return self._candidate_helper().promote_candidate(candidate_id, target_scope)
 
     def supersede_by_contradiction(
         self, old_record_id: str, new_record_id: str, reason: str = ""
