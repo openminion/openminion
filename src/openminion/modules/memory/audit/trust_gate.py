@@ -10,8 +10,7 @@ from sophiagraph.audit.events import (
 
 
 def emit_trust_gate_event(owner: Any, event: TrustGateEvent) -> None:
-    store = getattr(owner, "_store", owner)
-    if callable(append := getattr(store, "_append", None)):
+    if callable(append := getattr(getattr(owner, "_store", owner), "_append", None)):
         append(event.to_memory_audit_event())
 
 

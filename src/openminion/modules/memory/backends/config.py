@@ -20,19 +20,14 @@ class KnowledgeBackendConfig:
 
 
 def _read_mapping(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return dict(value)
     if value is None:
         return {}
-    result: dict[str, Any] = {}
-    for name in dir(value):
-        if name.startswith("_"):
-            continue
-        attr = getattr(value, name, None)
-        if callable(attr):
-            continue
-        result[name] = attr
-    return result
+    names = (name for name in dir(value) if not name.startswith("_"))
+    return {
+        name: attr for name in names if not callable(attr := getattr(value, name, None))
+    }
 
 
 def _normalize_provider(raw: Any) -> str:
@@ -49,7 +44,7 @@ def _normalize_provider(raw: Any) -> str:
 def resolve_backend_config(config: Any | None) -> KnowledgeBackendConfig:
     backend_source = (
         config.get("backend")
-        if isinstance(config, dict)
+        if isinstance(config, Mapping)
         else getattr(config, "backend", None)
     )
     backend_cfg: Mapping[str, Any] = _read_mapping(backend_source)

@@ -33,14 +33,14 @@ def map_delegated_memory_transport(
 ) -> DelegatedTransportProjection:
     """Map trusted transport facts without forwarding credentials or free text."""
 
-    forbidden = _FORBIDDEN_KEYS.intersection(payload)
-    if forbidden:
+    if forbidden := _FORBIDDEN_KEYS.intersection(payload):
         raise InvalidArgumentError(
             f"forbidden delegated transport fields: {sorted(forbidden)}"
         )
-    principal_id = str(payload.get("principal_id") or "").strip()
-    audience = str(payload.get("audience") or "").strip()
-    if principal_id != trusted_principal_id or audience != trusted_audience:
+    if (
+        str(payload.get("principal_id") or "").strip() != trusted_principal_id
+        or str(payload.get("audience") or "").strip() != trusted_audience
+    ):
         raise ConstraintViolationError(
             "delegated transport principal or audience mismatch"
         )
@@ -54,8 +54,7 @@ def map_delegated_memory_transport(
             "trace_parent_id",
         )
     }
-    missing = [key for key, value in required.items() if not value]
-    if missing:
+    if missing := [key for key, value in required.items() if not value]:
         raise InvalidArgumentError(
             f"missing delegated transport fields: {', '.join(missing)}"
         )
