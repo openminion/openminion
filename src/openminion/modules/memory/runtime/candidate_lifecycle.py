@@ -26,30 +26,26 @@ from openminion.modules.memory.storage.base import (
 )
 
 
+def _float_config_value(config: Any | None, name: str, default: float) -> float:
+    try:
+        return float(getattr(config, name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 def _resolve_learning_bounds(config: Any | None) -> tuple[float, float]:
-    confidence_boost = 0.1
-    confidence_max = 0.9
-    if config is None:
-        return confidence_boost, confidence_max
-    try:
-        confidence_boost = float(
-            getattr(config, "confidence_boost_per_reconfirmation", 0.1)
-        )
-    except (TypeError, ValueError):
-        confidence_boost = 0.1
-    try:
-        confidence_max = float(getattr(config, "confidence_max", 0.9))
-    except (TypeError, ValueError):
-        confidence_max = 0.9
-    return confidence_boost, confidence_max
+    return (
+        _float_config_value(config, "confidence_boost_per_reconfirmation", 0.1),
+        _float_config_value(config, "confidence_max", 0.9),
+    )
 
 
 def _is_live_record(record: MemoryRecord) -> bool:
-    if bool(getattr(record, "is_deleted", False)):
+    if record.is_deleted:
         return False
-    if bool(getattr(record, "valid_to", None)) and record.is_invalidated_at():
+    if record.valid_to and record.is_invalidated_at():
         return False
-    return not bool(getattr(record, "superseded_by_id", None))
+    return not record.superseded_by_id
 
 
 class MemoryCandidateLifecycle:
@@ -170,15 +166,14 @@ class MemoryCandidateLifecycle:
 
     def reinforce_candidate(self, *, candidate_id: str) -> MemoryCandidate:
         candidate = self.candidate_get(candidate_id)
-        original_meta = dict(getattr(candidate, "meta", {}) or {})
+        updated_meta = dict(candidate.meta or {})
         confidence_boost, confidence_max = _resolve_learning_bounds(
             getattr(self._service, "_candidate_learning_config", None)  # noqa: SLF001
         )
-        updated_meta = dict(original_meta)
         updated_meta["reconfirmation_count"] = (
             int(updated_meta.get("reconfirmation_count", 0) or 0) + 1
         )
-        current_confidence = float(getattr(candidate, "confidence", 0.0) or 0.0)
+        current_confidence = float(candidate.confidence or 0.0)
         new_confidence = min(confidence_max, current_confidence + confidence_boost)
         return self.candidate_update(
             candidate_id,
@@ -222,9 +217,9 @@ class MemoryCandidateLifecycle:
         confidence_boost, confidence_max = _resolve_learning_bounds(
             getattr(self._service, "_candidate_learning_config", None)  # noqa: SLF001
         )
-        current_confidence = float(getattr(record, "confidence", 0.0) or 0.0)
+        current_confidence = float(record.confidence or 0.0)
         new_confidence = min(confidence_max, current_confidence + confidence_boost)
-        key = str(getattr(record, "key", "") or "").strip()
+        key = str(record.key or "").strip()
         if not key:
             try:
                 self._service._store.touch_last_hit(record_id)  # noqa: SLF001

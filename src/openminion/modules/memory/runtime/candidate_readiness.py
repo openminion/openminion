@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import astuple, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,7 +21,7 @@ def _coerce_dt(value: str | datetime | None) -> datetime | None:
     if not value:
         return None
     try:
-        parsed = datetime.fromisoformat(str(value))
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
     if parsed.tzinfo is None:
@@ -39,17 +39,7 @@ class PromotionWeights:
     outcome_utility: float = 0.20
 
     def __post_init__(self) -> None:
-        total = sum(
-            float(value)
-            for value in (
-                self.reconfirmation,
-                self.retrieval_hits,
-                self.survival,
-                self.confidence,
-                self.correction_resistance,
-                self.outcome_utility,
-            )
-        )
+        total = sum(float(value) for value in astuple(self))
         if total <= 0.0:
             raise InvalidArgumentError("promotion weights must sum to a positive value")
 
@@ -123,11 +113,11 @@ def extract_candidate_signals(
     retrieval_hit_target: int = 3,
     survival_halflife_days: float = 7.0,
 ) -> CandidateSignalVector:
-    meta = dict(getattr(candidate, "meta", {}) or {})
+    meta = dict(candidate.meta or {})
     reconfirmation_count = max(0.0, float(meta.get("reconfirmation_count", 0) or 0))
     retrieval_hit_count = max(0.0, float(meta.get("retrieval_hit_count", 0) or 0))
     contradicted = bool(meta.get("contradicted", False))
-    created_at = _coerce_dt(getattr(candidate, "created_at", None))
+    created_at = _coerce_dt(candidate.created_at)
     effective_now = _coerce_dt(now) or _utc_now()
 
     if created_at is None:
@@ -146,7 +136,7 @@ def extract_candidate_signals(
             retrieval_hit_count / max(float(retrieval_hit_target), 1.0)
         ),
         survival=clamp01(survival_signal),
-        confidence=clamp01(float(getattr(candidate, "confidence", 0.0) or 0.0)),
+        confidence=clamp01(float(candidate.confidence or 0.0)),
         correction_resistance=0.0 if contradicted else 1.0,
         outcome_utility=_candidate_outcome_utility(meta),
     )
