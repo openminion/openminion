@@ -1,7 +1,7 @@
 """Small JSON memory-bundle helpers for public callers."""
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +20,7 @@ class MemoryBundle:
 
     def to_json(self) -> str:
         return json.dumps(
-            {
-                "version": self.version,
-                "items": self.items,
-                "metadata": self.metadata,
-            },
+            asdict(self),
             ensure_ascii=True,
             sort_keys=True,
         )
