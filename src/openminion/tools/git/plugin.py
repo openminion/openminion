@@ -185,6 +185,14 @@ class GitCommitArgs(_StrictModel):
             "`-m` arg to `git commit`."
         ),
     )
+    paths: list[str] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Explicit staged paths to commit. Other staged paths remain in the "
+            "index and are not included."
+        ),
+    )
 
 
 class GitStashArgs(_StrictModel):
@@ -482,7 +490,7 @@ _STASH_DESTRUCTIVE_ACTIONS: tuple[str, ...] = ("drop", "clear")
 VALID_RESET_MODES: tuple[str, ...] = ("mixed", "soft", "hard")
 
 
-def _h_add(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+def _resolve_explicit_paths(args: dict[str, Any], ctx: RuntimeContext) -> list[str]:
     raw_paths = args.get("paths") or []
     if not isinstance(raw_paths, list) or not raw_paths:
         raise ToolRuntimeError(
@@ -500,6 +508,11 @@ def _h_add(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
                 {"field": "paths"},
             )
         resolved_paths.append(_scoped_path(ctx, token, operation="write"))
+    return resolved_paths
+
+
+def _h_add(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
+    resolved_paths = _resolve_explicit_paths(args, ctx)
 
     cmd: list[str] = ["add", "--"] + resolved_paths
     result = run_git(tuple(cmd), cwd=_workspace_cwd(ctx))
@@ -530,8 +543,32 @@ def _h_commit(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
             "commit message is required",
             {"field": "message"},
         )
-    cmd: tuple[str, ...] = ("commit", "-m", message)
-    result = run_git(cmd, cwd=_workspace_cwd(ctx))
+    paths = _resolve_explicit_paths(args, ctx)
+    cwd = _workspace_cwd(ctx)
+    staged_probe = run_git(
+        ("diff", "--cached", "--name-only", "--", *paths),
+        cwd=cwd,
+    )
+    _require_success(staged_probe)
+    staged_paths = [line for line in staged_probe.stdout.splitlines() if line]
+    if not staged_paths:
+        raise ToolRuntimeError(
+            GIT_NOTHING_TO_COMMIT,
+            "none of the requested paths are staged",
+            {"paths": paths},
+        )
+    unstaged_probe = run_git(("diff", "--name-only", "--", *paths), cwd=cwd)
+    _require_success(unstaged_probe)
+    unstaged_paths = [line for line in unstaged_probe.stdout.splitlines() if line]
+    if unstaged_paths:
+        raise ToolRuntimeError(
+            "INVALID_ARGUMENT",
+            "requested paths contain unstaged changes; stage them before committing",
+            {"paths": unstaged_paths},
+        )
+
+    cmd: tuple[str, ...] = ("commit", "--only", "-m", message, "--", *paths)
+    result = run_git(cmd, cwd=cwd)
     if result.exit_code != 0:
         if _is_nothing_to_commit(result):
             raise ToolRuntimeError(
@@ -552,6 +589,7 @@ def _h_commit(args: dict[str, Any], ctx: RuntimeContext) -> dict[str, Any]:
     parsed = {
         "sha": sha,
         "message": message,
+        "committed_paths": staged_paths,
         "summary": result.stdout.strip().splitlines()[0]
         if result.stdout.strip()
         else "",

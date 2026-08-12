@@ -5,9 +5,11 @@ import sys
 from typing import Any
 
 from openminion.api.runtime import APIRuntime
+from openminion.cli.config import load_cli_manager_from_args
 from openminion.cli.parser.flags import add_json_output_flag
 from openminion.cli.presentation.json_output import print_json_payload
 from openminion.modules.session.schemas import ContinuationError
+from openminion.modules.storage import build_runtime_storage
 
 
 def _load_runtime(args: Any) -> APIRuntime:
@@ -15,6 +17,17 @@ def _load_runtime(args: Any) -> APIRuntime:
         getattr(args, "config", None),
         home_root=getattr(args, "home_root", None),
         data_root=getattr(args, "data_root", None),
+    )
+
+
+def _load_session_storage(args: Any) -> Any:
+    manager = load_cli_manager_from_args(args)
+    config = manager.base_config
+    return build_runtime_storage(
+        config.storage.path,
+        env=manager.env,
+        record_backend=config.storage.record_backend(),
+        record_backend_options=config.storage.record_backend_options(),
     )
 
 
@@ -110,7 +123,7 @@ def run_sessions_list(args) -> int:
     output_json = bool(getattr(args, "output_json", False))
 
     try:
-        runtime = _load_runtime(args)
+        runtime = _load_session_storage(args)
     except Exception as exc:
         print(f"openminion sessions: startup error — {exc}", file=sys.stderr)
         return 1
@@ -204,7 +217,7 @@ def run_sessions_delete(args) -> int:
             return 1
 
     try:
-        runtime = _load_runtime(args)
+        runtime = _load_session_storage(args)
     except Exception as exc:
         print(f"openminion sessions: startup error — {exc}", file=sys.stderr)
         return 1
@@ -226,6 +239,123 @@ def run_sessions_delete(args) -> int:
 
     print(f"Deleted session {session_id}.")
     return 0
+
+
+def _session_payload(sessions: Any, session_id: str) -> dict[str, Any]:
+    from openminion.modules.storage.runtime.session_store import (
+        agent_id_from_session_key,
+    )
+
+    session = sessions.get_session(session_id)
+    if session is None:
+        raise ValueError(f"Session not found: {session_id}")
+    context = sessions.get_session_context(session_id=session_id)
+    agent_id = str(getattr(session, "active_agent_id", "") or "").strip()
+    if not agent_id:
+        agent_id = agent_id_from_session_key(session.session_key)
+    return {
+        "id": session.id,
+        "agent": agent_id,
+        "channel": session.channel,
+        "target": session.target,
+        "status": session.status,
+        "turns": sessions.count_messages(session_id=session.id),
+        "created_at": session.created_at,
+        "updated_at": session.updated_at,
+        "last_activity_at": session.last_activity_at,
+        "closed_at": session.closed_at,
+        "expires_at": session.expires_at,
+        "metadata": dict(session.metadata),
+        "context": (
+            {
+                "pinned_context": context.pinned_context,
+                "summary_short": context.summary_short,
+                "rolling_summary": context.rolling_summary,
+                "compacted_message_count": context.compacted_message_count,
+                "version": context.version,
+                "updated_at": context.updated_at,
+            }
+            if context is not None
+            else None
+        ),
+    }
+
+
+def run_sessions_show(args) -> int:
+    session_id = str(getattr(args, "session_id", "") or "").strip()
+    try:
+        runtime = _load_session_storage(args)
+        payload = _session_payload(runtime.sessions, session_id)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        print(f"openminion sessions show: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if "runtime" in locals():
+            runtime.close()
+
+    if bool(getattr(args, "output_json", False)):
+        print_json_payload(payload)
+        return 0
+    print(
+        f"Session {payload['id']}: status={payload['status']} "
+        f"turns={payload['turns']} channel={payload['channel']}"
+    )
+    context = payload["context"]
+    if context is None:
+        print("Context: not compacted")
+    else:
+        print(
+            "Context: "
+            f"version={context['version']} "
+            f"compacted_messages={context['compacted_message_count']}"
+        )
+        if context["summary_short"]:
+            print(f"Summary: {context['summary_short']}")
+    return 0
+
+
+def _run_session_lifecycle(args, *, action: str) -> int:
+    session_id = str(getattr(args, "session_id", "") or "").strip()
+    reason = str(getattr(args, "reason", "") or "").strip() or None
+    try:
+        runtime = _load_session_storage(args)
+        if action == "close":
+            session = runtime.sessions.close_session(
+                session_id=session_id,
+                reason=reason,
+            )
+        elif action == "expire":
+            session = runtime.sessions.expire_session(
+                session_id=session_id,
+                expires_at=str(getattr(args, "at", "") or "").strip() or None,
+                reason=reason,
+            )
+        else:
+            session = runtime.sessions.set_session_status(
+                session_id=session_id,
+                status=str(getattr(args, "status", "") or "").strip(),
+                reason=reason,
+            )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        print(f"openminion sessions {action}: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        if "runtime" in locals():
+            runtime.close()
+    print(f"Session {session.id} is now {session.status}.")
+    return 0
+
+
+def run_sessions_close(args) -> int:
+    return _run_session_lifecycle(args, action="close")
+
+
+def run_sessions_set_status(args) -> int:
+    return _run_session_lifecycle(args, action="set-status")
+
+
+def run_sessions_expire(args) -> int:
+    return _run_session_lifecycle(args, action="expire")
 
 
 def _age_label(iso: str) -> str:
@@ -277,6 +407,44 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
         print(_fmt_row([str(row[field_map[h]]) for h in headers]))
 
 
+def _register_lifecycle_commands(sessions_subcommands: Any) -> None:
+    show = sessions_subcommands.add_parser(
+        "show", help="Show session lifecycle and compacted context"
+    )
+    show.add_argument("session_id", help="Session id to inspect")
+    add_json_output_flag(
+        show,
+        dest="output_json",
+        help_text="Emit session details as JSON",
+    )
+    show.set_defaults(handler=run_sessions_show, needs_app=False)
+
+    close = sessions_subcommands.add_parser(
+        "close", help="Close a session without deleting it"
+    )
+    close.add_argument("session_id", help="Session id to close")
+    close.add_argument("--reason", default="", help="Optional reason")
+    close.set_defaults(handler=run_sessions_close, needs_app=False)
+
+    status = sessions_subcommands.add_parser(
+        "set-status", help="Set a session to active, idle, paused, stale, or closed"
+    )
+    status.add_argument("session_id", help="Session id to update")
+    status.add_argument(
+        "status", choices=("active", "idle", "paused", "stale", "closed")
+    )
+    status.add_argument("--reason", default="", help="Optional reason")
+    status.set_defaults(handler=run_sessions_set_status, needs_app=False)
+
+    expire = sessions_subcommands.add_parser(
+        "expire", help="Expire and close a session"
+    )
+    expire.add_argument("session_id", help="Session id to expire")
+    expire.add_argument("--at", default="", help="Optional ISO-8601 expiry timestamp")
+    expire.add_argument("--reason", default="", help="Optional reason")
+    expire.set_defaults(handler=run_sessions_expire, needs_app=False)
+
+
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     sessions_cmd = subparsers.add_parser(
         "sessions", help="Session browser and management"
@@ -301,6 +469,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         sessions_list_cmd, dest="output_json", help_text="Emit JSON array"
     )
     sessions_list_cmd.set_defaults(handler=run_sessions_list, needs_app=False)
+    _register_lifecycle_commands(sessions_subcommands)
 
     sessions_delete_cmd = sessions_subcommands.add_parser(
         "delete", help="Permanently delete a session"

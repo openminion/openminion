@@ -306,6 +306,36 @@ class TestDebugE2EParity(unittest.TestCase):
         self.assertIn("mode_state=execute_step", details)
         self.assertIn("Running step 2/3: search", details)
 
+    def test_timeline_detail_connects_tool_request_and_result_facts(self):
+        from openminion.cli.commands.debug.cli import _extract_details
+
+        started = _extract_details(
+            "tool.execution.started",
+            {
+                "tool_name": "exec.run",
+                "argument_count": 2,
+                "argument_bytes": 48,
+                "status": "running",
+            },
+        )
+        completed = _extract_details(
+            "tool.execution.completed",
+            {
+                "tool_name": "exec.run",
+                "exit_code": 0,
+                "verified": True,
+                "duration_ms": 125,
+                "reason_code": "command_completed",
+            },
+        )
+
+        self.assertIn("tool=exec.run", started)
+        self.assertIn("args=2/48B", started)
+        self.assertIn("exit=0", completed)
+        self.assertIn("verified=true", completed)
+        self.assertIn("duration=125ms", completed)
+        self.assertIn("reason=command_completed", completed)
+
     def test_inprocess_daemon_parity_same_module_status(self):
         from openminion.cli.commands.debug import OpenMinionDebugProvider
 

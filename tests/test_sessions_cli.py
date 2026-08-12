@@ -179,8 +179,7 @@ def test_run_sessions_list_json_output(capsys) -> None:
         data_root=None,
     )
 
-    with patch.object(current, "APIRuntime") as MockRuntime:
-        MockRuntime.from_config_path.return_value = runtime
+    with patch.object(current, "_load_session_storage", return_value=runtime):
         result = current.run_sessions_list(args)
 
     assert result == 0
@@ -207,8 +206,7 @@ def test_run_sessions_list_table_output(capsys) -> None:
         data_root=None,
     )
 
-    with patch.object(current, "APIRuntime") as MockRuntime:
-        MockRuntime.from_config_path.return_value = runtime
+    with patch.object(current, "_load_session_storage", return_value=runtime):
         result = current.run_sessions_list(args)
 
     assert result == 0
@@ -230,8 +228,11 @@ def test_run_sessions_list_startup_error(capsys) -> None:
         data_root=None,
     )
 
-    with patch.object(current, "APIRuntime") as MockRuntime:
-        MockRuntime.from_config_path.side_effect = RuntimeError("bad config")
+    with patch.object(
+        current,
+        "_load_session_storage",
+        side_effect=RuntimeError("bad config"),
+    ):
         result = current.run_sessions_list(args)
 
     assert result == 1
@@ -252,8 +253,7 @@ def test_run_sessions_delete_yes_flag(capsys) -> None:
         data_root=None,
     )
 
-    with patch.object(current, "APIRuntime") as MockRuntime:
-        MockRuntime.from_config_path.return_value = runtime
+    with patch.object(current, "_load_session_storage", return_value=runtime):
         result = current.run_sessions_delete(args)
 
     assert result == 0
@@ -272,11 +272,11 @@ def test_run_sessions_delete_prompts_and_can_cancel(capsys) -> None:
     )
 
     with patch("builtins.input", return_value="n"):
-        with patch.object(current, "APIRuntime") as MockRuntime:
+        with patch.object(current, "_load_session_storage") as load_storage:
             result = current.run_sessions_delete(args)
 
     assert result == 1
-    MockRuntime.from_config_path.assert_not_called()
+    load_storage.assert_not_called()
     assert "Cancelled." in capsys.readouterr().out
 
 
@@ -293,12 +293,82 @@ def test_run_sessions_delete_missing_session(capsys) -> None:
         data_root=None,
     )
 
-    with patch.object(current, "APIRuntime") as MockRuntime:
-        MockRuntime.from_config_path.return_value = runtime
+    with patch.object(current, "_load_session_storage", return_value=runtime):
         result = current.run_sessions_delete(args)
 
     assert result == 1
     assert "session not found" in capsys.readouterr().err
+
+
+def test_run_sessions_show_reports_context(capsys) -> None:
+    runtime = _make_runtime([])
+    runtime.sessions.get_session.return_value = _make_session()
+    runtime.sessions.get_session_context.return_value = SimpleNamespace(
+        pinned_context="pin",
+        summary_short="fixed SSH setup",
+        rolling_summary="long summary",
+        compacted_message_count=8,
+        version=2,
+        updated_at="2026-03-22T10:00:00+00:00",
+    )
+    args = SimpleNamespace(session_id="sess-abc", output_json=True)
+
+    with patch.object(
+        sessions_command,
+        "_load_session_storage",
+        return_value=runtime,
+    ):
+        result = sessions_command.run_sessions_show(args)
+
+    assert result == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "active"
+    assert payload["context"]["summary_short"] == "fixed SSH setup"
+    assert payload["context"]["compacted_message_count"] == 8
+
+
+def test_session_lifecycle_commands_use_existing_store(capsys) -> None:
+    runtime = _make_runtime([])
+    closed = _make_session(status="closed")
+    active = _make_session(status="active")
+    runtime.sessions.close_session.return_value = closed
+    runtime.sessions.set_session_status.return_value = active
+    runtime.sessions.expire_session.return_value = closed
+
+    with patch.object(
+        sessions_command,
+        "_load_session_storage",
+        return_value=runtime,
+    ):
+        assert (
+            sessions_command.run_sessions_close(
+                SimpleNamespace(session_id="sess-abc", reason="done")
+            )
+            == 0
+        )
+        assert (
+            sessions_command.run_sessions_set_status(
+                SimpleNamespace(session_id="sess-abc", status="active", reason="resume")
+            )
+            == 0
+        )
+        assert (
+            sessions_command.run_sessions_expire(
+                SimpleNamespace(session_id="sess-abc", at="", reason="old")
+            )
+            == 0
+        )
+
+    runtime.sessions.close_session.assert_called_once_with(
+        session_id="sess-abc", reason="done"
+    )
+    runtime.sessions.set_session_status.assert_called_once_with(
+        session_id="sess-abc", status="active", reason="resume"
+    )
+    runtime.sessions.expire_session.assert_called_once_with(
+        session_id="sess-abc", expires_at=None, reason="old"
+    )
+    assert capsys.readouterr().out.count("Session sess-abc is now") == 3
 
 
 def test_session_cli_share_retention_and_branch_commands(tmp_path, capsys) -> None:

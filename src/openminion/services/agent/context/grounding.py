@@ -5,6 +5,7 @@ from typing import Any
 from collections.abc import Mapping, Sequence
 
 from openminion.modules.context.constants import PRIOR_TURN_CONTEXT_CHAR_LIMIT
+from openminion.modules.tool.exposure import get_allowed_model_tool_names
 from openminion.services.config import resolve_services_roots
 from openminion.modules.prompting.context_blocks import (
     GROUNDING_BLOCK_HEADER,
@@ -15,7 +16,7 @@ from openminion.modules.prompting.context_blocks import (
 _GROUNDING_BLOCK_HEADER = GROUNDING_BLOCK_HEADER
 _PENDING_TURN_BLOCK_HEADER = PENDING_TURN_BLOCK_HEADER
 _PRIOR_TURN_BLOCK_HEADER = PRIOR_TURN_BLOCK_HEADER
-_GROUNDING_BLOCK_BUDGET_TOKENS = 150
+_GROUNDING_BLOCK_BUDGET_TOKENS = 320
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class GroundingFacts:
     prior_context_present: bool
     prior_turn_present: bool
     session_working_state_available: bool
+    enabled_tool_names: tuple[str, ...]
     recent_artifacts: tuple["RecentArtifactFact", ...]
     recalled_memory_count: int = 0
 
@@ -64,7 +66,6 @@ def build_grounding_facts(
         metadata.get("cwd"),
         fallback=resolved_workspace_root,
     )
-    del tools
     has_recalled_memory = recalled_memory_count > 0
     return GroundingFacts(
         cwd=resolved_cwd,
@@ -74,9 +75,10 @@ def build_grounding_facts(
         prior_context_present=prior_context_present,
         prior_turn_present=prior_turn_present,
         session_working_state_available=include_session_working_state,
-        recent_artifacts=_recent_artifact_facts(
-            metadata.get("recent_artifacts"),
+        enabled_tool_names=tuple(
+            sorted(get_allowed_model_tool_names(tools, metadata=metadata))
         ),
+        recent_artifacts=_recent_artifact_facts(metadata.get("recent_artifacts")),
         recalled_memory_count=recalled_memory_count,
     )
 
@@ -111,6 +113,7 @@ def _render_grounding_block(*, facts: GroundingFacts) -> str:
             "facts:",
             f"- cwd: {facts.cwd}",
             f"- workspace_root: {facts.workspace_root}",
+            f"- enabled_tools: {', '.join(facts.enabled_tool_names) or 'none'}",
             "- current_session_history_available: "
             f"{_bool_text(facts.current_session_history_available)}",
             "- prior_session_history_available: "
@@ -127,6 +130,10 @@ def _render_grounding_block(*, facts: GroundingFacts) -> str:
     if rendered_recent_artifacts:
         lines.append("- recent_artifacts: " + rendered_recent_artifacts)
     lines.append("")
+    lines.append(
+        "tool_capability: The enabled_tools list above is authoritative. Use the "
+        "provided schemas and do not claim a listed tool is unavailable."
+    )
     lines.append(_render_memory_capability_text(facts))
     if facts.prior_context_present:
         lines.append(

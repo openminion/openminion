@@ -52,9 +52,7 @@ def run_debug(args) -> int:
     raise RuntimeError("Unknown debug command")
 
 
-def _daemon_debug_payload(
-    args: object, config: Any, *, path: str, key: str
-) -> Any:
+def _daemon_debug_payload(args: object, config: Any, *, path: str, key: str) -> Any:
     try:
         from openminion.cli.commands.daemon import ensure_daemon_running
 
@@ -375,6 +373,39 @@ def _extract_details(
     if tool_name:
         parts.append(f"tool={tool_name}")
 
+    argument_count = payload.get("argument_count")
+    argument_bytes = payload.get("argument_bytes")
+    if argument_count is not None:
+        argument_detail = f"args={argument_count}"
+        if argument_bytes is not None:
+            argument_detail += f"/{argument_bytes}B"
+        parts.append(argument_detail)
+
+    decision = str(payload.get("decision", payload.get("action", "")) or "").strip()
+    if decision:
+        parts.append(f"decision={decision}")
+
+    exit_code = payload.get("exit_code")
+    if exit_code is not None:
+        parts.append(f"exit={exit_code}")
+
+    verified = payload.get("verified")
+    if verified is not None:
+        parts.append(f"verified={str(bool(verified)).lower()}")
+
+    duration_ms = payload.get("duration_ms")
+    if duration_ms is not None:
+        parts.append(f"duration={duration_ms}ms")
+
+    reason = str(
+        payload.get("reason_code")
+        or payload.get("tool_loop_termination_reason")
+        or payload.get("termination_reason")
+        or ""
+    ).strip()
+    if reason:
+        parts.append(f"reason={reason}")
+
     title = str(payload.get("title", "")).strip()
     if title and not tool_name:
         parts.append(title)
@@ -387,7 +418,11 @@ def _extract_details(
     if note and not summary:
         parts.append(note[:80])
 
-    error = str(ev.get("error", payload.get("error", "") or "") or "").strip()
+    raw_error = ev.get("error", payload.get("error", "") or "")
+    if isinstance(raw_error, dict):
+        error = str(raw_error.get("code") or raw_error.get("type") or raw_error).strip()
+    else:
+        error = str(raw_error or "").strip()
     if error and error.lower() != "none":
         parts.append(f"error={error[:80]}")
 

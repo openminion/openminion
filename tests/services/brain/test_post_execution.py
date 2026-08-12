@@ -614,6 +614,7 @@ def test_prepare_turn_applies_runtime_system_prompt_override_with_gateway_system
     assert _runtime_grounding_keys(captured["system_prompt"]) == {
         "cwd",
         "workspace_root",
+        "enabled_tools",
         "current_session_history_available",
         "prior_session_history_available",
         "prior_context_present",
@@ -782,6 +783,7 @@ def test_prepare_turn_injects_identity_system_prompt_when_available() -> None:
     assert _runtime_grounding_keys(captured["system_prompt"]) == {
         "cwd",
         "workspace_root",
+        "enabled_tools",
         "current_session_history_available",
         "prior_session_history_available",
         "prior_context_present",

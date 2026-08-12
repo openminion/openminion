@@ -125,8 +125,9 @@ GIT_FAMILY = ToolFamilySpec(
             args_model=GitCommitArgs,
             handler=_h_commit,
             description=(
-                "Commit the staged changes with a required message. "
-                "Never uses --no-verify or --amend."
+                "Commit only the explicitly named staged paths with a required "
+                "message. Other staged paths remain untouched. Never uses "
+                "--no-verify or --amend."
             ),
             idempotent=False,
             capabilities=("write_safe",),
