@@ -49,8 +49,8 @@ Focus. A useful first task is:
 Give me one safe read-only command to inspect the current directory.
 ```
 
-The first screen goes directly to the model service. OpenAI, Anthropic,
-OpenRouter, MiniMax, and local Ollama appear first; additional services,
+The first screen goes directly to the model provider. OpenAI, Anthropic,
+OpenRouter, MiniMax, and local Ollama appear first; additional providers,
 custom endpoints, and config import remain available from the same menu.
 
 Demo mode is not part of normal onboarding. It remains available through the
@@ -60,20 +60,22 @@ local configuration, storage, session, and CLI plumbing only; it does not call
 a model. `openminion status readiness` therefore reports `overall=demo` for
 that configuration instead of claiming provider readiness.
 
-Setup distinguishes:
+Setup shows the three identities that matter during first run:
 
-1. service preset, such as OpenAI, Anthropic, OpenRouter, Ollama, MiniMax,
+1. provider, such as OpenAI, Anthropic, OpenRouter, Ollama, MiniMax,
    Kimi, Z.ai, DeepSeek, Qwen/DashScope, Gemini, xAI, Mistral, Together,
    Cerebras, Groq, Cortensor, or a custom endpoint;
-2. runtime adapter, such as `openai`, `anthropic`, `openrouter`, `ollama`, or
-   `cortensor`;
-3. API format, such as OpenAI-compatible or Anthropic-compatible; and
-4. model id, such as `gpt-4.1-mini` or `MiniMax-M2.7`.
+2. model id, such as `gpt-4.1-mini` or `MiniMax-M2.7`; and
+3. API adapter, such as OpenAI-compatible or Anthropic-compatible.
+
+For built-in providers, OpenMinion selects the API adapter automatically. The
+adapter describes compatibility, not provider identity. MiniMax remains the
+provider when it uses the OpenAI-compatible adapter.
 
 Environment credentials are preferred. For example, OpenAI setup reads
 `OPENAI_API_KEY`; MiniMax setup reads `MINIMAX_API_KEY` while using the existing
-OpenAI-compatible adapter. Compatibility describes the API format, not a shared
-account or credential; each service still uses its own key. Interactive setup may
+OpenAI-compatible adapter. Compatibility does not imply a shared account or
+credential; each provider still uses its own key. Interactive setup may
 store a pasted key locally only after a hidden prompt, warning, and confirmation.
 On POSIX systems, setup-owned config directories are tightened to owner-only
 `0700`, and setup-created config files are owner-only `0600`.
@@ -138,12 +140,11 @@ openminion setup \
   --no-focus
 ```
 
-For another OpenAI-compatible service, choose the service preset and model:
+For another OpenAI-compatible provider, choose the provider preset and model:
 
 ```bash
 openminion setup \
   --provider qwen-dashscope \
-  --api-format openai-compatible \
   --model qwen3.7-plus \
   --agent qwen3.7-plus \
   --no-focus

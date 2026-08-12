@@ -152,7 +152,7 @@ def _prompt_setup_preset() -> ProviderSetupPreset | None:
             label="Import an existing OpenMinion config",
             value="import",
         )
-        selection = _prompt_choice("Choose your model service:", options)
+        selection = _prompt_choice("Choose your model provider:", options)
         if selection.value == "import":
             return None
         if selection.value != "more":
@@ -169,7 +169,7 @@ def _prompt_setup_preset() -> ProviderSetupPreset | None:
         more_options["b"] = SetupSelection(label="Back", value="back")
         more_options["c"] = SetupSelection(label="Cancel setup", value="cancel")
         more_selection = _prompt_choice(
-            "Choose another service or custom endpoint:",
+            "Choose another provider or custom endpoint:",
             more_options,
         )
         if more_selection.value == "back":
@@ -335,12 +335,12 @@ def _build_non_interactive_setup(
 def _print_preview(result: ProviderSetupResult) -> None:
     print("Setup preview:")
     preview = result.preview
+    print(f"  provider: {preview.display_label}")
+    print(f"  model: {preview.model} [{preview.model_source}]")
+    print(f"  API adapter: {preview.api_format_label}")
+    print(f"  credential: {preview.credential}")
     print(f"  config target: {preview.config_path}")
     print(f"  default agent: {preview.agent_id}")
-    print(f"  service: {preview.display_label}")
-    print(f"  API format: {preview.api_format_label}")
-    print(f"  model: {preview.model} [{preview.model_source}]")
-    print(f"  credential: {preview.credential}")
     if result.preset.requires_base_url:
         print(f"  base URL: {preview.base_url}")
     if preview.shared_adapter_isolated:
@@ -492,14 +492,14 @@ def run_setup(args) -> int:
             mode = config.agents[_default_agent_id].provider
         if mode in {"demo", "echo"}:
             connection_state = "not applicable"
-        service_label = mode
+        provider_label = mode
         if interactive_preset is not None:
-            service_label = interactive_preset.display_label
+            provider_label = interactive_preset.display_label
         else:
             preset_id = str(getattr(args, "provider", "") or "").strip()
             if preset_id:
-                service_label = get_setup_preset(preset_id).display_label
-        print(f"Configuration saved at {saved_path} (service: {service_label})")
+                provider_label = get_setup_preset(preset_id).display_label
+        print(f"Configuration saved at {saved_path} (provider: {provider_label})")
 
         doctor_code = _resolve_runtime_helper("_run_setup_doctor")(
             config_path=saved_path

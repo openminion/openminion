@@ -260,7 +260,7 @@ def test_bare_command_imports_config_and_reaches_focus(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model service:", "7")
+        _reply(session, "Choose your model provider:", "7")
         _reply(session, "OpenMinion config file:", str(import_path))
         _reply(session, r"Import this config\? \[Y/n\]:")
         session.wait_for_after(
@@ -304,7 +304,7 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
             OPENAI_API_KEY=fixture_key,
         ),
     ) as session:
-        _reply(session, "Choose your model service:", "1")
+        _reply(session, "Choose your model provider:", "1")
         _reply(session, "Model \\[")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
         _reply(session, r"Test this provider now\? \[y/N\]:", "n")
@@ -319,7 +319,7 @@ def test_hosted_setup_uses_env_and_skips_remote_check(
     assert payload["providers"]["openai"]["model"] == "gpt-4.1-mini"
     assert payload["providers"]["openai"]["api_key"] == ""
     assert "[recommended]" in transcript
-    assert "service: OpenAI" in transcript
+    assert "provider: OpenAI" in transcript
     assert "runtime adapter:" not in transcript
     assert "Connection not tested; no provider request was made." in transcript
     assert fixture_key not in transcript
@@ -348,7 +348,7 @@ def test_local_setup_is_keyless_and_cancellable(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Choose your model provider:", "5")
         _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
         _reply(session, r"Save this configuration\? \[Y/n\]:", "n")
@@ -387,7 +387,7 @@ def test_missing_hosted_credential_cancels_without_writing(
             OPENAI_API_KEY="",
         ),
     ) as session:
-        _reply(session, "Choose your model service:", "1")
+        _reply(session, "Choose your model provider:", "1")
         _reply(session, "Model \\[")
         _reply(
             session,
@@ -426,10 +426,10 @@ def test_hosted_more_menu_back_and_cancel_stays_readable_at_80_columns(
         env=_environment(home_root=home_root, data_root=data_root),
         cols=80,
     ) as session:
-        _reply(session, "Choose your model service:", "6")
-        _reply(session, "Choose another service or custom endpoint:", "b")
-        _reply(session, "Choose your model service:", "6")
-        _reply(session, "Choose another service or custom endpoint:", "c")
+        _reply(session, "Choose your model provider:", "6")
+        _reply(session, "Choose another provider or custom endpoint:", "b")
+        _reply(session, "Choose your model provider:", "6")
+        _reply(session, "Choose another provider or custom endpoint:", "c")
         transcript = session.wait_for_after(
             "Setup cancelled; configuration not written.",
             offset=0,
@@ -468,7 +468,7 @@ def test_hosted_minimax_setup_lists_all_recommended_models(
             MINIMAX_API_KEY=fixture_key,
         ),
     ) as session:
-        _reply(session, "Choose your model service:", "4")
+        _reply(session, "Choose your model provider:", "4")
         _reply(session, "Choose a recommended model", "2")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
         _reply(session, r"Test this provider now\? \[y/N\]:", "n")
@@ -510,7 +510,7 @@ def test_local_ollama_check_failure_does_not_claim_readiness(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Choose your model provider:", "5")
         _reply(session, "Model \\[")
         _reply(session, "Ollama base URL", "http://127.0.0.1:1")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
@@ -552,7 +552,7 @@ def test_local_ollama_check_can_be_declined_after_config_is_saved(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Choose your model provider:", "5")
         _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
@@ -596,7 +596,7 @@ def test_local_ollama_check_can_verify_against_fixture_server(
             cwd=openminion_root,
             env=_environment(home_root=home_root, data_root=data_root),
         ) as session:
-            _reply(session, "Choose your model service:", "5")
+            _reply(session, "Choose your model provider:", "5")
             _reply(
                 session,
                 "Model \\[",
@@ -654,7 +654,7 @@ def test_setup_cancellation_before_write_is_clean(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        session.wait_for_after("Choose your model service:", offset=0, timeout=90)
+        session.wait_for_after("Choose your model provider:", offset=0, timeout=90)
         session.send(control)
         transcript = session.wait_for_after(
             "Setup cancelled; configuration not written.",
@@ -697,7 +697,7 @@ def test_setup_cancellation_after_write_preserves_saved_truth(
         cwd=openminion_root,
         env=_environment(home_root=home_root, data_root=data_root),
     ) as session:
-        _reply(session, "Choose your model service:", "5")
+        _reply(session, "Choose your model provider:", "5")
         _reply(session, "Model \\[")
         _reply(session, "Ollama base URL")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
@@ -768,7 +768,7 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
             MINIMAX_API_KEY=fixture_key,
         ),
     ) as session:
-        _reply(session, "Choose your model service:", "4")
+        _reply(session, "Choose your model provider:", "4")
         _reply(session, "Choose a recommended model", "1")
         _reply(session, r"Save this configuration\? \[Y/n\]:")
         _reply(session, r"Test this provider now\? \[y/N\]:", "n")
@@ -786,7 +786,7 @@ def test_setup_repairs_shared_adapter_without_changing_existing_agent(
         == "MiniMax-M2.7"
     )
     assert "repair: existing agents remain unchanged" in transcript
-    assert "service: MiniMax" in transcript
+    assert "provider: MiniMax" in transcript
     assert "runtime adapter:" not in transcript
     assert fixture_key not in transcript
     assert fixture_key not in config_path.read_text(encoding="utf-8")
