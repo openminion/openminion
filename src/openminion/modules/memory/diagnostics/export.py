@@ -7,6 +7,13 @@ from openminion.modules.memory.diagnostics.introspection import build_memory_sna
 from openminion.modules.memory.storage.base import ListQueryOptions
 
 
+def _list_records_or_empty(service: Any, scope: str) -> list[Any]:
+    try:
+        return list(service.list(ListQueryOptions(scopes=[scope], limit=200)))
+    except Exception:
+        return []
+
+
 def export_memory_debug(adapter: Any, output_dir: Path, *, session_id: str) -> Path:
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_dir = output_dir / f"memory_debug_{ts}"
@@ -26,26 +33,10 @@ def export_memory_debug(adapter: Any, output_dir: Path, *, session_id: str) -> P
                 result.append({"repr": repr(record)})
         return result
 
-    try:
-        session_records = adapter._service.list(  # noqa: SLF001
-            ListQueryOptions(scopes=[session_scope], limit=200)
-        )
-    except Exception:
-        session_records = []
-
-    try:
-        agent_records = adapter._service.list(  # noqa: SLF001
-            ListQueryOptions(scopes=[agent_scope], limit=200)
-        )
-    except Exception:
-        agent_records = []
-
-    try:
-        global_records = adapter._service.list(  # noqa: SLF001
-            ListQueryOptions(scopes=["global:system"], limit=200)
-        )
-    except Exception:
-        global_records = []
+    service = adapter._service  # noqa: SLF001
+    session_records = _list_records_or_empty(service, session_scope)
+    agent_records = _list_records_or_empty(service, agent_scope)
+    global_records = _list_records_or_empty(service, "global:system")
 
     (out_dir / "session_records.json").write_text(
         json.dumps(_to_dicts(session_records), indent=2, default=str)

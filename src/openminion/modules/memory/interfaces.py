@@ -96,12 +96,9 @@ def ensure_memory_compatibility(
     errors = [_render_compatibility_error(service, item) for item in raw_errors]
     errors.sort(key=lambda item: 0 if str(item).startswith("Version mismatch") else 1)
 
-    if errors:
-        if strict:
-            raise MemoryServiceInterfaceError(f"Memory service incompatible: {errors}")
-        return False, errors
-
-    return True, []
+    if strict:
+        raise MemoryServiceInterfaceError(f"Memory service incompatible: {errors}")
+    return False, errors
 
 
 __all__ = [

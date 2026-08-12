@@ -34,8 +34,7 @@ def emit_query_metrics(
     if not session_id or not turn_id:
         return
     bucket_ms = float(int(max(0.0, latency_ms) // 10) * 10)
-    payload_extra = dict(extra or {})
-    payload_extra["latency_bucket_ms"] = bucket_ms
+    payload_extra = {**(extra or {}), "latency_bucket_ms": bucket_ms}
     emit_memory_operation(
         telemetryctl=telemetryctl,
         session_id=session_id,

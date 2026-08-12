@@ -376,9 +376,7 @@ def format_history_timeline(records: Iterable[Any]) -> str:
         return "No history found."
     lines: list[str] = []
     for index, record in enumerate(ordered, start=1):
-        status = "[active]"
-        if bool(getattr(record, "is_deleted", False)):
-            status = "[superseded]"
+        status = "[superseded]" if getattr(record, "is_deleted", False) else "[active]"
         key = str(getattr(record, "key", "") or "-")
         record_type = str(getattr(record, "type", "") or "-")
         confidence = float(getattr(record, "confidence", 0.0) or 0.0)
