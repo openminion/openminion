@@ -83,7 +83,7 @@ def filter_provider_retry_overrides(
 ) -> tuple[ProviderRetryOverride, ...]:
     """Return overrides whose `provider_names` admit `provider_name`."""
 
-    normalized = str(provider_name or "").strip().lower()
+    normalized = provider_name.strip().lower()
     return tuple(
         item
         for item in _PROVIDER_RETRY_OVERRIDES
@@ -98,9 +98,8 @@ def provider_retry_overrides_disabled(
 ) -> tuple[bool, str]:
     """Return `(disabled, reason)` for provider retry-override hooks."""
 
-    if _provider_overrides_disabled(metadata=metadata, env=env):
-        return True, "provider overrides explicitly disabled"
-    return False, ""
+    disabled = _provider_overrides_disabled(metadata=metadata, env=env)
+    return disabled, "provider overrides explicitly disabled" if disabled else ""
 
 
 def provider_retry_override_table() -> list[dict[str, Any]]:
@@ -152,10 +151,10 @@ def resolve_provider_retry_override(
             )
         candidates = _PROVIDER_RETRY_OVERRIDES
 
-    normalized_provider = str(provider_name or "").strip().lower()
-    normalized_model = str(model_name or "").strip().lower()
-    normalized_purpose = str(purpose or "").strip().lower()
-    has_thinking = bool(str(thinking or "").strip())
+    normalized_provider = provider_name.strip().lower()
+    normalized_model = model_name.strip().lower()
+    normalized_purpose = purpose.strip().lower()
+    has_thinking = bool(thinking and thinking.strip())
     submit_output_only = _submit_output_only_tools(tool_names)
 
     for item in candidates:
@@ -193,7 +192,7 @@ def _provider_overrides_disabled(
     if env_config.get_bool(_DISABLE_PROVIDER_OVERRIDES_ENV, False):
         return True
 
-    raw_metadata = dict(metadata or {})
+    raw_metadata = metadata or {}
     mode = str(raw_metadata.get("provider_override_mode", "") or "").strip().lower()
     if mode in {"disable", "disabled", "off", "none"}:
         return True
@@ -217,11 +216,7 @@ def _structured_tool_choice(value: str | dict[str, Any] | None) -> bool:
 
 
 def _submit_output_only_tools(tool_names: Sequence[str] | None) -> bool:
-    normalized = tuple(
-        str(item or "").strip()
-        for item in (tool_names or [])
-        if str(item or "").strip()
-    )
+    normalized = tuple(item.strip() for item in (tool_names or ()) if item.strip())
     return bool(normalized) and all(item == "submit_output" for item in normalized)
 
 

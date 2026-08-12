@@ -108,17 +108,6 @@ def normalize_tool_choice(
     *,
     canonical_to_external: Mapping[str, str] | None = None,
 ) -> Any:
-    return normalize_tool_choice_with_overrides(
-        raw_value,
-        canonical_to_external=canonical_to_external,
-    )
-
-
-def normalize_tool_choice_with_overrides(
-    raw_value: Any,
-    *,
-    canonical_to_external: Mapping[str, str] | None = None,
-) -> Any:
     if isinstance(raw_value, str):
         normalized = raw_value.strip().lower()
         if normalized in _VALID_TOOL_CHOICES:
@@ -299,13 +288,13 @@ def build_fallback_tool_call_instruction(
 
 
 def _strip_tool_wrapper_prefix(value: str) -> str:
-    return strip_tool_wrapper_prefix(str(value or ""))
+    return strip_tool_wrapper_prefix(value)
 
 
 def _normalize_envelope_target(target: str) -> str | None:
     if not target:
         return None
-    raw_target = str(target or "").strip()
+    raw_target = target.strip()
     if raw_target in _ENVELOPE_TARGET_NAMESPACE_MAP:
         return _ENVELOPE_TARGET_NAMESPACE_MAP[raw_target]
     canonical = _canonical_model_tool_id(raw_target)
@@ -329,13 +318,13 @@ def detect_raw_envelope(text: str) -> bool:
 def detect_raw_tool_markup(text: str) -> bool:
     if not text:
         return False
-    return bool(_RAW_TOOL_MARKUP_RE.search(str(text)))
+    return bool(_RAW_TOOL_MARKUP_RE.search(text))
 
 
 def detect_raw_xml_tool_wrapper(text: str) -> bool:
     if not text:
         return False
-    return bool(_RAW_XML_TOOL_WRAPPER_RE.search(str(text)))
+    return bool(_RAW_XML_TOOL_WRAPPER_RE.search(text))
 
 
 def detect_raw_tool_payload_json(text: str) -> bool:
@@ -343,8 +332,16 @@ def detect_raw_tool_payload_json(text: str) -> bool:
         return False
     name_keys = ("name", "tool_name", "tool", ":op")
     argument_keys = (
-        "arguments", "args", ":args", "parameters", "tool_input",
-        "input", "command", "path", "query", "content",
+        "arguments",
+        "args",
+        ":args",
+        "parameters",
+        "tool_input",
+        "input",
+        "command",
+        "path",
+        "query",
+        "content",
     )
     for candidate in _json_payload_candidates(text):
         payload = _decode_json(candidate)
@@ -405,7 +402,7 @@ def _normalize_allowed_tool_names(
 ) -> set[str] | None:
     if allowed_tool_names is None:
         return None
-    normalized = {str(name).strip() for name in allowed_tool_names if str(name).strip()}
+    normalized = {name.strip() for name in allowed_tool_names if name.strip()}
     return normalized
 
 
@@ -436,7 +433,7 @@ def _resolve_family_wrapper_operation_candidate(
     prefix_matches = []
     dotted_prefix = f"{family}."
     for candidate in allowed_scope:
-        token = str(candidate or "").strip()
+        token = candidate.strip()
         if not token:
             continue
         canonical = _canonical_model_tool_id(token) or token
@@ -495,7 +492,7 @@ def _copy_arg_alias(
 
 
 def _json_payload_candidates(text: str) -> List[str]:
-    raw = str(text or "").strip()
+    raw = text.strip()
     candidates: list[str] = []
     if raw:
         candidates.append(raw)
@@ -512,7 +509,7 @@ def _json_payload_candidates(text: str) -> List[str]:
 
 def _embedded_json_value_candidates(text: str) -> list[str]:
     decoder = json.JSONDecoder()
-    raw = str(text or "")
+    raw = text
     candidates: list[str] = []
     seen: set[tuple[int, int]] = set()
     occupied_spans: list[tuple[int, int]] = []
@@ -537,7 +534,7 @@ def _embedded_json_value_candidates(text: str) -> list[str]:
 
 
 def _extract_embedded_json_candidate(text: str) -> str | None:
-    raw = str(text or "").strip()
+    raw = text.strip()
     if not raw:
         return None
     obj_start = raw.find("{")
@@ -556,7 +553,7 @@ def _extract_embedded_json_candidate(text: str) -> str | None:
 
 
 def _decode_json(raw_payload: str) -> Any | None:
-    candidate = str(raw_payload or "").strip()
+    candidate = raw_payload.strip()
     if not candidate:
         return None
     try:
@@ -577,7 +574,7 @@ def _repair_trailing_unbalanced_json(
 ) -> str:
     """Repair EOF-truncated JSON objects emitted inside bounded tool envelopes."""
 
-    token = str(candidate or "").strip()
+    token = candidate.strip()
     if not token or error.pos < len(token) - 1:
         return ""
 
@@ -764,39 +761,7 @@ def _coerce_inline_tool_arguments(item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_tool_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(value or "").lower()).strip("_")
-
-
-def canonicalize_tool_name_for_runtime(raw_name: str) -> str:
-    raw = str(raw_name or "").strip()
-    if not raw:
-        return ""
-    canonical = _canonical_model_tool_id(raw)
-    if canonical:
-        return canonical
-    normalized = _normalize_tool_name(raw)
-    normalized_matches = [
-        candidate
-        for candidate in ALL_MODEL_TOOL_IDS_SET
-        if _normalize_tool_name(candidate) == normalized
-    ]
-    if len(normalized_matches) == 1:
-        return normalized_matches[0]
-    stripped = _strip_tool_wrapper_prefix(raw)
-    if stripped and stripped != raw:
-        canonical = _canonical_model_tool_id(stripped)
-        if canonical:
-            return canonical
-        normalized = _normalize_tool_name(stripped)
-        normalized_matches = [
-            candidate
-            for candidate in ALL_MODEL_TOOL_IDS_SET
-            if _normalize_tool_name(candidate) == normalized
-        ]
-        if len(normalized_matches) == 1:
-            return normalized_matches[0]
-        return stripped
-    return raw
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
 
 
 def _resolve_allowed_tool_name(
@@ -828,15 +793,15 @@ def _resolve_allowed_tool_name(
         if allowed_tool_names is not None:
             lowered = name.lower()
             for candidate in allowed_tool_names:
-                normalized_candidate = str(candidate or "").strip()
+                normalized_candidate = candidate.strip()
                 if normalized_candidate and normalized_candidate.lower() == lowered:
                     return normalized_candidate
             normalized = _normalize_tool_name(name)
             normalized_matches = [
-                str(candidate or "").strip()
+                candidate.strip()
                 for candidate in allowed_tool_names
-                if str(candidate or "").strip()
-                and _normalize_tool_name(str(candidate or "").strip()) == normalized
+                if candidate.strip()
+                and _normalize_tool_name(candidate.strip()) == normalized
             ]
             if len(normalized_matches) == 1:
                 only_match = normalized_matches[0]
@@ -868,7 +833,7 @@ def _resolve_allowed_tool_name(
 
 
 def _canonical_model_tool_id(raw_name: str) -> str | None:
-    token = str(raw_name or "").strip()
+    token = raw_name.strip()
     if not token:
         return None
     alias = _LEGACY_MODEL_TOOL_ALIASES.get(token.lower())
@@ -918,10 +883,8 @@ def _is_submit_output_only_allowed(allowed_tool_names: set[str] | None) -> bool:
 
 
 def _coerce_submit_output_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    candidate: Any = dict(payload or {})
+    candidate = dict(payload)
     for key in ("decision", "Decision", "output", "result", "payload", "inputs"):
-        if not isinstance(candidate, dict):
-            break
         raw_value = candidate.get(key)
         parsed = _coerce_tool_arguments(raw_value)
         if parsed:
@@ -930,9 +893,7 @@ def _coerce_submit_output_payload(payload: dict[str, Any]) -> dict[str, Any] | N
         if isinstance(raw_value, dict):
             candidate = dict(raw_value)
             break
-    if isinstance(candidate, dict):
-        return dict(candidate)
-    return None
+    return candidate
 
 
 def _extract_raw_tool_name_from_payload(payload: Any) -> str | None:
