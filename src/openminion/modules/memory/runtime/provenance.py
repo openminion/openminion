@@ -53,8 +53,6 @@ class MemoryProvenanceRecorder:
 
         with self._lock:
             keys = list(self._memory_index.get(memory_id, ()))
-            if not keys:
-                return []
             traces = [self._traces[k] for k in keys if k in self._traces]
         return sorted(
             traces,

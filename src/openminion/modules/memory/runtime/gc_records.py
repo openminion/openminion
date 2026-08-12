@@ -36,9 +36,7 @@ def soft_delete_sqlite_record(
         (now_iso, record_id),
     )
     conn.execute("DELETE FROM memory_fts WHERE id = ?", (record_id,))
-    if row is None:
-        return []
-    return decode_evidence_ref_values(row["evidence_json"])
+    return [] if row is None else decode_evidence_ref_values(row["evidence_json"])
 
 
 def soft_delete_postgres_record(
@@ -67,9 +65,7 @@ def soft_delete_postgres_record(
         ),
         {"updated_at": now_iso, "id": record_id},
     )
-    if row is None:
-        return []
-    return decode_evidence_ref_values(row.get("evidence_json"))
+    return [] if row is None else decode_evidence_ref_values(row.get("evidence_json"))
 
 
 def remove_collected_artifact_refs(

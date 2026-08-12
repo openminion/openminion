@@ -11,7 +11,6 @@ _COLLAPSE_SEPARATORS_RE: Final[re.Pattern[str]] = re.compile(r"[_\-]+")
 _NORMALIZED_KEY_RE: Final[re.Pattern[str]] = re.compile(
     r"^(fact|user_preference|task):[a-z0-9](?:[a-z0-9_\-\.:]{0,126}[a-z0-9])?$"
 )
-_MAX_KEY_LENGTH: Final[int] = NORMALIZED_KEY_MAX_LENGTH
 
 
 def normalize_slug(raw: str) -> str:
@@ -29,15 +28,15 @@ def build_normalized_key(*, kind: str, slug: str) -> str:
     if not slug_norm:
         slug_norm = "unspecified"
     if category not in BOUNDED_CATEGORIES:
-        category = f"fact:custom"  # noqa: F541 — intentional literal
+        category = "fact:custom"
         kind_marker = _SLUG_SANITIZE_RE.sub("_", str(kind or "").strip().lower())
         kind_marker = _COLLAPSE_SEPARATORS_RE.sub("_", kind_marker).strip("_")
-        if kind_marker and kind_marker not in {"fact", "user_preference", "task"}:
-            slug_norm = f"{kind_marker}_{slug_norm}" if slug_norm else kind_marker
+        if kind_marker and kind_marker not in BOUNDED_CATEGORIES:
+            slug_norm = f"{kind_marker}_{slug_norm}"
     key = f"{category}:{slug_norm}"
-    if len(key) > _MAX_KEY_LENGTH:
+    if len(key) > NORMALIZED_KEY_MAX_LENGTH:
         prefix = f"{category}:"
-        budget = _MAX_KEY_LENGTH - len(prefix)
+        budget = NORMALIZED_KEY_MAX_LENGTH - len(prefix)
         key = prefix + slug_norm[:budget]
     return key
 
@@ -45,7 +44,7 @@ def build_normalized_key(*, kind: str, slug: str) -> str:
 def is_valid_normalized_key(key: str) -> bool:
     """Validate a normalized key against the bounded/custom vocabulary."""
     candidate = str(key or "").strip()
-    if not candidate or len(candidate) > _MAX_KEY_LENGTH:
+    if not candidate or len(candidate) > NORMALIZED_KEY_MAX_LENGTH:
         return False
     return bool(_NORMALIZED_KEY_RE.match(candidate))
 

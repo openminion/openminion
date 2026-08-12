@@ -60,7 +60,6 @@ def _evict_postgres_stale_insights(
     cutoff: datetime.datetime,
     now_iso: str,
 ) -> tuple[int, list[tuple[str, list[Any]]]]:
-    evicted = 0
     removed_edges: list[tuple[str, list[Any]]] = []
     with store.gc_connection() as conn:
         rows = (
@@ -87,8 +86,7 @@ def _evict_postgres_stale_insights(
                     soft_delete_postgres_record(conn, record_id, now_iso=now_iso),
                 )
             )
-            evicted += 1
-    return evicted, removed_edges
+    return len(removed_edges), removed_edges
 
 
 def _evict_sqlite_stale_insights(
@@ -97,7 +95,6 @@ def _evict_sqlite_stale_insights(
     cutoff: datetime.datetime,
     now_iso: str,
 ) -> tuple[int, list[tuple[str, list[Any]]]]:
-    evicted = 0
     removed_edges: list[tuple[str, list[Any]]] = []
     with store._connect() as conn:
         conn.execute("BEGIN")
@@ -120,9 +117,8 @@ def _evict_sqlite_stale_insights(
                         soft_delete_sqlite_record(conn, record_id, now_iso=now_iso),
                     )
                 )
-                evicted += 1
             conn.execute("COMMIT")
         except Exception:
             conn.execute("ROLLBACK")
             raise
-    return evicted, removed_edges
+    return len(removed_edges), removed_edges
