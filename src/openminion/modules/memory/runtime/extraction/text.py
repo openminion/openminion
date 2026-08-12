@@ -57,9 +57,7 @@ def _normalize_line(raw: str, max_chars: int = 400) -> str:
 
 def _normalize_scope(scope: str) -> str:
     s = str(scope or "").strip()
-    if s == "global":
-        return "global:system"
-    return s
+    return "global:system" if s == "global" else s
 
 
 def _tokenize_text(text: str) -> set[str]:

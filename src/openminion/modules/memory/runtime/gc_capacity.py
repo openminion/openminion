@@ -152,12 +152,9 @@ def _evict_postgres_excess_rows(
     now_iso: str,
     conn: Any,
 ) -> None:
-    if len(rows) <= int(max_records):
-        return
-    active_count = len(rows)
     removable = [row for row in rows if str(row.get("type") or "") not in exempt]
-    while active_count > int(max_records) and removable:
-        row = removable.pop(0)
+    excess = max(0, len(rows) - int(max_records))
+    for row in removable[:excess]:
         record_id = str(row["id"])
         removed_edges.append(
             (
@@ -166,7 +163,6 @@ def _evict_postgres_excess_rows(
             )
         )
         evicted[scope] = evicted.get(scope, 0) + 1
-        active_count -= 1
 
 
 def _evict_sqlite_excess_rows(
@@ -180,12 +176,9 @@ def _evict_sqlite_excess_rows(
     now_iso: str,
     conn: Any,
 ) -> None:
-    if len(rows) <= int(max_records):
-        return
-    active_count = len(rows)
     removable = [row for row in rows if str(row["type"] or "") not in exempt]
-    while active_count > int(max_records) and removable:
-        row = removable.pop(0)
+    excess = max(0, len(rows) - int(max_records))
+    for row in removable[:excess]:
         record_id = str(row["id"])
         removed_edges.append(
             (
@@ -194,4 +187,3 @@ def _evict_sqlite_excess_rows(
             )
         )
         evicted[scope] = evicted.get(scope, 0) + 1
-        active_count -= 1

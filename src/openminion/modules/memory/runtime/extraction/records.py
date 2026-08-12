@@ -114,10 +114,9 @@ def _format_records_as_context(
 
 def _content_text(content: Any) -> str:
     if isinstance(content, dict):
-        if "summary_text" in content:
-            return str(content.get("summary_text", "") or "").strip()
-        if "text" in content:
-            return str(content.get("text", "") or "").strip()
+        for key in ("summary_text", "text"):
+            if key in content:
+                return str(content.get(key, "") or "").strip()
         return str(content).strip()
     return str(content or "").strip()
 
