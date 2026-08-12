@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -327,11 +327,8 @@ def _local_tool_runtime(args_or_config_path: object) -> Iterator[tuple[Any, Any]
     try:
         yield config, tools
     finally:
-        manager = getattr(tools, "mcp_manager", None)
-        close = getattr(manager, "close", None)
-        if callable(close):
-            with suppress(Exception):
-                close()
+        if tools.mcp_manager is not None:
+            tools.mcp_manager.close()
 
 
 def _inproc_tool_specs(args_or_config_path: object) -> list[dict]:

@@ -331,40 +331,43 @@ def test_session_lifecycle_commands_use_existing_store(capsys) -> None:
     runtime = _make_runtime([])
     closed = _make_session(status="closed")
     active = _make_session(status="active")
-    runtime.sessions.close_session.return_value = closed
-    runtime.sessions.set_session_status.return_value = active
+    runtime.sessions.set_session_status.side_effect = [closed, active]
     runtime.sessions.expire_session.return_value = closed
+    commands = (
+        SimpleNamespace(
+            session_id="sess-abc",
+            lifecycle_action="close",
+            status="closed",
+            reason="done",
+        ),
+        SimpleNamespace(
+            session_id="sess-abc",
+            lifecycle_action="set-status",
+            status="active",
+            reason="resume",
+        ),
+        SimpleNamespace(
+            session_id="sess-abc",
+            lifecycle_action="expire",
+            at="",
+            reason="old",
+        ),
+    )
 
     with patch.object(
         sessions_command,
         "_load_session_storage",
         return_value=runtime,
     ):
-        assert (
-            sessions_command.run_sessions_close(
-                SimpleNamespace(session_id="sess-abc", reason="done")
-            )
-            == 0
-        )
-        assert (
-            sessions_command.run_sessions_set_status(
-                SimpleNamespace(session_id="sess-abc", status="active", reason="resume")
-            )
-            == 0
-        )
-        assert (
-            sessions_command.run_sessions_expire(
-                SimpleNamespace(session_id="sess-abc", at="", reason="old")
-            )
-            == 0
-        )
+        for args in commands:
+            assert sessions_command.run_sessions_update(args) == 0
 
-    runtime.sessions.close_session.assert_called_once_with(
-        session_id="sess-abc", reason="done"
-    )
-    runtime.sessions.set_session_status.assert_called_once_with(
-        session_id="sess-abc", status="active", reason="resume"
-    )
+    assert [
+        item.kwargs for item in runtime.sessions.set_session_status.call_args_list
+    ] == [
+        {"session_id": "sess-abc", "status": "closed", "reason": "done"},
+        {"session_id": "sess-abc", "status": "active", "reason": "resume"},
+    ]
     runtime.sessions.expire_session.assert_called_once_with(
         session_id="sess-abc", expires_at=None, reason="old"
     )

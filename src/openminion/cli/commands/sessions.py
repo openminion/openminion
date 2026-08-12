@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import sys
 from typing import Any
 
@@ -155,10 +156,6 @@ def _build_rows(
     channel_filter: str = "",
     limit: int,
 ) -> list[dict[str, Any]]:
-    from openminion.modules.storage.runtime.session_store import (
-        agent_id_from_session_key,
-    )
-
     try:
         sessions = runtime.sessions.list_sessions(
             limit=limit,
@@ -172,9 +169,7 @@ def _build_rows(
 
     rows: list[dict[str, Any]] = []
     for session in sessions:
-        agent_id = agent_id_from_session_key(session.session_key)
-        if not agent_id:
-            agent_id = str(getattr(session, "active_agent_id", "") or "").strip()
+        agent_id = _session_agent_id(session)
         if agent_filter and not agent_id.lower().startswith(agent_filter):
             continue
 
@@ -242,20 +237,13 @@ def run_sessions_delete(args) -> int:
 
 
 def _session_payload(sessions: Any, session_id: str) -> dict[str, Any]:
-    from openminion.modules.storage.runtime.session_store import (
-        agent_id_from_session_key,
-    )
-
     session = sessions.get_session(session_id)
     if session is None:
         raise ValueError(f"Session not found: {session_id}")
     context = sessions.get_session_context(session_id=session_id)
-    agent_id = str(getattr(session, "active_agent_id", "") or "").strip()
-    if not agent_id:
-        agent_id = agent_id_from_session_key(session.session_key)
     return {
         "id": session.id,
-        "agent": agent_id,
+        "agent": _session_agent_id(session),
         "channel": session.channel,
         "target": session.target,
         "status": session.status,
@@ -281,17 +269,25 @@ def _session_payload(sessions: Any, session_id: str) -> dict[str, Any]:
     }
 
 
+def _session_agent_id(session: Any) -> str:
+    from openminion.modules.storage.runtime.session_store import (
+        agent_id_from_session_key,
+    )
+
+    return (
+        agent_id_from_session_key(session.session_key)
+        or str(getattr(session, "active_agent_id", "") or "").strip()
+    )
+
+
 def run_sessions_show(args) -> int:
     session_id = str(getattr(args, "session_id", "") or "").strip()
     try:
-        runtime = _load_session_storage(args)
-        payload = _session_payload(runtime.sessions, session_id)
+        with closing(_load_session_storage(args)) as runtime:
+            payload = _session_payload(runtime.sessions, session_id)
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"openminion sessions show: {exc}", file=sys.stderr)
         return 1
-    finally:
-        if "runtime" in locals():
-            runtime.close()
 
     if bool(getattr(args, "output_json", False)):
         print_json_payload(payload)
@@ -314,48 +310,29 @@ def run_sessions_show(args) -> int:
     return 0
 
 
-def _run_session_lifecycle(args, *, action: str) -> int:
+def run_sessions_update(args) -> int:
     session_id = str(getattr(args, "session_id", "") or "").strip()
+    action = str(getattr(args, "lifecycle_action", "") or "").strip()
     reason = str(getattr(args, "reason", "") or "").strip() or None
     try:
-        runtime = _load_session_storage(args)
-        if action == "close":
-            session = runtime.sessions.close_session(
-                session_id=session_id,
-                reason=reason,
-            )
-        elif action == "expire":
-            session = runtime.sessions.expire_session(
-                session_id=session_id,
-                expires_at=str(getattr(args, "at", "") or "").strip() or None,
-                reason=reason,
-            )
-        else:
-            session = runtime.sessions.set_session_status(
-                session_id=session_id,
-                status=str(getattr(args, "status", "") or "").strip(),
-                reason=reason,
-            )
+        with closing(_load_session_storage(args)) as runtime:
+            if action == "expire":
+                session = runtime.sessions.expire_session(
+                    session_id=session_id,
+                    expires_at=str(getattr(args, "at", "") or "").strip() or None,
+                    reason=reason,
+                )
+            else:
+                session = runtime.sessions.set_session_status(
+                    session_id=session_id,
+                    status=str(getattr(args, "status", "") or "").strip(),
+                    reason=reason,
+                )
     except (OSError, RuntimeError, TypeError, ValueError) as exc:
         print(f"openminion sessions {action}: {exc}", file=sys.stderr)
         return 1
-    finally:
-        if "runtime" in locals():
-            runtime.close()
     print(f"Session {session.id} is now {session.status}.")
     return 0
-
-
-def run_sessions_close(args) -> int:
-    return _run_session_lifecycle(args, action="close")
-
-
-def run_sessions_set_status(args) -> int:
-    return _run_session_lifecycle(args, action="set-status")
-
-
-def run_sessions_expire(args) -> int:
-    return _run_session_lifecycle(args, action="expire")
 
 
 def _age_label(iso: str) -> str:
@@ -423,8 +400,13 @@ def _register_lifecycle_commands(sessions_subcommands: Any) -> None:
         "close", help="Close a session without deleting it"
     )
     close.add_argument("session_id", help="Session id to close")
-    close.add_argument("--reason", default="", help="Optional reason")
-    close.set_defaults(handler=run_sessions_close, needs_app=False)
+    close.add_argument("--reason", default="manual_close", help="Optional reason")
+    close.set_defaults(
+        handler=run_sessions_update,
+        lifecycle_action="close",
+        status="closed",
+        needs_app=False,
+    )
 
     status = sessions_subcommands.add_parser(
         "set-status", help="Set a session to active, idle, paused, stale, or closed"
@@ -434,7 +416,11 @@ def _register_lifecycle_commands(sessions_subcommands: Any) -> None:
         "status", choices=("active", "idle", "paused", "stale", "closed")
     )
     status.add_argument("--reason", default="", help="Optional reason")
-    status.set_defaults(handler=run_sessions_set_status, needs_app=False)
+    status.set_defaults(
+        handler=run_sessions_update,
+        lifecycle_action="set-status",
+        needs_app=False,
+    )
 
     expire = sessions_subcommands.add_parser(
         "expire", help="Expire and close a session"
@@ -442,7 +428,11 @@ def _register_lifecycle_commands(sessions_subcommands: Any) -> None:
     expire.add_argument("session_id", help="Session id to expire")
     expire.add_argument("--at", default="", help="Optional ISO-8601 expiry timestamp")
     expire.add_argument("--reason", default="", help="Optional reason")
-    expire.set_defaults(handler=run_sessions_expire, needs_app=False)
+    expire.set_defaults(
+        handler=run_sessions_update,
+        lifecycle_action="expire",
+        needs_app=False,
+    )
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
